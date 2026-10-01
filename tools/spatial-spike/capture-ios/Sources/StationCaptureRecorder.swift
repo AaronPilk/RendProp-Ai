@@ -92,7 +92,8 @@ final class StationCaptureRecorder {
                             try FileManager.default.createDirectory(at: root.appendingPathComponent(name), withIntermediateDirectories: false)
                         }
                         let created = Files(root: root, manifest: StationCaptureManifest(sessionID: id, deviceModel: deviceModel,
-                                                                                       operatingSystem: operatingSystem, depthSupported: depthSupported))
+                                                                                       operatingSystem: operatingSystem, depthSupported: depthSupported,
+                                                                                       profile: .handheldV2))
                         try created.requireCapacity(); try created.saveManifest()
                         continuation.resume(returning: created)
                     } catch { continuation.resume(throwing: error) }
@@ -120,11 +121,16 @@ final class StationCaptureRecorder {
             throw CaptureError.invalid("Hold still and point at room details until camera tracking is ready.")
         }
         guard StationCapturePolicy.canBeginFacingStraightAhead(forwardY: pose.forward[1]) else { throw CaptureError.invalid("Point the camera straight ahead to begin this position.") }
+        guard let profile = manifest.geometryProfile else { throw CaptureError.invalid("This tour's capture policy is unsupported. Start a new tour.") }
         let reference = atan2(pose.forward[0], -pose.forward[2]) * 180 / .pi
-        let station = StationCaptureStation(id: UUID().uuidString, index: manifest.stations.count, origin: pose.origin,
+        var pendingStation = StationCaptureStation(id: UUID().uuidString, index: manifest.stations.count, origin: pose.origin,
                                            reference_yaw_degrees: reference, started_timestamp: frame.timestamp)
+        pendingStation.status_detail = "Waiting for a still first photo to set this viewpoint."
+        pendingStation.targets = profile.targets
+        let station = pendingStation
         activeStationIndex = station.index
-        policy = StationCapturePolicy(origin: pose.origin, referenceYawDegrees: reference)
+        policy = StationCapturePolicy(origin: pose.origin, referenceYawDegrees: reference,
+                                      profile: profile, anchorAtFirstPhoto: true)
         previousPose = nil; finishingStation = false
         state = .saving; emit("Saving the starting position…")
         writerQueue.async {
@@ -137,7 +143,7 @@ final class StationCaptureRecorder {
                     self.manifest = snapshot
                     guard !self.ending, !self.finishingStation else { return }
                     self.state = .capturing
-                    self.emit("Photos save automatically. Keep the lens over this spot and turn around the phone, not around your body.")
+                    self.emit("Stay where you are. Point straight ahead and hold still while the first photo sets your viewpoint.")
                 }
             } catch { self.diskFailure(files, error: error) }
         }
@@ -164,7 +170,9 @@ final class StationCaptureRecorder {
         let measuredPose = CaptureGeometry.rows(camera.transform)
         let guidance = policy.evaluate(timestamp: frame.timestamp, cameraToWorld: measuredPose, normalTracking: normal,
                                        motionBlurAcceptable: estimate.map { $0.predictedSmearPixels <= 2 } ?? false,
-                                       angularSpeedDegreesPerSecond: estimate?.angularSpeedDegreesPerSecond)
+                                       angularSpeedDegreesPerSecond: estimate?.angularSpeedDegreesPerSecond,
+                                       intrinsics: CaptureGeometry.rows(camera.intrinsics),
+                                       resolution: ImageResolution(width: Int(camera.imageResolution.width), height: Int(camera.imageResolution.height)))
         self.policy = policy
         if frame.timestamp - lastUpdateTime >= 0.1 || guidance.readyToCapture {
             lastUpdateTime = frame.timestamp; emit(guidance.message, guidance: guidance)
@@ -190,6 +198,9 @@ final class StationCaptureRecorder {
         do { try frameRecord.validate(expectedSession: manifest.session_id) }
         catch { self.policy?.resetDwell(); emit("Waiting for valid camera measurements. Saved photos are safe."); return }
         guard self.policy?.beginWrite() == true else { return }
+        guard let admittedPolicy = self.policy else { return }
+        let admittedOrigin = admittedPolicy.origin
+        let admittedReference = admittedPolicy.referenceYawDegrees
         // Snapshot all image/depth buffers from this one frame before leaving it.
         // Exactly one image and optional depth/confidence pair can be in flight.
         let buffers = RetainedBuffers(image: frame.capturedImage, depth: frame.sceneDepth?.depthMap, confidence: frame.sceneDepth?.confidenceMap)
@@ -199,6 +210,21 @@ final class StationCaptureRecorder {
             do {
                 guard files.error == nil else { return }
                 try files.requireCapacity()
+                if files.manifest.stations[index].frames.isEmpty {
+                    guard target.index == 0 else { throw CaptureError.invalid("The first viewpoint photo is out of order.") }
+                    // The tap's pending position becomes a measured, immutable
+                    // viewpoint only after this same photo passed all admission
+                    // and FrameRecord checks. Persist before committing a count.
+                    files.manifest.stations[index].origin = admittedOrigin
+                    files.manifest.stations[index].reference_yaw_degrees = admittedReference
+                    files.manifest.stations[index].status_detail = "Viewpoint set by the first still photo. Stay here while turning the phone."
+                    try files.saveManifest()
+                } else {
+                    guard files.manifest.stations[index].origin == admittedOrigin,
+                          files.manifest.stations[index].reference_yaw_degrees == admittedReference else {
+                        throw CaptureError.invalid("The saved viewpoint changed. Original photos are preserved.")
+                    }
+                }
                 let imageURL = files.root.appendingPathComponent(frameRecord.image)
                 let temporary = files.root.appendingPathComponent(String(format: "images/%06d.partial.jpg", number))
                 guard !FileManager.default.fileExists(atPath: imageURL.path), !FileManager.default.fileExists(atPath: temporary.path) else {

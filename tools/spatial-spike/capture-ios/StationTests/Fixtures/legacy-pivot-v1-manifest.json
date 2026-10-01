@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "format": "rendprop-station-capture",
+  "session_id": "11111111-1111-4111-8111-111111111111",
+  "started_at": "2026-09-30T12:00:00Z",
+  "device_model": "synthetic-legacy-golden",
+  "operating_system": "synthetic-test",
+  "depth_supported": false,
+  "coordinate_system": "arkit-right-handed-y-up-camera-minus-z-forward",
+  "image_orientation": "sensor-native-exif-1",
+  "matrix_layout": "row-major",
+  "units": "metres",
+  "target_plan": "station-spherical-38-v1-provisional",
+  "geometry_note": "Measured ARKit camera poses and optional scene depth. Stations are not a verified mesh, floor plan or measurement product.",
+  "maximum_pivot_drift_metres": 0.1,
+  "status": "partial",
+  "status_detail": "Stopped before all targets were captured.",
+  "stations": [
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "index": 0,
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "reference_yaw_degrees": 0,
+      "started_timestamp": 1,
+      "targets": [
+        {
+          "id": "middle-0",
+          "index": 0,
+          "yaw_degrees": 0,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-1",
+          "index": 1,
+          "yaw_degrees": -30,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-2",
+          "index": 2,
+          "yaw_degrees": -60,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-3",
+          "index": 3,
+          "yaw_degrees": -90,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-4",
+          "index": 4,
+          "yaw_degrees": -120,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-5",
+          "index": 5,
+          "yaw_degrees": -150,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-6",
+          "index": 6,
+          "yaw_degrees": -180,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-7",
+          "index": 7,
+          "yaw_degrees": -210,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-8",
+          "index": 8,
+          "yaw_degrees": -240,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-9",
+          "index": 9,
+          "yaw_degrees": -270,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-10",
+          "index": 10,
+          "yaw_degrees": -300,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "middle-11",
+          "index": 11,
+          "yaw_degrees": -330,
+          "pitch_degrees": 0,
+          "instruction": "Turn slowly to the left"
+        },
+        {
+          "id": "upper-0",
+          "index": 12,
+          "yaw_degrees": 0,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-1",
+          "index": 13,
+          "yaw_degrees": -30,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-2",
+          "index": 14,
+          "yaw_degrees": -60,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-3",
+          "index": 15,
+          "yaw_degrees": -90,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-4",
+          "index": 16,
+          "yaw_degrees": -120,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-5",
+          "index": 17,
+          "yaw_degrees": -150,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-6",
+          "index": 18,
+          "yaw_degrees": -180,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-7",
+          "index": 19,
+          "yaw_degrees": -210,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-8",
+          "index": 20,
+          "yaw_degrees": -240,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-9",
+          "index": 21,
+          "yaw_degrees": -270,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-10",
+          "index": 22,
+          "yaw_degrees": -300,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "upper-11",
+          "index": 23,
+          "yaw_degrees": -330,
+          "pitch_degrees": 50,
+          "instruction": "Tilt up, then turn slowly to the left"
+        },
+        {
+          "id": "lower-0",
+          "index": 24,
+          "yaw_degrees": 0,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-1",
+          "index": 25,
+          "yaw_degrees": -30,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-2",
+          "index": 26,
+          "yaw_degrees": -60,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-3",
+          "index": 27,
+          "yaw_degrees": -90,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-4",
+          "index": 28,
+          "yaw_degrees": -120,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-5",
+          "index": 29,
+          "yaw_degrees": -150,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-6",
+          "index": 30,
+          "yaw_degrees": -180,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-7",
+          "index": 31,
+          "yaw_degrees": -210,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-8",
+          "index": 32,
+          "yaw_degrees": -240,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-9",
+          "index": 33,
+          "yaw_degrees": -270,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-10",
+          "index": 34,
+          "yaw_degrees": -300,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "lower-11",
+          "index": 35,
+          "yaw_degrees": -330,
+          "pitch_degrees": -50,
+          "instruction": "Tilt down, then turn slowly to the left"
+        },
+        {
+          "id": "ceiling",
+          "index": 36,
+          "yaw_degrees": 0,
+          "pitch_degrees": 90,
+          "instruction": "Point toward the ceiling"
+        },
+        {
+          "id": "floor",
+          "index": 37,
+          "yaw_degrees": 0,
+          "pitch_degrees": -90,
+          "instruction": "Point toward the floor"
+        }
+      ],
+      "frames": [
+        "frames/000001.json"
+      ],
+      "status": "partial",
+      "status_detail": "Stopped before all targets were captured."
+    }
+  ],
+  "stored_bytes": 0
+}

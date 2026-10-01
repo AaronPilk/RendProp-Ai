@@ -19,9 +19,10 @@ import simd
         do { try operation(); check(false, "accepted \(message)") }
         catch { checks += 1 }
     }
-    static func matrix(yaw: Double = 0, pitch: Double = 0, roll: Double = 0, x: Double = 0) -> [[Double]] {
+    static func matrix(yaw: Double = 0, pitch: Double = 0, roll: Double = 0,
+                       x: Double = 0, y: Double = 0, z: Double = 0) -> [[Double]] {
         // Independent explicit rotation multiplication: Ry(-yaw) Rx(pitch) Rz(roll).
-        let y = [[cos(yaw), 0, -sin(yaw)], [0, 1, 0], [sin(yaw), 0, cos(yaw)]]
+        let yawRotation = [[cos(yaw), 0, -sin(yaw)], [0, 1, 0], [sin(yaw), 0, cos(yaw)]]
         let p = [[1.0, 0, 0], [0, cos(pitch), -sin(pitch)], [0, sin(pitch), cos(pitch)]]
         let r = [[cos(roll), -sin(roll), 0], [sin(roll), cos(roll), 0], [0, 0, 1]]
         func multiply(_ a: [[Double]], _ b: [[Double]]) -> [[Double]] {
@@ -29,8 +30,8 @@ import simd
             for row in 0..<3 { for col in 0..<3 { for k in 0..<3 { product[row][col] += a[row][k] * b[k][col] } } }
             return product
         }
-        let result = multiply(multiply(y, p), r)
-        return [result[0] + [x], result[1] + [0], result[2] + [0], [0, 0, 0, 1]]
+        let result = multiply(multiply(yawRotation, p), r)
+        return [result[0] + [x], result[1] + [y], result[2] + [z], [0, 0, 0, 1]]
     }
     static func color(_ ray: SIMD3<Double>) -> [UInt8] {
         [ray.x, ray.y, ray.z].map { UInt8(max(0, min(255, (127.5 + $0 * 100).rounded()))) }
@@ -146,6 +147,30 @@ import simd
         }
         let rmse = sqrt(squaredError / Double(samples))
         check(rmse < 2.5 && maximumError <= 8, "render matches independent spherical color oracle; RMSE=\(rmse), max=\(maximumError)")
+        let handheldFrames = try StationCaptureGeometryProfile.handheldV2.targets.enumerated().map { index, target in
+            try writeFixture(root.appendingPathComponent("handheld-plan-\(index).jpg"),
+                matrix: matrix(yaw: target.yaw_degrees * .pi / 180, pitch: target.pitch_degrees * .pi / 180, roll: .pi / 2))
+        }
+        for (index, pole) in [(36, SIMD3<Float>(0, 1, 0)), (37, SIMD3<Float>(0, -1, 0))] {
+            let frame = handheldFrames[index]
+            let camera = try PanoramaProjection.Camera(cameraToWorld: frame.cameraToWorld, intrinsics: frame.intrinsics, resolution: frame.resolution)
+            let uv = camera.pixel(for: pole)
+            check(uv != nil && uv!.x >= Float(frame.resolution.width) * 0.08
+                  && uv!.x <= Float(frame.resolution.width - 1) - Float(frame.resolution.width) * 0.08
+                  && uv!.y >= Float(frame.resolution.height) * 0.08
+                  && uv!.y <= Float(frame.resolution.height - 1) - Float(frame.resolution.height) * 0.08,
+                  "80-degree handheld pole stays inside calibrated image with an 8 percent margin")
+        }
+        let handheldFullURL = root.appendingPathComponent("handheld-full.png")
+        let handheldFull = try PanoramaRenderer.render(
+            PanoramaRenderRequest(frames: handheldFrames, origin: [0, 0, 0], geometryProfile: .handheldV2,
+                maximumCameraDisplacementMetres: 0.20, width: 512), to: handheldFullURL)
+        check(handheldFull.source_frame_count == 38 && handheldFull.solidAngleCoverage > 0.999 && handheldFull.pixelCoverage > 0.999,
+              "38 handheld measured rotations including 80-degree poles photographically cover the sphere")
+        let handheldComplete = decoded(handheldFullURL)
+        check(pixel(handheldComplete, yaw: 0, pitch: .pi / 2)[3] == 255
+              && pixel(handheldComplete, yaw: 0, pitch: -.pi / 2)[3] == 255,
+              "handheld plan samples photographed ceiling and floor poles")
         for y in [1, complete.1 / 4, complete.1 / 2, complete.1 * 3 / 4, complete.1 - 2] {
             let first = (y * complete.0) * 4, last = (y * complete.0 + complete.0 - 1) * 4
             for channel in 0..<3 { check(abs(Int(complete.2[first + channel]) - Int(complete.2[last + channel])) < 5, "longitude wrap seam remains continuous") }
@@ -164,6 +189,57 @@ import simd
 
         let untouched = try Data(contentsOf: forward.imageURL)
         let invalidURL = root.appendingPathComponent("must-not-exist.png")
+        let handheldPhoto = try writeFixture(root.appendingPathComponent("handheld.jpg"), matrix: matrix(x: 0.18))
+        let handheldOriginal = try Data(contentsOf: handheldPhoto.imageURL)
+        let handheldURL = root.appendingPathComponent("handheld.png")
+        let handheld = try PanoramaRenderer.render(
+            PanoramaRenderRequest(frames: [forward, handheldPhoto], origin: [0, 0, 0], geometryProfile: .handheldV2,
+                                  maximumCameraDisplacementMetres: 0.20, width: 512), to: handheldURL)
+        check(handheld.geometry_profile == .handheldV2 && handheld.camera_displacement_limit_metres == 0.20
+              && handheld.camera_span_limit_metres == 0.20, "handheld report identifies exact declared profile and limits")
+        check(abs(handheld.maximumDisplacementMetres - 0.18) < 1e-12
+              && abs(handheld.maximumCameraSpanMetres - 0.18) < 1e-12, "handheld report measures one-sided 18 cm radius and span")
+        check(decoded(handheldURL).2 == raster.2, "handheld translation keeps measured rotation-only projection and exact unknown alpha")
+        check(single.geometry_profile == .legacyPivotV1 && single.camera_displacement_limit_metres == 0.10
+              && single.maximumCameraSpanMetres == 0, "default renderer retains the legacy profile and measures actual span")
+        let opposite = PanoramaFrameInput(imageURL: red.imageURL, cameraToWorld: matrix(x: -0.18), intrinsics: red.intrinsics, resolution: red.resolution)
+        rejects("handheld 36 cm pairwise span inside 20 cm radius") {
+            _ = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [handheldPhoto, opposite], origin: [0, 0, 0],
+                geometryProfile: .handheldV2, maximumCameraDisplacementMetres: 0.20, width: 128), to: invalidURL)
+        }
+        let diagonal = PanoramaFrameInput(imageURL: blue.imageURL, cameraToWorld: matrix(y: 0.18), intrinsics: blue.intrinsics, resolution: blue.resolution)
+        rejects("handheld 3D diagonal span above 20 cm") {
+            _ = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [handheldPhoto, diagonal], origin: [0, 0, 0],
+                geometryProfile: .handheldV2, maximumCameraDisplacementMetres: 0.20, width: 128), to: invalidURL)
+        }
+        let outOfBounds = PanoramaFrameInput(imageURL: forward.imageURL, cameraToWorld: matrix(x: 0.201), intrinsics: forward.intrinsics, resolution: forward.resolution)
+        rejects("handheld radius above 20 cm") {
+            _ = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [outOfBounds], origin: [0, 0, 0],
+                geometryProfile: .handheldV2, maximumCameraDisplacementMetres: 0.20, width: 128), to: invalidURL)
+        }
+        rejects("legacy profile with handheld radius") {
+            _ = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [handheldPhoto], origin: [0, 0, 0],
+                maximumCameraDisplacementMetres: 0.20, width: 128), to: invalidURL)
+        }
+        rejects("handheld profile with legacy radius") {
+            _ = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [forward], origin: [0, 0, 0],
+                geometryProfile: .handheldV2, width: 128), to: invalidURL)
+        }
+        rejects("handheld profile with undeclared span") {
+            _ = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [forward], origin: [0, 0, 0],
+                geometryProfile: .handheldV2, maximumCameraDisplacementMetres: 0.20, maximumCameraSpanMetres: 0.30, width: 128), to: invalidURL)
+        }
+        rejects("unknown renderer geometry profile at typed boundary") {
+            _ = try JSONDecoder().decode(StationCaptureGeometryProfile.self, from: Data("\"station-unknown-v3\"".utf8))
+        }
+        let strict = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [forward], origin: [0, 0, 0],
+            maximumCameraDisplacementMetres: 0.05, width: 128), to: root.appendingPathComponent("strict-legacy.png"))
+        check(strict.geometry_profile == .legacyPivotV1 && strict.camera_displacement_limit_metres == 0.05, "legacy caller can retain its stricter radius")
+        let legacyEdgeA = PanoramaFrameInput(imageURL: red.imageURL, cameraToWorld: matrix(x: 0.1000005), intrinsics: red.intrinsics, resolution: red.resolution)
+        let legacyEdgeB = PanoramaFrameInput(imageURL: blue.imageURL, cameraToWorld: matrix(x: -0.1000005), intrinsics: blue.intrinsics, resolution: blue.resolution)
+        let legacyEdge = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [legacyEdgeA, legacyEdgeB], origin: [0, 0, 0], width: 128),
+            to: root.appendingPathComponent("legacy-edge.png"))
+        check(legacyEdge.maximumCameraSpanMetres > 0.20, "legacy arithmetic tolerance does not acquire a new pairwise rejection")
         let moved = PanoramaFrameInput(imageURL: forward.imageURL, cameraToWorld: matrix(x: 0.101), intrinsics: forward.intrinsics, resolution: forward.resolution)
         rejects("station translation") { _ = try PanoramaRenderer.render(PanoramaRenderRequest(frames: [moved], origin: [0, 0, 0], width: 128), to: invalidURL) }
         rejects("more than 48 frames") { _ = try PanoramaRenderer.render(PanoramaRenderRequest(frames: Array(repeating: forward, count: 49), origin: [0, 0, 0], width: 128), to: invalidURL) }
@@ -193,6 +269,8 @@ import simd
         check(!FileManager.default.fileExists(atPath: invalidURL.path), "rejected jobs leave no declared output")
         let afterBytes = try Data(contentsOf: forward.imageURL)
         check(afterBytes == untouched, "source JPEG unchanged after rendering and errors")
+        let handheldAfterBytes = try Data(contentsOf: handheldPhoto.imageURL)
+        check(handheldAfterBytes == handheldOriginal, "handheld source JPEG unchanged after profile renders and errors")
         let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
         check(files.allSatisfy { !$0.contains("partial.png") }, "no failed partial derivative retained")
         let encodedReport = try JSONEncoder().encode(full)

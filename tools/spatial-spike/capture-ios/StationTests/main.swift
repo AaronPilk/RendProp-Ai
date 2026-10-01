@@ -13,16 +13,20 @@ func rejects(_ message: String, _ operation: () throws -> Void) {
 }
 if CommandLine.arguments.contains("--force-failure") { check(false, "intentional test harness failure") }
 
-func pose(yaw: Double = 0, pitch: Double = 0, x: Double = 0) -> [[Double]] {
+func pose(yaw: Double = 0, pitch: Double = 0, x: Double = 0, height: Double = 0, z: Double = 0) -> [[Double]] {
     let y = yaw * .pi / 180, p = pitch * .pi / 180
     return [[cos(y), -sin(y) * sin(p), -sin(y) * cos(p), x],
-            [0, cos(p), -sin(p), 0],
-            [sin(y), cos(y) * sin(p), cos(y) * cos(p), 0], [0, 0, 0, 1]]
+            [0, cos(p), -sin(p), height],
+            [sin(y), cos(y) * sin(p), cos(y) * cos(p), z], [0, 0, 0, 1]]
 }
 func ready(_ policy: inout StationCapturePolicy, matrix: [[Double]], start: Double = 0) -> StationCapturePolicy.Guidance {
-    var result = policy.evaluate(timestamp: start, cameraToWorld: matrix, normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0)
+    let intrinsics: [[Double]] = [[60, 0, 40], [0, 60, 24], [0, 0, 1]]
+    let resolution = ImageResolution(width: 80, height: 48)
+    var result = policy.evaluate(timestamp: start, cameraToWorld: matrix, normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0,
+                                 intrinsics: intrinsics, resolution: resolution)
     for tick in 1...4 {
-        result = policy.evaluate(timestamp: start + Double(tick) * 0.1, cameraToWorld: matrix, normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0)
+        result = policy.evaluate(timestamp: start + Double(tick) * 0.1, cameraToWorld: matrix, normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0,
+                                 intrinsics: intrinsics, resolution: resolution)
     }
     return result
 }
@@ -82,10 +86,11 @@ check(StationCapturePolicy.captureAimDirection(cameraToWorld: pose(), targetDire
       "capture cue refuses zero and overflowing target vectors")
 check(StationCapturePolicy.captureAimDirection(cameraToWorld: pose(), targetDirection: [0, 0, -1], angularErrorDegrees: .nan) == nil,
       "capture cue refuses invalid admission error")
-check(StationCapturePolicy.returnInstruction(viewOffset: [-0.12, 0, 0]) == "Move the phone about 12 cm left", "pivot correction asks for translation separately from turn")
-check(StationCapturePolicy.returnInstruction(viewOffset: [0, 0.15, 0]) == "Move the phone about 15 cm up", "pivot height drift asks to raise the phone")
-check(StationCapturePolicy.returnInstruction(viewOffset: [0, 0, -0.2]) == "Move the phone about 20 cm away from you", "negative view z means forward translation")
-check(StationCapturePolicy.returnInstruction(viewOffset: [0, 0, 0.2]) == "Move the phone about 20 cm toward you", "positive view z means backward translation")
+let coarseReturn = "Stay at this viewpoint. Bring the phone back toward its starting place."
+for offset in [[-0.12, 0, 0], [0, 0.15, 0], [0, 0, -0.2], [0, 0, 0.2]] {
+    check(StationCapturePolicy.returnInstruction(viewOffset: offset) == coarseReturn,
+          "pivot recovery stays coarse when the phone's displayed axes change")
+}
 check(StationCapturePolicy.returnInstruction(viewOffset: [0, 0, 0]) == nil && StationCapturePolicy.returnInstruction(viewOffset: [1e308, 0, 0]) == nil,
       "zero and overflowing displacement never create misleading centimetre cues")
 for target in StationCaptureTarget.standard {
@@ -145,6 +150,107 @@ for target in StationCaptureTarget.standard {
 }
 check(full.isComplete && full.currentTarget == nil && full.completedCount == 38, "complete requires every original target")
 check(!full.beginWrite(), "finished station cannot admit a 39th image")
+
+var firstAnchor = StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0,
+                                       profile: .handheldV2, anchorAtFirstPhoto: true)
+let firstMeasured = pose(yaw: 3, pitch: 2, x: 1, height: 1.4, z: 0.5)
+let firstAdmission = ready(&firstAnchor, matrix: firstMeasured)
+check(firstAdmission.readyToCapture && firstAdmission.pivotDriftMeters == 0,
+      "settling away from the Start tap can admit the first still photo without chasing its old pivot")
+check(!firstAnchor.isAnchored && firstAnchor.origin == [0, 0, 0],
+      "first admission remains provisional until the same frame has passed recorder validation")
+check(abs((firstAdmission.angularErrorDegrees ?? 99) - 2) < 1e-8,
+      "first-photo angular measurement uses the heading that will actually be persisted")
+firstAnchor.resetDwell()
+check(!firstAnchor.beginWrite() && !firstAnchor.isAnchored,
+      "invalid frame provenance can cancel a candidate without freezing its proposed origin")
+check(ready(&firstAnchor, matrix: firstMeasured, start: 1).readyToCapture && firstAnchor.beginWrite(),
+      "validated first photo begins exactly one write after fresh dwell")
+check(firstAnchor.isAnchored && firstAnchor.origin == [1, 1.4, 0.5] && abs(firstAnchor.referenceYawDegrees - 3) < 1e-8,
+      "first photo freezes its own measured XYZ and heading")
+check(firstAnchor.finishWrite(targetID: "middle-0", succeeded: true), "first photo becomes durable only on writer success")
+let frozenOrigin = firstAnchor.origin
+check(ready(&firstAnchor, matrix: pose(yaw: -27, x: 1.20, height: 1.4, z: 0.5), start: 2).readyToCapture,
+      "explicit handheld v2 accepts the 20 cm origin boundary")
+check(firstAnchor.beginWrite() && firstAnchor.finishWrite(targetID: "middle-1", succeeded: true),
+      "second handheld photo commits its actual bounded position")
+check(!ready(&firstAnchor, matrix: pose(yaw: -57, x: 0.999, height: 1.4, z: 0.5), start: 3).readyToCapture,
+      "opposite near-origin pose is rejected when its span from an accepted photo exceeds 20 cm")
+check(firstAnchor.origin == frozenOrigin && firstAnchor.completedCount == 2,
+      "span rejection never recenters a saved viewpoint or invents photo progress")
+check(ready(&firstAnchor, matrix: pose(yaw: -57, x: 1, height: 1.4, z: 0.5), start: 4).readyToCapture,
+      "exact 20 cm accepted-position span remains admissible")
+var verticalBound = StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0, profile: .handheldV2)
+check(ready(&verticalBound, matrix: pose(height: 0.2)).readyToCapture,
+      "handheld radius and span are full 3D measurements, including phone height")
+check(!ready(&verticalBound, matrix: pose(height: 0.201), start: 1).readyToCapture,
+      "handheld height movement over the actual bound is still rejected")
+var transientDrift = StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0, profile: .handheldV2)
+let transient = transientDrift.evaluate(timestamp: 0, cameraToWorld: pose(x: 0.201), normalTracking: true,
+                                      motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0)
+check(!transient.readyToCapture && transient.mode == .steady,
+      "a transient out-of-bounds pose pauses admission before asking the person to move")
+check(ready(&transientDrift, matrix: pose(x: 0.201), start: 0.1).mode == .returnToPivot,
+      "persistent displacement gets coarse recovery without weakening the hard bound")
+var walking = StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0,
+                                   profile: .handheldV2, anchorAtFirstPhoto: true)
+for tick in 0...50 {
+    let result = walking.evaluate(timestamp: Double(tick) * 0.1, cameraToWorld: pose(x: Double(tick) * 0.01),
+                                  normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0)
+    check(!result.readyToCapture && !walking.isAnchored,
+          "straight walking cannot satisfy rotationally steady first-photo dwell")
+}
+check(ready(&walking, matrix: pose(x: 0.5), start: 6).readyToCapture && walking.beginWrite() && walking.origin == [0.5, 0, 0],
+      "stopping a linear walk permits a fresh measured first-photo anchor")
+var handheldFull = StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0,
+                                       profile: .handheldV2, anchorAtFirstPhoto: true)
+for target in StationCaptureGeometryProfile.handheldV2.targets {
+    let matrix = pose(yaw: target.yaw_degrees, pitch: target.pitch_degrees, x: target.index == 0 ? 0 : 0.1)
+    check(ready(&handheldFull, matrix: matrix, start: Double(target.index)).readyToCapture,
+          "all 38 handheld targets retain their original direction and dwell checks")
+    check(handheldFull.beginWrite() && handheldFull.finishWrite(targetID: target.id, succeeded: true),
+          "handheld completion still requires each matching durable writer callback")
+}
+check(handheldFull.isComplete && handheldFull.completedCount == 38, "v2 cannot finish by dropping ceiling or floor targets")
+check(Array(StationCaptureTarget.handheld.prefix(36)) == Array(StationCaptureTarget.standard.prefix(36)),
+      "handheld v2 leaves the entire three-ring plan byte-for-value compatible")
+check(StationCaptureTarget.handheld.map(\.id) == StationCaptureTarget.standard.map(\.id) &&
+      StationCaptureTarget.handheld[36].pitch_degrees == 80 && StationCaptureTarget.handheld[37].pitch_degrees == -80,
+      "v2 keeps 38 real targets while ergonomically tilting toward each photographed pole")
+let phoneCalibration: [[Double]] = [[1345, 0, 960], [0, 1354, 720], [0, 0, 1]]
+let phoneResolution = ImageResolution(width: 1920, height: 1440)
+for index in [36, 37] {
+    let target = StationCaptureTarget.handheld[index]
+    for pitch in [75.0, 80, 85] {
+        check(StationCapturePolicy.poleIsPhotographed(target: target, cameraToWorld: pose(pitch: index == 36 ? pitch : -pitch),
+                                                      intrinsics: phoneCalibration, resolution: phoneResolution),
+              "native phone-like calibrated raster contains the real pole throughout v2's permitted aim range")
+    }
+    let narrow: [[Double]] = [[12000, 0, 960], [0, 12000, 720], [0, 0, 1]]
+    check(!StationCapturePolicy.poleIsPhotographed(target: target, cameraToWorld: pose(pitch: target.pitch_degrees),
+                                                   intrinsics: narrow, resolution: phoneResolution),
+          "odd narrow optics cannot pretend an 80-degree photo includes a missing pole")
+    check(!StationCapturePolicy.poleIsPhotographed(target: target, cameraToWorld: pose(pitch: -target.pitch_degrees),
+                                                   intrinsics: phoneCalibration, resolution: phoneResolution),
+          "the opposite gravity pole behind the camera is never counted as photographed")
+    check(!StationCapturePolicy.poleIsPhotographed(target: target, cameraToWorld: pose(pitch: target.pitch_degrees),
+                                                   intrinsics: nil, resolution: nil),
+          "handheld pole coverage needs actual same-frame native calibration")
+    var badCalibration = phoneCalibration; badCalibration[0][1] = 1
+    check(!StationCapturePolicy.poleIsPhotographed(target: target, cameraToWorld: pose(pitch: target.pitch_degrees),
+                                                   intrinsics: badCalibration, resolution: phoneResolution),
+          "unsupported skew calibration cannot produce a valid photographic pole")
+    var polePolicy = StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0, targets: [target], profile: .handheldV2)
+    for tick in 0...4 {
+        let result = polePolicy.evaluate(timestamp: Double(tick) * 0.1, cameraToWorld: pose(pitch: target.pitch_degrees),
+                                         normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0,
+                                         intrinsics: narrow, resolution: phoneResolution)
+        check(!result.readyToCapture && result.mode == .aim,
+              "perfect target alignment cannot override missing calibrated ceiling/floor coverage")
+    }
+    check(!polePolicy.beginWrite() && polePolicy.completedCount == 0,
+          "rejected pole optics cannot create a durable photo or fake completion")
+}
 
 var epoch = StationCaptureEpochPolicy()
 check(epoch.observe(timestamp: 10, relocalizing: false) == nil, "new epoch starts with camera time")
@@ -241,6 +347,125 @@ do {
     try originalSidecar.write(to: sidecar)
     check(try StationCaptureArchive.validateForExport(at: root).frameCount == 1, "partial export truthfully preserves incomplete coverage")
     check(try StationCaptureArchive.listTours(at: parent).count == 1, "archive recovery lists saved attempts")
+
+    let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Fixtures")
+    let goldenManifestBytes = try Data(contentsOf: fixtures.appendingPathComponent("legacy-pivot-v1-manifest.json"))
+    let goldenFrameBytes = try Data(contentsOf: fixtures.appendingPathComponent("legacy-pivot-v1-frame.json"))
+    let goldenManifest = try JSONDecoder().decode(StationCaptureManifest.self, from: goldenManifestBytes)
+    check(goldenManifest.geometryProfile == .legacyPivotV1 && goldenManifest.schema_version == 1,
+          "frozen pre-v2 JSON resolves to legacy without requiring new manifest keys")
+    let goldenRoot = parent.appendingPathComponent(goldenManifest.session_id)
+    try FileManager.default.createDirectory(at: goldenRoot, withIntermediateDirectories: false)
+    for directory in ["images", "frames", "depth"] {
+        try FileManager.default.createDirectory(at: goldenRoot.appendingPathComponent(directory), withIntermediateDirectories: false)
+    }
+    let fixtureJPEG = try Data(contentsOf: root.appendingPathComponent("images/000001.jpg"))
+    try goldenManifestBytes.write(to: goldenRoot.appendingPathComponent("manifest.json"))
+    try goldenFrameBytes.write(to: goldenRoot.appendingPathComponent("frames/000001.json"))
+    try fixtureJPEG.write(to: goldenRoot.appendingPathComponent("images/000001.jpg"))
+    check(try StationCaptureArchive.validateForExport(at: goldenRoot).frameCount == 1,
+          "an actual v1 golden archive still reopens and exports verified partial originals")
+    check(try Data(contentsOf: goldenRoot.appendingPathComponent("manifest.json")) == goldenManifestBytes &&
+          Data(contentsOf: goldenRoot.appendingPathComponent("frames/000001.json")) == goldenFrameBytes,
+          "v1 compatibility validation leaves its original manifest and sidecar bytes untouched")
+
+    var handheldManifest = StationCaptureManifest(sessionID: UUID().uuidString, deviceModel: "synthetic-test",
+                                                 operatingSystem: "synthetic-test", depthSupported: false, profile: .handheldV2)
+    check(handheldManifest.geometryProfile == .handheldV2 && handheldManifest.schema_version == 2 &&
+          handheldManifest.maximum_pivot_drift_metres == 0.20 && handheldManifest.maximum_camera_span_metres == 0.20,
+          "new handheld limits carry an explicit supported v2 archive profile")
+    let handheldObject = try JSONSerialization.jsonObject(with: encoder.encode(handheldManifest)) as! [String: Any]
+    var profileTampering: [[String: Any]] = []
+    for (key, value) in [("schema_version", 1 as Any), ("capture_policy", "unknown-profile" as Any),
+                         ("maximum_pivot_drift_metres", 0.21 as Any), ("maximum_camera_span_metres", 0.21 as Any)] {
+        var tampered = handheldObject; tampered[key] = value; profileTampering.append(tampered)
+    }
+    var missingProfile = handheldObject; missingProfile.removeValue(forKey: "capture_policy"); profileTampering.append(missingProfile)
+    var nullProfile = try JSONSerialization.jsonObject(with: goldenManifestBytes) as! [String: Any]
+    nullProfile["capture_policy"] = NSNull(); profileTampering.append(nullProfile)
+    var nullSpan = try JSONSerialization.jsonObject(with: goldenManifestBytes) as! [String: Any]
+    nullSpan["maximum_camera_span_metres"] = NSNull(); profileTampering.append(nullSpan)
+    for tampered in profileTampering {
+        let decoded = try JSONDecoder().decode(StationCaptureManifest.self, from: JSONSerialization.data(withJSONObject: tampered))
+        check(decoded.geometryProfile == nil, "unsupported schema/policy/limit combinations do not silently pick a wider profile")
+        rejects("archive validation rejects mismatched or disguised handheld geometry") {
+            try StationCaptureArchive.validateManifest(decoded, directoryID: decoded.session_id)
+        }
+    }
+
+    let handheldRoot = parent.appendingPathComponent(handheldManifest.session_id)
+    try FileManager.default.createDirectory(at: handheldRoot, withIntermediateDirectories: false)
+    for directory in ["images", "frames", "depth"] {
+        try FileManager.default.createDirectory(at: handheldRoot.appendingPathComponent(directory), withIntermediateDirectories: false)
+    }
+    var handheldStation = StationCaptureStation(id: UUID().uuidString, index: 0, origin: [0, 0, 0],
+                                                reference_yaw_degrees: 0, started_timestamp: 1)
+    handheldStation.targets = StationCaptureGeometryProfile.handheldV2.targets
+    handheldStation.frames = ["frames/000001.json", "frames/000002.json", "frames/000003.json"]
+    handheldStation.status = .partial
+    handheldManifest.stations = [handheldStation]; handheldManifest.status = .partial
+    try encoder.encode(handheldManifest).write(to: handheldRoot.appendingPathComponent("manifest.json"))
+    func writeHandheldFrame(_ index: Int, x: Double) throws {
+        let target = StationCaptureGeometryProfile.handheldV2.targets[index]
+        let matrix = pose(yaw: target.yaw_degrees, pitch: target.pitch_degrees, x: x)
+        let native = FrameRecord(session_id: handheldManifest.session_id, image: String(format: "images/%06d.jpg", index + 1),
+                                 camera_to_world: matrix, intrinsics: [[60, 0, 40], [0, 60, 24], [0, 0, 1]],
+                                 image_resolution: size, timestamp: Double(index + 1), tracking_state: TrackingRecord(state: "normal", reason: nil),
+                                 raw_feature_points: [], exposure_duration_seconds: 0.005, exposure_offset_ev: 0, world_mapping_status: "mapped")
+        let forward = StationCapturePolicy.pose(matrix)!.forward
+        let cosine = zip(forward, target.direction(referenceYawDegrees: 0)).reduce(0.0) { $0 + $1.0 * $1.1 }
+        let actualAngle = acos(min(1, max(-1, cosine))) * 180 / .pi
+        let saved = StationCaptureFrame(station_id: handheldStation.id, target_id: target.id, frame: native,
+                                        depth: nil, depth_availability: "unsupported", pivot_drift_metres: abs(x), angular_error_degrees: actualAngle)
+        try encoder.encode(saved).write(to: handheldRoot.appendingPathComponent(String(format: "frames/%06d.json", index + 1)))
+        try fixtureJPEG.write(to: handheldRoot.appendingPathComponent(native.image))
+    }
+    try writeHandheldFrame(0, x: 0); try writeHandheldFrame(1, x: 0.20); try writeHandheldFrame(2, x: 0)
+    check(try StationCaptureArchive.validateForExport(at: handheldRoot).frameCount == 3,
+          "v2 export validates the real measured radius and pairwise span at the 20 cm boundary")
+    try writeHandheldFrame(2, x: -0.001)
+    rejects("v2 archive cannot hide excessive pairwise span inside an admissible origin radius") {
+        _ = try StationCaptureArchive.loadFrames(at: handheldRoot, stationID: handheldStation.id)
+    }
+    try writeHandheldFrame(2, x: 0.201)
+    rejects("v2 archive independently rejects an excessive measured origin radius") {
+        _ = try StationCaptureArchive.loadFrames(at: handheldRoot, stationID: handheldStation.id)
+    }
+    try writeHandheldFrame(2, x: 0); try writeHandheldFrame(0, x: 0.01)
+    rejects("v2 archive binds the viewpoint anchor to its actual first photograph") {
+        _ = try StationCaptureArchive.loadFrames(at: handheldRoot, stationID: handheldStation.id)
+    }
+    try writeHandheldFrame(0, x: 0)
+    check(try StationCaptureArchive.validateForExport(at: handheldRoot).frameCount == 3,
+          "restored truthful v2 measurements export without creating complete coverage")
+    handheldStation.frames = (1...38).map { String(format: "frames/%06d.json", $0) }
+    handheldStation.status = .complete
+    handheldManifest.stations = [handheldStation]; handheldManifest.status = .complete
+    for index in 0..<38 { try writeHandheldFrame(index, x: 0) }
+    try encoder.encode(handheldManifest).write(to: handheldRoot.appendingPathComponent("manifest.json"))
+    check(try StationCaptureArchive.validateForExport(at: handheldRoot).frameCount == 38,
+          "all 38 real v2 target photos including calibrated poles can reopen and export as complete")
+    let ceilingSidecar = handheldRoot.appendingPathComponent("frames/000037.json")
+    let ceilingOriginal = try Data(contentsOf: ceilingSidecar)
+    var clippedCeiling = try JSONSerialization.jsonObject(with: ceilingOriginal) as! [String: Any]
+    var clippedFrame = clippedCeiling["frame"] as! [String: Any]
+    clippedFrame["intrinsics"] = [[6000, 0, 40], [0, 6000, 24], [0, 0, 1]]
+    clippedCeiling["frame"] = clippedFrame
+    try JSONSerialization.data(withJSONObject: clippedCeiling).write(to: ceilingSidecar)
+    rejects("even a 38-photo v2 archive cannot claim a ceiling excluded by its actual native optics") {
+        _ = try StationCaptureArchive.validateForExport(at: handheldRoot)
+    }
+    try ceilingOriginal.write(to: ceilingSidecar)
+    var wrongTargetPlan = handheldManifest
+    wrongTargetPlan.target_plan = StationCaptureGeometryProfile.legacyPivotV1.targetPlan
+    rejects("v2 handheld geometry cannot masquerade as the legacy target plan") {
+        try StationCaptureArchive.validateManifest(wrongTargetPlan, directoryID: wrongTargetPlan.session_id)
+    }
+    var wrongTargets = handheldManifest
+    wrongTargets.stations[0].targets = StationCaptureTarget.standard
+    rejects("v2 cannot silently substitute legacy vertical pole targets") {
+        try StationCaptureArchive.validateManifest(wrongTargets, directoryID: wrongTargets.session_id)
+    }
     manifest.status = .complete
     rejects("tour cannot claim complete with a partial station") { try StationCaptureArchive.validateManifest(manifest, directoryID: id) }
     manifest.stations[0].status = .complete

@@ -57,6 +57,26 @@ struct RoomGuidanceChecks {
         check(survey.observe(planeID: "new-floor", boundary: floor, cameraPosition: camera, timestamp: 10) == nil, "stale observation gap resets survey")
         survey.reset()
         check(survey.observe(planeID: "floor", boundary: floor, cameraPosition: camera, timestamp: 20) == nil, "tracking epoch reset clears plan")
+        // ARKit can refine a plane while the person is finding a standing spot.
+        // Its existing numbers must not become a moving target between updates.
+        survey.reset()
+        for t in 0...2 { _ = survey.observe(planeID: "floor", boundary: floor, cameraPosition: camera, timestamp: Double(t)) }
+        let smallShift: [[Double]] = [[-0.05,0,-0.05],[6.05,0,-0.05],[6.05,0,4.05],[-0.05,0,4.05]]
+        check(survey.observe(planeID: "floor", boundary: smallShift, cameraPosition: camera, timestamp: 3) == plan,
+              "ordinary floor refinement retains exact displayed standing locations")
+        var sawReset = false
+        for t in 4...14 {
+            let shifted = floor.map { [$0[0] == 6 ? $0[0] + Double(t - 2) * 0.16 : $0[0], $0[1], $0[2]] }
+            if survey.observe(planeID: "floor", boundary: shifted, cameraPosition: camera, timestamp: Double(t)) == nil { sawReset = true }
+        }
+        check(sawReset, "small accumulated updates cannot move a supposedly stable plan without fresh survey")
+        check(RoomScanPlanner.hasStandingClearance(plan.positions[0].position, boundary: smallShift), "latched center remains inside current clear floor")
+        let reducedFloor: [[Double]] = [[0,0,0],[1.5,0,0],[1.5,0,4],[0,0,4]]
+        check(!RoomScanPlanner.hasStandingClearance(plan.positions[0].position, boundary: reducedFloor), "removed floor invalidates old suggestion")
+        check(!RoomScanPlanner.hasStandingClearance([0.2,0,2], boundary: floor), "inside-but-edge-adjacent spot is not retained")
+        check(!RoomScanPlanner.hasStandingClearance([3,0.2,2], boundary: floor), "changed floor height invalidates marker")
+        check(!RoomScanPlanner.hasStandingClearance([.nan,0,0], boundary: floor), "invalid latched geometry rejected")
+        check(!RoomScanPlanner.hasStandingClearance([3,0,2], boundary: [floor[0], floor[0], floor[1]]), "degenerate outline does not retain suggestion")
         let positions: [[Double]] = [[0,1.4,0],[0,1.4,-2],[2,1.4,0],[0,1.4,2],[-2,1.4,0]]
         let links = PanoramaNavigationPolicy.links(from: 0, positions: positions, coverages: [1,1,1,1,1])
         check(links.count == 4, "four distinct captured directions can be tapped")

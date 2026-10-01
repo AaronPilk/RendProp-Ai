@@ -30,6 +30,7 @@ struct StationCapturePolicy {
     static let steadyDurationSeconds = 0.35
     static let maximumAngularSpeedDegreesPerSecond = 3.0
     static let maximumSampleGapSeconds = 0.15
+    static let maximumSteadyCameraSpanMetres = 0.025
     static func canBeginFacingStraightAhead(forwardY: Double) -> Bool { forwardY.isFinite && abs(forwardY) < 0.5 }
 
     enum GuidanceMode: Equatable { case waiting, aim, returnToPivot, steady, saving, complete }
@@ -57,59 +58,102 @@ struct StationCapturePolicy {
         let steadyProgress: Double
     }
 
-    let origin: [Double]
-    let referenceYawDegrees: Double
+    private(set) var origin: [Double]
+    private(set) var referenceYawDegrees: Double
     let targets: [StationCaptureTarget]
+    let profile: StationCaptureGeometryProfile
+    private(set) var isAnchored: Bool
     private(set) var completedCount = 0
     private(set) var writeInFlight = false
     private var steadySince: Double?
     private var previousTimestamp: Double?
     private var ready = false
+    private var steadyPositions: [[Double]] = []
+    private var acceptedPositions: [[Double]] = []
+    private var pendingWritePosition: [Double]?
+    private var pendingAnchor: (origin: [Double], referenceYaw: Double)?
+    private var geometryRejectionSince: Double?
     var isComplete: Bool { completedCount == targets.count }
     var currentTarget: StationCaptureTarget? { isComplete ? nil : targets[completedCount] }
 
-    init(origin: [Double], referenceYawDegrees: Double, targets: [StationCaptureTarget] = StationCaptureTarget.standard) {
-        self.origin = origin; self.referenceYawDegrees = referenceYawDegrees; self.targets = targets
+    init(origin: [Double], referenceYawDegrees: Double, targets: [StationCaptureTarget]? = nil,
+         profile: StationCaptureGeometryProfile = .legacyPivotV1, anchorAtFirstPhoto: Bool = false) {
+        self.origin = origin; self.referenceYawDegrees = referenceYawDegrees; self.targets = targets ?? profile.targets
+        self.profile = profile; self.isAnchored = !anchorAtFirstPhoto
     }
 
     mutating func evaluate(timestamp: Double, cameraToWorld: [[Double]], normalTracking: Bool,
-                           motionBlurAcceptable: Bool, angularSpeedDegreesPerSecond: Double?) -> Guidance {
+                           motionBlurAcceptable: Bool, angularSpeedDegreesPerSecond: Double?,
+                           intrinsics: [[Double]]? = nil, resolution: ImageResolution? = nil) -> Guidance {
         let target = currentTarget
-        let direction = target?.direction(referenceYawDegrees: referenceYawDegrees)
+        var direction = target?.direction(referenceYawDegrees: referenceYawDegrees)
         func guidance(_ message: String, error: Double? = nil, drift: Double? = nil, capture: Bool = false,
                       mode: GuidanceMode = .waiting, steadyProgress: Double = 0) -> Guidance {
             Guidance(message: message, target: target, targetDirection: direction,
                      angularErrorDegrees: error, pivotDriftMeters: drift, readyToCapture: capture,
                      mode: mode, steadyProgress: steadyProgress)
         }
-        ready = false
-        guard let target, let direction else { return guidance("All 38 photos saved. Preview this viewpoint before moving.", mode: .complete) }
+        ready = false; pendingAnchor = nil
+        guard let target, let initialDirection = direction else { return guidance("All 38 photos saved. Preview this viewpoint before moving.", mode: .complete) }
         guard !writeInFlight else { return guidance("Saving this photo…", mode: .saving) }
         guard timestamp.isFinite, timestamp >= 0, origin.count == 3, origin.allSatisfy(\.isFinite), referenceYawDegrees.isFinite,
               let pose = Self.pose(cameraToWorld) else {
             resetDwell(); return guidance("Waiting for valid camera measurements.")
         }
-        if let previousTimestamp, timestamp <= previousTimestamp || timestamp - previousTimestamp > Self.maximumSampleGapSeconds { steadySince = nil }
-        previousTimestamp = timestamp
-        guard normalTracking else { steadySince = nil; return guidance("Hold still while the camera finds the room.") }
-        let drift = sqrt(zip(pose.origin, origin).reduce(0.0) { $0 + pow($1.0 - $1.1, 2) })
-        let cosine = zip(pose.forward, direction).reduce(0.0) { $0 + $1.0 * $1.1 }
-        let angle = acos(min(1, max(-1, cosine))) * 180 / .pi
-        guard drift <= StationCaptureLimits.maximumPivotDriftMeters else {
-            steadySince = nil; return guidance("The phone moved away from its starting spot. Bring the lens back; don't walk around the room.", error: angle, drift: drift, mode: .returnToPivot)
+        if let previousTimestamp, timestamp <= previousTimestamp || timestamp - previousTimestamp > Self.maximumSampleGapSeconds {
+            clearSteadyInterval(); geometryRejectionSince = nil
         }
+        previousTimestamp = timestamp
+        guard normalTracking else { clearSteadyInterval(); geometryRejectionSince = nil; return guidance("Hold still while the camera finds the room.") }
+        var drift = isAnchored ? Self.distance(pose.origin, origin) : 0
+        let span = acceptedPositions.map { Self.distance(pose.origin, $0) }.max() ?? 0
+        let cosine = zip(pose.forward, initialDirection).reduce(0.0) { $0 + $1.0 * $1.1 }
+        var angle = acos(min(1, max(-1, cosine))) * 180 / .pi
+        guard drift <= profile.maximumPivotDriftMetres,
+              profile != .handheldV2 || span <= profile.maximumCameraSpanMetres else {
+            clearSteadyInterval()
+            if geometryRejectionSince == nil { geometryRejectionSince = timestamp }
+            // Reject every out-of-bounds frame immediately. A brief tracking
+            // fluctuation gets a steady cue before asking the person to move.
+            let transient = profile == .handheldV2 && timestamp - (geometryRejectionSince ?? timestamp) < Self.steadyDurationSeconds
+            return guidance(transient ? "Stay where you are. Hold the phone steady while this viewpoint settles."
+                            : "Stay at this viewpoint. Bring the phone back toward its starting place, then hold still.",
+                            error: angle, drift: drift, mode: transient ? .steady : .returnToPivot)
+        }
+        geometryRejectionSince = nil
         guard angle <= Self.targetToleranceDegrees else {
-            steadySince = nil; return guidance(target.index == 0 ? "First photo: point straight ahead. Photos save automatically." : "Keep the lens over the same spot. Follow the arrow, then pause.", error: angle, drift: drift, mode: .aim)
+            clearSteadyInterval(); return guidance(target.index == 0 ? "First photo: point straight ahead, then hold still. Photos save automatically." : "Stay where you are. Turn to look at the next part of the room, then hold still.", error: angle, drift: drift, mode: .aim)
+        }
+        if profile == .handheldV2, !Self.poleIsPhotographed(target: target, cameraToWorld: cameraToWorld,
+                                                         intrinsics: intrinsics, resolution: resolution) {
+            clearSteadyInterval()
+            return guidance("The \(target.phaseTitle.lowercased()) must be inside the photo. Tilt the phone toward it while keeping your body upright.",
+                            error: angle, drift: drift, mode: .aim)
         }
         guard motionBlurAcceptable, let speed = angularSpeedDegreesPerSecond,
               speed.isFinite, speed >= 0, speed <= Self.maximumAngularSpeedDegreesPerSecond else {
-            steadySince = nil; return guidance("On target. Stop turning and hold still for the automatic photo.", error: angle, drift: drift, mode: .steady)
+            clearSteadyInterval(); return guidance("On target. Stop turning and hold still for the automatic photo.", error: angle, drift: drift, mode: .steady)
+        }
+        if steadyPositions.contains(where: { Self.distance($0, pose.origin) > Self.maximumSteadyCameraSpanMetres }) {
+            clearSteadyInterval()
         }
         if steadySince == nil { steadySince = timestamp }
+        steadyPositions.append(pose.origin)
         guard timestamp - (steadySince ?? timestamp) >= Self.steadyDurationSeconds else {
-            return guidance(drift > 0.05 ? "Hold still. Keep the lens over its starting spot." : "Hold still for the automatic photo…", error: angle, drift: drift,
+            return guidance(isAnchored ? "Hold still for the automatic photo…" : "Hold still. Setting your viewpoint with the first photo…", error: angle, drift: drift,
                             mode: .steady, steadyProgress: min(1, max(0, (timestamp - (steadySince ?? timestamp)) / Self.steadyDurationSeconds)))
         }
+        if !isAnchored {
+            // Only a fully admitted, still first photo establishes the origin.
+            // Once established it never follows later phone movement.
+            let reference = atan2(pose.forward[0], -pose.forward[2]) * 180 / .pi - target.yaw_degrees
+            pendingAnchor = (pose.origin, reference)
+            direction = target.direction(referenceYawDegrees: reference)
+            let anchoredCosine = zip(pose.forward, direction ?? initialDirection).reduce(0.0) { $0 + $1.0 * $1.1 }
+            angle = acos(min(1, max(-1, anchoredCosine))) * 180 / .pi
+            drift = 0
+        }
+        pendingWritePosition = pose.origin
         ready = true
         return guidance("Taking photo…", error: angle, drift: drift, capture: true, mode: .steady, steadyProgress: 1)
     }
@@ -162,36 +206,63 @@ struct StationCapturePolicy {
         return horizontal > 0 ? .right : .left
     }
 
-    /// Screen-aligned translation back to the pivot, separate from turning.
+    /// Coarse recovery deliberately avoids changing axis/centimeter commands as
+    /// the person turns or tilts the phone to follow a photograph target.
     static func returnInstruction(viewOffset: [Double]) -> String? {
         guard viewOffset.count == 3, viewOffset.allSatisfy(\.isFinite),
-              let axis = (0..<3).max(by: { abs(viewOffset[$0]) < abs(viewOffset[$1]) }),
-              abs(viewOffset[axis]) > 0.001 else { return nil }
-        guard let distance = Int(exactly: ceil(abs(viewOffset[axis]) * 100)) else { return nil }
-        let direction: String
-        switch axis {
-        case 0: direction = viewOffset[0] > 0 ? "right" : "left"
-        case 1: direction = viewOffset[1] > 0 ? "up" : "down"
-        default: direction = viewOffset[2] < 0 ? "away from you" : "toward you"
-        }
-        return "Move the phone about \(distance) cm \(direction)"
+              (viewOffset.map(abs).max() ?? 0) > 0.001,
+              viewOffset.reduce(0, { $0 + $1 * $1 }).isFinite else { return nil }
+        return "Stay at this viewpoint. Bring the phone back toward its starting place."
     }
 
     mutating func beginWrite() -> Bool {
-        guard ready, !writeInFlight, !isComplete else { return false }
-        writeInFlight = true; ready = false; steadySince = nil
+        guard ready, pendingWritePosition != nil, !writeInFlight, !isComplete else { return false }
+        if let pendingAnchor {
+            origin = pendingAnchor.origin; referenceYawDegrees = pendingAnchor.referenceYaw
+            isAnchored = true; self.pendingAnchor = nil
+        }
+        writeInFlight = true; ready = false; clearSteadyInterval()
         return true
     }
 
     @discardableResult
     mutating func finishWrite(targetID: String, succeeded: Bool) -> Bool {
         guard writeInFlight, currentTarget?.id == targetID else { return false }
-        writeInFlight = false; resetDwell()
-        if succeeded { completedCount += 1 }
+        writeInFlight = false
+        if succeeded, let position = pendingWritePosition { acceptedPositions.append(position); completedCount += 1 }
+        pendingWritePosition = nil; resetDwell()
         return true
     }
 
-    mutating func resetDwell() { ready = false; steadySince = nil; previousTimestamp = nil }
+    private mutating func clearSteadyInterval() { steadySince = nil; steadyPositions.removeAll(keepingCapacity: true) }
+    mutating func resetDwell() { ready = false; clearSteadyInterval(); previousTimestamp = nil; pendingAnchor = nil }
+    private static func distance(_ a: [Double], _ b: [Double]) -> Double {
+        sqrt(zip(a, b).reduce(0.0) { $0 + pow($1.0 - $1.1, 2) })
+    }
+
+    /// Project the actual gravity pole into the native sensor raster, matching
+    /// the preview's pinhole convention. An image-edge margin keeps a clipped
+    /// pole from masquerading as complete ceiling/floor coverage.
+    static func poleIsPhotographed(target: StationCaptureTarget, cameraToWorld c: [[Double]],
+                                   intrinsics k: [[Double]]?, resolution: ImageResolution?) -> Bool {
+        guard target.id == "ceiling" || target.id == "floor" else { return true }
+        guard pose(c) != nil, let k, let resolution,
+              k.count == 3, k.allSatisfy({ $0.count == 3 && $0.allSatisfy(\.isFinite) }),
+              resolution.width >= 2, resolution.height >= 2,
+              (try? CaptureRasterLimits.validate(resolution)) != nil,
+              k[0][0] > 0, k[1][1] > 0, k[0][0] < 1_000_000, k[1][1] < 1_000_000,
+              k[0][1] == 0, k[1][0] == 0, k[2] == [0, 0, 1],
+              k[0][2] >= 0, k[0][2] < Double(resolution.width),
+              k[1][2] >= 0, k[1][2] < Double(resolution.height) else { return false }
+        let sign = target.id == "ceiling" ? 1.0 : -1.0
+        let depth = -sign * c[1][2]
+        guard depth.isFinite, depth > 0 else { return false }
+        let u = k[0][0] * sign * c[1][0] / depth + k[0][2]
+        let v = k[1][2] - k[1][1] * sign * c[1][1] / depth
+        let maxX = Double(resolution.width - 1), maxY = Double(resolution.height - 1)
+        return u.isFinite && v.isFinite && (maxX * 0.08...maxX * 0.92).contains(u)
+            && (maxY * 0.08...maxY * 0.92).contains(v)
+    }
 
     static func pose(_ matrix: [[Double]]) -> (origin: [Double], forward: [Double])? {
         guard matrix.count == 4, matrix.allSatisfy({ $0.count == 4 && $0.allSatisfy(\.isFinite) }),

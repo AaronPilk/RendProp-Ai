@@ -14,6 +14,12 @@ activate a trial. Studio uses the same account/workspace subscription.
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
 [Latest iPhone and public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
+The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
+is the next internal TestFlight38 candidate: a first-photo viewpoint anchor,
+optional standing markers, a distinct yellow camera target, bounded hand movement,
+gentler ceiling/floor angles and feedback after each saved photo. Older room
+exports remain compatible. Phone comfort and stitching quality still need acceptance.
+
 The [room-guidance and photo-delivery update](docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 adds floor-based standing suggestions, clear automatic 38-photo viewpoint capture,
 saved-view markers, retained photo versions and MLS/web/social downloads. Software
