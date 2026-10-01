@@ -7,9 +7,9 @@ Real estate is the primary workflow; the app also supports other space types.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Studio release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md) ·
-[iPhone delivery record](docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md)
+[iPhone delivery record](docs/handoff/GUIDED-PANORAMA-TESTFLIGHT-20261001.md)
 
-## Production status — 30 September 2026
+## Production status — 1 October 2026
 
 | Area | Current state |
 | --- | --- |
@@ -18,7 +18,7 @@ Real estate is the primary workflow; the app also supports other space types.
 | Prompt library | Ten original recipes, adaptation, saved personal collections and result notes. Copying a prompt does not generate media. |
 | Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Save project to account explicitly uploads general-project originals. |
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
-| iOS | Internal TestFlight **1.0.3 (32)** is available to the existing Rendprop team. Includes the improved local 3D capture guard and native sync/recovery fixes. Physical-phone acceptance is pending. |
+| iOS | Internal TestFlight **1.0.3 (33)** is available to the existing Rendprop team. Adds guided scan positions, optional native depth, local panoramic room tours and recovery/export. Open **Home → Guided room tour**. Physical-phone acceptance is pending; these panoramic tours do not yet publish or sync to Studio. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The 27 September website release passed exact verification of **30 web files**; Studio API v12
