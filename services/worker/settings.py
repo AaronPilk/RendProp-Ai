@@ -220,9 +220,9 @@ class Settings:
     # ── ffmpeg encode (mirrors apps/ios .../RenderEngine.swift) ──
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
-    encode_long_edge: int = 1280
+    encode_long_edge: int = 1920
     encode_fps: int = 60
-    encode_bitrate: str = "14M"
+    encode_bitrate: str = "24M"
     encode_preset: str = "medium"
     # HDR→SDR tonemap for PQ/HLG (BT.2020) sources. The chain is inserted only
     # when ffprobe says the SOURCE is HDR (never for SDR, never for untagged
@@ -282,9 +282,9 @@ class Settings:
             stream_require_ready=_bool("STREAM_REQUIRE_READY", False),
             ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg"),
             ffprobe_bin=os.environ.get("FFPROBE_BIN", "ffprobe"),
-            encode_long_edge=_int("ENCODE_LONG_EDGE", 1280, lo=240, hi=7680),
+            encode_long_edge=_int("ENCODE_LONG_EDGE", 1920, lo=240, hi=7680),
             encode_fps=_int("ENCODE_FPS", 60, lo=1, hi=240),
-            encode_bitrate=os.environ.get("ENCODE_BITRATE", "14M"),
+            encode_bitrate=os.environ.get("ENCODE_BITRATE", "24M"),
             encode_preset=os.environ.get("ENCODE_PRESET", "medium"),
             tonemap_hdr=_bool("TONEMAP_HDR", True),
             tonemap_curve=os.environ.get("TONEMAP_CURVE", "mobius").strip().lower() or "mobius",

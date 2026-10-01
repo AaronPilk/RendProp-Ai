@@ -156,6 +156,8 @@ struct FlythroughDetailView: View {
     /// inside `body`: a directory scan per re-render is exactly what
     /// `PhotoStudioView.loadExisting()` avoids by loading into state once.
     @State private var mediaItems: [ListingMediaItem] = []
+    /// Checked off the main thread, never by repeated filesystem reads in body.
+    @State private var availableRerenderSource: URL?
     /// The file being viewed. ONE binding for every kind — `ListingFileViewer`
     /// switches internally — so `body` grows a single presentation modifier.
     @State private var openedFile: ListingMediaItem?
@@ -450,6 +452,15 @@ struct FlythroughDetailView: View {
                 .environmentObject(model)
         }
         .task { await loadCompliance() }
+        .task(id: asset?.localURL) {
+            availableRerenderSource = nil
+            guard let source = asset?.localURL, source.isFileURL else { return }
+            let exists = await Task.detached(priority: .utility) {
+                FileManager.default.fileExists(atPath: source.path)
+            }.value
+            guard !Task.isCancelled, exists, asset?.localURL == source else { return }
+            availableRerenderSource = source
+        }
         .onChange(of: spaceTypeRaw) { _ in
             // The list this screen was opened from no longer contains this
             // listing — go back rather than showing another industry's detail.
@@ -938,6 +949,23 @@ struct FlythroughDetailView: View {
                 }
                 .buttonStyle(ScalePressStyle())
                 .disabled(asset == nil || sample)
+
+                if !sample, tour != nil || shareURL != nil {
+                    if let a = asset, availableRerenderSource == a.localURL {
+                        NavigationLink {
+                            ReviewSubmitView(listing: currentListing, asset: a)
+                        } label: {
+                            toolCard("Re-render fly-through", "New render · new sharing link",
+                                     "arrow.clockwise", RPGradient.drone)
+                        }
+                        .buttonStyle(ScalePressStyle())
+                        .accessibilityIdentifier("detail.rerenderTour")
+                    } else {
+                        toolCard("Re-render fly-through", "Needs the source video on this phone",
+                                 "arrow.clockwise", RPGradient.drone, dimmed: true)
+                            .accessibilityLabel("Re-render fly-through unavailable. Download the source video from Cloud files or add it to this phone.")
+                    }
+                }
 
                 NavigationLink { FloorPlanView(listing: currentListing) } label: {
                     toolCard("Floor plan", sample ? createFirst : "Scan in 3D or upload",

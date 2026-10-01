@@ -23,6 +23,13 @@ Browser video export also prepares sources ahead and handles delayed animation c
 Photo version history is local to iPhone; shared durable history and published-gallery
 supersession remain separate work. Physical room/camera quality still needs phone testing.
 
+The [listing-first fly-through update](docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
+is the next release candidate, **1.0.3 (37)**. Public pages separate details/photos
+from opt-in video playback; new native renders retain up to a 1920-pixel long
+edge at a 24 Mbps target and move MP4 metadata to the front. The re-render action
+uses the original local recording and clearly creates a new sharing link. Build
+36 remains the latest verified delivery until build37's Apple receipt is recorded.
+
 ## Production status — 1 October 2026
 
 | Area | Current state |

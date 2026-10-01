@@ -23,8 +23,8 @@ Routes implemented in the current source:
 
 | Route | Renders | Source |
 |---|---|---|
-| `GET /f/:slug` | the scroll-scrub **tour player** — branded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
-| `GET /u/:slug` | the **same tour, unbranded** — for the MLS field | the same payload |
+| `GET /f/:slug` | listing details/photos with an optional fly-through — branded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
+| `GET /u/:slug` | the same listing/player, unbranded — for the MLS field | the same payload |
 | `GET /a/:handle` | an org's **portfolio grid** (cards → `/f/:slug`) | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
 | `GET /studio` | redirect to `https://studio.rendprop.com/` | Studio has its own Worker |
 | `GET /s/:scene` | spatial viewer shell | `src/spatial.ts` |
@@ -37,9 +37,12 @@ Tour and portfolio requests render HTML without a client framework; Wrangler
 bundles the TypeScript Worker at deployment. The spatial viewer additionally loads
 its dedicated browser module and runtime assets. Customer pages check upstream
 on every request and return `Cache-Control: no-store`; only synthetic demo HTML
-remains cacheable. The player shares the iOS webview design (`apps/ios/Rendprop/Resources/player/index.html`) — same
-rAF-lerp scrub loop, buffer gate, chapter rail, room label, jank watchdog and autoplay
-fallback — adapted to stream its video instead of bundling a demo file.
+remains cacheable. Normal listing pages open with the address, price and property overview. Photos,
+rooms, floor plan and contact navigation scroll independently of video. **Watch
+fly-through** opens a native playback dialog; **Back to listing** stops decoding
+and loading and restores the previous scroll position. No video request or view
+beacon occurs before the visitor opens playback. `?embed=1` explicitly retains
+the legacy scroll-driven player, which the native bundled preview also uses.
 
 See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md) and
 [the spatial API](../../supabase/functions/spatial/README.md) for upstream contracts.
@@ -95,6 +98,7 @@ content. Check the applicable listing service's rules before distribution.
 ```bash
 npm run typecheck   # tsc --noEmit
 npm test            # unbranded, routes, upstream, lead form, legal, spatial and bundle checks
+node scripts/check-listing-browser.mjs # real Chromium + FFmpeg, opt-in playback and cleanup
 ```
 
 > **Deployment constraint:** the host rules ignore media-delivery URLs (any
@@ -108,27 +112,38 @@ npm test            # unbranded, routes, upstream, lead form, legal, spatial and
 
 The tour JSON exposes two video sources, in this preference order:
 
-- **`scrub_url` — PRIMARY.** The **all-intra R2 mp4** (every frame a keyframe) served
-  over HTTP byte-range. Set directly as `video.src` with `preload="auto"`; all-intra encoding gives the browser a keyframe at every frame for responsive
-  seeking. Actual seeking remains subject to browser decoding and buffering.
-- **`hls_url` — FALLBACK ONLY.** Cloudflare Stream HLS (`…/manifest/video.m3u8`).
-  Stream re-encodes with normal GOPs; decoding between keyframes can make
-  repeated scrub seeks less responsive. Used only when `scrub_url` is absent (or the mp4 errors before playback
-  starts): **native HLS** on Safari/iOS, **hls.js** elsewhere (lazy-loaded from cdnjs,
-  pinned `1.5.20` + SRI, big MSE buffers so seeks land inside the buffered range).
-- `video_url` (= `scrub_url ?? hls_url`) is kept for back-compat; if a payload only
-  has `video_url`, it's classified by `.m3u8` extension.
+- **`scrub_url` — primary.** The published all-intra R2 MP4 is served over HTTP
+  byte-range, without a browser re-encode or resolution cap. On normal pages the
+  video has `preload="none"` and no source until an explicit open. Closing removes
+  the source, pauses playback and empties the decoder. Native controls provide
+  play/pause, seeking and fullscreen; room buttons seek the rendered timeline.
+- **`hls_url` — fallback.** Cloudflare Stream HLS is used when the MP4 is absent
+  or fails. Safari uses native HLS; other supported browsers lazily load pinned
+  hls.js `1.5.20` with SRI. The normal player uses bounded 30/60-second forward
+  buffers, a 30-second back buffer, and no player-size quality cap. Network and
+  decoder capabilities still determine adaptive quality.
+- `video_url` remains compatible: a payload with only this field is classified
+  by its `.m3u8` extension.
 
-The `<video>` is `muted playsinline webkit-playsinline preload=auto` for reliable
-inline autoplay-less scrubbing on iOS Safari.
+The player shows the actual decoded dimensions and whether it is playing the
+published master or streaming. A larger player cannot restore detail absent
+from an existing 720p file. The [listing-first/HD release](../../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
+changes new native and optional-worker renders to a maximum 1920-pixel long edge
+and a 24 Mbps target, without upscaling. Re-rendering from the original and
+publishing creates a **new sharing link**; older links keep their earlier video.
+The explicit legacy embed continues its muted scroll-driven loading behavior.
 
-> **Chapter timebase:** chapter `t_ms` is already rescaled to the rendered timeline by
-> the app before publish (it divides by `speed_factor`). The player uses `t_ms/1000`
-> against `duration_s` directly — it must **not** divide by `speed_factor` again.
+**Chapter timebase:** `t_ms` is already rescaled to the rendered timeline by
+publication. Both players use `t_ms/1000` directly, without dividing by
+`speed_factor` again.
 
-The browser talks to Supabase **directly** for:
-- **Lead form** → `POST ${SUPABASE_FUNCTIONS_URL}/leads` (`{slug,name,phone,email?,extra,_hp}`; honeypot + per-type fields).
-- **View beacon** → `POST ${SUPABASE_FUNCTIONS_URL}/beacon/:slug` via `navigator.sendBeacon` (CORS-simple `text/plain`, `apikey` in the query string, so it fires reliably on `pagehide`). It counts one view + `streamed_minutes ≈ duration` at start, then batches `watch_ms` deltas + `max scroll_depth`.
+The browser talks directly to Supabase for the existing lead form and view
+beacon. The normal player's beacon starts after a decoded frame actually plays,
+then batches visible playing time and delivered buffered seconds. Merely reading
+a listing does not count as a video view. `scroll_depth` retains its transport
+field name but represents maximum video progress in the normal player.
+Unbranded pages omit the form and agent/contact content and mark video beacons
+unbranded. The legacy embed retains its scroll-playback metering.
 
 The anon key is injected into the page (it's public by design — RLS enforces access, and it already ships in every Supabase client).
 
