@@ -8,10 +8,10 @@ import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
-// Two 400 ms notifications create a regression larger than the existing 400 ms
-// export tolerance even with cold MediaRecorder encoder startup variation.
+// Two one-second notifications leave a clear regression beyond the unchanged
+// 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
-const resumeNotificationDelayMs = 400;
+const resumeNotificationDelayMs = 1000;
 const receipt = { proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Only resume-notification delivery is delayed ${resumeNotificationDelayMs} ms. Negative control restores the former await; fixed build uses unchanged production source. No external requests or provider use.`, checks: [], runs: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
@@ -115,7 +115,7 @@ document.querySelector("#run").onclick=async()=>{
       // cut cannot satisfy the split, and the delayed-resume control must miss
       // this window. Keep the independent duration and audio timing bounds.
       const pixels = {
-        dissolve: pixel(output, .64),
+        dissolve: { before: pixel(output, .4), samples: [.54, .58, .62, .66, .70, .74, .78, .82, .86].map(time => ({ time, rgb: pixel(output, time) })), after: pixel(output, 1.1) },
         beforeWhip: whipPixels(output, 2.4),
         whip: [2.54, 2.58, 2.62, 2.66, 2.70, 2.74].map(time => whipPixels(output, time)),
         afterWhip: whipPixels(output, 2.9),
@@ -136,7 +136,13 @@ document.querySelector("#run").onclick=async()=>{
       } else {
         assert(Math.abs(duration - 3) < .4, `Fixed real MP4 must retain the existing duration tolerance: ${duration}`);
         assert.equal(trace.filter(event => event.event === "resume.delivered").length, 0);
-        assert(pixels.dissolve[0] > 20 && pixels.dissolve[0] < 100 && pixels.dissolve[2] > 170 && pixels.dissolve[2] < 245, `Actual dissolve blend: ${pixels.dissolve}`);
+        // Match the fixed, bounded cloud-editor criterion: a real dissolve
+        // progresses through multiple blends; a cut or frozen blend cannot pass.
+        const dissolve = pixels.dissolve;
+        const blends = dissolve.samples.filter(({ rgb }) => rgb[0] > 20 && rgb[0] < 100 && rgb[2] > 170 && rgb[2] < 245);
+        assert(blends.some((sample, index) => blends.slice(index + 1).some(later => sample.rgb[0] - later.rgb[0] >= 8 && later.rgb[2] - sample.rgb[2] >= 8)), `Dissolve must progress within the bounded window: ${JSON.stringify(dissolve.samples)}`);
+        assert(dissolve.before[0] > 100 && dissolve.before[0] < 135 && dissolve.before[1] > 65 && dissolve.before[1] < 95 && dissolve.before[2] > 135 && dissolve.before[2] < 175, "The preceding shot must still be purple before the dissolve");
+        assert(dissolve.after[0] < 10 && dissolve.after[1] < 10 && dissolve.after[2] > 240, "The following shot must be fully blue after the dissolve");
         assert(pixels.whip.some(isWhip), `Actual whip must move blue and red across the frame within the bounded timeline window: ${JSON.stringify(pixels.whip)}`);
         assert(pixels.beforeWhip.left[2] > 200 && pixels.beforeWhip.right[2] > 200 && !isWhip(pixels.beforeWhip), "The preceding shot must still be blue before the whip");
         assert(pixels.afterWhip.left[0] > 200 && pixels.afterWhip.right[0] > 200 && !isWhip(pixels.afterWhip), "The closing shot must be fully red after the whip");
