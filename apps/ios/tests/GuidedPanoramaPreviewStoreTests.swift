@@ -12,6 +12,7 @@ struct PanoramaPreviewStation {
     let panoramaURL: URL
     let position: [Double]
     let coverage: Double
+    var captureComplete = false
 }
 
 @main enum GuidedPanoramaPreviewStoreTests {
@@ -104,6 +105,7 @@ struct PanoramaPreviewStation {
         check(first.count == 1 && first[0].id == stationID, "first build returns requested station identity")
         check(first[0].coverage > 0 && first[0].coverage < 1, "partial capture stays partial in projected coverage")
         check(first[0].label.contains("partial"), "partial station is visibly labelled")
+        check(!first[0].captureComplete, "partial archive cannot advertise complete navigation after rendering")
         let image = first[0].panoramaURL, json = cache.appendingPathComponent(stationID + ".json")
         let firstReceipt = try receipt(json)
         let firstImageDigest = try digest(image)
@@ -111,6 +113,7 @@ struct PanoramaPreviewStation {
         let firstImageInode = try inode(image), firstReceiptInode = try inode(json)
         let hit = try build()
         check(hit.count == 1 && hit[0].coverage == first[0].coverage, "cache hit returns same photographic coverage")
+        check(!hit[0].captureComplete, "cache hit preserves partial archive navigation status")
         check(try inode(image) == firstImageInode && inode(json) == firstReceiptInode, "cache hit does not replace image or receipt")
         check(try snapshot(root) == original, "first build and hit preserve all original bytes")
 

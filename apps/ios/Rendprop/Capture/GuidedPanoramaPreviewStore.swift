@@ -96,7 +96,7 @@ enum GuidedPanoramaPreviewStore {
             let suffix = station.status == .complete ? "" : " · partial"
             result.append(PanoramaPreviewStation(id: station.id, label: "Position \(station.index + 1)\(suffix)",
                                                  panoramaURL: imageURL, position: station.origin,
-                                                 coverage: receipt.solidAngleCoverage))
+                                                 coverage: receipt.solidAngleCoverage, captureComplete: station.status == .complete))
         }
         try checkCancellation(cancellation)
         progress(1, "Your room tour is ready.")

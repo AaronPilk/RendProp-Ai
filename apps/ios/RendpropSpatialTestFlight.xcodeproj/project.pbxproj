@@ -83,6 +83,8 @@
 		71957E9C056B75D577EFF2E4 /* PersistentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A2DCE3CB319592C83AC24E /* PersistentStore.swift */; };
 		7441F10AEAEDBE82954B72DD /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = C85920512C4F2DFF5FFCA96A /* Components.swift */; };
 		76CE8E28AD7EDAE17ACC1773 /* PlayerWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8E474ED20BA6BF2B53D1AE4 /* PlayerWebView.swift */; };
+		76F54C921C4EFDBE767F4874 /* PhotoExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3F1A0D087FE6C8BA9569EB /* PhotoExport.swift */; };
+		77AE627A0751883965BC3321 /* RoomScanPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1792AC988DB4A092C14B4DC9 /* RoomScanPlanner.swift */; };
 		8069F4892F4F5A2193E18079 /* CaptureAsset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D875C85CF0FBFF3AB084355 /* CaptureAsset.swift */; };
 		8112DA1CC5399B6270356ADE /* PurchaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD768A00D934D1E24059EE91 /* PurchaseManager.swift */; };
 		8653525A198CFBFBEE6CED44 /* PhotoCapturePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03170CBF21940B66B49F79BC /* PhotoCapturePolicy.swift */; };
@@ -116,6 +118,7 @@
 		B458FFDE10CD162110CE176D /* SpatialCaptureLabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46B21A666AA57E10366152D2 /* SpatialCaptureLabView.swift */; };
 		B50F6AB491FA3B65210B9629 /* UploadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37E0F2236CE11BA5DBAFA928 /* UploadManager.swift */; };
 		B57EED760675E9F92BBC822D /* SpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E784CB3EEEFAE9BD7B75E5 /* SpeechTranscriber.swift */; };
+		B693CCA3C22A9ECBD8E33AB3 /* PanoramaNavigationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C73AC243D4E41699D282BE0A /* PanoramaNavigationPolicy.swift */; };
 		B74B427D320335DDFF086562 /* player in Resources */ = {isa = PBXBuildFile; fileRef = A1A717EF1EAF047A3F5BBE5A /* player */; };
 		B7F6169AFFA7A4C4BA65127F /* MotionRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51BA2E5923FECE183A12BECF /* MotionRecorder.swift */; };
 		B9F3EABC12DD626D2612E88D /* AdminCohortsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43D935C21C3B7D74F431BC8E /* AdminCohortsView.swift */; };
@@ -136,6 +139,7 @@
 		CDD082D0B0F718B598B53FB2 /* CaptureArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A461EBF989B38E92B91EEB9 /* CaptureArchive.swift */; };
 		D0592E74228BCD88D3D4388F /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26F6B9DEC69B94BACBAE3013 /* DeepLink.swift */; };
 		D1B73A9FFF3E55CACEBA7484 /* Attribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42768D32094A6D200D61ADC9 /* Attribution.swift */; };
+		D32F5D655D60301CC7C7FDA5 /* PhotoVersionHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA349DC3A057BEBF43906360 /* PhotoVersionHistory.swift */; };
 		D4C1936FFEEAB47C83636B90 /* GuideShot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08D367FCD91D3636204B2A1F /* GuideShot.swift */; };
 		E06C4D8832956C7813B7EAF1 /* PaywallShot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A54D1B2CA8F4917C2E4DF9CF /* PaywallShot.swift */; };
 		E638C5F8080CC52C680A2FC2 /* ReflectionRemovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9407EDBABEFA6BC8C87D96E0 /* ReflectionRemovalView.swift */; };
@@ -184,6 +188,7 @@
 		10EE1CAB0B656D2B5E2CB413 /* ReflectionVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflectionVideo.swift; sourceTree = "<group>"; };
 		119664C44FE387DA568B063E /* Products.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Products.swift; sourceTree = "<group>"; };
 		127ACBDA225C821C769BD7F4 /* GuidedPanoramaPreviewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidedPanoramaPreviewStore.swift; sourceTree = "<group>"; };
+		1792AC988DB4A092C14B4DC9 /* RoomScanPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomScanPlanner.swift; sourceTree = "<group>"; };
 		1878EC51F31B5973C882DBAB /* Render.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Render.swift; sourceTree = "<group>"; };
 		1994F5FD18BF8B6EFE472509 /* NotificationPrefs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationPrefs.swift; sourceTree = "<group>"; };
 		19FD1D7384CD8FA5C88D4E05 /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
@@ -230,6 +235,7 @@
 		533C06F3863370A154B40814 /* UploadRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadRecovery.swift; sourceTree = "<group>"; };
 		53D613155642BA6A9494FAD9 /* TeamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamView.swift; sourceTree = "<group>"; };
 		580196B05EC5AE80C9FFAC74 /* SubscriptionBillingContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionBillingContext.swift; sourceTree = "<group>"; };
+		5B3F1A0D087FE6C8BA9569EB /* PhotoExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoExport.swift; sourceTree = "<group>"; };
 		5D09E710265AB8B04719CFEA /* CoachShot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachShot.swift; sourceTree = "<group>"; };
 		5F31D41CE5C10626F049A141 /* DirectUploadJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectUploadJournal.swift; sourceTree = "<group>"; };
 		602F0B7C0D1F2B95285B98EA /* PanoramaProjection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanoramaProjection.swift; sourceTree = "<group>"; };
@@ -273,6 +279,7 @@
 		A54D1B2CA8F4917C2E4DF9CF /* PaywallShot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallShot.swift; sourceTree = "<group>"; };
 		A655E018537297FA4C6C83FE /* CaptureControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureControls.swift; sourceTree = "<group>"; };
 		A7754907E4949351FB2C9F71 /* TourViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourViewerView.swift; sourceTree = "<group>"; };
+		AA349DC3A057BEBF43906360 /* PhotoVersionHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoVersionHistory.swift; sourceTree = "<group>"; };
 		AD5527ADF03538C14A5E8AA6 /* PhaseOneFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhaseOneFixtures.swift; sourceTree = "<group>"; };
 		AD768A00D934D1E24059EE91 /* PurchaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseManager.swift; sourceTree = "<group>"; };
 		AFFEE0E4398F4C1822FC8118 /* CoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachView.swift; sourceTree = "<group>"; };
@@ -295,6 +302,7 @@
 		C3B7621187183F6D3D9315D6 /* BuildFourteenShots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildFourteenShots.swift; sourceTree = "<group>"; };
 		C480A25C3876A80D8316B4C3 /* SpatialTourView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialTourView.swift; sourceTree = "<group>"; };
 		C66A1E1E95990CCEA9229773 /* ProductionGuidance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionGuidance.swift; sourceTree = "<group>"; };
+		C73AC243D4E41699D282BE0A /* PanoramaNavigationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanoramaNavigationPolicy.swift; sourceTree = "<group>"; };
 		C75899F4461006AB1C3681CA /* CloudPhotoReferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudPhotoReferences.swift; sourceTree = "<group>"; };
 		C85920512C4F2DFF5FFCA96A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		CBEBC11B92007478BEB66E95 /* MediaImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImporter.swift; sourceTree = "<group>"; };
@@ -366,6 +374,7 @@
 				7824A75418CB7C5723A18EE4 /* Import */,
 				7C165E62B85209FF843376D5 /* Models */,
 				BFCE373BBAB72A0E06B15618 /* Networking */,
+				0FE21510D468E7ABF0912ACC /* Photos */,
 				F843763E719806730708F72A /* Plan */,
 				2BF16507768EDE1867536017 /* Purchases */,
 				C84EE1417F2FED06A644E257 /* Push */,
@@ -379,6 +388,15 @@
 				ED7A52A84FEE990BAB866EC1 /* Workspace */,
 			);
 			path = Rendprop;
+			sourceTree = "<group>";
+		};
+		0FE21510D468E7ABF0912ACC /* Photos */ = {
+			isa = PBXGroup;
+			children = (
+				5B3F1A0D087FE6C8BA9569EB /* PhotoExport.swift */,
+				AA349DC3A057BEBF43906360 /* PhotoVersionHistory.swift */,
+			);
+			path = Photos;
 			sourceTree = "<group>";
 		};
 		202E98C1AF51B93AC7F0DBEA /* Guide */ = {
@@ -632,10 +650,12 @@
 				0EC04C3A695AAF594247CF6E /* CaptureModel.swift */,
 				E20728F61703502CF7FCEA36 /* CaptureQuality.swift */,
 				94929B499B9FC1061F07C7BD /* CaptureRecorder.swift */,
+				C73AC243D4E41699D282BE0A /* PanoramaNavigationPolicy.swift */,
 				3E4C5F89D9B34FEE84214171 /* PanoramaPreviewViewController.swift */,
 				602F0B7C0D1F2B95285B98EA /* PanoramaProjection.swift */,
 				23503546AD74DEBE7F308D1B /* PanoramaRenderer.swift */,
 				8C3347414FFCF92B402B2B50 /* RasterWriter.swift */,
+				1792AC988DB4A092C14B4DC9 /* RoomScanPlanner.swift */,
 				6F5C855B596D84847F145A6F /* SpatialCaptureViewController.swift */,
 				47156A8D54A7BD62FBAC7945 /* StationCaptureModels.swift */,
 				440FBC5ACA30D98C83B1EB32 /* StationCapturePolicy.swift */,
@@ -921,6 +941,7 @@
 				8EE168B493E406AF7CABD38F /* NewListingView.swift in Sources */,
 				E76031A5A938969D809B12B4 /* NotificationPrefs.swift in Sources */,
 				99DFF90D914D290F3357A3CB /* OnboardingView.swift in Sources */,
+				B693CCA3C22A9ECBD8E33AB3 /* PanoramaNavigationPolicy.swift in Sources */,
 				3DF0B25DC7E81B782F053A84 /* PanoramaPreviewViewController.swift in Sources */,
 				515057918C64033A6F7D914D /* PanoramaProjection.swift in Sources */,
 				B1AA9D178FCF4CB8C1996A03 /* PanoramaRenderer.swift in Sources */,
@@ -930,6 +951,8 @@
 				7067B016541A857F25F31BB1 /* PhaseOneFixtures.swift in Sources */,
 				8653525A198CFBFBEE6CED44 /* PhotoCapturePolicy.swift in Sources */,
 				9AD437EBBFB66F110500EDD2 /* PhotoCaptureStorage.swift in Sources */,
+				76F54C921C4EFDBE767F4874 /* PhotoExport.swift in Sources */,
+				D32F5D655D60301CC7C7FDA5 /* PhotoVersionHistory.swift in Sources */,
 				AFB99E30186ABE78DBD3DA33 /* PlanBanner.swift in Sources */,
 				76CE8E28AD7EDAE17ACC1773 /* PlayerWebView.swift in Sources */,
 				325040039B7C60B152B81103 /* ProductionGuidance.swift in Sources */,
@@ -953,6 +976,7 @@
 				F8B1025639AA370532271FC5 /* RendpropApp.swift in Sources */,
 				CD8AA2660F3206B775403A81 /* ReviewPrompter.swift in Sources */,
 				FB002B6FD89E7D735F7B02AA /* ReviewSubmitView.swift in Sources */,
+				77AE627A0751883965BC3321 /* RoomScanPlanner.swift in Sources */,
 				2228EA94A8F0ED72D0924267 /* RoomTag.swift in Sources */,
 				535A02561A06C3B110B03235 /* RoomTagBar.swift in Sources */,
 				B2690E7FADDE0733171EA070 /* SessionConnection.swift in Sources */,
@@ -1036,7 +1060,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 35;
+				CURRENT_PROJECT_VERSION = 36;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -1119,7 +1143,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 35;
+				CURRENT_PROJECT_VERSION = 36;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

@@ -10,11 +10,12 @@ const calls:{path:string;method:string;body:any}[]=[],docs=new Map<string,any>()
 const shotHandoffs:ShotPlanHandoff[]=[],agentHandoffs:AgentPlanHandoff[]=[],editorHandoffs:string[]=[];
 const png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=";
 const url=(name:string)=>`https://012345678901234567890123456789ab.r2.cloudflarestorage.com/rendprop-renders/renders/${org}/${listing}/${name}?X-Amz-Signature=fixture`;
-let counter=0;
+let counter=0, identityVersion=1;
+const photoResponses:{image_b64:string;disclosure:string}[]=[], uploadedFiles:{url:string;sha256:string;size:number}[]=[];
 const workspace:Workspace={user:{id:user,email:"agent@example.invalid",name:"Agent",avatarUrl:null},org:{id:org,name:"Fixture office",handle:"office",spaceType:"real_estate"},memberships:[{orgId:org,orgName:"Fixture office",role:"owner",spaceType:"real_estate"}],plan:"team",planRaw:"team",planDegraded:false,planExpiresAt:null,trialEndsAt:null,usage:{listings:2,leads:0,leadsNew:0,renders:1}};
 const listings:Listing[]=[listing,other].map((id,i)=>({id,orgId:org,spaceType:"real_estate",address:i?"22 Pine Street":"10 Oak Street",tagline:"Bright rooms and a patio",details:{access_code:"private-must-not-send"},status:"ready",createdAt:"2026-09-14T12:00:00Z",mainPhotoKey:null,beds:3,baths:2,sqft:2000,priceCents:null}));
 const photos:StudioPhoto[]=[{id:source,listingId:listing,url:url("source.png"),originalUrl:url("source.png"),isAltered:false,expiresAt:"2099-01-01T00:00:00Z",caption:"Kitchen",isStaged:false,sort:0}];
-const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identityVersion:1,identity:{userId:user,isAnonymous:false,email:"agent@example.invalid"}}),upload:async()=>({etag:'"fixture-receipt"'}),listMedia:async(_org:string,selected:string)=>({orgId:org,listingId:selected,photos:selected===listing?[...photos]:[],videos:[],nextOffset:null,unavailableCount:0}),api:async(path:string,options:any)=>{
+const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identityVersion,identity:{userId:user,isAnonymous:false,email:"agent@example.invalid"}}),upload:async(url:string,body:Blob)=>{const digest=await crypto.subtle.digest("SHA-256",await body.arrayBuffer());uploadedFiles.push({url,sha256:[...new Uint8Array(digest)].map(n=>n.toString(16).padStart(2,"0")).join(""),size:body.size});return {etag:'"fixture-receipt"'};},listMedia:async(_org:string,selected:string)=>({orgId:org,listingId:selected,photos:selected===listing?[...photos]:[],videos:[],nextOffset:null,unavailableCount:0}),api:async(path:string,options:any)=>{
  if(options.orgId!==org)throw new Error("Wrong organization");const body=options.body,method=options.method??"GET";calls.push({path,body,method});if(calls.length>160)throw new Error("Request loop");
  if(path==="/functions/v1/me"&&method==="GET")return {user:{id:user},org:{id:org,name:"Fixture office",handle:"office",space_type:"real_estate",brand_kit:{}},usage:{by_feature:{renders:1,photo_edits:0,reels:0,aerials:0,drone:0},caps:{renders:50,photo_edits:50,reels:50,aerials:50,drone:50},windows:{renders:null,photo_edits:null,reels:null,aerials:null,drone:null}},notifications:{lead_received:true,render_ready:true,upload_stuck:false,free_week_ending:true,allowance_low:true,first_tour_nudge:false,muted_until:null},entitlement:{degraded:false},portfolio_url:null,plan_source:"apple"};
  if(path.includes("studio/documents?")&&method==="GET"){const key=new URL(path,"https://fixture.invalid").searchParams.get("key")!;return {document:structuredClone(docs.get(key)??null)};}
@@ -25,7 +26,7 @@ const services={subscribe:()=>()=>{},getSnapshot:()=>({status:"signed-in",identi
  if(path.endsWith("ai-copy/shotlist"))return {script:"Welcome inside. The bright kitchen opens onto a patio.",shots:body.photos.map((p:any,i:number)=>({photo_id:p.id,order:i+1,room:p.room,motion:"push_in",seconds:5,on_screen_text:"Bright kitchen",voice_line:"The kitchen opens onto the patio."}))};
  if(path.endsWith("ai-copy/agent-reel"))return {cutaways:[{photo_id:source,start:4,end:6,on_screen_text:"Kitchen and patio",motion:"push_in"}]};
  if(path.endsWith("ai-copy/edit-prompt"))return {prompt:"Remove the movable boxes while preserving the room and permanent features."};
- if(path.endsWith("ai-photo")){if(body.edit==="suggest")return {suggestions:[{edit:"declutter",reason:"Clear the movable boxes to show the room."}]};return {image_b64:png,mime:"image/png",disclosure:"This photo was digitally altered with AI.",provenance:{id:provenance,recorded:true}};}
+ if(path.endsWith("ai-photo")){if(body.edit==="suggest")return {suggestions:[{edit:"declutter",reason:"Clear the movable boxes to show the room."}]};return {...(photoResponses.shift()??{image_b64:png,disclosure:"This photo was digitally altered with AI."}),mime:"image/png",provenance:{id:provenance,recorded:true}};}
  if(path==="/functions/v1/uploads"&&method==="POST"){const id=`88888888-8888-4888-8888-${String(++counter).padStart(12,"0")}`;const ticket={asset_id:id,storage_key:`renders/${org}/${body.listing_id}/${body.role}-${id}.png`,uploaded:false,mode:"single",put_url:`https://uploads.rendprop.com/v2/${id}?signature=fixture`};tickets.set(id,ticket);return ticket;}
  if(/\/uploads\/[^/]+\/complete$/.test(path)){const id=path.split("/").at(-2)!;const ticket=tickets.get(id);return {...ticket,id,listing_id:listing,uploaded:true};}
  if(path.includes("me/compliance/")&&method==="PATCH")return {ok:true};
@@ -47,6 +48,10 @@ function Fixture(){
  Object.assign(window,{creativeFixture:{
   entry:(tool:CreativeTool,options:{id?:string;listingId?:string;preset?:CreativeEntryRequest["preset"]}={})=>setEntryRequest({id:options.id??crypto.randomUUID(),listingId:options.listingId??listing,tool,preset:options.preset}),
   calls:()=>structuredClone(calls),
+  photoResponses:(responses:{image_b64:string;disclosure:string}[])=>photoResponses.push(...responses),
+  uploadedFiles:()=>structuredClone(uploadedFiles),
+  photos:(next:StudioPhoto[])=>photos.splice(0,photos.length,...next),
+  changeIdentity:()=>{identityVersion++;},
  }});
  return <><Controls/><main style={{padding:32}}><CreativeWorkspace services={services} workspace={workspace} listings={listings} entryRequest={entryRequest} onChanged={()=>{}} onOpenEditor={id=>editorHandoffs.push(id)} onUseShotPlan={plan=>shotHandoffs.push(plan)} onUseAgentPlan={plan=>agentHandoffs.push(plan)}/></main></>;
 }

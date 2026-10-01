@@ -5,6 +5,12 @@ A passing screenshot walk can still contain skipped steps. Read its activity
 notes and inspect the actual attachments before accepting a screen. No
 simulator test validates a camera, LiDAR, AR tracking or real-house coverage.
 
+The [room/photo-delivery update](../../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
+passed three guided-tour Home/Settings/relaunch/large-text assertion tests and
+the two guided-still-camera unavailable/close/reopen tests. They do not start
+capture or prove floor detection. Synthetic executable checks separately verify
+photo version files, export pixels and measured-view marker projection.
+
 The [30 September phone receipt](../../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md)
 records internal TestFlight **1.0.3 (32)** available to the existing Rendprop team.
 Archive and Apple availability checks passed; no new physical-camera or UI-test

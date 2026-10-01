@@ -12,7 +12,16 @@ activate a trial. Studio uses the same account/workspace subscription.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
-[iPhone delivery receipt](docs/releases/TESTFLIGHT-35-20261001.json)
+[iPhone and Studio delivery receipt](docs/releases/TESTFLIGHT-36-20261001.json)
+
+The [room-guidance and photo-delivery update](docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
+adds floor-based standing suggestions, clear automatic 38-photo viewpoint capture,
+saved-view markers, retained photo versions and MLS/web/social downloads. Software
+checks pass; internal **TestFlight 1.0.3 (36)** is available and Studio is live.
+All 12 CI jobs passed on the archived source; all 30 Studio application assets match it.
+Browser video export also prepares sources ahead and handles delayed animation callbacks.
+Photo version history is local to iPhone; shared durable history and published-gallery
+supersession remain separate work. Physical room/camera quality still needs phone testing.
 
 ## Production status — 1 October 2026
 
@@ -23,7 +32,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 | Prompt library | Ten original recipes, adaptation, saved personal collections and result notes. Copying a prompt does not generate media. |
 | Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Save project to account explicitly uploads general-project originals. |
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
-| iOS | Internal TestFlight **1.0.3 (35)** is available to the existing Rendprop team. Adds guided still photos with supported physical 0.5×/1× lenses, grid/level, landscape guidance and full-photo review/retake. Save errors retain the photo for retry. Includes build 34's account, workspace and subscription fixes. Real-phone camera quality, purchase/restore and phone-to-Studio acceptance remain pending. |
+| iOS | Internal TestFlight **1.0.3 (36)** is available to the existing Rendprop team. Adds guided room standing suggestions and automatic 38-photo coverage, saved-view navigation, retained photo versions and MLS/web/social exports. Preserves guided 0.5×/1× still photos and the account/workspace/subscription fixes. Real-phone camera/room quality, purchase/restore and phone-to-Studio acceptance remain pending. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the
@@ -114,6 +123,7 @@ tests cannot validate physical camera, ARKit/LiDAR capture or thermal behavior.
 - [AI Presenter and activation requirements](docs/studio/ai-presenter.md)
 - [Brand assets](docs/brand/README.md)
 - [iOS test boundaries](apps/ios/RendpropUITests/README.md)
+- [Room guidance, edited-photo downloads and disclosure boundaries](docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 - [Current Studio release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 - [24 September production baseline](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 

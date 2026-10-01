@@ -18,8 +18,11 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
     private let scan = UIButton(type: .system)
     private let preview = UIButton(type: .system)
     private let finish = UIButton(type: .system)
+    private let chooseSpot = UIButton(type: .system)
+    private let useCurrentSpot = UIButton(type: .system)
     private let target = UIView()
     private let reticle = UIView()
+    private let controlScroll = UIScrollView()
     private var update: StationCaptureUpdate?
     private var closing = false
     private var closed = false
@@ -29,6 +32,18 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
     private var previewController: PanoramaPreviewViewController?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var lastGuidanceTime = -Double.infinity
+    private var confirmingEarlyFinish = false
+    private var survey = RoomScanSurveyStability()
+    private var surveyPlan: RoomScanPlan?
+    private var surveyFrozen = false
+    private var choosingViewpoint = true
+    private var selectedSuggestedNumber: Int?
+    private var lastSurveyTime = -Double.infinity
+    private var floorMarkers: [Int: UIButton] = [:]
+    private var lastSurveyPlaneID: String?
+    private var manualSpotChosen = false
+    private var presentedSurveyPlan: RoomScanPlan?
+    private static let suggestionArrivalMetres = 0.45
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -40,8 +55,7 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         NSLayoutConstraint.activate([
             cameraView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             cameraView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            cameraView.topAnchor.constraint(equalTo: view.topAnchor),
-            cameraView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            cameraView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
         ])
         cameraView.session.delegateQueue = .main
         cameraView.session.delegate = self
@@ -63,19 +77,26 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         instruction.font = .preferredFont(forTextStyle: .body)
         direction.font = .preferredFont(forTextStyle: .subheadline)
         heading.text = "Room tour · starting camera"
-        instruction.text = "Stand in a clear spot. Keep the camera over that spot while you turn around it."
-        direction.text = "Line up the purple target with the center circle."
+        instruction.text = "Start near the center of one room. Keep the lens over one spot while you turn."
+        direction.text = "One viewpoint needs 38 automatic photos. You do not need eight viewpoints."
         progress.progressTintColor = UIColor(Theme.accent)
         scan.accessibilityIdentifier = "panorama.capture.scan"
         preview.accessibilityIdentifier = "panorama.capture.preview"
         finish.accessibilityIdentifier = "panorama.capture.finish"
+        chooseSpot.accessibilityIdentifier = "panorama.capture.chooseSpot"
+        useCurrentSpot.accessibilityIdentifier = "panorama.capture.useCurrentSpot"
         scan.addTarget(self, action: #selector(scanTapped), for: .touchUpInside)
         preview.addTarget(self, action: #selector(previewTapped), for: .touchUpInside)
         finish.addTarget(self, action: #selector(finishTapped), for: .touchUpInside)
+        chooseSpot.addTarget(self, action: #selector(chooseSpotTapped), for: .touchUpInside)
+        useCurrentSpot.addTarget(self, action: #selector(useCurrentSpotTapped), for: .touchUpInside)
         setButton(scan, title: "Starting camera…", enabled: false, primary: true)
         setButton(preview, title: "Preview this position", enabled: false)
-        setButton(finish, title: "Finish and save", enabled: true)
-        let buttons = UIStackView(arrangedSubviews: [scan, preview, finish])
+        setButton(finish, title: "Close room capture", enabled: true)
+        setButton(chooseSpot, title: "Choose a suggested spot", enabled: false)
+        setButton(useCurrentSpot, title: "Use my current clear spot instead", enabled: false)
+        chooseSpot.isHidden = true; useCurrentSpot.isHidden = true
+        let buttons = UIStackView(arrangedSubviews: [scan, chooseSpot, useCurrentSpot, preview, finish])
         buttons.axis = .vertical; buttons.spacing = 8
         let content = UIStackView(arrangedSubviews: [heading, progress, instruction, direction, buttons])
         content.axis = .vertical; content.spacing = 10
@@ -84,11 +105,22 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         content.backgroundColor = UIColor(Theme.card).withAlphaComponent(0.97)
         content.layer.cornerRadius = 20
         content.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(content)
+        controlScroll.translatesAutoresizingMaskIntoConstraints = false
+        controlScroll.backgroundColor = UIColor(Theme.card)
+        controlScroll.layer.cornerRadius = 20
+        controlScroll.addSubview(content)
+        view.addSubview(controlScroll)
         NSLayoutConstraint.activate([
-            content.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
-            content.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
-            content.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8)
+            controlScroll.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            controlScroll.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            controlScroll.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+            controlScroll.heightAnchor.constraint(equalTo: view.safeAreaLayoutGuide.heightAnchor, multiplier: 0.48),
+            content.leadingAnchor.constraint(equalTo: controlScroll.contentLayoutGuide.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: controlScroll.contentLayoutGuide.trailingAnchor),
+            content.topAnchor.constraint(equalTo: controlScroll.contentLayoutGuide.topAnchor),
+            content.bottomAnchor.constraint(equalTo: controlScroll.contentLayoutGuide.bottomAnchor),
+            content.widthAnchor.constraint(equalTo: controlScroll.frameLayoutGuide.widthAnchor),
+            cameraView.bottomAnchor.constraint(equalTo: controlScroll.topAnchor, constant: -8)
         ])
         for (indicator, diameter, color) in [(reticle, CGFloat(52), UIColor.white), (target, CGFloat(34), UIColor(Theme.accent))] {
             indicator.bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
@@ -97,14 +129,14 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
             indicator.layer.borderColor = color.cgColor
             indicator.backgroundColor = color.withAlphaComponent(0.15)
             indicator.isUserInteractionEnabled = false
-            view.insertSubview(indicator, belowSubview: content)
+            view.insertSubview(indicator, belowSubview: controlScroll)
         }
         target.isHidden = true
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        reticle.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        reticle.center = cameraView.convert(CGPoint(x: cameraView.bounds.midX, y: cameraView.bounds.midY), to: view)
     }
 
     private func setButton(_ button: UIButton, title: String, enabled: Bool, primary: Bool = false) {
@@ -139,6 +171,7 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
             let configuration = ARWorldTrackingConfiguration()
             configuration.worldAlignment = .gravity
             configuration.isAutoFocusEnabled = true
+            configuration.planeDetection = [.horizontal]
             if let format = ARWorldTrackingConfiguration.supportedVideoFormats
                 .filter({ $0.imageResolution.width <= 1920 && $0.framesPerSecond == 30 })
                 .max(by: { $0.imageResolution.width < $1.imageResolution.width }) {
@@ -171,21 +204,36 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
 
     private func apply(_ update: StationCaptureUpdate) {
         self.update = update
+        if update.state == .ready, choosingViewpoint {
+            updateSurveyPresentation(frame: cameraView.session.currentFrame)
+            refreshButtons()
+            return
+        }
         instruction.text = update.message
+        progress.isHidden = false
+        reticle.isHidden = update.state != .capturing
+        hideFloorMarkers()
         let stationNumber = recorder.currentStationID == nil ? max(1, recorder.manifest?.stations.count ?? 0) : (recorder.manifest?.stations.count ?? 1)
         let savedTargets = update.state == .ready ? (recorder.manifest?.stations.last?.frames.count ?? 0) : update.savedTargets
-        heading.text = "Position \(stationNumber) · \(savedTargets)/\(update.totalTargets) photos"
+        let phase = update.target?.progressTitle ?? "Viewpoint saved"
+        heading.text = update.state == .capturing || update.state == .saving
+            ? "Viewpoint \(stationNumber) · \(savedTargets)/\(update.totalTargets) saved\n\(phase)"
+            : (recorder.manifest?.stations.isEmpty == false ? "Viewpoint \(stationNumber) · \(savedTargets)/\(update.totalTargets) saved" : "Start with one viewpoint")
         progress.progress = Float(savedTargets) / Float(max(1, update.totalTargets))
-        target.isHidden = update.state != .capturing
+        target.isHidden = update.state != .capturing || update.guidanceMode == .returnToPivot || update.guidanceMode == .waiting
+        reticle.layer.borderColor = (update.guidanceMode == .steady ? UIColor.systemGreen : UIColor.white).cgColor
         if update.state == .ready {
             direction.text = (recorder.manifest?.frameCount ?? 0) > 0
-                ? "Next: move a few feet, keeping some of the same room in view."
-                : "Start in a clear spot, away from nearby furniture."
+                ? "Preview this viewpoint first. Add another only for an area hidden from this spot."
+                : "Walls → upper walls → lower walls → ceiling → floor. Stay in this spot until all 38 save."
+        } else if update.state == .saving {
+            direction.text = "Saving automatically. Stay in this spot."
         }
         refreshButtons()
     }
 
     private func refreshButtons() {
+        presentedSurveyPlan = surveyPlan
         let busyPreview = previewCancellation != nil
         let trackingReady: Bool
         if let frame = cameraView.session.currentFrame, case .normal = frame.camera.trackingState { trackingReady = true }
@@ -193,21 +241,213 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         let ready = recorder.state == .ready && !closing && !busyPreview
         let active = (recorder.state == .capturing || recorder.state == .saving) && recorder.currentStationID != nil && !closing
         let full = (recorder.manifest?.stations.count ?? 0) >= StationCaptureLimits.maximumStations
-        let title = active ? "Save this position early" : full ? "All 8 positions saved" :
-            ((recorder.manifest?.stations.isEmpty ?? true) ? "Scan this position" : "Scan next position")
-        setButton(scan, title: title, enabled: active || (ready && sessionRunning && trackingReady && !full), primary: true)
+        let selected = selectedSuggestion
+        let upright = cameraView.session.currentFrame.map { StationCapturePolicy.canBeginFacingStraightAhead(forwardY: Double(-$0.camera.transform.columns.2.y)) } ?? false
+        let nearSuggested = selected.flatMap { point in
+            cameraView.session.currentFrame.map { RoomScanPlanner.distance(point.position, cameraPosition($0)) <= Self.suggestionArrivalMetres }
+        } ?? true
+        let title: String
+        if active { title = "Capturing automatically…" }
+        else if full { title = "Viewpoint limit reached" }
+        else if !choosingViewpoint { title = "Add another viewpoint (optional)" }
+        else if let selected, !nearSuggested { title = "Move near spot \(selected.number) to start" }
+        else if !upright { title = "Point straight ahead to start" }
+        else if let selected { title = "Spot \(selected.number) is clear — start 38 photos" }
+        else { title = "Use this clear spot — start 38 photos" }
+        setButton(scan, title: title, enabled: ready && sessionRunning && trackingReady && !full && (!choosingViewpoint || (nearSuggested && upright)), primary: true)
+        chooseSpot.isHidden = !ready || !choosingViewpoint || (surveyPlan?.positions.count ?? 0) < 2
+        useCurrentSpot.isHidden = !ready || !choosingViewpoint || surveyPlan == nil || manualSpotChosen
+        setButton(chooseSpot, title: "Choose a suggested spot", enabled: ready && trackingReady)
+        setButton(useCurrentSpot, title: "Use my current clear spot instead", enabled: ready && trackingReady && !full)
         setButton(preview, title: busyPreview ? "Cancel preview" : "Preview this position",
                   enabled: !closing && (busyPreview || (ready && recorder.manifest?.stations.last?.frames.isEmpty == false)))
-        setButton(finish, title: closing ? "Saving your tour…" : "Finish and save", enabled: !closing)
+        preview.isHidden = recorder.manifest?.stations.last?.frames.isEmpty != false && !busyPreview
+        setButton(finish, title: closing ? "Saving your tour…" : active ? "Finish early…" : "Done — save room tour", enabled: !closing)
     }
 
     @objc private func scanTapped() {
-        if recorder.state == .capturing || recorder.state == .saving {
-            recorder.finishStation(); return
-        }
+        guard recorder.state == .ready else { return }
         guard let frame = cameraView.session.currentFrame, previewCancellation == nil else { return }
-        do { try recorder.beginStation(frame: frame) }
-        catch { instruction.text = error.localizedDescription }
+        // A floor observation may invalidate the old suggestion between a
+        // display refresh and a tap. Require the displayed plan to stay current.
+        guard presentedSurveyPlan == surveyPlan else {
+            updateSurveyPresentation(frame: frame); refreshButtons(); return
+        }
+        if !choosingViewpoint {
+            choosingViewpoint = true; manualSpotChosen = false
+            let previous = recorder.manifest?.stations.map(\.origin) ?? []
+            selectedSuggestedNumber = surveyPlan?.positions.first { point in previous.allSatisfy { RoomScanPlanner.distance($0, point.position) > 0.75 } }?.number
+            updateSurveyPresentation(frame: frame); refreshButtons(); return
+        }
+        if let selected = selectedSuggestion, RoomScanPlanner.distance(selected.position, cameraPosition(frame)) > Self.suggestionArrivalMetres { return }
+        beginFromCurrentSpot(frame)
+    }
+
+    private func beginFromCurrentSpot(_ frame: ARFrame) {
+        guard !closing, recorder.state == .ready, previewCancellation == nil,
+              case .normal = frame.camera.trackingState else { return }
+        do {
+            try recorder.beginStation(frame: frame)
+            surveyFrozen = true; choosingViewpoint = false
+            hideFloorMarkers()
+            refreshButtons()
+        } catch { instruction.text = error.localizedDescription }
+    }
+
+    @objc private func useCurrentSpotTapped() {
+        guard choosingViewpoint, let frame = cameraView.session.currentFrame else { return }
+        selectedSuggestedNumber = nil; manualSpotChosen = true
+        if StationCapturePolicy.canBeginFacingStraightAhead(forwardY: Double(-frame.camera.transform.columns.2.y)) { beginFromCurrentSpot(frame) }
+        else { updateSurveyPresentation(frame: frame); refreshButtons() }
+    }
+
+    @objc private func chooseSpotTapped() {
+        guard recorder.state == .ready, choosingViewpoint, let plan = surveyPlan,
+              let frame = cameraView.session.currentFrame else { return }
+        let alert = UIAlertController(title: "Suggested standing spots", message: "Choose a spot only if the floor and your way there are clear. These are suggestions from visible floor, not a checked walking route.", preferredStyle: .actionSheet)
+        for point in plan.positions {
+            let distance = RoomScanPlanner.distance(point.position, cameraPosition(frame))
+            alert.addAction(UIAlertAction(title: "Spot \(point.number) · about \(String(format: "%.1f", distance)) m away", style: .default) { [weak self] _ in
+                guard let self, !self.closing, self.recorder.state == .ready, self.surveyPlan == plan else { return }
+                self.manualSpotChosen = false
+                self.selectedSuggestedNumber = point.number
+                self.updateSurveyPresentation(frame: self.cameraView.session.currentFrame); self.refreshButtons()
+            })
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        alert.popoverPresentationController?.sourceView = chooseSpot
+        alert.popoverPresentationController?.sourceRect = chooseSpot.bounds
+        present(alert, animated: true)
+    }
+
+    @objc private func floorMarkerTapped(_ marker: UIButton) {
+        guard recorder.state == .ready, choosingViewpoint, surveyPlan?.positions.contains(where: { $0.number == marker.tag }) == true else { return }
+        manualSpotChosen = false
+        selectedSuggestedNumber = marker.tag
+        updateSurveyPresentation(frame: cameraView.session.currentFrame); refreshButtons()
+    }
+
+    private var selectedSuggestion: RoomScanSuggestedPosition? {
+        surveyPlan?.positions.first { $0.number == selectedSuggestedNumber }
+    }
+    private func cameraPosition(_ frame: ARFrame) -> [Double] {
+        let value = frame.camera.transform.columns.3
+        return [Double(value.x), Double(value.y), Double(value.z)]
+    }
+
+    private func observeRoomSurvey(_ frame: ARFrame) {
+        guard !surveyFrozen else { return }
+        guard case .normal = frame.camera.trackingState else {
+            survey.reset(); surveyPlan = nil; selectedSuggestedNumber = nil; lastSurveyPlaneID = nil
+            hideFloorMarkers(); return
+        }
+        guard frame.timestamp - lastSurveyTime >= 1, presentedViewController == nil else { return }
+        lastSurveyTime = frame.timestamp
+        let camera = cameraPosition(frame)
+        // A horizontal table is not a floor. Unclassified/unsupported geometry
+        // uses the explicit manual fallback instead of inventing a room plan.
+        let floors = frame.anchors.compactMap { $0 as? ARPlaneAnchor }
+            .filter { $0.alignment == .horizontal && $0.classification == .floor }
+            .sorted { $0.planeExtent.width * $0.planeExtent.height > $1.planeExtent.width * $1.planeExtent.height }
+        var observation: (id: String, boundary: [[Double]])?
+        for anchor in floors.prefix(8) {
+            let vertices = anchor.geometry.boundaryVertices
+            guard (3...64).contains(vertices.count) else { continue }
+            let boundary = vertices.map { vertex -> [Double] in
+                let world = anchor.transform * SIMD4<Float>(vertex, 1)
+                return [Double(world.x), Double(world.y), Double(world.z)]
+            }
+            guard RoomScanPlanner.plan(boundary: boundary, cameraPosition: camera) != nil else { continue }
+            observation = (anchor.identifier.uuidString, boundary); break
+        }
+        guard let observation else {
+            survey.reset(); surveyPlan = nil; selectedSuggestedNumber = nil; lastSurveyPlaneID = nil
+            hideFloorMarkers(); return
+        }
+        if lastSurveyPlaneID != observation.id {
+            survey.reset(); surveyPlan = nil; selectedSuggestedNumber = nil
+            lastSurveyPlaneID = observation.id
+        }
+        if let plan = survey.observe(planeID: observation.id, boundary: observation.boundary,
+                                     cameraPosition: camera, timestamp: frame.timestamp) {
+            surveyPlan = plan
+            if !manualSpotChosen, !plan.positions.contains(where: { $0.number == selectedSuggestedNumber }) {
+                selectedSuggestedNumber = plan.positions.first?.number
+            }
+        } else {
+            // Same-anchor area/centre changes also restart stability. A prior
+            // suggestion must not remain selectable during the next two seconds.
+            surveyPlan = nil; selectedSuggestedNumber = nil; hideFloorMarkers()
+        }
+    }
+
+    private func updateSurveyPresentation(frame: ARFrame?) {
+        target.isHidden = true; reticle.isHidden = true; progress.isHidden = true
+        if manualSpotChosen {
+            heading.text = "Use your current clear spot"
+            instruction.text = "Keep the lens over this spot for all 38 automatic photos. Turn around the phone, rather than swinging it around your body."
+            direction.text = "Hold the phone upright at chest height and point straight ahead, then tap Start."
+        } else if let plan = surveyPlan {
+            heading.text = "Choose a clear spot · \(plan.positions.count) suggested"
+            instruction.text = "Purple numbers mark suggested standing spots. Check for furniture and a clear way there before moving. One complete viewpoint may be enough."
+            if let selected = selectedSuggestion, let frame {
+                let distance = RoomScanPlanner.distance(selected.position, cameraPosition(frame))
+                direction.text = distance <= Self.suggestionArrivalMetres
+                    ? "Near spot \(selected.number). Hold the phone upright, point straight ahead and start when the spot is clear."
+                    : "Spot \(selected.number) · about \(String(format: "%.1f", distance)) m away. Point toward the floor to find its marker."
+            } else {
+                direction.text = "Choose another suggested spot, or use your current clear spot."
+            }
+        } else {
+            heading.text = surveyFrozen ? "Choose another clear spot" : "Look around the room"
+            instruction.text = surveyFrozen
+                ? "Move to a clear spot that shows an area hidden from your first viewpoint. Keep some of the same room in view."
+                : "Slowly look toward the floor and around the room. The app can suggest standing spots when it recognizes a steady floor outline."
+            direction.text = "No reliable floor suggestions yet. You can choose a clear spot near the center and start there."
+        }
+        if let frame { updateFloorMarkers(frame) }
+        else { hideFloorMarkers() }
+    }
+
+    private func hideFloorMarkers() { for marker in floorMarkers.values { marker.isHidden = true } }
+
+    private func updateFloorMarkers(_ frame: ARFrame) {
+        hideFloorMarkers()
+        guard choosingViewpoint, !manualSpotChosen, recorder.state == .ready, case .normal = frame.camera.trackingState,
+              let plan = surveyPlan else { return }
+        let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
+        let matrix = frame.camera.viewMatrix(for: orientation)
+        for point in plan.positions {
+            let marker: UIButton
+            if let existing = floorMarkers[point.number] { marker = existing }
+            else {
+                marker = UIButton(type: .system); marker.tag = point.number
+                marker.bounds = CGRect(x: 0, y: 0, width: 48, height: 48)
+                marker.layer.cornerRadius = 24; marker.backgroundColor = UIColor(Theme.accent)
+                marker.setTitleColor(.white, for: .normal)
+                marker.titleLabel?.font = .systemFont(ofSize: 22, weight: .bold)
+                marker.setTitle(String(point.number), for: .normal)
+                marker.accessibilityLabel = "Suggested standing spot \(point.number)"
+                marker.accessibilityIdentifier = "panorama.suggestedSpot.\(point.number)"
+                marker.addTarget(self, action: #selector(floorMarkerTapped(_:)), for: .touchUpInside)
+                view.insertSubview(marker, belowSubview: controlScroll)
+                floorMarkers[point.number] = marker
+            }
+            marker.layer.borderWidth = point.number == selectedSuggestedNumber ? 3 : 0
+            marker.layer.borderColor = UIColor.white.cgColor
+            let world = SIMD3<Float>(Float(point.position[0]), Float(point.position[1] + 0.03), Float(point.position[2]))
+            let local = matrix * SIMD4<Float>(world, 1)
+            let pixel = frame.camera.projectPoint(world, orientation: orientation, viewportSize: cameraView.bounds.size)
+            guard local.z < -0.05, cameraView.bounds.insetBy(dx: 26, dy: 26).contains(pixel) else {
+                if point.number == selectedSuggestedNumber,
+                   RoomScanPlanner.distance(point.position, cameraPosition(frame)) > Self.suggestionArrivalMetres {
+                    let cue = StationCapturePolicy.aimDirection(viewVector: [Double(local.x), Double(local.y), Double(local.z)], angularErrorDegrees: nil)?.instruction ?? "Point toward the floor"
+                    direction.text = cue + " to see spot \(point.number). Check the floor before moving."
+                }
+                continue
+            }
+            marker.center = cameraView.convert(pixel, to: view); marker.isHidden = false
+        }
     }
 
     @objc private func previewTapped() {
@@ -249,7 +489,19 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         }
     }
 
-    @objc private func finishTapped() { end(reason: nil) }
+    @objc private func finishTapped() {
+        guard !closing, !confirmingEarlyFinish else { return }
+        guard recorder.currentStationID != nil else { end(reason: nil); return }
+        confirmingEarlyFinish = true
+        let saved = update?.savedTargets ?? 0
+        let alert = UIAlertController(title: "Save an incomplete viewpoint?",
+            message: "Only \(saved) of 38 photos are saved from this spot. Missing directions will remain blank. Keep scanning to finish the room view.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Keep scanning", style: .cancel) { [weak self] _ in self?.confirmingEarlyFinish = false })
+        alert.addAction(UIAlertAction(title: "Save with missing coverage", style: .default) { [weak self] _ in
+            self?.confirmingEarlyFinish = false; self?.end(reason: nil)
+        })
+        present(alert, animated: true)
+    }
     @objc private func backgrounded() {
         if backgroundTask == .invalid {
             backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Save room tour") { [weak self] in self?.endBackgroundTask() }
@@ -309,25 +561,45 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         if case .limited(.relocalizing) = frame.camera.trackingState {
             end(reason: "Camera tracking restarted. Saved positions are safe; start a new tour for further scanning."); return
         }
+        guard !confirmingEarlyFinish else { return }
+        observeRoomSurvey(frame)
         recorder.process(frame: frame)
         guard frame.timestamp - lastGuidanceTime >= 0.1 else { return }
         lastGuidanceTime = frame.timestamp
         refreshButtons()
+        if recorder.state == .ready, choosingViewpoint {
+            updateSurveyPresentation(frame: frame)
+            return
+        }
         guard recorder.state == .capturing, let vector = update?.targetDirection, vector.count == 3,
               let station = recorder.manifest?.stations.last else { target.isHidden = true; return }
-        let world = SIMD3<Float>(Float(station.origin[0] + vector[0] * 2), Float(station.origin[1] + vector[1] * 2), Float(station.origin[2] + vector[2] * 2))
         let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
-        let local = frame.camera.viewMatrix(for: orientation) * SIMD4<Float>(world, 1)
+        let viewMatrix = frame.camera.viewMatrix(for: orientation)
+        let origin = frame.camera.transform.columns.3
+        if update?.guidanceMode == .returnToPivot {
+            target.isHidden = true
+            let offset = SIMD4<Float>(Float(station.origin[0]) - origin.x, Float(station.origin[1]) - origin.y, Float(station.origin[2]) - origin.z, 0)
+            let localOffset = viewMatrix * offset
+            direction.text = StationCapturePolicy.returnInstruction(viewOffset: [Double(localOffset.x), Double(localOffset.y), Double(localOffset.z)]) ?? "Bring the lens back to its starting spot"
+            return
+        }
+        guard update?.guidanceMode == .aim || update?.guidanceMode == .steady else { target.isHidden = true; direction.text = "Hold still while camera tracking settles"; return }
+        // Admission tests the orientation-only ray. Project that same ray from
+        // the current camera, so the purple target and acceptance cannot disagree
+        // because of camera translation. Pivot correction is a separate cue above.
+        let world = SIMD3<Float>(origin.x + Float(vector[0] * 2), origin.y + Float(vector[1] * 2), origin.z + Float(vector[2] * 2))
+        let local = viewMatrix * SIMD4<Float>(Float(vector[0]), Float(vector[1]), Float(vector[2]), 0)
         let projected = frame.camera.projectPoint(world, orientation: orientation, viewportSize: cameraView.bounds.size)
         let visible = local.z < 0 && cameraView.bounds.insetBy(dx: 28, dy: 28).contains(projected)
         target.isHidden = !visible
         if visible {
-            target.center = projected
-            direction.text = "Center the target, then hold still for the photo."
-        } else if abs(local.y) > abs(local.x), abs(local.y) > 0.2 {
-            direction.text = local.y > 0 ? "↑ Tilt up toward the target" : "↓ Tilt down toward the target"
+            target.center = cameraView.convert(projected, to: view)
+        }
+        if update?.guidanceMode == .steady {
+            direction.text = "Hold still · \(Int((update?.steadyProgress ?? 0) * 100))%"
         } else {
-            direction.text = local.x > 0 ? "→ Turn right toward the target" : "← Turn left toward the target"
+            direction.text = StationCapturePolicy.captureAimDirection(cameraToWorld: CaptureGeometry.rows(frame.camera.transform), targetDirection: vector,
+                                                                      angularErrorDegrees: update?.angularErrorDegrees)?.instruction ?? "Follow the next target"
         }
     }
 

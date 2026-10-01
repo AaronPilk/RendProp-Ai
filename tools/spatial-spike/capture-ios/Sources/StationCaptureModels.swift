@@ -20,6 +20,18 @@ struct StationCaptureTarget: Codable, Equatable {
     let pitch_degrees: Double
     let instruction: String
 
+    // Presentation is computed separately from the persisted v1 targets. Changing
+    // their stored instruction strings would invalidate existing local archives.
+    var phaseTitle: String {
+        if id.hasPrefix("middle-") { return "Walls" }
+        if id.hasPrefix("upper-") { return "Upper walls" }
+        if id.hasPrefix("lower-") { return "Lower walls" }
+        return id == "ceiling" ? "Ceiling" : "Floor"
+    }
+    var phasePhotoNumber: Int { index < 36 ? index % 12 + 1 : 1 }
+    var phasePhotoCount: Int { index < 36 ? 12 : 1 }
+    var progressTitle: String { "\(phaseTitle) · photo \(phasePhotoNumber) of \(phasePhotoCount)" }
+
     static let standard: [StationCaptureTarget] = {
         var targets: [StationCaptureTarget] = []
         for (ring, pitch, instruction) in [("middle", 0.0, "Turn slowly to the left"),

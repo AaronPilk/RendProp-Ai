@@ -5,7 +5,13 @@ is integrated into the app's explicit TestFlight overlay. Its `StationCapture*`
 archive and `Panorama*` preview sources are excluded from this older standalone
 diagnostic target. Walking archives and station archives remain distinct; neither
 is silently converted into the other's upload format. Run `verify-station.sh`
-and `verify-panorama.sh` for their synthetic software checks.
+and `verify-panorama.sh` for their synthetic software checks. The
+[room-guidance update](../../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
+adds `RoomScanPlanner.swift` and `PanoramaNavigationPolicy.swift` to the explicit
+TestFlight overlay: observed-floor standing suggestions, clearer automatic
+38-photo progress and photographed saved-view markers. Run
+`bash verify-room-guidance.sh` for its 70 geometry/stability/navigation checks.
+Suggestions are not measured room boundaries or furniture-aware routes.
 
 This local capture implementation supplies the input for the one-room spatial
 spike. The owner chose delivery inside the existing Rendprop TestFlight app

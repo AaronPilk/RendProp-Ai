@@ -10,12 +10,12 @@ import {
   timelineDuration,
   validateDraft,
   type EditDraft,
+  type EditClip,
 } from "./model";
 import {
   awaitMediaOperation,
   decodeMedia,
   drawFrame,
-  nextFrame,
   seekMedia,
   throwIfAborted,
   waitForEvent,
@@ -72,6 +72,28 @@ export function exportFormats(): ExportFormat[] {
 
 export function supportsOriginalAudio(): boolean {
   return typeof AudioContext !== "undefined";
+}
+
+// Animation callbacks can arrive after a segment's deadline, and their supplied
+// timestamp can precede delivery. Bound the wait by the segment deadline and
+// the existing 30 fps capture interval; use the current clock at delivery.
+export function nextExportFrame(signal: AbortSignal, remainingMs: number): Promise<number> {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      signal.removeEventListener("abort", aborted);
+    };
+    const done = () => { cleanup(); resolve(performance.now()); };
+    const aborted = () => {
+      cleanup();
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException("Operation cancelled.", "AbortError"));
+    };
+    const frame = requestAnimationFrame(done);
+    const timer = setTimeout(done, Math.max(1, Math.min(remainingMs, 1000 / 30)));
+    signal.addEventListener("abort", aborted, { once: true });
+  });
 }
 
 /** A real-time local draft export; its bytes are not the canonical server artifact. */
@@ -152,6 +174,29 @@ export async function exportLocalVideo(options: {
   const previous = document.createElement("canvas"); Object.assign(previous, renderDimensions(draft.ratio));
   let hasPrevious = false;
   let decoded: DecodedMedia | undefined;
+  type Prepared = { media: DecodedMedia } | { error: unknown };
+  let lookahead: { result?: Prepared; settled: Promise<Prepared> } | undefined;
+  const prepare = (clip: EditClip) => {
+    const task: NonNullable<typeof lookahead> = { settled: undefined! };
+    task.settled = (async () => {
+      const ready = await decodeMedia(media.get(clip.id)!.url, clip.source.kind, renderSignal);
+      try {
+        if (ready.element instanceof HTMLVideoElement) {
+          await seekMedia(ready.element, clip.start, renderSignal);
+          ready.element.playbackRate = clip.speed ?? 1;
+        }
+        throwIfAborted(renderSignal);
+        return ready;
+      } catch (error) {
+        ready.dispose();
+        throw error;
+      }
+    })().then(
+      media => (task.result = { media }),
+      error => (task.result = { error }),
+    );
+    return task;
+  };
   let stopped: Promise<void> | undefined;
   const chunks: Blob[] = [];
   let outputBytes = 0;
@@ -221,20 +266,32 @@ export async function exportLocalVideo(options: {
     });
     let elapsedBefore = 0;
     let lastProgressAt = 0;
-    for (const clip of draft.clips) {
+    // Keep only the current source and one decoded/seeked successor. Prepare
+    // the first pair before recording so even a short opening photo provides
+    // its full intended span without a cold decoder gap at the next boundary.
+    lookahead = prepare(draft.clips[0]);
+    await lookahead.settled;
+    for (const [index, clip] of draft.clips.entries()) {
       assertCurrentRevision(draft, currentDraft(), renderSignal);
-      decoded = await decodeMedia(
-        media.get(clip.id)!.url,
-        clip.source.kind,
-        renderSignal,
-      );
+      if (!lookahead?.result)
+        throw new Error("The browser could not prepare the next clip in time. Close other busy tabs and retry, or use a smaller edit.");
+      const prepared = lookahead.result;
+      lookahead = undefined;
+      if ("error" in prepared) throw prepared.error;
+      decoded = prepared.media;
+      const next = draft.clips[index + 1];
+      if (next) {
+        lookahead = prepare(next);
+        if (index === 0) {
+          const preparedNext = await lookahead.settled;
+          if ("error" in preparedNext) throw preparedNext.error;
+        }
+      }
       const video =
         decoded.element instanceof HTMLVideoElement
           ? decoded.element
           : undefined;
       if (video) {
-        await seekMedia(video, clip.start, renderSignal);
-        video.playbackRate = clip.speed ?? 1;
         if (originalAudio && audio && destination) {
           audioSource = audio.createMediaElementSource(video);
           originalGain = audio.createGain(); originalGain.gain.value = 1;
@@ -291,7 +348,10 @@ export async function exportLocalVideo(options: {
       const duration = clipDuration(clip);
       while (true) {
         assertCurrentRevision(draft, currentDraft(), renderSignal);
-        const now = await nextFrame(renderSignal);
+        const elapsedAtWait = video
+          ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
+          : (performance.now() - start) / 1000;
+        const now = await nextExportFrame(renderSignal, (duration - elapsedAtWait) * 1000);
         const elapsed = video
           ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
           : (now - start) / 1000;
@@ -319,7 +379,8 @@ export async function exportLocalVideo(options: {
         }
         if (elapsed >= duration || video?.ended) break;
       }
-      // Pausing recording while loading the next source keeps decoder setup out of the edit.
+      // The successor is already prepared. MediaRecorder pause notifications do
+      // not guarantee that MP4 timestamps exclude a long decoder setup gap.
       const paused = waitForEvent(recorder, "pause", renderSignal);
       recorder.pause();
       await paused;
@@ -372,6 +433,14 @@ export async function exportLocalVideo(options: {
     signal.removeEventListener("abort", forwardAbort);
     document.removeEventListener("visibilitychange", hidden);
     decoded?.dispose();
+    // A pending decoder must not outlive cancellation, a stale revision, or a
+    // failed export. Its rejection is retained above until consumed, and a
+    // successfully prepared successor is always disposed if never consumed.
+    controller.abort();
+    if (lookahead) {
+      const prepared = await lookahead.settled;
+      if ("media" in prepared) prepared.media.dispose();
+    }
     audioSource?.disconnect();
     originalGain?.disconnect(); voiceSource?.stop(); voiceSource?.disconnect(); voiceGain?.disconnect();
     musicSource?.stop(); musicSource?.disconnect(); musicGain?.disconnect();

@@ -30,6 +30,64 @@ func ready(_ policy: inout StationCapturePolicy, matrix: [[Double]], start: Doub
 check(StationCaptureTarget.standard.count == 38, "the provisional plan has 38 distinct directions")
 check(Set(StationCaptureTarget.standard.map(\.id)).count == 38, "target identifiers are unique")
 check(StationCaptureTarget.standard.map(\.index) == Array(0..<38), "target order is contiguous")
+check(StationCapturePolicy.canBeginFacingStraightAhead(forwardY: 0.49), "slight pitch can start the first target")
+check(!StationCapturePolicy.canBeginFacingStraightAhead(forwardY: 0.5) && !StationCapturePolicy.canBeginFacingStraightAhead(forwardY: -0.5),
+      "floor survey must hand off to the same straight-ahead gate used by the recorder")
+check(!StationCapturePolicy.canBeginFacingStraightAhead(forwardY: .nan), "invalid pose cannot enable start")
+for (index, phase, number, count) in [(0, "Walls", 1, 12), (11, "Walls", 12, 12),
+                                    (12, "Upper walls", 1, 12), (23, "Upper walls", 12, 12),
+                                    (24, "Lower walls", 1, 12), (35, "Lower walls", 12, 12),
+                                    (36, "Ceiling", 1, 1), (37, "Floor", 1, 1)] {
+    let target = StationCaptureTarget.standard[index]
+    check(target.phaseTitle == phase && target.phasePhotoNumber == number && target.phasePhotoCount == count,
+          "ring presentation resets its local count at each actual target boundary")
+}
+check(StationCaptureTarget.standard[0].instruction == "Turn slowly to the left", "legacy archive target text is preserved; presentation does not mutate v1 targets")
+let aiming = StationCapturePolicy.aimDirection
+check(aiming([-0.5, 0, -sqrt(0.75)], nil) == .left, "target to displayed left requests a left turn")
+check(aiming([0.5, 0, -sqrt(0.75)], nil) == .right, "overshooting left reverses guidance to right")
+check(aiming([0, 0.5, -sqrt(0.75)], nil) == .up, "target above requires tilt, not turning")
+check(aiming([0, -0.5, -sqrt(0.75)], nil) == .down, "target below requires downward tilt")
+check(aiming([0, 0, 1], nil) == .left, "directly behind has stable counterclockwise guidance")
+check(aiming([0, 0, -1], nil) == .centered, "first centered target never incorrectly tells the operator to turn left")
+check(aiming([0.02, 0, -1], 2) == .centered, "aim feedback uses the same angular acceptance tolerance")
+check(aiming([Double.nan, 0, -1], nil) == nil && aiming([0, 0, 0], nil) == nil,
+      "invalid vectors cannot produce a direction cue")
+check(aiming([1e308, 0, -1], nil) == nil && aiming([0, 0, -1], Double.nan) == nil,
+      "overflow or invalid admission error is not presented as valid guidance")
+func captureAim(yaw: Double = 0, pitch: Double = 0, targetYaw: Double = 0, targetPitch: Double = 0) -> StationCapturePolicy.AimDirection? {
+    StationCapturePolicy.captureAimDirection(cameraToWorld: pose(yaw: yaw, pitch: pitch),
+                                            targetDirection: StationCapturePolicy.pose(pose(yaw: targetYaw, pitch: targetPitch))!.forward,
+                                            angularErrorDegrees: nil)
+}
+check(captureAim(targetYaw: -30) == .left, "actual capture cue follows the next counterclockwise target")
+check(captureAim(yaw: -40, targetYaw: -30) == .right, "actual capture cue reverses after overshooting left")
+check(captureAim(yaw: 359, targetYaw: 9) == .right && captureAim(yaw: 1, targetYaw: 351) == .left,
+      "gravity heading wraps across zero in the shorter direction")
+check(captureAim(yaw: 359, targetYaw: -1) == .centered, "capture cue agrees with admission across heading wrap")
+check(captureAim(pitch: 90, targetPitch: -90) == .down, "ceiling to floor must tilt down, never spin left indefinitely")
+check(captureAim(pitch: -90, targetPitch: 90) == .up, "floor to ceiling must tilt up")
+check(captureAim(pitch: 50, targetPitch: -50) == .down, "upper to lower ring behind camera requires downward pitch")
+check(captureAim(pitch: -50, targetPitch: 50) == .up, "lower to upper ring behind camera requires upward pitch")
+check(captureAim(yaw: 170, pitch: 89, targetYaw: -170, targetPitch: -50) == .down,
+      "near-pole heading noise does not replace the needed tilt")
+check(captureAim(yaw: 90, pitch: 50, targetYaw: -90, targetPitch: 50) == .left,
+      "opposite same-ring heading uses a stable counterclockwise turn")
+check(captureAim(pitch: 84, targetPitch: 90) == .up && captureAim(pitch: -84, targetPitch: -90) == .down,
+      "pole targets always give the appropriate tilt")
+check(StationCapturePolicy.captureAimDirection(cameraToWorld: [], targetDirection: [0, 0, -1], angularErrorDegrees: nil) == nil,
+      "capture cue refuses an invalid camera matrix")
+check(StationCapturePolicy.captureAimDirection(cameraToWorld: pose(), targetDirection: [0, 0, 0], angularErrorDegrees: nil) == nil &&
+      StationCapturePolicy.captureAimDirection(cameraToWorld: pose(), targetDirection: [1e308, 0, -1], angularErrorDegrees: nil) == nil,
+      "capture cue refuses zero and overflowing target vectors")
+check(StationCapturePolicy.captureAimDirection(cameraToWorld: pose(), targetDirection: [0, 0, -1], angularErrorDegrees: .nan) == nil,
+      "capture cue refuses invalid admission error")
+check(StationCapturePolicy.returnInstruction(viewOffset: [-0.12, 0, 0]) == "Move the phone about 12 cm left", "pivot correction asks for translation separately from turn")
+check(StationCapturePolicy.returnInstruction(viewOffset: [0, 0.15, 0]) == "Move the phone about 15 cm up", "pivot height drift asks to raise the phone")
+check(StationCapturePolicy.returnInstruction(viewOffset: [0, 0, -0.2]) == "Move the phone about 20 cm away from you", "negative view z means forward translation")
+check(StationCapturePolicy.returnInstruction(viewOffset: [0, 0, 0.2]) == "Move the phone about 20 cm toward you", "positive view z means backward translation")
+check(StationCapturePolicy.returnInstruction(viewOffset: [0, 0, 0]) == nil && StationCapturePolicy.returnInstruction(viewOffset: [1e308, 0, 0]) == nil,
+      "zero and overflowing displacement never create misleading centimetre cues")
 for target in StationCaptureTarget.standard {
     let d = target.direction(referenceYawDegrees: 123)
     check(abs(d.reduce(0) { $0 + $1 * $1 } - 1) < 1e-12, "target \(target.id) is unit length including poles")
@@ -39,6 +97,8 @@ check(!policy.beginWrite(), "a target cannot be admitted without measured steady
 check(ready(&policy, matrix: pose()).readyToCapture, "steady target is admitted after dwell")
 check(policy.completedCount == 0, "admission alone never claims a durable photo")
 check(policy.beginWrite() && !policy.beginWrite(), "one target write at a time")
+check(policy.evaluate(timestamp: 0.5, cameraToWorld: pose(), normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0).mode == .saving,
+      "pending write presents saving rather than requesting another turn")
 check(!policy.finishWrite(targetID: "wrong", succeeded: true), "a stale or wrong target completion cannot advance progress")
 check(policy.completedCount == 0 && policy.writeInFlight, "mismatched completion preserves pending write")
 check(policy.finishWrite(targetID: "middle-0", succeeded: false), "failed write can clear pending target")
@@ -52,7 +112,16 @@ let wrapResult = ready(&wrapped, matrix: pose(yaw: -1))
 check(wrapResult.readyToCapture && (wrapResult.angularErrorDegrees ?? 99) < 0.001, "359 and −1 degrees are the same target")
 var drifted = StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0)
 check(!ready(&drifted, matrix: pose(x: 0.101)).readyToCapture, "more than 10 cm pivot drift rejects a target")
-check(ready(&drifted, matrix: pose(x: 0.10), start: 1).readyToCapture, "the documented pivot boundary is accepted")
+check(ready(&drifted, matrix: pose(x: 0.2), start: 1).mode == .returnToPivot,
+      "displaced but perfectly aimed phone must get pivot correction instead of centered-target encouragement")
+check(ready(&drifted, matrix: pose(x: 0.10), start: 2).readyToCapture, "the documented pivot boundary is accepted")
+var dwelling = StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0)
+_ = dwelling.evaluate(timestamp: 0, cameraToWorld: pose(), normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0)
+let halfway = dwelling.evaluate(timestamp: 0.1, cameraToWorld: pose(), normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0)
+check(halfway.mode == .steady && halfway.steadyProgress > 0 && halfway.steadyProgress < 1 && !halfway.readyToCapture,
+      "dwell indicator reports actual partial steady time without claiming a saved photo")
+let moved = dwelling.evaluate(timestamp: 0.2, cameraToWorld: pose(yaw: 30), normalTracking: true, motionBlurAcceptable: true, angularSpeedDegreesPerSecond: 0)
+check(moved.mode == .aim && moved.steadyProgress == 0, "moving away from target clears dwell progress")
 var invalid = pose(); invalid[0][0] = .nan
 check(!StationCapturePolicy(origin: [0, 0, 0], referenceYawDegrees: 0).isComplete, "empty progress is incomplete")
 check(StationCapturePolicy.pose(invalid) == nil, "nonfinite pose is rejected")

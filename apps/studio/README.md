@@ -6,6 +6,25 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
+The [photo-delivery update](../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
+adds **Download photo/photos** in AI Photo Studio, with clean MLS JPEGs, labelled
+web/social JPEGs, unchanged verified originals and disclosure captions in a ZIP.
+Default export keeps source framing/full available output; optional crops have
+a preview. Declutter → stage → restyle uses the correct current/pre-staging image.
+Pre-staging history lasts during the open Studio session; it is not yet a shared
+native/desktop version-history contract. This release is live on worker version
+`70d092cd-0a7b-41d3-bc3f-16743907a4c5`; all 30 application assets match source
+`0e7c78c`, which passed all 12 CI jobs. See the
+[delivery receipt](../../docs/releases/TESTFLIGHT-36-20261001.json).
+
+Video export now prepares one source ahead and bounds frame waits by the segment
+deadline and existing 30 fps capture interval. Actual MP4/AAC checks under delayed
+callbacks preserve full source playback, transitions and audio without widening
+acceptance bounds. A fully blocked browser thread remains outside that recovery.
+
+`node tests/photo-delivery-browser.mjs` verifies actual photo UI, canvas JPEGs and
+ZIP downloads using isolated synthetic provider replies; no paid generation.
+
 The [1 October core release](../../docs/handoff/CORE-READINESS-20261001.md) is
 live: rejected project creation/copy keeps the current edit, empty drafts no
 longer create phantom recovery prompts, and billing copy explains subscription
