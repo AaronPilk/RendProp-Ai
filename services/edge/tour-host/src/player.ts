@@ -757,7 +757,7 @@ function renderLeadForm(tour: Tour, turnstileSiteKey = "", opts: LeadFormOpts = 
   // submit handler forwards to /leads as `turnstile_token`.
   const turnstile = turnstileSiteKey
     ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-       <div class="cf-turnstile" data-sitekey="${escapeAttr(turnstileSiteKey)}" data-theme="auto" data-size="flexible"></div>`
+       <div class="cf-turnstile" data-sitekey="${escapeAttr(turnstileSiteKey)}" data-theme="auto" data-size="compact"></div>`
     : "";
 
   const base = emailOnly
