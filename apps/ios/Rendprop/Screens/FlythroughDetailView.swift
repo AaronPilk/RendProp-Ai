@@ -3599,6 +3599,16 @@ struct PhotoStudioView: View {
     /// (W2-C4). Not persisted: the durable copy is the provenance row, which the
     /// listing's COMPLIANCE card reads back from the server.
     @State private var editDisclosures: [String: String] = [:]
+    /// For a staged photo, the image its staging started from — normally the
+    /// decluttered room. Picking a second style restyles from here instead of
+    /// asking the model to furnish a room that is already furnished.
+    ///
+    /// Session-scoped on purpose. Nothing on disk records which edit produced a
+    /// file (`loadAll` reads the enh-/orig- filename convention and nothing
+    /// else), and a sidecar just for this is not worth the format. After a
+    /// relaunch this is empty and a restyle chains like any other edit, which is
+    /// exactly what it did before this existed.
+    @State private var stageBases: [String: URL] = [:]
     /// A photo waiting on the "this original backs a published disclosure"
     /// confirmation before it is deleted (W2-C3).
     @State private var pendingPhotoDelete: EnhancedPhoto?
@@ -3983,7 +3993,7 @@ struct PhotoStudioView: View {
             Button(EditWords.animate) { animate(p) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Each change saves as a new photo. The original stays, and the change is disclosed on your tour.")
+            Text("Each change replaces the photo here and builds on the last one — declutter first, then add furniture. Tap any photo to see its before, and every change is disclosed on your tour.")
         }
         // W2-C3: a photo's "before" is the file a published disclosure's
         // "View original" points at. Never destroy it without asking.
@@ -4291,7 +4301,14 @@ struct PhotoStudioView: View {
                              style: String?, prompt: String?) async throws -> EnhancedPhoto {
         let api = model.api          // snapshot on the main actor
         let targetDir = dir
-        let source = p.enhancedURL
+        // Edits CHAIN — each one works on the photo as it looks now. That is what
+        // makes declutter-then-stage furnish a clean room instead of arranging a
+        // sofa around someone's laundry.
+        //
+        // Staging is the one exception: staging an already-staged photo asks the
+        // model to put furniture on top of furniture, so a restyle reruns from
+        // the image the first staging started from.
+        let source = (edit == "stage" ? stageBases[p.id] : nil) ?? p.enhancedURL
         // The unaltered "before" we publish for disclosure. `originalURL` is the
         // camera/ingest original when one exists; for an already-AI-edited photo
         // it is that edit's own recorded source. Never a different photo's file.
@@ -4359,8 +4376,40 @@ struct PhotoStudioView: View {
             ? beforeURL : outURL
 
         let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
-        photos.insert(newPhoto, at: 0)
         if let disclosure = result.disclosure, !disclosure.isEmpty { editDisclosures[id] = disclosure }
+        // Remember what this staging started from, so a second style restyles the
+        // room rather than furnishing the furniture.
+        if edit == "stage" { stageBases[id] = source }
+
+        // SUPERSEDE, don't accumulate. An edit produces the version that belongs
+        // on the tour, so it takes the source photo's place in the grid instead of
+        // sitting next to it. Two reasons beyond tidiness: staging is only as good
+        // as its input, so the decluttered room has to be what the stager sees
+        // next; and a grid holding both versions is a grid where the worse one can
+        // reach the listing.
+        //
+        // Nothing is lost. orig-<newid>.jpg holds the source's own pixels (copied
+        // just above), so before/after compare and the AB 723 "View original" link
+        // keep working, and the camera original stays on disk untouched.
+        //
+        // The enh- file goes with the grid entry. The grid is rebuilt from disk
+        // (loadExisting -> loadAll, which globs enh-*), so dropping the photo from
+        // the array alone would resurrect the pre-edit version on the next launch.
+        if let idx = photos.firstIndex(where: { $0.id == p.id }) {
+            let supersededWasMain = isMain(p)
+            photos[idx] = newPhoto
+            ImageThumbnails.invalidate(p.enhancedURL)
+            try? FileManager.default.removeItem(at: p.enhancedURL)
+            editDisclosures.removeValue(forKey: p.id)
+            stageBases.removeValue(forKey: p.id)
+            // Re-point the cover at the version that survived, or the listing is
+            // left pointing at a file that no longer exists.
+            if supersededWasMain {
+                model.setMainPhoto(FileStore.relativePath(for: newPhoto.enhancedURL), for: listing.id)
+            }
+        } else {
+            photos.insert(newPhoto, at: 0)   // source already gone (deleted mid-edit)
+        }
         // METERED PER PHOTO, because it is charged per photo. `batch` says how
         // it was reached; the event, and everything else about it, is the one
         // `ai_photo_edit` a single wand tap has always sent.

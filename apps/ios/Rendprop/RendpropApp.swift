@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import AuthenticationServices
 import AVFoundation
 // StoreKit is used for two things: `Storefront.current.countryCode` (see
 // `Storefronts` at the bottom of this file) and the in-app subscriptions in
@@ -2302,22 +2303,24 @@ struct RendpropApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
+            IdentityGate {
+                Group {
 #if DEBUG
-                if Config.isSessionNetworkTesting {
-                    PhaseOneFixtureRoot()
-                } else if hasOnboarded {
-                    RootTabView()
-                } else {
-                    OnboardingView()
-                }
+                    if Config.isSessionNetworkTesting {
+                        PhaseOneFixtureRoot()
+                    } else if hasOnboarded {
+                        RootTabView()
+                    } else {
+                        OnboardingView()
+                    }
 #else
-                if hasOnboarded {
-                    RootTabView()
-                } else {
-                    OnboardingView()
-                }
+                    if hasOnboarded {
+                        RootTabView()
+                    } else {
+                        OnboardingView()
+                    }
 #endif
+                }
             }
             .environmentObject(model)
             .environmentObject(uploads)
@@ -2332,11 +2335,17 @@ struct RendpropApp: App {
             // First-party analytics only: our own /events route, no third-party
             // SDK, no IDFA, no ATT prompt. `start` is idempotent.
             .task { Analytics.start(api: model.api as? AnalyticsAPI) }
-            // GUIDELINE 5.1.1(v). A session with NO personal information, minted
-            // silently at launch, is what lets every feature and the paywall
-            // work without anybody registering. Idempotent, and a no-op when a
-            // session already exists — including a real Apple one.
-            .task { AuthStore.shared.signInAnonymouslyIfNeeded() }
+            // The silent anonymous sign-in that used to run here is GONE, on
+            // purpose. It minted a real auth.users row at launch and
+            // handle_new_user handed that row an org with trial_ends_at set — so
+            // delete-and-reinstall produced a brand new 7-day trial, with a fresh
+            // COGS ceiling, as many times as anyone cared to repeat it. An Apple
+            // ID is stable across reinstalls; that is the whole fix.
+            //
+            // `signInAnonymouslyIfNeeded()` is left on AuthStore but is no longer
+            // called from anywhere. An install that is ALREADY anonymous still has
+            // its token in the Keychain, so AnonymousAdoptionRecovery has a session
+            // to adopt from when that person signs in — nothing needs minting.
             .task { SpatialUploadCoordinator.shared.reconnect() }
             // Whether Home may offer the 3D walkthrough at all: one server flag
             // for everyone, asked once per foreground (and again below when a
@@ -2354,7 +2363,6 @@ struct RendpropApp: App {
                 // A launch with no network leaves the device sessionless.
                 // Retry on the way back rather than stranding it.
                 if phase == .active {
-                    AuthStore.shared.signInAnonymouslyIfNeeded()
                     model.refreshSpatialCapability()
                     // iOS Settings can change the notification permission while
                     // the app is in the background, in BOTH directions — and a
@@ -2481,6 +2489,163 @@ struct RendpropApp: App {
 // Stores/Studios/Spaces + matching icon) and re-renders live on type change.
 // This is the ONE place samples are re-derived when the business type changes
 // (Home menu, Settings, or a re-pick in the intro all land here).
+/// Nothing in the app is reachable without a real person behind it.
+///
+/// `isSignedIn` is NOT the question — it is true for an anonymous session too
+/// (AuthStore line 29). `isIdentified` is the one that means a human: it reads
+/// the `is_anonymous` claim out of the JWT, and an unparseable token answers
+/// "no", which is the safe direction for a gate.
+struct IdentityGate<Content: View>: View {
+    @ObservedObject private var auth = AuthStore.shared
+    @ViewBuilder var content: () -> Content
+
+    private var needsSignIn: Bool {
+        // Dev stub with auth switched off: there are no identities to have.
+        guard Config.enableAuth else { return false }
+        // No test harness is ever gated. The UI walks (ReviewerWalk,
+        // IndustryWalk, PaywallShot, the non-camera walks) drive the app with no
+        // Apple ID and cannot tap a system sign-in sheet, and the session-network
+        // fixture root exists precisely to exercise session establishment —
+        // gating THAT would hide the thing under test. Both flags, not the
+        // `isUITesting && !isSessionNetworkTesting` pairing used elsewhere.
+        if Config.isUITesting || Config.isSessionNetworkTesting { return false }
+        return !auth.isIdentified
+    }
+
+    var body: some View {
+        if needsSignIn { SignInGateView() } else { content() }
+    }
+}
+
+/// The hard gate.
+///
+/// Apple only, deliberately. Every Rendprop user is on iOS, which means every
+/// Rendprop user already has an Apple ID — so an email+password alternative buys
+/// access for a population of nobody while adding a second credential surface to
+/// own: verification mail, reset flow, credential stuffing, support load. Worth
+/// building the day there is an Android or web client, not before.
+///
+/// This REVERSES the 5.1.1(v) anonymous-session design. That guideline bars
+/// forcing registration on an app whose core features don't need it; Rendprop's
+/// do — cloud rendering, a hosted page per tour, seats, and a billed trial all
+/// have to belong to someone. 5.1.1(iv) also requires in-app account deletion
+/// once you require an account, and that already ships (Settings → Delete
+/// account). The review notes have to say this out loud and carry a demo account.
+///
+/// Lives here because a new .swift file is not in the Xcode target until
+/// xcodegen runs again (repo rule — see Auth/SignInView.swift, kept empty for it).
+struct SignInGateView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var rawNonce: String?
+    @State private var isExchanging = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Text("RENDPROP")
+                .font(.rpKicker)
+                .foregroundStyle(Theme.inkDim)
+            Text("Sign in to start")
+                .font(.rpTitle)
+                .foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+            Text("Your tours render in the cloud and live at a link you send to buyers, so they need an owner. Apple can hide your email — we only ever see a token.")
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+
+            SignInWithAppleButton(.signIn) { request in
+                let raw = AuthStore.randomNonceString()
+                rawNonce = raw
+                request.requestedScopes = [.fullName, .email]
+                request.nonce = AuthStore.sha256(raw)
+            } onCompletion: { result in
+                handle(result)
+            }
+            // Black on light, white on dark — a .black button vanishes into the
+            // near-black dark-mode background.
+            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
+            .frame(height: 50)
+            .padding(.horizontal, 28)
+            .disabled(isExchanging)
+
+            if isExchanging {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("Signing in…").foregroundStyle(Theme.inkDim)
+                }
+                .font(.rpCaption)
+            }
+
+            // No "Not now". That is the point of this screen.
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+
+    /// Mirrors the exchange in `SignInView` (Screens/RenderStatusView.swift)
+    /// including the TN3194 authorizationCode capture — without it, Delete
+    /// account cannot revoke the Apple grant (audit P0-4). No `dismiss()`: there
+    /// is nothing behind this view to go back to, and `isIdentified` flipping is
+    /// what replaces it.
+    private func handle(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .failure(let error):
+            if (error as? ASAuthorizationError)?.code == .canceled { return }
+            errorMessage = error.localizedDescription
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let idToken = String(data: tokenData, encoding: .utf8) else {
+                errorMessage = "Apple didn't return a usable credential. Please try again."
+                return
+            }
+            let nonce = rawNonce
+            // Apple returns the name ONLY on the first authorization.
+            let displayName = credential.fullName.flatMap { components -> String? in
+                let text = PersonNameComponentsFormatter().string(from: components)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return text.isEmpty ? nil : text
+            }
+            let authCode = credential.authorizationCode
+                .flatMap { String(data: $0, encoding: .utf8) }
+            isExchanging = true
+            errorMessage = nil
+            Task {
+                do {
+                    try await AuthStore.shared.exchangeAppleIdentityToken(idToken: idToken, nonce: nonce)
+                    if let authCode {
+                        await AuthStore.submitAppleAuthorizationCode(authCode)
+                    }
+                    await MainActor.run {
+                        if let displayName {
+                            AuthStore.shared.userName = displayName
+                            UserDefaults.standard.set(displayName, forKey: "auth.userName")
+                        }
+                        isExchanging = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        isExchanging = false
+                        errorMessage = "Couldn't sign in: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct RootTabView: View {
     @EnvironmentObject var model: AppModel
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
