@@ -12,7 +12,7 @@ const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
-const receipt = { proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Only resume-notification delivery is delayed ${resumeNotificationDelayMs} ms. Negative control restores the former await; fixed build uses unchanged production source. No external requests or provider use.`, checks: [], runs: [], errors: [], externalRequests: [], status: "running" };
+const receipt = { proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -21,12 +21,22 @@ try {
 import {exportLocalVideo,exportFormats} from ${JSON.stringify(join(root, "src/editor/export.ts"))};
 import {inspectFile} from ${JSON.stringify(join(root, "src/editor/media.ts"))};
 import {validateDraft} from ${JSON.stringify(join(root, "src/editor/model.ts"))};
-let sources=[],voice,narrated=false,url;
-const fixture=window.fixture={ready:false,error:null,result:null,trace:[],configure:value=>{narrated=value;}};
+let sources=[],voice,narrated=false,url,exportController,decodeIndex=0;
+const fixture=window.fixture={ready:false,error:null,result:null,trace:[],exporting:false,decodeDelays:[],revision:1,configure:value=>{narrated=value;},cancel:()=>exportController?.abort(new Error("Fixture export cancelled")),
+  delayDecode:async(signal,kind)=>{
+    const index=decodeIndex++,delay=fixture.decodeDelays[index]??0;
+    log("decode.start",{index,kind,delay});
+    if(delay)await new Promise((resolve,reject)=>{
+      const abort=()=>{clearTimeout(timer);signal.removeEventListener("abort",abort);log("decode.aborted",{index});reject(signal.reason);};
+      const timer=setTimeout(()=>{signal.removeEventListener("abort",abort);log("decode.ready",{index});resolve();},delay);
+      signal.addEventListener("abort",abort,{once:true});
+    });
+    if(fixture.decodeErrorIndex===index)throw new Error("Fixture decoder failure");
+  }};
 const NativeRecorder=MediaRecorder;
 function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...extra});}
 window.MediaRecorder=class extends NativeRecorder {
-  constructor(...args){super(...args);for(const event of ["start","resume","pause","stop"])
+  constructor(...args){super(...args);fixture.tracks.push(...args[0].getTracks());for(const event of ["start","resume","pause","stop"])
     super.addEventListener(event,()=>log(event+".native",{state:this.state}));}
   start(...args){log("start.call",{state:this.state});const result=super.start(...args);log("start.return",{state:this.state});return result;}
   resume(...args){log("resume.call",{state:this.state});const result=super.resume(...args);log("resume.return",{state:this.state});return result;}
@@ -42,13 +52,13 @@ HTMLMediaElement.prototype.play=function(...args){log("play.call",{time:this.cur
 document.querySelector("#sources").onchange=async event=>{fixture.ready=false;try{sources=[];for(const file of event.target.files)sources.push(await inspectFile(file,new AbortController().signal));fixture.ready=true;}catch(error){fixture.error=error.message;}};
 document.querySelector("#voice").onchange=event=>{voice=event.target.files[0];};
 document.querySelector("#run").onclick=async()=>{
-  fixture.error=null;fixture.result=null;fixture.trace=[];document.querySelector("#download").hidden=true;
+  fixture.error=null;fixture.result=null;fixture.trace=[];fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
   if(url)URL.revokeObjectURL(url);
   try{
     const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?4:.5,speed:index===1?2:1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
-    const result=await exportLocalVideo({draft,media:new Map(sources.map((local,index)=>["clip-"+index,local])),narrationBlob:narrated?voice:undefined,format:exportFormats().find(format=>format.extension==="mp4"),signal:new AbortController().signal,currentDraft:()=>draft,onProgress:()=>{}});
+    const result=await exportLocalVideo({draft,media:new Map(sources.map((local,index)=>["clip-"+index,local])),narrationBlob:narrated?voice:undefined,format:exportFormats().find(format=>format.extension==="mp4"),signal:exportController.signal,currentDraft:()=>({...draft,revision:fixture.revision}),onProgress:()=>{}});
     url=URL.createObjectURL(result.blob);const download=document.querySelector("#download");download.href=url;download.hidden=false;fixture.result={duration:result.duration,bytes:result.blob.size};
-  }catch(error){fixture.error=error.message;}
+  }catch(error){fixture.error=error.message;}finally{fixture.exporting=false;}
 };
 `);
   const oldAwaitPlugin = { name: "negative-control-original-resume-await", enforce: "pre", transform(code, id) {
@@ -57,7 +67,27 @@ document.querySelector("#run").onclick=async()=>{
     assert(seam.test(code), "Negative control must match the audited resume fix");
     return code.replace(seam, '        const resumed = waitForEvent(recorder, "resume", renderSignal);\n        recorder.resume();\n        await resumed;');
   } };
-  for (const variant of ["baseline", "fixed"]) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", plugins: variant === "baseline" ? [oldAwaitPlugin] : [], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
+  // Delay only export-time decoder readiness, never file inspection or source
+  // playback. The sequential negative control restores the former per-boundary
+  // loading behavior while using exactly the same source media and assertions.
+  const delayedDecodePlugin = { name: "forced-export-decoder-latency", enforce: "pre", transform(code, id) {
+    if (!id.endsWith("/src/editor/media.ts")) return;
+    const seam = /export async function decodeMedia\([\s\S]*?throwIfAborted\(signal\);/;
+    assert(seam.test(code), "Decoder delay must match the real decode entry");
+    return code.replace(seam, match => match + '\n  if ((window as any).fixture?.exporting) await (window as any).fixture.delayDecode(signal, kind);')
+      .replace('return { element: image, dispose };', 'if ((window as any).fixture?.exporting) (window as any).fixture.resources.push(image); return { element: image, dispose };')
+      .replace('return { element: video, dispose };', 'if ((window as any).fixture?.exporting) (window as any).fixture.resources.push(video); return { element: video, dispose };');
+  } };
+  const sequentialPreparationPlugin = { name: "negative-control-sequential-decode", enforce: "pre", transform(code, id) {
+    if (!id.endsWith("/src/editor/export.ts")) return;
+    const seam = /      const next = draft.clips\[index \+ 1\];[\s\S]*?if \("error" in preparedNext\) throw preparedNext.error;\n        }\n      }/;
+    assert(seam.test(code), "Sequential control must remove only successor preloading");
+    code = code.replace(seam, "");
+    const handoff = "      if (!lookahead?.result)";
+    assert(code.includes(handoff));
+    return code.replace(handoff, "      if (index > 0) { lookahead = prepare(clip); await lookahead.settled; }\n" + handoff);
+  } };
+  for (const variant of ["baseline", "sequential", "fixed"]) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", plugins: [delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
   server = createServer(async (request, response) => {
     const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`);
     if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end();
@@ -87,11 +117,24 @@ document.querySelector("#run").onclick=async()=>{
     }
     return { rms: Math.sqrt(power / count), hz: crossings / (count / 48000), dominantHz, samples: count };
   };
-  const pixel = (path, time, x = 100) => [...execFileSync("ffmpeg", ["-v", "error", "-ss", String(time), "-i", path, "-frames:v", "1", "-vf", `format=rgb24,crop=1:1:${x}:400`, "-f", "rawvideo", "pipe:1"])];
+  const frameCache = new Map();
+  const frames = (path, x) => {
+    const key = `${path}:${x}`;
+    if (!frameCache.has(key)) {
+      const timestamps = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_frames", "-show_entries", "frame=best_effort_timestamp_time", "-of", "json", path], { encoding: "utf8" })).frames;
+      const rgb = execFileSync("ffmpeg", ["-v", "error", "-i", path, "-vf", `format=rgb24,crop=1:1:${x}:400`, "-fps_mode", "passthrough", "-f", "rawvideo", "pipe:1"]);
+      assert.equal(rgb.length, timestamps.length * 3);
+      frameCache.set(key, timestamps.map((frame, index) => ({ time: Number(frame.best_effort_timestamp_time), rgb: [...rgb.subarray(index * 3, index * 3 + 3)] })));
+    }
+    return frameCache.get(key);
+  };
+  // Input seeking selects the next future frame and can conceal an encoded
+  // gap. Sample the last frame actually displayed at each requested timestamp.
+  const pixel = (path, time, x = 100) => frames(path, x).findLast(frame => frame.time <= time)?.rgb ?? frames(path, x)[0].rgb;
   const isOpeningTone = value => value.rms > .04 && value.dominantHz > 900 && value.dominantHz < 1100;
   const isWhip = ({ left, right }) => left[2] > 200 && left[0] < 30 && right[0] > 200 && right[2] < 30;
   const whipPixels = (path, time) => ({ time, left: pixel(path, time, 100), right: pixel(path, time, 650) });
-  for (const variant of ["baseline", "fixed"]) {
+  for (const variant of ["baseline", "sequential", "fixed"]) {
     const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: true });
     await context.route("**/*", route => { const url = new URL(route.request().url()); if (url.origin === origin || ["blob:", "data:"].includes(url.protocol)) return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
     const page = await context.newPage(); page.on("pageerror", error => receipt.errors.push(error.message)); await page.goto(`${origin}/${variant}/fixture.html`);
@@ -99,7 +142,7 @@ document.querySelector("#run").onclick=async()=>{
     await page.locator("#sources").setInputFiles([{ name: "opening.png", mimeType: "image/png", buffer: Buffer.from(png[0], "base64") }, { name: "original.mp4", mimeType: "video/mp4", buffer: await readFile(source) }, { name: "closing.png", mimeType: "image/png", buffer: Buffer.from(png[1], "base64") }]);
     await page.locator("#voice").setInputFiles(narration); await expect.poll(() => page.evaluate(() => window.fixture.ready)).toBe(true);
     for (const narrated of [true, false]) {
-      await page.evaluate(value => window.fixture.configure(value), narrated); await page.locator("#run").click();
+      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
       await expect.poll(() => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending")), { timeout: 20000 }).toBe("done");
       const download = page.waitForEvent("download"); await page.locator("#download").click(); const output = join(artifacts, `${variant}-${narrated ? "narrated" : "original"}.mp4`); await (await download).saveAs(output);
       const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", output], { encoding: "utf8" }));
@@ -120,7 +163,7 @@ document.querySelector("#run").onclick=async()=>{
         whip: [2.54, 2.58, 2.62, 2.66, 2.70, 2.74].map(time => whipPixels(output, time)),
         afterWhip: whipPixels(output, 2.9),
       };
-      receipt.runs.push({ variant, narrated, plannedSeconds: 3, duration, trace, audio, pixels, output, probe }); await persist();
+      receipt.runs.push({ variant, narrated, plannedSeconds: 3, duration, trace, audio, pixels, decodedFrames: frames(output, 100), output, probe }); await persist();
       assert(probe.streams.some(stream => stream.codec_name === "h264")); assert(probe.streams.some(stream => stream.codec_name === "aac"));
       assert.equal(trace.filter(event => event.event === "resume.return").length, 2);
       assert(trace.filter(event => event.event === "resume.return").every(event => event.state === "recording"));
@@ -133,7 +176,21 @@ document.querySelector("#run").onclick=async()=>{
         assert(trace.find(event => event.event === "play.call").at >= delivered[0].at, "The old await must stall original playback until the delayed notification arrives");
         assert(!pixels.whip.some(isWhip), "Delayed-resume negative control must put the whip outside the fixed timeline window");
         if (!narrated) assert(!audio.opening.some(isOpeningTone), "The old-await control must put the original opening tone outside the bounded audio window");
+      } else if (variant === "sequential") {
+        assert.equal(trace.filter(event => event.event === "resume.delivered").length, 0);
+        const ready = trace.filter(event => event.event === "decode.ready");
+        assert.equal(ready.length, 2);
+        assert(ready.every(event => event.at > trace.find(event => event.event === "start.call").at), "Both sequential decoder delays must occur after recording starts");
+        const pauses = trace.filter(event => event.event === "pause.call"), resumes = trace.filter(event => event.event === "resume.call");
+        assert(ready.every((event, index) => event.at > pauses[index].at && event.at < resumes[index].at), "Sequential control must finish each decoder at its paused boundary, violating readiness before handoff");
       } else {
+        const start = trace.find(event => event.event === "start.call");
+        const ready = trace.filter(event => event.event === "decode.ready");
+        assert.equal(ready.length, 2);
+        assert(ready[0].at < start.at, "The second source must be decoded/seeked before recording starts");
+        const pauses = trace.filter(event => event.event === "pause.call");
+        const thirdPreparation = trace.find(event => event.event === "decode.start" && event.index === 2);
+        assert(thirdPreparation.at >= pauses[0].at && ready[1].at < pauses[1].at, "The third source must be prepared after the first segment and ready before the second segment ends");
         assert(Math.abs(duration - 3) < .4, `Fixed real MP4 must retain the existing duration tolerance: ${duration}`);
         assert.equal(trace.filter(event => event.event === "resume.delivered").length, 0);
         // Match the fixed, bounded cloud-editor criterion: a real dissolve
@@ -154,9 +211,40 @@ document.querySelector("#run").onclick=async()=>{
         }
       }
     }
+    if (variant === "fixed") {
+      for (const scenario of ["late-successor", "abort-initial-successor", "stale-during-lookahead", "failed-initial-successor"]) {
+        await page.evaluate(scenario => {
+          window.fixture.configure(false);
+          window.fixture.decodeDelays = scenario === "abort-initial-successor" ? [0, 5000] : scenario === "failed-initial-successor" ? [] : [0, 0, 5000];
+          window.fixture.decodeErrorIndex = scenario === "failed-initial-successor" ? 1 : undefined;
+        }, scenario);
+        await page.locator("#run").click();
+        if (scenario === "abort-initial-successor" || scenario === "stale-during-lookahead") {
+          const index = scenario === "abort-initial-successor" ? 1 : 2;
+          await expect.poll(() => page.evaluate(index => window.fixture.trace.some(event => event.event === "decode.start" && event.index === index), index)).toBe(true);
+          await page.evaluate(scenario => { if (scenario === "abort-initial-successor") window.fixture.cancel(); else window.fixture.revision++; }, scenario);
+        }
+        await expect.poll(() => page.evaluate(() => window.fixture.exporting), { timeout: 10000 }).toBe(false);
+        const evidence = await page.evaluate(() => ({ error: window.fixture.error, result: window.fixture.result, trace: window.fixture.trace, resourceCount: window.fixture.resources.length, remainingSources: window.fixture.resources.filter(element => element.hasAttribute("src")).length, liveTracks: window.fixture.tracks.filter(track => track.readyState !== "ended").length }));
+        receipt.preparationFailures.push({ scenario, ...evidence }); await persist();
+        assert.equal(evidence.result, null, "Preparation failure must never offer an export blob");
+        assert.equal(evidence.remainingSources, 0, "All current and prepared decoders must release their source");
+        assert.equal(evidence.liveTracks, 0, "Failed exports must stop their recording tracks");
+        assert(evidence.resourceCount > 0, "Cleanup assertion must inspect real decoded resources");
+        if (scenario === "late-successor") assert.match(evidence.error, /could not prepare the next clip in time/);
+        if (scenario === "abort-initial-successor") assert.match(evidence.error, /Fixture export cancelled/);
+        if (scenario === "stale-during-lookahead") assert.match(evidence.error, /changed/i);
+        if (scenario === "failed-initial-successor") {
+          assert.match(evidence.error, /Fixture decoder failure/);
+          assert(!evidence.trace.some(event => event.event === "start.call"), "Known initial preparation failure must precede recording");
+        } else assert(evidence.trace.some(event => event.event === "decode.aborted"), "Pending preparation must be aborted and settled before returning");
+      }
+    }
     await context.close();
   }
+  receipt.checks.push("Late decoder readiness, cancellation during initial preparation, stale revision during lookahead and decoder failure reject without a blob, source handles or live tracks");
   receipt.checks.push("Negative control reproduces >400 ms accumulated timing error by delaying only two resume notifications; source playback and decoding are unchanged");
+  receipt.checks.push("Sequential-decoder negative control violates readiness before handoff; fixed export prepares the second source before start and third during the second segment despite identical 600 ms decoder delays");
   receipt.checks.push("Fixed exports keep the existing 400 ms duration tolerance without cutting source spans or changing playback speed");
   receipt.checks.push("Decoded MP4 frames retain the real dissolve and whip at their intended timeline positions");
   receipt.checks.push("AAC retains 660 Hz narration, leading photo silence, the distinctive 990 Hz opening sound in adjacent bounded samples after resume, and continuous 440 Hz original audio; the old-await control misses that opening window");
