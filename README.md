@@ -12,13 +12,16 @@ activate a trial. Studio uses the same account/workspace subscription.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
-[Latest iPhone and public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
+[Latest iPhone delivery receipt](docs/releases/TESTFLIGHT-38-20261001.json) ·
+[Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
-is the next internal TestFlight38 candidate: a first-photo viewpoint anchor,
+is available as internal **TestFlight 1.0.3 (38)**: a first-photo viewpoint anchor,
 optional standing markers, a distinct yellow camera target, bounded hand movement,
 gentler ceiling/floor angles and feedback after each saved photo. Older room
-exports remain compatible. Phone comfort and stitching quality still need acceptance.
+exports remain compatible. All 12 exact-source CI jobs, both iPhone-target builds
+and three navigation-only UI checks pass. Apple availability was verified on
+1 October 2026 at 22:17:40 UTC. Phone comfort and stitching quality still need acceptance.
 
 The [room-guidance and photo-delivery update](docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 adds floor-based standing suggestions, clear automatic 38-photo viewpoint capture,
@@ -49,7 +52,7 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Save project to account explicitly uploads general-project originals. |
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: photos/details first, independent navigation and opt-in fly-through with native controls. Close stops video and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
-| iOS | Internal TestFlight **1.0.3 (37)** is available to the existing Rendprop team. Adds HD fly-through rendering and an original-source re-render action; retains build36's guided room standing suggestions, automatic 38-photo coverage, saved-view navigation, photo versions and MLS/web/social exports, guided 0.5×/1× still photos and account/workspace/subscription fixes. Real-phone camera/room quality, render/playback, purchase/restore and phone-to-Studio acceptance remain pending. |
+| iOS | Internal TestFlight **1.0.3 (38)** is available to the existing Rendprop team. Adds first-photo anchoring, optional standing markers, a yellow camera target, bounded handheld adjustment and gentler ceiling/floor aims with saved-photo haptics. Retains HD fly-through rendering, saved-view navigation, photo versions/exports, guided 0.5×/1× photos and account/workspace/subscription fixes. Real-phone comfort, camera/room quality, render/playback, purchase/restore and phone-to-Studio acceptance remain pending. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

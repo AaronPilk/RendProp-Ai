@@ -2,10 +2,17 @@
 
 ## Delivery status
 
-Candidate for internal TestFlight **1.0.3 (38)**, isolated branch
-`fix/room-tour-usability-20261001`, based on `bb7a615`. Build37 remains the
-latest verified delivery until build38's exact-source CI, signed archive,
-single upload and Apple availability checks finish. No public App Store release,
+Internal TestFlight **1.0.3 (38) is available** to the existing Rendprop team,
+verified **1 October 2026 at 22:17:40 UTC**: `VALID`, `INTERNAL_ONLY`,
+`IN_BETA_TESTING`. English testing notes were read back at **22:18:01 UTC**. The isolated
+branch is `fix/room-tour-usability-20261001`, based on `bb7a615`; archived source
+is `ba5c52c0f55f66af76af33cfa07d5b95db881ded`. All 12 exact-source CI jobs passed
+in [run 36932858049](https://github.com/AaronPilk/RendProp-Ai/actions/runs/36932858049).
+[The delivery receipt](../releases/TESTFLIGHT-38-20261001.json) binds the 197-input
+source inventory, signed archive, independent audits, single successful upload,
+Apple availability and testing notes. [PR #15](https://github.com/AaronPilk/RendProp-Ai/pull/15)
+is a stacked draft against `fix/listing-first-tour-20261001`; the final delivery
+documentation is separate from the archived source. No public App Store release,
 spatial runtime activation, provider call or paid experiment is part of this change.
 
 ## Evidence from the owner's phone
@@ -97,10 +104,19 @@ Capture admission is a provisional phone usability experiment, not quality accep
 - Legacy golden archive and PNG are unchanged. Synthetic fixtures contain only
   generated dummy identities, camera matrices, pixels and feature points.
 
-Full device-target compilation, navigation-only UI checks, signed release archive
-and all 12 exact-source CI jobs are separate release gates. Software checks never
+Both full device-target compilations passed. Three navigation-only UI tests passed,
+including large accessibility text, without starting the camera. Signed release
+archive and all 12 exact-source CI jobs also passed. Software checks never
 operate a real camera or certify comfort, tracking, exposure, thermal behavior,
 coverage or seams on the owner's phone.
+
+An additional full-history workflow-dispatch run 36932544065 failed on eight older
+secret-scan matches. Independent inspection classified seven as test/document
+non-credential data and one as the intentionally public Supabase anon key. No
+capture file was flagged, no credential needing rotation was found, and ignore
+rules were not changed. That run remains failed. The passing release gate above
+is the normal pull-request run, whose merge tree was independently verified
+identical to the archived source and whose secret-scan job passed.
 
 ## Next phone acceptance
 
