@@ -9,9 +9,11 @@ Real estate is the primary workflow; the app also supports other space types.
 an Agent / Photographer onboarding choice, a separate client contact and photo
 per listing, private lead email routing, retained inquiry history and confirmed
 resends. Client pages can hide service promotions while retaining the contact
-form and privacy disclosure. Implementation and release verification are in
-progress on the isolated photographer branch; the workflow guide is not a
-production or TestFlight availability receipt.
+form and privacy disclosure. This workflow is deployed to Studio, public pages
+and the backend, with internal **TestFlight 1.0.3 (39)** available. All 12
+exact-source CI jobs pass; see the
+[release handoff](docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for live
+readbacks and the controlled phone/inbox acceptance still required.
 
 Apple subscription plans are selected, upgraded and changed in the iPhone app
 under **Settings → Plan & usage**. A seven-day trial starts only after confirming
@@ -20,7 +22,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
-[Latest iPhone delivery receipt](docs/releases/TESTFLIGHT-38-20261001.json) ·
+[Latest iPhone delivery receipt](docs/releases/TESTFLIGHT-39-20261001.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -60,7 +62,8 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Save project to account explicitly uploads general-project originals. |
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: photos/details first, independent navigation and opt-in fly-through with native controls. Close stops video and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
-| iOS | Internal TestFlight **1.0.3 (38)** is available to the existing Rendprop team. Adds first-photo anchoring, optional standing markers, a yellow camera target, bounded handheld adjustment and gentler ceiling/floor aims with saved-photo haptics. Retains HD fly-through rendering, saved-view navigation, photo versions/exports, guided 0.5×/1× photos and account/workspace/subscription fixes. Real-phone comfort, camera/room quality, render/playback, purchase/restore and phone-to-Studio acceptance remain pending. |
+| Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
+| iOS | Internal TestFlight **1.0.3 (39)** is available to the existing Rendprop team. Adds photographer client delivery and retains build38 room-tour guidance, HD fly-through rendering, photo versions/exports, guided 0.5×/1× photos and account/workspace/subscription fixes. Real-phone comfort, camera/room quality, render/playback, purchase/restore, client inbox and phone-to-Studio acceptance remain pending. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the
@@ -152,7 +155,8 @@ tests cannot validate physical camera, ARKit/LiDAR capture or thermal behavior.
 - [Brand assets](docs/brand/README.md)
 - [iOS test boundaries](apps/ios/RendpropUITests/README.md)
 - [Room guidance, edited-photo downloads and disclosure boundaries](docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
-- [Current Studio release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
+- [Current photographer client delivery release](docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
+- [27 September Studio release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 - [24 September production baseline](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 
 The [original master build prompt](docs/MASTER-BUILD-PROMPT.md) records product

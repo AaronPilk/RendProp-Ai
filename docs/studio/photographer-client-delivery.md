@@ -2,7 +2,11 @@
 
 This workflow keeps a photographer's account and project ownership separate
 from the contact shown on each client's listing. The client needs no Rendprop
-account. It also works for a business contact outside real estate.
+account. It also works for a business contact outside real estate. The workflow
+is deployed to Studio, published pages and the backend, with internal
+**TestFlight 1.0.3 (39)** available. See the
+[release handoff](../handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for verified
+delivery and controlled phone/inbox acceptance still required.
 
 ## Using the workflow
 

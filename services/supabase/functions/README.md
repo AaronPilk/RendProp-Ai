@@ -11,10 +11,15 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 adds a nullable, explicit real estate work preference, service-only per-listing
 client contacts, verified contact-photo uploads and transactional client inquiry
 emails. Recipients and delivery history remain private; public tours expose only
-the client card and display flags. The migration must precede the selected
-`me`, `listings`, `uploads`, `leads`, `notify`, `studio`, `tours` and adoption
-handlers. The new release is being verified; older release versions below remain
-historical receipts rather than evidence that this feature is live.
+the client card and display flags. The migration is applied under live ledger
+`20261001233128` (source filename stamp `20261001222809`; do not apply it twice).
+Selected live versions are **me43, listings37, uploads45, leads36, notify11,
+studio15, tours44 and ai-video45**; all downloaded runtime source files match
+the release. The adopt handler is unchanged; its existing RPC preserves role
+preference. All 19 migration function contracts and six triggers pass live
+metadata readback. See the
+[release handoff](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
+for exact evidence and real inbox acceptance still required.
 
 The [1 October core release](../../../docs/handoff/CORE-READINESS-20261001.md)
 deployed **team v16, me v42, coach v19 and listings v36**, all ACTIVE with JWT
@@ -239,7 +244,8 @@ The [deploy-functions.sh](../deploy-functions.sh) wrapper now delegates to that
 same explicit-selection helper. It no longer deploys an implicit list or forces
 uniform JWT settings. Choose every affected read handler deliberately. Earlier sections of
 [DEPLOYMENT.md](../DEPLOYMENT.md) document older rollout/setup work; use the latest
-release record for current production facts.
+[release record](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
+for current production facts.
 
 ## Configuration and scheduled work
 
