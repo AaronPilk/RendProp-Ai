@@ -181,6 +181,10 @@ Private receipts are under
 `/Users/pilksclaes/LocalRendpropAudits/room-tour-photo-delivery-20261001/`
 and `/Users/pilksclaes/LocalRendpropAudits/photo-delivery-20261001/`.
 CI runs the photo-history, room-guidance and real-browser download checks.
+The first CI run found that the offline preview-store test's value-only viewer
+stub lacked the new completion field. The stub now matches the real value type,
+with assertions that both rendering and cache reuse preserve partial status.
+Production preview/capture code was unchanged by this test repair.
 Release availability, exact-source CI and deployment readback will be recorded
 here and in a separate build-36 receipt after delivery.
 
