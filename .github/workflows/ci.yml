@@ -57,10 +57,14 @@ jobs:
         run: bash apps/ios/tests/run-subscription-policy.sh
       - name: Photo lens, orientation, level and failed-save handling
         run: bash apps/ios/tests/run-photo-capture.sh
+      - name: Photo versions, retained originals and destination export geometry
+        run: bash apps/ios/tests/run-photo-delivery.sh
       - name: Guided scan storage, pose epochs and native depth packing
         run: bash tools/spatial-spike/capture-ios/verify-station.sh
       - name: Panorama projection, coverage and cancellation on synthetic images
         run: bash tools/spatial-spike/capture-ios/verify-panorama.sh
+      - name: Room survey, standing suggestions and saved-view navigation
+        run: bash tools/spatial-spike/capture-ios/verify-room-guidance.sh
       - name: Saved panorama cache freshness, corruption and cancellation
         run: bash apps/ios/tests/verify-guided-panorama-preview-store.sh
       # Playwright's Linux Chromium lacks the H.264/AAC encoder combination
@@ -199,6 +203,8 @@ jobs:
           node tests/presenter-browser.mjs
           node tests/prompts-browser.mjs
           node tests/projects-browser.mjs
+          node tests/creative-browser.mjs
+          node tests/photo-delivery-browser.mjs
       - name: Retain browser failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -227,6 +233,11 @@ jobs:
             /tmp/rendprop-auth-sdk-*/*.png
             /tmp/rendprop-prompts-*/*.json
             /tmp/rendprop-prompts-*/*.png
+            /tmp/rendprop-creative-*/receipt.json
+            /tmp/rendprop-creative-*/*.png
+            /tmp/rendprop-photo-delivery-browser-*/receipt.json
+            /tmp/rendprop-photo-delivery-browser-*/*.png
+            /tmp/rendprop-photo-delivery-browser-*/*.zip
           if-no-files-found: warn
 
   worker-edge:

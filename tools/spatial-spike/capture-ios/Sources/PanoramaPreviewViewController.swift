@@ -8,6 +8,7 @@ struct PanoramaPreviewStation {
     let panoramaURL: URL
     let position: [Double]
     let coverage: Double
+    var captureComplete = false
 }
 
 /// A local photographic look-around viewer. Numbered positions are explicit
@@ -26,6 +27,8 @@ final class PanoramaPreviewViewController: UIViewController {
     private var yaw: Float = 0
     private var pitch: Float = 0
     private var panStart = SIMD2<Float>(repeating: 0)
+    private var panoramaImage: CGImage?
+    private var viewLinks: [(link: PanoramaSavedViewLink, button: UIButton)] = []
     private let previewTint: UIColor
 
     init(stations: [PanoramaPreviewStation], initialStationID: String? = nil, tintColor: UIColor = .systemPurple) {
@@ -70,12 +73,13 @@ final class PanoramaPreviewViewController: UIViewController {
         sceneView.rendersContinuously = false
         sceneView.allowsCameraControl = false
         sceneView.accessibilityLabel = "Photographic room panorama"
-        sceneView.accessibilityHint = "Drag with one finger to look around, or use the look direction controls."
+        sceneView.accessibilityHint = "Drag to look around. Tap a saved-view marker or choose a position below."
         sceneView.accessibilityIdentifier = "panorama.preview.scene"
         let scene = SCNScene()
         scene.background.contents = UIColor.gray
         let camera = SCNCamera()
         camera.fieldOfView = 70
+        camera.projectionDirection = .vertical
         camera.zNear = 0.01
         camera.zFar = 20
         camera.wantsHDR = false
@@ -170,6 +174,11 @@ final class PanoramaPreviewViewController: UIViewController {
         sceneView.isPlaying = false
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        layoutViewLinks()
+    }
+
     private func showSelectedStation() {
         guard stations.indices.contains(selectedIndex) else {
             titleLabel.text = "No saved panorama"
@@ -178,6 +187,7 @@ final class PanoramaPreviewViewController: UIViewController {
         let station = stations[selectedIndex]
         do {
             let image = try Self.loadPanorama(at: station.panoramaURL)
+            panoramaImage = image.cgImage
             let material = SCNMaterial()
             material.lightingModel = .constant
             material.diffuse.contents = image
@@ -190,7 +200,9 @@ final class PanoramaPreviewViewController: UIViewController {
             material.writesToDepthBuffer = false
             sphereNode.geometry?.materials = [material]
             titleLabel.text = "\(station.label) · \(Self.percentage(station.coverage))% photographed"
-            detailLabel.text = "Drag to look around. Gray areas were not captured. This is a photo preview; edges may not line up yet."
+            detailLabel.text = station.captureComplete
+                ? "Drag to look around. Tap a numbered view to change position. Gray areas were not captured."
+                : "Incomplete scan: gray areas are missing photos. Use the saved positions below to compare views."
             for (index, button) in stationButtons.enumerated() {
                 button.isSelected = index == selectedIndex
                 button.accessibilityTraits = index == selectedIndex ? [.button, .selected] : [.button]
@@ -202,10 +214,67 @@ final class PanoramaPreviewViewController: UIViewController {
             // Do not leave another station's photograph displayed under the
             // newly selected station label after an unavailable/corrupt asset.
             sphereNode.geometry?.materials = []
+            panoramaImage = nil
             titleLabel.text = station.label
             detailLabel.text = error.localizedDescription
         }
+        rebuildViewLinks()
         updateCamera()
+    }
+
+    private func rebuildViewLinks() {
+        for entry in viewLinks { entry.button.removeFromSuperview() }
+        viewLinks.removeAll()
+        guard panoramaImage != nil else { return }
+        let links = PanoramaNavigationPolicy.links(from: selectedIndex,
+            positions: stations.map(\.position), coverages: stations.map(\.coverage), complete: stations.map(\.captureComplete))
+        for link in links where photographed(link) {
+            let button = UIButton(type: .system)
+            var configuration = UIButton.Configuration.filled()
+            configuration.title = "\(link.index + 1)"
+            configuration.baseBackgroundColor = previewTint
+            configuration.baseForegroundColor = .white
+            configuration.cornerStyle = .capsule
+            button.configuration = configuration
+            button.tag = link.index
+            button.accessibilityLabel = "Open saved view \(link.index + 1)"
+            button.accessibilityIdentifier = "panorama.preview.hotspot.\(link.index + 1)"
+            button.addTarget(self, action: #selector(stationTapped(_:)), for: .touchUpInside)
+            sceneView.addSubview(button)
+            viewLinks.append((link, button))
+        }
+    }
+
+    private func layoutViewLinks() {
+        for entry in viewLinks {
+            let d = entry.link.direction
+            guard let projected = PanoramaNavigationPolicy.screenPoint(direction: d, yaw: Double(yaw), pitch: Double(pitch),
+                width: Double(sceneView.bounds.width), height: Double(sceneView.bounds.height),
+                verticalFieldOfView: Double(cameraNode.camera?.fieldOfView ?? 70)) else {
+                entry.button.isHidden = true
+                continue
+            }
+            let point = CGPoint(x: projected.x, y: projected.y)
+            entry.button.isHidden = !sceneView.bounds.insetBy(dx: 24, dy: 24).contains(point)
+            entry.button.frame = CGRect(x: point.x - 24, y: point.y - 24, width: 48, height: 48)
+        }
+    }
+
+    /// A marker cannot float over an unphotographed part of a partial panorama.
+    private func photographed(_ link: PanoramaSavedViewLink) -> Bool {
+        guard let image = panoramaImage else { return false }
+        let u = (link.longitude + .pi) / (2 * .pi)
+        let v = (.pi / 2 - link.latitude) / .pi
+        let x = max(0, min(image.width - 1, Int(u * Double(image.width))))
+        let y = max(0, min(image.height - 1, Int(v * Double(image.height))))
+        guard let pixel = image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)) else { return false }
+        var rgba = [UInt8](repeating: 0, count: 4)
+        return rgba.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return buffer[3] > 200
+        }
     }
 
     @objc private func stationTapped(_ sender: UIButton) {
@@ -239,8 +308,10 @@ final class PanoramaPreviewViewController: UIViewController {
     private func updateCamera() {
         // Default SceneKit camera looks down -Z. Positive pitch looks up;
         // negative Y Euler rotation looks toward positive world longitude.
-        cameraNode.eulerAngles = SCNVector3(pitch, -yaw, 0)
+        cameraNode.simdOrientation = simd_quatf(angle: -yaw, axis: SIMD3<Float>(0, 1, 0))
+            * simd_quatf(angle: pitch, axis: SIMD3<Float>(1, 0, 0))
         sceneView.setNeedsDisplay()
+        layoutViewLinks()
     }
 
     /// Explicit mapping avoids relying on an undocumented primitive sphere's

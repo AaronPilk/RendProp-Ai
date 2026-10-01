@@ -8,6 +8,17 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+The [room-guidance and photo-delivery candidate](../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
+targets internal TestFlight **1.0.3 (36)**; availability is pending Apple readback.
+Guided room tour now starts with floor-based spot suggestions or a manual fallback,
+then shows automatic 38-photo viewpoint progress. Photos keeps local immutable
+versions/originals and adds single/batch export to Files or Photos, destination
+disclosures and previewed aspect choices. Published gallery uploads remain append-only;
+local version selection does not yet synchronize as a shared history contract.
+
+Run `bash apps/ios/tests/run-photo-delivery.sh` and
+`bash tools/spatial-spike/capture-ios/verify-room-guidance.sh` from the repository root.
+
 The [guided photo-camera update](../../docs/handoff/GUIDED-PHOTO-CAPTURE-20261001.md)
 is available as internal **TestFlight 1.0.3 (35)** to the existing Rendprop team,
 verified **1 October 2026 at 17:06:20 UTC**. It adds supported physical 0.5×/1×

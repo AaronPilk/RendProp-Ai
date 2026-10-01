@@ -51,12 +51,12 @@ final class GuidedPanoramaNavigationTests: XCTestCase {
     func testAccessibilityTextKeepsInstructionsStartAndBackReachable() {
         launch(largeText: true)
         openFromHome()
-        XCTAssertTrue(app.staticTexts["Keep the camera over one spot"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Look around, then choose a spot"].waitForExistence(timeout: 5))
         attach("guided-tour-accessibility-top")
-        scrollTo(app.staticTexts["Move, then scan again"])
-        XCTAssertTrue(app.staticTexts["Move, then scan again"].isHittable)
-        scrollTo(app.staticTexts["Check your room tour"])
-        XCTAssertTrue(app.staticTexts["Check your room tour"].isHittable)
+        scrollTo(app.staticTexts["Let the phone take all 38 photos"])
+        XCTAssertTrue(app.staticTexts["Let the phone take all 38 photos"].isHittable)
+        scrollTo(app.staticTexts["Preview before moving"])
+        XCTAssertTrue(app.staticTexts["Preview before moving"].isHittable)
         scrollTo(app.buttons["panorama.start"])
         XCTAssertTrue(app.buttons["panorama.start"].isHittable)
         XCTAssertTrue(app.buttons["panorama.start"].isEnabled)
@@ -100,7 +100,7 @@ final class GuidedPanoramaNavigationTests: XCTestCase {
     }
 
     private func assertInstructionsAndLocalScope() {
-        for text in ["Keep the camera over one spot", "Move, then scan again", "Check your room tour"] {
+        for text in ["Look around, then choose a spot", "Let the phone take all 38 photos", "Preview before moving"] {
             XCTAssertTrue(app.staticTexts[text].exists, "Missing capture instruction: \(text)")
         }
         scrollTo(app.buttons["panorama.start"])

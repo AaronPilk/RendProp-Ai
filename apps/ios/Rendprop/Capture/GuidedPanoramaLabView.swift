@@ -8,7 +8,7 @@ struct GuidedPanoramaEntryCard: View {
                 Image(systemName: "viewfinder.circle.fill").font(.system(size: 34)).foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Guided room tour").font(.headline).foregroundStyle(Theme.ink)
-                    Text("TestFlight · scan a few spots, then look around").font(.subheadline).foregroundStyle(Theme.inkDim)
+                    Text("TestFlight · start in the center, photos save automatically").font(.subheadline).foregroundStyle(Theme.inkDim)
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
@@ -48,11 +48,11 @@ struct GuidedPanoramaLabView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("TESTFLIGHT ROOM TOUR").font(.caption.weight(.bold)).foregroundStyle(Theme.accent)
                     Text("Capture a room.\nStep inside your photos.").font(.title2.bold()).foregroundStyle(Theme.ink)
-                    Text("Start with one well-lit room. Scan from a few clear spots, then look around each saved view.")
+                    Text("Look around one well-lit room first. The app can suggest a few standing spots, then capture 38 photos automatically from your chosen spot.")
                         .foregroundStyle(Theme.inkDim)
-                    instructionRow("1", "Keep the camera over one spot", "Turn around the camera, rather than swinging it around your body. Follow the targets and pause for each photo.")
-                    instructionRow("2", "Move, then scan again", "Move a few feet, with some of the same room still in view. Try two positions for your first room.")
-                    instructionRow("3", "Check your room tour", "Look around each position. Check door frames, corners and nearby furniture for gaps or doubled edges.")
+                    instructionRow("1", "Look around, then choose a spot", "Point toward the floor and around the room. Purple numbers suggest places to stand when enough floor is detected. Check that a spot and your way there are clear; you can choose your own clear center spot instead.")
+                    instructionRow("2", "Let the phone take all 38 photos", "Follow the arrow and pause. Keep the lens over the same spot as you turn: walls, upper walls, lower walls, ceiling and floor. You do not tap for each photo.")
+                    instructionRow("3", "Preview before moving", "You can finish after one viewpoint. Add another only for an area hidden from the first spot. Check door frames and furniture for gaps or doubled edges.")
                     Button { notice = ""; showCapture = true } label: {
                         Label("Start a room tour", systemImage: "viewfinder").frame(maxWidth: .infinity).padding(.vertical, 7)
                     }
@@ -133,8 +133,14 @@ struct GuidedPanoramaLabView: View {
                 if let issue = entry.issue {
                     Text(issue).font(.footnote).foregroundStyle(Theme.inkDim)
                 }
-                Text("\(manifest.stations.count) positions · \(manifest.frameCount) photos\(manifest.status == .complete ? "" : " · partial tour")")
+                let completed = manifest.stations.filter { $0.status == .complete }.count
+                let incomplete = manifest.stations.count - completed
+                Text("\(completed) complete viewpoints\(incomplete > 0 ? " · \(incomplete) incomplete" : "") · \(manifest.frameCount) photos")
                     .font(.subheadline).foregroundStyle(Theme.inkDim)
+                if completed == 0 && manifest.frameCount > 0 {
+                    Text("No viewpoint finished all 38 photos. You can inspect these saved photos, but missing directions will be blank.")
+                        .font(.footnote).foregroundStyle(Theme.inkDim)
+                }
                 Button { openTour(entry.url) } label: {
                     Label("Open room tour", systemImage: "pano").frame(maxWidth: .infinity).padding(.vertical, 4)
                 }

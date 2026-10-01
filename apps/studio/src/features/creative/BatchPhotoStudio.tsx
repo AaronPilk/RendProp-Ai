@@ -5,15 +5,17 @@ import type { StudioServices } from "../../data/services";
 import { businessApi } from "../business/api";
 import { uploadListingAsset } from "../listings/uploads";
 import type { UploadedAsset, UploadJournal } from "../listings/uploads";
-import { editedImage, imageFromURL } from "./media";
+import { editedImage } from "./media";
+import { inputForEdit, photoDelivery, propertyPhoto, type PhotoSource, type PhotoDelivery } from "./photo-lineage";
+import PhotoExportPanel from "./PhotoExportPanel";
 import type { SourceImage } from "./media";
 import { PRESETS, record, requiredText, text } from "./model";
 import type { Edit } from "./model";
 
 export const MAX_BATCH_PHOTOS = 6;
 export type BatchEdit = { edit: Edit; style: string; prompt: string };
-export type BatchPhotoResult = {
-  file: File; preview: string; originalPreview: string; originalAssetId: string;
+export type BatchPhotoResult = PhotoDelivery & {
+  file: File; preview: string; originalAssetId: string;
   provenanceId: string | null; disclosure: string;
 };
 export type BatchPhotoEntry = {
@@ -23,7 +25,7 @@ export type BatchPhotoEntry = {
 };
 type BatchDependencies = {
   assertScope: () => void;
-  prepare: (photo: StudioPhoto, signal: AbortSignal) => Promise<SourceImage>;
+  prepare: (photo: StudioPhoto, signal: AbortSignal) => Promise<PhotoSource>;
   upload: (file: File, role: "original" | "gallery", signal: AbortSignal, resume?: UploadJournal, onJournal?: (journal: UploadJournal) => void) => Promise<UploadedAsset>;
   generate: (source: SourceImage, originalId: string, choice: BatchEdit, key: string, caption: string, signal: AbortSignal) => Promise<unknown>;
   attach: (entry: BatchPhotoEntry, signal: AbortSignal) => Promise<void>;
@@ -69,20 +71,22 @@ export class PhotoBatch {
           const source = await this.deps.prepare(entry.photo, this.abort.signal);
           this.check();
           if (this.stopped) { entry.state = "stopped"; continue; }
-          const original = await this.deps.upload(source.file, "original", this.abort.signal);
+          if (!source.originalVerified || !source.original) throw new Error("Review and confirm the paired unedited original before editing this photo.");
+          const original = await this.deps.upload(source.original.file, "original", this.abort.signal);
           this.check();
           if (this.stopped) { entry.state = "stopped"; continue; }
           entry.state = "generating"; this.emit();
-          const raw = record(await this.deps.generate(source, original.assetId, this.choice, entry.requestKey, entry.photo.caption || "Property photo", this.abort.signal));
+          const raw = record(await this.deps.generate(inputForEdit(source, this.choice.edit), original.assetId, this.choice, entry.requestKey, entry.photo.caption || "Property photo", this.abort.signal));
           this.check();
           const base64 = requiredText(raw.image_b64, "an edited photo", 32 * 1024 * 1024), mime = text(raw.mime, 50) || "image/png";
           const file = editedImage(base64, mime);
           let provenanceId: string | null = null;
           try { const proof = raw.provenance ? record(raw.provenance) : {}; if (proof.recorded === true) provenanceId = uuid(proof.id, "photo disclosure"); }
           catch { /* Keep the paid preview available; an invalid proof cannot authorize gallery save. */ }
-          entry.result = { file, preview: `data:${mime};base64,${base64}`, originalPreview: source.preview, originalAssetId: original.assetId,
-            provenanceId,
-            disclosure: requiredText(raw.disclosure, "the photo disclosure", 1000) };
+          const disclosure = requiredText(raw.disclosure, "the photo disclosure", 1000);
+          entry.result = { ...photoDelivery(source, file, this.choice.edit, disclosure, provenanceId),
+            preview: `data:${mime};base64,${base64}`, originalAssetId: original.assetId,
+            disclosure: [...inputForEdit(source, this.choice.edit).disclosures, disclosure].join("\n") };
           entry.state = "ready";
           if (!entry.result.provenanceId) entry.error = "The preview is ready, but its disclosure could not be saved. Download it; it cannot join the gallery yet.";
         } catch (error) {
@@ -124,6 +128,7 @@ export default function BatchPhotoStudio(props: BatchPhotoStudioProps) {
   return <BatchPhotoStudioContent key={`${props.workspace.user.id}:${props.workspace.org.id}:${props.listing.id}`} {...props} />;
 }
 function BatchPhotoStudioContent({ services, workspace, listing, photos, canCreate, onChanged, onComplete, disabled, onBusyChange }: BatchPhotoStudioProps) {
+  const [confirmedOriginals, setConfirmedOriginals] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]), [edit, setEdit] = useState<Edit>("declutter"), [style, setStyle] = useState("modern"), [prompt, setPrompt] = useState("");
   const [batch, setBatch] = useState<PhotoBatch | null>(null), [, redraw] = useState(0), [error, setError] = useState<string | null>(null);
   const [allowance, setAllowance] = useState<{ used: number; cap: number } | null>(null), [allowanceRead, setAllowanceRead] = useState(false);
@@ -171,10 +176,14 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
       const dispatch = (path: string, body: unknown, signal: AbortSignal, extra: Partial<Parameters<StudioServices["api"]>[1]> = {}) => services.api(`/functions/v1/${path}`, { orgId: workspace.org.id, signal, method: "POST", body, ...extra });
       const next = new PhotoBatch(choices, listing.id, { edit, style, prompt }, {
         assertScope,
-        prepare: (photo, signal) => imageFromURL((photo.isAltered || photo.isStaged) ? photo.originalUrl! : photo.url, `${photo.caption || "property"}.jpg`, signal),
+        prepare: async (photo, signal) => {
+          const source = await propertyPhoto(photo, signal);
+          return { ...source, originalVerified: source.originalVerified || confirmedOriginals.includes(photo.id) };
+        },
         upload: (file, role, signal, resume, onJournal) => uploadListingAsset(services, { orgId: workspace.org.id, listingId: listing.id, file, role, signal, resume, onJournal }),
         generate: (source, originalId, choice, key, caption, signal) => dispatch("ai-photo", { listing_id: listing.id, original_asset_id: originalId, image_b64: source.base64, mime: source.mime, edit: choice.edit, space_type: listing.spaceType, label: caption.slice(0, 80), ...(choice.edit === "stage" ? { style: choice.style } : {}), ...(choice.edit === "custom" ? { prompt: choice.prompt } : {}) }, signal, { idempotencyKey: key, timeoutMs: 300_000, maxResponseBytes: 32 * 1024 * 1024 }),
         attach: async (entry, signal) => {
+          if ((entry.photo.caption?.length ?? 0) > 400) throw new Error("This edit history is too long for a gallery caption. Download its complete photo package instead.");
           await services.api(`/functions/v1/me/compliance/${entry.result!.provenanceId}`, { orgId: workspace.org.id, signal, method: "PATCH", body: { original_asset_id: entry.result!.originalAssetId, altered_asset_id: entry.output!.assetId } });
           assertScope();
           const attached = record(await dispatch("studio/photos", { listing_id: listing.id, asset_id: entry.output!.assetId, caption: entry.photo.caption?.slice(0, 400) || PRESETS.find(p => p.id === edit)?.name, provenance_id: entry.result!.provenanceId }, signal));
@@ -205,12 +214,14 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
       <fieldset disabled={!!disabled || !canCreate}><legend>2. Choose the photos to change</legend>
         {!eligible.length ? <p>Add photos to this property first. Edited photos need their untouched original before another edit.</p> : <div className="batch-photo-grid">{eligible.map((photo, index) => <label className="batch-photo-choice" key={photo.id}><input type="checkbox" checked={selected.includes(photo.id)} disabled={!selected.includes(photo.id) && choices.length >= MAX_BATCH_PHOTOS} onChange={event => setSelected(ids => event.target.checked ? [...ids, photo.id] : ids.filter(id => id !== photo.id))} /><img src={photo.url} alt="" loading="lazy" referrerPolicy="no-referrer" /><span>{photo.caption || `Photo ${index + 1}`}</span></label>)}</div>}
       </fieldset>
+      {choices.filter(photo => photo.isAltered || photo.isStaged).map(photo => <details key={photo.id}><summary>Verify the original for {photo.caption || "this edited photo"}</summary><img src={photo.originalUrl!} alt="Paired source to verify" style={{ maxWidth: "100%", maxHeight: 240 }} /><p>The current edited photo will be used. Earlier source history is not verified automatically.</p><label><input type="checkbox" checked={confirmedOriginals.includes(photo.id)} onChange={event => setConfirmedOriginals(ids => event.target.checked ? [...ids, photo.id] : ids.filter(id => id !== photo.id))} />This is the actual unedited original.</label></details>)}
       <p>{choices.length} selected. This starts {choices.length} separate AI edit{choices.length === 1 ? "" : "s"}. Review and save the previews below before leaving this property.</p>
-      <button className="creative-primary" disabled={!!disabled || !canCreate || !choices.length || !!allowance && choices.length > Math.max(0, allowance.cap - allowance.used) || edit === "custom" && !prompt.trim()} onClick={() => void start()}>Generate {choices.length || "selected"} photo previews</button>
+      <button className="creative-primary" disabled={!!disabled || !canCreate || !choices.length || choices.some(photo => (photo.isAltered || photo.isStaged) && !confirmedOriginals.includes(photo.id)) || !!allowance && choices.length > Math.max(0, allowance.cap - allowance.used) || edit === "custom" && !prompt.trim()} onClick={() => void start()}>Generate {choices.length || "selected"} photo previews</button>
     </> : <>
       <div className="creative-actions"><p role="status">{batch.entries.filter(e => e.state === "saved").length} saved · {batch.entries.filter(e => e.state === "ready").length} ready to review · {batch.entries.filter(e => e.state === "failed").length} failed · {batch.entries.filter(e => e.state === "stopped").length} not started</p>{busy ? <button disabled={batch.stopRequested} onClick={() => batch.stop()}>{batch.stopRequested ? "Stopping after this photo…" : "Stop remaining photos"}</button> : <button onClick={reset}>Choose another batch</button>}</div>
       {busy && <p>Keep this property open. Stopping leaves an edit already sent to AI running; no further photo will be sent.</p>}
-      <div className="batch-photo-results">{batch.entries.map((entry, index) => <article className="batch-photo-result" key={entry.requestKey}><h3>{index + 1}. {entry.photo.caption || "Property photo"}</h3><p className="batch-photo-status">{({ queued: "Waiting", preparing: "Preparing the original…", generating: "Creating your preview…", ready: "Review your preview", saving: "Saving the photo and disclosure…", saved: "Saved to your property", failed: "This photo needs attention", stopped: "Not started" })[entry.state]}</p>{entry.error && <p role="alert">{entry.error}</p>}{entry.result && <><div className="creative-comparison"><figure><img src={entry.result.originalPreview} alt="Untouched original" /><figcaption>Original</figcaption></figure><figure><img src={entry.result.preview} alt="AI edited preview" /><figcaption>AI edited</figcaption></figure></div><p>{entry.result.disclosure}</p><div className="creative-actions"><a href={entry.result.preview} download={`rendprop-photo-${index + 1}.${entry.result.file.type === "image/jpeg" ? "jpg" : entry.result.file.type === "image/webp" ? "webp" : "png"}`}>Download preview</a>{entry.state !== "saved" && <button className="creative-primary" disabled={busy || !!disabled || !canCreate || !entry.result.provenanceId} onClick={() => void save(index)}>{entry.error && entry.result.provenanceId ? "Retry saving this preview" : "Save to property gallery"}</button>}</div></>}</article>)}</div>
+      {batch.entries.some(entry => entry.result) && <PhotoExportPanel photos={batch.entries.flatMap(entry => entry.result ? [entry.result] : [])} assertScope={assertScope} disabled={busy || !!disabled} />}
+      <div className="batch-photo-results">{batch.entries.map((entry, index) => <article className="batch-photo-result" key={entry.requestKey}><h3>{index + 1}. {entry.photo.caption || "Property photo"}</h3><p className="batch-photo-status">{({ queued: "Waiting", preparing: "Preparing your photo and original…", generating: "Creating your preview…", ready: "Review your preview", saving: "Saving the photo and disclosure…", saved: "Saved to your property", failed: "This photo needs attention", stopped: "Not started" })[entry.state]}</p>{entry.error && <p role="alert">{entry.error}</p>}{entry.result && <><div className="creative-comparison"><figure><img src={entry.result.originalPreview ?? undefined} alt="Untouched original" /><figcaption>Original</figcaption></figure><figure><img src={entry.result.preview} alt="AI edited preview" /><figcaption>AI edited</figcaption></figure></div><p>{entry.result.disclosure}</p><div className="creative-actions"><PhotoExportPanel photos={[entry.result]} assertScope={assertScope} disabled={busy || !!disabled} />{entry.state !== "saved" && <button className="creative-primary" disabled={busy || !!disabled || !canCreate || !entry.result.provenanceId} onClick={() => void save(index)}>{entry.error && entry.result.provenanceId ? "Retry saving this preview" : "Save to property gallery"}</button>}</div></>}</article>)}</div>
     </>}
   </section>;
 }

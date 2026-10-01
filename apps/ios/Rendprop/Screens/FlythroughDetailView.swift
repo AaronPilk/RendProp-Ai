@@ -3281,6 +3281,21 @@ struct EnhancedPhoto: Identifiable, Hashable, Sendable {
     let id: String
     let originalURL: URL
     let enhancedURL: URL
+
+    var savedVersion: PhotoVersionHistory.Version? {
+        guard let index = try? PhotoVersionHistory.load(directory: enhancedURL.deletingLastPathComponent()) else { return nil }
+        return index.versions[id] ?? index.versions.values.first { $0.imageFile == enhancedURL.lastPathComponent }
+    }
+    var retainedSourceIsVerified: Bool { savedVersion?.originalVerified == true }
+    var history: [EnhancedPhoto] {
+        let directory = enhancedURL.deletingLastPathComponent()
+        guard let index = try? PhotoVersionHistory.load(directory: directory), let version = savedVersion else { return [self] }
+        return index.history(for: version.id).map { saved in
+            EnhancedPhoto(id: saved.id, originalURL: saved.originalFile.map { directory.appendingPathComponent($0) }
+                          ?? directory.appendingPathComponent(saved.imageFile),
+                          enhancedURL: directory.appendingPathComponent(saved.imageFile))
+        }
+    }
 }
 
 extension EnhancedPhoto {
@@ -3289,55 +3304,41 @@ extension EnhancedPhoto {
         FileStore.documents.appendingPathComponent("Photos/\(listingID.uuidString)", isDirectory: true)
     }
 
-    /// Every enhanced photo on disk for a listing, newest first. Sorted by real
-    /// file creation date (mixing UUID and timestamp ids reordered AI edits vs
-    /// ingests unpredictably across relaunches); `orig-<id>.jpg` beside an
-    /// `enh-<id>.jpg` is the "before", else the photo is its own before.
-    ///
-    /// SIGNATURE UNCHANGED, deliberately. `PhotoStudioView.loadExisting`, the
-    /// Reel Studio hand-off and `CoachModel.photoCounts` all call this
-    /// synchronously and none of them wanted an `await`; the build-9 lag report
-    /// only asked that it stop costing what it cost, so the body moved onto
-    /// `dated(in:directory:)` and the callers are untouched.
+    /// Current photo versions, newest first. Older files remain addressable for
+    /// history and existing reels, but superseded versions are not gallery tiles.
     nonisolated static func loadAll(listingID: UUID) -> [EnhancedPhoto] {
         let dir = directory(for: listingID)
         return dated(in: DiskScan.entries(of: dir), directory: dir).map(\.photo)
     }
 
-    /// The scan behind `loadAll`, over a directory listing the caller already
-    /// has, keeping each photo's creation date instead of throwing it away.
-    ///
-    /// TWO syscall bills paid off here, both mine (the build-9 lag report):
-    ///
-    /// 1. The sort used to call `created()` inside the comparator, so a folder of
-    ///    n photos was stat'd O(n log n) times to answer a question with n
-    ///    answers. The date now comes off the enumeration once, in `DatedFile`.
-    /// 2. Finding the "before" used to be a `fileExists` PER PHOTO — twenty
-    ///    photos, twenty syscalls — for a fact the directory listing in front of
-    ///    us already contains. It is a set lookup now.
-    ///
-    /// The result is byte-for-byte the list build 8 produced, including the
-    /// `a.id > b.id` tie-break, which matters on the rare pair of files written
-    /// inside the same filesystem timestamp.
+    /// Reuse one directory scan for legacy files and the durable version index.
+    /// A legacy orig-* filename alone does not certify an unaltered original.
     nonisolated fileprivate static func dated(in entries: [DatedFile],
                                               directory dir: URL) -> [DatedPhoto] {
         let names = Set(entries.map(\.name))
-        return entries
-            .filter { $0.name.hasPrefix("enh-") }
-            .map { file -> DatedPhoto in
-                let id = file.url.deletingPathExtension().lastPathComponent
-                    .replacingOccurrences(of: "enh-", with: "")
-                let preferredOriginal = "orig-\(id).jpg"
-                let originalName = names.contains(preferredOriginal) ? preferredOriginal
-                    : names.sorted().first(where: { $0.hasPrefix("orig-\(id).") })
-                let origURL = originalName.map { dir.appendingPathComponent($0) } ?? file.url
-                return DatedPhoto(photo: EnhancedPhoto(id: id, originalURL: origURL,
-                                                       enhancedURL: file.url),
-                                  createdAt: file.createdAt)
+        let history = try? PhotoVersionHistory.load(directory: dir)
+        let knownFiles = Dictionary((history?.versions.values.map { ($0.imageFile, $0) } ?? []),
+                                    uniquingKeysWith: { first, _ in first })
+        return entries.compactMap { file -> DatedPhoto? in
+            if let version = knownFiles[file.name] {
+                guard history?.isVisible(version.id) == true else { return nil }
+                let source = version.originalFile.map { dir.appendingPathComponent($0) } ?? file.url
+                return DatedPhoto(photo: EnhancedPhoto(id: version.id, originalURL: source, enhancedURL: file.url),
+                                  createdAt: version.createdAt)
             }
-            .sorted { a, b in
-                a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.photo.id > b.photo.id
-            }
+            // Legacy files stay visible without inferring edit history. New edit-
+            // files are visible only after their atomic metadata commit succeeds.
+            guard file.name.hasPrefix("enh-") else { return nil }
+            let id = String(file.url.deletingPathExtension().lastPathComponent.dropFirst(4))
+            let preferredOriginal = "orig-\(id).jpg"
+            let originalName = names.contains(preferredOriginal) ? preferredOriginal
+                : names.sorted().first(where: { $0.hasPrefix("orig-\(id).") })
+            let original = originalName.map { dir.appendingPathComponent($0) } ?? file.url
+            return DatedPhoto(photo: EnhancedPhoto(id: id, originalURL: original, enhancedURL: file.url),
+                              createdAt: file.createdAt)
+        }.sorted { a, b in
+            a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.photo.id > b.photo.id
+        }
     }
 }
 
@@ -3586,6 +3587,8 @@ struct PhotoStudioView: View {
     @State private var photoSaveError: String?
     @State private var processingText = "Working on your photo…"
     @State private var compare: EnhancedPhoto?
+    @State private var exportingPhotos: PhotoExportSelection?
+    @State private var photoOwner = AuthStore.shared.userID
     @State private var aiFailure: AIFailure?
     @State private var animatedClip: AnimatedClip?   // finished photo→reel clip
     @State private var customEditPhoto: EnhancedPhoto?   // photo awaiting a custom-prompt AI edit
@@ -3620,13 +3623,7 @@ struct PhotoStudioView: View {
     /// `CustomEditSheet` edits one photo's worth of prompt; the prompt it
     /// returns is applied to every photo in here.
     @State private var customBatchTargets: [EnhancedPhoto] = []
-    /// The disclosure sentence the server recorded for each AI edit made this
-    /// session, keyed by photo id — shown verbatim in the before/after view
-    /// (W2-C4). Not persisted: the durable copy is the provenance row, which the
-    /// listing's COMPLIANCE card reads back from the server.
-    @State private var editDisclosures: [String: String] = [:]
-    /// A photo waiting on the "this original backs a published disclosure"
-    /// confirmation before it is deleted (W2-C3).
+    /// A photo awaiting confirmation before its family is hidden from the gallery.
     @State private var pendingPhotoDelete: EnhancedPhoto?
     @State private var showPhotoDeleteConfirm = false
     /// Motion clips already on disk for this listing (F-A-23). Without this the
@@ -3653,7 +3650,7 @@ struct PhotoStudioView: View {
     /// fires the presenter's `onDisappear` — cancelling the animate task there
     /// left the grid stuck on "Animating photo…" forever (F-A-12).
     private var isPresentingOverlay: Bool {
-        compare != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
+        compare != nil || exportingPhotos != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
             || showLibrary || showCamera
             || showWandDialog || showStageDialog || showPhotoDeleteConfirm
             || showClipDeleteConfirm
@@ -3709,6 +3706,15 @@ struct PhotoStudioView: View {
             syncGalleryIfPublished()
         }
         .onChange(of: isProcessing) { _ in syncIdleHold() }
+        .onChange(of: auth.userID) { newOwner in
+            // Initial anonymous connection is expected when the first AI tap
+            // reconnects. A change from an established owner closes old media.
+            if photoOwner != nil, photoOwner != newOwner { compare = nil; exportingPhotos = nil; dismiss() }
+            photoOwner = newOwner
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            compare = nil; exportingPhotos = nil; dismiss()
+        }
         .onDisappear {
             if !isPresentingOverlay { animateTask?.cancel() }
             releaseIdleHold()   // re-taken by onAppear when the work is still running
@@ -3772,8 +3778,8 @@ struct PhotoStudioView: View {
     }
 
     private var shareAllButton: some View {
-        ShareLink(items: photos.map { $0.enhancedURL }) {
-            Label("Share all photos", systemImage: "square.and.arrow.up")
+        Button { exportingPhotos = PhotoExportSelection(photos: photos) } label: {
+            Label("Export photos", systemImage: "square.and.arrow.up")
                 .font(.rpBody.weight(.semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(Theme.accent).foregroundStyle(Color.white)
@@ -3936,11 +3942,11 @@ struct PhotoStudioView: View {
     /// only: tick the photos this change applies to.
     private var studioPickHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Tap the photos you want changed \u{2014} they get a tick. Each one is a separate change, saved beside its original.")
+            Text("Tap the photos you want changed \u{2014} they get a tick. Each change becomes the current version. Earlier versions stay in history.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
-            Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
-                  systemImage: "checkmark.shield.fill")
+            Label("Review saved disclosures and retained source photos before publishing. Export includes disclosure captions for your chosen destination.",
+                  systemImage: "info.circle")
                 .font(.rpCaption.weight(.semibold))
                 .foregroundStyle(Theme.good)
                 .fixedSize(horizontal: false, vertical: true)
@@ -3966,8 +3972,9 @@ struct PhotoStudioView: View {
             .ignoresSafeArea()
         }
         .fullScreenCover(item: $compare) { p in
-            PhotoCompareView(photo: p, disclosure: editDisclosures[p.id])
+            PhotoCompareView(photo: p)
         }
+        .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos) }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
         .sheet(item: $customEditPhoto, onDismiss: { customBatchTargets = [] }) { p in
             CustomEditSheet(photo: p, api: model.api, space: space,
@@ -4024,21 +4031,19 @@ struct PhotoStudioView: View {
             Button(EditWords.animate) { animate(p) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Each change saves as a new photo. The original stays, and the change is disclosed on your tour.")
+            Text("Your latest edit becomes the main version. Earlier versions and retained source files stay in this photo’s history.")
         }
-        // W2-C3: a photo's "before" is the file a published disclosure's
-        // "View original" points at. Never destroy it without asking.
-        .confirmationDialog("Delete this photo?", isPresented: $showPhotoDeleteConfirm,
+        // Removal hides the family; source bytes remain available to earlier
+        // versions and existing reels. Public gallery removal is separate.
+        .confirmationDialog("Remove this photo from the gallery?", isPresented: $showPhotoDeleteConfirm,
                             titleVisibility: .visible, presenting: pendingPhotoDelete) { p in
-            Button("Delete photo", role: .destructive) {
+            Button("Remove from gallery", role: .destructive) {
                 delete(p)
                 pendingPhotoDelete = nil
             }
             Button("Cancel", role: .cancel) { pendingPhotoDelete = nil }
         } message: { _ in
-            Text(space == .realEstate
-                 ? "This deletes the edited photo AND the untouched original beside it. Your published tour discloses AI edits and links buyers to the original — download the originals from COMPLIANCE first if your broker needs them on file."
-                 : "This deletes the edited photo AND the untouched original beside it. Your published tour discloses AI edits and links \(space.customerNoun) to the original — download the originals from COMPLIANCE first if you want to keep them on file.")
+            Text("This hides the photo and its versions from this phone’s gallery. Source files and edit history stay on this phone. Photos already on a published tour are not removed.")
         }
         .confirmationDialog("Delete this clip?", isPresented: $showClipDeleteConfirm,
                             titleVisibility: .visible, presenting: pendingClipDelete) { clip in
@@ -4061,7 +4066,7 @@ struct PhotoStudioView: View {
             // `stagingLabel` is the INDUSTRY term ("Virtual staging" /
             // "Furnish & style") — the button says "Add furniture", the
             // disclosure sentence says what a broker has to read.
-            Text("AI adds furniture in the style you pick. Walls and windows stay as they are. \(stagingLabel) is disclosed on your tour.")
+            Text("AI adds furniture in the style you pick. Review the result for unwanted changes. Restyling starts from the saved pre-furniture version, so later edits may not carry over. Export includes \(stagingLabel.lowercased()) disclosure text.")
         }
         .alert(aiFailure?.title ?? "That one didn't work",
                isPresented: Binding(get: { aiFailure != nil }, set: { if !$0 { aiFailure = nil } }),
@@ -4244,8 +4249,11 @@ struct PhotoStudioView: View {
         Button { setMain(p) } label: {
             Label("Use as cover photo", systemImage: "star")
         }
+        Button { exportingPhotos = PhotoExportSelection(photos: [p]) } label: {
+            Label("Export photo", systemImage: "square.and.arrow.up")
+        }
         Button(role: .destructive) { confirmDelete(p) } label: {
-            Label("Delete", systemImage: "trash")
+            Label("Remove from gallery", systemImage: "trash")
         }
     }
 
@@ -4300,48 +4308,31 @@ struct PhotoStudioView: View {
         }
     }
 
-    /// ONE AI edit, start to finish: prep the JPEG, anchor the listing, publish
-    /// the untouched original for disclosure, call `/ai-photo`, write the result
-    /// beside its "before", insert it into the grid, meter it. Returns the new
-    /// photo. Throws whatever the call threw — the CALLER decides whether that
-    /// is an alert (single edit) or a counted failure (a batch that keeps going).
-    ///
-    /// EXTRACTED VERBATIM from `aiEdit`'s task body, deliberately unchanged in
-    /// every respect that costs money or touches compliance. It does not present
-    /// anything and it does not clear `isProcessing`: a batch owns the spinner
-    /// for its whole run, and only the single-photo path opens the compare view.
-    ///
-    /// COMPLIANCE (W2-C3). Before the edit runs we publish the UNTOUCHED
-    /// original with `role:"original"` and send its asset id as
-    /// `original_asset_id`, so the disclosure block's "View original" link is a
-    /// real file rather than a dead promise — California AB 723 requires access
-    /// to the unaltered version, not only the sentence. Both that upload and the
-    /// server-listing creation it needs are best effort: an agent's edit never
-    /// fails because the audit log couldn't be anchored.
-    ///
-    /// A `400 unsupported_edit` from the fair-housing denylist surfaces the
-    /// server's own wording and is NEVER auto-retried — the user re-words it.
-    ///
-    /// `@MainActor` is spelled out rather than inherited from `View`. Everything
-    /// in here reads `AppModel`, `@State` or `Analytics`, all three of which are
-    /// main-actor, and this file has already lost one build to an isolation
-    /// guess (commit 78c4610). The long-running work — JPEG encode, upload, the
-    /// model call — is `await`ed and hops off on its own, exactly as before.
+    /// One edit preserves its immutable source, retained original and durable
+    /// disclosure history. A new version becomes current only after both image
+    /// and metadata are saved. Identity checks fence every asynchronous boundary.
     @MainActor
     private func performEdit(_ p: EnhancedPhoto, _ edit: String,
                              style: String?, prompt: String?) async throws -> EnhancedPhoto {
         let api = model.api          // snapshot on the main actor
         let targetDir = dir
-        let source = p.enhancedURL
-        // The unaltered "before" we publish for disclosure. `originalURL` is the
-        // camera/ingest original when one exists; for an already-AI-edited photo
-        // it is that edit's own recorded source. Never a different photo's file.
-        // …but only when it really IS a separate file. When the "before" copy is
-        // missing, `originalURL` falls back to the photo itself — publishing that
-        // as "the original" would label an already-processed image unaltered, so
-        // we publish nothing and the compliance row honestly shows amber.
-        let unaltered: URL? = p.originalURL.standardizedFileURL == p.enhancedURL.standardizedFileURL
-            ? nil : p.originalURL
+        let owner = AuthStore.shared.userID
+        let revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID
+        func requireIdentity() throws {
+            guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+        }
+        let priorFile = p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent
+        let parent = try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
+                                                          priorFile: priorFile, directory: targetDir)
+        let input = try PhotoVersionHistory.source(for: parent.id, edit: edit, directory: targetDir)
+        let source = targetDir.appendingPathComponent(input.imageFile)
+        // Old orig-* files sometimes contain an AI predecessor. Only a retained
+        // source registered at ingestion is eligible as an unaltered source.
+        let unaltered: URL? = parent.originalVerified
+            ? parent.originalFile.map { targetDir.appendingPathComponent($0) } : nil
+        let wasMain = isMain(p)
         let listingLocalID = listing.id
         let isSample = listing.isSample
         let disclosureLabel = Self.provenanceLabel(edit: edit, style: style, space: space)
@@ -4357,11 +4348,13 @@ struct PhotoStudioView: View {
         guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
             throw AIImagePrep.error("Couldn't read that photo.")
         }
-        // Anchor + "before", both best effort.
+        try requireIdentity()
+        // Anchor + retained source, both best effort.
         var serverListingID: UUID? = nil
         var originalAssetID: String? = nil
         if !isSample {
             serverListingID = await model.serverListingIDForCompliance(listingLocalID)
+            try requireIdentity()
             if let sid = serverListingID, let unaltered {
                 // Put the step on screen and put back whatever line was there —
                 // a batch's line counts photos and must survive this detour.
@@ -4369,6 +4362,7 @@ struct PhotoStudioView: View {
                 processingText = "Saving the original for disclosure…"
                 originalAssetID = await model.publishOriginalForDisclosure(
                     listingServerID: sid, fileURL: unaltered)
+                try requireIdentity()
                 processingText = resume
             }
         }
@@ -4381,27 +4375,29 @@ struct PhotoStudioView: View {
         request.label = disclosureLabel
         request.originalAssetID = originalAssetID
         request.idempotencyKey = tapKey
+        try requireIdentity()
         let result = try await api.aiPhotoEdit(request)
-        // Save with the same enh-/orig- convention as ingested photos: a
-        // UUID-named PNG was skipped by loadExisting (enh- filter) and lost
-        // on relaunch. Timestamp id sorts newest-first alongside ingests;
-        // the copied "before" keeps the compare working after relaunch.
-        let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
-            + "-" + String(UUID().uuidString.prefix(4))
-        let outURL = targetDir.appendingPathComponent("enh-\(id).jpg")
-        guard await AIImagePrep.writeJPEG(base64: result.imageBase64, to: outURL, quality: 0.95) else {
-            throw AIImagePrep.error("The AI didn't return an image. Try again.")
-        }
-        let beforeURL = targetDir.appendingPathComponent("orig-\(id).jpg")
-        try? FileManager.default.copyItem(at: source, to: beforeURL)
-        // Never point originalURL at another photo's live file — delete()
-        // removes it, so fall back to self, not the source, if the copy fails.
-        let originalURL = FileManager.default.fileExists(atPath: beforeURL.path)
-            ? beforeURL : outURL
-
-        let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
-        photos.insert(newPhoto, at: 0)
-        if let disclosure = result.disclosure, !disclosure.isEmpty { editDisclosures[id] = disclosure }
+        try requireIdentity()
+        let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000)) + "-" + UUID().uuidString
+        let recordedOriginalAssetID = originalAssetID
+        let recordedListingID = serverListingID?.uuidString
+        let version = try await Task.detached(priority: .userInitiated) {
+            guard let raw = Data(base64Encoded: result.imageBase64), let image = UIImage(data: raw),
+                  let jpeg = image.jpegData(compressionQuality: 0.97) else {
+                throw AIImagePrep.error("The AI didn't return an image. Try again.")
+            }
+            return try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: parent.id, sourceID: input.id,
+                edit: edit, style: style, disclosure: result.disclosure, provenanceID: result.provenanceID,
+                provenanceRecorded: result.provenanceRecorded, directory: targetDir,
+                originalAssetID: recordedOriginalAssetID, serverListingID: recordedListingID)
+        }.value
+        try requireIdentity()
+        let outURL = targetDir.appendingPathComponent(version.imageFile)
+        let newPhoto = EnhancedPhoto(id: id,
+            originalURL: version.originalFile.map { targetDir.appendingPathComponent($0) } ?? outURL,
+            enhancedURL: outURL)
+        loadExisting()
+        if wasMain { setMain(newPhoto) }
         // METERED PER PHOTO, because it is charged per photo. `batch` says how
         // it was reached; the event, and everything else about it, is the one
         // `ai_photo_edit` a single wand tap has always sent.
@@ -4409,15 +4405,14 @@ struct PhotoStudioView: View {
                         ["task": edit, "ok": "true", "batch": batchRun == nil ? "false" : "true"])
         if !isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
 
-        // Publish the "after" against the same provenance row so the
-        // tour can show the pair side by side (NorthstarMLS). Off the
-        // critical path — the edit is already on screen, and a failure
-        // costs nothing: the original alone satisfies AB 723. Detached from
-        // the caller so photo 4 of 17 is not waiting on photo 3's audit row.
+        // Linking the output can fail independently. Persist the exact server
+        // disclosure without claiming that an upload or public link succeeded.
         if let provenanceID = result.provenanceID, let sid = serverListingID {
             let appModel = model     // snapshot: an @EnvironmentObject read is a
                                      // view-graph read, and this outlives the call
             Task { @MainActor in
+                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+                      WorkspaceContext.selectedOrgID == workspace else { return }
                 await appModel.attachAlteredPhotoForDisclosure(
                     provenanceID: provenanceID, listingServerID: sid, fileURL: outURL)
             }
@@ -4912,7 +4907,7 @@ struct PhotoStudioView: View {
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             stagingStyleGrid
-            Text("\(stagingLabel) is disclosed on your tour.")
+            Text("Exports include \(stagingLabel.lowercased()) disclosure text. Review your tour’s disclosures before publishing.")
                 .font(.caption2).foregroundStyle(Theme.inkDim)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -5068,7 +5063,7 @@ struct PhotoStudioView: View {
             ProgressView(value: Double(run.done + run.failed), total: Double(max(run.total, 1)))
                 .tint(Theme.accent)
             Text(run.failed == 0
-                 ? "\(run.done) done. Each photo is a separate change, saved beside its original."
+                 ? "\(run.done) done. Earlier versions and source files stay in history."
                  : "\(run.done) done, \(run.failed) failed. The rest keep going.")
                 .font(.rpCaption)
                 .foregroundStyle(run.failed == 0 ? Theme.inkDim : Theme.warn)
@@ -5109,8 +5104,8 @@ struct PhotoStudioView: View {
                 .fixedSize(horizontal: false, vertical: true)
             // W2-C4: the agent learns this BEFORE they tap, not after
             // a broker asks. Disclosure is automatic, not optional.
-            Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
-                  systemImage: "checkmark.shield.fill")
+            Label("Review saved disclosures and retained source photos before publishing. Export includes disclosure captions for your chosen destination.",
+                  systemImage: "info.circle")
                 .font(.rpCaption.weight(.semibold))
                 .foregroundStyle(Theme.good)
                 .fixedSize(horizontal: false, vertical: true)
@@ -5266,6 +5261,9 @@ struct PhotoStudioView: View {
         // line in here touches `@State`, `AppModel` or `Analytics`, all three of
         // which are main-actor, and this file has already lost one build to an
         // isolation guess (commit 78c4610).
+        let batchOwner = AuthStore.shared.userID
+        let batchRevision = AuthStore.shared.syncSessionRevision
+        let batchWorkspace = WorkspaceContext.selectedOrgID
         Task { @MainActor in
             var done = 0
             var failedCount = 0
@@ -5273,6 +5271,8 @@ struct PhotoStudioView: View {
             var stoppedEarly = false
 
             for (index, photo) in targets.enumerated() {
+                guard AuthStore.shared.userID == batchOwner, AuthStore.shared.syncSessionRevision == batchRevision,
+                      WorkspaceContext.selectedOrgID == batchWorkspace else { stoppedEarly = true; break }
                 batchRun?.current = index + 1
                 processingText = "\(pending.title) — photo \(index + 1) of \(targets.count)…"
                 do {
@@ -5311,7 +5311,7 @@ struct PhotoStudioView: View {
         let photoWord = done == 1 ? "photo" : "photos"
         if failed == 0 {
             batchNote = BatchNote(
-                text: "\(pending.title) — \(done) \(photoWord) changed. Each one saved beside its original.",
+                text: "\(pending.title) — \(done) \(photoWord) changed. Earlier versions and source files stay in history.",
                 ok: true)
             Haptics.success()
             return
@@ -5406,7 +5406,7 @@ struct PhotoStudioView: View {
                         return
                     }
                     do {
-                        try PhotoCaptureStorage.writePair(original: od, enhanced: ed, id: id, directory: targetDir)
+                        try PhotoVersionHistory.saveCapture(original: od, enhanced: ed, id: id, directory: targetDir)
                     } catch {
                         failed += 1
                     }
@@ -5450,30 +5450,24 @@ struct PhotoStudioView: View {
         loadExisting()
     }
 
-    /// Deleting a photo also deletes its "before". Once the tour is published
-    /// that before may be the original a disclosure links to (W2-C3), so ask
-    /// first; an unpublished listing deletes straight away as before.
+    /// Non-destructive gallery removal: old reels, history and disclosures may
+    /// still reference these files, so no photo bytes are deleted here.
     private func confirmDelete(_ p: EnhancedPhoto) {
-        let published = model.listings.first(where: { $0.id == listing.id })?.serverShareURL != nil
-        let hasSeparateOriginal = p.originalURL.standardizedFileURL != p.enhancedURL.standardizedFileURL
-        guard published, hasSeparateOriginal, !listing.isSample else {
-            delete(p)
-            return
-        }
         pendingPhotoDelete = p
         showPhotoDeleteConfirm = true
     }
 
     private func delete(_ p: EnhancedPhoto) {
         let wasMain = isMain(p)
-        ImageThumbnails.invalidate(p.enhancedURL)
-        try? FileManager.default.removeItem(at: p.enhancedURL)
-        try? FileManager.default.removeItem(at: p.originalURL)
-        editDisclosures.removeValue(forKey: p.id)
-        loadExisting()
-        if wasMain {
-            model.setMainPhoto(photos.first.map { FileStore.relativePath(for: $0.enhancedURL) }, for: listing.id)
-        }
+        do {
+            try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
+                priorFile: p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent, directory: dir)
+            try PhotoVersionHistory.hide(id: p.id, directory: dir)
+            loadExisting()
+            if wasMain {
+                model.setMainPhoto(photos.first.map { FileStore.relativePath(for: $0.enhancedURL) }, for: listing.id)
+            }
+        } catch { photoSaveError = error.localizedDescription }
     }
 }
 
@@ -5525,68 +5519,84 @@ enum PhotoEnhancer {
 /// thread, at screen resolution.
 struct PhotoCompareView: View {
     let photo: EnhancedPhoto
-    /// The exact disclosure sentence the server recorded for this edit, when it
-    /// came from one (W2-C4). Shown VERBATIM — it is the sentence the public
-    /// tour prints, and the agent should recognise it when a broker quotes it.
     var disclosure: String? = nil
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var selectedVersion: EnhancedPhoto?
     @State private var showOriginal = false
     @State private var enhanced: UIImage?
     @State private var original: UIImage?
+    @State private var exporting: PhotoExportSelection?
+
+    private var viewed: EnhancedPhoto { selectedVersion ?? photo }
+    private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
+    private var savedDisclosure: String? { viewed.savedVersion?.disclosure ?? (viewed.id == photo.id ? disclosure : nil) }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            VStack {
-                Spacer()
-                if let ui = showOriginal ? original : enhanced {
-                    Image(uiImage: ui).resizable().scaledToFit()
-                        .accessibilityLabel(Text(showOriginal ? "Original photo" : "Enhanced photo"))
-                } else {
-                    ProgressView().tint(.white)
-                }
-                Spacer()
-                if let disclosure, !disclosure.isEmpty {
-                    Label(disclosure, systemImage: "checkmark.shield.fill")
-                        .font(.rpCaption)
-                        .foregroundStyle(Color.white.opacity(0.85))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 6)
-                        .accessibilityLabel(Text("Disclosure published with this photo. \(disclosure)"))
-                }
-                Picker("", selection: $showOriginal) {
-                    Text("After").tag(false)
-                    Text("Before").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .padding()
-            }
-            VStack {
+            VStack(spacing: 12) {
                 HStack {
+                    if photo.history.count > 1 {
+                        Menu {
+                            ForEach(photo.history) { version in
+                                Button(version.savedVersion?.title ?? "Earlier version") {
+                                    selectedVersion = version; showOriginal = false
+                                }
+                            }
+                        } label: { Label("Versions (\(photo.history.count))", systemImage: "clock.arrow.circlepath") }
+                    }
                     Spacer()
                     Button { dismiss() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title).foregroundStyle(Color.white.opacity(0.9))
-                    }
-                    .padding()
-                    .accessibilityLabel(Text("Close"))
+                        Image(systemName: "xmark.circle.fill").font(.title)
+                    }.accessibilityLabel("Close")
+                }.padding(.horizontal)
+                Spacer(minLength: 0)
+                if let image = showOriginal ? original : enhanced {
+                    Image(uiImage: image).resizable().scaledToFit()
+                        .accessibilityLabel(showOriginal ? sourceTitle : "Edited photo")
+                } else { ProgressView().tint(.white) }
+                Spacer(minLength: 0)
+                if let label = viewed.savedVersion?.visibleLabel {
+                    Text(label).font(.headline).padding(.horizontal)
                 }
-                Spacer()
-            }
+                if let savedDisclosure, !savedDisclosure.isEmpty {
+                    Text(savedDisclosure).font(.caption).foregroundStyle(.white.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal)
+                }
+                if viewed.savedVersion?.sourceHistoryKnown != true {
+                    Text("Earlier edits are unverified. This source may already contain AI changes.")
+                        .font(.caption).foregroundStyle(.orange).padding(.horizontal)
+                }
+                if viewed.originalURL != viewed.enhancedURL {
+                    Picker("Photo version", selection: $showOriginal) {
+                        Text("Edited").tag(false)
+                        Text(sourceTitle).tag(true)
+                    }.pickerStyle(.segmented).padding(.horizontal)
+                }
+                Button { exporting = PhotoExportSelection(photos: [viewed]) } label: {
+                    Label("Export photo", systemImage: "square.and.arrow.up")
+                        .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12))
+                }.padding(.horizontal).padding(.bottom, 12)
+            }.foregroundStyle(.white)
         }
-        // Media viewer — always dark chrome (segmented control, buttons),
-        // regardless of the app's light/dark appearance. The photo sits on
-        // black in both modes anyway.
         .environment(\.colorScheme, .dark)
-        .task {
-            let after = await AIImagePrep.decoded(at: photo.enhancedURL, maxPixel: 2400)
+        .onChange(of: auth.userID) { _ in exporting = nil; enhanced = nil; original = nil; dismiss() }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            exporting = nil; enhanced = nil; original = nil; dismiss()
+        }
+        .sheet(item: $exporting) { selection in PhotoExportSheet(photos: selection.photos) }
+        .task(id: viewed.id) {
+            let target = viewed
+            enhanced = nil; original = nil
+            let after = await AIImagePrep.decoded(at: target.enhancedURL, maxPixel: 2400)
+            guard !Task.isCancelled, viewed.id == target.id else { return }
             enhanced = after
-            if photo.originalURL == photo.enhancedURL {
-                original = after
-            } else {
-                original = await AIImagePrep.decoded(at: photo.originalURL, maxPixel: 2400)
-            }
+            let before = target.originalURL == target.enhancedURL ? after
+                : await AIImagePrep.decoded(at: target.originalURL, maxPixel: 2400)
+            guard !Task.isCancelled, viewed.id == target.id else { return }
+            original = before
         }
     }
 }

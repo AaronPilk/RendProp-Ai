@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Guided photo camera plus existing local scan tests. Recheck Apple build
+    # Room survey/guidance and photo delivery plus existing local scan tests. Recheck Apple build
     # inventory before upload; never automatically renumber an upload retry.
-    CURRENT_PROJECT_VERSION: "35"
+    CURRENT_PROJECT_VERSION: "36"
 targets:
   Rendprop:
     sources:
@@ -18,6 +18,8 @@ targets:
       - path: ../../tools/spatial-spike/capture-ios/Sources/PanoramaProjection.swift
       - path: ../../tools/spatial-spike/capture-ios/Sources/PanoramaRenderer.swift
       - path: ../../tools/spatial-spike/capture-ios/Sources/PanoramaPreviewViewController.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/RoomScanPlanner.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/PanoramaNavigationPolicy.swift
     settings:
       base:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPATIAL_CAPTURE_LAB"

@@ -14,6 +14,13 @@ activate a trial. Studio uses the same account/workspace subscription.
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
 [iPhone delivery receipt](docs/releases/TESTFLIGHT-35-20261001.json)
 
+The [room-guidance and photo-delivery update](docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
+adds floor-based standing suggestions, clear automatic 38-photo viewpoint capture,
+saved-view markers, retained photo versions and MLS/web/social downloads. Software
+checks pass; internal TestFlight 36 and the Studio update are being prepared.
+Photo version history is local to iPhone; shared durable history and published-gallery
+supersession remain separate work. Physical room/camera quality still needs phone testing.
+
 ## Production status — 1 October 2026
 
 | Area | Current state |
@@ -114,6 +121,7 @@ tests cannot validate physical camera, ARKit/LiDAR capture or thermal behavior.
 - [AI Presenter and activation requirements](docs/studio/ai-presenter.md)
 - [Brand assets](docs/brand/README.md)
 - [iOS test boundaries](apps/ios/RendpropUITests/README.md)
+- [Room guidance, edited-photo downloads and disclosure boundaries](docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 - [Current Studio release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 - [24 September production baseline](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 

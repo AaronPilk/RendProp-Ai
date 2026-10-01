@@ -15,6 +15,8 @@ struct StationCaptureUpdate {
     let targetDirection: [Double]?
     let angularErrorDegrees: Double?
     let pivotDriftMeters: Double?
+    let guidanceMode: StationCapturePolicy.GuidanceMode
+    let steadyProgress: Double
 }
 
 /// The controller owns ARSession and invokes process on MainActor. Only the
@@ -99,7 +101,7 @@ final class StationCaptureRecorder {
             files = created; tourURL = created.root; manifest = created.manifest
             if ending { finalizeTour(); throw CaptureError.invalid("Capture closed while preparing. Saved files are preserved.") }
             state = .ready
-            emit("Stand where you want to scan. Hold the camera still and tap Scan this position.")
+            emit("Start near the room's center in a clear spot. Hold the phone upright at chest height, point straight ahead, then tap Start 38 photos.")
         } catch {
             if files == nil { state = .finished; emit(error.localizedDescription); onFinished?(tourURL, error.localizedDescription) }
             throw error
@@ -117,7 +119,7 @@ final class StationCaptureRecorder {
               let pose = StationCapturePolicy.pose(CaptureGeometry.rows(frame.camera.transform)) else {
             throw CaptureError.invalid("Hold still and point at room details until camera tracking is ready.")
         }
-        guard abs(pose.forward[1]) < 0.5 else { throw CaptureError.invalid("Point the camera straight ahead to begin this position.") }
+        guard StationCapturePolicy.canBeginFacingStraightAhead(forwardY: pose.forward[1]) else { throw CaptureError.invalid("Point the camera straight ahead to begin this position.") }
         let reference = atan2(pose.forward[0], -pose.forward[2]) * 180 / .pi
         let station = StationCaptureStation(id: UUID().uuidString, index: manifest.stations.count, origin: pose.origin,
                                            reference_yaw_degrees: reference, started_timestamp: frame.timestamp)
@@ -135,7 +137,7 @@ final class StationCaptureRecorder {
                     self.manifest = snapshot
                     guard !self.ending, !self.finishingStation else { return }
                     self.state = .capturing
-                    self.emit("Follow the target. Keep the camera at this spot as you turn around it.")
+                    self.emit("Photos save automatically. Keep the lens over this spot and turn around the phone, not around your body.")
                 }
             } catch { self.diskFailure(files, error: error) }
         }
@@ -249,8 +251,8 @@ final class StationCaptureRecorder {
                     guard !self.ending, !self.finishingStation else { return }
                     if complete {
                         self.activeStationIndex = nil; self.previousPose = nil
-                        self.state = .ready; self.emit("Position saved. Check the preview, then move to the next position.")
-                    } else { self.state = .capturing; self.emit("Photo saved. \(self.policy?.currentTarget?.instruction ?? "Follow the next target").") }
+                        self.state = .ready; self.emit("All 38 photos saved from this spot. Preview the room; another viewpoint is optional.")
+                    } else { self.state = .capturing; self.emit("Photo saved. Stay in this spot and follow the next arrow.") }
                 }
             } catch { self.diskFailure(files, error: error) }
         }
@@ -335,7 +337,9 @@ final class StationCaptureRecorder {
                                        savedTargets: policy?.completedCount ?? 0, totalTargets: StationCaptureTarget.standard.count,
                                        target: guidance?.target ?? policy?.currentTarget,
                                        targetDirection: guidance?.targetDirection ?? policy?.currentTarget?.direction(referenceYawDegrees: policy?.referenceYawDegrees ?? 0),
-                                       angularErrorDegrees: guidance?.angularErrorDegrees, pivotDriftMeters: guidance?.pivotDriftMeters))
+                                       angularErrorDegrees: guidance?.angularErrorDegrees, pivotDriftMeters: guidance?.pivotDriftMeters,
+                                       guidanceMode: guidance?.mode ?? (state == .saving ? .saving : state == .capturing ? .aim : .waiting),
+                                       steadyProgress: guidance?.steadyProgress ?? 0))
     }
 
     nonisolated private static func writeNew(_ data: Data, to url: URL) throws {

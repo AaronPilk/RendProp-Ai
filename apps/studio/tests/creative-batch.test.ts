@@ -4,6 +4,7 @@ import { PhotoBatch, batchEligible, MAX_BATCH_PHOTOS } from "../src/features/cre
 import type { BatchPhotoEntry } from "../src/features/creative/BatchPhotoStudio";
 import type { StudioPhoto } from "../src/data/contracts";
 import type { UploadJournal } from "../src/features/listings/uploads";
+import { importedPhoto } from "../src/features/creative/photo-lineage";
 import { StudioError } from "../src/data/config";
 
 const listingId = "11111111-1111-4111-8111-111111111111";
@@ -19,7 +20,7 @@ function fixture() {
   const events: string[] = [], keys: string[] = [], resumeValues: (UploadJournal | undefined)[] = [];
   const deps = {
     assertScope: () => { if (!current) throw new Error("Account changed"); },
-    prepare: async (photo: StudioPhoto) => { events.push(`prepare:${photo.id}`); return { file: new File([photo.id], `${photo.id}.jpg`, { type: "image/jpeg" }), base64: "c291cmNl", mime: "image/jpeg" as const, preview: "data:image/jpeg;base64,c291cmNl" }; },
+    prepare: async (photo: StudioPhoto) => { events.push(`prepare:${photo.id}`); return importedPhoto({ file: new File([photo.id], `${photo.id}.jpg`, { type: "image/jpeg" }), base64: "c291cmNl", mime: "image/jpeg" as const, preview: "data:image/jpeg;base64,c291cmNl" }); },
     upload: async (file: File, role: "original" | "gallery", _signal: AbortSignal, resume?: UploadJournal, onJournal?: (journal: UploadJournal) => void) => {
       events.push(`upload:${role}:${file.name}`); resumeValues.push(resume);
       if (onJournal) onJournal({ version: 1, operationId: "same-operation" } as UploadJournal);
@@ -154,4 +155,17 @@ test("selection bounds, listing scope, originals, edit and staging settings are 
   assert.throws(() => new PhotoBatch([original], listingId, { ...choice, edit: "custom", prompt: " " }, f.deps), /settings/);
   assert.throws(() => new PhotoBatch([original], listingId, { ...choice, edit: "stage", style: "invented" }, f.deps), /settings/);
   assert.equal(f.keys.length, 0);
+});
+
+
+test("batch sends the edited current pixels while uploading and retaining the actual original", async () => {
+  const f = fixture(), source = await f.deps.prepare(photos(1)[0]!);
+  f.deps.prepare = async () => ({ ...source, file: new File(["decluttered"], "decluttered.png", { type: "image/png" }), base64: "decluttered", disclosures: ["Clutter removed."], edits: ["Digitally decluttered"] });
+  const generate = f.deps.generate;
+  f.deps.generate = async (...args) => { assert.equal((args[0] as { base64: string }).base64, "decluttered"); return generate(...args); };
+  const batch = new PhotoBatch(photos(1), listingId, { ...choice, edit: "stage" }, f.deps);
+  await batch.run();
+  assert.ok(f.events.includes("upload:original:photo-1.jpg"));
+  assert.equal(batch.entries[0]!.result!.original, source.original!.file);
+  assert.deepEqual(batch.entries[0]!.result!.edits, ["Digitally decluttered", "Virtually staged"]);
 });
