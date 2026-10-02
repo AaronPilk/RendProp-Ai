@@ -65,7 +65,9 @@ struct ConsentPersistenceTests {
             check(consent.isGranted, "relaunch must load the v2 grant")
             let granted = await consent.ensureGranted()
             check(granted && !consent.isAsking, "v2 grant skips asking")
+            let revision = consent.revocationRevision
             consent.revoke()
+            check(consent.revocationRevision == revision + 1, "revoke invalidates the captured grant revision")
             check(!consent.isGranted && !defaults.bool(forKey: current), "revoke persists false")
             check(defaults.bool(forKey: old), "stale v1 YES remains irrelevant")
             check(defaults.synchronize(), "revocation must flush before next process")

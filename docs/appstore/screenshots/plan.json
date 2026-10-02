@@ -1,15 +1,10 @@
 {
   "_comment": [
-    "The 6.9-inch App Store set, in upload order. Rendered by tools/screenshots/compose.py",
-    "into docs/appstore/screenshots/6.9-framed/ and uploaded by",
-    "tools/asc/asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace.",
-    "src names are the raw captures (StoreShots.swift attachment names); the five",
-    "numbered ones are the names the integrator staged the first set under - compose.py",
-    "resolves either spelling, and the bridge's suffixed exports (s09-venue-home_0_<id>.png).",
-    "Headlines: benefit first, plain English, <= 32 characters, no hype, no emoji, and",
-    "nothing a fair-housing reviewer could read as a claim about people or neighbourhoods.",
-    "03 uses the column layout (the top of each Home, hero card readable); 05 starts at the leads banner (crop_top) - a mid-scroll capture's nav bar over half-scrolled tiles is not a store image.",
-    "08 needs s05-reel-studio (StoreShots opens the Reel Studio once the studio has seeded photos — TEST_RUNNER_STORESHOT_PHOTOS); it is skipped when the capture is missing."
+    "Five representative native App Store screenshots for1.0.3, in this explicit order.",
+    "The prior nine-frame1.0.1 set is historical. Three hosted-page screenshots and Photo Studio are omitted because their UI or disclosure is outdated.",
+    "Retained captures show real native UI with fictional/sample listing and lead information. No camera capture, AI generation, purchase or publish was performed for this composition.",
+    "Render with tools/screenshots/compose.py; the per-frame source captures and prior ASC checksum matches are recorded in the private release receipt.",
+    "The first image shows Home and tools. No paywall/IAP-review screenshot belongs in this marketing set."
   ],
   "defaults": {
     "fit": "bleed",
@@ -17,17 +12,10 @@
   },
   "frames": [
     {
-      "src": "01-published-tour.png",
-      "out": "01-cinematic-tour.png",
-      "headline": "Walk it once. A cinematic tour.",
-      "subline": "Film a walkthrough on your phone. It becomes a scroll-to-fly tour on its own page.",
-      "bg": "violet"
-    },
-    {
       "src": "02-home-showroom.png",
       "out": "02-every-tool.png",
-      "headline": "Every tool in one place",
-      "subline": "Tour, photos, reel, floor plan and aerial intro, all saved to one home.",
+      "headline": "Listing content in one place",
+      "subline": "Walkthrough, photos, reel and floor plan, together with one home.",
       "bg": "grape"
     },
     {
@@ -45,33 +33,12 @@
       "crop_top": 190
     },
     {
-      "src": "04-photo-studio.png",
-      "out": "04-photo-fixes.png",
-      "headline": "Photos fixed in one tap",
-      "subline": "Twilight, blue sky, tidy room, furniture. Every AI edit is labeled on the tour.",
-      "bg": "violet"
-    },
-    {
       "src": "s14-leads.png",
       "out": "05-one-link.png",
       "headline": "One link. Leads land in the app.",
-      "subline": "Every tour is one link with a lead form built in. Replies land here, with a tap to call or email.",
+      "subline": "Enquiries arrive in your inbox, with a tap to call or email.",
       "bg": "grape",
       "fit": "bleed"
-    },
-    {
-      "src": "s16-tour-chapters.png",
-      "out": "06-tap-a-room.png",
-      "headline": "Tap a room. Fly straight there.",
-      "subline": "Room tags become chapters on every tour. Buyers jump to the kitchen, the yard, the primary suite.",
-      "bg": "indigo"
-    },
-    {
-      "src": "s15-share-link.png",
-      "out": "07-book-from-the-tour.png",
-      "headline": "Buyers book from the tour",
-      "subline": "Every tour page ends with your card and a booking form. The lead lands in the app.",
-      "bg": "grape"
     },
     {
       "src": "s05-reel-studio.png",
@@ -84,7 +51,7 @@
       "src": "05-new-home.png",
       "out": "09-start-in-a-minute.png",
       "headline": "Add the home. Film it. Share it.",
-      "subline": "Walk it at a normal pace or upload a clip. No film crew, no editing.",
+      "subline": "Record or import a walkthrough, choose your photos, then review and share.",
       "bg": "violet"
     }
   ]
