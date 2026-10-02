@@ -37,7 +37,10 @@ struct PhotoVersionHistoryTests {
         let stagingInput = try PhotoVersionHistory.source(for: "declutter", edit: "stage", directory: dir)
         check(stagingInput.id == "declutter", "first stage uses decluttered image")
         let stage = try PhotoVersionHistory.saveEdit(jpeg: Data("modern-furniture".utf8), id: "stage", parentID: "declutter", sourceID: stagingInput.id,
-            edit: "stage", style: "modern", disclosure: "Furniture digitally added.", provenanceID: nil, provenanceRecorded: false, directory: dir)
+            edit: "stage", style: "modern", disclosure: "Furniture digitally added. The architecture, dimensions, and views are unchanged.", provenanceID: nil, provenanceRecorded: false, directory: dir)
+        check(stage.disclosure?.contains("are unchanged") == true, "historical audit sentence remains immutable")
+        check(stage.reviewDisclosure?.contains("are unchanged") == false, "native presentation does not certify AI geometry")
+        check(stage.caption.contains("Compare with the original") && !stage.caption.contains("are unchanged"), "download caption uses honest review disclosure")
         check(stage.originalFile == "orig-capture.jpg", "declutter to stage preserves true original")
         check(stage.stagingBaseID == "declutter", "pre-furniture image persisted")
         check(stage.visibleLabel == "Virtually staged · Digitally decluttered", "both actual alterations disclosed")
@@ -61,11 +64,34 @@ struct PhotoVersionHistoryTests {
         }
         check((try? Data(contentsOf: dir.appendingPathComponent("orig-capture.jpg"))) == original, "collision preserves originals")
 
+        check(index.listingSelections?["capture"] == "declutter", "unreviewed staging keeps approved declutter on public listing")
+        try PhotoVersionHistory.select(id: "stage", directory: dir)
+        index = try PhotoVersionHistory.load(directory: dir)
+        check(index.current["capture"] == "stage" && index.listingSelections?["capture"] == "stage", "reviewed saved version selected without a paid rerun")
+        try PhotoVersionHistory.select(id: "declutter", directory: dir)
+        index = try PhotoVersionHistory.load(directory: dir)
+        check(index.current["capture"] == "declutter" && index.listingSelections?["capture"] == "declutter", "declutter restored after staging")
+        check(index.versions.count == 4 && (try? Data(contentsOf: dir.appendingPathComponent("edit-rustic.jpg"))) != nil, "reverting preserves rejected staging and lineage")
+        rejected("missing saved version cannot become public") { try PhotoVersionHistory.select(id: "missing", directory: dir) }
+        let publishChoices = try PhotoVersionHistory.publicationVersions(directory: dir)
+        check(publishChoices?.map(\.id) == ["declutter"], "publication uses reviewed versions rather than newest staging")
+        let missingSelected = dir.appendingPathComponent("edit-declutter.jpg")
+        let retainedSelected = try Data(contentsOf: missingSelected)
+        try FileManager.default.removeItem(at: missingSelected)
+        rejected("missing selected publication file preserves cloud rather than clearing it") { _ = try PhotoVersionHistory.publicationVersions(directory: dir) }
+        try retainedSelected.write(to: missingSelected)
+        let indexURL = dir.appendingPathComponent(".photo-history.json")
+        let goodIndex = try Data(contentsOf: indexURL)
+        try Data("corrupt".utf8).write(to: indexURL)
+        rejected("corrupt publication index cannot silently fall back to old photos") { _ = try PhotoVersionHistory.publicationVersions(directory: dir) }
+        try goodIndex.write(to: indexURL)
+        try PhotoVersionHistory.select(id: "rustic", directory: dir)
         try PhotoVersionHistory.hide(id: "rustic", directory: dir)
         index = try PhotoVersionHistory.load(directory: dir)
         check(!index.isVisible("rustic") && !index.isVisible("capture"), "gallery removal does not resurrect a predecessor")
         check(index.history(for: "rustic").count == 4, "gallery removal preserves history")
         check(FileManager.default.fileExists(atPath: dir.appendingPathComponent("edit-stage.jpg").path), "gallery removal preserves old reel sources")
+        rejected("hidden family cannot be republished through stale compare") { try PhotoVersionHistory.select(id: "stage", directory: dir) }
         rejected("hidden family cannot accept delayed edit") { _ = try PhotoVersionHistory.source(for: "rustic", edit: "sky", directory: dir) }
 
         let legacyDir = root.appendingPathComponent("legacy")

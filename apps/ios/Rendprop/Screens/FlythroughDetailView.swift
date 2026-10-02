@@ -283,13 +283,18 @@ struct DetailMetadataRegressionHost: View {
     @State private var failure: String?
 
     var body: some View {
-        NavigationStack {
-            if let listing {
-                FlythroughDetailView(listing: listing)
-            } else if let failure {
-                Text(failure).accessibilityIdentifier("detail.fixtureFailure")
-            } else {
-                ProgressView("Preparing synthetic detail fixture")
+        VStack(spacing: 0) {
+            if Config.isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.photoWorkFixture") {
+                PhotoWorkBanner()
+            }
+            NavigationStack {
+                if let listing {
+                    FlythroughDetailView(listing: listing)
+                } else if let failure {
+                    Text(failure).accessibilityIdentifier("detail.fixtureFailure")
+                } else {
+                    ProgressView("Preparing synthetic detail fixture")
+                }
             }
         }
         .task {
@@ -649,6 +654,15 @@ struct FlythroughDetailView: View {
                     .accessibilityIdentifier("listing.productionPlan")
                 }
                 tourSection
+                if let smoothing = tour?.motionSmoothing {
+                    Text(smoothing == "unavailable"
+                         ? "Motion smoothing wasn't available for this footage. Preview the video before sharing."
+                         : smoothing == "applied"
+                         ? "Camera-shake correction applied. Preview the video to check walking movement and framing."
+                         : "The video had little measured shake. Preview the movement before sharing.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !currentListing.isSample { ListingClientContactSummary(listing: currentListing) }
                 if let shareURL {
                     shareSection(shareURL)
@@ -662,6 +676,13 @@ struct FlythroughDetailView: View {
                             .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(16)
                             .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
                     }
+                }
+                if !currentListing.isSample {
+                    Button { showEdit = true } label: {
+                        Label("Edit listing details", systemImage: "pencil")
+                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: Theme.radius))
+                    }.foregroundStyle(Theme.accent).accessibilityIdentifier("listing.editDetails")
                 }
                 complianceSection
                 toolboxSection
@@ -2326,7 +2347,7 @@ struct MapPin: Identifiable {
 /// message when there is one, plus the status class so the UI can offer the
 /// right next step — "Upgrade plan" on 402, "Retry connection" on 401, "try again in a
 /// few minutes" on 429.
-private struct AIFailure: Identifiable {
+struct AIFailure: Identifiable {
     let id = UUID()
     let title: String
     let message: String
@@ -2509,7 +2530,7 @@ private struct AIFailureCard: View {
 /// UI (F-A-19). The renderer is pinned to scale 1 so "1280 px" means 1280
 /// pixels — the default format inherits the screen's 3× scale and silently
 /// tripled every upload.
-private enum AIImagePrep {
+enum AIImagePrep {
     static func error(_ message: String) -> NSError {
         NSError(domain: "AIImagePrep", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
@@ -3528,6 +3549,17 @@ struct EnhancedPhoto: Identifiable, Hashable, Sendable {
 }
 
 extension EnhancedPhoto {
+    nonisolated static func loadForListing(listingID: UUID) throws -> [EnhancedPhoto] {
+        let directory = directory(for: listingID)
+        guard let choices = try PhotoVersionHistory.publicationVersions(directory: directory) else {
+            return loadAll(listingID: listingID)
+        }
+        return choices.map { version in
+            let output = directory.appendingPathComponent(version.imageFile)
+            return EnhancedPhoto(id: version.id, originalURL: version.originalFile.map { directory.appendingPathComponent($0) } ?? output,
+                                 enhancedURL: output)
+        }.sorted { $0.id > $1.id }
+    }
     /// Per-listing photo directory (Documents/Photos/<listingID>/). Not created here.
     static func directory(for listingID: UUID) -> URL {
         FileStore.documents.appendingPathComponent("Photos/\(listingID.uuidString)", isDirectory: true)
@@ -3717,8 +3749,8 @@ struct PhotoStudioView: View {
         /// agent already learned to look for disappeared off the screen.
         static func stagingGloss(_ space: SpaceType) -> String {
             space == .realEstate
-                ? "Add furniture in the style you pick — walls and windows stay as they are."
-                : "Puts in sofas, tables and art in the style you pick — walls and windows stay as they are."
+                ? "Add furniture in the style you pick. Review every result against the original before publishing."
+                : "Add furniture and decor in the style you pick. Review fixed features and access against the original before publishing."
         }
 
     }
@@ -3791,6 +3823,10 @@ struct PhotoStudioView: View {
     }
 
     private func setMain(_ p: EnhancedPhoto) {
+        if p.savedVersion != nil {
+            do { try PhotoVersionHistory.select(id: p.id, directory: p.enhancedURL.deletingLastPathComponent()) }
+            catch { aiFailure = AIFailure(error); return }
+        }
         model.setMainPhoto(FileStore.relativePath(for: p.enhancedURL), for: listing.id)
         Haptics.success()
     }
@@ -3812,7 +3848,10 @@ struct PhotoStudioView: View {
     @State private var busyPhotoIDs: Set<String> = []
     @State private var showLibrary = false
     @State private var showCamera = false
-    @State private var isProcessing = false
+    @State private var localProcessing = false
+    @ObservedObject private var photoJobs = PhotoWorkQueue.shared
+    @State private var handledPhotoJob: UUID?
+    private var isProcessing: Bool { localProcessing || photoJobs.job?.running == true }
     @State private var photoSaveError: String?
     @State private var processingText = "Working on your photo…"
     @State private var compare: EnhancedPhoto?
@@ -3918,7 +3957,7 @@ struct PhotoStudioView: View {
             }
             .padding()
         }
-        .overlay(alignment: .bottom) { workingPill }
+        .overlay(alignment: .top) { if localProcessing { workingPill } }
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isProcessing)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: busyPhotoIDs)
         .background(Theme.bg)
@@ -3930,10 +3969,12 @@ struct PhotoStudioView: View {
         }
         .onAppear {
             loadExisting()
+            receivePhotoWork(photoJobs.visibleJob)
             syncIdleHold()      // a dismissed cover re-appears mid-animate
             seedPhotosForUIWalk()
             syncGalleryIfPublished()
         }
+        .onReceive(photoJobs.$job) { job in receivePhotoWork(photoJobs.isContextCurrent ? job : nil) }
         .onChange(of: isProcessing) { _ in syncIdleHold() }
         .onChange(of: auth.userID) { newOwner in
             // Initial anonymous connection is expected when the first AI tap
@@ -4109,8 +4150,9 @@ struct PhotoStudioView: View {
 
             // THE GRID IS ONLY HERE ONCE A MODE IS CHOSEN. An AI screen that
             // opens on a wall of thumbnails is the screen he kept reporting.
-            if batchEdit != nil {
-                studioPickHint
+            if !photos.isEmpty {
+                if batchEdit != nil { studioPickHint }
+                else { Text("Review your photos").font(.rpHeadline).foregroundStyle(Theme.ink) }
                 photoGrid
             }
         }
@@ -4516,137 +4558,40 @@ struct PhotoStudioView: View {
 
     private func aiEditWithSession(_ p: EnhancedPhoto, _ edit: String,
                                    style: String?, prompt: String?) {
+        let title = edit == "declutter" ? "Declutter" : "Photo edit"
+        startPhotoWork(PendingBatchEdit(edit: edit, style: style, title: title, multiple: false),
+                       targets: [p], prompt: prompt)
+    }
+
+    private func startPhotoWork(_ pending: PendingBatchEdit, targets: [EnhancedPhoto], prompt: String?) {
         guard !isProcessing else { return }
-        isProcessing = true
-        batchNote = nil
-        processingText = "Working on your photo…"
-        Task { @MainActor in
-            do {
-                let newPhoto = try await performEdit(p, edit, style: style, prompt: prompt)
-                isProcessing = false
-                Haptics.success()
-                compare = newPhoto   // show the before/after (and its disclosure)
-            } catch {
-                isProcessing = false
-                // The fair-housing denylist speaks for itself — show its
-                // wording, let the user re-word, never retry automatically.
-                let title = (error as? APIError)?.code == "unsupported_edit"
-                    ? "That change isn't allowed" : "That change didn't work"
-                aiFailure = AIFailure(error, title: title)
-            }
+        let service = PhotoEditService(model: model, listing: listing, space: space)
+        if service.start(title: pending.title, photos: targets, edit: pending.edit,
+                         style: pending.style, prompt: prompt) {
+            batchNote = nil; batchEdit = nil; batchSelection.removeAll()
+            Haptics.selection()
         }
     }
 
-    /// One edit preserves its immutable source, retained original and durable
-    /// disclosure history. A new version becomes current only after both image
-    /// and metadata are saved. Identity checks fence every asynchronous boundary.
-    @MainActor
-    private func performEdit(_ p: EnhancedPhoto, _ edit: String,
-                             style: String?, prompt: String?) async throws -> EnhancedPhoto {
-        let api = model.api          // snapshot on the main actor
-        let targetDir = dir
-        let owner = AuthStore.shared.userID
-        let revision = AuthStore.shared.syncSessionRevision
-        let workspace = WorkspaceContext.selectedOrgID
-        func requireIdentity() throws {
-            guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
-                  WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+    private func receivePhotoWork(_ job: PhotoWorkQueue.Job?) {
+        guard let job, job.listingID == listing.id else { batchRun = nil; busyPhotoIDs.removeAll(); return }
+        busyPhotoIDs = job.currentPhotoID.map { Set([$0]) } ?? []
+        if job.running {
+            batchRun = BatchRun(title: job.title, total: job.total, current: job.current,
+                                done: job.done, failed: job.failures.count)
+            return
         }
-        let priorFile = p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent
-        let parent = try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
-                                                          priorFile: priorFile, directory: targetDir)
-        let input = try PhotoVersionHistory.source(for: parent.id, edit: edit, directory: targetDir)
-        let source = targetDir.appendingPathComponent(input.imageFile)
-        // Old orig-* files sometimes contain an AI predecessor. Only a retained
-        // source registered at ingestion is eligible as an unaltered source.
-        let unaltered: URL? = parent.originalVerified
-            ? parent.originalFile.map { targetDir.appendingPathComponent($0) } : nil
-        let wasMain = isMain(p)
-        let listingLocalID = listing.id
-        let isSample = listing.isSample
-        let disclosureLabel = Self.provenanceLabel(edit: edit, style: style, space: space)
-        let spaceRaw = space.rawValue    // THIS listing's type, not the selected one (P2-5)
-        let tapKey = UUID().uuidString   // one idempotency key per photo, per run
-
-        // THIS photo is busy, and its thumbnail says so for as long as it is.
-        // `defer` rather than a clear at the end: the throws below are the
-        // whole point — a photo that failed must not be left spinning.
-        busyPhotoIDs.insert(p.id)
-        defer { busyPhotoIDs.remove(p.id) }
-
-        guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
-            throw AIImagePrep.error("Couldn't read that photo.")
-        }
-        try requireIdentity()
-        // Anchor + retained source, both best effort.
-        var serverListingID: UUID? = nil
-        var originalAssetID: String? = nil
-        if !isSample {
-            serverListingID = await model.serverListingIDForCompliance(listingLocalID)
-            try requireIdentity()
-            if let sid = serverListingID, let unaltered {
-                // Put the step on screen and put back whatever line was there —
-                // a batch's line counts photos and must survive this detour.
-                let resume = processingText
-                processingText = "Saving the original for disclosure…"
-                originalAssetID = await model.publishOriginalForDisclosure(
-                    listingServerID: sid, fileURL: unaltered)
-                try requireIdentity()
-                processingText = resume
-            }
-        }
-
-        var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
-        request.style = style
-        request.prompt = prompt
-        request.spaceType = spaceRaw
-        request.listingServerID = serverListingID
-        request.label = disclosureLabel
-        request.originalAssetID = originalAssetID
-        request.idempotencyKey = tapKey
-        try requireIdentity()
-        let result = try await api.aiPhotoEdit(request)
-        try requireIdentity()
-        let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000)) + "-" + UUID().uuidString
-        let recordedOriginalAssetID = originalAssetID
-        let recordedListingID = serverListingID?.uuidString
-        let version = try await Task.detached(priority: .userInitiated) {
-            guard let raw = Data(base64Encoded: result.imageBase64), let image = UIImage(data: raw),
-                  let jpeg = image.jpegData(compressionQuality: 0.97) else {
-                throw AIImagePrep.error("The AI didn't return an image. Try again.")
-            }
-            return try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: parent.id, sourceID: input.id,
-                edit: edit, style: style, disclosure: result.disclosure, provenanceID: result.provenanceID,
-                provenanceRecorded: result.provenanceRecorded, directory: targetDir,
-                originalAssetID: recordedOriginalAssetID, serverListingID: recordedListingID)
-        }.value
-        try requireIdentity()
-        let outURL = targetDir.appendingPathComponent(version.imageFile)
-        let newPhoto = EnhancedPhoto(id: id,
-            originalURL: version.originalFile.map { targetDir.appendingPathComponent($0) } ?? outURL,
-            enhancedURL: outURL)
+        batchRun = nil
         loadExisting()
-        if wasMain { setMain(newPhoto) }
-        // METERED PER PHOTO, because it is charged per photo. `batch` says how
-        // it was reached; the event, and everything else about it, is the one
-        // `ai_photo_edit` a single wand tap has always sent.
-        Analytics.track("ai_photo_edit",
-                        ["task": edit, "ok": "true", "batch": batchRun == nil ? "false" : "true"])
-        if !isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
-
-        // Linking the output can fail independently. Persist the exact server
-        // disclosure without claiming that an upload or public link succeeded.
-        if let provenanceID = result.provenanceID, let sid = serverListingID {
-            let appModel = model     // snapshot: an @EnvironmentObject read is a
-                                     // view-graph read, and this outlives the call
-            Task { @MainActor in
-                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
-                      WorkspaceContext.selectedOrgID == workspace else { return }
-                await appModel.attachAlteredPhotoForDisclosure(
-                    provenanceID: provenanceID, listingServerID: sid, fileURL: outURL)
-            }
+        guard handledPhotoJob != job.id else { return }
+        handledPhotoJob = job.id
+        let failure = job.failures.first.map { AIFailure($0.error) }
+        let pending = PendingBatchEdit(edit: "", style: nil, title: job.title, multiple: true)
+        finishBatch(pending, total: job.total, done: job.done, failed: job.failures.count,
+                    firstFailure: failure, stoppedEarly: job.interrupted)
+        if job.interrupted && job.failures.isEmpty {
+            batchNote = BatchNote(text: "\(job.done) of \(job.total) photos changed. Work stopped; saved photos and originals are safe. Reopen the app and select the remaining photos to continue.", ok: false)
         }
-        return newPhoto
     }
 
     /// The label the public disclosure line carries for a studio edit. Studio
@@ -4678,7 +4623,7 @@ struct PhotoStudioView: View {
 
     private func suggestEditsWithSession(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        isProcessing = true
+        localProcessing = true
         processingText = "Looking at your photo…"
         Haptics.selection()
         let api = model.api          // snapshot on the main actor
@@ -4690,13 +4635,13 @@ struct PhotoStudioView: View {
                 }
                 let results = try await api.aiPhotoSuggest(imageBase64: b64, mime: "image/jpeg")
                 await MainActor.run {
-                    isProcessing = false
+                    localProcessing = false
                     suggestResult = SuggestResult(photo: p, suggestions: results)
                     Haptics.success()
                 }
             } catch {
                 await MainActor.run {
-                    isProcessing = false
+                    localProcessing = false
                     aiFailure = AIFailure(error, title: "Couldn't analyze the photo")
                 }
             }
@@ -4714,7 +4659,7 @@ struct PhotoStudioView: View {
 
     private func animateWithSession(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        isProcessing = true
+        localProcessing = true
         processingText = "Making your video — about a minute…"
         Haptics.selection()
         let api = model.api          // snapshot on the main actor
@@ -4815,7 +4760,7 @@ struct PhotoStudioView: View {
                 try FileManager.default.moveItem(at: tmp, to: dest)
 
                 await MainActor.run {
-                    isProcessing = false
+                    localProcessing = false
                     clips = SavedClip.loadAll(listingID: listingLocalID)   // the new clip joins the list
                     animatedClip = AnimatedClip(url: dest)
                     Haptics.success()
@@ -4823,10 +4768,10 @@ struct PhotoStudioView: View {
             } catch is CancellationError {
                 // The studio was left mid-animate — stop polling quietly, and
                 // never leave the spinner up (F-A-12).
-                await MainActor.run { isProcessing = false }
+                await MainActor.run { localProcessing = false }
             } catch {
                 await MainActor.run {
-                    isProcessing = false
+                    localProcessing = false
                     aiFailure = AIFailure(error, title: "Couldn't animate the photo")
                 }
             }
@@ -5479,58 +5424,7 @@ struct PhotoStudioView: View {
 
     private func runBatchWithSession(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
                                      prompt: String?) {
-        guard !isProcessing else { return }
-        guard !targets.isEmpty else { return }
-        isProcessing = true
-        batchNote = nil
-        batchRun = BatchRun(title: pending.title, total: targets.count)
-        processingText = "\(pending.title) — photo 1 of \(targets.count)…"
-        Haptics.selection()
-        // `@MainActor in` explicitly rather than relying on inheritance: every
-        // line in here touches `@State`, `AppModel` or `Analytics`, all three of
-        // which are main-actor, and this file has already lost one build to an
-        // isolation guess (commit 78c4610).
-        let batchOwner = AuthStore.shared.userID
-        let batchRevision = AuthStore.shared.syncSessionRevision
-        let batchWorkspace = WorkspaceContext.selectedOrgID
-        Task { @MainActor in
-            var done = 0
-            var failedCount = 0
-            var firstFailure: AIFailure?
-            var stoppedEarly = false
-
-            for (index, photo) in targets.enumerated() {
-                guard AuthStore.shared.userID == batchOwner, AuthStore.shared.syncSessionRevision == batchRevision,
-                      WorkspaceContext.selectedOrgID == batchWorkspace else { stoppedEarly = true; break }
-                batchRun?.current = index + 1
-                processingText = "\(pending.title) — photo \(index + 1) of \(targets.count)…"
-                do {
-                    _ = try await performEdit(photo, pending.edit,
-                                              style: pending.style, prompt: prompt)
-                    done += 1
-                    batchRun?.done = done
-                } catch {
-                    // The fair-housing denylist speaks for itself — its wording
-                    // is the message, and it is NEVER auto-retried.
-                    let title = (error as? APIError)?.code == "unsupported_edit"
-                        ? "That change isn't allowed" : "That change didn't work"
-                    let failure = AIFailure(error, title: title)
-                    failedCount += 1
-                    batchRun?.failed = failedCount
-                    if firstFailure == nil { firstFailure = failure }
-                    if failure.isQuota || failure.isUnauthorized {
-                        stoppedEarly = true
-                        break
-                    }
-                }
-            }
-
-            isProcessing = false
-            batchRun = nil
-            finishBatch(pending, total: targets.count, done: done,
-                        failed: failedCount, firstFailure: firstFailure,
-                        stoppedEarly: stoppedEarly)
-        }
+        startPhotoWork(pending, targets: targets, prompt: prompt)
     }
 
     /// What the agent is told when a batch ends. Split out of `runBatch` so the
@@ -5538,7 +5432,7 @@ struct PhotoStudioView: View {
     private func finishBatch(_ pending: PendingBatchEdit, total: Int, done: Int,
                              failed: Int, firstFailure: AIFailure?, stoppedEarly: Bool) {
         let photoWord = done == 1 ? "photo" : "photos"
-        if failed == 0 {
+        if failed == 0 && !stoppedEarly {
             batchNote = BatchNote(
                 text: "\(pending.title) — \(done) \(photoWord) changed. Earlier versions and source files stay in history.",
                 ok: true)
@@ -5611,7 +5505,7 @@ struct PhotoStudioView: View {
             completion?("Another photo is still saving. Please wait, then try again.")
             return
         }
-        isProcessing = true
+        localProcessing = true
         photoSaveError = nil
         processingText = "Working on your photo…"
         let targetDir = dir
@@ -5643,7 +5537,7 @@ struct PhotoStudioView: View {
             }
             let failureCount = failed
             DispatchQueue.main.async {
-                isProcessing = false
+                localProcessing = false
                 guard AuthStore.shared.userID == owner,
                       AuthStore.shared.syncSessionRevision == revision,
                       WorkspaceContext.selectedOrgID == workspace else {
@@ -5749,6 +5643,7 @@ enum PhotoEnhancer {
 struct PhotoCompareView: View {
     let photo: EnhancedPhoto
     var disclosure: String? = nil
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthStore.shared
     @State private var selectedVersion: EnhancedPhoto?
@@ -5756,10 +5651,12 @@ struct PhotoCompareView: View {
     @State private var enhanced: UIImage?
     @State private var original: UIImage?
     @State private var exporting: PhotoExportSelection?
+    @State private var selectionError: String?
+    @State private var selectedForListing = false
 
     private var viewed: EnhancedPhoto { selectedVersion ?? photo }
     private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
-    private var savedDisclosure: String? { viewed.savedVersion?.disclosure ?? (viewed.id == photo.id ? disclosure : nil) }
+    private var savedDisclosure: String? { viewed.savedVersion?.reviewDisclosure ?? (viewed.id == photo.id ? disclosure : nil) }
 
     var body: some View {
         ZStack {
@@ -5789,6 +5686,10 @@ struct PhotoCompareView: View {
                 if let label = viewed.savedVersion?.visibleLabel {
                     Text(label).font(.headline).padding(.horizontal)
                 }
+                if viewed.savedVersion?.effects.contains("stage") == true {
+                    Text("Review against the original: check windows, doors, fixed appliances and furniture placement. AI can change details or use different furniture in another view.")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).padding(.horizontal)
+                }
                 if let savedDisclosure, !savedDisclosure.isEmpty {
                     Text(savedDisclosure).font(.caption).foregroundStyle(.white.opacity(0.85))
                         .fixedSize(horizontal: false, vertical: true).padding(.horizontal)
@@ -5803,6 +5704,26 @@ struct PhotoCompareView: View {
                         Text(sourceTitle).tag(true)
                     }.pickerStyle(.segmented).padding(.horizontal)
                 }
+                if viewed.savedVersion != nil {
+                    Button {
+                        do {
+                            let directory = viewed.enhancedURL.deletingLastPathComponent()
+                            guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
+                            let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
+                            let familyWasMain = photo.history.contains { FileStore.relativePath(for: $0.enhancedURL) == priorMain }
+                            try PhotoVersionHistory.select(id: viewed.id, directory: directory)
+                            if familyWasMain { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
+                            selectedForListing = true
+                            if let listing = model.listings.first(where: { $0.id == listingID }),
+                               listing.serverShareURL != nil, let serverID = listing.serverID {
+                                Task { await model.syncGalleryPhotos(listingLocalID: listingID, listingServerID: serverID) }
+                            }
+                        } catch { selectionError = error.localizedDescription }
+                    } label: {
+                        Label(selectedForListing ? "Selected for listing" : "Use this version on listing", systemImage: "checkmark.circle")
+                            .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
+                    }.padding(.horizontal).accessibilityIdentifier("photoVersion.useOnListing")
+                }
                 Button { exporting = PhotoExportSelection(photos: [viewed]) } label: {
                     Label("Export photo", systemImage: "square.and.arrow.up")
                         .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
@@ -5816,7 +5737,11 @@ struct PhotoCompareView: View {
             exporting = nil; enhanced = nil; original = nil; dismiss()
         }
         .sheet(item: $exporting) { selection in PhotoExportSheet(photos: selection.photos) }
+        .alert("Couldn't select that version", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
+            Button("OK") { selectionError = nil }
+        } message: { Text(selectionError ?? "") }
         .task(id: viewed.id) {
+            selectedForListing = false
             let target = viewed
             enhanced = nil; original = nil
             let after = await AIImagePrep.decoded(at: target.enhancedURL, maxPixel: 2400)

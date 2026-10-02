@@ -59,6 +59,12 @@ jobs:
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
         run: bash apps/ios/tests/run-photo-delivery.sh
+      - name: Photo work survives navigation and fences account transitions
+        run: bash apps/ios/tests/run-photo-work-queue.sh
+      - name: Photo edit lifecycle and background resource cleanup
+        run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
+      - name: Listing unit fields and real estate metadata survive editing
+        run: bash apps/ios/tests/run-listing-unit-form.sh
       - name: Photographer preference, client drafts and confirmed contact transactions
         run: bash apps/ios/tests/run-client-contact.sh
       - name: Guided scan storage, pose epochs and native depth packing
@@ -621,6 +627,7 @@ jobs:
           python3 tools/audit/run_team_readiness.py
           python3 tools/audit/run_subscription_trial_regression.py
           python3 tools/audit/run_workspace_selection.py
+          python3 tools/audit/run_listing_gallery_selection.py
           python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py

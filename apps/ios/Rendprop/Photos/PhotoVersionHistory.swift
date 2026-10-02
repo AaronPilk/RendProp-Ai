@@ -33,10 +33,31 @@ enum PhotoVersionHistory {
             return parts.isEmpty ? nil : parts.joined(separator: " · ")
         }
 
+        /// Presentation may correct old copy; immutable recorded disclosure is
+        /// retained verbatim in the saved audit/history, not used as a geometry certificate.
+        var reviewDisclosure: String? {
+            guard !effects.isEmpty else { return disclosure }
+            let change: String
+            if effects.contains("stage") {
+                change = "This photo was virtually staged with AI: furniture and decor were digitally added or restyled."
+            } else if effects.contains("declutter") {
+                change = "This photo was digitally decluttered with AI: clutter and personal items were removed."
+            } else if edit == "twilight" {
+                change = "This photo was digitally altered with AI to simulate dusk."
+            } else if edit == "sky" {
+                change = "This photo was digitally altered with AI: the sky was replaced."
+            } else if edit == "lawn" {
+                change = "This photo was digitally altered with AI: the lawn and landscaping were digitally repaired."
+            } else {
+                change = "This photo was digitally altered with AI."
+            }
+            return change + " Compare with the original to check fixed features, layout and access before publication."
+        }
+
         var caption: String {
             var parts: [String] = []
             if let visibleLabel { parts.append(visibleLabel + ".") }
-            if let disclosure, !disclosure.isEmpty { parts.append(disclosure) }
+            if let reviewDisclosure, !reviewDisclosure.isEmpty { parts.append(reviewDisclosure) }
             if !originalVerified { parts.append("An unaltered original has not been verified for this photo.") }
             return parts.isEmpty ? "Brightness, color and sharpness enhanced on this phone. Review the source before publishing." : parts.joined(separator: " ")
         }
@@ -59,6 +80,9 @@ enum PhotoVersionHistory {
         var schema = 1
         var versions: [String: Version] = [:]
         var current: [String: String] = [:]
+        /// Staged previews stay separate from the approved public choice.
+        /// Optional so older on-disk indexes continue to decode unchanged.
+        var listingSelections: [String: String]? = nil
         var hiddenFamilies: Set<String> = []
 
         func history(for id: String) -> [Version] {
@@ -99,7 +123,8 @@ enum PhotoVersionHistory {
                   index.versions.allSatisfy({ key, v in
                       key == v.id && safeName(v.id) && safeName(v.familyID) && safeName(v.imageFile)
                       && (v.originalFile.map(safeName) ?? true)
-                  }), index.current.allSatisfy({ family, id in index.versions[id]?.familyID == family })
+                  }), index.current.allSatisfy({ family, id in index.versions[id]?.familyID == family }),
+                  (index.listingSelections ?? [:]).allSatisfy({ family, id in index.versions[id]?.familyID == family })
             else { throw Failure.invalidHistory }
             return index
         } catch { throw Failure.invalidHistory }
@@ -107,6 +132,19 @@ enum PhotoVersionHistory {
     static func load(directory: URL) throws -> Index {
         lock.lock(); defer { lock.unlock() }
         return try loadUnlocked(directory: directory)
+    }
+    /// Publication must not silently replace a saved gallery when its history
+    /// is corrupt or a selected file is missing. nil means legacy/no index.
+    static func publicationVersions(directory: URL) throws -> [Version]? {
+        lock.lock(); defer { lock.unlock() }
+        guard FileManager.default.fileExists(atPath: directory.appendingPathComponent(filename).path) else { return nil }
+        let index = try loadUnlocked(directory: directory)
+        return try (index.listingSelections ?? index.current).compactMap { family, id in
+            guard !index.hiddenFamilies.contains(family) else { return nil }
+            guard let version = index.versions[id], version.familyID == family else { throw Failure.invalidHistory }
+            try requireImage(version.imageFile, directory: directory)
+            return version
+        }
     }
     private static func save(_ index: Index, directory: URL,
                              write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws {
@@ -136,6 +174,7 @@ enum PhotoVersionHistory {
                                   disclosure: nil, provenanceID: nil, originalAssetID: nil, serverListingID: nil,
                                   provenanceRecorded: false, createdAt: Date())
             index.versions[id] = version; index.current[id] = id
+            index.listingSelections?[id] = id
             try save(index, directory: directory, write: write)
         } catch {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(originalName))
@@ -159,6 +198,7 @@ enum PhotoVersionHistory {
                               disclosure: nil, provenanceID: nil, originalAssetID: nil, serverListingID: nil,
                                   provenanceRecorded: false, createdAt: Date())
         index.versions[id] = version; index.current[id] = id
+        index.listingSelections?[id] = id
         try save(index, directory: directory)
         return version
     }
@@ -208,13 +248,32 @@ enum PhotoVersionHistory {
                               provenanceRecorded: provenanceRecorded, createdAt: Date())
         do {
             try write(jpeg, imageURL)
+            if index.listingSelections == nil { index.listingSelections = index.current }
             index.versions[id] = version; index.current[parent.familyID] = id
+            // A generated window, displaced fixture, blocked door or mismatched
+            // furniture must be reviewed rather than automatically published.
+            if !effects.contains("stage") { index.listingSelections?[parent.familyID] = id }
             try save(index, directory: directory, write: write)
         } catch {
             try? FileManager.default.removeItem(at: imageURL)
             throw error
         }
         return version
+    }
+
+    /// Select a saved version without generating again or discarding later edits.
+    /// Only a complete retained image can become the listing's current version.
+    static func select(id: String, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID) else {
+            throw Failure.changedVersion
+        }
+        try requireImage(version.imageFile, directory: directory)
+        index.current[version.familyID] = id
+        if index.listingSelections == nil { index.listingSelections = index.current }
+        index.listingSelections?[version.familyID] = id
+        try save(index, directory: directory)
     }
 
     /// Removing a family from the gallery keeps every image needed by its edit

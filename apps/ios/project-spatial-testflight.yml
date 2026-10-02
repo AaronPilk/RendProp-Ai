@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Listing toolbox crash hardening plus existing client and local scan tests. Recheck Apple build
+    # Photo workflow and listing UI feedback plus existing local scan tests. Recheck Apple build
     # inventory before upload; never automatically renumber an upload retry.
-    CURRENT_PROJECT_VERSION: "40"
+    CURRENT_PROJECT_VERSION: "41"
 targets:
   Rendprop:
     sources:

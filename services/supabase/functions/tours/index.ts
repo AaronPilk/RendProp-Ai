@@ -42,6 +42,8 @@ import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts"
 import { adminClient } from "../_shared/supabase.ts";
 import { assertMediaVisible, mediaVisibility, type MediaSourceRefs } from "../_shared/media-source-access.ts";
 import { bucketForKey } from "../studio/handler.ts";
+import { propertyGalleryKey, publicMainPhoto } from "../_shared/property-cover.ts";
+import { publicProvenanceDisclosure } from "../_shared/provenance.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
 import { buildAgentCard } from "../_shared/agentcard.ts";
 import { resolveContactPhoto } from "../listings/client-contact.ts";
@@ -81,27 +83,32 @@ interface AlteredMedium {
  * disclosure — but only the public subset leaves this function.
  */
 // deno-lint-ignore no-explicit-any
-async function alteredMediaFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }): Promise<AlteredMedium[]> {
+async function alteredMediaFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selectedKeys: ReadonlySet<string> | null): Promise<AlteredMedium[]> {
   const { data, error } = await admin
     .from("media_provenance")
-    .select("kind, label, disclosure, original_key, altered_key, created_at")
+    .select("kind, edit, label, disclosure, original_key, altered_key, created_at")
     .eq("listing_id", listingId)
     .order("created_at", { ascending: false })
-    .limit(MAX_ALTERED_MEDIA);
+    // The private log is capped at 500. Filter before the public 40-item cap
+    // so recent retired edits cannot crowd out a currently selected version.
+    .limit(selectedKeys===null?MAX_ALTERED_MEDIA:500);
   // A disclosure lookup must never take the tour down: log and serve the tour
   // without the block rather than 500 the whole page.
   if (error) {
     console.error("altered_media lookup failed:", error.message);
     return [];
   }
-  const scopedKeys = (data ?? []).flatMap((r: Record<string, unknown>) => [r.original_key, r.altered_key]).filter((key: unknown): key is string => bucketForKey(key, { orgId, listingId }) !== null);
+  const current=(data??[]).filter((r:Record<string,unknown>)=>selectedKeys===null ||
+    ["aerial","reel","video_reflection_removal"].includes(String(r.kind)) ||
+    (typeof r.altered_key==="string" && selectedKeys.has(r.altered_key))).slice(0,MAX_ALTERED_MEDIA);
+  const scopedKeys = current.flatMap((r: Record<string, unknown>) => [r.original_key, r.altered_key]).filter((key: unknown): key is string => bucketForKey(key, { orgId, listingId }) !== null);
   const visible = await mediaVisibility(admin, listingId, { keys: scopedKeys });
-  return (data ?? []).filter((r: Record<string, unknown>) => [r.original_key, r.altered_key].every(key => !key || (typeof key === "string" && visible.keys[key] === true))).map((r: Record<string, unknown>) => {
+  return current.filter((r: Record<string, unknown>) => [r.original_key, r.altered_key].every(key => !key || (typeof key === "string" && visible.keys[key] === true))).map((r: Record<string, unknown>) => {
     for (const key of [r.original_key, r.altered_key]) if (typeof key === "string") refs.keys.push(key);
     return ({
     label: (r.label as string | null) ?? null,
     kind: r.kind as string,
-    disclosure: r.disclosure as string,
+    disclosure: publicProvenanceDisclosure(r.kind as string,(r.edit as string|null)??null,r.disclosure as string),
     model: modelFamily(r.kind as string),
     original_url: publicR2Url(r.original_key as string | null),
     altered_url: publicR2Url(r.altered_key as string | null),
@@ -129,22 +136,25 @@ const MAX_GALLERY = 40;
  * Never fatal: a gallery lookup must not take the tour down.
  */
 // deno-lint-ignore no-explicit-any
-async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }): Promise<Array<{ url: string }>> {
-  const { data, error } = await admin
+async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selection: string[] | null): Promise<Array<{ url: string }>> {
+  if(selection?.length===0)return [];
+  let query = admin
     .from("capture_assets")
     .select("id, storage_key, created_at")
     .eq("listing_id", listingId)
     .eq("kind", "photo")
     .eq("bucket", "renders")
     .eq("uploaded", true)
-    .like("storage_key", "%/gallery-%")
-    .order("created_at", { ascending: true })
-    .limit(MAX_GALLERY);
+    .like("storage_key", "%/gallery-%");
+  if(selection!==null)query=query.in("id",selection);
+  const { data, error } = await query.order("created_at", { ascending: true }).order("id",{ascending:true}).limit(MAX_GALLERY);
   if (error) {
     console.error("gallery lookup failed:", error.message);
     return [];
   }
-  const eligible = (data ?? []).filter((r: Record<string, unknown>) => bucketForKey(r.storage_key, { orgId, listingId }) !== null);
+  const eligible = (data ?? []).filter((r: Record<string, unknown>) => propertyGalleryKey(r.storage_key, { orgId, listingId }) &&
+    (selection===null || selection.includes(r.id as string)));
+  if(selection!==null)eligible.sort((a: {id:string},b: {id:string})=>selection.indexOf(a.id)-selection.indexOf(b.id));
   const visible = await mediaVisibility(admin, listingId, { assets: eligible.map((r: { id: string }) => r.id), keys: eligible.map((r: { storage_key: string }) => r.storage_key) });
   const out: Array<{ url: string }> = [];
   for (const r of eligible) {
@@ -175,8 +185,8 @@ function floorplanUrl(details: unknown): string | null {
 
 const STAGED_DISCLOSURE =
   "Some imagery in this tour has been virtually staged or digitally decluttered. " +
-  "Furniture and decor may be digitally added, removed, or restyled; the architecture, " +
-  "layout, dimensions, and views are unchanged.";
+  "Furniture and decor may be digitally added, removed, or restyled with AI. " +
+  "Compare with the original to check fixed features, layout and access.";
 
 function formatUSD(cents: number | null | undefined): string | null {
   if (cents == null) return null;
@@ -289,7 +299,7 @@ function demoTour(): Record<string, unknown> {
         label: "Great room — virtually staged",
         kind: "virtual_stage",
         disclosure:
-          "This photo was virtually staged with AI: furniture and decor were digitally added or restyled. The architecture, dimensions, and views are unchanged.",
+          publicProvenanceDisclosure("virtual_stage",null,""),
         model: "AI image edit",
         original_url: asset("/assets/example-staging-before.webp"),
         altered_url: asset("/assets/example-staging-after.webp"),
@@ -346,7 +356,7 @@ Deno.serve(async (req) => {
     // 2. Listing (public subset) + its org. A deleted listing has no public tour.
     const { data: listing, error: lErr } = await admin
       .from("listings")
-      .select("id, org_id, agent_id, space_type, address, tagline, details, beds, baths, sqft, price_cents, zillow_url, lat, lng, status, sold_at, deleted_at")
+      .select("id, org_id, agent_id, space_type, address, tagline, details, beds, baths, sqft, price_cents, zillow_url, main_photo_key, gallery_asset_ids, lat, lng, status, sold_at, deleted_at")
       .eq("id", render.listing_id)
       .maybeSingle();
     if (lErr) throw new HttpError(500, `Listing lookup failed: ${lErr.message}`);
@@ -362,8 +372,12 @@ Deno.serve(async (req) => {
     ]);
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
-    const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs);
-    const gallery = await galleryFor(admin, listing.org_id, listing.id as string, visibleRefs);
+    const selectedPhotos=listing.gallery_asset_ids??null;
+    const gallery = await galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos);
+    const cover_url = await publicMainPhoto(admin,{orgId:listing.org_id,listingId:listing.id},
+      listing.main_photo_key,publicR2Url,visibleRefs,selectedPhotos);
+    const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
+      selectedPhotos===null?null:new Set(visibleRefs.keys));
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: SpatialChapter[] = [];
@@ -427,6 +441,12 @@ Deno.serve(async (req) => {
     // These service-role reads bypass RLS; recheck every exposed lineage after
     // assembling the response, so revocation during optional reads cannot leak.
     await assertMediaVisible(admin, listing.id, visibleRefs);
+    const {data:currentPhotos,error:currentPhotosError}=await admin.from("listings")
+      .select("main_photo_key,gallery_asset_ids,deleted_at").eq("id",listing.id).maybeSingle();
+    if(currentPhotosError || !currentPhotos || currentPhotos.deleted_at ||
+       (currentPhotos.main_photo_key??null)!==(listing.main_photo_key??null) ||
+       JSON.stringify(currentPhotos.gallery_asset_ids??null)!==JSON.stringify(selectedPhotos))
+      throw new HttpError(503,"The published photos changed. Please refresh.");
     const {data: currentClient,error: currentClientError}=await admin.from("listing_client_contacts")
       .select("revision,enabled").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
     if(currentClientError || (currentClient?.revision??null)!==(clientRow?.revision??null) || (currentClient?.enabled??false)!==clientMode)
@@ -459,6 +479,7 @@ Deno.serve(async (req) => {
       scrub_url,   // all-intra mp4 (byte-range) — use this for frame-accurate scrubbing
       hls_url,     // Cloudflare Stream HLS — adaptive fallback for very long / 4K tours
       poster: publicR2Url(render.poster_key as string),
+      cover_url,
       duration_s: render.duration_s,
       speed_factor: render.speed_factor,
       published_at: render.published_at,

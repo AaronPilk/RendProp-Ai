@@ -20,21 +20,25 @@ create function pg_temp.denied(command text,expected text,label text) returns vo
   end;
   perform pg_temp.a(true,label);
 end $$;
-do $$ declare s uuid; d uuid; o uuid; l uuid; a uuid; j uuid; r uuid; prefix text; begin
+do $$ declare s uuid; d uuid; o uuid; l uuid; a uuid; p uuid; j uuid; r uuid; prefix text; begin
   for n in 1..10 loop
     s:=('a0390000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     d:=('a0391000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     l:=('a0392000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     a:=('a0393000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
+    p:=('a0396000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     j:=('a0394000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     r:=('a0395000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     insert into auth.users(id,email,raw_user_meta_data,is_anonymous) values
       (s,'delete-source-'||n||'@fixture.invalid','{}',true),(d,'delete-dest-'||n||'@fixture.invalid','{}',false);
     select org_id into strict o from public.memberships where user_id=s;
     prefix:='renders/'||l||'/'||r;
-    insert into public.listings(id,org_id,agent_id,status,main_photo_key) values(l,o,s,'ready',prefix||'-main.jpg');
+    insert into public.listings(id,org_id,agent_id,status) values(l,o,s,'ready');
     insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes,transport_version)
       values(a,l,'video','uploads','uploads/'||o||'/'||l||'/capture.mov',true,1,2);
+    insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes,transport_version)
+      values(p,l,'photo','renders','renders/'||o||'/'||l||'/gallery-'||p||'.jpg',true,1,2);
+    update public.listings set main_photo_key='renders/'||o||'/'||l||'/gallery-'||p||'.jpg'where id=l;
     insert into public.render_jobs(id,listing_id,capture_asset_id,source,status) values(j,l,a,'worker','ready');
     insert into public.renders(id,job_id,listing_id,slug,duration_s,video_key,poster_key,hero_key,stream_uid,published_at)
       values(r,j,l,'deletion-fixture-'||n,30,prefix||'.mp4',prefix||'-poster.jpg',prefix||'-hero.mp4','synthetic-stream-'||n,now());

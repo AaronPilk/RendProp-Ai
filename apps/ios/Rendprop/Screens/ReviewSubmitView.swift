@@ -189,8 +189,8 @@ struct ReviewSubmitView: View {
             .accessibilityLabel(Text("Footage type"))
 
             Text(sourceKind == .drone
-                 ? "Drone clips are already smooth: no stabilization, a gentle 1.25× glide."
-                 : "Handheld walks get stabilized and retimed to a 2× glide.")
+                 ? "Drone footage uses light motion correction and a 1.25× glide. The result depends on the original clip."
+                 : "Handheld walks use motion correction and a 2× glide. Steady footage gives the best result.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -516,6 +516,7 @@ struct RoomTaggerView: View {
     @State private var isPlaying = false
     @State private var scrubbing = false
     @State private var customName = ""
+    @FocusState private var customNameFocused: Bool
     @State private var observer: Any?
 
     // Auto room chapters
@@ -547,20 +548,24 @@ struct RoomTaggerView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 14) {
-                playerCard
-                scrubberBlock
-                hintText
-                suggestionBlock
-                quickTagStrip
-                customNameRow
-                Divider()
-                tagListBlock
+            ScrollView {
+                VStack(spacing: 14) {
+                    playerCard
+                    scrubberBlock
+                    hintText
+                    suggestionBlock
+                    quickTagStrip
+                    Divider().padding(.horizontal)
+                    tagListBlock
+                }.padding(.top, 12).padding(.bottom, 14)
             }
-            .padding(.top)
             .background(Theme.bg)
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) { customNameBar }
             .navigationTitle("Tag \(areaNounPlural)")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bg, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .askAI(.roomTagger)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -570,8 +575,16 @@ struct RoomTaggerView: View {
                     // runs before it. Doing it here makes the binding already
                     // clean on the Done path regardless of that order.
                     Button("Done") {
+                        customNameFocused = false
                         discardUnconfirmedAITags()
                         dismiss()
+                    }.accessibilityIdentifier("roomTagger.done")
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    if customNameFocused {
+                        Spacer()
+                        Button("Hide keyboard") { customNameFocused = false }
+                            .accessibilityIdentifier("roomTagger.keyboardDone")
                     }
                 }
             }
@@ -589,10 +602,11 @@ struct RoomTaggerView: View {
     private var playerCard: some View {
         PlayerLayerView(player: player)
             .frame(maxWidth: .infinity)
-            .frame(height: 240)
+            .frame(height: customNameFocused ? 120 : 240)
             .background(Color.black)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .padding(.horizontal)
+            .accessibilityIdentifier("roomTagger.player")
     }
 
     private var scrubberBlock: some View {
@@ -742,23 +756,43 @@ struct RoomTaggerView: View {
     }
 
     private var customNameRow: some View {
-        HStack {
+        HStack(spacing: 12) {
             TextField("Custom \(areaNoun) name", text: $customName)
-                .textFieldStyle(.roundedBorder)
-            Button { addTag(customName); customName = "" } label: {
-                Image(systemName: "plus.circle.fill").font(.title3)
+                .font(.rpBody).focused($customNameFocused)
+                .submitLabel(.done).onSubmit { addCustomTag() }
+                .padding(12).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityLabel(Text("Custom \(areaNoun) name"))
+                .accessibilityIdentifier("roomTagger.customName")
+            Button(action: addCustomTag) {
+                Image(systemName: "plus.circle.fill").font(.title2)
+                    .frame(width: 44, height: 44)
             }
             .disabled(customName.trimmingCharacters(in: .whitespaces).isEmpty)
             .accessibilityLabel(Text("Add custom \(areaNoun) tag"))
+            .accessibilityIdentifier("roomTagger.addCustom")
         }
-        .padding(.horizontal)
+    }
+
+    private var customNameBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Add a \(areaNoun) at \(timeLabel(current))").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.inkDim)
+            customNameRow
+        }.padding(.horizontal).padding(.top, 10).padding(.bottom, 8)
+            .background(Theme.bg)
+            .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+    }
+
+    private func addCustomTag() {
+        guard !customName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        addTag(customName)
+        customName = ""
+        customNameFocused = false
     }
 
     // MARK: The tag list
 
     private var tagListBlock: some View {
-        ScrollView {
-            VStack(spacing: 6) {
+        VStack(spacing: 6) {
                 if sortedTags.isEmpty {
                     Text("No \(areaNounPlural) tagged yet.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -767,7 +801,6 @@ struct RoomTaggerView: View {
                 ForEach(sortedTags) { tag in
                     tagRow(tag)
                 }
-            }
         }
     }
 

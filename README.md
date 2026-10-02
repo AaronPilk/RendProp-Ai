@@ -5,21 +5,34 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
-Internal **TestFlight 1.0.3 (40)** is available to the existing Rendprop team.
+Internal **TestFlight 1.0.3 (41)** is available to the existing Rendprop team,
+verified **2 October 2026 at 17:23:58 UTC**. The
+[beta feedback release](docs/handoff/BETA-POLISH-20261002.md) adds main-photo-first
+publishing, separate Explore/Play video modes, branded client editing, apartment
+units, keyboard-safe room tags, top photo-work progress and saved-version selection.
+The public Worker and gallery-selection backend are live; all 12 CI jobs passed
+on runtime `3615a23`. The [delivery receipt](docs/releases/TESTFLIGHT-41-20261002.json)
+binds the archive, one internal upload, Apple availability, notes and live readbacks.
+You can leave Photo Studio during a batch; force-quit does not resume unfinished
+work. Whole-video declutter, staging consistency and drone-like walking quality
+remain unfinished and are not certified by the software tests.
+
+The preceding internal **TestFlight 1.0.3 (40)** delivered crash hardening.
 The [crash-hardening release](docs/handoff/IOS-CRASH-HARDENING-20261002.md)
 bounds the listing toolbox's SwiftUI types, safely formats invalid duration/FPS
 metadata and handles duplicate saved listing IDs without discarding rows/media.
 All 12 exact-source CI jobs pass; 19 selected Release UI cases passed across
 separate runs with identical production app source. The signed device archive
 excludes simulator fixtures. Crash diagnostic build attribution is fixed in
-live `events` v26. The previously affected physical iPhone still needs acceptance.
+live `events` v26. The owner reported repeated cold opens on 40 working;
+build 41's new flows still need phone acceptance.
 
 [Photographer client delivery](docs/studio/photographer-client-delivery.md) adds
 an Agent / Photographer onboarding choice, a separate client contact and photo
 per listing, private lead email routing, retained inquiry history and confirmed
 resends. Client pages can hide service promotions while retaining the contact
 form and privacy disclosure. This workflow is deployed to Studio, public pages
-and the backend, released in build 39 and retained in current build 40. All 12
+and the backend, released in build 39 and retained in current build 41. All 12
 workflow exact-source CI jobs passed; see the
 [release handoff](docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for live
 readbacks and the controlled phone/inbox acceptance still required.
@@ -31,7 +44,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
-[Latest iPhone delivery receipt](docs/releases/TESTFLIGHT-40-20261002.json) ·
+[Latest iPhone delivery receipt](docs/releases/TESTFLIGHT-41-20261002.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -48,8 +61,9 @@ saved-view markers, retained photo versions and MLS/web/social downloads. Softwa
 checks pass; internal **TestFlight 1.0.3 (36)** is available and Studio is live.
 All 12 CI jobs passed on the archived source; all 30 Studio application assets match it.
 Browser video export also prepares sources ahead and handles delayed animation callbacks.
-Photo version history is local to iPhone; shared durable history and published-gallery
-supersession remain separate work. Physical room/camera quality still needs phone testing.
+Photo version history is local to iPhone. Build 41 adds local saved-version
+publication; shared durable family/history selection remains separate work.
+Physical room/camera quality still needs phone testing.
 
 The [listing-first fly-through update](docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
 is live on public listing pages, with internal **TestFlight 1.0.3 (37)** available
@@ -61,7 +75,7 @@ publish a **new sharing link** for higher quality; old links keep their earlier
 video. Both exact runtime sources passed all 12 CI jobs; final live page checks
 passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain.
 
-## Production status — 1 October 2026
+## Production status — 2 October 2026
 
 | Area | Current state |
 | --- | --- |
@@ -70,9 +84,9 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | Prompt library | Ten original recipes, adaptation, saved personal collections and result notes. Copying a prompt does not generate media. |
 | Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Save project to account explicitly uploads general-project originals. |
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
-| Published listing pages | Live: photos/details first, independent navigation and opt-in fly-through with native controls. Close stops video and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
+| Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Internal TestFlight **1.0.3 (40)** is available to the existing Rendprop team. Adds listing toolbox/metadata crash hardening and retains photographer client delivery, build38 room-tour guidance, HD fly-through rendering, photo versions/exports, guided 0.5×/1× photos and account/workspace/subscription fixes. Physical arm64e cold launch, camera/room quality, render/playback, purchase/restore, client inbox and phone-to-Studio acceptance remain pending. |
+| iOS | Internal TestFlight **1.0.3 (41)** is available to the existing Rendprop team. Adds branded client editing, condo units, keyboard-safe room tags, app-owned photo progress and deliberate staged-version publication. Retains crash hardening, photographer delivery, room guidance, HD rendering and account/subscription fixes. Owner reported repeated cold opens on 40 working; new 41 phone acceptance, camera/room quality, purchase/restore, client inbox and phone-to-Studio checks remain. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

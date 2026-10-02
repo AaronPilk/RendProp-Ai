@@ -769,6 +769,10 @@ protocol APIClient: Sendable {
     /// address, price, beds/baths/sqft, tagline, details, lat/lng, zillow_url,
     /// sold_at (JSON null to un-sell) and status (`uploading` → `processing`).
     func updateListing(_ listing: Listing) async throws -> Listing
+    /// Select uploaded gallery versions and a main image; nil gallery preserves
+    /// a cloud listing's existing selection, while [] explicitly hides its gallery.
+    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws
+    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws
     /// DELETE `listings/<serverID>` — soft-deletes and unpublishes its tours.
     func deleteListing(serverID: UUID) async throws
 

@@ -10,6 +10,7 @@ import json
 import math
 import os
 import platform
+import random
 import shutil
 import struct
 import subprocess
@@ -111,6 +112,60 @@ def main():
             # frames. Below, compare actual PTS to the prechange policy; never
             # confuse nominal60fps with measured unique frame count.
             verify(native_output, (wanted_width, wanted_height), 'native-' + name, 45)
+
+        # Distinct, fixed spatial features make the stationary clip measurable;
+        # a repeated stripe or blank wall cannot prove zero corrected motion.
+        # The jitter clip uses these exact same pixels with known translations.
+        still = out / 'motion-features.ppm'
+        rng = random.Random(7319)
+        width, height = 704, 424
+        blocks = {(x, y): tuple(rng.randrange(20, 225) for _ in range(3))
+                  for y in range(0, height, 16) for x in range(0, width, 16)}
+        pixels = bytearray()
+        for y in range(height):
+            for x in range(width):
+                pixels.extend(blocks[(x // 16 * 16, y // 16 * 16)])
+        still.write_bytes(f'P6\n{width} {height}\n255\n'.encode() + pixels)
+        motion_fixtures = [('stationary', 'crop=640:360:32:32', 'steady'),
+                           ('jitter', "crop=640:360:x='32+10*sin(n*PI/3)':y='32+8*cos(n*PI/5)'", 'applied'),
+                           ('featureless', None, 'unavailable')]
+        receipt['syntheticMotion'] = []
+        for name, crop, expected_motion in motion_fixtures:
+            clip = out / f'motion-{name}-input.mp4'
+            source_args = (['-loop', '1', '-framerate', '30', '-i', still, '-vf', crop]
+                           if crop else ['-f', 'lavfi', '-i', 'color=gray:size=640x360:rate=30'])
+            run('make-motion-' + name, [ffmpeg, '-hide_banner', '-loglevel', 'error',
+                *source_args, '-t', '1.5', '-c:v', 'libx264', '-crf', '10', '-pix_fmt', 'yuv420p',
+                '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', clip])
+            destination = out / ('motion-' + name)
+            destination.mkdir()
+            output_receipt = destination / 'output.json'
+            run('motion-' + name, [executable, clip, output_receipt, 640, 360, expected_motion],
+                extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)})
+            diagnostic = json.loads(output_receipt.read_text())
+            verify(Path(diagnostic['path']), (640, 360), 'motion-' + name,
+                   45 if expected_motion == 'unavailable' else 60)
+            receipt['syntheticMotion'].append({'fixture': name, 'expected': expected_motion,
+                'motionSmoothing': diagnostic['motionSmoothing'], 'stabilized': diagnostic['stabilized'],
+                'outputReceipt': str(output_receipt), 'outputReceiptSHA256': hashlib.sha256(output_receipt.read_bytes()).hexdigest()})
+
+        # Restore only the former crop-based success check in a private copy.
+        # The stationary clip still gets the safety crop; claiming correction
+        # was applied must fail the exact production-output diagnostic check.
+        crop_mutant = out / 'crop-positive.swift'
+        original = engine.read_text()
+        motion_needle = 'stabilized = corrections.contains { abs($0.x) > 0.01 || abs($0.y) > 0.01 }'
+        assert original.count(motion_needle) == 1
+        crop_mutant.write_text(original.replace(motion_needle, 'stabilized = cropZoom > 1.0001'))
+        crop_mutant_bin = out / 'crop-positive'
+        run('compile-crop-positive', [*native, crop_mutant, *dependencies, sources[1], '-o', crop_mutant_bin])
+        destination = out / 'reject-crop-positive'
+        destination.mkdir()
+        rejected_crop = run('reject-crop-positive', [crop_mutant_bin, out / 'motion-stationary-input.mp4',
+            destination / 'output.json', 640, 360, 'steady'],
+            extra_env={'RENDER_FIXTURE_DIRECTORY': str(destination)}, expected='failure')
+        assert 'Motion smoothing status mismatch: applied, expected steady' in rejected_crop, 'Crop mutant failed for an unrelated reason'
+        receipt['motionNegativeControl'] = 'Former crop-only positive rejected by stationary actual RenderEngine diagnostic'
 
         # Revert just the dimensions ceiling in a copied source; actual encoded
         # media must fail the HD assertion. This protects against a test which

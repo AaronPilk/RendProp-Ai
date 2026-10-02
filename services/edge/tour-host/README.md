@@ -1,21 +1,32 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
+The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
+is live at **100%** on Worker `0d5db590-c2c8-4482-9f3f-77bcf893fcd6`, deployed
+at **17:15:45 UTC** from runtime `3615a23`. Selected main photos lead the listing;
+compact navigation opens an isolated **Explore** scroll viewer, with **Play video**
+for ordinary playback. Closing unloads the decoder and returns to the listing.
+All 12 CI jobs passed; four live branded/MLS HTML readbacks match the frozen engine
+and CSS, separately from 195 actual-browser assertions using generated local video.
+HTML readback does not establish every remote Worker bundle byte or real-phone
+playback quality. Routes, variables, secrets and compatibility date are preserved.
+See the [delivery receipt](../../../docs/releases/TESTFLIGHT-41-20261002.json).
+
 [Photographer client delivery](../../../docs/studio/photographer-client-delivery.md)
 adds explicit `client_mode` and `hide_rendprop_branding` payload flags. Only two
 boolean `true` values suppress vendor attribution, promotions, app banners,
 favicon and player wordmarks. Client cards and lead forms remain; client pages
 never link to the photographer's portfolio. Required property alterations,
 original-photo access and privacy links remain. `/u/` retains its existing
-contact-free MLS behavior. Worker `4ad3ab1c-0709-442b-bbf9-6426a5fb0bb2` is the
-100% active deployment. Live marketing/MLS demo engine and CSS readbacks match
+contact-free MLS behavior. Worker `4ad3ab1c-0709-442b-bbf9-6426a5fb0bb2` was the
+preceding deployment. Its live marketing/MLS demo engine and CSS readbacks matched
 the release source; all 12 CI jobs pass. See the
 [release handoff](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md).
 Actual client listing publication and inbox acceptance remain controlled owner tests.
 
 The [1 October listing-first release](../../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
 was deployed at 100% traffic on Worker version
-`8268c7a9-aad9-43a7-89ac-f1769e75896b`, from source `a87834c`; the client-delivery
-deployment above supersedes that historical version. Its final production
+`8268c7a9-aad9-43a7-89ac-f1769e75896b`, from source `a87834c`; the subsequent
+client-delivery deployment superseded that historical version. Its final production
 readback passed 153 assertions on branded/unbranded listings, with photos/details
 first and opt-in playback. All 12 CI jobs passed on that exact web source.
 Home, pricing, legal and health pages retained their verified normalized bodies
@@ -55,11 +66,17 @@ Tour and portfolio requests render HTML without a client framework; Wrangler
 bundles the TypeScript Worker at deployment. The spatial viewer additionally loads
 its dedicated browser module and runtime assets. Customer pages check upstream
 on every request and return `Cache-Control: no-store`; only synthetic demo HTML
-remains cacheable. Normal listing pages open with the address, price and property overview. Photos,
-rooms, floor plan and contact navigation scroll independently of video. **Watch
-fly-through** opens a native playback dialog; **Back to listing** stops decoding
-and loading and restores the previous scroll position. No video request or view
-beacon occurs before the visitor opens playback. `?embed=1` explicitly retains
+remains cacheable. The next release's source opens with the selected property
+photo, followed by the address, price and details. `cover_url` is resolved and
+visibility-checked by the backend; ordered gallery photos precede the video
+poster when there is no selected cover. An explicit empty `gallery` stays empty,
+while a missing legacy field may use editorial photos. Photos, rooms, floor plan
+and contact navigation scroll independently of video. **Watch fly-through**
+opens one dialog in **Explore** mode: scrolling stays inside the video viewer,
+with a keyboard-accessible Tour position control. **Play video** switches the
+same source to normal playback with sound. **Back to listing** stops decoding
+and loading and restores the previous scroll position and focus. No video request
+or view beacon occurs before the visitor opens the viewer. `?embed=1` retains
 the legacy scroll-driven player, which the native bundled preview also uses.
 
 See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md) and
@@ -133,8 +150,9 @@ The tour JSON exposes two video sources, in this preference order:
 - **`scrub_url` — primary.** The published all-intra R2 MP4 is served over HTTP
   byte-range, without a browser re-encode or resolution cap. On normal pages the
   video has `preload="none"` and no source until an explicit open. Closing removes
-  the source, pauses playback and empties the decoder. Native controls provide
-  play/pause, seeking and fullscreen; room buttons seek the rendered timeline.
+  the source, pauses playback and empties the decoder. Explore seeks the paused
+  timeline; Play video exposes native play/pause, seeking and fullscreen. Room
+  buttons seek the same rendered timeline in either mode.
 - **`hls_url` — fallback.** Cloudflare Stream HLS is used when the MP4 is absent
   or fails. Safari uses native HLS; other supported browsers lazily load pinned
   hls.js `1.5.20` with SRI. The normal player uses bounded 30/60-second forward
@@ -156,8 +174,9 @@ publication. Both players use `t_ms/1000` directly, without dividing by
 `speed_factor` again.
 
 The browser talks directly to Supabase for the existing lead form and view
-beacon. The normal player's beacon starts after a decoded frame actually plays,
-then batches visible playing time and delivered buffered seconds. Merely reading
+beacon. The normal player's beacon starts after a frame has decoded in the opened
+viewer, then batches visible playback or recent Explore interaction time and
+delivered buffered seconds. Merely reading
 a listing does not count as a video view. `scroll_depth` retains its transport
 field name but represents maximum video progress in the normal player.
 Unbranded pages omit the form and agent/contact content and mark video beacons

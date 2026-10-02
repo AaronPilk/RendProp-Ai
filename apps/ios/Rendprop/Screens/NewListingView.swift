@@ -3,6 +3,34 @@ import UIKit
 import CoreLocation
 import MapKit
 
+/// Unit numbers travel with the existing address, so phone edits, Studio sync
+/// and published pages use one truth without adding a parallel metadata field.
+/// Only the conventional ` #unit` suffix on the street line is separated;
+/// city/state and older free-form apartment addresses are never guessed apart.
+enum ListingUnitAddress {
+    static func split(_ value: String) -> (address: String, unit: String) {
+        let address = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let streetEnd = address.firstIndex(of: ",") ?? address.endIndex
+        let street = String(address[..<streetEnd])
+        guard let marker = street.range(of: " #", options: .backwards) else { return (address, "") }
+        let unit = String(street[marker.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = String(street[..<marker.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !base.isEmpty, !unit.isEmpty else { return (address, "") }
+        return (base + String(address[streetEnd...]), unit)
+    }
+
+    static func compose(address: String, unit: String) -> String {
+        let parts = split(address)
+        let entered = unit.trimmingCharacters(in: .whitespacesAndNewlines)
+        var chosen = entered.isEmpty ? parts.unit : entered
+        if chosen.hasPrefix("#") { chosen = String(chosen.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines) }
+        if chosen.lowercased().hasPrefix("unit ") { chosen = String(chosen.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard !chosen.isEmpty else { return parts.address }
+        let end = parts.address.firstIndex(of: ",") ?? parts.address.endIndex
+        return String(parts.address[..<end]) + " #" + chosen + String(parts.address[end...])
+    }
+}
+
 // MARK: - Form data shared by New Listing and Edit
 
 /// Everything the owner types about a space, independent of the screen that
@@ -10,6 +38,7 @@ import MapKit
 /// type: name/address + tagline + the industry's `detailFields`.
 struct ListingFormData: Equatable {
     var address = ""
+    var unit = ""
     /// 0 = unknown for beds/baths (shown as "—"). Never publish invented facts.
     var beds = 0
     var baths = 0.0
@@ -27,7 +56,9 @@ struct ListingFormData: Equatable {
     }
 
     init(listing: Listing) {
-        address = listing.address
+        let location = listing.spaceType.showsPropertyDetails ? ListingUnitAddress.split(listing.address) : (listing.address, "")
+        address = location.0
+        unit = location.1
         beds = listing.beds
         baths = listing.baths
         sqft = listing.sqft > 0 ? String(listing.sqft) : ""
@@ -41,7 +72,17 @@ struct ListingFormData: Equatable {
     var isRealEstate: Bool { spaceType.showsPropertyDetails }
     var isValid: Bool { !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-    private var trimmedAddress: String { address.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var formattedAddress: String {
+        isRealEstate ? ListingUnitAddress.compose(address: address, unit: unit)
+            : address.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    /// Location/link suggestions replace the street without erasing a unit the
+    /// person entered. A suggestion carrying its own explicit unit wins.
+    mutating func setSuggestedAddress(_ value: String) {
+        let parts = isRealEstate ? ListingUnitAddress.split(value) : (value, "")
+        address = parts.0
+        if !parts.1.isEmpty { unit = parts.1 }
+    }
     private var trimmedTagline: String? {
         let t = tagline.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
@@ -60,13 +101,15 @@ struct ListingFormData: Equatable {
     /// Write the form into a listing (edit path). Beds/baths/sqft/price are
     /// real-estate concepts — never store the steppers on a venue/gym listing.
     func apply(to l: inout Listing) {
-        l.address = trimmedAddress
+        l.address = formattedAddress
         l.beds = isRealEstate ? beds : 0
         l.baths = isRealEstate ? baths : 0
         l.sqft = isRealEstate ? sqftValue : 0
         l.price = .dollars(isRealEstate ? (Money.parseDollars(priceDollars) ?? 0) : 0)
         l.tagline = isRealEstate ? nil : trimmedTagline
-        l.details = isRealEstate ? nil : cleanedDetails
+        // Keep lookup/publish metadata such as yearBuilt when editing a home;
+        // only empty values are removed, just as for business listings.
+        l.details = cleanedDetails
         if clientContact != l.clientContact {
             var contact = clientContact
             contact?.listingID = l.serverID ?? l.id
@@ -77,7 +120,7 @@ struct ListingFormData: Equatable {
 
     /// A brand-new listing from the form (create path).
     func makeListing(coordinate: CLLocationCoordinate2D?) -> Listing {
-        var l = Listing(address: trimmedAddress,
+        var l = Listing(address: formattedAddress,
                         beds: 0, baths: 0, sqft: 0,
                         price: Money(cents: 0),
                         status: .draft,
@@ -98,6 +141,7 @@ struct ListingFieldsForm<Middle: View>: View {
     @Binding var form: ListingFormData
     var locationAction: (() -> Void)? = nil
     var locating = false
+    var expandPropertyDetails = false
     @ViewBuilder var middle: () -> Middle
 
     /// Step 2's buttons are gated on Step 1 being filled in. When someone taps
@@ -111,6 +155,8 @@ struct ListingFieldsForm<Middle: View>: View {
     /// without one.
     var addressFocus: FocusState<Bool>.Binding? = nil
     @FocusState private var ownAddressFocus: Bool
+    @FocusState private var unitFocused: Bool
+    @State private var propertyDetailsExpanded = false
     private var addressFocused: FocusState<Bool>.Binding { addressFocus ?? $ownAddressFocus }
 
     /// Address type-ahead. Only ever consulted for real-estate style spaces —
@@ -152,6 +198,15 @@ struct ListingFieldsForm<Middle: View>: View {
             } else {
                 taglineCard
                 businessDetailsCard
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if addressFocused.wrappedValue || unitFocused {
+                    Spacer()
+                    Button("Done") { addressFocused.wrappedValue = false; unitFocused = false }
+                        .accessibilityIdentifier("newListing.keyboardDone")
+                }
             }
         }
     }
@@ -238,7 +293,7 @@ struct ListingFieldsForm<Middle: View>: View {
             Haptics.warning()
             return
         }
-        form.address = parsed.formatted
+        form.setSuggestedAddress(parsed.formatted)
         linkResult = parsed
         linkFailed = false
         Haptics.success()
@@ -268,6 +323,22 @@ struct ListingFieldsForm<Middle: View>: View {
                 .onChange(of: addressFocused.wrappedValue) { focused in
                     if !focused { completer.clear() }
                 }
+                .accessibilityIdentifier("newListing.address")
+
+            if space.showsPropertyDetails {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Apartment or condo unit (optional)").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.ink)
+                    TextField("e.g. 4B", text: $form.unit)
+                        .font(.rpBody).focused($unitFocused)
+                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        .submitLabel(.done).onSubmit { unitFocused = false }
+                        .padding(14).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityLabel("Apartment or condo unit")
+                        .accessibilityIdentifier("newListing.unit")
+                    Text("Included in the listing address. Current location can find the building, but only you know the unit.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             // Suggestions sit directly under the field, so the list is where
             // the eye already is. Capped at four: more than that and the video
@@ -278,7 +349,7 @@ struct ListingFieldsForm<Middle: View>: View {
                         Button {
                             Haptics.selection()
                             completer.accept()
-                            form.address = AddressCompleter.fullAddress(item)
+                            form.setSuggestedAddress(AddressCompleter.fullAddress(item))
                             addressFocused.wrappedValue = false
                         } label: {
                             HStack(spacing: 10) {
@@ -334,6 +405,7 @@ struct ListingFieldsForm<Middle: View>: View {
                     .foregroundStyle(Theme.accent)
                 }
                 .disabled(locating)
+                .accessibilityIdentifier("newListing.currentLocation")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -402,13 +474,16 @@ struct ListingFieldsForm<Middle: View>: View {
     /// every call is metered on the server and a retry is a second charge.
     @MainActor
     private func runPropertyLookup() async {
-        let address = form.address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = form.formattedAddress
         guard address.count >= 6, !lookingUp else { return }
         lookingUp = true
         lookupNote = nil
         defer { lookingUp = false }
         do {
             let result = try await model.api.propertyLookup(address: address)
+            // A delayed record for a different building/unit must not fill the
+            // property currently being edited. Existing typed facts stay intact.
+            guard form.formattedAddress == address else { return }
             lookupAvailable = result.configured
             guard result.configured else { return }
             guard let f = result.facts else {
@@ -437,17 +512,21 @@ struct ListingFieldsForm<Middle: View>: View {
     }
 
     private var propertyDetailsCard: some View {
-        DisclosureGroup {
+        DisclosureGroup(isExpanded: $propertyDetailsExpanded) {
             VStack(spacing: 14) {
                 Stepper(form.beds > 0 ? "Bedrooms: \(form.beds)" : "Bedrooms: —",
                         value: $form.beds, in: 0...12)
+                    .accessibilityIdentifier("listing.beds")
                 Stepper(form.baths > 0 ? String(format: "Bathrooms: %g", form.baths) : "Bathrooms: —",
                         value: $form.baths, in: 0...12, step: 0.5)
+                    .accessibilityIdentifier("listing.baths")
                 TextField("Square feet", text: $form.sqft)
+                    .accessibilityIdentifier("listing.sqft")
                     .keyboardType(.numberPad)
                     .padding(12)
                     .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 TextField("Asking price", text: $form.priceDollars)
+                    .accessibilityIdentifier("listing.price")
                     .keyboardType(.numberPad)
                     .padding(12)
                     .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -464,6 +543,7 @@ struct ListingFieldsForm<Middle: View>: View {
         }
         .tint(Theme.inkDim)
         .card()
+        .onAppear { if expandPropertyDetails { propertyDetailsExpanded = true } }
     }
 
     private var taglineCard: some View {
@@ -608,6 +688,13 @@ struct NewListingView: View {
     }
 
     private func useCurrentLocation() {
+#if targetEnvironment(simulator)
+        if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.currentLocationFixture") {
+            pendingCoord = CLLocationCoordinate2D(latitude: 35.123, longitude: -80.987)
+            form.setSuggestedAddress("100 Synthetic Condo Way, Fixture City, NC 28000")
+            return
+        }
+#endif
         locating = true
         locator.request { loc in
             guard let loc else { locating = false; return }
@@ -617,7 +704,7 @@ struct NewListingView: View {
                                                   longitude: coarseCoordinate(loc.coordinate.longitude))
             CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
                 if let p = placemarks?.first {
-                    form.address = Self.formatAddress(p)
+                    form.setSuggestedAddress(Self.formatAddress(p))
                 }
                 locating = false
             }
@@ -962,7 +1049,7 @@ struct ListingEditSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                ListingFieldsForm(form: $form) {
+                ListingFieldsForm(form: $form, expandPropertyDetails: true) {
                     EmptyView()
                 }
                 .padding()
@@ -979,6 +1066,7 @@ struct ListingEditSheet: View {
                     Button("Save") { save() }
                         .fontWeight(.semibold)
                         .disabled(!canSave)
+                        .accessibilityIdentifier("listing.edit.save")
                 }
             }
         }

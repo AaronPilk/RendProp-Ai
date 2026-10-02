@@ -78,6 +78,9 @@ actor MockAPIClient: APIClient {
         created = created.filter { $0.value.serverID != serverID && $0.key != serverID }
     }
 
+    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws {}
+    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws {}
+
     // MARK: - Uploads
 
     func requestUpload(filename: String, bytes: Int64,
@@ -920,7 +923,15 @@ actor MockAPIClient: APIClient {
         // (style/prompt are ignored offline). The disclosure sentence mirrors
         // public.provenance_disclosure() so the compliance copy is exercised
         // offline too; nothing is recorded, because there is no audit log here.
-        try? await Task.sleep(nanoseconds: 500_000_000)
+#if targetEnvironment(simulator)
+        if Config.isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.photoWorkFixture") {
+            try await Task.sleep(nanoseconds: 6_000_000_000)
+        } else {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+#else
+        try await Task.sleep(nanoseconds: 500_000_000)
+#endif
         return AIPhotoEditResult(imageBase64: request.imageBase64,
                                  mime: request.mime,
                                  disclosure: Self.offlineDisclosure(for: request.edit),
@@ -934,22 +945,20 @@ actor MockAPIClient: APIClient {
         switch edit {
         case "stage":
             return "This photo was virtually staged with AI: furniture and decor were digitally added "
-                + "or restyled. The architecture, dimensions, and views are unchanged."
+                + "or restyled. Compare with the original to check fixed features, layout and access before publication."
         case "declutter":
             return "This photo was digitally decluttered with AI: clutter and personal items were "
-                + "removed. The architecture, dimensions, and views are unchanged."
+                + "removed. Compare with the original to check fixed features, layout and access before publication."
         case "twilight":
             return "This photo was digitally altered with AI: the sky and lighting were changed to "
-                + "simulate dusk. The property itself is unchanged."
+                + "simulate dusk. Compare with the original to check property features before publication."
         case "sky":
-            return "This photo was digitally altered with AI: the sky was replaced. The property "
-                + "itself is unchanged."
+            return "This photo was digitally altered with AI: the sky was replaced. Compare with the original to check property features before publication."
         case "lawn":
             return "This photo was digitally altered with AI: the lawn and landscaping were digitally "
-                + "repaired. The property itself is unchanged."
+                + "repaired. Compare with the original to check property features before publication."
         default:
-            return "This photo was digitally altered with AI. The architecture, dimensions, and views "
-                + "are unchanged."
+            return "This photo was digitally altered with AI. Compare with the original to check fixed features, layout and access before publication."
         }
     }
 

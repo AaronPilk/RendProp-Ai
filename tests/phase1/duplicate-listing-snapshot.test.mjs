@@ -41,7 +41,7 @@ enum FileStore {
 struct AdoptionLocalBindings:Codable { func validate() throws {} }
 enum CloudSyncError:Error { case invalidResponse }
 final class AppModel {
- struct RenderedTour { let url:URL;let durationS:Double;let speedFactor:Double }
+ struct RenderedTour { let url:URL;let durationS:Double;let speedFactor:Double;var motionSmoothing:String?=nil }
  struct UploadedRenderAsset:Codable,Hashable { var relPath:String;var assetID:String }
  var listings:[Listing]=[]
  func snapshotBindings() throws -> [UUID:UUID?] {

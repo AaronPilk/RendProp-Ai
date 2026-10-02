@@ -7,6 +7,20 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
+deployed **listings v38, tours v45 and ai-photo v49**, all ACTIVE with JWT
+verification enabled. Gallery selection validates ordered ready/visible listing
+photos; a service-only atomic append preserves concurrent cloud additions. The
+gallery migration is recorded live as `20261002171338`, from source filename
+`20261002160344`; do not apply it twice. All eight catalog/permission checks and
+three exact database function bodies match. Deployed extraction returns 12/13/24
+files, all byte-matching the source; tours submitted 14, with only `spatial/contract.ts`
+omitted because its sole incoming edge is an erased Row type import. That module's
+unused runtime exports are unreachable through that edge. All 12 CI jobs passed
+on runtime `3615a23`; three unauthenticated GET probes return 401. No paid generation
+or synthetic customer write was used. See the
+[delivery receipt](../../../docs/releases/TESTFLIGHT-41-20261002.json).
+
 The [build 40 crash audit](../../../docs/handoff/IOS-CRASH-HARDENING-20261002.md)
 deployed **events v26 ACTIVE**, with JWT verification enabled. A narrow,
 whitelisted diagnostic `app_version` exemption preserves `marketing.version (build)`
@@ -22,7 +36,7 @@ client contacts, verified contact-photo uploads and transactional client inquiry
 emails. Recipients and delivery history remain private; public tours expose only
 the client card and display flags. The migration is applied under live ledger
 `20261001233128` (source filename stamp `20261001222809`; do not apply it twice).
-Selected live versions are **me43, listings37, uploads45, leads36, notify11,
+At that delivery, selected versions were **me43, listings37, uploads45, leads36, notify11,
 studio15, tours44 and ai-video45**; all downloaded runtime source files match
 the release. The adopt handler is unchanged; its existing RPC preserves role
 preference. All 19 migration function contracts and six triggers pass live

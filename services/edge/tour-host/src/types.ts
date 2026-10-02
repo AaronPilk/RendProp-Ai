@@ -105,6 +105,9 @@ export interface AgentCard {
 }
 
 export interface Tour {
+  /** Server-resolved, visible property cover photo selected by the owner.
+   *  Separate from the video poster; never sourced from client headshots. */
+  cover_url?: string | null;
   /** The listing's own photos, from `role:"gallery"` uploads, as
    *  `{ url, label }` objects (a bare string url is also accepted). Top level
    *  on the payload; `listing.details.gallery` is the older freeform shape the
