@@ -51,6 +51,14 @@ KEPT_RED = {
 # included — keeps the number it had.
 INVARIANT_COUNT = 266
 
+# These tests are transactional and rolled back. Require their exact completion
+# markers on both freshly migrated and historically replayed schemas; merely
+# hashing/registering an SQL file does not prove its receipts or cost fences.
+REFLECTION_FIXTURES = (
+    ("video_erase.sql", "PASS video erase SQL: 51 assertions", 51),
+    ("video_erase_direct_bria.sql", "PASS direct Bria SQL: 37 assertions", 37),
+)
+
 # These already-shipped transactional Studio migrations intentionally create
 # their tables/policies once. Apply every listed file on BOTH fresh database paths, but
 # do not manufacture a second CREATE as an idempotency requirement. Keep this
@@ -191,6 +199,7 @@ def main():
             run("apply-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
         counts = []
         receipt["invariantRuns"] = []
+        receipt["reflectionFixtures"] = []
         for phase in ("initial", "replayed"):
             if phase == "replayed":
                 # Reapply each historical version where it actually existed.
@@ -210,6 +219,15 @@ def main():
                 receipt["replayedMigrations"] = len(replay)
                 receipt["singleApplicationMigrations"] = sorted(SINGLE_APPLICATION_MIGRATIONS)
                 receipt["replayMode"] = "second clean database; each replayable migration twice at its historical schema point"
+            for filename, marker, assertion_count in REFLECTION_FIXTURES:
+                fixture = sqlroot / "tests" / filename
+                require(fixture in sources, "Required reflection fixture missing from source receipt")
+                reflection = run("reflection-" + phase + "-" + fixture.stem,
+                                 psql + ["-f", str(fixture)])
+                require(marker in reflection, f"{filename} did not complete its {assertion_count} assertions")
+                receipt["reflectionFixtures"].append({"phase": phase, "fixture": filename,
+                    "assertions": assertion_count, "rolledBack": True,
+                    "database": psql[psql.index("-d") + 1]})
             output = run("invariants-" + phase, psql + ["-f", str(sqlroot / "tests/invariants.sql")], expected=(0, 3))
             # Preserve a genuine red suite, but still test migration replay.
             # A SQL/load error is not a completed red suite and aborts here.

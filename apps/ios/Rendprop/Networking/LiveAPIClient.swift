@@ -188,7 +188,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// Send, verify 2xx, decode the error envelope otherwise. Refreshes the JWT
     /// first (never sends a token we know is expired), and on a 401 forces ONE
     /// refresh + retry; a 401 after that means the session is dead → sign out.
-    @MainActor private func execute(_ req: URLRequest, session: URLSession? = nil) async throws -> Data {
+    @MainActor private func execute(_ req: URLRequest, session: URLSession? = nil,
+                                    beforeSend: (() throws -> Void)? = nil) async throws -> Data {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         // The request can have been assembled before a hop to this actor. Its
         // old bearer identifies the intended account; refresh may replace an
@@ -208,6 +209,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         }
 
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        try beforeSend?()
         let (data, resp) = try await client.data(for: request)
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
@@ -218,6 +220,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
             if refreshed, let fresh = AuthStore.storedAccessToken() {
                 request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+                try beforeSend?()
                 let (data2, resp2) = try await client.data(for: request)
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
                 guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
@@ -1155,7 +1158,25 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote {
         let target = url(["ai-video", "declutter", "quote"],
                          query: [URLQueryItem(name: "listing_id", value: listingID.uuidString)])
-        return try decode(await execute(makeRequest(url: target), session: aiSession))
+        return try decode(await executeReflection(makeRequest(url: target)))
+    }
+
+    @MainActor private func executeReflection(_ request: URLRequest) async throws -> Data {
+        var request = request
+#if SPATIAL_CAPTURE_LAB
+        // Only the explicit internal TestFlight scheme can opt into the Bria
+        // beta. The server independently checks the configured tester list.
+        if AIConsent.shared.isGranted {
+            let revision = AIConsent.shared.revocationRevision
+            request.setValue("bria-video-v1", forHTTPHeaderField: "x-rendprop-ai-consent")
+            return try await execute(request, session: aiSession, beforeSend: {
+                guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == revision else {
+                    throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+                }
+            })
+        }
+#endif
+        return try await execute(request, session: aiSession)
     }
 
     func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
@@ -1259,10 +1280,10 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// Shared submit → decode for the three generate routes (202 responses).
     private func submitAIVideo(path: String, body: [String: Any],
                                fallbackKind: String, idempotencyKey: String?) async throws -> AIVideoJob {
-        let data = try await execute(makeRequest(url: url(["ai-video", path]),
+        var request = makeRequest(url: url(["ai-video", path]),
                                                  method: "POST", json: body,
-                                                 idempotency: Self.aiIdempotency(idempotencyKey)),
-                                     session: aiSession)
+                                                 idempotency: Self.aiIdempotency(idempotencyKey))
+        let data = path == "declutter" ? try await executeReflection(request) : try await execute(request, session: aiSession)
         let dto: AIVideoJobDTO = try decode(data)
         guard let requestId = dto.requestId, !requestId.isEmpty,
               let statusUrl = dto.statusUrl, !statusUrl.isEmpty,
@@ -1293,7 +1314,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // surfaces as a normal APIError to the caller's retry/fallback path).
         let target = comps?.url ?? plain
 
-        let data = try await execute(makeRequest(url: target), session: aiSession)
+        let request = makeRequest(url: target)
+        let data = job.kind == "declutter" ? try await executeReflection(request) : try await execute(request, session: aiSession)
         let dto: AIVideoStatusDTO = try decode(data)
         switch dto.status {
         case "completed":

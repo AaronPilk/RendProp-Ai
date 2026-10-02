@@ -1035,6 +1035,7 @@ final class AppModel: ObservableObject {
     /// stall.
     private var gallerySyncInFlight: Set<UUID> = []
     private var gallerySyncPending: Set<UUID> = []
+    static let photoSyncErrorPrefix = "Your photo selection hasn't reached the published page."
 
     func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
         guard Config.useLiveBackend else { return }
@@ -1115,10 +1116,13 @@ final class AppModel: ObservableObject {
                 try await api.selectListingPhotos(serverID: listingServerID, galleryAssetIDs: selectedAssets, mainAssetID: mainAsset)
             }
             try requireIdentity()
+            if listings.first(where: { $0.id == listingLocalID })?.lastError?.hasPrefix(Self.photoSyncErrorPrefix) == true {
+                setLastError(nil, for: listingLocalID)
+            }
         } catch is CancellationError { return }
         catch CloudSyncError.identityChanged { return }
         catch {
-            noteUploadProblem("Your photo selection hasn't reached the published page. Your saved versions are safe. Open Photos to retry. "
+            noteUploadProblem(Self.photoSyncErrorPrefix + " Your saved versions are safe. Open Photos to retry. "
                               + Self.userMessage(for: error), listingLocalID: listingLocalID, error: error)
         }
     }
@@ -3828,9 +3832,9 @@ final class AIConsent: ObservableObject {
 
     /// Bumped if the set of processors or what we send them ever changes — a
     /// new suffix re-asks everyone, which is what a materially different
-    /// disclosure requires. v2 corrects omitted recipients and media/text uses;
+    /// disclosure requires. v3 adds direct Bria video processing;
     /// a prior grant must not silently stand in for the corrected disclosure.
-    private static let storageKey = "ai.thirdPartyProcessing.consent.v2"
+    private static let storageKey = "ai.thirdPartyProcessing.consent.v3"
 
     /// Drives the disclosure overlay on whichever AI surface is open.
     @Published private(set) var isAsking = false
@@ -3856,6 +3860,8 @@ final class AIConsent: ObservableObject {
                   detail: "Receives photos, video or text for photo editing, video analysis and writing assistance."),
         Processor(name: "fal.ai",
                   detail: "Receives photos, video and prompts for AI edits, generated clips and upscaling. Available models include ByteDance Seedance, Google Veo, Topaz Labs, Bria, FLUX and MiniMax Hailuo."),
+        Processor(name: "Bria",
+                  detail: "Receives the video intervals you select, removal prompts and generated masks to remove people, objects or reflections from video."),
         Processor(name: "Anthropic and OpenAI",
                   detail: "Receive chat, project context and writing requests. Quality checks can also send source photos and frames from generated clips; OpenAI can edit photos."),
         Processor(name: "ElevenLabs",

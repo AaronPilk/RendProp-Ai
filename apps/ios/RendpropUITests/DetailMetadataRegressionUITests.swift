@@ -144,7 +144,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
 
     private func launch(_ fixture: String) {
         app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", fixture == "venue" ? "venue" : "real_estate",
-                               "-appearance", "light", "-ai.thirdPartyProcessing.consent.v2", "YES",
+                               "-appearance", "light", "-ai.thirdPartyProcessing.consent.v3", "YES",
                                "-ui.detailMetadataFixture", fixture]
         app.launch()
         XCTAssertTrue(app.navigationBars["Detail fixture \(fixture)"].waitForExistence(timeout: 30), app.debugDescription)

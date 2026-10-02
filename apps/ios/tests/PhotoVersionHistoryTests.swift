@@ -145,6 +145,84 @@ struct PhotoVersionHistoryTests {
         check(!FileManager.default.fileExists(atPath: failureDir.appendingPathComponent("edit-failed-edit.jpg").path), "uncommitted AI output cleaned up")
         check((try? Data(contentsOf: failureDir.appendingPathComponent("orig-retry.jpg"))) == original, "metadata failure never deletes existing original")
 
+        // Saved-library browsing and the public selection are separate from
+        // the editing workspace. Use two families and multiple restyles so a
+        // latest-only grid or staging-derived "declutter" cannot pass.
+        let libraryDir = root.appendingPathComponent("separate-libraries")
+        var latestByFamily: [String: String] = [:]
+        var cleanByFamily: [String: String] = [:]
+        for family in ["living", "bedroom"] {
+            try PhotoVersionHistory.saveCapture(original: Data("original-\(family)".utf8),
+                enhanced: Data("enhanced-\(family)".utf8), id: family, directory: libraryDir)
+            let firstClean = family + "-clean-1", secondClean = family + "-clean-2"
+            _ = try PhotoVersionHistory.saveEdit(jpeg: Data("clean-1-\(family)".utf8), id: firstClean,
+                parentID: family, sourceID: family, edit: "declutter", style: nil, disclosure: nil,
+                provenanceID: nil, provenanceRecorded: false, directory: libraryDir)
+            _ = try PhotoVersionHistory.saveEdit(jpeg: Data("clean-2-\(family)".utf8), id: secondClean,
+                parentID: firstClean, sourceID: firstClean, edit: "declutter", style: nil, disclosure: nil,
+                provenanceID: nil, provenanceRecorded: false, directory: libraryDir)
+            let firstStage = family + "-modern", secondStage = family + "-rustic"
+            _ = try PhotoVersionHistory.saveEdit(jpeg: Data("modern-\(family)".utf8), id: firstStage,
+                parentID: secondClean, sourceID: secondClean, edit: "stage", style: "modern", disclosure: nil,
+                provenanceID: nil, provenanceRecorded: false, directory: libraryDir)
+            let restyleSource = try PhotoVersionHistory.source(for: firstStage, edit: "stage", directory: libraryDir)
+            _ = try PhotoVersionHistory.saveEdit(jpeg: Data("rustic-\(family)".utf8), id: secondStage,
+                parentID: firstStage, sourceID: restyleSource.id, edit: "stage", style: "rustic", disclosure: nil,
+                provenanceID: nil, provenanceRecorded: false, directory: libraryDir)
+            latestByFamily[family] = secondStage; cleanByFamily[family] = secondClean
+            check(restyleSource.id == secondClean, "restyling uses retained furniture-free source")
+        }
+        let libraryIndexURL = libraryDir.appendingPathComponent(".photo-history.json")
+        let beforeBrowsing = try Data(contentsOf: libraryIndexURL)
+        let browseIndex = try PhotoVersionHistory.load(directory: libraryDir)
+        let latestLibrary = browseIndex.libraryVersions(.latest)
+        let cleanLibrary = browseIndex.libraryVersions(.decluttered)
+        let stageLibrary = browseIndex.libraryVersions(.staged)
+        check(latestLibrary.count == 2 && stageLibrary.count == 2 && cleanLibrary.count == 2, "each library keeps one version per family")
+        check(Dictionary(uniqueKeysWithValues: latestLibrary.map { ($0.familyID, $0.id) }) == latestByFamily, "latest library remains the editing workspace's current versions")
+        check(Dictionary(uniqueKeysWithValues: stageLibrary.map { ($0.familyID, $0.id) }) == latestByFamily, "staged library keeps newest restyle per family")
+        check(Dictionary(uniqueKeysWithValues: cleanLibrary.map { ($0.familyID, $0.id) }) == cleanByFamily, "declutter library keeps newest clean source after two staging outputs")
+        check(cleanLibrary.allSatisfy { $0.effects == ["declutter"] }, "declutter exports cannot include furniture effects inherited by staging")
+        check(stageLibrary.allSatisfy { $0.effects == ["declutter", "stage"] }, "staged outputs retain truthful declutter lineage")
+        check((try? Data(contentsOf: libraryIndexURL)) == beforeBrowsing, "loading and browsing libraries performs no history-state write")
+        for version in cleanLibrary {
+            let cleanBytes = try Data(contentsOf: libraryDir.appendingPathComponent(version.imageFile))
+            check(cleanBytes == Data("clean-2-\(version.familyID)".utf8), "downloadable declutter bytes remain separate from staging")
+            check(version.originalFile == "orig-\(version.familyID).jpg", "declutter download still points to the retained unaltered source")
+            check((try? Data(contentsOf: libraryDir.appendingPathComponent(version.originalFile!))) == Data("original-\(version.familyID)".utf8), "library review never changes original pixels")
+            try PhotoVersionHistory.selectForPublication(id: version.id, directory: libraryDir)
+            let publicationIndex = try PhotoVersionHistory.load(directory: libraryDir)
+            check(publicationIndex.current == latestByFamily, "public selection must not replace current editing/staging versions")
+            check(publicationIndex.isSelectedForListing(version.id), "chosen clean version is the public selection")
+            check(!publicationIndex.isSelectedForListing(latestByFamily[version.familyID]!), "newest staging stays unapproved after choosing declutter")
+            check(publicationIndex.versions.count == 10, "public selection retains all source, declutter and staging versions")
+        }
+        let cleanPublished = try PhotoVersionHistory.publicationVersions(directory: libraryDir)!
+        check(Set(cleanPublished.map(\.id)) == Set(cleanByFamily.values), "publication exports reviewed clean versions for both families")
+        let indexBeforeReject = try Data(contentsOf: libraryIndexURL)
+        let missingCleanURL = libraryDir.appendingPathComponent("edit-living-clean-2.jpg")
+        let cleanSavedBytes = try Data(contentsOf: missingCleanURL)
+        try FileManager.default.removeItem(at: missingCleanURL)
+        rejected("missing public-choice image fails closed") { try PhotoVersionHistory.selectForPublication(id: "living-clean-2", directory: libraryDir) }
+        rejected("missing selected image cannot silently publish a staged replacement") { _ = try PhotoVersionHistory.publicationVersions(directory: libraryDir) }
+        check((try? Data(contentsOf: libraryIndexURL)) == indexBeforeReject, "failed public choice cannot alter history or selection")
+        try Data().write(to: missingCleanURL)
+        rejected("empty public-choice image fails closed") { try PhotoVersionHistory.selectForPublication(id: "living-clean-2", directory: libraryDir) }
+        try cleanSavedBytes.write(to: missingCleanURL)
+        rejected("unknown version cannot be selected through a stale saved-library item") { try PhotoVersionHistory.selectForPublication(id: "not-a-version", directory: libraryDir) }
+        check((try? Data(contentsOf: libraryIndexURL)) == indexBeforeReject, "unknown/empty selection rejection is also read only")
+        try PhotoVersionHistory.hide(id: "living-rustic", directory: libraryDir)
+        let hiddenIndex = try PhotoVersionHistory.load(directory: libraryDir)
+        for kind in PhotoVersionHistory.LibraryKind.allCases {
+            let visible = hiddenIndex.libraryVersions(kind)
+            check(visible.count == 1 && visible[0].familyID == "bedroom", "every library excludes the whole hidden living-room family")
+        }
+        let beforeHiddenReject = try Data(contentsOf: libraryIndexURL)
+        rejected("hidden clean version cannot be selected from an old compare sheet") { try PhotoVersionHistory.selectForPublication(id: "living-clean-2", directory: libraryDir) }
+        check((try? Data(contentsOf: libraryIndexURL)) == beforeHiddenReject, "hidden-family selection rejection preserves current and public state")
+        let visiblePublished = try PhotoVersionHistory.publicationVersions(directory: libraryDir)
+        check(visiblePublished?.map(\.familyID) == ["bedroom"], "hidden family stays off publication without resurrecting an earlier image")
+
         typealias Layout = PhotoExportLayout
         check(Layout.size(width: 4032, height: 3024, aspect: .original, framing: .crop) == .init(width: 4032, height: 3024), "default preserves every original pixel")
         check(Layout.size(width: 4032, height: 3024, aspect: .landscape, framing: .crop) == .init(width: 4032, height: 3024), "4:3 same source")

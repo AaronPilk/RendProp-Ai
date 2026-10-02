@@ -27,7 +27,7 @@ import StoreKitTest
 
     private func launch() {
         app = XCUIApplication()
-        app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate", "-appearance", "light", "-ai.thirdPartyProcessing.consent.v2", "NO"]
+        app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate", "-appearance", "light", "-ai.thirdPartyProcessing.consent.v3", "NO"]
         app.launch()
     }
     private func openPaywall() {
@@ -104,7 +104,7 @@ import StoreKitTest
     override func tearDownWithError() throws { app?.terminate() }
     private func launch(_ extra: [String] = []) {
         app = XCUIApplication()
-        app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate", "-appearance", "light", "-ai.thirdPartyProcessing.consent.v2", "NO"] + extra
+        app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate", "-appearance", "light", "-ai.thirdPartyProcessing.consent.v3", "NO"] + extra
         app.launch()
     }
     private func show(_ element: XCUIElement) {

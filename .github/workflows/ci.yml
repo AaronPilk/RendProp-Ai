@@ -59,6 +59,16 @@ jobs:
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
         run: bash apps/ios/tests/run-photo-delivery.sh
+      - name: Actual gallery sync races, warning recovery and provenance fences
+        run: |
+          python3 tools/audit/gallery-sync-20261002/run.py
+          for fault in clear-unrelated stale-selection ignore-provenance; do
+            python3 tools/audit/gallery-sync-20261002/run.py --inject-fault "$fault"
+          done
+      - name: Reel generation stops at failures and retains completed clips
+        run: bash apps/ios/tests/run-reel-clip-failures.sh
+      - name: Reflection permission revocation fences pending requests
+        run: python3 tools/audit/call-20260919/reflection-controller/run.py
       - name: Photo work survives navigation and fences account transitions
         run: bash apps/ios/tests/run-photo-work-queue.sh
       - name: Photo edit lifecycle and background resource cleanup
@@ -150,6 +160,8 @@ jobs:
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
             ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
             ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
+            /tmp/rendprop-gallery-sync-fixture-*/receipt.json
+            /tmp/rendprop-gallery-sync-fixture-*/*.log
           retention-days: 7
           if-no-files-found: warn
 
@@ -461,10 +473,13 @@ jobs:
       - name: Durable video reflection jobs and idempotent migration replay
         run: |
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0055_video_reflection_jobs.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0056_active_photo_fallback.sql
+          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261002225458_video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
 
       - name: Concurrent reflection receipts, cancellation and cost fences
@@ -505,7 +520,7 @@ jobs:
           createdb rendprop_replay
           psql -v ON_ERROR_STOP=1 -q -f services/supabase/tests/ci-bootstrap.sql
           # Use the same exact replay policy as the disposable runner. The
-          # eight transactional Studio migrations still run once in EACH
+          # listed transactional Studio migrations still run once in EACH
           # fresh database; their CREATE statements are not replay APIs.
           python3 - <<'PY' > /tmp/rendprop-replayable-migrations.txt
           from pathlib import Path
@@ -521,6 +536,7 @@ jobs:
             fi
           done
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
 
       - name: Invariants after the replay (same answers, one overload per RPC)
@@ -604,6 +620,12 @@ jobs:
           set -euo pipefail
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
           python3 tools/audit/run_database_regression.py
+      - name: Direct Bria reservations, stage admissions and cancellation races
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 services/supabase/tests/video_erase_direct_bria_pg.py
       # The spatial edge regression runs --cached-only without preparing its
       # own cache (the deletion runners do), so fill the Deno cache with every
       # first-party edge module's pinned std/npm imports first. This is the

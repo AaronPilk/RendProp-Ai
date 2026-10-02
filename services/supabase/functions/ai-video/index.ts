@@ -237,8 +237,10 @@ import { ProviderError } from "../_shared/providers/common.ts";
 import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
 import { falSubmitEcho } from "../_shared/providers/fal.ts";
-import { persistResult, persistedUrl, routedR2Key } from "../_shared/providers/common.ts";
-import { createEraseHandler, extractEraseJob } from "./erase.ts";
+import { persistResult, persistedUrl, routedR2Key, putBytes } from "../_shared/providers/common.ts";
+import { R2_BUCKET_RENDERS } from "../_shared/r2.ts";
+import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
+import { createBriaAdapter } from "./bria.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
   extractJobToken,
@@ -942,8 +944,22 @@ const eraseHandler = createEraseHandler({
   resolveAsset: async (id, req) => await resolvePublicAsset(userClient(req), id, req),
   fetch: (url, init) => fetch(url, init),
   falKey: () => Deno.env.get("FAL_KEY")?.trim() ?? "",
-  persist: async (url, key) => {
-    await persistResult("fal", { status: "done", result_url: url, mime: "video/mp4" }, key);
+  config: (req, ctx) => readEraseConfig((name) => Deno.env.get(name), req, ctx),
+  bria: (config) => createBriaAdapter({
+    fetch: (url, init) => fetch(url, init),
+    apiToken: () => Deno.env.get("BRIA_API_TOKEN")?.trim() ?? "",
+    outputHosts: Array.isArray(config.output_hosts) ? config.output_hosts as string[] : [],
+  }),
+  persist: async (url, key, provider, config) => {
+    if (provider === "bria") {
+      const adapter = createBriaAdapter({
+        fetch: (input, init) => fetch(input, init),
+        apiToken: () => Deno.env.get("BRIA_API_TOKEN")?.trim() ?? "",
+        outputHosts: Array.isArray(config?.output_hosts) ? config.output_hosts as string[] : [],
+      });
+      const output = await adapter.downloadOutput(url);
+      await putBytes(R2_BUCKET_RENDERS, key, output.bytes, output.mime);
+    } else await persistResult("fal", { status: "done", result_url: url, mime: "video/mp4" }, key);
     const publicUrl = publicR2Url(key);
     assert(publicUrl, 503, "The edited clip could not be made available", "upstream");
     return publicUrl;
@@ -1415,7 +1431,32 @@ Deno.serve(async (req) => {
       // hand the charge back (audit item 2). See refundGenerateCharge.
       let attempt: ChainResult<JobRef>;
       try {
-        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+        attempt = await runChain(task, steps, async (step) => {
+          try {
+            return await adapterFor(step.provider).submit(step, genInput);
+          } catch (error) {
+            // Deliberate HttpErrors are returned without logging. Preserve the
+            // provider's HTTP status before runChain maps it to our 502, so
+            // account authorization failures can be distinguished from an
+            // outage. Never log its message/body, token or customer image URL.
+            const known = error instanceof ProviderError ? error : null;
+            const httpStatus = known?.status;
+            console.error("ai-video reel submit failed", {
+              provider: step.provider,
+              model: step.model,
+              error_class: known?.error_class ?? "other",
+              provider_http_status: typeof httpStatus === "number" &&
+                  Number.isInteger(httpStatus) && httpStatus >= 100 &&
+                  httpStatus <= 599
+                ? httpStatus
+                : null,
+              reason: known?.message === "FAL_KEY function secret is not set"
+                ? "provider_not_configured"
+                : "submission_failed",
+            });
+            throw error;
+          }
+        });
       } catch (e) {
         await refundGenerateCharge(charge);
         throw e;

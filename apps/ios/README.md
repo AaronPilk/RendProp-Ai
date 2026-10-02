@@ -8,6 +8,18 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+Internal **TestFlight 1.0.3 (43): PREPARING**, not uploaded or verified available.
+The [Bria and saved-photo versions handoff](../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
+records the new direct-Bria consent v3, an internal-scheme acknowledgement plus
+explicit server tester allowlist, saved Latest/Decluttered/Staged libraries,
+viewed-version downloads and separate listing selection. Photo history remains
+local to the iPhone. Reel generation now stops on the first failure and retains
+completed clips for finishing without regeneration; the underlying fal 502 cause
+remains unproven. All 27 available beta attachments were reviewed with zero new
+crash reports surfaced. The dependent backend is not deployed and final source CI,
+archive, upload, Apple availability and phone checks are pending. These changes
+do not alter the submitted build-42 snapshot or certify camera/media quality.
+
 Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
 and Apple reports **Waiting for Review**. Release is automatic after approval.
 The [receipt](../../docs/releases/APPSTORE-42-20261002.json) and
@@ -213,6 +225,11 @@ Money is represented as integer cents.
 
 ## Tests and phone acceptance
 
+- [Preparing build 43 tests and phone checklist](../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md#verification-and-evidence-boundaries)
+  links the new actual-source consent, photo-history, reflection and reel failure
+  checks. The new Release saved-photo UI case uses MockAPIClient and synthetic
+  photos; provider output, Files/Photos delivery and physical capture need phone
+  acceptance after delivery gates pass.
 - [UI tests](RendpropUITests/README.md) distinguish screenshot walks, assertion
   tests, synthetic saved-take recovery and loopback session tests. Some cases
   require fixtures; running the entire bundle blindly is not a release check.

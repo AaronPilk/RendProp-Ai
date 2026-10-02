@@ -88,6 +88,7 @@ struct ReflectionRemovalView: View {
             .onChange(of: controller.accountMatches) { _ in refreshPlayer() }
             .onDisappear { player?.pause() }
         }
+        .aiConsentGate()
     }
 
     private var intervalPicker: some View {
@@ -107,7 +108,10 @@ struct ReflectionRemovalView: View {
             if let quote = controller.quote {
                 Text("\(quote.remainingClips) AI clips available. Up to \(String(format: "%.1f", quote.maximumSeconds)) seconds per edit.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                if !canStart && !chosen.isEmpty {
+                if !quote.available {
+                    Text("Video removal is unavailable right now. Your recording is safe; try checking again later.")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                } else if !canStart && !chosen.isEmpty {
                     Text("Deselect some intervals to fit the available allowance.")
                         .font(.rpCaption).foregroundStyle(Theme.warn)
                 }

@@ -3839,6 +3839,23 @@ struct PhotoStudioView: View {
     private var stagingLabel: String { space == .realEstate ? "Virtual staging" : "Furnish & style" }
 
     @State private var photos: [EnhancedPhoto] = []
+    @State private var libraryKind: PhotoVersionHistory.LibraryKind = .latest
+    @State private var galleryRetrying = false
+    private var libraryPhotos: [EnhancedPhoto] {
+        guard entry == .photos, libraryKind != .latest else { return photos }
+        guard let index = try? PhotoVersionHistory.load(directory: EnhancedPhoto.directory(for: listing.id)) else { return [] }
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        return index.libraryVersions(libraryKind).map { version in
+            let image = directory.appendingPathComponent(version.imageFile)
+            return EnhancedPhoto(id: version.id, originalURL: version.originalFile.map { directory.appendingPathComponent($0) } ?? image,
+                                 enhancedURL: image)
+        }
+    }
+    private var gallerySyncError: String? {
+        guard let message = model.listings.first(where: { $0.id == listing.id })?.lastError,
+              message.hasPrefix(AppModel.photoSyncErrorPrefix) else { return nil }
+        return message
+    }
     /// The photos with AI work in flight right now, so each THUMBNAIL can say
     /// so. `isProcessing` is one bool for the whole screen and its spinner
     /// renders once, at the top of the scroll view — on a seventeen-photo grid
@@ -4025,10 +4042,35 @@ struct PhotoStudioView: View {
             }
 
             if !photos.isEmpty {
+                Picker("Saved photo versions", selection: $libraryKind) {
+                    ForEach(PhotoVersionHistory.LibraryKind.allCases) { Text($0.rawValue).tag($0) }
+                }.pickerStyle(.segmented).accessibilityIdentifier("photos.savedVersions")
+                Text("Decluttered and staged photos are saved separately. Tap a photo to see its original and all saved versions. Downloading doesn't change your published listing.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
                 photosGridHint
             }
 
+            if let gallerySyncError {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(gallerySyncError).font(.rpCaption).foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        guard let serverID = model.listings.first(where: { $0.id == listing.id })?.serverID else { return }
+                        galleryRetrying = true
+                        Task {
+                            await model.syncGalleryPhotos(listingLocalID: listing.id, listingServerID: serverID)
+                            galleryRetrying = false
+                        }
+                    } label: { Label(galleryRetrying ? "Updating published photos…" : "Retry published photos", systemImage: "arrow.clockwise") }
+                    .disabled(galleryRetrying).accessibilityIdentifier("photos.retryPublishedPhotos")
+                }.frame(maxWidth: .infinity, alignment: .leading).card()
+            }
             photoGrid
+            if !photos.isEmpty && libraryPhotos.isEmpty {
+                Text(libraryKind == .decluttered ? "No decluttered photos saved yet. Declutter a photo in AI Photo Studio first."
+                     : "No staged photos saved yet. Add furniture in AI Photo Studio first.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+            }
 
             if !photos.isEmpty {
                 openStudioCard
@@ -4048,13 +4090,14 @@ struct PhotoStudioView: View {
     }
 
     private var shareAllButton: some View {
-        Button { exportingPhotos = PhotoExportSelection(photos: photos) } label: {
-            Label("Export photos", systemImage: "square.and.arrow.up")
+        Button { exportingPhotos = PhotoExportSelection(photos: libraryPhotos) } label: {
+            Label(libraryKind == .latest ? "Download photos" : "Download \(libraryKind.rawValue.lowercased()) photos", systemImage: "square.and.arrow.down")
                 .font(.rpBody.weight(.semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(Theme.accent).foregroundStyle(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .disabled(libraryPhotos.isEmpty)
     }
 
     /// The empty library. It says what happens to a photo when it lands,
@@ -4083,7 +4126,8 @@ struct PhotoStudioView: View {
     /// The line above the library grid. Three verbs, all of them free.
     private var photosGridHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Tap a photo to see before and after. Tap the star to make it the cover. Tap the wand to change just that one.")
+            Text(libraryKind == .latest ? "Tap a photo to see its saved versions. Tap the star to make it the cover. Tap the wand to change it."
+                 : "Tap a photo to view or download this saved edit, or choose it for your listing. Later edits stay saved.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             Label("Already brightened and sharpened on this phone \u{2014} that part costs nothing.",
@@ -4213,7 +4257,7 @@ struct PhotoStudioView: View {
     /// only: tick the photos this change applies to.
     private var studioPickHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Tap the photos you want changed \u{2014} they get a tick. Each change becomes the current version. Earlier versions stay in history.")
+            Text("Tap the photos you want changed \u{2014} they get a tick. Decluttered and staged versions stay available in Photos. Staging is a preview until you choose it for the listing.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             Label("Review saved disclosures and retained source photos before publishing. Export includes disclosure captions for your chosen destination.",
@@ -4245,7 +4289,7 @@ struct PhotoStudioView: View {
         .fullScreenCover(item: $compare) { p in
             PhotoCompareView(photo: p)
         }
-        .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos) }
+        .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
         .sheet(item: $customEditPhoto, onDismiss: { customBatchTargets = [] }) { p in
             CustomEditSheet(photo: p, api: model.api, space: space,
@@ -4302,7 +4346,7 @@ struct PhotoStudioView: View {
             Button(EditWords.animate) { animate(p) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Your latest edit becomes the main version. Earlier versions and retained source files stay in this photo’s history.")
+            Text("Each edit is saved separately. Find decluttered and staged photos in Photos. Choose a staged preview for the listing only after reviewing it.")
         }
         // Removal hides the family; source bytes remain available to earlier
         // versions and existing reels. Public gallery removal is separate.
@@ -4374,7 +4418,7 @@ struct PhotoStudioView: View {
 
     private var photoGrid: some View {
         LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(photos) { p in photoCell(p) }
+            ForEach(libraryPhotos) { p in photoCell(p) }
         }
         // New AI edits and deletions settle into the grid instead of
         // popping — keyed on count so only inserts/removes animate.
@@ -4401,14 +4445,14 @@ struct PhotoStudioView: View {
                                              ? "Photo — the AI is working on this one"
                                              : "Photo — opens before-and-after compare"))
                     .contextMenu { photoMenu(p) }
-                if !busyPhotoIDs.contains(p.id) { wandButton(p) }
+                if !busyPhotoIDs.contains(p.id), entry != .photos || libraryKind == .latest { wandButton(p) }
                 // THE COVER, on the surface. It was a long-press and nothing
                 // else — an invisible gesture for the one picture that
                 // represents the whole home everywhere it is shared. Only on
                 // the library screen: in the studio a tap means "include this
                 // photo in the change", and a second meaning on the same
                 // thumbnail is a trap.
-                if entry == .photos { coverButton(p) }
+                if entry == .photos && libraryKind == .latest { coverButton(p) }
             } else {
                 Button { toggleBatchSelection(p) } label: {
                     thumb(p).overlay { selectionOverlay(p) }
@@ -4495,6 +4539,7 @@ struct PhotoStudioView: View {
     }
 
     @ViewBuilder private func photoMenu(_ p: EnhancedPhoto) -> some View {
+        if entry != .photos || libraryKind == .latest {
         Menu {
             Button { aiEdit(p, "twilight") } label: { Label(EditWords.twilight, systemImage: "moon.stars") }
             Button { aiEdit(p, "sky") } label: { Label(EditWords.sky, systemImage: "cloud.sun") }
@@ -4519,6 +4564,7 @@ struct PhotoStudioView: View {
         }
         Button { setMain(p) } label: {
             Label("Use as cover photo", systemImage: "star")
+        }
         }
         Button { exportingPhotos = PhotoExportSelection(photos: [p]) } label: {
             Label("Export photo", systemImage: "square.and.arrow.up")
@@ -5657,12 +5703,27 @@ struct PhotoCompareView: View {
     private var viewed: EnhancedPhoto { selectedVersion ?? photo }
     private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
     private var savedDisclosure: String? { viewed.savedVersion?.reviewDisclosure ?? (viewed.id == photo.id ? disclosure : nil) }
+    private var versionChoices: [EnhancedPhoto] {
+        let history = photo.history
+        var kinds: Set<String> = []
+        return history.filter { version in
+            let effects = version.savedVersion?.effects ?? []
+            let kind = effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
+            return kinds.insert(kind).inserted
+        }
+    }
+    private func choiceTitle(_ version: EnhancedPhoto) -> String {
+        let effects = version.savedVersion?.effects ?? []
+        return effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
+    }
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 12) {
                 HStack {
+                    Text("Photo versions").font(.headline)
+                    Spacer()
                     if photo.history.count > 1 {
                         Menu {
                             ForEach(photo.history) { version in
@@ -5670,27 +5731,38 @@ struct PhotoCompareView: View {
                                     selectedVersion = version; showOriginal = false
                                 }
                             }
-                        } label: { Label("Versions (\(photo.history.count))", systemImage: "clock.arrow.circlepath") }
+                        } label: { Label("All edits", systemImage: "clock.arrow.circlepath") }
                     }
-                    Spacer()
                     Button { dismiss() } label: {
                         Image(systemName: "xmark.circle.fill").font(.title)
                     }.accessibilityLabel("Close")
                 }.padding(.horizontal)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        if viewed.originalURL != viewed.enhancedURL {
+                            versionChip(viewed.retainedSourceIsVerified ? "Original" : "Earlier source", selected: showOriginal) { showOriginal = true }
+                        }
+                        ForEach(versionChoices) { version in
+                            versionChip(choiceTitle(version), selected: !showOriginal && viewed.id == version.id) {
+                                selectedVersion = version; showOriginal = false
+                            }
+                        }
+                    }.padding(.horizontal)
+                }.accessibilityIdentifier("photoVersion.savedChoices")
                 Spacer(minLength: 0)
                 if let image = showOriginal ? original : enhanced {
                     Image(uiImage: image).resizable().scaledToFit()
                         .accessibilityLabel(showOriginal ? sourceTitle : "Edited photo")
                 } else { ProgressView().tint(.white) }
                 Spacer(minLength: 0)
-                if let label = viewed.savedVersion?.visibleLabel {
+                if !showOriginal, let label = viewed.savedVersion?.visibleLabel {
                     Text(label).font(.headline).padding(.horizontal)
                 }
-                if viewed.savedVersion?.effects.contains("stage") == true {
+                if !showOriginal, viewed.savedVersion?.effects.contains("stage") == true {
                     Text("Review against the original: check windows, doors, fixed appliances and furniture placement. AI can change details or use different furniture in another view.")
                         .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).padding(.horizontal)
                 }
-                if let savedDisclosure, !savedDisclosure.isEmpty {
+                if !showOriginal, let savedDisclosure, !savedDisclosure.isEmpty {
                     Text(savedDisclosure).font(.caption).foregroundStyle(.white.opacity(0.85))
                         .fixedSize(horizontal: false, vertical: true).padding(.horizontal)
                 }
@@ -5704,14 +5776,14 @@ struct PhotoCompareView: View {
                         Text(sourceTitle).tag(true)
                     }.pickerStyle(.segmented).padding(.horizontal)
                 }
-                if viewed.savedVersion != nil {
+                if !showOriginal, viewed.savedVersion != nil {
                     Button {
                         do {
                             let directory = viewed.enhancedURL.deletingLastPathComponent()
                             guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
                             let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
                             let familyWasMain = photo.history.contains { FileStore.relativePath(for: $0.enhancedURL) == priorMain }
-                            try PhotoVersionHistory.select(id: viewed.id, directory: directory)
+                            try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory)
                             if familyWasMain { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
                             selectedForListing = true
                             if let listing = model.listings.first(where: { $0.id == listingID }),
@@ -5724,8 +5796,9 @@ struct PhotoCompareView: View {
                             .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
                     }.padding(.horizontal).accessibilityIdentifier("photoVersion.useOnListing")
                 }
-                Button { exporting = PhotoExportSelection(photos: [viewed]) } label: {
-                    Label("Export photo", systemImage: "square.and.arrow.up")
+                Button { exporting = PhotoExportSelection(photos: [viewed], original: showOriginal) } label: {
+                    Label(showOriginal ? (viewed.retainedSourceIsVerified ? "Download original" : "Download earlier source")
+                          : "Download \(choiceTitle(viewed).lowercased()) photo", systemImage: "square.and.arrow.down")
                         .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
                         .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12))
                 }.padding(.horizontal).padding(.bottom, 12)
@@ -5736,12 +5809,13 @@ struct PhotoCompareView: View {
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
             exporting = nil; enhanced = nil; original = nil; dismiss()
         }
-        .sheet(item: $exporting) { selection in PhotoExportSheet(photos: selection.photos) }
+        .sheet(item: $exporting) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
         .alert("Couldn't select that version", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
             Button("OK") { selectionError = nil }
         } message: { Text(selectionError ?? "") }
         .task(id: viewed.id) {
-            selectedForListing = false
+            let directory = viewed.enhancedURL.deletingLastPathComponent()
+            selectedForListing = (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
             let target = viewed
             enhanced = nil; original = nil
             let after = await AIImagePrep.decoded(at: target.enhancedURL, maxPixel: 2400)
@@ -5752,6 +5826,13 @@ struct PhotoCompareView: View {
             guard !Task.isCancelled, viewed.id == target.id else { return }
             original = before
         }
+    }
+
+    private func versionChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.subheadline.weight(.semibold)).padding(.horizontal, 14).padding(.vertical, 10)
+                .background(selected ? Theme.accent : Color.white.opacity(0.15), in: Capsule())
+        }.accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -7373,6 +7454,37 @@ private struct PendingReelClips: Codable {
 // intro) are ready-made clips that lead the reel — no AI call for those.
 // Inline here per the new-file-not-in-target rule.
 
+/// A reel stops at the first failed photo. Keep the position and a safe reason
+/// instead of reducing every error to a count and spending on the next photo.
+struct ReelClipIssue: Identifiable {
+    let photoNumber: Int
+    let failure: AIFailure
+    var id: Int { photoNumber }
+
+    init(photoNumber: Int, error: Error) {
+        self.photoNumber = photoNumber
+        failure = Self.failure(for: error, title: "Photo \(photoNumber) couldn't become a clip")
+    }
+
+    static func failure(for error: Error, title: String) -> AIFailure {
+        let original = AIFailure(error, title: title)
+        let message: String
+        if let api = error as? APIError, (api.status ?? 0) >= 500 || api.code == "upstream" || api.code == "internal" {
+            message = "The video service is unavailable. Try again later."
+        } else if AIFailure.isOffline(error) {
+            message = "The connection stopped. Check your connection before making more clips."
+        } else {
+            let raw = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            // A submit, poll or download failure does not establish whether the
+            // provider charged. Never repeat a raw payload or promise a refund.
+            let machine = raw.contains("{\"") || raw.contains("[{") || raw.contains("Traceback")
+                || raw.range(of: #"HTTP \d{3}"#, options: .regularExpression) != nil
+            message = machine ? "The video service couldn't process this photo. Review the photo and try again later." : original.message
+        }
+        return AIFailure(original, title: title, message: message)
+    }
+}
+
 struct ReelStudioView: View {
     @State private var idleHeld = false
     @EnvironmentObject var model: AppModel
@@ -7434,7 +7546,8 @@ struct ReelStudioView: View {
     @State private var motionPrompt = ""
     @State private var completedClips = 0
     @State private var totalClips = 0
-    @State private var failedClips = 0
+    @State private var clipIssues: [ReelClipIssue] = []
+    private var failedClips: Int { clipIssues.count }
     @State private var statusText = ""
     @State private var reelURL: URL?
     @State private var player: AVPlayer?
@@ -8132,9 +8245,10 @@ struct ReelStudioView: View {
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
             if failedClips > 0 {
-                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — continuing with the rest.")
+                Text("Clip generation stopped. Finished clips are kept on this phone.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
+                clipFailureDetails
             }
             Button("Cancel", role: .destructive) { cancelWork() }
                 .font(.rpBody)
@@ -8226,7 +8340,7 @@ struct ReelStudioView: View {
         VStack(spacing: 12) {
             if let failure {
                 AIFailureCard(failure: failure,
-                              retryHint: "Check your photos and try again.",
+                              retryHint: "No more photos were sent after the failure. Finished clips are kept on this phone.",
                               quotaFeature: "reels",
                               onReconnect: { connection.run { resetToSetup() } })
             } else {
@@ -8234,13 +8348,35 @@ struct ReelStudioView: View {
                     .font(.rpHeadline)
                     .foregroundStyle(Theme.warn)
             }
-            Button("Try again") { resetToSetup() }
+            clipFailureDetails
+            if let parkedClips {
+                Text("\(parkedClips.clipURLs.count) finished clip\(parkedClips.clipURLs.count == 1 ? " is" : "s are") saved. You can finish a shorter reel from those clips without generating again.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Finish reel from saved clips") { finishParkedReel() }
+                    .font(.rpBody.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityIdentifier("reel.finish-saved-clips")
+            }
+            Button("Back to reel setup") { resetToSetup() }
                 .font(.rpBody.weight(.semibold))
                 .foregroundStyle(Theme.accent)
                 .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
+    }
+
+    private var clipFailureDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(clipIssues) { issue in
+                Text("Photo \(issue.photoNumber): \(issue.failure.message)")
+                    .font(.rpCaption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("reel.clip-failures")
     }
 
     // MARK: Step 2 — your voice (optional; docs/VOICEOVER-CONTRACT.md)
@@ -9213,7 +9349,7 @@ struct ReelStudioView: View {
         failure = nil
         completedClips = 0
         totalClips = 0
-        failedClips = 0
+        clipIssues = []
         phase = .setup
         lastReel = Self.newestReel(for: listing.id)   // the one just made is now "your last reel"
         // A run that failed part-way parked its billed clips — surface them again
@@ -9236,7 +9372,7 @@ struct ReelStudioView: View {
         savedToPhotos = false
         saveError = nil
         failure = nil
-        failedClips = 0
+        clipIssues = []
         phase = .done
         Haptics.selection()
         Task {
@@ -9369,7 +9505,7 @@ struct ReelStudioView: View {
         phase = .generating
         completedClips = 0
         totalClips = chosen.count
-        failedClips = 0
+        clipIssues = []
         failure = nil
         statusText = chosen.isEmpty ? "Getting ready…" : "Planning your shots…"
         Haptics.selection()
@@ -9438,13 +9574,15 @@ struct ReelStudioView: View {
                         billedClips.append(clip)   // paid for the moment it lands
                     } catch is CancellationError {
                         throw CancellationError()
-                    } catch let apiError as APIError where apiError.isQuota || apiError.isUnauthorized {
-                        // A plan boundary or expired session won't fix itself on
-                        // the next clip — stop and say so.
-                        throw apiError
                     } catch {
-                        // One bad clip never kills the reel — note it and move on.
-                        await MainActor.run { failedClips += 1 }
+                        // Continuing hid the reason and could send every other
+                        // photo to an unavailable service. Stop, retain the exact
+                        // photo position, and park completed clips in the catch.
+                        await MainActor.run {
+                            clipIssues.append(ReelClipIssue(photoNumber: i + 1, error: error))
+                            completedClips = i + 1
+                        }
+                        throw error
                     }
                     await MainActor.run { completedClips = i + 1 }
                 }
@@ -9513,7 +9651,7 @@ struct ReelStudioView: View {
                 await MainActor.run {
                     parkedClips = PendingReelClips.load(for: listingID)
                     phase = .failed
-                    failure = AIFailure(error, title: "Couldn't make the reel")
+                    failure = ReelClipIssue.failure(for: error, title: "Couldn't make the reel")
                 }
             }
         }
@@ -9588,7 +9726,7 @@ struct ReelStudioView: View {
         let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
         let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
         failure = nil
-        failedClips = 0
+        clipIssues = []
         phase = .stitching
         Haptics.selection()
         workTask = Task {

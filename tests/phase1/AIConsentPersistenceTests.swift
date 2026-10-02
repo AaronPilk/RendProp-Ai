@@ -38,7 +38,8 @@ struct ConsentPersistenceTests {
             exit(1)
         }
         let old = "ai.thirdPartyProcessing.consent.v1"
-        let current = "ai.thirdPartyProcessing.consent.v2"
+        let priorDisclosure = "ai.thirdPartyProcessing.consent.v2"
+        let current = "ai.thirdPartyProcessing.consent.v3"
         let defaults = UserDefaults.standard
         switch CommandLine.arguments[1] {
         case "v1-only-then-grant":
@@ -46,7 +47,7 @@ struct ConsentPersistenceTests {
                   "test suite must start unused")
             defaults.set(true, forKey: old)
             let consent = AIConsent.shared
-            check(!consent.isGranted, "a persisted v1 YES must not grant v2")
+            check(!consent.isGranted, "a persisted v1 YES must not grant v3")
             check(!consent.isAsking, "loading ungranted defaults must not open a tool")
             let first = await pending(consent)
             let second = Task { @MainActor in await consent.ensureGranted() }
@@ -56,15 +57,15 @@ struct ConsentPersistenceTests {
             let b = await second.value
             check(a && b, "grant must return true to both requesting callers")
             check(consent.isGranted && !consent.isAsking, "grant must close disclosure")
-            check(defaults.bool(forKey: current), "grant must persist v2")
+            check(defaults.bool(forKey: current), "grant must persist v3")
             check(defaults.bool(forKey: old), "grant must not rewrite the historical v1 key")
             check(defaults.synchronize(), "test preferences must flush before next process")
         case "relaunch-then-revoke":
-            check(defaults.bool(forKey: current), "previous process must have persisted v2 grant")
+            check(defaults.bool(forKey: current), "previous process must have persisted v3 grant")
             let consent = AIConsent.shared
-            check(consent.isGranted, "relaunch must load the v2 grant")
+            check(consent.isGranted, "relaunch must load the v3 grant")
             let granted = await consent.ensureGranted()
-            check(granted && !consent.isAsking, "v2 grant skips asking")
+            check(granted && !consent.isAsking, "v3 grant skips asking")
             let revision = consent.revocationRevision
             consent.revoke()
             check(consent.revocationRevision == revision + 1, "revoke invalidates the captured grant revision")
@@ -74,7 +75,7 @@ struct ConsentPersistenceTests {
         case "relaunch-then-decline":
             let consent = AIConsent.shared
             check(defaults.bool(forKey: old), "fixture retains old v1 grant")
-            check(!consent.isGranted, "persisted v2 false must require a fresh decision")
+            check(!consent.isGranted, "persisted v3 false must require a fresh decision")
             let declined = await pending(consent)
             consent.decline()
             let answer = await declined.value
@@ -88,6 +89,36 @@ struct ConsentPersistenceTests {
             check(!defaults.bool(forKey: current), "leaving must not persist a grant")
             consent.cancelIfStillWaiting()
             check(!consent.isGranted, "repeated cancellation is inert")
+        case "seed-old-v2-grant":
+            check(defaults.object(forKey: old) == nil && defaults.object(forKey: priorDisclosure) == nil &&
+                  defaults.object(forKey: current) == nil, "v2 migration suite must start unused")
+            // Deliberately seed the prior release's stored grant without
+            // instantiating the current production consent object in this process.
+            defaults.set(true, forKey: priorDisclosure)
+            check(defaults.bool(forKey: priorDisclosure), "old release grant must be persisted as v2 YES")
+            check(defaults.object(forKey: current) == nil, "old release must not pre-grant the v3 disclosure")
+            check(defaults.synchronize(), "old release grant must flush before relaunch")
+        case "v2-relaunch-requires-disclosure":
+            check(defaults.bool(forKey: priorDisclosure), "previous process must have persisted the v2 grant")
+            check(defaults.object(forKey: current) == nil, "v3 must not exist before the new disclosure")
+            let consent = AIConsent.shared
+            check(!consent.isGranted, "a persisted v2 YES must not grant direct Bria v3")
+            check(!consent.isAsking, "relaunch alone must not open an AI tool")
+            check(AIConsent.processors.contains { $0.name == "Bria" }, "new disclosure must name the direct processor")
+            let declined = await pending(consent)
+            consent.decline()
+            check(!(await declined.value), "old v2 grant cannot override a new disclosure decline")
+            check(!consent.isGranted && !defaults.bool(forKey: current), "decline must leave direct Bria consent ungranted")
+            let cancelled = await pending(consent)
+            consent.cancelIfStillWaiting()
+            check(!(await cancelled.value), "old v2 grant cannot override leaving the new disclosure")
+            check(!consent.isGranted && !defaults.bool(forKey: current), "cancel must leave direct Bria consent ungranted")
+            let accepted = await pending(consent)
+            consent.grant()
+            check(await accepted.value, "only an explicit new grant may continue")
+            check(consent.isGranted && !consent.isAsking && defaults.bool(forKey: current), "new grant must persist v3 and close disclosure")
+            check(defaults.bool(forKey: priorDisclosure), "new decision must not rewrite the historical v2 grant")
+            check(defaults.synchronize(), "new decision must flush")
         default:
             check(false, "unknown scenario is not a pass")
         }

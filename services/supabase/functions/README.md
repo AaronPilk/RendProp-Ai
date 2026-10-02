@@ -7,6 +7,36 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+## Preparing direct Bria internal beta
+
+The [build-43 handoff](../../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
+is **PREPARING**: its migration and `ai-video` changes are not deployed and the
+TestFlight binary is not uploaded. Direct Bria requires the internal client's
+consent-v3 acknowledgement, `BRIA_BETA_ENABLED=true`, a server-configured
+`BRIA_BETA_USER_IDS` list containing the authenticated user, confirmed rates and
+exact output hosts. A saved API token does not switch providers. Other users and
+normal App Store clients retain fal; eligible unconfigured beta requests fail
+before paid dispatch.
+
+The confirmed catalog rates are **2¢/second masking + 4.5¢/second erasing**, used
+for pinned stage reservations/accounting, not invoice reconciliation. Rendprop's
+AI clip allowance, workspace ceiling and existing **240¢ batch fence** remain.
+Each paid stage has durable admission and an immutable receipt; no automatic paid
+retry or fallback exists. The narrow starting host
+`d1ei2xrl63k822.cloudfront.net` has historical Bria-owned video-output evidence,
+without a guarantee for current mask/erase outputs. Unknown hosts fail closed and
+can strand paid output while references and cost accounting remain. Environment
+changes cannot repair a job's pinned allowlist through normal polling.
+
+See the [adapter tests](ai-video/bria_test.ts), [handler tests](ai-video/erase_test.ts),
+[migration](../migrations/20261002225458_video_erase_direct_bria.sql),
+[SQL contracts](../tests/video_erase_direct_bria.sql) and
+[disposable PostgreSQL runner](../tests/video_erase_direct_bria_pg.py).
+Apply schema before the dependent handler and verify deployed source/grants before
+enablement. Tester IDs, credentials and customer evidence stay outside Git.
+
+## Delivered release checkpoints
+
 The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
 deployed **listings v38, tours v45 and ai-photo v49**, all ACTIVE with JWT
 verification enabled. Gallery selection validates ordered ready/visible listing

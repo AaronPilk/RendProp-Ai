@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Photo workflow and listing UI feedback plus existing local scan tests. Recheck Apple build
-    # inventory before upload; never automatically renumber an upload retry.
-    CURRENT_PROJECT_VERSION: "41"
+    # Separate photo libraries and private Bria video-removal beta, plus local scan tests.
+    # Recheck Apple inventory; never automatically renumber an upload retry.
+    CURRENT_PROJECT_VERSION: "43"
 targets:
   Rendprop:
     sources:

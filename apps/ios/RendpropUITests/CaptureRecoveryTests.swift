@@ -9,7 +9,7 @@ final class CaptureRecoveryTests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate",
-                               "-appearance", "light", "-ai.thirdPartyProcessing.consent.v2", "NO"]
+                               "-appearance", "light", "-ai.thirdPartyProcessing.consent.v3", "NO"]
     }
 
     override func tearDownWithError() throws {

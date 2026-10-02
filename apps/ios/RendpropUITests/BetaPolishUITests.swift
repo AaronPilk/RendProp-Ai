@@ -185,7 +185,9 @@ final class BetaPolishUITests: XCTestCase {
         scrollTo(cards.firstMatch); cards.firstMatch.tap()
         let label = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Digitally decluttered")).firstMatch
         XCTAssertTrue(label.waitForExistence(timeout: 10), "The grid must open the newly saved version, not its stale pre-edit photo")
-        XCTAssertTrue(app.buttons["Versions (2)"].exists, "The original and output remain accessible without another paid edit")
+        XCTAssertTrue(app.buttons["All edits"].exists, "Saved edit history remains accessible without another paid edit")
+        XCTAssertTrue(app.buttons["Earlier source"].exists, "The legacy source stays available without claiming a verified original")
+        XCTAssertTrue(app.buttons["Decluttered"].exists, "The saved decluttered version remains available for comparison")
         attach("photo-work-reviewed-output-history")
         app.buttons["Close"].tap()
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
@@ -196,9 +198,113 @@ final class BetaPolishUITests: XCTestCase {
         attach("photo-work-completed-global-status")
     }
 
+    func testSavedDeclutterAndStagingLibrariesKeepDownloadsAndListingChoiceSeparate() {
+        launchDetail() // Existing procedural legacy fixture; MockAPIClient only.
+        openDetail("detail.photoStudio", title: "AI Photo Studio")
+        let declutter = app.buttons["studio.edit.declutter"]
+        scrollTo(declutter); declutter.tap()
+        applyThreeFixturePhotosAndWait(for: "Declutter")
+        let modern = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Modern — pick the photos")).firstMatch
+        scrollTo(modern); modern.tap()
+        applyThreeFixturePhotosAndWait(for: "Staging · Modern")
+        app.navigationBars["AI Photo Studio"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10), app.debugDescription)
+        openDetail("detail.photos", title: "Photos")
+        let library = app.segmentedControls["photos.savedVersions"]
+        scrollTo(library)
+        XCTAssertTrue(library.exists, app.debugDescription)
+        library.buttons["Decluttered"].tap()
+        let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
+        XCTAssertEqual(cards.count, 3, "There is one saved clean photo per family after staging")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Change this photo with AI")).count, 0,
+                       "Browsing old clean versions must not replace the current editing workspace")
+        scrollTo(cards.firstMatch); cards.firstMatch.tap()
+        assertCompareContains("Digitally decluttered")
+        assertSelectedExportForCompareButton("Download decluttered photo", original: false)
+        app.buttons["Close"].tap()
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
+
+        scrollTo(library); library.buttons["Staged"].tap()
+        XCTAssertEqual(cards.count, 3, "The staged library keeps one newest preview per family")
+        scrollTo(cards.firstMatch); cards.firstMatch.tap()
+        assertCompareContains("Virtually staged")
+        let choices = app.scrollViews["photoVersion.savedChoices"]
+        XCTAssertTrue(choices.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(choices.buttons["Decluttered"].exists && choices.buttons["Staged"].exists, app.debugDescription)
+        // Rich's enh-/orig- files predate the durable capture history. They
+        // must remain explicitly unverified, never gain a certified-original
+        // label just because the offline edit runner touched them.
+        let source = choices.buttons["Earlier source"]
+        XCTAssertTrue(source.exists && !choices.buttons["Original"].exists, app.debugDescription)
+        assertSelectedExportForCompareButton("Download staged photo", original: false)
+        source.tap()
+        XCTAssertTrue(source.isSelected, app.debugDescription)
+        assertSelectedExportForCompareButton("Download earlier source", original: true)
+        choices.buttons["Decluttered"].tap()
+        XCTAssertTrue(choices.buttons["Decluttered"].isSelected, app.debugDescription)
+        assertCompareContains("Digitally decluttered")
+        assertSelectedExportForCompareButton("Download decluttered photo", original: false)
+        let publication = app.buttons["photoVersion.useOnListing"]
+        XCTAssertEqual(publication.label, "Selected for listing", "Staging stays a preview until explicitly chosen")
+        choices.buttons["Staged"].tap()
+        let stageNotSelected = NSPredicate { _, _ in publication.exists && publication.label == "Use this version on listing" }
+        expectation(for: stageNotSelected, evaluatedWith: app); waitForExpectations(timeout: 5)
+        publication.tap()
+        XCTAssertEqual(publication.label, "Selected for listing")
+        choices.buttons["Decluttered"].tap()
+        let cleanNotSelected = NSPredicate { _, _ in publication.exists && publication.label == "Use this version on listing" }
+        expectation(for: cleanNotSelected, evaluatedWith: app); waitForExpectations(timeout: 5)
+        publication.tap()
+        XCTAssertEqual(publication.label, "Selected for listing")
+        attach("saved-photo-library-public-clean-selection")
+        app.buttons["Close"].tap()
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
+        scrollTo(library); library.buttons["Latest"].tap()
+        XCTAssertEqual(cards.count, 3)
+        scrollTo(cards.firstMatch); cards.firstMatch.tap()
+        assertCompareContains("Virtually staged")
+        XCTAssertTrue(app.scrollViews["photoVersion.savedChoices"].buttons["Staged"].isSelected,
+                      "Choosing the declutter for publication must not change the latest staging workspace")
+        XCTAssertEqual(app.buttons["photoVersion.useOnListing"].label, "Use this version on listing")
+        attach("saved-photo-library-latest-stage-retained")
+        app.buttons["Close"].tap()
+    }
+
+    private func applyThreeFixturePhotosAndWait(for title: String) {
+        let apply = app.buttons["studio.batchApply"]
+        scrollTo(apply)
+        XCTAssertEqual(apply.label, "Apply to 3 photos")
+        apply.tap()
+        let completed = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", title, "3 photos changed")).firstMatch
+        XCTAssertTrue(completed.waitForExistence(timeout: 40), app.debugDescription)
+        XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
+    }
+
+    private func assertCompareContains(_ phrase: String) {
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", phrase)).firstMatch.waitForExistence(timeout: 10), app.debugDescription)
+    }
+
+    private func assertSelectedExportForCompareButton(_ label: String, original: Bool) {
+        let download = app.buttons[label]
+        XCTAssertTrue(download.waitForExistence(timeout: 10) && download.isHittable, app.debugDescription)
+        download.tap()
+        XCTAssertTrue(app.navigationBars["Export photos"].waitForExistence(timeout: 10), app.debugDescription)
+        let selectedVersion = original ? "Earlier source files" : "Selected saved edits"
+        let selected = app.staticTexts[selectedVersion]
+        XCTAssertTrue(selected.exists, "Export starts with the version currently viewed: \(app.debugDescription)")
+        let footer = original
+            ? "Older files have no complete edit history. These earlier sources may already contain AI edits; verify them before publishing."
+            : "Full available resolution is kept. AI output resolution may be lower than your capture. Stored photos and originals are never changed."
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", footer)).firstMatch.exists, app.debugDescription)
+        // Opening the native sheet checks initial selection only. Never invoke
+        // share, photo-library permission, a save, an upload or a paid provider.
+        app.navigationBars["Export photos"].buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["Close"].waitForExistence(timeout: 10), app.debugDescription)
+    }
+
     private var baseArguments: [String] {
         ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate", "-appearance", "light",
-         "-ai.thirdPartyProcessing.consent.v2", "YES"]
+         "-ai.thirdPartyProcessing.consent.v3", "YES"]
     }
     private func launchDetail() {
         app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "rich"]
