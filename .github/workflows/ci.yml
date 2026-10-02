@@ -67,6 +67,8 @@ jobs:
         run: bash apps/ios/tests/run-listing-unit-form.sh
       - name: Photographer preference, client drafts and confirmed contact transactions
         run: bash apps/ios/tests/run-client-contact.sh
+      - name: App Store capture isolation and physical UI-test switch boundaries
+        run: bash apps/ios/tests/run-app-store-boundaries.sh
       - name: Guided scan storage, pose epochs and native depth packing
         run: bash tools/spatial-spike/capture-ios/verify-station.sh
       - name: Panorama projection, coverage and cancellation on synthetic images

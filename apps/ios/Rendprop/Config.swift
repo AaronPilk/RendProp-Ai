@@ -76,7 +76,11 @@ enum Config {
     /// real customer, no real spend figure and no real share link can end up
     /// in a PNG the owner forwards to somebody. Read at launch only.
     static var isUITesting: Bool {
+#if targetEnvironment(simulator)
         ProcessInfo.processInfo.arguments.contains("-uiTesting")
+#else
+        false
+#endif
     }
 
     /// Store-screenshot seeding, UI walk only: `-ui.seedPhotosDir <dir>` names a

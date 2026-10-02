@@ -1,1 +1,7 @@
-Notifications. A lead on one of your tours now reaches your phone straight away, and so does a finished render. You are asked once, at the end of setup, and turning them down costs nothing. Plans now fit the way you work too — the same prices, allowances sized for real listing volume, and a free week sized to your business. Uploads recover on their own if your connection drops.
+Photographers and videographers can publish with their client's name, photo and contact details, route enquiries to the client, and follow delivery in Leads.
+
+Choose your listing's cover photo and publish the current photo versions. Shared pages now open with photos and details; viewers can choose Explore or Play inside the flythrough viewer.
+
+Photo edits show progress across screens and keep completed images when work stops. We've also fixed listing-toolbox crashes and improved room tags, listing details and photo disclosures.
+
+Plans are easier to find and change. An eligible 7-day free trial starts only after you confirm a subscription with Apple.

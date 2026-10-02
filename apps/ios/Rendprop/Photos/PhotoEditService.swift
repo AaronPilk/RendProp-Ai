@@ -12,6 +12,7 @@ final class PhotoEditService {
     private let owner = AuthStore.shared.userID
     private let revision = AuthStore.shared.syncSessionRevision
     private let workspace = WorkspaceContext.selectedOrgID
+    private let consentRevision = AIConsent.shared.revocationRevision
 
     init(model: AppModel, listing: Listing, space: SpaceType) {
         self.model = model; self.listing = listing; self.space = space
@@ -25,9 +26,16 @@ final class PhotoEditService {
         try Task.checkCancellation()
         guard identityIsCurrent else { throw CloudSyncError.identityChanged }
     }
+    private var consentIsCurrent: Bool {
+        AIConsent.shared.isGranted && AIConsent.shared.revocationRevision == consentRevision
+    }
+    private func requireUnsentWork() throws {
+        try requireIdentity()
+        guard consentIsCurrent else { throw CancellationError() }
+    }
 
     func edit(_ p: EnhancedPhoto, edit: String, style: String?, prompt: String?, batch: Bool) async throws {
-        try requireIdentity()
+        try requireUnsentWork()
         let api = model.api
         let directory = EnhancedPhoto.directory(for: listing.id)
         let prior = p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent
@@ -38,18 +46,18 @@ final class PhotoEditService {
                                                    maxDimension: 2048, quality: 0.9) else {
             throw AIImagePrep.error("Couldn't read that photo.")
         }
-        try requireIdentity()
+        try requireUnsentWork()
         let wasMain = model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath
             == FileStore.relativePath(for: p.enhancedURL)
         var serverID: UUID?
         var originalAssetID: String?
         if !listing.isSample {
             serverID = await model.serverListingIDForCompliance(listing.id)
-            try requireIdentity()
+            try requireUnsentWork()
             if let serverID, parent.originalVerified, let original = parent.originalFile {
                 originalAssetID = await model.publishOriginalForDisclosure(
                     listingServerID: serverID, fileURL: directory.appendingPathComponent(original))
-                try requireIdentity()
+                try requireUnsentWork()
             }
         }
         var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
@@ -57,7 +65,12 @@ final class PhotoEditService {
         request.listingServerID = serverID
         request.label = PhotoStudioView.provenanceLabel(edit: edit, style: style, space: space)
         request.originalAssetID = originalAssetID; request.idempotencyKey = UUID().uuidString
+        // Preparation can suspend. Recheck the original grant at the actual
+        // provider boundary; revoke followed by grant cannot revive this batch.
+        try requireUnsentWork()
         let result = try await api.aiPhotoEdit(request)
+        // This request was already sent. Keep its returned edit under the same
+        // account/workspace; consent revocation fences the next unsent photo.
         try requireIdentity()
         let jpeg = try await Task.detached(priority: .userInitiated) {
             guard let raw = Data(base64Encoded: result.imageBase64), let image = UIImage(data: raw),
@@ -88,6 +101,7 @@ final class PhotoEditService {
     }
 
     func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?) -> Bool {
+        guard consentIsCurrent else { return false }
         var background: UIBackgroundTaskIdentifier = .invalid
         let queue = PhotoWorkQueue.shared
         let byID = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })

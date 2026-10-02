@@ -44,6 +44,13 @@ struct NoPreferencesAPI: LifecycleBaseAPI {}
     var syncSessionRevision: UInt64 = 1
 }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
+// Consent is a boundary double in these cleanup/notification-only scenarios.
+// The separate consent batch gate runs the actual consent and full edit body.
+@MainActor final class AIConsent {
+    static let shared = AIConsent()
+    var isGranted = true
+    var revocationRevision: UInt64 = 0
+}
 struct UIBackgroundTaskIdentifier: Hashable { let rawValue: Int; static let invalid = Self(rawValue: -1) }
 @MainActor final class UIApplication {
     static let shared = UIApplication()

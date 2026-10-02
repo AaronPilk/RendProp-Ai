@@ -119,13 +119,21 @@ final class AppModel: ObservableObject {
     }
     private var spatialCapabilityFetch: Task<Void, Never>?
 
-    /// True only once the server has said the 3D walkthrough is on.
-    var isSpatialWalkthroughAvailable: Bool { spatialCapability?.enabled == true }
+    /// Experimental capture stays in the explicit TestFlight configuration,
+    /// even if the server enables the pipeline for its testers.
+    var isSpatialWalkthroughAvailable: Bool {
+#if SPATIAL_CAPTURE_LAB
+        spatialCapability?.enabled == true
+#else
+        false
+#endif
+    }
 
     /// Ask the server once (coalesced while a fetch is in flight). Called on
     /// every return to the foreground and again when a session lands, since
     /// the first launch of all may not have one yet when the scene appears.
     func refreshSpatialCapability() {
+#if SPATIAL_CAPTURE_LAB
         guard spatialCapabilityFetch == nil else { return }
         spatialCapabilityFetch = Task { [weak self] in
             let answer = try? await self?.api.spatialCapability()
@@ -133,6 +141,7 @@ final class AppModel: ObservableObject {
             if let answer { self.spatialCapability = answer }
             self.spatialCapabilityFetch = nil
         }
+#endif
     }
 
     // Mock by default (offline dev); LiveAPIClient when Config.useLiveBackend.
@@ -2655,7 +2664,9 @@ struct RendpropApp: App {
             // work without anybody registering. Idempotent, and a no-op when a
             // session already exists — including a real Apple one.
             .task { AuthStore.shared.signInAnonymouslyIfNeeded() }
+#if SPATIAL_CAPTURE_LAB
             .task { SpatialUploadCoordinator.shared.reconnect() }
+#endif
             // Whether Home may offer the 3D walkthrough at all: one server flag
             // for everyone, asked once per foreground (and again below when a
             // session lands). Unknown means hidden.
@@ -3825,6 +3836,8 @@ final class AIConsent: ObservableObject {
     @Published private(set) var isAsking = false
     /// True once the person has explicitly agreed on this device.
     @Published private(set) var isGranted: Bool
+    /// Pending work must not resume under a later grant after this one was revoked.
+    private(set) var revocationRevision: UInt64 = 0
 
     private var waiters: [CheckedContinuation<Bool, Never>] = []
 
@@ -3883,6 +3896,7 @@ final class AIConsent: ObservableObject {
 
     /// Settings → "AI processing" → Turn off. The next AI tool asks again.
     func revoke() {
+        revocationRevision &+= 1
         UserDefaults.standard.set(false, forKey: Self.storageKey)
         isGranted = false
     }

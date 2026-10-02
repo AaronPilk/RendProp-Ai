@@ -109,7 +109,7 @@ struct SettingsView: View {
     /// disclosure is readable without re-opening the consent screen.
     private var aiProcessingFooter: String {
         aiConsent.isGranted
-            ? "AI tools may send the photo or video you pick to Google (Gemini, Veo, Seedance) and Topaz Labs to produce your result. Turning this off stops that; capture, on-device rendering and sharing keep working."
+            ? "AI tools may send selected media, text and project context to \(AIConsent.processors.map(\.name).joined(separator: ", ")) to produce your result. Turning this off stops that; capture, on-device rendering and sharing keep working."
             : "AI tools are off. The next time you open one, Rendprop asks again before sending anything to an outside AI provider."
     }
 

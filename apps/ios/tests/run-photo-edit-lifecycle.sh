@@ -21,15 +21,16 @@ private let listing:Listing
 private let owner=AuthStore.shared.userID
 private let revision=AuthStore.shared.syncSessionRevision
 private let workspace=WorkspaceContext.selectedOrgID
+private let consentRevision=AIConsent.shared.revocationRevision
 private let process:(EnhancedPhoto) async throws -> Void
 init(model:AppModel,listing:Listing,process:@escaping (EnhancedPhoto) async throws -> Void) {
 self.model=model;self.listing=listing;self.process=process
 }
 func edit(_ photo:EnhancedPhoto,edit:String,style:String?,prompt:String?,batch:Bool) async throws {
-try requireIdentity(); try await process(photo); try requireIdentity()
+try requireUnsentWork(); try await process(photo); try requireIdentity()
 }
 '''
-methods=[block(anchor) for anchor in ['    var identityIsCurrent: Bool {','    private func requireIdentity()','    func start(title:','    private func notify(']]
+methods=[block(anchor) for anchor in ['    var identityIsCurrent: Bool {','    private func requireIdentity()', '    private var consentIsCurrent: Bool {', '    private func requireUnsentWork()', '    func start(title:', '    private func notify(']]
 pathlib.Path(sys.argv[2]).write_text(header+'\n'.join(methods)+'\n}\n')
 PY
 xcrun swiftc -parse-as-library \

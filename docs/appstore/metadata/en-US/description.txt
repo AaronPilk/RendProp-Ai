@@ -1,35 +1,35 @@
-Win the listing. Skip the film crew.
+Create content. Share the listing.
 
-Film a walkthrough on your phone. Rendprop turns it into a smooth, drone-style flythrough with a share link you can text, email, or print on a flyer — no drone, no crew, no editor.
+Record or import a walkthrough, prepare your photos and make a reel on your iPhone. Bring them together on one listing page you can share by text, email or a printed QR code.
 
 HOW IT WORKS
 1. Walk the space and record on your iPhone.
 2. Tag the rooms or areas you want people to jump to.
-3. Rendprop builds the flythrough and gives you a link.
-4. Send the link. Anyone who opens it scrolls to fly through the space, and the contact form on that page drops enquiries into your inbox inside the app.
+3. Choose your cover photo, review the content and publish.
+4. Share the link. Visitors see photos and details first, then choose a scroll-through tour or ordinary video playback. Enquiries land in your Leads inbox.
 
-EVERYTHING ELSE IN THE APP
-• AI Photo Studio — one tap for a blue sky, a twilight sky, a green lawn, a tidied room, or added furniture. Every AI edit is labelled as virtually staged on your tour, and the untouched original is published beside it.
+TOOLS FOR YOUR LISTING
+• AI Photo Studio — blue sky, twilight, lawn, decluttering, virtual staging and custom edits. Review the result, keep photo versions and export images with the disclosure for the changes you made. Original comparisons are available when an untouched original was saved.
 • Reels — turn your photos into a short vertical video with your own voiceover and word-by-word captions.
-• Aerial intro — an AI opening shot that lifts off an exterior photo you already have. Always disclosed as AI-generated.
-• Floor plan — scan a room in 3D with RoomPlan on supported iPhones, or upload a plan you already have.
-• Two links, every time — a branded page with your card and contact form, plus a separate unbranded link that is safe to paste into an MLS virtual-tour field.
-• Your card on every tour — name, business, photo, phone, and social links.
+• Aerial intro — an optional AI-generated opening clip based on your exterior photo, labelled as AI-generated. It is simulated imagery, not drone footage.
+• Floor plan — scan with Apple RoomPlan on LiDAR-supported iPhones, or import a PDF or image. Review and export the plan before using it.
+• Listing links — a contact page for sharing and a separate unbranded tour link. Check your MLS's rules before posting.
+• Client delivery — photographers and videographers can put their client's name, business, photo and contact details on each listing. Route enquiries to that client's email, track delivery in Leads and send them again when needed. The client does not need a Rendprop account.
 
 NOT ONLY HOMES
-Rendprop ships with modes for real estate, event venues, restaurants, retail stores, and gyms. Pick your mode and the whole app matches what you sell: the fields you fill in, the words on screen, and the sample tour.
+Choose real estate, event venues, restaurants, retail stores or gyms. The listing fields, screen labels and samples match your business.
 
-WORKS WITHOUT AN ACCOUNT
-Record, build, preview, and publish without signing in — nothing in the app needs an account. Sign in with Apple is optional: it carries your workspace to a new iPhone, and a Team seat needs it because a seat belongs to a person.
+WORK ON YOUR PHONE OR IN STUDIO
+Explore, record and import without signing in. Individual work uses a workspace connected to your iPhone. Sign in with Apple to connect your account across devices and Studio, or to join a shared team. Cloud tools need an internet connection and the relevant plan allowance.
 
 WHAT A PLAN INCLUDES
-Rendprop is free to download and try. A subscription unlocks monthly allowances for tour renders and the AI features:
+Rendprop is free to download and explore. A subscription unlocks monthly allowances:
 • Starter — 4 tour renders, 100 AI photo edits, 6 reel clips, 2 aerial intros a month.
 • Pro — 10 tour renders, 200 AI photo edits, 12 reel clips, 4 aerial intros a month.
 • Team — 25 tour renders, 400 AI photo edits, 25 reel clips, 8 aerial intros a month, and 2 seats.
 
 SUBSCRIPTION DETAILS
-Rendprop sells auto-renewable subscriptions:
+Auto-renewable subscriptions:
 • Starter Monthly — 1 month — $49.00
 • Starter Yearly — 1 year — $490.00
 • Pro Monthly — 1 month — $99.00
@@ -37,11 +37,11 @@ Rendprop sells auto-renewable subscriptions:
 • Team Monthly — 1 month — $249.00
 Starter and Pro are available monthly or yearly; Team is monthly.
 Eligible new subscribers can start with a 7-day free trial by confirming a subscription with Apple. The app shows the available offer and renewal price before confirmation.
-Payment is charged to your Apple ID account at confirmation of purchase, or when an eligible free trial ends. The subscription renews automatically unless it is cancelled at least 24 hours before the end of the current period. Your account is charged for renewal within 24 hours before the end of the current period, at the price listed above. Manage or cancel your subscription after purchase in Settings on your device: tap your name, then Subscriptions. Any unused portion of a free trial is forfeited when you buy a subscription. Prices are in U.S. dollars; the price in your country or region is shown in the app before you buy.
+Payment is charged to your Apple ID account at confirmation of purchase, or when an eligible free trial ends. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Renewal is charged within 24 hours before the period ends. Manage or cancel in device Settings > your name > Subscriptions. Prices above are in U.S. dollars; the app shows your local price before you buy.
 
 Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 Rendprop Terms of Service: https://rendprop.com/terms
 Privacy Policy: https://rendprop.com/privacy
 
 AI AND YOUR CONTENT
-AI-generated and AI-altered media is labelled inside the app and on every tour you publish. Your videos and photos stay yours — we never use them for our own marketing, and never to train AI models, without your written permission. Only record spaces you have the right to record and publish.
+AI-generated and AI-altered media carries disclosure. Review every result: AI can change details or make mistakes. Cloud AI asks permission before sending selected media and text to named providers. Your content stays yours. Only publish content you have permission to use.
