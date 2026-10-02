@@ -14,21 +14,28 @@ need Xcode and XcodeGen. The Python utility uses the standard library only.
 
 ## Release target caution
 
-Reviewed against repository source on 24 September 2026. `asc.py` still declares
-`VERSION_STRING = "1.0"` and has **no `--version` option**. It prefers an editable
-1.0 version, then falls back to another editable version; if none exists its
-creation path targets 1.0. `--build` selects a build, not an App Store version.
-The native source currently declares 1.0.3 (31). Reconcile version selection and
-the exact intended build before using any write command for a newer release.
-Do not run the broad apply bridge as routine maintenance of an already shipped app.
+Reviewed against repository source on 2 October 2026. `asc.py` still declares
+`VERSION_STRING = "1.0"` and has **no `--version` option**. It can fall back to
+another editable version; `--build` selects a build, not an App Store version.
+Its broad apply bridge can change prices, territories, subscription screenshots
+and review state. Do not run it for maintenance of the shipped app.
 
-The latest [phone delivery receipt](../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md)
-records internal TestFlight **1.0.3 (32)** available on 30 September. The owner
-explicitly authorized this upload; the spatial scheme used a build-32 override
-and the internal-only export options. Apple availability and this build's test
-notes were read back. No App Store version attachment or review submission
-occurred. Historical API observations below describe the launch run and do not
-establish current store state or authorize the broad apply bridge.
+Internal TestFlight **1.0.3 (41)** is available to the existing group; see the
+[delivery receipt](../../docs/releases/TESTFLIGHT-41-20261002.json). It is an
+internal-only spatial lab build and cannot be submitted to the App Store.
+The owner has now authorized a regular **1.0.3 (42)** App Store submission.
+The new version's copy/review notes are applied; upload and submission require
+separate readback receipts. Use the regular `Rendprop` scheme and
+[exportOptions-appstore.plist](exportOptions-appstore.plist), which explicitly
+sets `testFlightInternalTestingOnly = false` and preserves build number 42.
+The internal lab scheme/options remain separate.
+
+This release uses privately reviewed, exact-version helpers with clean-source,
+archive/dSYM binding, all twelve CI jobs, one-attempt journals and exact Apple
+build/version readback. It does not rerun launch pricing/subscription setup.
+Five sold subscriptions were read back as approved; Team Yearly remains
+withdrawn and is not part of this App Review. The legacy examples below document
+the historical launch sequence, not the current release procedure.
 
 Offline inspection that does not load credentials or call Apple:
 

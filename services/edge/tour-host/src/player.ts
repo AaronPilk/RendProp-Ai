@@ -2754,22 +2754,20 @@ export function renderGetAppSection(opts: GetAppOpts): string {
   if (opts.off) return "";
   const tourSurface = opts.surface === "tour";
   const heading = tourSurface
-    ? "This tour was filmed on a phone."
-    : "Every tour here was filmed on a phone.";
+    ? "Create your next tour with Rendprop."
+    : "Create your own tour portfolio.";
   const lede = tourSurface
-    ? `No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
-    Rendprop creates the flythrough, photos and this listing link —
-    the same day. If you list property, that is your next shoot done before lunch.`
-    : `No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
-    Rendprop renders the flythrough — plus the photos, the floor plan and the link —
-    the same day. If you list property, that is your next shoot done before lunch.`;
+    ? `Capture or import photos and video on your iPhone. Use Rendprop to edit your media,
+    create a flythrough and publish a listing link. Review AI edits against the originals before sharing.`
+    : `Capture or import photos and video on your iPhone. Use Rendprop to edit your media,
+    create tours and share them in your portfolio. Review AI edits against the originals before sharing.`;
   return `<section class="lp-sec" id="getapp"><div class="lp-wrap">
     <div class="lp-eyebrow">The app behind this page</div>
     <h2 class="lp-h">${heading}</h2>
     <p class="lp-tag">${lede}</p>
     <a class="lp-btn" id="getapp-store" href="${escapeAttr(appStoreUrl(opts.surface, opts.slug))}" target="_blank" rel="noopener nofollow">Download on the App&nbsp;Store</a>
     ${tourSurface ? `<a class="lp-btn lp-btn-ghost" id="getapp-open" hidden>Open this tour in the app</a>` : ""}
-    <p class="lp-fine">Free on iPhone · iOS 16 or later. Rendprop is the software behind this page, not a
+    <p class="lp-fine">Free to download on iPhone · iOS 16 or later. Rendprop is the software behind this page, not a
     service offered by the ${tourSurface ? "owner of this listing" : "agent whose page this is"}.</p>
   </div></section>`;
 }
