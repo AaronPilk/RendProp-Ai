@@ -257,7 +257,7 @@ def main():
         # Prove the rejection tests detect an implementation that stops validating.
         globals()["validate_capabilities"] = lambda *_args, **_kwargs: inventory
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(FoundationTests))
-    require(result.testsRun == 16 and not result.skipped, "missing/skipped tests")
+    require(result.testsRun == 17 and not result.skipped, "missing/skipped tests")
     require(result.wasSuccessful(), "foundation tests failed")
     print(json.dumps({"inventory": inventory, "contrast": ratios, "tests": result.testsRun,
                       "skips": len(result.skipped), "browserTests": 0, "liveTests": 0}, indent=2))
