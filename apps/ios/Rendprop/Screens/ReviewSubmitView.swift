@@ -164,7 +164,7 @@ struct ReviewSubmitView: View {
                     .frame(width: 44, height: 44)
                     .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(Formatters.duration(asset.durationS)) · \(asset.resolutionLabel) · \(Int(asset.fps.rounded())) fps")
+                    Text("\(Formatters.duration(asset.durationS)) · \(asset.resolutionLabel) · \(Formatters.frameRate(asset.fps))")
                         .font(.rpHeadline)
                         .foregroundStyle(Theme.ink)
                     // Size only. The "Gyro sidecar" chip that used to sit here
@@ -926,9 +926,8 @@ struct RoomTaggerView: View {
     }
 
     private func timeLabel(_ s: Double) -> String {
-        guard s.isFinite, s >= 0 else { return "0:00" }
-        let total = Int(s.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
+        if s.isFinite, s < 0 { return "0:00" }
+        return Formatters.duration(s)
     }
 
     // MARK: Auto room chapters

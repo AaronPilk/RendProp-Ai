@@ -61,7 +61,7 @@ test('all current UI launch overrides target v2; historical receipts are not rew
     }
   }
   assert.deepEqual(configured.sort(), [
-    'CaptureRecoveryTests.swift', 'CoachShot.swift', 'GuideShot.swift', 'GuidedPhotoNavigationTests.swift', 'IndustryWalk.swift',
+    'CaptureRecoveryTests.swift', 'CoachShot.swift', 'DetailMetadataRegressionUITests.swift', 'GuideShot.swift', 'GuidedPhotoNavigationTests.swift', 'IndustryWalk.swift',
     'OnboardingTour.swift', 'PaywallShot.swift', 'RendpropUITests.swift', 'ReviewerWalk.swift', 'StoreShots.swift', 'SubscriptionFlowTests.swift',
   ], 'review every current consent launch fixture explicitly');
 });

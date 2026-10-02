@@ -128,7 +128,7 @@ final class ReviewerWalk: XCTestCase {
         // what Home and the Homes tab look like. Every "fresh install" shot
         // above is already taken by the time it runs.
         step11AIConsent()
-        let required = Set(["r01-onboarding-1", "r02-first-home", "r03-homes",
+        let required = Set(["r01-onboarding-1", "r01-role", "r02-first-home", "r03-homes",
                             "r04-sample-detail", "r05-sample-player", "r06-profile",
                             "r07-settings-legal", "r08-delete-account", "r09-delete-confirm",
                             "r11-ai-consent"])
@@ -177,8 +177,8 @@ final class ReviewerWalk: XCTestCase {
     /// The view is four feature cards in a paged `TabView` followed by the
     /// "What do you showcase?" business-type picker (`choosingType`). The card
     /// pages carry a "Continue" button until the last one, where it becomes
-    /// "Get started" and flips to the picker; the picker's own "Get started"
-    /// sets `hasOnboarded = true` and swaps the root for `RootTabView`.
+    /// "Get started" and flips to the picker. Real estate then requires the
+    /// actual agent/photographer role picker before onboarding can complete.
     ///
     /// The loop below does not hard-code four: it screenshots whatever is on
     /// screen, taps whichever of the two buttons is there, and stops as soon as
@@ -218,13 +218,33 @@ final class ReviewerWalk: XCTestCase {
 
                 if onTypePicker {
                     photographedPicker = true
-                    // Accept the pre-selected "Real estate" the way a reviewer
-                    // would, and leave the intro.
-                    if let start = find(ids: ["onboarding.explore"], labels: ["Explore the app first"], timeout: shortTimeout) {
-                        tap(start)
-                    } else {
-                        note("The type picker had no \"Get started\" button — onboarding cannot be left.")
+                    // Accept the pinned real-estate type, then complete its
+                    // role choice through the production onboarding controls.
+                    guard let start = find(ids: ["onboarding.explore"], labels: ["Explore the app first"], timeout: shortTimeout) else {
+                        note("The type picker has no Explore control — onboarding cannot continue.")
+                        return
                     }
+                    tap(start)
+                    let agent = app.buttons["realEstateRole.agent"]
+                    let photographer = app.buttons["realEstateRole.photographer_videographer"]
+                    guard agent.waitForExistence(timeout: screenTimeout),
+                          photographer.waitForExistence(timeout: shortTimeout) else {
+                        note("Real-estate onboarding did not show both agent and photographer/videographer choices")
+                        return
+                    }
+                    XCTAssertTrue(agent.isHittable && photographer.isHittable,
+                                  "Both actual role choices must be reachable")
+                    shot("r01-role")
+                    screens += 1
+                    tap(agent)
+                    let explore = app.buttons["onboarding.role.explore"]
+                    guard explore.waitForExistence(timeout: shortTimeout), explore.isHittable else {
+                        note("Role picker has no reachable Explore control")
+                        return
+                    }
+                    tap(explore)
+                    XCTAssertTrue(waitForHome(timeout: screenTimeout),
+                                  "Completing role onboarding must reveal the actual Home root")
                     break
                 }
 

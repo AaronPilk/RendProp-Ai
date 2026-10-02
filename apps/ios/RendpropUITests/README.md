@@ -5,6 +5,16 @@ A passing screenshot walk can still contain skipped steps. Read its activity
 notes and inspect the actual attachments before accepting a screen. No
 simulator test validates a camera, LiDAR, AR tracking or real-house coverage.
 
+The [build 40 crash-hardening receipt](../../../docs/releases/TESTFLIGHT-40-20261002.json)
+records **19 unique selected Release cases with successful results across separate
+runs**, with identical production app source and zero formal skips. It preserves
+the broad 19 run's 16 passes/3 test-setup failures and the focused corrections;
+there was no single all-green 19-test run. All eight real rich-listing tool
+destinations, local photo/aerial carryover, client save/reopen, role onboarding,
+consent decisions, long-title Ask AI and plan entry points were inspected. These
+are software/navigation checks; purchase transactions, live sign-in/sync/inbox
+delivery and the reported physical arm64e crash still need owner acceptance.
+
 The [room/photo-delivery update](../../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 passed three guided-tour Home/Settings/relaunch/large-text assertion tests and
 the two guided-still-camera unavailable/close/reopen tests. They do not start
@@ -21,8 +31,9 @@ installed or tested a build.
 
 | Case | What it covers | Setup / limits |
 | --- | --- | --- |
+| `DetailMetadataRegressionUITests` | Seven cold launches of the real listing detail/toolbox in Release, including samples, no media, source availability, photos, aerial, client contact, re-render navigation and industry labels | Simulator only; procedural local media and an offline identified fixture. Never invokes camera, AI, upload, render submission or contact save. Device archives exclude the fixture host. |
 | `RendpropUITests/testWalk` | Home, Add a home, Photo Studio, Reel Studio voice, Settings, owner console, routing, paywall and health screenshots (`01`–`09`) | Mock API. Missing controls are noted and skipped. Reel entry needs photos. |
-| `ReviewerWalk/testReviewerWalk` | Onboarding, samples, profile, legal, deletion confirmation and AI consent (`r01`–`r11`) | Fresh app container. Required screenshots are asserted; sign-in `r10` is excluded for the mock identified session. Cancel is the only deletion action. |
+| `ReviewerWalk/testReviewerWalk` | Onboarding including the real-estate agent/photographer role choice, samples, profile, legal, deletion confirmation and AI consent (`r01`–`r11`) | Dedicated fresh app container before other cases create projects. Required screenshots, including `r01-role`, are asserted; sign-in `r10` is excluded for the mock identified session. Cancel is the only deletion action. |
 | `ReviewerWalk/testAIConsentDecisions` | Focused real consent-sheet path, actions and granted state | Assertions require all three captured consent states; no AI edit. |
 | `ReviewerWalk/testAskAILabelOnLongTitle` | Ask AI geometry/accessibility and opening Coach from a long-title sample | Assertions plus screenshots; no provider call. |
 | `StoreShots/testStoreShots` | Marketing screenshot capture, including industry variants, reels, leads and hosted demo surfaces | Seed listing photos; hosted demo requires network. No actual AI edit, purchase or publication. |
@@ -58,8 +69,16 @@ simulator: separate clients and hosted WebViews are not globally blocked by
 
 `ReviewerWalk` omits `hasOnboarded` for its full walk and explicitly sets consent
 to `NO`, real-estate identity and light appearance. Its two focused tests skip
-onboarding. Use a new simulator/app container for a genuine first-run walk;
-persisted onboarding completion otherwise changes the path.
+onboarding. Run `ReviewerWalk` on a dedicated fresh simulator/app container
+**before** mutating `PhotographerClientFlowTests` or `ProductionPlanUITests`.
+Those cases leave named synthetic projects behind, which changes the name-first
+AI entry to a project picker. The reviewer selector intentionally accepts only
+its known `24 Willow Bend Court` / `1 Walk Test Street` fixtures; it must never
+choose an arbitrary listing to make a test pass. Focused reviewer cases can
+reuse only that dedicated synthetic state. For a genuine first-run full walk,
+use a fresh container for that test. Keep failed results and screenshots.
+Do not delete, reset or uninstall a customer app, phone or useful simulator to
+prepare this gate; choose a new disposable simulator/container instead.
 
 `SessionNetworkFlow` adds `-sessionNetworkTesting`, which takes precedence over
 the mock only in Debug. `RENDP_TEST_URL` must be loopback HTTP; the case expects
@@ -94,6 +113,18 @@ xcodebuild test \
 Replace `-only-testing` with one case from the table after satisfying its
 fixture needs. A result-bundle path must not already exist. Do not treat a
 whole-target run without recovery/network fixtures as meaningful acceptance.
+
+For the listing metadata crash regression, regenerate
+`project-spatial-testflight.yml` and select `RendpropSpatialTestFlight.xcodeproj`,
+scheme `RendpropSpatialTestFlight`, `-configuration Release`,
+`ONLY_ACTIVE_ARCH=YES` and
+`-only-testing:RendpropUITests/DetailMetadataRegressionUITests` on a new disposable
+simulator. Each case launches the app afresh and selects its synthetic state
+through `-ui.detailMetadataFixture`. A simulator pass checks real SwiftUI
+instantiation and navigation, but does not certify an arm64e phone or its stack
+limits. The previously affected tester should force-quit, relaunch and open the
+same listings on the new TestFlight build. Do not delete or reinstall to clear
+metadata: that cache is process-local, and deleting can lose local-only media.
 
 Saved-take recovery has its own
 [fixture and source-preservation procedure](../../../tools/audit/call-20260919/join/RECOVERY-UI.md).

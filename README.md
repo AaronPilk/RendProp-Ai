@@ -5,13 +5,22 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+Internal **TestFlight 1.0.3 (40)** is available to the existing Rendprop team.
+The [crash-hardening release](docs/handoff/IOS-CRASH-HARDENING-20261002.md)
+bounds the listing toolbox's SwiftUI types, safely formats invalid duration/FPS
+metadata and handles duplicate saved listing IDs without discarding rows/media.
+All 12 exact-source CI jobs pass; 19 selected Release UI cases passed across
+separate runs with identical production app source. The signed device archive
+excludes simulator fixtures. Crash diagnostic build attribution is fixed in
+live `events` v26. The previously affected physical iPhone still needs acceptance.
+
 [Photographer client delivery](docs/studio/photographer-client-delivery.md) adds
 an Agent / Photographer onboarding choice, a separate client contact and photo
 per listing, private lead email routing, retained inquiry history and confirmed
 resends. Client pages can hide service promotions while retaining the contact
 form and privacy disclosure. This workflow is deployed to Studio, public pages
-and the backend, with internal **TestFlight 1.0.3 (39)** available. All 12
-exact-source CI jobs pass; see the
+and the backend, released in build 39 and retained in current build 40. All 12
+workflow exact-source CI jobs passed; see the
 [release handoff](docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for live
 readbacks and the controlled phone/inbox acceptance still required.
 
@@ -22,7 +31,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
-[Latest iPhone delivery receipt](docs/releases/TESTFLIGHT-39-20261001.json) ·
+[Latest iPhone delivery receipt](docs/releases/TESTFLIGHT-40-20261002.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -63,7 +72,7 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: photos/details first, independent navigation and opt-in fly-through with native controls. Close stops video and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Internal TestFlight **1.0.3 (39)** is available to the existing Rendprop team. Adds photographer client delivery and retains build38 room-tour guidance, HD fly-through rendering, photo versions/exports, guided 0.5×/1× photos and account/workspace/subscription fixes. Real-phone comfort, camera/room quality, render/playback, purchase/restore, client inbox and phone-to-Studio acceptance remain pending. |
+| iOS | Internal TestFlight **1.0.3 (40)** is available to the existing Rendprop team. Adds listing toolbox/metadata crash hardening and retains photographer client delivery, build38 room-tour guidance, HD fly-through rendering, photo versions/exports, guided 0.5×/1× photos and account/workspace/subscription fixes. Physical arm64e cold launch, camera/room quality, render/playback, purchase/restore, client inbox and phone-to-Studio acceptance remain pending. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

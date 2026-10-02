@@ -7,6 +7,15 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+The [build 40 crash audit](../../../docs/handoff/IOS-CRASH-HARDENING-20261002.md)
+deployed **events v26 ACTIVE**, with JWT verification enabled. A narrow,
+whitelisted diagnostic `app_version` exemption preserves `marketing.version (build)`
+for future crash attribution; arbitrary strings still pass through scrubbing.
+All six downloaded source files match runtime `4580f76`; downloaded-source tests
+pass 30/30 and the entrypoint type-check passes. No migration or production
+test-event ingestion was required. Already redacted historical builds cannot
+be recovered, and accepted telemetry summaries are not a complete crash census.
+
 [Photographer client delivery](../../../docs/studio/photographer-client-delivery.md)
 adds a nullable, explicit real estate work preference, service-only per-listing
 client contacts, verified contact-photo uploads and transactional client inquiry

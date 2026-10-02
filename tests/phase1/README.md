@@ -11,6 +11,14 @@ interruption and thermal acceptance require the owner's physical phone.
 
 ## Offline production-source concurrency tests
 
+`node --test tests/phase1/formatters-runtime.test.mjs tests/phase1/duplicate-listing-snapshot.test.mjs`
+compiles actual production formatters, capture metadata and persistence code,
+plus mechanically extracted review labels and the sync binding guard. It checks
+nonfinite/out-of-range numbers and duplicate saved IDs without dropping rows or
+media. Deliberate assertion failures and three unsafe conversion/guard mutants
+must fail; the mutants reproduce Swift traps. These executable checks do not
+replace the Release SwiftUI detail tests described in the iOS test guide.
+
 Run `bash tests/phase1/run-unit.sh` from this worktree. This compiles the real
 `Auth/SessionConnection.swift` with the Swift test entry point. It asserts
 single-flight retry, continuation of the original four waiting actions,
