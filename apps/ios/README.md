@@ -8,12 +8,25 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+[Crash hardening](../../docs/handoff/IOS-CRASH-HARDENING-20261002.md) is available
+as internal **TestFlight 1.0.3 (40)**, verified **2 October 2026 at 01:18:15 UTC**
+for the existing Rendprop team. All 12 CI jobs passed on archived source
+`4580f76`; [the delivery receipt](../../docs/releases/TESTFLIGHT-40-20261002.json)
+binds the signed archive, one upload, Apple availability and English testing notes.
+Named concrete listing-toolbox and launch views bound Swift metadata construction;
+checked duration/FPS conversion and duplicate-ID detection remove two independently
+reproduced traps while retaining saved work. Nineteen selected Release UI cases
+passed across separate runs with identical production app source. Simulator
+fixtures are absent from the signed device binary. The affected physical iPhone
+must still pass cold-launch acceptance; force-quit/relaunch, without deleting the
+app or recordings. Live `events` v26 now retains narrow diagnostic build strings.
+
 [Photographer client delivery](../../docs/studio/photographer-client-delivery.md)
 adds a real estate role choice, per-property client contact/photo editing,
 independent offline contact drafts and current server-state verification before
 either publish entry, with dirty contact edits saved first. Client lead status
 and deliberate resends remain tied to the
-selected account and workspace. Internal **TestFlight 1.0.3 (39)** is available,
+selected account and workspace. The preceding internal **TestFlight 1.0.3 (39)** is available,
 verified at **23:41:47 UTC on 1 October 2026**, with all 12 exact-source CI jobs
 passing. [The receipt](../../docs/releases/TESTFLIGHT-39-20261001.json) and
 [handoff](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) bind the

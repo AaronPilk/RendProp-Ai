@@ -5,6 +5,16 @@ A passing screenshot walk can still contain skipped steps. Read its activity
 notes and inspect the actual attachments before accepting a screen. No
 simulator test validates a camera, LiDAR, AR tracking or real-house coverage.
 
+The [build 40 crash-hardening receipt](../../../docs/releases/TESTFLIGHT-40-20261002.json)
+records **19 unique selected Release cases with successful results across separate
+runs**, with identical production app source and zero formal skips. It preserves
+the broad 19 run's 16 passes/3 test-setup failures and the focused corrections;
+there was no single all-green 19-test run. All eight real rich-listing tool
+destinations, local photo/aerial carryover, client save/reopen, role onboarding,
+consent decisions, long-title Ask AI and plan entry points were inspected. These
+are software/navigation checks; purchase transactions, live sign-in/sync/inbox
+delivery and the reported physical arm64e crash still need owner acceptance.
+
 The [room/photo-delivery update](../../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 passed three guided-tour Home/Settings/relaunch/large-text assertion tests and
 the two guided-still-camera unavailable/close/reopen tests. They do not start
