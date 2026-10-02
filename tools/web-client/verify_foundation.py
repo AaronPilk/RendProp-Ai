@@ -140,11 +140,11 @@ class FoundationTests(unittest.TestCase):
 
     def test_complete_inventory(self):
         result = validate_capabilities(self.cap, SWIFT)
-        # Includes the four reflection and five photographer/client methods.
+        # Includes reflection, photographer/client and two photo-selection methods.
         # Inventory coverage does not establish browser, phone or live parity.
-        self.assertEqual(result["apiMethods"], 62)
-        self.assertEqual(result["apiDeclarations"], 63)
-        self.assertEqual(result["capabilityGroups"], 17)
+        self.assertEqual(result["apiMethods"], 64)
+        self.assertEqual(result["apiDeclarations"], 65)
+        self.assertEqual(result["capabilityGroups"], 18)
         self.assertEqual(result["outsideProtocol"], 24)
         self.assertEqual(result["browserVerified"], 0)
 
@@ -167,6 +167,15 @@ class FoundationTests(unittest.TestCase):
 
     def test_token_positive(self):
         self.assertEqual(len(validate_tokens(self.tokens)), 6)
+
+    def test_photo_publication_methods_must_be_mapped(self):
+        row = next(row for row in self.cap["api"] if row["id"] == "listing-photo-publication")
+        self.assertEqual(set(row["methods"]), {"selectListingPhotos", "addListingPhotos"})
+        for method in row["methods"]:
+            incomplete = copy.deepcopy(self.cap)
+            next(item for item in incomplete["api"] if item["id"] == row["id"])["methods"].remove(method)
+            with self.subTest(method=method), self.assertRaises(ContractError):
+                validate_capabilities(incomplete, SWIFT)
 
     def test_contrast_reference_values(self):
         self.assertAlmostEqual(contrast("#000000", "#FFFFFF"), 21)
