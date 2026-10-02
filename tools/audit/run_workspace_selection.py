@@ -13,7 +13,7 @@ ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','NO_C
 BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb','deno']};assert all(BIN.values())
 ENV['DENO_DIR']=json.loads(subprocess.check_output([BIN['deno'],'info','--no-config','--json'],text=True))['denoDir']
 CONN=['-h',str(SOCK),'-p','55453','-U','postgres'];PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
-paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/workspace_selection.sql',pathlib.Path(__file__).resolve(),*sorted((SQL/'functions/me').glob('*.ts')),*sorted((SQL/'functions/listings').glob('*.ts')),*sorted((SQL/'functions/_shared').glob('*.ts'))]
+paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/workspace_selection.sql',pathlib.Path(__file__).resolve(),*sorted((SQL/'functions/me').glob('*.ts')),*sorted((SQL/'functions/listings').glob('*.ts')),*sorted((SQL/'functions/_shared').glob('*.ts')),SQL/'functions/studio/handler.ts']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
 receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'commands':[],'passed':False,'productionMutations':0,'limits':['Synthetic auth schema and transport; no real phone or cross-device interaction']}
 def run(name,args,stdin=None,expected=0):
@@ -72,6 +72,10 @@ try:
  # Removing explicit scope must create a second row and fail the handler test.
  mutant=OUT/'request-drift-control';mutant.mkdir();(mutant/'_shared').symlink_to(SQL/'functions/_shared',target_is_directory=True)
  shutil.copytree(SQL/'functions/me',mutant/'me');shutil.copytree(SQL/'functions/listings',mutant/'listings')
+ # The real listings handler now imports property-cover, whose ownership
+ # validator is shared with Studio. Preserve that unchanged dependency so
+ # the negative control reaches its assertion, not a missing-module error.
+ (mutant/'studio').mkdir();shutil.copy2(SQL/'functions/studio/handler.ts',mutant/'studio/handler.ts')
  path=mutant/'listings/index.ts';text=path.read_text();anchor='const org_id = explicitOrg ?? await orgForUser(user.id, preferredOrg(req));';assert text.count(anchor)==1
  path.write_text(text.replace(anchor,'const org_id = await orgForUser(user.id);'))
  output=run('request-drift-control',deno+['--filter','bound listing create and retry',mutant/'me/workspaces.test.ts'],expected=1);assert re.search(r'0 passed \| 1 failed',output)and 'AssertionError'in output

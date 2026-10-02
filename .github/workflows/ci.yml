@@ -627,6 +627,7 @@ jobs:
           python3 tools/audit/run_team_readiness.py
           python3 tools/audit/run_subscription_trial_regression.py
           python3 tools/audit/run_workspace_selection.py
+          python3 tools/audit/run_listing_gallery_selection.py
           python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py
