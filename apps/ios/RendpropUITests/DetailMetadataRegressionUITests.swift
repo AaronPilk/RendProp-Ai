@@ -10,8 +10,12 @@ final class DetailMetadataRegressionUITests: XCTestCase {
                            "detail.floorPlan", "detail.aerialIntro", "detail.clientContact"]
 
     override func setUpWithError() throws {
+#if targetEnvironment(simulator)
         continueAfterFailure = false
         app = XCUIApplication()
+#else
+        throw XCTSkip("Synthetic detail metadata fixtures exist only in simulator builds.")
+#endif
     }
 
     override func tearDownWithError() throws {
@@ -179,10 +183,22 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     }
 
     private func scrollTo(_ element: XCUIElement) {
-        // The grid is lazy. Start at its top when returning from another tool;
-        // then advance until the real accessibility control is instantiated.
-        for _ in 0..<6 where !element.isHittable { app.swipeDown() }
-        for _ in 0..<12 where !element.isHittable { app.swipeUp() }
+        // Target the real outer page's 16pt gutter. A centre-screen swipe can
+        // scrub the nested fly-through instead of moving the native page; the
+        // original empty-fixture failure recorded native scroll=0%, web=34%.
+        // Coordinates are used only for scrolling, never to select a control.
+        let outer = app.scrollViews.firstMatch
+        XCTAssertTrue(outer.waitForExistence(timeout: 5), app.debugDescription)
+        let upper = outer.coordinate(withNormalizedOffset: CGVector(dx: 0.015, dy: 0.24))
+        let lower = outer.coordinate(withNormalizedOffset: CGVector(dx: 0.015, dy: 0.78))
+        // Lazy-grid controls may not exist until scrolled into view. Test that
+        // cheaply before isHittable, which retries a nonexistent query.
+        for _ in 0..<6 where !element.exists || !element.isHittable {
+            upper.press(forDuration: 0.01, thenDragTo: lower)
+        }
+        for _ in 0..<12 where !element.exists || !element.isHittable {
+            lower.press(forDuration: 0.01, thenDragTo: upper)
+        }
         XCTAssertTrue(element.isHittable, app.debugDescription)
     }
 
