@@ -95,8 +95,15 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let firstPhoto = app.buttons["reel.photo.fixture-0"]
         scrollTo(firstPhoto)
         XCTAssertTrue(firstPhoto.exists, "Reel must receive the detail listing's local photos")
-        scrollTo(app.staticTexts["Aerial intro"])
-        XCTAssertTrue(app.staticTexts["Aerial intro"].exists, "Reel must receive the detail listing's aerial clip")
+        // The presenting detail remains in the accessibility tree behind the
+        // cover and has the same title. Match the actual Reel clips control,
+        // whose existing subtitle distinguishes it from the toolbox tile.
+        let aerialClips = app.buttons.matching(NSPredicate(format:
+            "label CONTAINS %@ AND label CONTAINS %@", "Aerial intro", "Opens the reel"))
+        XCTAssertEqual(aerialClips.count, 1, "Reel must receive exactly one local aerial clip")
+        let reelAerial = aerialClips.firstMatch
+        scrollTo(reelAerial)
+        XCTAssertTrue(reelAerial.exists, "Reel must receive the detail listing's aerial clip")
         attach("detail-rich-reel")
         app.navigationBars["Reel Studio"].buttons["Close"].tap()
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10))
