@@ -86,6 +86,329 @@ enum SearchIndexingDefault {
     }
 }
 
+/// A concrete card keeps its modifier metadata behind one named View type.
+/// The layout, gradient, AI badge and dimming are shared by every tool tile.
+private struct ListingToolCard: View {
+    let title: String
+    let sub: String
+    let icon: String
+    let gradient: LinearGradient
+    var ai = false
+    var dimmed = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Color.white)
+                Spacer()
+                if ai { AIPill() }
+            }
+            Spacer(minLength: 8)
+            Text(title)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(sub)
+                .font(.caption2)
+                .foregroundStyle(Color.white.opacity(0.88))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.top, 1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 96)
+        .background(gradient)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .opacity(dimmed ? 0.45 : 1)
+    }
+}
+
+/// All link tiles have the same small concrete type. Destinations are erased
+/// only inside NavigationLink's builder, so constructing the grid does not
+/// preconstruct screens or perform their appearance/file/network work.
+private struct ListingToolLinkTile: View {
+    let card: ListingToolCard
+    let disabled: Bool
+    let accessibilityID: String
+    let destination: () -> AnyView
+
+    var body: some View {
+        NavigationLink { destination() } label: { card }
+            .buttonStyle(ScalePressStyle())
+            .disabled(disabled)
+            .accessibilityIdentifier(accessibilityID)
+    }
+}
+
+private struct ListingToolButtonTile: View {
+    let card: ListingToolCard
+    let disabled: Bool
+    let accessibilityID: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { card }
+            .buttonStyle(ScalePressStyle())
+            .disabled(disabled)
+            .accessibilityIdentifier(accessibilityID)
+    }
+}
+
+/// This is deliberately a card, not a disabled NavigationLink: a remote tour
+/// cannot be rendered again until its exact source is present on this phone.
+private struct ListingToolUnavailableTile: View {
+    var body: some View {
+        ListingToolCard(title: "Re-render fly-through", sub: "Needs the source video on this phone",
+                        icon: "arrow.clockwise", gradient: RPGradient.drone, dimmed: true)
+            .accessibilityLabel("Re-render fly-through unavailable. Download the source video from Cloud files or add it to this phone.")
+            .accessibilityIdentifier("detail.rerenderUnavailable")
+    }
+}
+
+private struct ListingToolboxGrid: View {
+    let listing: Listing
+    // Preserve the detail screen's live read when a destination is built.
+    let destinationListing: () -> Listing
+    let space: SpaceType
+    let asset: CaptureAsset?
+    let canRerender: Bool
+    let hasPublishedTour: Bool
+    let photoCount: Int
+    let hasAerial: Bool
+    let openReel: () -> Void
+    let openRoomTagger: () -> Void
+    let openAerial: () -> Void
+
+    private var sample: Bool { listing.isSample }
+    private var createFirst: String { "Create a \(space.spaceNoun) first" }
+    private var photosSub: String {
+        photoCount == 0 ? "Add and brighten" : "\(photoCount) photo\(photoCount == 1 ? "" : "s") · add more"
+    }
+
+    var body: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
+                            GridItem(.flexible(), spacing: 10)], spacing: 10) {
+            // Photo management and AI edits remain separate entry points.
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "Photos", sub: sample ? createFirst : photosSub,
+                                      icon: "photo.stack", gradient: RPGradient.photo, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.photos",
+                destination: { AnyView(PhotoStudioView(listing: destinationListing(), entry: .photos)) }
+            )
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "AI Photo Studio", sub: sample ? createFirst : "Declutter · staging · sky",
+                                      icon: "wand.and.stars", gradient: RPGradient.photo, ai: true, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.photoStudio",
+                destination: { AnyView(PhotoStudioView(listing: destinationListing(), entry: .studio)) }
+            )
+            // The existing detail-owned cover reads live photos/aerial on tap.
+            ListingToolButtonTile(
+                card: ListingToolCard(title: "Make a reel", sub: sample ? createFirst : "Video + your voice",
+                                      icon: "film.stack", gradient: RPGradient.reel, ai: true, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.reelStudio", action: openReel
+            )
+            ListingToolButtonTile(
+                card: ListingToolCard(title: space == .realEstate ? "Tag rooms" : "Tag areas",
+                                      sub: sample ? createFirst : (asset == nil ? "Needs your own video" : "Tap-to-jump chapters"),
+                                      icon: "mappin.and.ellipse", gradient: RPGradient.rooms, dimmed: asset == nil || sample),
+                disabled: asset == nil || sample, accessibilityID: "detail.roomTags", action: openRoomTagger
+            )
+            if !sample, hasPublishedTour {
+                if let asset, canRerender {
+                    ListingToolLinkTile(
+                        card: ListingToolCard(title: "Re-render fly-through", sub: "New render · new sharing link",
+                                              icon: "arrow.clockwise", gradient: RPGradient.drone),
+                        disabled: false, accessibilityID: "detail.rerenderTour",
+                        destination: { AnyView(ReviewSubmitView(listing: destinationListing(), asset: asset)) }
+                    )
+                } else {
+                    ListingToolUnavailableTile()
+                }
+            }
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "Floor plan", sub: sample ? createFirst : "Scan in 3D or upload",
+                                      icon: "cube.transparent", gradient: RPGradient.plan, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.floorPlan",
+                destination: { AnyView(FloorPlanView(listing: destinationListing())) }
+            )
+            ListingToolButtonTile(
+                card: ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : (hasAerial ? "Aerial ready" : "AI opening shot"),
+                                      icon: "airplane.departure", gradient: RPGradient.aerial, ai: true, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.aerialIntro", action: openAerial
+            )
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "Listing contact", sub: "Your client or your own account card",
+                                      icon: "person.text.rectangle.fill", gradient: RPGradient.agent),
+                disabled: sample, accessibilityID: "detail.clientContact",
+                destination: { AnyView(ListingClientContactEditor(listing: destinationListing())) }
+            )
+        }
+    }
+}
+
+private struct ListingToolboxSection: View {
+    let grid: ListingToolboxGrid
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            grid
+        }
+    }
+}
+
+#if targetEnvironment(simulator)
+/// Cold-launch regression fixture for the real detail screen, including Release
+/// builds. It is unavailable in device archives and requires the offline UI-test
+/// flag. It never restores/persists a customer's library or invokes capture/AI.
+struct DetailMetadataRegressionHost: View {
+    private static let cases: Set<String> = ["empty", "capture", "rich", "missing-source",
+                                             "published-no-source", "sample", "venue"]
+    static var requestedCase: String? {
+        guard Config.isUITesting else { return nil }
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-ui.detailMetadataFixture"),
+              index + 1 < arguments.count, cases.contains(arguments[index + 1]) else { return nil }
+        return arguments[index + 1]
+    }
+
+    @EnvironmentObject private var model: AppModel
+    @State private var listing: Listing?
+    @State private var failure: String?
+
+    var body: some View {
+        NavigationStack {
+            if let listing {
+                FlythroughDetailView(listing: listing)
+            } else if let failure {
+                Text(failure).accessibilityIdentifier("detail.fixtureFailure")
+            } else {
+                ProgressView("Preparing synthetic detail fixture")
+            }
+        }
+        .task {
+            guard listing == nil, failure == nil, let requested = Self.requestedCase else { return }
+            do { try await seed(requested) }
+            catch { failure = "Synthetic fixture failed: \(error.localizedDescription)" }
+        }
+    }
+
+    @MainActor private func seed(_ name: String) async throws {
+        var value = Listing(address: "Detail fixture \(name)", beds: 3, baths: 2,
+                            sqft: 1800, price: Money(cents: 45_000_000))
+        value.spaceTypeRaw = name == "venue" ? SpaceType.venue.rawValue : SpaceType.realEstate.rawValue
+        value.isSample = name == "sample"
+        // A nonfinite coordinate sentinel is rejected by mapCoordinate; the
+        // existing hasCoordinate + region guard also prevents geocoding. No
+        // MapKit tile/geocoder request is needed for this offline fixture.
+        value.latitude = .nan; value.longitude = .nan; value.regionLabel = "Synthetic fixture"
+        value.clientContactLoaded = true
+        if name == "rich" {
+            value.clientContact = ListingClientContact(listingID: value.id, enabled: true,
+                publicCard: ClientPublicCard(name: "Fixture client", brokerage: "Fixture agency"),
+                recipientEmail: "fixture@example.invalid")
+        }
+        let hasCapture = ["capture", "rich", "missing-source", "venue"].contains(name)
+        let hasTour = ["rich", "missing-source", "venue"].contains(name)
+        let hasAerial = ["rich", "missing-source"].contains(name)
+        let photoCount = name == "rich" ? 3 : (["missing-source", "published-no-source", "venue"].contains(name) ? 1 : 0)
+        var video: URL?
+        if hasCapture || hasTour || hasAerial {
+            video = try await Self.makeSyntheticVideo(listingID: value.id)
+        }
+        if hasCapture, let video {
+            let source = name == "missing-source"
+                ? FileStore.recordingsDir.appendingPathComponent("missing-fixture-\(value.id).mp4") : video
+            model.assets[value.id] = CaptureAsset(localURL: source, durationS: 2, fps: 10,
+                                                 width: 64, height: 64, bytes: FileStore.fileSize(video))
+        }
+        if hasTour, let video {
+            model.tours[value.id] = AppModel.RenderedTour(url: video, durationS: 2, speedFactor: 1.25)
+            value.status = .ready
+        }
+        if name == "published-no-source" {
+            // A syntactically valid fake share link selects the share branch.
+            // The suite never opens a browser, QR, share sheet or publish action.
+            value.shareSlug = "metadata-fixture"
+            value.shareURL = "https://example.invalid/f/metadata-fixture"
+            value.status = .ready
+        }
+        if hasAerial, let video {
+            let aerial = FileStore.aerialsDir.appendingPathComponent("\(value.id)-fixture.mp4")
+            try FileManager.default.copyItem(at: video, to: aerial)
+            value.aerialRelPath = FileStore.relativePath(for: aerial)
+            value.aerialGeneratedAt = Date()
+        }
+        if photoCount > 0 {
+            let directory = EnhancedPhoto.directory(for: value.id)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            for index in 0..<photoCount {
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 480)).image { context in
+                    UIColor(hue: CGFloat(index) / 3, saturation: 0.35, brightness: 0.8, alpha: 1).setFill()
+                    context.fill(CGRect(x: 0, y: 0, width: 640, height: 480))
+                    UIColor.white.setFill(); context.fill(CGRect(x: 80, y: 100, width: 480, height: 280))
+                }
+                guard let jpeg = image.jpegData(compressionQuality: 0.85) else { throw FixtureError.image }
+                try jpeg.write(to: directory.appendingPathComponent("enh-fixture-\(index).jpg"), options: .atomic)
+                try jpeg.write(to: directory.appendingPathComponent("orig-fixture-\(index).jpg"), options: .atomic)
+            }
+        }
+        // AppModel.load is deliberately never called by this host. Its
+        // hasLoaded guard keeps these transient fixtures out of PersistentStore.
+        model.listings = [value]
+        listing = value
+    }
+
+    private enum FixtureError: Error { case image, video }
+
+    /// Procedural silent video: no camera, microphone, bundled house footage or
+    /// remote asset. It exercises real AVFoundation/PlayerWebView metadata.
+    @MainActor private static func makeSyntheticVideo(listingID: UUID) async throws -> URL {
+        let url = FileStore.recordingsDir.appendingPathComponent("metadata-fixture-\(listingID).mp4")
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
+            sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+                                         kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64])
+        guard writer.canAdd(input) else { throw FixtureError.video }
+        writer.add(input)
+        guard writer.startWriting() else { throw writer.error ?? FixtureError.video }
+        writer.startSession(atSourceTime: .zero)
+        var buffer: CVPixelBuffer?
+        guard CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32ARGB, nil, &buffer) == kCVReturnSuccess,
+              let buffer else { throw FixtureError.video }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        if let address = CVPixelBufferGetBaseAddress(buffer) {
+            memset(address, 120, CVPixelBufferGetBytesPerRow(buffer) * 64)
+        }
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        for index in 0..<20 {
+            var checks = 0
+            while !input.isReadyForMoreMediaData, checks < 300 {
+                try await Task.sleep(nanoseconds: 10_000_000)
+                checks += 1
+            }
+            guard input.isReadyForMoreMediaData,
+                  adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(index), timescale: 10)) else {
+                writer.cancelWriting(); throw writer.error ?? FixtureError.video
+            }
+        }
+        input.markAsFinished()
+        await withCheckedContinuation { continuation in writer.finishWriting { continuation.resume() } }
+        guard writer.status == .completed else { throw writer.error ?? FixtureError.video }
+        return url
+    }
+}
+#endif
+
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
@@ -249,41 +572,6 @@ struct FlythroughDetailView: View {
     }
 
     // MARK: - end router additions
-
-    /// Toolbox mini feature card — the feature's signature gradient (same one
-    /// it wears on Home), white icon, name, and a short promise.
-    private func toolCard(_ title: String, _ sub: String, _ icon: String,
-                          _ gradient: LinearGradient, ai: Bool = false,
-                          dimmed: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                Image(systemName: icon)
-                    .font(.system(size: 20, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(Color.white)
-                Spacer()
-                if ai { AIPill() }
-            }
-            Spacer(minLength: 8)
-            Text(title)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(Color.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Text(sub)
-                .font(.caption2)
-                .foregroundStyle(Color.white.opacity(0.88))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .padding(.top, 1)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 96)
-        .background(gradient)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        .opacity(dimmed ? 0.45 : 1)
-    }
 
     private var asset: CaptureAsset? { model.assets[listing.id] }
     private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
@@ -884,113 +1172,23 @@ struct FlythroughDetailView: View {
         .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    /// Toolbox — every feature for this listing, one tap away. Every tool that
-    /// writes files or calls AI is disabled on samples (decision A7): a sample's
-    /// output would be orphaned, and the AI would run against a demo.
-    private var toolboxSection: some View {
-        let sample = currentListing.isSample
-        let createFirst = "Create a \(space.spaceNoun) first"
-        // Read off the FILES scan, not off `currentListing.aerialURL`: that
-        // property does a `fileExists` every time it is touched, and this line
-        // sits in a computed property `body` reads, so it was a stat syscall on
-        // EVERY re-render of this screen — a save, a note, a scroll-driven state
-        // change (the build-9 lag report). The scan already did that check, off
-        // the main thread, and it is the same answer: it only lists an aerial
-        // whose file is really there.
-        let aerialSub = mediaItems.contains { $0.kind == .aerial } ? "Aerial ready" : "AI opening shot"
-        // Same rule as `aerialSub`: read the count off the scan that already
-        // ran, never off a fresh filesystem walk in a computed property `body`
-        // touches (the build-9 lag report).
-        let photoCount = mediaItems.filter { $0.kind == .photo }.count
-        let photosTileSub = photoCount == 0
-            ? "Add and brighten"
-            : "\(photoCount) photo\(photoCount == 1 ? "" : "s") \u{00B7} add more"
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
-                                GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                // TWO TILES. Getting photos in is one job; changing them with
-                // AI is a different job with a different cost, and putting both
-                // behind one door is what made "AI Photo Studio" open on a wall
-                // of thumbnails instead of on the list of what the AI can do.
-                NavigationLink { PhotoStudioView(listing: currentListing, entry: .photos) } label: {
-                    toolCard("Photos", sample ? createFirst : photosTileSub,
-                             "photo.stack", RPGradient.photo, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-                .accessibilityIdentifier("detail.photos")
-
-                NavigationLink { PhotoStudioView(listing: currentListing, entry: .studio) } label: {
-                    toolCard("AI Photo Studio", sample ? createFirst : "Declutter · staging · sky",
-                             "wand.and.stars", RPGradient.photo, ai: true, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-                .accessibilityIdentifier("detail.photoStudio")
-
-                // STRAIGHT to Reel Studio — not through AI Photo Studio.
-                // `detail.reelStudio` stays on this tile (RendpropUITests taps
-                // it by that identifier); what changed is where it lands.
-                Button { showReelStudio = true } label: {
-                    toolCard("Make a reel", sample ? createFirst : "Video + your voice",
-                             "film.stack", RPGradient.reel, ai: true, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-                .accessibilityIdentifier("detail.reelStudio")
-
-                Button {
-                    tagsBeforeEdit = asset?.roomTags ?? []
-                    showRoomTagger = true
-                } label: {
-                    toolCard(space == .realEstate ? "Tag rooms" : "Tag areas",
-                             sample ? createFirst : (asset == nil ? "Needs your own video" : "Tap-to-jump chapters"),
-                             "mappin.and.ellipse", RPGradient.rooms, dimmed: asset == nil || sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(asset == nil || sample)
-
-                if !sample, tour != nil || shareURL != nil {
-                    if let a = asset, availableRerenderSource == a.localURL {
-                        NavigationLink {
-                            ReviewSubmitView(listing: currentListing, asset: a)
-                        } label: {
-                            toolCard("Re-render fly-through", "New render · new sharing link",
-                                     "arrow.clockwise", RPGradient.drone)
-                        }
-                        .buttonStyle(ScalePressStyle())
-                        .accessibilityIdentifier("detail.rerenderTour")
-                    } else {
-                        toolCard("Re-render fly-through", "Needs the source video on this phone",
-                                 "arrow.clockwise", RPGradient.drone, dimmed: true)
-                            .accessibilityLabel("Re-render fly-through unavailable. Download the source video from Cloud files or add it to this phone.")
-                    }
-                }
-
-                NavigationLink { FloorPlanView(listing: currentListing) } label: {
-                    toolCard("Floor plan", sample ? createFirst : "Scan in 3D or upload",
-                             "cube.transparent", RPGradient.plan, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-
-                Button { showAerialIntro = true } label: {
-                    toolCard("Aerial intro", sample ? createFirst : aerialSub,
-                             "airplane.departure", RPGradient.aerial, ai: true, dimmed: sample)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-
-                NavigationLink { ListingClientContactEditor(listing: currentListing) } label: {
-                    toolCard("Listing contact", "Your client or your own account card",
-                             "person.text.rectangle.fill", RPGradient.agent)
-                }
-                .buttonStyle(ScalePressStyle())
-                .disabled(sample)
-            }
-        }
+    /// Nominal section/grid/tile boundaries keep the toolbox's navigation and
+    /// card modifier trees out of this screen's enclosing SwiftUI metadata.
+    private var toolboxSection: ListingToolboxSection {
+        ListingToolboxSection(grid: ListingToolboxGrid(
+            listing: currentListing, destinationListing: { currentListing }, space: space, asset: asset,
+            canRerender: asset != nil && availableRerenderSource == asset?.localURL,
+            hasPublishedTour: tour != nil || shareURL != nil,
+            // Reuse the background FILES scan. No disk reads in body.
+            photoCount: mediaItems.filter { $0.kind == .photo }.count,
+            hasAerial: mediaItems.contains { $0.kind == .aerial },
+            openReel: { showReelStudio = true },
+            openRoomTagger: {
+                tagsBeforeEdit = asset?.roomTags ?? []
+                showRoomTagger = true
+            },
+            openAerial: { showAerialIntro = true }
+        ))
     }
 
     // MARK: - Files (the 4,000 sq ft field test)

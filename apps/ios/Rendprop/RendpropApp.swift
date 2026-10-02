@@ -774,6 +774,12 @@ final class AppModel: ObservableObject {
             let actor = AuthStore.shared.userID
             let revision = AuthStore.shared.syncSessionRevision
             do {
+                // Tolerant legacy snapshot loading can preserve conflicting IDs.
+                // Report a recoverable sync error rather than trapping or choosing
+                // one row and silently discarding another row's media bindings.
+                guard Set(self.listings.map(\.id)).count == self.listings.count else {
+                    throw CloudSyncError.invalidResponse
+                }
                 let bindingsAtRead = Dictionary(uniqueKeysWithValues: self.listings.map { ($0.id, $0.serverID) })
                 let remote = try await cloud.cloudListings()
                 try Task.checkCancellation()
@@ -2474,6 +2480,44 @@ enum Appearance: String, CaseIterable, Identifiable {
     }
 }
 
+/// A concrete boundary keeps launch routing out of the scene's modifier type.
+/// Release UI fixtures exist only in the simulator and require the offline test flag.
+private struct RendpropLaunchContent: View {
+    let hasOnboarded: Bool
+
+    var body: some View {
+        Group {
+#if targetEnvironment(simulator)
+            if DetailMetadataRegressionHost.requestedCase != nil {
+                DetailMetadataRegressionHost()
+            } else {
+                normalContent
+            }
+#else
+            normalContent
+#endif
+        }
+    }
+
+    @ViewBuilder private var normalContent: some View {
+#if DEBUG
+        if Config.isSessionNetworkTesting {
+            PhaseOneFixtureRoot()
+        } else if hasOnboarded {
+            RootTabView()
+        } else {
+            OnboardingView()
+        }
+#else
+        if hasOnboarded {
+            RootTabView()
+        } else {
+            OnboardingView()
+        }
+#endif
+    }
+}
+
 @main
 struct RendpropApp: App {
     /// The Universal Link this launch (or this tap) arrived on, if any.
@@ -2519,23 +2563,7 @@ struct RendpropApp: App {
 
     var body: some Scene {
         WindowGroup {
-            Group {
-#if DEBUG
-                if Config.isSessionNetworkTesting {
-                    PhaseOneFixtureRoot()
-                } else if hasOnboarded {
-                    RootTabView()
-                } else {
-                    OnboardingView()
-                }
-#else
-                if hasOnboarded {
-                    RootTabView()
-                } else {
-                    OnboardingView()
-                }
-#endif
-            }
+            RendpropLaunchContent(hasOnboarded: hasOnboarded)
             .environmentObject(model)
             .environmentObject(uploads)
             // The one paywall sheet + the StoreKit 2 lifecycle (Purchases/).

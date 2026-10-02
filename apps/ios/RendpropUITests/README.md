@@ -21,6 +21,7 @@ installed or tested a build.
 
 | Case | What it covers | Setup / limits |
 | --- | --- | --- |
+| `DetailMetadataRegressionUITests` | Seven cold launches of the real listing detail/toolbox in Release, including samples, no media, source availability, photos, aerial, client contact, re-render navigation and industry labels | Simulator only; procedural local media and an offline identified fixture. Never invokes camera, AI, upload, render submission or contact save. Device archives exclude the fixture host. |
 | `RendpropUITests/testWalk` | Home, Add a home, Photo Studio, Reel Studio voice, Settings, owner console, routing, paywall and health screenshots (`01`–`09`) | Mock API. Missing controls are noted and skipped. Reel entry needs photos. |
 | `ReviewerWalk/testReviewerWalk` | Onboarding, samples, profile, legal, deletion confirmation and AI consent (`r01`–`r11`) | Fresh app container. Required screenshots are asserted; sign-in `r10` is excluded for the mock identified session. Cancel is the only deletion action. |
 | `ReviewerWalk/testAIConsentDecisions` | Focused real consent-sheet path, actions and granted state | Assertions require all three captured consent states; no AI edit. |
@@ -94,6 +95,18 @@ xcodebuild test \
 Replace `-only-testing` with one case from the table after satisfying its
 fixture needs. A result-bundle path must not already exist. Do not treat a
 whole-target run without recovery/network fixtures as meaningful acceptance.
+
+For the listing metadata crash regression, regenerate
+`project-spatial-testflight.yml` and select `RendpropSpatialTestFlight.xcodeproj`,
+scheme `RendpropSpatialTestFlight`, `-configuration Release`,
+`ONLY_ACTIVE_ARCH=YES` and
+`-only-testing:RendpropUITests/DetailMetadataRegressionUITests` on a new disposable
+simulator. Each case launches the app afresh and selects its synthetic state
+through `-ui.detailMetadataFixture`. A simulator pass checks real SwiftUI
+instantiation and navigation, but does not certify an arm64e phone or its stack
+limits. The previously affected tester should force-quit, relaunch and open the
+same listings on the new TestFlight build. Do not delete or reinstall to clear
+metadata: that cache is process-local, and deleting can lose local-only media.
 
 Saved-take recovery has its own
 [fixture and source-preservation procedure](../../../tools/audit/call-20260919/join/RECOVERY-UI.md).

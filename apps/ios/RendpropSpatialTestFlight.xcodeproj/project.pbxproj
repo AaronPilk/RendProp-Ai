@@ -84,6 +84,7 @@
 		716B45F593EBE5817D2509CA /* BuildFourteenShots.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3B7621187183F6D3D9315D6 /* BuildFourteenShots.swift */; };
 		71957E9C056B75D577EFF2E4 /* PersistentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1A2DCE3CB319592C83AC24E /* PersistentStore.swift */; };
 		7441F10AEAEDBE82954B72DD /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = C85920512C4F2DFF5FFCA96A /* Components.swift */; };
+		75E12CACDA66B342F4BDDA07 /* DetailMetadataRegressionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9A6777C29B7AC540B0AB8CE /* DetailMetadataRegressionUITests.swift */; };
 		76CE8E28AD7EDAE17ACC1773 /* PlayerWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8E474ED20BA6BF2B53D1AE4 /* PlayerWebView.swift */; };
 		76F54C921C4EFDBE767F4874 /* PhotoExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B3F1A0D087FE6C8BA9569EB /* PhotoExport.swift */; };
 		77AE627A0751883965BC3321 /* RoomScanPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1792AC988DB4A092C14B4DC9 /* RoomScanPlanner.swift */; };
@@ -310,6 +311,7 @@
 		C73AC243D4E41699D282BE0A /* PanoramaNavigationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanoramaNavigationPolicy.swift; sourceTree = "<group>"; };
 		C75899F4461006AB1C3681CA /* CloudPhotoReferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudPhotoReferences.swift; sourceTree = "<group>"; };
 		C85920512C4F2DFF5FFCA96A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		C9A6777C29B7AC540B0AB8CE /* DetailMetadataRegressionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailMetadataRegressionUITests.swift; sourceTree = "<group>"; };
 		CBEBC11B92007478BEB66E95 /* MediaImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImporter.swift; sourceTree = "<group>"; };
 		CCA7A0B7D01EBED4F8452179 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		CD562015539E4AFC5F007857 /* GuidedPanoramaCaptureController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidedPanoramaCaptureController.swift; sourceTree = "<group>"; };
@@ -616,6 +618,7 @@
 				C3B7621187183F6D3D9315D6 /* BuildFourteenShots.swift */,
 				E5149137ABF0979B88A22DBF /* CaptureRecoveryTests.swift */,
 				5D09E710265AB8B04719CFEA /* CoachShot.swift */,
+				C9A6777C29B7AC540B0AB8CE /* DetailMetadataRegressionUITests.swift */,
 				CE5C1472954826F4CD7E7D59 /* GuidedPanoramaNavigationTests.swift */,
 				2FE5D7CA4B9C5BC59D698B09 /* GuidedPhotoNavigationTests.swift */,
 				08D367FCD91D3636204B2A1F /* GuideShot.swift */,
@@ -869,6 +872,7 @@
 				716B45F593EBE5817D2509CA /* BuildFourteenShots.swift in Sources */,
 				3B836336BFF8DE6C94C37903 /* CaptureRecoveryTests.swift in Sources */,
 				5835CA874AF453BC445045E0 /* CoachShot.swift in Sources */,
+				75E12CACDA66B342F4BDDA07 /* DetailMetadataRegressionUITests.swift in Sources */,
 				D4C1936FFEEAB47C83636B90 /* GuideShot.swift in Sources */,
 				513CB826021D1AE3CCC98F17 /* GuidedPanoramaNavigationTests.swift in Sources */,
 				0C46A8B02C2DEDF5D979C742 /* GuidedPhotoNavigationTests.swift in Sources */,
@@ -1076,7 +1080,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -1159,7 +1163,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 39;
+				CURRENT_PROJECT_VERSION = 40;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

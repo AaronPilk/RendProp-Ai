@@ -43,6 +43,7 @@
 		2F5E63B6403ADB995B0C120E /* PaywallHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4FB4606C39486BBD3D62359 /* PaywallHost.swift */; };
 		303B69B46785940A987E4FAF /* GuidedPanoramaLabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C67929A4096D24ECF0452EC8 /* GuidedPanoramaLabView.swift */; };
 		3054090E056500CCDB9AED7B /* PurchasesAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FBB854578BF4F7A9D1A44AA /* PurchasesAPI.swift */; };
+		328333CD0579E385F91EBBDA /* DetailMetadataRegressionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45AB6FC48F4158483F85DC34 /* DetailMetadataRegressionUITests.swift */; };
 		35EAC9664096A5526F97ACE1 /* PaywallView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DF74276AC7DEB9312C026E3 /* PaywallView.swift */; };
 		37D554C3AC6570078EBC9896 /* CameraManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D746633FD7B0C96F45695CBF /* CameraManager.swift */; };
 		3AFA52B6A3EAE858A8AC2592 /* FirstProjectCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = F58A2B0001F48CCB7ACEBEBA /* FirstProjectCard.swift */; };
@@ -209,6 +210,7 @@
 		38DBEA52E6A2912885C3A15C /* AskAIButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskAIButton.swift; sourceTree = "<group>"; };
 		3FBCB5707EABFE49CFFFB45F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		403AF389A944AF0B9F4700B1 /* FileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileStore.swift; sourceTree = "<group>"; };
+		45AB6FC48F4158483F85DC34 /* DetailMetadataRegressionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailMetadataRegressionUITests.swift; sourceTree = "<group>"; };
 		4801EBFCC788B0BADF6B9B10 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		486A2245D2766F4943B5016A /* RendpropApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RendpropApp.swift; sourceTree = "<group>"; };
 		4CAFAF30B745B48498E15F25 /* CrashReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrashReporter.swift; sourceTree = "<group>"; };
@@ -377,6 +379,7 @@
 				FCFC63BFC51CC5B643E6ACC9 /* BuildFourteenShots.swift */,
 				DF4448103DC40236DCF59777 /* CaptureRecoveryTests.swift */,
 				5544A6806716A76F8327A02F /* CoachShot.swift */,
+				45AB6FC48F4158483F85DC34 /* DetailMetadataRegressionUITests.swift */,
 				87943AA0603F9BCE85E8DEF2 /* GuidedPanoramaNavigationTests.swift */,
 				54A6FC85AB6611A5A74FA246 /* GuidedPhotoNavigationTests.swift */,
 				75F888EABC6EA5FC889E6036 /* GuideShot.swift */,
@@ -845,6 +848,7 @@
 				5C351245D6F9198302C4BCD9 /* BuildFourteenShots.swift in Sources */,
 				06FBE1BF7197DF7190EF1A35 /* CaptureRecoveryTests.swift in Sources */,
 				5C9FD2214FA725946A3B60F0 /* CoachShot.swift in Sources */,
+				328333CD0579E385F91EBBDA /* DetailMetadataRegressionUITests.swift in Sources */,
 				10961469907FE832369B652D /* GuideShot.swift in Sources */,
 				065E63B6814F83BF7B72A5B9 /* GuidedPanoramaNavigationTests.swift in Sources */,
 				F953867B896C5BE4F1D10CEF /* GuidedPhotoNavigationTests.swift in Sources */,
