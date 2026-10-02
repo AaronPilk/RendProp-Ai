@@ -73,7 +73,7 @@ struct Render: Identifiable, Codable, Hashable {
         var blurb: String {
             switch self {
             case .smooth:
-                return "A silky drone-style glide in HD. Perfect for most tours."
+                return "Reduces camera shake and creates a fast, scrubbable HD tour. Preview the result before sharing."
             case .premium4k:
                 return "AI motion smoothing + upscale (up to 4K, 30 fps) on our render farm — the premium look for standout spaces."
             case .cinematic:

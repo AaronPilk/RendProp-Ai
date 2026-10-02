@@ -20,6 +20,7 @@ import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, user
 import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
 import { createListingRow } from "./create.ts";
 import { clientContact, saveClientContact } from "./client-contact.ts";
+import { appendPublishedPhotos, publishedPhotoPatch } from "../_shared/property-cover.ts";
 
 // Columns a client is allowed to set/patch. agent_id/org_id/id/created_at are
 // server-controlled and never taken from the body. Must stay in sync with the
@@ -35,6 +36,7 @@ const WRITABLE = [
   "price_cents",
   "zillow_url",
   "main_photo_key",
+  "gallery_asset_ids",
   "lat",
   "lng",
   "status",
@@ -62,7 +64,7 @@ function pick(body: Record<string, unknown>): Record<string, unknown> {
 }
 
 /** Validate a picked patch/insert. Throws 400 with a precise message. */
-function validate(patch: Record<string, unknown>, orgId: string, listingId: string | null) {
+function validate(patch: Record<string, unknown>) {
   if ("status" in patch) {
     assert(typeof patch.status === "string" && STATUSES.includes(patch.status), 400,
       `status must be one of ${STATUSES.join(", ")}`);
@@ -125,16 +127,6 @@ function validate(patch: Record<string, unknown>, orgId: string, listingId: stri
       assert(Number.isFinite(n) && Math.abs(n) <= lim, 400, `${k} is out of range`);
     }
   }
-  // Only keys of this org's own listing may be referenced (audit F-supabase-35).
-  if ("main_photo_key" in patch && patch.main_photo_key !== null) {
-    const key = String(patch.main_photo_key ?? "");
-    const prefixOk = listingId
-      ? key.startsWith(`uploads/${orgId}/${listingId}/`) || key.startsWith(`renders/${orgId}/${listingId}/`)
-      : key.startsWith(`uploads/${orgId}/`) || key.startsWith(`renders/${orgId}/`);
-    assert(prefixOk && key.length <= MAX_TEXT, 400,
-      "main_photo_key must be an uploads/ or renders/ key belonging to this listing");
-    assert(!/\/contact-[^/]+$/.test(key),400,"Client headshots cannot be used as property cover photos.");
-  }
 }
 
 Deno.serve(async (req) => {
@@ -165,7 +157,17 @@ Deno.serve(async (req) => {
       await assertNotDeleting(user.id); // no new listings once deletion starts
       const org_id = explicitOrg ?? await orgForUser(user.id, preferredOrg(req));
       const patch = pick(body);
-      validate(patch, org_id, null);
+      // A new listing has no uploaded gallery assets yet. Choose its cover
+      // after the gallery upload completes, through the scoped PATCH contract.
+      assert(!Object.hasOwn(body,"main_photo_asset_id") &&
+        !Object.hasOwn(body,"gallery_add_asset_ids") &&
+        (patch.main_photo_key === undefined || patch.main_photo_key === null),400,
+        "Create the listing and upload its gallery photo before choosing the main photo.");
+      if(Object.hasOwn(body,"gallery_asset_ids")) {
+        assert(body.gallery_asset_ids===null || (Array.isArray(body.gallery_asset_ids)&&body.gallery_asset_ids.length===0),400,
+          "Create the listing and upload its photos before choosing the published gallery.");
+      }
+      validate(patch);
       const result = await createListingRow(db, patch, user.id, org_id, req.headers.get("Idempotency-Key"));
       return json({ ...result.data, create_replayed: result.replayed }, result.replayed ? 200 : 201);
     }
@@ -188,14 +190,25 @@ Deno.serve(async (req) => {
     if (req.method === "PATCH" && id) {
       const body = await readJson<Record<string, unknown>>(req);
       const patch = pick(body);
-      assert(Object.keys(patch).length > 0, 400, `No writable fields in body (accepted: ${WRITABLE.join(", ")})`);
+      assert(Object.keys(patch).length > 0 || Object.hasOwn(body,"main_photo_asset_id") || Object.hasOwn(body,"gallery_add_asset_ids"), 400,
+        `No writable fields in body (accepted: ${WRITABLE.join(", ")}, main_photo_asset_id, gallery_add_asset_ids)`);
 
       // RLS-scoped read: proves membership and gives the org for key validation.
       const { data: existing, error: eErr } = await db
-        .from("listings").select("id, org_id").eq("id", id).is("deleted_at", null).maybeSingle();
+        .from("listings").select("id, org_id, main_photo_key, gallery_asset_ids").eq("id", id).is("deleted_at", null).maybeSingle();
       if (eErr) throw new HttpError(400, `Listing lookup failed: ${eErr.message}`);
       if (!existing || (explicitOrg && existing.org_id !== explicitOrg)) throw new HttpError(404, "Listing not found in this workspace");
-      validate(patch, existing.org_id as string, id);
+      if(Object.hasOwn(body,"gallery_add_asset_ids")) {
+        assert(Object.keys(patch).every(k=>k==="main_photo_key"),400,
+          "Save listing details separately when adding published photos.");
+        await assertNotDeleting(user.id);
+        return json(await appendPublishedPhotos(adminClient(),{orgId:existing.org_id as string,listingId:id},user.id,body));
+      }
+      if (Object.hasOwn(body,"main_photo_asset_id") || Object.hasOwn(body,"main_photo_key") || Object.hasOwn(body,"gallery_asset_ids")) {
+        await assertNotDeleting(user.id);
+        Object.assign(patch,await publishedPhotoPatch(adminClient(),{orgId:existing.org_id as string,listingId:id},body,existing));
+      }
+      validate(patch);
 
       const { data, error } = await db
         .from("listings")

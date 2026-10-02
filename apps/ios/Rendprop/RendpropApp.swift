@@ -71,6 +71,7 @@ final class AppModel: ObservableObject {
         let url: URL
         let durationS: Double
         let speedFactor: Double
+        var motionSmoothing: String? = nil
     }
     @Published var tours: [UUID: RenderedTour] = [:]   { didSet { persist() } } // listingID → rendered tour
 
@@ -590,7 +591,14 @@ final class AppModel: ObservableObject {
         guard let i = index(of: id), !listings[i].isSample else { return }
         listings[i].mainPhotoRelPath = relPath
         markDirty(id)
-        Task { [weak self] in await self?.syncListing(id) }
+        Task { [weak self] in
+            guard let self else { return }
+            await self.syncListing(id)
+            if let listing = self.listings.first(where: { $0.id == id }),
+               listing.serverShareURL != nil, let serverID = listing.serverID {
+                await self.syncGalleryPhotos(listingLocalID: id, listingServerID: serverID)
+            }
+        }
     }
 
     func setCoordinate(lat: Double, lon: Double, for id: UUID) {
@@ -669,6 +677,7 @@ final class AppModel: ObservableObject {
     /// unpublishes its hosted tour (decision A3). Samples are never removed.
     func remove(_ id: UUID) async {
         guard let listing = listings.first(where: { $0.id == id }), !listing.isSample else { return }
+        if PhotoWorkQueue.shared.job?.listingID == id { PhotoWorkQueue.shared.cancel() }
 
         renderCoordinator.cancel(listingID: id)
         ProductionVideoLibrary.shared.cancelForPropertyDeletion(id)
@@ -1015,35 +1024,93 @@ final class AppModel: ObservableObject {
     /// ceiling. Sequential on purpose: seventeen concurrent multi-megabyte
     /// PUTs from a phone on cellular is how you turn a working publish into a
     /// stall.
+    private var gallerySyncInFlight: Set<UUID> = []
+    private var gallerySyncPending: Set<UUID> = []
+
     func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
         guard Config.useLiveBackend else { return }
         guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
-        guard let l = listings.first(where: { $0.id == listingLocalID }), !l.isSample else { return }
-        let photos = EnhancedPhoto.loadAll(listingID: listingLocalID).prefix(40)
-        var failures = 0
-        var lastProblem: Error?
-        for photo in photos {
-            if Task.isCancelled { return }
-            let url = photo.enhancedURL
-            let bytes = FileStore.fileSize(url)
-            guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { continue }
-            let memo = "\(FileStore.relativePath(for: url))|\(bytes)"
-            if publishedGalleryAssets[memo] != nil { continue }
-            do {
-                publishedGalleryAssets[memo] = try await UploadManager.shared.uploadGalleryPhoto(
-                    fileURL: url, listingID: listingServerID)
-            } catch is CancellationError {
-                return   // signed out or cancelled mid-sync: not a failure to report
-            } catch {
-                failures += 1
-                lastProblem = error
+        guard let listing = listings.first(where: { $0.id == listingLocalID }), !listing.isSample,
+              listing.serverID == listingServerID else { return }
+        if gallerySyncInFlight.contains(listingLocalID) {
+            gallerySyncPending.insert(listingLocalID); return
+        }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID
+        func requireIdentity() throws {
+            try Task.checkCancellation()
+            guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == workspace,
+                  listings.first(where: { $0.id == listingLocalID })?.serverID == listingServerID
+            else { throw CloudSyncError.identityChanged }
+        }
+        gallerySyncInFlight.insert(listingLocalID)
+        defer {
+            gallerySyncInFlight.remove(listingLocalID)
+            if gallerySyncPending.remove(listingLocalID) != nil {
+                Task { [weak self] in
+                    await self?.syncGalleryPhotos(listingLocalID: listingLocalID, listingServerID: listingServerID)
+                }
             }
         }
-        if let lastProblem, failures > 0 {
-            let count = failures == 1 ? "1 photo" : "\(failures) photos"
-            noteUploadProblem("\(count) didn't reach the tour page's gallery. Publish again to retry. "
-                              + Self.userMessage(for: lastProblem),
-                              listingLocalID: listingLocalID, error: lastProblem)
+        let mainPath = listing.mainPhotoRelPath
+        func selectedPhotos() throws -> [EnhancedPhoto] {
+            let saved = try EnhancedPhoto.loadForListing(listingID: listingLocalID)
+            let main = saved.first { FileStore.relativePath(for: $0.enhancedURL) == mainPath }
+            return Array(((main.map { [$0] } ?? []) + saved.filter { $0.id != main?.id }).prefix(40))
+        }
+        var selectedAssets: [String] = []
+        var mainAsset: String?
+        do {
+            let photos = try selectedPhotos()
+            if let mainPath, !photos.contains(where: { FileStore.relativePath(for: $0.enhancedURL) == mainPath }) {
+                throw PhotoVersionHistory.Failure.missingImage
+            }
+            for photo in photos {
+                try requireIdentity()
+                let url = photo.enhancedURL
+                let bytes = FileStore.fileSize(url)
+                guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { throw PhotoVersionHistory.Failure.missingImage }
+                let memo = "\(owner ?? "guest")|\(workspace?.uuidString ?? "none")|\(listingServerID)|\(FileStore.relativePath(for: url))|\(bytes)"
+                let asset: String
+                if let cached = publishedGalleryAssets[memo] { asset = cached }
+                else {
+                    asset = try await UploadManager.shared.uploadGalleryPhoto(fileURL: url, listingID: listingServerID)
+                    try requireIdentity()
+                    publishedGalleryAssets[memo] = asset
+                }
+                selectedAssets.append(asset)
+                if let version = photo.savedVersion, version.edit != "capture" && version.edit != "legacy" {
+                    guard let provenanceID = version.provenanceID, version.provenanceRecorded else {
+                        throw AIImagePrep.error("This edited photo's disclosure hasn't been saved. Keep the earlier version selected and retry its AI edit.")
+                    }
+                    try await api.attachProvenanceMedia(provenanceID: provenanceID, originalAssetID: nil, alteredAssetID: asset)
+                    try requireIdentity()
+                }
+                if FileStore.relativePath(for: url) == mainPath { mainAsset = asset }
+            }
+            try requireIdentity()
+            // An older upload pass must never replace a newer local selection.
+            guard try selectedPhotos().map(\.id) == photos.map(\.id),
+                  listings.first(where: { $0.id == listingLocalID })?.mainPhotoRelPath == mainPath else {
+                gallerySyncPending.insert(listingLocalID); return
+            }
+            // A cloud-imported project may have photos that are not on this
+            // phone. Preserve its cloud gallery rather than replacing it with
+            // an incomplete local directory.
+            if listing.cloudImported == true {
+                if !selectedAssets.isEmpty {
+                    try await api.addListingPhotos(serverID: listingServerID, assetIDs: selectedAssets, mainAssetID: mainAsset)
+                }
+            } else {
+                try await api.selectListingPhotos(serverID: listingServerID, galleryAssetIDs: selectedAssets, mainAssetID: mainAsset)
+            }
+            try requireIdentity()
+        } catch is CancellationError { return }
+        catch CloudSyncError.identityChanged { return }
+        catch {
+            noteUploadProblem("Your photo selection hasn't reached the published page. Your saved versions are safe. Open Photos to retry. "
+                              + Self.userMessage(for: error), listingLocalID: listingLocalID, error: error)
         }
     }
 
@@ -1584,7 +1651,10 @@ final class RenderCoordinator: ObservableObject {
 
         // In-app viewing works from here on — store the local tour first.
         model.tours[id] = AppModel.RenderedTour(url: output.url, durationS: output.durationS,
-                                                speedFactor: output.speedFactor)
+                                                speedFactor: output.speedFactor, motionSmoothing: output.motionSmoothing)
+        if output.motionSmoothing == "unavailable" {
+            setNote(id, run, "Motion smoothing couldn't be applied to this footage. Your HD video is saved; preview it before sharing.")
+        }
         Analytics.track("render_finished", ["ok": "true", "duration_s": String(Int(output.durationS))])
         model.uploadedRenderAssets.removeValue(forKey: id)   // a new file: any earlier upload is stale
         model.setLastError(nil, for: id)
@@ -1870,7 +1940,7 @@ final class RenderCoordinator: ObservableObject {
             // Swap the local tour to the enhanced file (same duration/speed —
             // Topaz preserves duration, so chapter timestamps stay valid).
             model.tours[id] = AppModel.RenderedTour(url: dest, durationS: tour.durationS,
-                                                    speedFactor: tour.speedFactor)
+                                                    speedFactor: tour.speedFactor, motionSmoothing: tour.motionSmoothing)
             return .enhanced
         } catch {
             // e. Three kinds of "we didn't enhance", and only one of them is a
@@ -2156,6 +2226,7 @@ enum PersistentStore {
         var relPath: String
         var durationS: Double
         var speedFactor: Double
+        var motionSmoothing: String? = nil
     }
 
     fileprivate struct PersistedState: Codable {
@@ -2199,7 +2270,7 @@ enum PersistentStore {
         for (id, t) in tours where realIDs.contains(id) {
             state.tours[id] = PersistedTour(
                 relPath: FileStore.relativePath(for: t.url),
-                durationS: t.durationS, speedFactor: t.speedFactor)
+                durationS: t.durationS, speedFactor: t.speedFactor, motionSmoothing: t.motionSmoothing)
         }
         state.renders = renders.filter { realIDs.contains($0.key) }
         let pending = pendingPublish.filter { realIDs.contains($0) }
@@ -2311,7 +2382,8 @@ enum PersistentStore {
         for (id, t) in state.tours {
             let url = FileStore.url(fromRelativePath: t.relPath)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            out.tours[id] = AppModel.RenderedTour(url: url, durationS: t.durationS, speedFactor: t.speedFactor)
+            out.tours[id] = AppModel.RenderedTour(url: url, durationS: t.durationS, speedFactor: t.speedFactor,
+                                                motionSmoothing: t.motionSmoothing)
         }
         let ids = Set(out.listings.map { $0.id })
         out.renders = state.renders.filter { ids.contains($0.key) }
@@ -2359,13 +2431,14 @@ extension PersistentStore.PersistedAsset {
 }
 
 extension PersistentStore.PersistedTour {
-    enum CodingKeys: String, CodingKey { case relPath, durationS, speedFactor }
+    enum CodingKeys: String, CodingKey { case relPath, durationS, speedFactor, motionSmoothing }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         relPath     = try c.decode(String.self, forKey: .relPath)     // useless without a path
         durationS   = try c.decodeIfPresent(Double.self, forKey: .durationS) ?? 0
         speedFactor = try c.decodeIfPresent(Double.self, forKey: .speedFactor) ?? 1
+        motionSmoothing = try c.decodeIfPresent(String.self, forKey: .motionSmoothing)
     }
 }
 
@@ -2758,6 +2831,7 @@ struct RootTabView: View {
                 .tag(3)
         }
         .id("\(workspaceAuth.userID ?? "guest"):\(workspace.selected?.id.uuidString ?? "unselected")")
+        .safeAreaInset(edge: .top, spacing: 0) { PhotoWorkBanner() }
         .task {
             await model.load()        // idempotent
             await model.syncRealEstateRole()

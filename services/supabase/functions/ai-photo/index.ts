@@ -321,8 +321,9 @@ const PROFILES: Record<SpaceType, Profile> = {
 /**
  * THE MATERIAL-FACT LINE.
  *
- * Every prompt above locks the ARCHITECTURE — walls, dimensions, window and
- * door placement. None of them locked the CONDITION, and that is a different
+ * Every prompt above instructs the model to preserve ARCHITECTURE — walls,
+ * dimensions, window and door placement. That instruction is not verified
+ * geometry or a quality guarantee. The CONDITION instruction covers a different
  * thing: an inpainting model asked to tidy a room will happily smooth a cracked
  * wall or a water stain on the way past, because a clean wall is what "tidy"
  * looks like in its training data. Nothing in this file told it not to.
@@ -339,7 +340,8 @@ const PROFILES: Record<SpaceType, Profile> = {
  * a misrepresentation of a material fact, which is the thing that ends licences
  * — and it is the one edit no disclosure sentence makes acceptable, because the
  * buyer's complaint is not "this was AI", it is "the house is not what you
- * showed me". So it is enforced here, in the prompt itself, on every route.
+ * showed me". The instruction is included on every route; the output must
+ * still be compared with the original before publication.
  */
 const CONDITION_LOCK =
   "CRITICAL — MATERIAL FACTS: never repair, patch, hide, clean away, smooth over or " +
@@ -360,7 +362,7 @@ const LOCK =
   "window/door placement. " + CONDITION_LOCK +
   "Photorealistic, natural, consistent perspective and shadows.";
 
-// Staging must NEVER remodel the room — only add furnishings.
+// Staging instruction; generated results still require original-image review.
 const STAGE_LOCK =
   "CRITICAL: keep the room's architecture EXACTLY as photographed — identical walls, " +
   "windows, doors, ceiling, flooring material, trim, built-ins, light fixtures, the view " +

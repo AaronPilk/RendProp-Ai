@@ -5,6 +5,13 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+The [2 October beta-polish candidate](docs/handoff/BETA-POLISH-20261002.md) adds
+main-photo-first publishing, Explore/Play video modes, branded client editing,
+apartment units, keyboard-safe room tags, app-owned photo progress and explicit
+saved-photo selection for published listings. Its handoff separates tested source
+from deployment and phone acceptance; build40 below is the last verified delivery
+until a build41 receipt confirms otherwise.
+
 Internal **TestFlight 1.0.3 (40)** is available to the existing Rendprop team.
 The [crash-hardening release](docs/handoff/IOS-CRASH-HARDENING-20261002.md)
 bounds the listing toolbox's SwiftUI types, safely formats invalid duration/FPS

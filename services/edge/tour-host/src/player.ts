@@ -2263,7 +2263,9 @@ function galleryItems(tour: Tour): Array<{ url: string; label: string }> {
   // listing while the demo kept working — which is exactly how a broken wire
   // survives a spot-check. Top level wins; details is the fallback.
   const top = (tour as unknown as Record<string, unknown>).gallery;
-  const g = (Array.isArray(top) && top.length) ? top : det(tour, "gallery", "photos");
+  // An explicit empty array intentionally hides the published gallery. Only a
+  // missing legacy field may fall back to editorial details.
+  const g = Array.isArray(top) ? top : det(tour, "gallery", "photos");
   const out: Array<{ url: string; label: string }> = [];
   if (Array.isArray(g)) {
     for (const it of g) {
@@ -2565,6 +2567,8 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
   const isRE = isRealEstate(tour);
   const sold = isSoldOrArchived(tour);
   const out: string[] = [];
+  // Lead with the owner's property photo; details follow without loading video.
+  if (mediaCover) out.push(mediaCover);
 
   // Overview (always — built from core listing data).
   const tiles = overviewTiles(tour);
@@ -2583,8 +2587,6 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
     ${soldNote}
     ${tiles.length ? `<div class="lp-stats">${tiles.map((t) => `<div class="lp-stat"><span class="v">${escapeHtml(t.v)}</span><span class="k">${escapeHtml(t.k)}</span></div>`).join("")}</div>` : ""}
   </div></section>`);
-
-  if (mediaCover) out.push(mediaCover);
 
   // Per-industry details (venue / restaurant / retail / fitness / other).
   if (!isRE) out.push(renderIndustrySection(tour, unbranded));
@@ -2995,6 +2997,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const agent = extractAgent(tour.client_mode === true ? { ...tour.agent_card, handle: null } : tour.agent_card || {});
   const header = buildHeader(tour, unbranded);
   const poster = safeUrl(tour.poster || "");
+  const coverImage = safeUrl(tour.cover_url || "") || galleryItems(tour)[0]?.url || poster;
   const staged = !!tour.staged;
   const hasAltered = Array.isArray(tour.altered_media) && tour.altered_media.length > 0;
   const chapters = Array.isArray(tour.chapters) ? tour.chapters : [];
@@ -3072,7 +3075,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // asked for it. og:* still ships — sharing a link in a message is not the
   // same decision as being listed in a search index forever.
   const indexable = !embed && !unbranded && allowsIndexing(tour);
-  const ogPoster = unbranded ? "" : absolutize(poster, shareUrl);
+  const ogPoster = unbranded ? "" : absolutize(coverImage, shareUrl);
   const ogImage = ogPoster ? `<meta property="og:image" content="${escapeAttr(ogPoster)}">\n<meta name="twitter:image" content="${escapeAttr(ogPoster)}">` : "";
 
   // Contract: scrub_url (all-intra R2 mp4) is the PRIMARY scrub source and
@@ -3122,7 +3125,6 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 
   // Embed mode (?embed=1): render ONLY the flythrough hero — for the in-app
   // "See it in action" card. Otherwise render the full listing microsite.
-  const coverImage = poster || galleryItems(tour)[0]?.url || "";
   const hasVideo = !!(scrubUrl || hlsUrl);
   const coverHtml = `<section class="listing-cover" aria-label="Property media">
     ${coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
@@ -3172,7 +3174,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
         canonical: shareUrl,
         name: header.entityName,
         description: header.ogDesc,
-        poster: ogPoster,
+        poster: absolutize(poster, shareUrl),
         videoUrl: scrubUrl,
         // priceText() already returns "" for 0 / absent; price_cents is the
         // only numeric source, so a listing with a display price but no cents
@@ -3285,13 +3287,16 @@ ${footerHtml}
 
 ` : `<div id="listing-top"></div>
 <nav id="listing-nav" aria-label="Listing navigation"><div class="listing-nav-inner">
+  <div class="listing-nav-links">
   <a href="#overview">Details</a>
-  ${galleryItems(tour).length || chapters.length ? `<a href="#gallery">Photos & rooms</a>` : ""}
+  ${galleryItems(tour).length || chapters.length ? `<a href="#gallery">${galleryItems(tour).length ? "Photos" : "Rooms"}</a>` : ""}
   ${safeUrl(tour.floorplan_url || "") ? `<a href="#plan">Floor plan</a>` : ""}
   ${!unbranded ? `<a href="#endcard">Contact</a>` : ""}
+  </div><div class="listing-nav-actions">
   ${hasVideo ? `<button type="button" class="watch-button" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button>` : ""}
   ${shareHtml}
   <a href="#listing-top" class="listing-backtop">Top ↑</a>
+  </div>
 </div></nav>
 ${sectionsHtml}
 ${endcardHtml}
@@ -3299,7 +3304,15 @@ ${getAppHtml}
 ${footerHtml}
 <dialog id="flythrough-modal" aria-labelledby="flythrough-title" aria-modal="true">
   <div class="video-head"><h2 id="flythrough-title">Fly-through</h2><button type="button" id="flythrough-close">Back to listing ×</button></div>
-  <video id="flythrough-video" controls playsinline webkit-playsinline preload="none"${poster ? ` poster="${escapeAttr(poster)}"` : ""}></video>
+  <div class="flythrough-modes" role="group" aria-label="Choose how to view the tour">
+    <button type="button" class="video-action" id="flythrough-explore" aria-pressed="true">Explore</button>
+    <button type="button" class="video-action" id="flythrough-watch" aria-pressed="false">Play video</button>
+  </div>
+  <div id="flythrough-viewer" tabindex="0" role="region" aria-label="Scroll through the fly-through" aria-describedby="flythrough-status">
+    <div id="flythrough-stage"><video id="flythrough-video" muted playsinline webkit-playsinline preload="none"${poster ? ` poster="${escapeAttr(poster)}"` : ""}></video></div>
+    <div id="flythrough-scroll-track" aria-hidden="true"></div>
+  </div>
+  <div class="flythrough-position" id="flythrough-position-label"><span id="flythrough-position-name">Tour position</span><div id="flythrough-position" role="slider" tabindex="0" aria-labelledby="flythrough-position-name" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div></div>
   <div class="video-foot">
     <p id="flythrough-status" role="status" aria-live="polite">Choose Watch fly-through to load the video.</p>
     <span id="flythrough-quality"></span>

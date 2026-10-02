@@ -8,6 +8,14 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+The [beta-polish candidate](../../docs/handoff/BETA-POLISH-20261002.md) targets
+internal build41: labeled client cards/private routing, unit entry, prominent
+property editing, keyboard-safe room tags, top photo progress across navigation,
+completion notifications that respect preferences, and explicit saved-version
+publication. Jobs do not resume automatically after force-quit. Staging output and
+real walking motion still need review; software checks are not camera acceptance.
+Until a41 delivery receipt exists,40 is the last verified TestFlight release.
+
 [Crash hardening](../../docs/handoff/IOS-CRASH-HARDENING-20261002.md) is available
 as internal **TestFlight 1.0.3 (40)**, verified **2 October 2026 at 01:18:15 UTC**
 for the existing Rendprop team. All 12 CI jobs passed on archived source

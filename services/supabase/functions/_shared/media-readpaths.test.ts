@@ -5,9 +5,11 @@ const org = "10000000-0000-4000-8000-000000000001", listing = "20000000-0000-400
 const renderId = "30000000-0000-4000-8000-000000000003", asset = "40000000-0000-4000-8000-000000000004";
 const user = "50000000-0000-4000-8000-000000000005", jobId = "60000000-0000-4000-8000-000000000006";
 const galleryId = "70000000-0000-4000-8000-000000000007", resultId = "80000000-0000-4000-8000-000000000008";
+const olderGalleryId="70000000-0000-4000-8000-000000000017";
 const contactId="90000000-0000-4000-8000-000000000009";
 const contactKey=`renders/${org}/${listing}/contact-${contactId}.jpg`;
 const prefix = `renders/${org}/${listing}`, key = `${prefix}/finished.mp4`, altered = `${prefix}/altered.mp4`, galleryKey = `${prefix}/gallery-test.jpg`;
+const olderGalleryKey=`${prefix}/gallery-old-staged.jpg`;
 for (const [name, value] of Object.entries({ SUPABASE_URL: "https://media-privacy-fixture.invalid", SUPABASE_ANON_KEY: "synthetic-public", SUPABASE_SERVICE_ROLE_KEY: "synthetic-service", CLOUDFLARE_ACCOUNT_ID: "media-fixture", R2_ACCESS_KEY_ID: "synthetic-access", R2_SECRET_ACCESS_KEY: "synthetic-secret", R2_PUBLIC_BASE_URL: "https://media-fixture.invalid" })) Deno.env.set(name, value);
 let captured!: (req: Request) => Promise<Response>;
 const descriptor = Object.getOwnPropertyDescriptor(Deno, "serve")!;
@@ -18,9 +20,9 @@ finally { Object.defineProperty(Deno, "serve", descriptor); }
 const { handleCreative } = await import("../studio/creative.ts");
 const { adminClient } = await import("./supabase.ts");
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
-type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean };
+type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean };
 async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "history" | "portfolio", opts: Options = {}) {
-  const previous = globalThis.fetch; let checks = 0, profileRead = false, contactReads=0; const seen: Record<string, unknown>[] = [];
+  const previous = globalThis.fetch; let checks = 0, profileRead = false, contactReads=0,listingReads=0; const seen: Record<string, unknown>[] = [];
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init), url = new URL(req.url);
     assertEquals(url.hostname, "media-privacy-fixture.invalid");
@@ -32,13 +34,13 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
       if (opts.missingVisibility) return response({ assets: {}, renders: {}, keys: {} });
       if (opts.invalidVisibility) return response({ assets: {}, renders: { [renderId]: "true" }, keys: {} });
       return response(Object.fromEntries(["assets", "renders", "keys"].map(kind => [kind, Object.fromEntries(args[`p_${kind}`].map((v: string) => [v,
-        !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
+        !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.revokeCoverAtFinal && checks>=5 && [galleryId,galleryKey].includes(v)) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
     }
     if (url.pathname === "/rest/v1/rpc/publish_render") return response({ id: renderId, listing_id: listing, slug: "fixture-tour", video_key: key });
     if (url.pathname === "/rest/v1/rpc/assert_studio_edit_quality") return response(null);
     const table = url.pathname.split("/").pop();
     if (table === "renders") { const row = { id: renderId, job_id: jobId, listing_id: listing, slug: "fixture-tour", video_key: key, poster_key: `${prefix}/poster.jpg`, published_at: "2026-09-24T00:00:00Z", duration_s: 5 }; return response(handler === "portfolio" ? [row] : row); }
-    if (table === "listings") { const row = { id: listing, org_id: org, agent_id: user, deleted_at: null, details: {}, address: "Synthetic listing" }; return response(handler === "portfolio" ? [row] : row); }
+    if (table === "listings") {listingReads++; const row = { id: listing, org_id: org, agent_id: user, deleted_at: null, details: {}, address: "Synthetic listing",main_photo_key:opts.mainPhotoKey??null,gallery_asset_ids:opts.changeSelection&&listingReads>1?[]:opts.selection??null }; return response(handler === "portfolio" ? [row] : row); }
     if (table === "orgs") return response({ id: org, handle: "fixture", brand_kit: {} });
     if (table === "listing_client_contacts") {
       contactReads++;
@@ -47,8 +49,18 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
     }
     if (table === "profiles") { profileRead = true; return response({ name: "Fixture Agent" }); }
     if (table === "render_jobs") return response({ id: jobId, listing_id: listing, capture_asset_id: null, status: "completed" });
-    if (table === "capture_assets") return response(url.searchParams.get("id")===`eq.${contactId}`?{id:contactId,listing_id:listing,kind:"photo",bucket:"renders",uploaded:true,storage_key:contactKey}:[{ id: galleryId, storage_key: galleryKey }]);
-    if (table === "media_provenance") return response([{ kind: "video.edit", disclosure: "Edited video", original_key: key, altered_key: altered }]);
+    if (table === "capture_assets") {
+      if(url.searchParams.get("id")===`eq.${contactId}`)return response({id:contactId,listing_id:listing,kind:"photo",bucket:"renders",uploaded:true,storage_key:contactKey});
+      if(url.searchParams.get("storage_key")?.startsWith("eq."))return response(opts.coverPhoto===undefined?{id:galleryId,listing_id:listing,kind:"photo",bucket:"renders",uploaded:true,storage_key:galleryKey}:opts.coverPhoto);
+      return response([...(opts.withHistoricalPhoto?[{id:olderGalleryId,storage_key:olderGalleryKey}]:[]),{ id: galleryId, storage_key: galleryKey }]);
+    }
+    if (table === "media_provenance") return response([
+      { kind: "video_reflection_removal", disclosure: "Edited video", original_key: key, altered_key: altered },
+      ...(opts.withHistoricalPhoto?[
+        {kind:"virtual_stage",disclosure:"Retired stage",original_key:`${prefix}/original-old.jpg`,altered_key:olderGalleryKey},
+        {kind:"declutter",disclosure:"Current selected edit",original_key:`${prefix}/original-current.jpg`,altered_key:galleryKey},
+      ]:[]),
+    ]);
     if (table === "studio_creative_results") { const row = { id: resultId, listing_id: listing, org_id: org, user_id: user, kind: "video", bucket: "renders", storage_key: key,
       metadata: { state: "completed", video_kind: "edit", asset_id: asset, source_asset_ids: [asset] } }; return response(handler === "history" ? [row] : row); }
     throw new Error(`Unmodelled fixture request ${url.pathname}`);
@@ -134,4 +146,39 @@ Deno.test("actual client tour discards mixed revisions and revoked headshot with
 Deno.test("ordinary actual tour retains the agent mode when no client is assigned",async()=>{
  const r=await invoke("tour");assertEquals(r.status,200);assertEquals(r.body.agent_card.name,"Fixture Agent");
  assertEquals(r.body.client_mode,false);assertEquals(r.body.hide_rendprop_branding,false);
+});
+Deno.test("actual public cover resolves the saved gallery selection and joins final visibility fencing",async()=>{
+  const r=await invoke("tour",{mainPhotoKey:galleryKey});assertEquals(r.status,200);assertEquals(r.body.cover_url,`https://media-fixture.invalid/${galleryKey}`);
+  const last=r.seen.at(-1)!;assert((last.p_assets as string[]).includes(galleryId));assert((last.p_keys as string[]).includes(galleryKey));
+  const revoked=await invoke("tour",{mainPhotoKey:galleryKey,revokeCoverAtFinal:true});assertEquals(revoked.status,404);assert(!JSON.stringify(revoked.body).includes("media-fixture.invalid"));
+});
+Deno.test("actual public cover omits invalid, unuploaded, cross-scope and revoked references",async()=>{
+  for(const mainPhotoKey of [null,contactKey,key,`https://fixture.invalid/${galleryKey}`,galleryKey.replace(listing,asset),galleryKey+"?x=1"]){
+    const r=await invoke("tour",{mainPhotoKey});assertEquals(r.status,200);assertEquals(r.body.cover_url,null);
+  }
+  const base={id:galleryId,listing_id:listing,kind:"photo",bucket:"renders",uploaded:true,storage_key:galleryKey};
+  for(const coverPhoto of [null,{...base,listing_id:asset},{...base,storage_key:galleryKey.replace(org,user)},{...base,uploaded:false},{...base,kind:"video"},{...base,storage_key:contactKey}]){
+    const r=await invoke("tour",{mainPhotoKey:galleryKey,coverPhoto});assertEquals(r.status,200);assertEquals(r.body.cover_url,null);
+  }
+  const denied=await invoke("tour",{mainPhotoKey:galleryKey,denyOptional:true});assertEquals(denied.status,200);assertEquals(denied.body.cover_url,null);
+});
+Deno.test("actual tour explicit current gallery excludes historical staged uploads and preserves selected order",async()=>{
+  const current=await invoke("tour",{selection:[galleryId],withHistoricalPhoto:true,mainPhotoKey:galleryKey});assertEquals(current.status,200);
+  assertEquals(current.body.gallery,[{url:`https://media-fixture.invalid/${galleryKey}`}]);assertEquals(current.body.cover_url,`https://media-fixture.invalid/${galleryKey}`);
+  assert(!JSON.stringify(current.body.gallery).includes("old-staged"));
+  assert(!JSON.stringify(current.body.altered_media).includes("old-staged"));
+  assertEquals(current.body.altered_media.map((r:{kind:string})=>r.kind),["video_reflection_removal","declutter"]);
+  assert(current.body.altered_media[1].disclosure.includes("Compare with the original"));
+  const ordered=await invoke("tour",{selection:[galleryId,olderGalleryId],withHistoricalPhoto:true});assertEquals(ordered.body.gallery,[{url:`https://media-fixture.invalid/${galleryKey}`},{url:`https://media-fixture.invalid/${olderGalleryKey}`}]);
+  const legacy=await invoke("tour",{withHistoricalPhoto:true});assertEquals(legacy.body.gallery.length,2);
+});
+Deno.test("actual tour empty gallery selection hides property photos and saved cover without changing video",async()=>{
+  const r=await invoke("tour",{selection:[],withHistoricalPhoto:true,mainPhotoKey:galleryKey});assertEquals(r.status,200);
+  assertEquals(r.body.gallery,[]);assertEquals(r.body.cover_url,null);assert(r.body.video_url);
+  assertEquals(r.body.altered_media.map((r:{kind:string})=>r.kind),["video_reflection_removal"]);
+  const excludedCover=await invoke("tour",{selection:[olderGalleryId],mainPhotoKey:galleryKey,withHistoricalPhoto:true});assertEquals(excludedCover.body.cover_url,null);
+});
+Deno.test("actual tour discards a retired version if gallery selection changes during assembly",async()=>{
+ const r=await invoke("tour",{selection:[galleryId],mainPhotoKey:galleryKey,changeSelection:true});assertEquals(r.status,503);
+ assert(!JSON.stringify(r.body).includes("media-fixture.invalid"));
 });

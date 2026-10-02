@@ -2,15 +2,16 @@ import AVFoundation
 import CoreGraphics
 import Vision
 
-/// On-device render engine v2 — turns a raw walkthrough into a smooth,
-/// drone-style, instantly-scrubbable tour with zero server cost.
+/// On-device render engine v2 — reduces measurable translational shake and
+/// encodes a retimed, instantly-scrubbable HD tour with zero server cost.
 ///
 ///   • STABILIZE — the drone feel. A first pass measures frame-to-frame camera
 ///                 jitter (Vision translational registration on downscaled
 ///                 frames), smooths the camera path with a Gaussian low-pass,
 ///                 and derives a per-frame correction. A small adaptive crop-in
-///                 hides the moving borders. Handheld footage that came in shaky
-///                 goes out gliding. Drone clips skip this (already smooth).
+///                 hides moving borders. Drone footage uses a gentler profile.
+///                 Global translation cannot remove walking parallax, rotation
+///                 or rolling-shutter distortion.
 ///   • RETIME    — handheld walks glide at 2×; drone clips a gentle 1.25×.
 ///                 Very short clips are sped less so they don't feel frantic.
 ///   • 60 FPS    — output frame cadence for a fluid scroll-scrub.
@@ -41,6 +42,7 @@ enum RenderEngine {
         let durationS: Double
         let speedFactor: Double
         let stabilized: Bool
+        let motionSmoothing: String
     }
 
     enum RenderError: LocalizedError {
@@ -214,6 +216,7 @@ enum RenderEngine {
         var corrections = [CGPoint](repeating: .zero, count: frameCount)
         var cropZoom: CGFloat = 1.0
         var stabilized = false
+        var motionSmoothing = "unavailable"
         let profile: StabProfile = asset.isDrone ? .drone : .handheld
 
         do {
@@ -246,7 +249,9 @@ enum RenderEngine {
                                                renderSize: encode.renderSize,
                                                profile: profile,
                                                zoom: &cropZoom)
-                stabilized = cropZoom > 1.0001
+                // A safety crop alone is not evidence of corrected motion.
+                stabilized = corrections.contains { abs($0.x) > 0.01 || abs($0.y) > 0.01 }
+                motionSmoothing = stabilized ? "applied" : "steady"
             }
         }
 
@@ -286,7 +291,8 @@ enum RenderEngine {
         }
 
         progress(1.0, "Done")
-        return Output(url: outURL, durationS: outDuration.seconds, speedFactor: speed, stabilized: stabilized)
+        return Output(url: outURL, durationS: outDuration.seconds, speedFactor: speed,
+                      stabilized: stabilized, motionSmoothing: motionSmoothing)
     }
 
     // MARK: - File plumbing

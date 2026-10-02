@@ -18,7 +18,7 @@ mkdirSync(evidence, { recursive: true });
 const playwrightPath = arg("--playwright") || resolve(ROOT, "../../../apps/studio/node_modules/@playwright/test/index.mjs");
 const { chromium } = await import(pathToFileURL(playwrightPath).href);
 const fault = arg("--fault") || null;
-assert.ok(!fault || ["eager-media", "retain-media", "queued-close"].includes(fault), "Unknown negative control");
+assert.ok(!fault || ["eager-media", "retain-media", "queued-close", "poster-cover", "explore-no-seek"].includes(fault), "Unknown negative control");
 const sourceHash = createHash("sha256").update(readFileSync(join(ROOT, "src/player.ts"))).digest("hex");
 const sourceHashes = Object.fromEntries(readdirSync(join(ROOT, "src")).filter((name) => name.endsWith(".ts")).map((name) => ["src/" + name, createHash("sha256").update(readFileSync(join(ROOT, "src", name))).digest("hex")]));
 sourceHashes["scripts/check-listing-browser.mjs"] = createHash("sha256").update(readFileSync(join(ROOT, "scripts/check-listing-browser.mjs"))).digest("hex");
@@ -61,6 +61,7 @@ function fixture({ slow = false, missing = false, failed = false, spatial = fals
   tour.gallery = [{ url: "/synthetic-gallery.svg", label: "Synthetic gallery photo" }];
   tour.floorplan_url = "/synthetic-floorplan.svg";
   tour.poster = "/synthetic-poster.svg";
+  tour.cover_url = "/synthetic-main-photo.svg";
   tour.video_url = missing ? null : slow ? "/synthetic-slow.mp4" : failed ? "/synthetic-failed.mp4" : "/synthetic-video.mp4";
   tour.scrub_url = tour.video_url;
   tour.hls_url = null;
@@ -78,6 +79,21 @@ function fixture({ slow = false, missing = false, failed = false, spatial = fals
     tour.listing.details = { ...tour.listing.details, show_partners: true, show_app_cta: true, show_financing: true };
   }
   return tour;
+}
+
+// Actual property-cover priority, without an account or media fetch.
+for (const test of [
+  { name: "explicit selected cover", cover: "/synthetic-main.svg", gallery: ["/synthetic-sign.svg", "/synthetic-main.svg"], expected: "/synthetic-main.svg" },
+  { name: "legacy ordered gallery", cover: null, gallery: ["/synthetic-gallery.svg"], expected: "/synthetic-gallery.svg" },
+  { name: "invalid cover URL", cover: "javascript:alert(1)", gallery: ["/synthetic-gallery.svg"], expected: "/synthetic-gallery.svg" },
+  { name: "video-only fallback", cover: null, gallery: [], expected: "/synthetic-poster.svg" },
+  { name: "explicit empty gallery", cover: null, gallery: [], detailsGallery: ["/synthetic-stale-original.svg"], expected: "/synthetic-poster.svg" },
+]) {
+  const tour = fixture(); tour.cover_url = test.cover; tour.gallery = test.gallery; tour.listing.details.gallery = test.detailsGallery || test.gallery;
+  const html = renderTourPage(tour, "http://127.0.0.1/api", "", "", { origin: "http://127.0.0.1" });
+  check(html.match(/class="listing-cover"[^>]*>\s*<img src="([^"]+)"/)?.[1] === test.expected, test.name + " takes the correct actual cover priority");
+  check(html.includes('property="og:image" content="http://127.0.0.1' + test.expected + '"'), test.name + " social preview uses the same property cover");
+  check(html.indexOf('class="listing-cover"') < html.indexOf('id="overview"'), test.name + " property photo appears before listing details");
 }
 
 let browser, server, browserPage;
@@ -126,6 +142,8 @@ try {
       if (fault === "eager-media") html = html.replace("</body>", '<script>document.getElementById("flythrough-video").src="/synthetic-video.mp4";document.getElementById("flythrough-video").load();</script></body>');
       if (fault === "retain-media") html = html.replace("</body>", '<script>var v=document.getElementById("flythrough-video");var remove=v.removeAttribute.bind(v);v.removeAttribute=function(name){if(name!=="src")remove(name)};var load=v.load.bind(v);v.load=function(){if(!v.currentSrc)load()};</script></body>');
       if (fault === "queued-close") { assert.ok(html.includes("if (active && !modal.open) closeVideo(false)"), "Queued-close control must mutate the actual fixed listener"); html = html.replace("if (active && !modal.open) closeVideo(false)", "if (active) closeVideo(false)"); }
+      if (fault === "poster-cover") html = html.replace('src="/synthetic-main-photo.svg" alt=', 'src="/synthetic-poster.svg" alt=');
+      if (fault === "explore-no-seek") html = html.replace('queueSeek(fraction*usableDuration());', '/* fault: scrolling does not seek */');
       return send(200, html, { "Content-Type": "text/html; charset=utf-8" });
     }
     if (url.pathname === "/favicon.svg") return send(204, "");
@@ -156,7 +174,7 @@ try {
   const mediaRequests = () => requests.filter((r) => /\.(mp4|m3u8|ts)$/.test(r.path));
   const snapshot = () => page.evaluate(() => { const v = document.querySelector("#flythrough-video"); return { time: v.currentTime, paused: v.paused, src: v.getAttribute("src"), currentSrc: v.currentSrc, ready: v.readyState, network: v.networkState, width: v.videoWidth, height: v.videoHeight, rate: v.playbackRate, controls: v.controls, muted: v.muted }; });
   const unloaded = () => page.waitForFunction(() => { const v = document.querySelector("#flythrough-video"); return v.getAttribute("src") === null && v.networkState === v.NETWORK_EMPTY && v.readyState === v.HAVE_NOTHING && v.paused; });
-  const open = async () => { await entry.click(); await modal.waitFor({ state: "visible" }); await page.waitForFunction(() => document.querySelector("#flythrough-video").readyState >= 2); };
+  const open = async ({ watch = true } = {}) => { await entry.click(); await modal.waitFor({ state: "visible" }); await page.waitForFunction(() => document.querySelector("#flythrough-video").readyState >= 2); if (watch) await page.locator("#flythrough-watch").click(); };
   const closeAndCheck = async (label) => {
     await close.click(); await modal.waitFor({ state: "hidden" });
     // Chromium may retain currentSrc's last selected URL after load() clears
@@ -182,7 +200,10 @@ try {
   check(requests.filter((r) => r.path.startsWith("/api/beacon")).length === 0, "Viewing listing content alone does not record a flythrough view or delivery");
   check(await page.locator("#overview").innerText().then((text) => text.includes("123 Listing Avenue")), "Property address/details render without media readiness");
   check(await page.locator("#gallery img").count() === 1, "Property photos remain available without a flythrough");
+  check(await page.locator(".listing-cover img").getAttribute("src") === "/synthetic-main-photo.svg", "Actual browser opens on the selected main photo instead of the video thumbnail");
+  check(await page.evaluate(() => document.querySelector(".listing-cover").getBoundingClientRect().top < document.querySelector("#overview").getBoundingClientRect().top), "The main photo is above details in the rendered page");
   check(await page.locator("#leadform").count() === 1, "Branded lead form remains available before watching video");
+  await page.screenshot({ path: join(evidence, "listing-first-mobile.png") });
 
   // The regression reported by the user: navigation through listing sections
   // must never seek or force the visitor through a massive scroll/video track.
@@ -201,6 +222,18 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Listing has no horizontal overflow at " + width + "px");
     const box = await entry.boundingBox();
     check(box && box.width >= 44 && box.height >= 44, "Watch control is at least 44×44px at " + width + "px");
+    const geometry = await page.evaluate(() => {
+      const nav=document.querySelector('#listing-nav').getBoundingClientRect();
+      const actions=Array.from(document.querySelectorAll('.listing-nav-actions > *')).map(el=>{const r=el.getBoundingClientRect();return {id:el.id||el.className,top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width,height:r.height};});
+      const links=Array.from(document.querySelectorAll('.listing-nav-links > *')).map(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,height:r.height};});
+      return {width:innerWidth,height:nav.height,top:nav.top,bottom:nav.bottom,actions,links};
+    });
+    navigationMeasurements.push({ target: "nav-layout", ...geometry });
+    check(geometry.height <= (width <= 600 ? 114 : 76), "Navigation stays compact without an orphan Top row at " + width + "px");
+    check(geometry.actions.every(a=>a.height>=44 && a.width>=44 && a.left>=0 && a.right<=width && Math.abs(a.top-geometry.actions[0].top)<1), "Watch, Share and Top stay aligned and tappable at " + width + "px");
+    check(geometry.links.every(a=>a.height>=44 && a.left>=0 && a.right<=width), "All section links remain visible without sideways scrolling at " + width + "px");
+    check(width>600 || Math.abs(geometry.actions.at(-1).right-(width-12))<1, "Mobile actions use the full row with consistent side margins at " + width + "px");
+    if (width===1440) { await page.locator('.listing-backtop').click(); await page.screenshot({ path: join(evidence, "listing-first-desktop.png") }); }
     for (const target of ["gallery", "overview", "endcard"]) {
       await page.locator('#listing-nav a[href="#' + target + '"]').click(); await page.waitForTimeout(100);
       const measurement = await page.evaluate((id) => { const nav = document.querySelector("#listing-nav").getBoundingClientRect(), heading = document.querySelector("#" + id + (id === "endcard" ? " .agent .nm" : " .lp-h")).getBoundingClientRect(); return { width: innerWidth, target: id, navBottom: nav.bottom, headingTop: heading.top, headingBottom: heading.bottom }; }, target);
@@ -210,15 +243,38 @@ try {
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => { scrollTo(0, 120); window.__savedScroll = scrollY; });
-  await open();
+  await open({ watch: false });
   check(mediaRequests().length > 0 && mediaRequests().every((r) => r.path === "/synthetic-video.mp4"), "Only opening the flythrough initiates the real video source");
   check(await modal.getAttribute("aria-labelledby") === "flythrough-title", "Flythrough dialog has an accessible title");
   check(await page.evaluate(() => document.querySelector("#flythrough-modal").open), "Flythrough opens as an actual native dialog");
   check(await page.evaluate(() => document.activeElement?.id === "flythrough-close"), "Initial modal focus provides an immediate working exit");
+  const explored = await snapshot();
+  check(explored.width === 1280 && explored.height === 720 && explored.paused && explored.muted && !explored.controls, "Explore opens on the actual decoded master with scrolling and no automatic playback");
+  check(await page.locator("#flythrough-explore").getAttribute("aria-pressed") === "true", "Explore is the clear default view after opening");
+  await page.screenshot({ path: join(evidence, "flythrough-explore-mobile.png") });
+  const viewer = page.locator("#flythrough-viewer");
+  await viewer.hover(); await page.mouse.wheel(0, 800);
+  await page.waitForFunction(() => { const v=document.querySelector('#flythrough-video'); return v.currentTime>1 && !v.seeking; });
+  check((await snapshot()).paused && (await snapshot()).time>1, "A real wheel scroll inside Explore seeks the actual paused media timeline");
+  check(await page.evaluate(() => scrollY===0 && document.body.style.top===-window.__savedScroll+'px'), "Explore scrolling stays inside the viewer while the listing remains fixed");
+  const exploreFrame = await page.evaluate(() => new Promise((resolveFrame,reject)=>{
+    const v=document.querySelector('#flythrough-video'), viewer=document.querySelector('#flythrough-viewer');
+    const timer=setTimeout(()=>reject(new Error('No decoded Explore frame after internal scroll')),3000);
+    function next(){v.requestVideoFrameCallback((_,m)=>{if(Math.abs(m.mediaTime-4)<.2){clearTimeout(timer);resolveFrame({time:m.mediaTime,width:m.width,height:m.height});}else next();});}
+    next(); viewer.scrollTop=(viewer.scrollHeight-viewer.clientHeight)/2;
+  }));
+  check(Math.abs(exploreFrame.time-4)<.2 && exploreFrame.width===1280 && exploreFrame.height===720, "Internal scroll presents a real decoded frame at the chosen tour position");
+  await page.locator('#flythrough-position').focus(); await page.keyboard.press('Home');
+  await page.waitForFunction(()=>{const v=document.querySelector('#flythrough-video');return v.currentTime<.1&&!v.seeking;});
+  check(await page.locator('#flythrough-position').getAttribute('aria-valuenow') === '0', "Explore position has a working keyboard-accessible slider");
+  const mediaBeforeSwitch=mediaRequests().length;
+  await page.locator('#flythrough-watch').click();
+  check(await page.locator('#flythrough-watch').getAttribute('aria-pressed') === 'true' && await viewer.evaluate(el=>el.classList.contains('watch-mode')), "Play video switches the same viewer to ordinary playback");
   const loaded = await snapshot();
   check(loaded.width === 1280 && loaded.height === 720 && loaded.controls && loaded.rate === 1, "Actual decoded 720p video uses ordinary controls and normal speed");
   check((await page.locator("#flythrough-quality").innerText()).includes("1280 × 720"), "Visible quality label reflects actual decoded source dimensions");
   check(!loaded.muted, "Flythrough starts with its real audio track available");
+  check(mediaRequests().length === mediaBeforeSwitch, "Switching Explore to Play video reuses the existing source instead of a second decoder");
   await page.evaluate(() => document.querySelector("#flythrough-video").pause());
   const pausedAt = (await snapshot()).time; await page.waitForTimeout(350);
   check(Math.abs((await snapshot()).time - pausedAt) < .08, "Real media pause stops the playhead");
@@ -251,6 +307,20 @@ try {
   const frame = await page.evaluate(() => { const v = document.querySelector("#flythrough-video"), c = document.createElement("canvas"); c.width = 32; c.height = 18; const ctx = c.getContext("2d"); ctx.drawImage(v, 0, 0, 32, 18); return Array.from(ctx.getImageData(0, 0, 32, 18).data); });
   writeFileSync(join(evidence, "decoded-frame.json"), JSON.stringify({ presented, channelValues: new Set(frame.filter((_, i) => i % 4 !== 3)).size, pixels: frame }, null, 2) + "\n");
   check(new Set(frame.filter((_, i) => i % 4 !== 3)).size > 80, "Seeking yields a real nonempty decoded test-pattern frame");
+  const switchAt=(await snapshot()).time, sourceBeforeExplore=(await snapshot()).currentSrc;
+  await page.locator('#flythrough-explore').click();
+  await page.waitForFunction(()=>document.querySelector('#flythrough-video').paused);
+  check(!(await snapshot()).controls && (await snapshot()).muted && Math.abs((await snapshot()).time-switchAt)<.15, "Returning to Explore pauses at the current playback position without losing the tour");
+  check((await snapshot()).currentSrc===sourceBeforeExplore && await page.locator('#flythrough-position').getAttribute('aria-valuenow').then(v=>Number(v)>=45 && Number(v)<=70), "Reverse switch retains source and synchronizes accessible position");
+  await page.evaluate(()=>{const v=document.querySelector('#flythrough-viewer');v.scrollTop=(v.scrollHeight-v.clientHeight)*.25;v.dispatchEvent(new Event('scroll'));v.scrollTop=(v.scrollHeight-v.clientHeight)*.75;v.dispatchEvent(new Event('scroll'));});
+  await page.waitForFunction(()=>{const v=document.querySelector('#flythrough-video');return Math.abs(v.currentTime-6)<.1&&!v.seeking;});
+  check(Math.abs((await snapshot()).time-6)<.1 && (await snapshot()).paused, "Rapid Explore scroll changes resolve to the latest requested decoded position");
+  await page.evaluate(()=>{const v=document.querySelector('#flythrough-video');window.__originalPlay=v.play;v.play=()=>new Promise((resolve,reject)=>{window.__rejectPlay=reject;});});
+  await page.locator('#flythrough-watch').click(); await page.locator('#flythrough-explore').click();
+  await page.evaluate(()=>{window.__rejectPlay(new Error('Synthetic delayed autoplay rejection'));document.querySelector('#flythrough-video').play=window.__originalPlay;});
+  await page.waitForTimeout(50);
+  check(await page.locator('#flythrough-play').isHidden() && await page.locator('#flythrough-status').innerText().then(t=>t.includes('Scroll on the video')), "A delayed playback rejection cannot replace the current Explore controls or instructions");
+  await page.locator('#flythrough-watch').click();
   for (let i = 0; i < 15; i++) { await page.keyboard.press("Tab"); check(await page.evaluate(() => document.querySelector("#flythrough-modal").contains(document.activeElement)), "Native dialog keeps keyboard focus inside, tab " + (i + 1)); }
   await page.keyboard.press("Shift+Tab");
   check(await page.evaluate(() => document.querySelector("#flythrough-modal").contains(document.activeElement)), "Reverse Tab stays inside the dialog");
@@ -268,7 +338,7 @@ try {
   await page.waitForTimeout(150);
   check(await page.evaluate(() => document.querySelector("#flythrough-modal").open), "A queued previous Close event cannot close a rapidly reopened dialog");
   await page.waitForFunction(() => document.querySelector("#flythrough-modal").open && document.querySelector("#flythrough-video").readyState >= 2);
-  check((await snapshot()).width === 1280 && !(await snapshot()).paused, "Rapid close/reopen produces actual decoded playback in the current session");
+  check((await snapshot()).width === 1280 && (await snapshot()).paused && await page.locator('#flythrough-explore').getAttribute('aria-pressed') === 'true', "Rapid close/reopen produces a decoded Explore view in the current session");
   await closeAndCheck("Rapid reopen close");
   await entry.scrollIntoViewIfNeeded();
   await page.evaluate(() => { window.__savedScroll = scrollY; }); await open();

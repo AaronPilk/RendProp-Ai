@@ -54,31 +54,148 @@ struct RealEstateRoleSettingsView: View {
     }
 }
 
+private enum ClientContactInputField: String, Hashable {
+    case name, brokerage, title, phone, publicEmail, website, recipient
+}
+
+/// A permanent label stays readable after typing and gives VoiceOver the same
+/// meaning as the visual form. Each field is a bounded, concrete view.
+private struct ClientContactInput: View {
+    let title: String
+    let prompt: String
+    @Binding var text: String
+    let field: ClientContactInputField
+    let focus: FocusState<ClientContactInputField?>.Binding
+    var next: ClientContactInputField? = nil
+    var keyboard: UIKeyboardType = .default
+    var contentType: UITextContentType? = nil
+    var capitalization: TextInputAutocapitalization = .words
+    var disableCorrection = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title).font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.ink)
+            TextField(prompt, text: $text)
+                .font(.rpBody).foregroundStyle(Theme.ink)
+                .textContentType(contentType).keyboardType(keyboard)
+                .textInputAutocapitalization(capitalization).autocorrectionDisabled(disableCorrection)
+                .submitLabel(next == nil ? .done : .next)
+                .focused(focus, equals: field)
+                .onSubmit { focus.wrappedValue = next }
+                .padding(14)
+                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.border))
+                .accessibilityLabel(Text(title))
+                .accessibilityIdentifier("clientContact.\(field == .publicEmail ? "publicEmail" : field.rawValue)")
+        }
+    }
+}
+
+private struct ClientContactSectionTitle: View {
+    let title: String
+    let subtitle: String
+    let icon: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: icon).font(.rpHeadline).foregroundStyle(Theme.accent)
+            Text(subtitle).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 /// Shared public-card/private-recipient fields. No owner-card fallback.
 struct ClientContactFields: View {
     @Binding var contact: ListingClientContact
+    @FocusState private var focused: ClientContactInputField?
     private func optional(_ path: WritableKeyPath<ClientPublicCard, String?>) -> Binding<String> {
         Binding(get: { contact.publicCard[keyPath: path] ?? "" }, set: { contact.publicCard[keyPath: path] = $0.isEmpty ? nil : $0 })
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextField("Client name or business name", text: $contact.publicCard.name).textContentType(.name)
-                .accessibilityIdentifier("clientContact.name")
-            TextField("Brokerage or business (optional)", text: optional(\.brokerage)).textContentType(.organizationName)
-            TextField("Title (optional)", text: optional(\.title))
-            TextField("Public phone (optional)", text: optional(\.phone)).keyboardType(.phonePad).textContentType(.telephoneNumber)
-            TextField("Public email (optional)", text: optional(\.email)).keyboardType(.emailAddress).textContentType(.emailAddress)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-            TextField("Website (optional)", text: optional(\.website)).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-            Divider()
-            Text("Where should listing inquiries go?").font(.rpHeadline)
-            TextField("Client's lead email", text: $contact.recipientEmail).keyboardType(.emailAddress).textContentType(.emailAddress)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                .accessibilityIdentifier("clientContact.recipient")
-            Text("This email receives form submissions. It is private unless you also enter it as the public email above. You keep a copy of every inquiry in Leads.")
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        VStack(alignment: .leading, spacing: Theme.spacing) {
+            publicFields
+            privateFields
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if focused != nil {
+                    Spacer()
+                    Button("Done") { focused = nil }.accessibilityIdentifier("clientContact.keyboardDone")
+                }
+            }
+        }
+    }
+    private var publicFields: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ClientContactSectionTitle(title: "Public contact card", subtitle: "Buyers see these details on the listing.", icon: "person.text.rectangle.fill")
+            ClientContactInput(title: "Client or business name", prompt: "Name shown to buyers", text: $contact.publicCard.name,
+                               field: .name, focus: $focused, next: .brokerage, contentType: .name)
+            ClientContactInput(title: "Brokerage or business (optional)", prompt: "Company name", text: optional(\.brokerage),
+                               field: .brokerage, focus: $focused, next: .title, contentType: .organizationName)
+            ClientContactInput(title: "Title (optional)", prompt: "e.g. Real estate agent", text: optional(\.title),
+                               field: .title, focus: $focused, next: .phone)
+            ClientContactInput(title: "Public phone (optional)", prompt: "Phone shown to buyers", text: optional(\.phone),
+                               field: .phone, focus: $focused, next: .publicEmail, keyboard: .phonePad, contentType: .telephoneNumber)
+            ClientContactInput(title: "Public email (optional)", prompt: "Email shown to buyers", text: optional(\.email),
+                               field: .publicEmail, focus: $focused, next: .website, keyboard: .emailAddress,
+                               contentType: .emailAddress, capitalization: .never, disableCorrection: true)
+            ClientContactInput(title: "Website (optional)", prompt: "example.com", text: optional(\.website),
+                               field: .website, focus: $focused, next: .recipient, keyboard: .URL,
+                               capitalization: .never, disableCorrection: true)
+        }.card()
+    }
+    private var privateFields: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ClientContactSectionTitle(title: "Send inquiries to your client", subtitle: "Private delivery email · not part of the public card.", icon: "envelope.badge.shield.half.filled")
+            ClientContactInput(title: "Client's lead email", prompt: "Where form submissions should go", text: $contact.recipientEmail,
+                               field: .recipient, focus: $focused, keyboard: .emailAddress,
+                               contentType: .emailAddress, capitalization: .never, disableCorrection: true)
+            Text("You keep a copy of every inquiry in Leads. This address is only public if you also enter it in Public email above.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+            Divider().overlay(Theme.border)
             Toggle("Hide Rendprop branding on this listing", isOn: $contact.hideRendpropBranding)
-        }.textFieldStyle(.roundedBorder)
+                .font(.rpBody).tint(Theme.accent)
+                .accessibilityIdentifier("clientContact.hideBranding")
+        }.card()
+    }
+}
+
+private struct ClientContactAvatar: View {
+    let photo: UIImage?
+    let avatarURL: String?
+    var body: some View {
+        Group {
+            if let photo { Image(uiImage: photo).resizable().scaledToFill() }
+            else if let raw = avatarURL, let url = URL(string: raw) {
+                AsyncImage(url: url) { image in image.resizable().scaledToFill() }
+                placeholder: { Image(systemName: "person.crop.circle.fill").resizable().scaledToFit().foregroundStyle(Theme.accent) }
+            } else { Image(systemName: "person.crop.circle.fill").resizable().scaledToFit().foregroundStyle(Theme.accent) }
+        }.frame(width: 72, height: 72).clipShape(Circle())
+            .background(Theme.accentSoft, in: Circle())
+            .overlay(Circle().strokeBorder(Theme.accent.opacity(0.2), lineWidth: 2))
+            .accessibilityHidden(true)
+    }
+}
+
+private struct ClientContactPublicPreview: View {
+    let card: ClientPublicCard
+    let photo: UIImage?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ClientContactSectionTitle(title: "Your client's card", subtitle: "Preview of the details buyers will see.", icon: "eye.fill")
+            HStack(alignment: .top, spacing: 14) {
+                ClientContactAvatar(photo: photo, avatarURL: card.avatarURL)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(card.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Client or business name" : card.name)
+                        .font(.rpHeadline).foregroundStyle(Theme.ink)
+                    if let brokerage = card.brokerage, !brokerage.isEmpty { Text(brokerage).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+                    if let title = card.title, !title.isEmpty { Text(title).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+                    if let phone = card.phone, !phone.isEmpty { Label(phone, systemImage: "phone.fill").font(.rpCaption).foregroundStyle(Theme.accent) }
+                    if let email = card.email, !email.isEmpty { Label(email, systemImage: "envelope.fill").font(.rpCaption).foregroundStyle(Theme.accent) }
+                    if let website = card.website, !website.isEmpty { Label(website, systemImage: "globe").font(.rpCaption).foregroundStyle(Theme.accent) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }.card().accessibilityIdentifier("clientContact.publicPreview")
     }
 }
 
@@ -156,40 +273,31 @@ struct ListingClientContactEditor: View {
             enabled: RealEstateRoleStore.current.isProducer, publicCard: ClientPublicCard(), recipientEmail: ""))
     }
     var body: some View {
-        Form {
-            Section {
-                Toggle("Use a client's contact details", isOn: $contact.enabled).accessibilityIdentifier("clientContact.enabled")
-            } footer: { Text("Applies only to this listing. Your own profile and other listings keep their existing details.") }
-            if contact.enabled {
-                Section("Client photo or business logo") {
-                    HStack(spacing: 14) {
-                        Group {
-                            if let photo { Image(uiImage: photo).resizable().scaledToFill() }
-                            else if let raw = contact.publicCard.avatarURL, let url = URL(string: raw) {
-                                AsyncImage(url: url) { image in image.resizable().scaledToFill() } placeholder: { Image(systemName: "person.fill").font(.title2) }
-                            } else { Image(systemName: "person.fill").font(.title2) }
-                        }.frame(width: 64, height: 64).clipShape(Circle())
-                        PhotosPicker(selection: $picker, matching: .images) { Label("Choose photo", systemImage: "photo") }
-                            .accessibilityIdentifier("clientContact.photo")
-                        if photo != nil || contact.photoAssetID != nil {
-                            Button("Remove", role: .destructive) { photo = nil; photoChanged = true; contact.photoAssetID = nil; contact.publicCard.avatarURL = nil; picker = nil }
-                        }
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.spacing) {
+                routingCard
+                if contact.enabled {
+                    ClientContactPublicPreview(card: contact.publicCard, photo: photo)
+                    photoCard
+                    ClientContactFields(contact: $contact)
                 }
-                Section("Details shown on the listing") { ClientContactFields(contact: $contact) }
-            }
-            if let error {
-                Section { Text(error).foregroundStyle(Theme.warn).accessibilityIdentifier("clientContact.error") }
-            }
-            Section {
-                Button { Task { await save() } } label: {
-                    HStack { Text(saving ? "Saving…" : "Save client details"); if saving { Spacer(); ProgressView() } }
-                }.disabled(saving || loading).accessibilityIdentifier("clientContact.save")
+                if let error {
+                    Text(error)
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .card().accessibilityIdentifier("clientContact.error")
+                }
                 if live.clientContactDirty == true, live.serverID != nil {
                     Button("Reload the latest details from Studio", role: .destructive) { reloadConfirm = true }
+                        .font(.rpCaption.weight(.semibold)).padding(.vertical, 8)
                 }
-            } footer: { Text("Saving updates the published listing's contact card. Form inquiries stay in your account and are emailed to the client.") }
-        }.navigationTitle("Listing contact").navigationBarTitleDisplayMode(.inline)
+            }.padding(Theme.spacing)
+        }
+            .background(Theme.bg).tint(Theme.accent)
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) { saveBar }
+            .navigationTitle("Listing contact").navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .tabBar)
             .disabled(saving || loading || (context != nil && context != current))
             .task { if context == nil { context = current; await load() } }
             .confirmationDialog("Replace this phone's draft with the latest client details?", isPresented: $reloadConfirm, titleVisibility: .visible) {
@@ -204,6 +312,51 @@ struct ListingClientContactEditor: View {
                     }
                 }
             }
+    }
+    private var routingCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ClientContactSectionTitle(title: "Who should buyers contact?", subtitle: "Choose the card for this listing.", icon: "person.crop.rectangle.fill")
+            Toggle("Use a client's contact details", isOn: $contact.enabled)
+                .font(.rpBody).tint(Theme.accent).accessibilityIdentifier("clientContact.enabled")
+            Text(contact.enabled ? "Your client appears on this listing. Your own profile and other listings keep their details."
+                 : "This listing uses your own account card. You can switch to a client's card any time.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+        }.card()
+    }
+    private var photoCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ClientContactSectionTitle(title: "Client photo or business logo", subtitle: "Add the person or business buyers should recognize.", icon: "photo.fill")
+            HStack(spacing: 14) {
+                ClientContactAvatar(photo: photo, avatarURL: contact.publicCard.avatarURL)
+                VStack(alignment: .leading, spacing: 10) {
+                    PhotosPicker(selection: $picker, matching: .images) { Label("Choose photo", systemImage: "photo.on.rectangle") }
+                        .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                        .accessibilityIdentifier("clientContact.photo")
+                    if photo != nil || contact.photoAssetID != nil {
+                        Button("Remove photo", role: .destructive) { photo = nil; photoChanged = true; contact.photoAssetID = nil; contact.publicCard.avatarURL = nil; picker = nil }
+                            .font(.rpCaption).accessibilityIdentifier("clientContact.removePhoto")
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+        }.card()
+    }
+    private var saveBar: some View {
+        VStack(spacing: 8) {
+            PrimaryButton(title: saving ? "Saving…" : contact.enabled ? "Save client details" : "Use my account card",
+                          systemImage: saving ? nil : "checkmark", isDisabled: saving || loading) {
+                // Commit through the existing validated/session-fenced path;
+                // the fixed action stays above the keyboard while editing.
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                Task { await save() }
+            }.accessibilityIdentifier("clientContact.save")
+            if saving { ProgressView().tint(Theme.accent) }
+            Text("Form inquiries stay in your Leads. When your client's card is on, inquiries are also emailed to the lead address.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }.padding(.horizontal, Theme.spacing).padding(.top, 12).padding(.bottom, 8)
+            .background(Theme.bg)
+            .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
     }
     @MainActor private func load(discardDraft: Bool = false) async {
         loading = true; defer { loading = false }

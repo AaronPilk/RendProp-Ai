@@ -559,6 +559,18 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                                           method: "DELETE"))
     }
 
+    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws {
+        var body: [String: Any] = ["main_photo_asset_id": mainAssetID.map { $0 as Any } ?? NSNull()]
+        if let galleryAssetIDs { body["gallery_asset_ids"] = galleryAssetIDs }
+        _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]), method: "PATCH", json: body))
+    }
+
+    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws {
+        var body: [String: Any] = ["gallery_add_asset_ids": assetIDs]
+        if let mainAssetID { body["main_photo_asset_id"] = mainAssetID }
+        _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]), method: "PATCH", json: body))
+    }
+
     // MARK: - Uploads (contract §2)
 
     func requestUpload(filename: String, bytes: Int64,
