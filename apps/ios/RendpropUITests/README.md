@@ -23,7 +23,7 @@ installed or tested a build.
 | --- | --- | --- |
 | `DetailMetadataRegressionUITests` | Seven cold launches of the real listing detail/toolbox in Release, including samples, no media, source availability, photos, aerial, client contact, re-render navigation and industry labels | Simulator only; procedural local media and an offline identified fixture. Never invokes camera, AI, upload, render submission or contact save. Device archives exclude the fixture host. |
 | `RendpropUITests/testWalk` | Home, Add a home, Photo Studio, Reel Studio voice, Settings, owner console, routing, paywall and health screenshots (`01`–`09`) | Mock API. Missing controls are noted and skipped. Reel entry needs photos. |
-| `ReviewerWalk/testReviewerWalk` | Onboarding, samples, profile, legal, deletion confirmation and AI consent (`r01`–`r11`) | Fresh app container. Required screenshots are asserted; sign-in `r10` is excluded for the mock identified session. Cancel is the only deletion action. |
+| `ReviewerWalk/testReviewerWalk` | Onboarding including the real-estate agent/photographer role choice, samples, profile, legal, deletion confirmation and AI consent (`r01`–`r11`) | Dedicated fresh app container before other cases create projects. Required screenshots, including `r01-role`, are asserted; sign-in `r10` is excluded for the mock identified session. Cancel is the only deletion action. |
 | `ReviewerWalk/testAIConsentDecisions` | Focused real consent-sheet path, actions and granted state | Assertions require all three captured consent states; no AI edit. |
 | `ReviewerWalk/testAskAILabelOnLongTitle` | Ask AI geometry/accessibility and opening Coach from a long-title sample | Assertions plus screenshots; no provider call. |
 | `StoreShots/testStoreShots` | Marketing screenshot capture, including industry variants, reels, leads and hosted demo surfaces | Seed listing photos; hosted demo requires network. No actual AI edit, purchase or publication. |
@@ -59,8 +59,16 @@ simulator: separate clients and hosted WebViews are not globally blocked by
 
 `ReviewerWalk` omits `hasOnboarded` for its full walk and explicitly sets consent
 to `NO`, real-estate identity and light appearance. Its two focused tests skip
-onboarding. Use a new simulator/app container for a genuine first-run walk;
-persisted onboarding completion otherwise changes the path.
+onboarding. Run `ReviewerWalk` on a dedicated fresh simulator/app container
+**before** mutating `PhotographerClientFlowTests` or `ProductionPlanUITests`.
+Those cases leave named synthetic projects behind, which changes the name-first
+AI entry to a project picker. The reviewer selector intentionally accepts only
+its known `24 Willow Bend Court` / `1 Walk Test Street` fixtures; it must never
+choose an arbitrary listing to make a test pass. Focused reviewer cases can
+reuse only that dedicated synthetic state. For a genuine first-run full walk,
+use a fresh container for that test. Keep failed results and screenshots.
+Do not delete, reset or uninstall a customer app, phone or useful simulator to
+prepare this gate; choose a new disposable simulator/container instead.
 
 `SessionNetworkFlow` adds `-sessionNetworkTesting`, which takes precedence over
 the mock only in Debug. `RENDP_TEST_URL` must be loopback HTTP; the case expects
