@@ -183,23 +183,42 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     }
 
     private func scrollTo(_ element: XCUIElement) {
-        // Target the real outer page's 16pt gutter. A centre-screen swipe can
-        // scrub the nested fly-through instead of moving the native page; the
-        // original empty-fixture failure recorded native scroll=0%, web=34%.
-        // Coordinates are used only for scrolling, never to select a control.
+        // Centre-screen swipes can scrub the nested player. Use only the outer
+        // page's 16pt gutter for scrolling; controls still use actual .tap().
         let outer = app.scrollViews.firstMatch
         XCTAssertTrue(outer.waitForExistence(timeout: 5), app.debugDescription)
         let upper = outer.coordinate(withNormalizedOffset: CGVector(dx: 0.015, dy: 0.24))
         let lower = outer.coordinate(withNormalizedOffset: CGVector(dx: 0.015, dy: 0.78))
-        // Lazy-grid controls may not exist until scrolled into view. Test that
-        // cheaply before isHittable, which retries a nonexistent query.
-        for _ in 0..<6 where !element.exists || !element.isHittable {
-            upper.press(forDuration: 0.01, thenDragTo: lower)
+        let visibleTop = max(outer.frame.minY, app.navigationBars.firstMatch.frame.maxY) + 8
+        let visibleBottom = min(outer.frame.maxY, app.frame.maxY) - 60
+        var missingRewinds = 0
+        // isHittable alone accepts partially clipped cards. Require the entire
+        // target below the navigation bar and above the bottom safe area, so a
+        // normal centre tap cannot land on navigation chrome instead of a tile.
+        for _ in 0..<24 {
+            guard element.exists else {
+                // A lazy-grid target may not be instantiated. Rewind at most
+                // six gestures, then advance through the page to locate it.
+                if missingRewinds < 6 {
+                    upper.press(forDuration: 0.01, thenDragTo: lower)
+                    missingRewinds += 1
+                } else {
+                    lower.press(forDuration: 0.01, thenDragTo: upper)
+                }
+                continue
+            }
+            let frame = element.frame
+            if frame.height > 0, frame.minY >= visibleTop, frame.maxY <= visibleBottom {
+                XCTAssertTrue(element.isHittable, app.debugDescription)
+                return
+            }
+            if frame.height > 0, frame.minY < visibleTop {
+                upper.press(forDuration: 0.01, thenDragTo: lower)
+            } else {
+                lower.press(forDuration: 0.01, thenDragTo: upper)
+            }
         }
-        for _ in 0..<12 where !element.exists || !element.isHittable {
-            lower.press(forDuration: 0.01, thenDragTo: upper)
-        }
-        XCTAssertTrue(element.isHittable, app.debugDescription)
+        XCTFail("Target never fully entered the outer page viewport: \(element.debugDescription)\n\(app.debugDescription)")
     }
 
     private func attach(_ name: String) {
