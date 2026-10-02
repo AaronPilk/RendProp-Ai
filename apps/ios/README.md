@@ -8,6 +8,18 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
+and Apple reports **Waiting for Review**. Release is automatic after approval.
+The [receipt](../../docs/releases/APPSTORE-42-20261002.json) and
+[handoff](../../docs/handoff/APPSTORE-42-20261002.md) bind runtime `204594a`, all
+twelve passing CI jobs and the actual uploaded Apple Distribution package.
+The regular scheme hides spatial capture and prevents new spatial admission
+and inherited upload recovery. AI photo batches stop unsent requests after
+consent revocation. Physical builds ignore simulator UI-test switches.
+For spatial testing, choose **TestFlight → Previous Builds → 1.0.3 (41)**;
+build 42 excludes those experimental entry points. Submission does not certify
+physical camera quality or mean Apple has approved the update.
+
 The [beta feedback release](../../docs/handoff/BETA-POLISH-20261002.md) is available
 as internal **TestFlight 1.0.3 (41)**, verified **2 October 2026 at 17:23:58 UTC**
 for the existing Rendprop team. It adds labeled client cards/private routing,

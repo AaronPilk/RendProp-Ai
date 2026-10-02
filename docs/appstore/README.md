@@ -1,12 +1,15 @@
 # App Store listing and review assets
 
 This directory contains the listing copy, review notes and screenshot recipes.
-Reconciled on 2 October 2026 for the regular 1.0.3 App Store release. Version
-1.0.3 is created in App Store Connect with updated copy and review notes. Build
-42 is being prepared for App Review; an archive alone does not prove upload,
-submission or approval. Dated release receipts record those subsequent steps.
+Reconciled on 2 October 2026 for the regular 1.0.3 App Store release.
+**1.0.3 (42) was submitted at 20:17:03 UTC and is Waiting for Review.** Apple
+confirmed the exact version, attached eligible build and one submitted review
+item. Release is automatic after approval; this is not an approval or public
+availability claim. The [App Store release receipt](../releases/APPSTORE-42-20261002.json)
+binds runtime source `204594a`, all twelve CI jobs, the actual uploaded IPA,
+metadata, five screenshots and the review readback.
 
-The latest phone delivery receipt records
+For experimental spatial testing, the phone delivery receipt records
 [internal TestFlight 1.0.3 (41), available on 2 October](../releases/TESTFLIGHT-41-20261002.json).
 The owner authorized that upload and its build-specific testing notes. Apple
 confirmed availability to the existing internal group. This did not attach a
@@ -87,5 +90,5 @@ having the migration file.
 `tools/asc/asc.py` still has a launch-era `VERSION_STRING = "1.0"`, may select
 another editable version, and has no `--version` override. Its apply bridge also
 changes prices, territories, screenshots and review state. Reconcile the exact
-release target before using that tooling; this documentation refresh does not
-submit or alter the listing.
+release target before using that tooling. The dated delivery receipt records the
+completed exact-version submission; do not rerun the legacy apply bridge.

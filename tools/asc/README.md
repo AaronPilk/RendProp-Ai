@@ -23,12 +23,17 @@ and review state. Do not run it for maintenance of the shipped app.
 Internal TestFlight **1.0.3 (41)** is available to the existing group; see the
 [delivery receipt](../../docs/releases/TESTFLIGHT-41-20261002.json). It is an
 internal-only spatial lab build and cannot be submitted to the App Store.
-The owner has now authorized a regular **1.0.3 (42)** App Store submission.
-The new version's copy/review notes are applied; upload and submission require
-separate readback receipts. Use the regular `Rendprop` scheme and
+The owner authorized a regular **1.0.3 (42)** App Store submission. It was
+submitted on **2 October 2026 at 20:17:03 UTC** and Apple reports **Waiting for
+Review**, with automatic release after approval. The
+[delivery receipt](../../docs/releases/APPSTORE-42-20261002.json) binds the exact
+uploaded source, distribution package, metadata and submitted item. It uses the
+regular `Rendprop` scheme and
 [exportOptions-appstore.plist](exportOptions-appstore.plist), which explicitly
 sets `testFlightInternalTestingOnly = false` and preserves build number 42.
-The internal lab scheme/options remain separate.
+The internal lab scheme/options remain separate. Continue spatial testing with
+**TestFlight → Previous Builds → 1.0.3 (41)**. Do not repeat the upload or review
+submission based on older preparation notes.
 
 This release uses privately reviewed, exact-version helpers with clean-source,
 archive/dSYM binding, all twelve CI jobs, one-attempt journals and exact Apple

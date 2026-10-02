@@ -5,6 +5,17 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
+and is **Waiting for Review**, with automatic release after approval. All twelve
+CI jobs passed on uploaded runtime `204594a`. Spatial capture remains confined
+to internal **TestFlight 41**; select **Previous Builds → 1.0.3 (41)** to keep
+testing it. The [App Store receipt](docs/releases/APPSTORE-42-20261002.json) and
+[release handoff](docs/handoff/APPSTORE-42-20261002.md) record the exact binary,
+Apple state and verification limits. Studio now waits for original media to be
+saved before accepting newly imported media; this fix is deployed and all 31 live assets
+match the release. Direct Bria integration remains pending; no Bria key was
+received or provider generation enabled in this release.
+
 Internal **TestFlight 1.0.3 (41)** is available to the existing Rendprop team,
 verified **2 October 2026 at 17:23:58 UTC**. The
 [beta feedback release](docs/handoff/BETA-POLISH-20261002.md) adds main-photo-first
@@ -44,7 +55,8 @@ activate a trial. Studio uses the same account/workspace subscription.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
-[Latest iPhone delivery receipt](docs/releases/TESTFLIGHT-41-20261002.json) ·
+[App Store submission receipt](docs/releases/APPSTORE-42-20261002.json) ·
+[Spatial TestFlight receipt](docs/releases/TESTFLIGHT-41-20261002.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -86,7 +98,7 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Internal TestFlight **1.0.3 (41)** is available to the existing Rendprop team. Adds branded client editing, condo units, keyboard-safe room tags, app-owned photo progress and deliberate staged-version publication. Retains crash hardening, photographer delivery, room guidance, HD rendering and account/subscription fixes. Owner reported repeated cold opens on 40 working; new 41 phone acceptance, camera/room quality, purchase/restore, client inbox and phone-to-Studio checks remain. |
+| iOS | Regular **1.0.3 (42)** submitted and **Waiting for Review**; public release follows Apple approval. Retains beta workflow fixes and stops unsent AI photo work after consent revocation. Internal **41** remains available for spatial tests. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

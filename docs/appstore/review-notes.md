@@ -2,7 +2,9 @@
 
 Reconciled on 2 October 2026. The text below matches the machine-uploaded
 [review notes](metadata/en-US/review_notes.txt). Submission and approval are
-separate states recorded by the release receipt. Approved reviewer contact
+separate states recorded by the [release receipt](../releases/APPSTORE-42-20261002.json).
+Build 42 was submitted on 2 October 2026 and is **Waiting for Review**, with
+automatic release after approval. Approved reviewer contact
 fields are retained in App Store Connect; no demo account is required.
 
 Rendprop creates shareable listing pages from phone walkthroughs and photos, with photo editing, reels and client contact cards. Walkthrough output is the user's recorded video, not captured drone footage or a production 3D walkthrough.

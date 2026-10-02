@@ -18,7 +18,10 @@ against App Store Connect's original checksums. Captions were recomposed from
 [plan.json](plan.json). No camera capture, generation, purchase or publishing
 was performed for the composition. The listing and leads are fictional samples.
 The five final files and their order, hashes and dimensions are recorded in the
-private 1.0.3 release manifest; upload completion needs Apple readback.
+private 1.0.3 release manifest. Apple readback verified all five assets in this
+order with matching checksums, dimensions and `COMPLETE` delivery states. They
+are attached to the submitted 1.0.3 (42) version; released 1.0.1's nine assets
+were verified unchanged. See the [release receipt](../../releases/APPSTORE-42-20261002.json).
 
 The old nine-frame 1.0.1 set is historical. Three hosted-page captures and the
 old Photo Studio capture are omitted because their UI/disclosures no longer
