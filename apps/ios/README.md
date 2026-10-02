@@ -8,15 +8,20 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
-The [beta-polish candidate](../../docs/handoff/BETA-POLISH-20261002.md) targets
-internal build41: labeled client cards/private routing, unit entry, prominent
-property editing, keyboard-safe room tags, top photo progress across navigation,
-completion notifications that respect preferences, and explicit saved-version
-publication. Jobs do not resume automatically after force-quit. Staging output and
-real walking motion still need review; software checks are not camera acceptance.
-Until a41 delivery receipt exists,40 is the last verified TestFlight release.
+The [beta feedback release](../../docs/handoff/BETA-POLISH-20261002.md) is available
+as internal **TestFlight 1.0.3 (41)**, verified **2 October 2026 at 17:23:58 UTC**
+for the existing Rendprop team. It adds labeled client cards/private routing,
+unit entry, prominent property editing, keyboard-safe room tags, top photo progress
+across navigation, permitted completion notifications and saved-version publication.
+All 12 CI jobs passed on archived runtime `3615a23`; the
+[delivery receipt](../../docs/releases/TESTFLIGHT-41-20261002.json) binds the signed
+archive, one internal upload and Apple availability/English notes. Five beta UI
+cases passed across preserved runs; final queue navigation and cold toolbox runs
+use native inputs identical to the archive. This is not one all-green twelve-case
+UI run. Jobs do not resume automatically after force-quit. Staging output and real
+walking motion still need review; software checks are not camera acceptance.
 
-[Crash hardening](../../docs/handoff/IOS-CRASH-HARDENING-20261002.md) is available
+[Crash hardening](../../docs/handoff/IOS-CRASH-HARDENING-20261002.md) was delivered
 as internal **TestFlight 1.0.3 (40)**, verified **2 October 2026 at 01:18:15 UTC**
 for the existing Rendprop team. All 12 CI jobs passed on archived source
 `4580f76`; [the delivery receipt](../../docs/releases/TESTFLIGHT-40-20261002.json)
@@ -25,9 +30,9 @@ Named concrete listing-toolbox and launch views bound Swift metadata constructio
 checked duration/FPS conversion and duplicate-ID detection remove two independently
 reproduced traps while retaining saved work. Nineteen selected Release UI cases
 passed across separate runs with identical production app source. Simulator
-fixtures are absent from the signed device binary. The affected physical iPhone
-must still pass cold-launch acceptance; force-quit/relaunch, without deleting the
-app or recordings. Live `events` v26 now retains narrow diagnostic build strings.
+fixtures are absent from the signed device binary. The owner reported repeated
+cold opens on 40 working. Repeat acceptance on 41 without deleting the app or
+recordings. Live `events` v26 retains narrow diagnostic build strings.
 
 [Photographer client delivery](../../docs/studio/photographer-client-delivery.md)
 adds a real estate role choice, per-property client contact/photo editing,

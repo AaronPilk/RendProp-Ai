@@ -1,21 +1,32 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
+The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
+is live at **100%** on Worker `0d5db590-c2c8-4482-9f3f-77bcf893fcd6`, deployed
+at **17:15:45 UTC** from runtime `3615a23`. Selected main photos lead the listing;
+compact navigation opens an isolated **Explore** scroll viewer, with **Play video**
+for ordinary playback. Closing unloads the decoder and returns to the listing.
+All 12 CI jobs passed; four live branded/MLS HTML readbacks match the frozen engine
+and CSS, separately from 195 actual-browser assertions using generated local video.
+HTML readback does not establish every remote Worker bundle byte or real-phone
+playback quality. Routes, variables, secrets and compatibility date are preserved.
+See the [delivery receipt](../../../docs/releases/TESTFLIGHT-41-20261002.json).
+
 [Photographer client delivery](../../../docs/studio/photographer-client-delivery.md)
 adds explicit `client_mode` and `hide_rendprop_branding` payload flags. Only two
 boolean `true` values suppress vendor attribution, promotions, app banners,
 favicon and player wordmarks. Client cards and lead forms remain; client pages
 never link to the photographer's portfolio. Required property alterations,
 original-photo access and privacy links remain. `/u/` retains its existing
-contact-free MLS behavior. Worker `4ad3ab1c-0709-442b-bbf9-6426a5fb0bb2` is the
-100% active deployment. Live marketing/MLS demo engine and CSS readbacks match
+contact-free MLS behavior. Worker `4ad3ab1c-0709-442b-bbf9-6426a5fb0bb2` was the
+preceding deployment. Its live marketing/MLS demo engine and CSS readbacks matched
 the release source; all 12 CI jobs pass. See the
 [release handoff](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md).
 Actual client listing publication and inbox acceptance remain controlled owner tests.
 
 The [1 October listing-first release](../../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
 was deployed at 100% traffic on Worker version
-`8268c7a9-aad9-43a7-89ac-f1769e75896b`, from source `a87834c`; the client-delivery
-deployment above supersedes that historical version. Its final production
+`8268c7a9-aad9-43a7-89ac-f1769e75896b`, from source `a87834c`; the subsequent
+client-delivery deployment superseded that historical version. Its final production
 readback passed 153 assertions on branded/unbranded listings, with photos/details
 first and opt-in playback. All 12 CI jobs passed on that exact web source.
 Home, pricing, legal and health pages retained their verified normalized bodies

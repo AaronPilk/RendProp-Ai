@@ -1,13 +1,29 @@
 # Listing and photo-work feedback — 2 October 2026
 
-Candidate source is on isolated `fix/beta-polish-20261002`, based on the delivered
-build40 documentation commit `eef4918`. This document describes tested source;
-deployment and internal TestFlight41 availability must be confirmed by a separate
-delivery receipt. Main and Claude's checkout are not rewritten.
+Runtime `3615a23a4c055045be053cf788e776263de75851` is deployed from isolated
+`fix/beta-polish-20261002`, based on delivered build 40 documentation `eef4918`.
+Internal **TestFlight 1.0.3 (41)** was verified available to the existing Rendprop
+team on **2 October 2026 at 17:23:58 UTC**. Apple reports VALID, INTERNAL_ONLY and
+IN_BETA_TESTING after one upload. English testing notes are readback-verified.
+The [delivery receipt](../releases/TESTFLIGHT-41-20261002.json) binds source,
+archive, CI, upload and production readbacks. Main and Claude's checkout were not
+rewritten; [draft PR 18](https://github.com/AaronPilk/RendProp-Ai/pull/18) is stacked
+on the delivered crash-hardening branch. The later delivery commit changes docs only.
+
+The gallery migration is recorded live as `20261002171338` (source filename
+`20261002160344`); all eight schema/grant checks and three function bodies match.
+Functions listings 38, tours 45 and ai-photo 49 are ACTIVE with JWT verification
+on. Submitted files are 12/14/24; extracted files are 12/13/24, all source-matching.
+Tours extraction omits contract.ts, reached only through an erased Row type edge;
+its unused runtime exports are not a missing runtime dependency. Worker
+`0d5db590-c2c8-4482-9f3f-77bcf893fcd6` is deployed at 100%. Four existing branded/MLS
+HTML GETs match the reviewed engine/CSS without fetching media. These live checks
+are separate from the 195 local actual-browser assertions and phone acceptance.
 
 The owner confirmed repeated cold opens on40 worked. Available Apple screenshot
 feedback was exhaustively paginated:25 submissions, including13 for40, two for37,
-one for28, six for27 and three for24. Every comment was read. The screenshots and
+one for28, six for27 and three for24. Every comment was read and all 25 screenshots
+were visually reviewed. The screenshots and
 customer identifiers remain in private local audit storage outside Git. The
 owner's five new screenshots are also part of this review.
 
@@ -87,9 +103,14 @@ migrations, concurrent different-photo/repeated-photo appends and deletion regre
 
 Native checks exercise actual source:304 photo-history/export assertions,22 Combine
 queue assertions,65 lifecycle/notification boundary assertions,71 unit/metadata form
-assertions and60 existing client-contact assertions. Release UI test results and
-the exact-source CI/archive status belong in the final release receipt; earlier
-failed harness runs are retained instead of reported as passes.
+assertions and60 existing client-contact assertions. All 12 CI jobs passed on the
+archived source; the pull-request merge tree matches it. Five beta UI cases passed
+across preserved runs, with final queue navigation and cold toolbox checks on
+native inputs byte-identical to the archive. Earlier editor/detail runs are
+qualified separately; this is not one all-green twelve-case UI run. The actual
+banner/Back overlap caught during UI testing was fixed and its regression passed.
+The signed arm64 archive, 214 inputs, 140 compile inputs, dSYM and fixture exclusion
+passed independent review. Earlier compiler/harness failures remain recorded.
 
 Actual AVFoundation synthetic renders classify feature-rich stationary footage as
 `steady`, translated jitter as `applied`, and featureless footage as `unavailable`.
@@ -110,7 +131,7 @@ needs its own provider/real-footage acceptance. Bria's current
 [video editing documentation](https://docs.bria.ai/video-editing/editing) specifies
 a five-second eraser limit. No paid eraser, AI generation or spatial experiment ran.
 
-Production targets are the new gallery-selection migration, `listings`, `tours`,
-`ai-photo`, public tour-host Worker and internal TestFlight41. JWT verification stays
+Deployed targets are the new gallery-selection migration, `listings`, `tours`,
+`ai-photo`, public tour-host Worker and internal TestFlight 41. JWT verification stays
 enabled on all three functions. No public App Store release, pricing change, tester
 changes, spatial activation or budget increase is part of this release.
