@@ -2812,7 +2812,7 @@ struct RootTabView: View {
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var tab = 0
 
-    var body: some View {
+    private var tabs: some View {
         TabView(selection: $tab) {
             NavigationStack { HomeDashboardView(goToListings: { tab = 1 }) }
                 .tabItem { Label("Home", systemImage: "house.fill") }
@@ -2831,7 +2831,13 @@ struct RootTabView: View {
                 .tag(3)
         }
         .id("\(workspaceAuth.userID ?? "guest"):\(workspace.selected?.id.uuidString ?? "unselected")")
-        .safeAreaInset(edge: .top, spacing: 0) { PhotoWorkBanner() }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PhotoWorkBanner()
+            tabs
+        }
         .task {
             await model.load()        // idempotent
             await model.syncRealEstateRole()

@@ -283,18 +283,18 @@ struct DetailMetadataRegressionHost: View {
     @State private var failure: String?
 
     var body: some View {
-        NavigationStack {
-            if let listing {
-                FlythroughDetailView(listing: listing)
-            } else if let failure {
-                Text(failure).accessibilityIdentifier("detail.fixtureFailure")
-            } else {
-                ProgressView("Preparing synthetic detail fixture")
-            }
-        }
-        .safeAreaInset(edge: .top) {
+        VStack(spacing: 0) {
             if Config.isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.photoWorkFixture") {
                 PhotoWorkBanner()
+            }
+            NavigationStack {
+                if let listing {
+                    FlythroughDetailView(listing: listing)
+                } else if let failure {
+                    Text(failure).accessibilityIdentifier("detail.fixtureFailure")
+                } else {
+                    ProgressView("Preparing synthetic detail fixture")
+                }
             }
         }
         .task {

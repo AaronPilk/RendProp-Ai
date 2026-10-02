@@ -153,10 +153,15 @@ final class BetaPolishUITests: XCTestCase {
         scrollTo(apply)
         XCTAssertEqual(apply.label, "Apply to 3 photos", "The actual default selection includes all three synthetic photos")
         apply.tap() // MockAPIClient only; explicit simulator flag delays each edit.
-        let bannerText = app.staticTexts.matching(identifier: "photoWork.banner")
+        let banner = element("photoWork.banner")
+        let bannerText = banner.descendants(matching: .staticText)
         let running = bannerText.matching(NSPredicate(format: "label CONTAINS %@", "You can use other screens")).firstMatch
         XCTAssertTrue(running.waitForExistence(timeout: 5), app.debugDescription)
-        app.navigationBars["AI Photo Studio"].buttons.element(boundBy: 0).tap()
+        let navigation = app.navigationBars["AI Photo Studio"]
+        XCTAssertGreaterThanOrEqual(navigation.frame.minY, banner.frame.maxY - 2,
+                                    "Photo status must not cover navigation or intercept Back")
+        let back = navigation.buttons.element(boundBy: 0)
+        XCTAssertTrue(back.isHittable); back.tap()
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(running.isHittable, "Actual global status remains visible after leaving the studio")
         let progress = bannerText.matching(NSPredicate(format: "label BEGINSWITH %@", "Declutter ·")).firstMatch
@@ -166,8 +171,16 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(review.isHittable); review.tap()
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
         let finished = bannerText.matching(NSPredicate(format: "label == %@", "3 of 3 photos ready")).firstMatch
-        XCTAssertTrue(finished.waitForExistence(timeout: 40), app.debugDescription)
         let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
+        let changes = app.buttons.matching(NSPredicate(format: "label == %@", "Change this photo with AI"))
+        // The Review sheet intentionally hides the underlying global banner
+        // from accessibility. Observe the actual open library's ready cards and
+        // re-enabled controls, then verify global completion after dismissing it.
+        let ready = NSPredicate { _, _ in
+            cards.count == 3 && changes.count == 3 && changes.allElementsBoundByIndex.allSatisfy(\.isEnabled)
+        }
+        expectation(for: ready, evaluatedWith: app)
+        waitForExpectations(timeout: 40)
         XCTAssertEqual(cards.count, 3, "Review reloads completed photos while its screen is already open")
         scrollTo(cards.firstMatch); cards.firstMatch.tap()
         let label = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Digitally decluttered")).firstMatch
@@ -178,6 +191,7 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
         app.navigationBars["Photos"].buttons["Done"].tap()
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(finished.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(finished.isHittable, "Completed status is still available on the main screen")
         attach("photo-work-completed-global-status")
     }

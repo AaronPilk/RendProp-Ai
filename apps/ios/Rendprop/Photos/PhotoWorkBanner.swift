@@ -43,6 +43,7 @@ struct PhotoWorkBanner: View {
                 }.padding(.horizontal, 16).padding(.bottom, 10)
                     .background(Theme.card)
                     .overlay(alignment: .bottom) { Rectangle().fill(Theme.border).frame(height: 1) }
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("photoWork.banner")
             }
         }
