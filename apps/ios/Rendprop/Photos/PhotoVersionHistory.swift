@@ -4,6 +4,10 @@ import Foundation
 /// version never deletes its source or the retained pre-enhancement capture.
 /// This is a local history, not a claim that a cloud provenance row was saved.
 enum PhotoVersionHistory {
+    enum LibraryKind: String, CaseIterable, Identifiable, Sendable {
+        case latest = "Latest", decluttered = "Decluttered", staged = "Staged"
+        var id: String { rawValue }
+    }
     struct Version: Codable, Hashable, Sendable, Identifiable {
         let id: String
         let familyID: String
@@ -94,6 +98,26 @@ enum PhotoVersionHistory {
         func isVisible(_ id: String) -> Bool {
             guard let version = versions[id] else { return true }
             return !hiddenFamilies.contains(version.familyID) && current[version.familyID] == id
+        }
+        /// A saved declutter remains available after staging. Choose one newest
+        /// matching version per photo; a staged photo is never a declutter-only
+        /// export, even when its lineage includes decluttering.
+        func libraryVersions(_ kind: LibraryKind) -> [Version] {
+            let candidates = versions.values.filter { version in
+                guard !hiddenFamilies.contains(version.familyID) else { return false }
+                switch kind {
+                case .latest: return current[version.familyID] == version.id
+                case .decluttered: return version.effects.contains("declutter") && !version.effects.contains("stage")
+                case .staged: return version.effects.contains("stage")
+                }
+            }.sorted { $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.id > $1.id }
+            var families: Set<String> = []
+            return candidates.filter { families.insert($0.familyID).inserted }
+        }
+
+        func isSelectedForListing(_ id: String) -> Bool {
+            guard let version = versions[id], !hiddenFamilies.contains(version.familyID) else { return false }
+            return (listingSelections ?? current)[version.familyID] == id
         }
     }
 
@@ -271,6 +295,20 @@ enum PhotoVersionHistory {
         }
         try requireImage(version.imageFile, directory: directory)
         index.current[version.familyID] = id
+        if index.listingSelections == nil { index.listingSelections = index.current }
+        index.listingSelections?[version.familyID] = id
+        try save(index, directory: directory)
+    }
+
+    /// Choosing the public photo doesn't replace the editing workspace's latest
+    /// version. Browsing/exporting a saved edit never calls this operation.
+    static func selectForPublication(id: String, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID) else {
+            throw Failure.changedVersion
+        }
+        try requireImage(version.imageFile, directory: directory)
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.listingSelections?[version.familyID] = id
         try save(index, directory: directory)

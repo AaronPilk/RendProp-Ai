@@ -7,6 +7,47 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+## Delivered direct Bria internal beta
+
+The [build-43 handoff](../../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
+is delivered as internal **TestFlight 1.0.3 (43)**, verified available at
+**2026-10-03 00:55:46 UTC**. **ai-video v47** is ACTIVE with JWT verification;
+all 30 API-listed files match runtime `8de8fd0`. The migration is recorded live
+as `20261003003531`, from source `20261002225458_video_erase_direct_bria.sql`;
+do not apply it twice. All twelve SQL function bodies and expected grants match;
+job/stage RLS denies client access and service CRUD remains. The membership-scoped
+held-cents authenticated read is preserved. Security readback adds no ERROR/WARN
+over the existing 26 WARN entries. Quote and status probes return 401.
+Six private configuration values were digest-confirmed for one trusted owner.
+The [delivery receipt](../../../docs/releases/TESTFLIGHT-43-20261002.json) records
+the exact-source twelve passing CI jobs and Apple availability. Direct Bria requires
+the internal client's
+consent-v3 acknowledgement, `BRIA_BETA_ENABLED=true`, a server-configured
+`BRIA_BETA_USER_IDS` list containing the authenticated user, confirmed rates and
+exact output hosts. A saved API token does not switch providers. Other users and
+normal App Store clients retain fal; eligible unconfigured beta requests fail
+before paid dispatch.
+
+The confirmed catalog rates are **2¢/second masking + 4.5¢/second erasing**, used
+for pinned stage reservations/accounting, not invoice reconciliation. Rendprop's
+AI clip allowance, workspace ceiling and existing **240¢ batch fence** remain.
+Each paid stage has durable admission and an immutable receipt; no automatic paid
+retry or fallback exists. The narrow starting host
+`d1ei2xrl63k822.cloudfront.net` has historical Bria-owned video-output evidence,
+without a guarantee for current mask/erase outputs. Unknown hosts fail closed and
+can strand paid output while references and cost accounting remain. Environment
+changes cannot repair a job's pinned allowlist through normal polling.
+
+See the [adapter tests](ai-video/bria_test.ts), [handler tests](ai-video/erase_test.ts),
+[migration](../migrations/20261002225458_video_erase_direct_bria.sql),
+[SQL contracts](../tests/video_erase_direct_bria.sql) and
+[disposable PostgreSQL runner](../tests/video_erase_direct_bria_pg.py).
+Schema was applied before the dependent handler; source, grants and configuration
+were read back before enablement. No paid provider jobs were submitted for delivery
+verification. Tester IDs, credentials and customer evidence stay outside Git.
+
+## Delivered release checkpoints
+
 The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
 deployed **listings v38, tours v45 and ai-photo v49**, all ACTIVE with JWT
 verification enabled. Gallery selection validates ordered ready/visible listing

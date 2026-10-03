@@ -128,10 +128,15 @@ enum PhotoExportRenderer {
 struct PhotoExportSelection: Identifiable {
     let id = UUID()
     let photos: [EnhancedPhoto]
+    var original = false
 }
 
 struct PhotoExportSheet: View {
     let photos: [EnhancedPhoto]
+    init(photos: [EnhancedPhoto], original: Bool = false) {
+        self.photos = photos
+        _original = State(initialValue: original)
+    }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthStore.shared
     @State private var destination: PhotoExportRenderer.Destination = .mls
@@ -175,7 +180,7 @@ struct PhotoExportSheet: View {
                         ForEach(PhotoExportRenderer.Destination.allCases) { Text($0.rawValue).tag($0) }
                     }
                     Picker("Version", selection: $original) {
-                        Text("Current edits").tag(false)
+                        Text("Selected saved edits").tag(false)
                         if hasSources { Text(verifiedOriginals ? "Retained originals" : "Earlier source files").tag(true) }
                     }
                 } footer: {

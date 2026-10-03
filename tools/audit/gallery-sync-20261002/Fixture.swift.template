@@ -1,0 +1,250 @@
+import Foundation
+
+enum Config { static var useLiveBackend = true; static var enableAuth = true }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var isSignedIn = true
+    var userID: String? = "synthetic-owner"
+    var syncSessionRevision = 1
+}
+enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
+enum CloudSyncError: Error { case identityChanged }
+enum FixtureError: LocalizedError {
+    case upload, selection, provenance
+    var errorDescription: String? { "Synthetic \(self) failure" }
+}
+struct APIError: Error { var errorDescription: String? = "Synthetic API failure"; var isUnauthorized = false }
+enum AIImagePrep {
+    static func error(_ text: String) -> Error { NSError(domain: "Synthetic", code: 1, userInfo: [NSLocalizedDescriptionKey: text]) }
+}
+enum FileStore {
+    static var documents = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+    static func fileSize(_ url: URL) -> Int64 {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+    }
+    static func relativePath(for url: URL) -> String {
+        let prefix = documents.path + "/"
+        precondition(url.path.hasPrefix(prefix), "Only owned isolated fixture paths are allowed")
+        return String(url.path.dropFirst(prefix.count))
+    }
+}
+struct Listing {
+    var id: UUID; var serverID: UUID?; var isSample = false
+    var mainPhotoRelPath: String?; var cloudImported: Bool? = nil; var lastError: String?
+}
+__ENHANCED_PHOTO__
+extension EnhancedPhoto {
+__PHOTO_LOAD__
+__PHOTO_DIRECTORY__
+    nonisolated static func loadAll(listingID: UUID) -> [EnhancedPhoto] {
+        preconditionFailure("Fixtures must use actual durable photo history")
+    }
+}
+@MainActor final class Hold<T> {
+    private var continuation: CheckedContinuation<T, Error>?
+    var reached = false
+    func suspend() async throws -> T {
+        precondition(!reached, "A held boundary is called once")
+        reached = true
+        return try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+    func resume(_ value: T) { let saved = continuation; continuation = nil; saved!.resume(returning: value) }
+    func fail(_ error: Error) { let saved = continuation; continuation = nil; saved!.resume(throwing: error) }
+}
+@MainActor final class UploadManager {
+    static let shared = UploadManager()
+    var calls: [(URL, UUID)] = []
+    var boundary: ((URL, UUID) async throws -> String)?
+    func uploadGalleryPhoto(fileURL: URL, listingID: UUID) async throws -> String {
+        precondition(fileURL.path.hasPrefix(FileStore.documents.path + "/"))
+        calls.append((fileURL, listingID))
+        if let boundary { return try await boundary(fileURL, listingID) }
+        return "asset:" + fileURL.lastPathComponent
+    }
+    func reset() { calls = []; boundary = nil }
+}
+@MainActor final class API {
+    struct Selection: Equatable { var serverID: UUID; var assetIDs: [String]; var main: String? }
+    var selectionAttempts: [Selection] = []
+    var publications: [Selection] = []
+    var appendAttempts: [Selection] = []
+    var provenance: [String] = []
+    var selectBoundary: (() async throws -> Void)?
+    var attachBoundary: (() async throws -> Void)?
+    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String], mainAssetID: String?) async throws {
+        let selection = Selection(serverID: serverID, assetIDs: galleryAssetIDs, main: mainAssetID)
+        selectionAttempts.append(selection)
+        try await selectBoundary?()
+        publications.append(selection)
+    }
+    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws {
+        let selection = Selection(serverID: serverID, assetIDs: assetIDs, main: mainAssetID)
+        appendAttempts.append(selection)
+        try await selectBoundary?()
+        publications.append(selection)
+    }
+    func attachProvenanceMedia(provenanceID: String, originalAssetID: String?, alteredAssetID: String) async throws {
+        provenance.append(provenanceID)
+        try await attachBoundary?()
+    }
+}
+@MainActor final class AppModel {
+    var listings: [Listing]; let api = API()
+    init(_ listing: Listing) { listings = [listing] }
+    func index(of id: UUID) -> Int? { listings.firstIndex { $0.id == id } }
+__ERROR_SETTER__
+__ERROR_NOTE__
+__USER_MESSAGE__
+__MAX_BYTES__
+__GALLERY_MEMO__
+__IN_FLIGHT__
+__PENDING__
+__ERROR_PREFIX__
+__SYNC__
+    var isBusy: Bool { !gallerySyncInFlight.isEmpty || !gallerySyncPending.isEmpty }
+}
+@main struct GallerySyncChecks {
+    @MainActor static func main() async throws {
+        var count = 0
+        func check(_ value: Bool, _ message: String) {
+            precondition(value, message); count += 1
+        }
+        func eventually(_ message: String, _ predicate: @MainActor () -> Bool) async {
+            for _ in 0..<25000 { if predicate() { return }; await Task.yield() }
+            preconditionFailure(message)
+        }
+        func finish(_ model: AppModel) async {
+            await eventually("Queued gallery sync must finish", { !model.isBusy })
+            for _ in 0..<10 { await Task.yield() }
+        }
+        func fixture(_ label: String, edited: Bool = false, recorded: Bool = true, imported: Bool = false) throws -> (AppModel, UUID, UUID, URL) {
+            AuthStore.shared.isSignedIn = true; AuthStore.shared.userID = "synthetic-owner"; AuthStore.shared.syncSessionRevision = 1
+            WorkspaceContext.selectedOrgID = UUID(); UploadManager.shared.reset()
+            let id = UUID(), server = UUID(), dir = EnhancedPhoto.directory(for: id)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try PhotoVersionHistory.saveCapture(original: Data("\(label)-original".utf8), enhanced: Data("\(label)-capture".utf8), id: "capture", directory: dir)
+            var selected = "enh-capture.jpg"
+            if edited {
+                _ = try PhotoVersionHistory.saveEdit(jpeg: Data("\(label)-declutter".utf8), id: "declutter", parentID: "capture", sourceID: "capture", edit: "declutter", style: nil, disclosure: "Synthetic recorded disclosure", provenanceID: "synthetic-provenance", provenanceRecorded: recorded, directory: dir)
+                selected = "edit-declutter.jpg"
+            }
+            let model = AppModel(Listing(id: id, serverID: server, mainPhotoRelPath: FileStore.relativePath(for: dir.appendingPathComponent(selected)), cloudImported: imported, lastError: AppModel.photoSyncErrorPrefix + " Earlier attempt."))
+            return (model, id, server, dir)
+        }
+        func files(_ dir: URL) throws -> [String: Data] {
+            try Dictionary(uniqueKeysWithValues: FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil).map { ($0.lastPathComponent, try Data(contentsOf: $0)) })
+        }
+        // A server selection failure remains visible and never deletes local versions.
+        do {
+            let (model, id, server, dir) = try fixture("failed-selection")
+            let before = try files(dir)
+            model.api.selectBoundary = { throw FixtureError.selection }
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.listings[0].lastError?.hasPrefix(AppModel.photoSyncErrorPrefix) == true, "Failed selection must retain the photo-sync warning")
+            check(model.listings[0].lastError?.contains("Synthetic selection failure") == true, "Failure has an actionable cause")
+            check(model.api.publications.isEmpty, "Failed selection publishes nothing")
+            check(try files(dir) == before, "Failed selection leaves every fixture image/history byte untouched")
+        }
+        // Only this operation's warning may be cleared by a successful retry.
+        for unrelated in [false, true] {
+            let (model, id, server, dir) = try fixture("success-\(unrelated)")
+            let before = try files(dir)
+            if unrelated { model.listings[0].lastError = "A newer render failure needs attention." }
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(unrelated ? model.listings[0].lastError == "A newer render failure needs attention." : model.listings[0].lastError == nil, "Successful gallery retry clears only its own error prefix")
+            check(model.api.publications.count == 1 && model.api.publications[0].assetIDs == ["asset:enh-capture.jpg"], "Selected photo reaches the explicit gallery setter")
+            check(try files(dir) == before, "Successful sync does not rewrite local saved files")
+        }
+        // A newer unrelated error appearing while the selection API is held survives.
+        do {
+            let (model, id, server, _) = try fixture("new-error-during-api")
+            let held = Hold<Void>(); model.api.selectBoundary = { try await held.suspend() }
+            let task = Task { await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server) }
+            await eventually("Selection boundary must be reached", { held.reached })
+            model.setLastError("Newer unrelated publishing failure.", for: id)
+            held.resume(()); await task.value
+            check(model.listings[0].lastError == "Newer unrelated publishing failure.", "A completed old gallery pass must not erase a newer error")
+        }
+        // Failure and cancellation never clear the prior gallery warning.
+        for cancellation in [false, true] {
+            let (model, id, server, dir) = try fixture("held-upload-\(cancellation)")
+            let old = model.listings[0].lastError, before = try files(dir), held = Hold<String>()
+            UploadManager.shared.boundary = { _, _ in try await held.suspend() }
+            let task = Task { await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server) }
+            await eventually("Upload boundary must be reached", { held.reached })
+            if cancellation { task.cancel(); held.resume("asset:enh-capture.jpg") } else { held.fail(FixtureError.upload) }
+            await task.value
+            check(cancellation ? model.listings[0].lastError == old : model.listings[0].lastError?.hasPrefix(AppModel.photoSyncErrorPrefix) == true, "Failure/cancellation may not clear the prior warning")
+            check(model.api.selectionAttempts.isEmpty && model.api.publications.isEmpty, "Failure/cancellation before selection publishes nothing")
+            check(try files(dir) == before, "Failure/cancellation leaves every saved byte untouched")
+        }
+        // Account, session, workspace and listing identity changes fence the API write.
+        for identity in ["actor", "session", "workspace", "listing"] {
+            let (model, id, server, dir) = try fixture("identity-\(identity)")
+            let before = try files(dir), old = model.listings[0].lastError, held = Hold<String>()
+            UploadManager.shared.boundary = { _, _ in try await held.suspend() }
+            let task = Task { await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server) }
+            await eventually("Identity upload boundary must be reached", { held.reached })
+            switch identity {
+            case "actor": AuthStore.shared.userID = "another-synthetic-owner"
+            case "session": AuthStore.shared.syncSessionRevision += 1
+            case "workspace": WorkspaceContext.selectedOrgID = UUID()
+            default: model.listings[0].serverID = UUID()
+            }
+            held.resume("asset:enh-capture.jpg"); await task.value
+            check(model.listings[0].lastError == old, "Identity change cannot clear the warning")
+            check(model.api.selectionAttempts.isEmpty, "Identity change cannot publish into another context")
+            check(try files(dir) == before, "Identity change leaves retained files untouched")
+        }
+        // A changed selected version during upload queues another pass; the
+        // completed old upload must never be used in a stale publication.
+        do {
+            let (model, id, server, dir) = try fixture("changed-selection")
+            let held = Hold<String>(); var uploads = 0
+            UploadManager.shared.boundary = { url, _ in uploads += 1; if uploads == 1 { return try await held.suspend() }; return "asset:" + url.lastPathComponent }
+            let task = Task { await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server) }
+            await eventually("Old selection upload must be held", { held.reached })
+            _ = try PhotoVersionHistory.saveEdit(jpeg: Data("changed-selection-declutter".utf8), id: "declutter", parentID: "capture", sourceID: "capture", edit: "declutter", style: nil, disclosure: "Synthetic recorded disclosure", provenanceID: "synthetic-provenance", provenanceRecorded: true, directory: dir)
+            model.listings[0].mainPhotoRelPath = FileStore.relativePath(for: dir.appendingPathComponent("edit-declutter.jpg"))
+            let before = try files(dir)
+            held.resume("asset:enh-capture.jpg"); await task.value
+            await eventually("Changed selection must queue an automatic retry", { model.api.publications.count > 0 }); await finish(model)
+            check(model.api.selectionAttempts.count == 1, "A stale selected-version upload never reaches publication")
+            check(model.api.publications[0].assetIDs == ["asset:edit-declutter.jpg"] && model.api.publications[0].main == "asset:edit-declutter.jpg", "Queued pass publishes only the newer selected version and main photo")
+            check(uploads == 2 && model.api.provenance == ["synthetic-provenance"], "Queued pass uploads and links the actual new version once")
+            check(model.listings[0].lastError == nil, "Successful queued pass resolves the prior gallery warning")
+            check(try files(dir) == before, "Queued pass retains capture, edit and history bytes")
+        }
+        // Re-entrant requests mark a pending pass without duplicate media work.
+        do {
+            let (model, id, server, _) = try fixture("reentrant")
+            let held = Hold<String>(); UploadManager.shared.boundary = { _, _ in try await held.suspend() }
+            let first = Task { await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server) }
+            await eventually("Re-entrant upload must be held", { held.reached })
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            held.resume("asset:enh-capture.jpg"); await first.value
+            await eventually("Pending request must repass", { model.api.publications.count == 2 }); await finish(model)
+            check(UploadManager.shared.calls.count == 1, "Memo prevents duplicate upload across a queued identical selection")
+            check(model.api.publications.count == 2, "Queued request completes its explicit selection synchronization")
+        }
+        // Missing or failed provenance must not publish the AI result.
+        for recorded in [false, true] {
+            let (model, id, server, dir) = try fixture("provenance-\(recorded)", edited: true, recorded: recorded)
+            let before = try files(dir)
+            if recorded { model.api.attachBoundary = { throw FixtureError.provenance } }
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.selectionAttempts.isEmpty && model.api.appendAttempts.isEmpty && model.api.publications.isEmpty, "Missing/failed provenance publishes no photo selection")
+            check(model.listings[0].lastError?.hasPrefix(AppModel.photoSyncErrorPrefix) == true, "Provenance failure remains visible")
+            check(recorded ? model.api.provenance.count == 1 : model.api.provenance.isEmpty, "Actual provenance failure boundary is exercised")
+            check(try files(dir) == before, "Provenance failure leaves all selected and source files untouched")
+        }
+        // Cloud-imported galleries preserve remote photos through the append API.
+        do {
+            let (model, id, server, _) = try fixture("cloud-import", imported: true)
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.selectionAttempts.isEmpty && model.api.appendAttempts.count == 1, "Imported project uses append rather than replacing remote gallery")
+            check(model.listings[0].lastError == nil, "Successful append clears only its own prior warning")
+        }
+        print("PASS actual syncGalleryPhotos: \(count) assertions; held uploads/API, selection races, cancellation, identity fences and immutable files")
+    }
+}

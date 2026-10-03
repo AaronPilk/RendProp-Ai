@@ -45,7 +45,7 @@ final class GuidedPhotoNavigationTests: XCTestCase {
 
     private func launch(largeText: Bool = false) {
         app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate",
-                               "-appearance", "light", "-ai.thirdPartyProcessing.consent.v2", "YES"]
+                               "-appearance", "light", "-ai.thirdPartyProcessing.consent.v3", "YES"]
         if largeText {
             app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
         }

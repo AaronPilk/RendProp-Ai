@@ -1,6 +1,14 @@
 // Offline production handler tests: real guardrails, MP4 probe and routing;
 // only auth/database/provider/storage boundaries are injected. Deno denies net.
-import { createEraseHandler, ERASE_PROMPT, extractEraseJob } from "./erase.ts";
+import {
+  BRIA_CONSENT,
+  createEraseHandler,
+  ERASE_MASK_PROMPT,
+  ERASE_PROMPT,
+  extractEraseJob,
+  readEraseConfig,
+} from "./erase.ts";
+import { createBriaAdapter } from "./bria.ts";
 import { HttpError } from "../_shared/http.ts";
 import { movieDuration, probeMP4Duration } from "./mp4duration.ts";
 const id = (n: number) =>
@@ -94,6 +102,15 @@ function harness() {
     actualSeconds = 2,
     movieSeconds: number | null = null,
     key = "synthetic-not-key",
+    provider: "fal" | "bria" | "disabled" = "fal",
+    serverConfig: Record<string, string> | null = null,
+    ack = true,
+    maskRate = 2,
+    eraseRate = 3,
+    directToken = "synthetic-direct-key",
+    maskError = false,
+    cancelOnAdmission = false,
+    directMask = "https://outputs.example.com/mask.mp4",
     now = 1_000_000,
     submitStatus = 200,
     submitThrows = false,
@@ -130,7 +147,7 @@ function harness() {
         error: null,
       };
     }
-    if (action === "reserve") {
+    if (action === "reserve" || action === "reserve_direct") {
       if (receipts.has(args.p_idem)) {
         return {
           data: { dispatch: false, job: receipts.get(args.p_idem) },
@@ -144,6 +161,25 @@ function harness() {
         created_at: new Date(now).toISOString(),
         provider_ref: null,
         allowance_refunded_at: null,
+        ...(action === "reserve_direct"
+          ? {
+            provider: "bria",
+            provider_config: args.p_config,
+            asset_id: args.p_asset,
+            duration_s: args.p_seconds,
+            stages: [{
+              stage: "mask",
+              state: "dispatching",
+              provider_ref: null,
+              admitted_at: new Date(now).toISOString(),
+            }, {
+              stage: "erase",
+              state: "pending",
+              provider_ref: null,
+              admitted_at: null,
+            }],
+          }
+          : {}),
       };
       jobs.set(j.id, j);
       receipts.set(args.p_idem, j);
@@ -153,6 +189,36 @@ function harness() {
       return jobs.has(args.p_job)
         ? { data: { ...jobs.get(args.p_job) }, error: null }
         : { data: null, error: { message: "RP404: Reflection job not found" } };
+    }
+    if (action === "finish_stage") {
+      const j = jobs.get(args.p_job)!,
+        stage = j.stages.find((s: O) => s.stage === args.p_stage);
+      stage.state = args.p_state;
+      stage.provider_ref ??= args.p_ref;
+      stage.output_url ??= args.p_output;
+      if (
+        !["failed", "uncertain", "cancelled", "completed"].includes(j.state)
+      ) {
+        j.state = ["failed", "uncertain"].includes(args.p_state)
+          ? args.p_state
+          : "processing";
+        if (["failed", "uncertain"].includes(args.p_state)) {
+          j.allowance_refunded_at = new Date(now).toISOString();
+        }
+      }
+      return { data: structuredClone(j), error: null };
+    }
+    if (action === "admit_stage") {
+      const j = jobs.get(args.p_job)!;
+      if (cancelOnAdmission) j.state = "cancelled";
+      const stage = j.stages.find((s: O) => s.stage === "erase");
+      const dispatch = j.state === "processing" && stage.state === "pending";
+      if (dispatch) {
+        stage.state = "dispatching";
+        stage.admitted_at = new Date(now).toISOString();
+      }
+      equal(args.p_consent, BRIA_CONSENT);
+      return { data: { job: structuredClone(j), dispatch }, error: null };
     }
     if (action === "finish") {
       const j = jobs.get(args.p_job)!;
@@ -202,15 +268,68 @@ function harness() {
       return {
         listing_id: id(4),
         kind: "video",
-        url: "https://media.invalid/" + assetId + ".mp4",
+        url: "https://media.example.com/" + assetId + ".mp4",
         duration_s: duration,
         space_type: "real_estate",
       };
     },
     falKey: () => key,
+    config: (req, actor) =>
+      serverConfig
+        ? readEraseConfig((name) => serverConfig?.[name], req, actor)
+        : ({
+          provider,
+          maskUnitCostCents: maskRate,
+          eraseUnitCostCents: eraseRate,
+          priceVersion: "synthetic-confirmed-price",
+          outputHosts: ["outputs.example.com"],
+        }),
+    bria: (config) =>
+      createBriaAdapter({
+        apiToken: () => directToken,
+        outputHosts: config.output_hosts as string[],
+        fetch: async (input, init) => {
+          equal(init.redirect, "error");
+          equal(
+            new Headers(init.headers).get("api_token"),
+            "synthetic-direct-key",
+          );
+          if (init.method === "POST") {
+            const name = input.endsWith("mask_by_prompt") ? "mask" : "erase";
+            events.push("direct-submit:" + name);
+            bodies.push(JSON.parse(String(init.body)));
+            if (submitThrows) throw Error("lost direct response");
+            return Response.json({
+              request_id: "synthetic-" + name,
+              status_url:
+                "https://engine.prod.bria-api.com/v2/status/synthetic-" + name,
+            }, { status: submitStatus === 200 ? 202 : submitStatus });
+          }
+          events.push("direct-get");
+          const name = input.endsWith("synthetic-mask") ? "mask" : "erase";
+          return Response.json(
+            maskError
+              ? {
+                request_id: "synthetic-" + name,
+                status: "ERROR",
+                error: "sensitive provider body",
+              }
+              : {
+                request_id: "synthetic-" + name,
+                status: "COMPLETED",
+                result: name === "mask"
+                  ? { mask_url: directMask }
+                  : { video_url: "https://outputs.example.com/edited.mp4" },
+              },
+          );
+        },
+      }),
     now: () => now,
     fetch: async (input, init) => {
-      if (input.startsWith("https://media.invalid/")) {
+      if (
+        input.startsWith("https://media.invalid/") ||
+        input.startsWith("https://media.example.com/")
+      ) {
         events.push("media-probe");
         const bytes = mp4(actualSeconds);
         if (movieSeconds !== null) {
@@ -247,10 +366,18 @@ function harness() {
           status: resultStatus,
         });
     },
-    persist: async (input, k) => {
+    persist: async (input, k, outputProvider, pinned) => {
       events.push("persist");
       if (cancelDuringPersist) jobs.get(id(10))!.state = "cancelled";
-      equal(input, "https://fal.media/synthetic.mp4");
+      equal(
+        input,
+        outputProvider === "bria"
+          ? "https://outputs.example.com/edited.mp4"
+          : "https://fal.media/synthetic.mp4",
+      );
+      if (outputProvider === "bria") {
+        equal(pinned?.price_version, "synthetic-confirmed-price");
+      }
       ok(k.includes(ctx.orgId + "/" + id(10)));
       return "https://media.invalid/output.mp4";
     },
@@ -258,7 +385,11 @@ function harness() {
   function request(action: string, payload: O = body, method = "POST") {
     return new Request(url + "/" + action, {
       method,
-      headers: { "content-type": "application/json", "idempotency-key": id(6) },
+      headers: {
+        "content-type": "application/json",
+        "idempotency-key": id(6),
+        ...(ack ? { "x-rendprop-ai-consent": BRIA_CONSENT } : {}),
+      },
       ...(method === "POST" ? { body: JSON.stringify(payload) } : {}),
     });
   }
@@ -275,6 +406,17 @@ function harness() {
     bodies,
     jobs,
     set: (options: O) => {
+      if ("provider" in options) provider = options.provider;
+      if ("serverConfig" in options) serverConfig = options.serverConfig;
+      if ("ack" in options) ack = options.ack;
+      if ("maskRate" in options) maskRate = options.maskRate;
+      if ("eraseRate" in options) eraseRate = options.eraseRate;
+      if ("directToken" in options) directToken = options.directToken;
+      if ("maskError" in options) maskError = options.maskError;
+      if ("cancelOnAdmission" in options) {
+        cancelOnAdmission = options.cancelOnAdmission;
+      }
+      if ("directMask" in options) directMask = options.directMask;
       if ("duration" in options) duration = options.duration;
       if ("actualSeconds" in options) actualSeconds = options.actualSeconds;
       if ("movieSeconds" in options) movieSeconds = options.movieSeconds;
@@ -534,4 +676,225 @@ Deno.test("apply checks real full durations, explicit receipt is idempotent and 
     400,
   );
   equal(tooLong.events.filter((x) => x === "rpc:apply").length, 1);
+});
+
+Deno.test("direct provider requires explicit selection, processor acknowledgement and both confirmed prices", async () => {
+  equal(
+    readEraseConfig((name) => name === "BRIA_API_TOKEN" ? "token" : undefined),
+    { provider: "fal" },
+  );
+  equal(
+    readEraseConfig((name) =>
+      name === "VIDEO_ERASE_PROVIDER" ? "typo" : undefined
+    ),
+    { provider: "disabled" },
+  );
+  for (
+    const config of [{ ack: false }, { maskRate: NaN }, { eraseRate: 0 }, {
+      maskRate: Infinity,
+    }, { directToken: "" }]
+  ) {
+    const h = harness();
+    h.set({ provider: "bria", ...config });
+    const quote = await h.handler(
+      h.request("declutter/quote?listing_id=" + id(4), {}, "GET"),
+      ctx,
+      "quote",
+    );
+    equal((await quote.json()).available, false);
+    await refuses(() => h.submit(), 503);
+    ok(
+      !h.events.includes("rpc:reserve_direct") &&
+        !h.events.some((e) => e.startsWith("direct-submit")),
+    );
+  }
+  const h = harness();
+  h.set({ provider: "bria" });
+  equal(
+    (await (await h.handler(
+      h.request("declutter/quote?listing_id=" + id(4), {}, "GET"),
+      ctx,
+      "quote",
+    )).json()).unit_cost_cents,
+    5,
+  );
+});
+Deno.test("direct mask and erase each follow one durable admission; race polls never duplicate the paid erase", async () => {
+  const h = harness();
+  h.set({ provider: "bria" });
+  const first = await (await h.submit()).json();
+  ok(first.model_id.includes("/v2/video/edit/erase"));
+  ok(
+    h.events.indexOf("rpc:reserve_direct") <
+      h.events.indexOf("direct-submit:mask"),
+  );
+  equal(h.bodies[0].prompt, ERASE_MASK_PROMPT);
+  await Promise.all([h.status(), h.status()]);
+  equal(h.events.filter((e) => e === "direct-submit:mask").length, 1);
+  equal(h.events.filter((e) => e === "direct-submit:erase").length, 1);
+  ok(
+    h.events.indexOf("rpc:admit_stage") <
+      h.events.indexOf("direct-submit:erase"),
+  );
+  equal(h.bodies[1].mask, "https://outputs.example.com/mask.mp4");
+  const result = await (await h.status()).json();
+  equal(result.status, "completed");
+  equal(result.publishable, false);
+  await h.submit();
+  equal(h.events.filter((e) => e.startsWith("direct-submit")).length, 2);
+});
+Deno.test("provider selection and price changes do not rewrite existing direct or fal jobs", async () => {
+  const direct = harness();
+  direct.set({ provider: "bria" });
+  await direct.submit();
+  direct.set({ provider: "fal", maskRate: NaN, eraseRate: 100 });
+  await direct.status();
+  await direct.status();
+  equal(direct.events.filter((e) => e === "provider-submit").length, 0);
+  equal((await (await direct.status()).json()).status, "completed");
+  const fal = harness();
+  await fal.submit();
+  fal.set({ provider: "bria", ack: false });
+  equal((await (await fal.status()).json()).status, "completed");
+  equal(fal.events.filter((e) => e.startsWith("direct-submit")).length, 0);
+});
+Deno.test("direct uncertain POST or lost receipt cannot restart masking or admit erase", async () => {
+  for (
+    const failure of [{ submitThrows: true }, { rpcFailure: "finish_stage" }]
+  ) {
+    const h = harness();
+    h.set({ provider: "bria", ...failure });
+    if (failure.rpcFailure) await refuses(() => h.submit(), 503);
+    else await h.submit();
+    h.set({ submitThrows: false, rpcFailure: "", now: 1_121_000 });
+    await h.submit();
+    await h.status();
+    equal(h.events.filter((e) => e === "direct-submit:mask").length, 1);
+    equal(h.events.filter((e) => e === "direct-submit:erase").length, 0);
+    equal(h.jobs.get(id(10))!.state, "uncertain");
+  }
+});
+Deno.test("mask error, cancelled batch or withdrawn processor acknowledgement stops erase", async () => {
+  for (
+    const config of [{ maskError: true }, { cancelOnAdmission: true }, {
+      ack: false,
+    }]
+  ) {
+    const h = harness();
+    h.set({ provider: "bria" });
+    await h.submit();
+    h.set(config);
+    const result = await (await h.status()).json();
+    ok(["failed", "cancelled"].includes(result.status));
+    equal(h.events.filter((e) => e === "direct-submit:erase").length, 0);
+    ok(!JSON.stringify(result).includes("sensitive provider body"));
+  }
+});
+Deno.test("direct erase ambiguity keeps the original mask and does not dispatch a replacement stage", async () => {
+  const h = harness();
+  h.set({ provider: "bria" });
+  await h.submit();
+  h.set({ submitThrows: true });
+  equal((await (await h.status()).json()).status, "failed");
+  h.set({ submitThrows: false });
+  await h.status();
+  await h.submit();
+  equal(h.events.filter((e) => e === "direct-submit:mask").length, 1);
+  equal(h.events.filter((e) => e === "direct-submit:erase").length, 1);
+});
+
+const betaConfig = {
+  VIDEO_ERASE_PROVIDER: "fal",
+  BRIA_BETA_ENABLED: "true",
+  BRIA_BETA_USER_IDS: ctx.userId,
+  BRIA_MASK_CENTS_PER_SECOND: "2",
+  BRIA_ERASE_CENTS_PER_SECOND: "3",
+  BRIA_PRICE_VERSION: "synthetic-confirmed-price",
+  BRIA_OUTPUT_HOSTS: "outputs.example.com",
+};
+Deno.test("Bria beta selection requires flag, exact actor UUID allowlist and processor acknowledgement", async () => {
+  for (
+    const config of [
+      {},
+      { BRIA_API_TOKEN: "new-token" },
+      { VIDEO_ERASE_PROVIDER: "bria" },
+      { ...betaConfig, BRIA_BETA_ENABLED: "false" },
+      { ...betaConfig, BRIA_BETA_ENABLED: "TRUE" },
+      { ...betaConfig, BRIA_BETA_USER_IDS: id(99) },
+      { ...betaConfig, BRIA_BETA_USER_IDS: "*" },
+      { ...betaConfig, BRIA_BETA_USER_IDS: ctx.userId + ",invalid" },
+    ]
+  ) {
+    const h = harness();
+    h.set({ serverConfig: config });
+    await h.submit();
+    equal(h.events.filter((e) => e === "provider-submit").length, 1);
+    equal(h.events.filter((e) => e.startsWith("direct-submit")).length, 0);
+  }
+  const oldApp = harness();
+  oldApp.set({ serverConfig: betaConfig, ack: false });
+  const quote = await oldApp.handler(
+    oldApp.request("declutter/quote?listing_id=" + id(4), {}, "GET"),
+    ctx,
+    "quote",
+  );
+  equal((await quote.json()).unit_cost_cents, 14);
+  await oldApp.submit();
+  equal(oldApp.events.filter((e) => e === "provider-submit").length, 1);
+  equal(oldApp.events.filter((e) => e.startsWith("direct-submit")).length, 0);
+  const otherActor = harness();
+  otherActor.set({ serverConfig: betaConfig });
+  await otherActor.handler(otherActor.request("declutter"), {
+    ...ctx,
+    userId: id(99),
+  }, "submit");
+  equal(otherActor.events.filter((e) => e === "provider-submit").length, 1);
+  equal(
+    otherActor.events.filter((e) => e.startsWith("direct-submit")).length,
+    0,
+  );
+  const beta = harness();
+  beta.set({ serverConfig: betaConfig });
+  await beta.submit();
+  equal(beta.events.filter((e) => e === "direct-submit:mask").length, 1);
+  equal(beta.events.filter((e) => e === "provider-submit").length, 0);
+});
+Deno.test("eligible Bria beta actor fails closed on unknown rates or output hosts without falling back to fal", async () => {
+  for (
+    const config of [{ ...betaConfig, BRIA_MASK_CENTS_PER_SECOND: "" }, {
+      ...betaConfig,
+      BRIA_ERASE_CENTS_PER_SECOND: "unknown",
+    }, { ...betaConfig, BRIA_OUTPUT_HOSTS: "" }]
+  ) {
+    const h = harness();
+    h.set({ serverConfig: config });
+    const quote = await h.handler(
+      h.request("declutter/quote?listing_id=" + id(4), {}, "GET"),
+      ctx,
+      "quote",
+    );
+    equal((await quote.json()).available, false);
+    await refuses(() => h.submit(), 503);
+    ok(
+      !h.events.includes("rpc:reserve") &&
+        !h.events.includes("rpc:reserve_direct"),
+    );
+    equal(
+      h.events.filter((e) =>
+        e === "provider-submit" || e.startsWith("direct-submit")
+      ).length,
+      0,
+    );
+  }
+});
+Deno.test("beta flag or allowlist changes cannot reroute an already admitted direct job", async () => {
+  const h = harness();
+  h.set({ serverConfig: betaConfig });
+  await h.submit();
+  h.set({ serverConfig: {} });
+  await h.status();
+  await h.status();
+  equal((await (await h.status()).json()).status, "completed");
+  equal(h.events.filter((e) => e.startsWith("direct-submit")).length, 2);
+  equal(h.events.filter((e) => e === "provider-submit").length, 0);
 });

@@ -57,7 +57,7 @@ Most walks launch with:
 -hasOnboarded YES
 -space.type real_estate
 -appearance light
--ai.thirdPartyProcessing.consent.v2 YES
+-ai.thirdPartyProcessing.consent.v3 YES
 ```
 
 `Config.makeAPIClient()` then returns `MockAPIClient` and `AuthStore` exposes a
