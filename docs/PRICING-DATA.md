@@ -1,5 +1,11 @@
 # Rendprop — Pricing data (6 Sep 2026)
 
+> **Historical analysis; superseded for profitability decisions.** The
+> [3 October pricing audit](PRICING-AUDIT-20261003.md) found annual/commission
+> budget gaps, underpriced provider units and paid routes outside the financial
+> fence. The tables and no-loss conclusions below are preserved as historical
+> assumptions, not current limits or a guaranteed margin.
+
 The numbers behind $49 / $99 / $249: what each billable action costs us with the AI
 routing brain ON, what each plan can cost at full allowance use, the margin after
 Apple's cut, and what competitors charge this week.

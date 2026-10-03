@@ -1,5 +1,10 @@
 # Rendprop — AI + Infra Cost Model (grounded, late-2025/2026 pricing)
 
+> **Historical architecture and pricing proposal.** The add-on prices and
+> universal cost-control claims below do not describe a verified current margin.
+> Use the [3 October pricing audit](PRICING-AUDIT-20261003.md) for current findings
+> and the proposed fee-aware funding policy. No margin guarantee is established.
+
 **Bottom line up front:** the unit economics are extremely favorable. The core render is **on-device (free)**. A base tour costs pennies to host and ~$0.003 per full view to deliver. A fully AI-enhanced listing (declutter + restage every room + a hero clip) costs roughly **$1.00–$1.50 in AI COGS** — against add-on prices of **+$19 declutter / +$49 restage**. Margin is not the problem; **consistency and cost *predictability*** are, and both are engineered below.
 
 > All figures are per-unit vendor pricing as of the research pass (2025–2026). Frontier-model prices drop monthly — reconfirm at wire-up. Route choice (direct API vs aggregator) moves cost ~2×, so it's a config, not a rewrite.

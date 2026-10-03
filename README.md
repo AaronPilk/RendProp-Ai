@@ -163,6 +163,15 @@ provider calls totaled **$0.2415 in estimated ledger cost**, not an invoice char
 records gates, pricing estimates and acceptance checks. Presenter generation stays
 disabled, and this work does not establish phone or spatial-quality acceptance.
 
+## Pricing and cost safety
+
+The [3 October pricing audit](docs/PRICING-AUDIT-20261003.md) verifies the current
+US subscription prices and live plan/routing configuration. **A 75% minimum
+margin is not currently enforced.** The report distinguishes customer-payment
+and net-receipts margins, annual discounts, actual provider billing units and
+paid paths that still need financial admission. Its proposed budgets are not
+deployed; the older pricing documents are marked historical.
+
 ## Start developing
 
 For Studio, use Node.js **22.12 or newer**:
