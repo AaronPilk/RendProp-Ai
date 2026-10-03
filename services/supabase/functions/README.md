@@ -9,9 +9,21 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 
 ## Delivered direct Bria internal beta
 
+The subsequent [audit rollout](../../../docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)
+is live: **ai-video v49**, fourteen other affected functions, strict durable
+limits, verified paid identity, compatible required request keys and ordinary
+video reservations. All 12 CI jobs pass on deployed runtime source; 196 returned
+files match, with three compiler-only type files omitted by bundling. Live
+catalog checks verify 117 assertions. Its migration is recorded once as
+`20261003024724_app_video_cost_reservations`, from source
+`20261003020955_app_video_cost_reservations.sql`. See the
+[receipt](../../../docs/releases/AUDIT-COST-GUARDS-20261002.json).
+Bria configuration and native build 43 are unchanged; the following paragraph
+describes the earlier build-43 delivery snapshot.
+
 The [build-43 handoff](../../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
 is delivered as internal **TestFlight 1.0.3 (43)**, verified available at
-**2026-10-03 00:55:46 UTC**. **ai-video v47** is ACTIVE with JWT verification;
+**2026-10-03 00:55:46 UTC**. At that delivery, **ai-video v47** was ACTIVE with JWT verification;
 all 30 API-listed files match runtime `8de8fd0`. The migration is recorded live
 as `20261003003531`, from source `20261002225458_video_erase_direct_bria.sql`;
 do not apply it twice. All twelve SQL function bodies and expected grants match;
