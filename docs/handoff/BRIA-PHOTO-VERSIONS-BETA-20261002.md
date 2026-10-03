@@ -65,6 +65,13 @@ pins provider, models, rates, consent and output hosts per job. Current configur
 changes do not reroute existing jobs. Stage admission checks current authorization,
 source availability, cancellation and the processor acknowledgement again.
 
+The latest migration also preserves Presenter ancestry checks before reads,
+idempotent replay, acceptance and each paid admission. Late receipts retain
+once-only accounting while revoked output URLs are redacted. Current-schema,
+historical-replay and direct-replay tests pass 119 checks plus the controller
+integration; a pre-fix migration is rejected before historical replay can repair
+its missing guard. Historical migrations remain unchanged.
+
 ## Narrow output-host starting point and recovery limit
 
 The proposed starting allowlist contains only
@@ -146,9 +153,10 @@ remain private outside Git.
 | [Direct adapter tests](../../services/supabase/functions/ai-video/bria_test.ts) and [handler tests](../../services/supabase/functions/ai-video/erase_test.ts) | Network/environment-denied fixtures cover contract shapes, hosts, byte/time limits, consent/cohort selection, rejected versus ambiguous dispatch and durable stage flow. No paid provider or real output-quality test. |
 | [Direct SQL contracts](../../services/supabase/tests/video_erase_direct_bria.sql) and [owned PostgreSQL runner](../../services/supabase/tests/video_erase_direct_bria_pg.py) | Fresh/replay policy checks and eight-connection admission/receipt races pass on disposable native PostgreSQL; no production migration applied by these tests. |
 | [Photo history tests](../../apps/ios/tests/PhotoVersionHistoryTests.swift) | 340 assertions; two mutation controls caught library/selection regressions. Stored source/history tests do not certify generated-photo fidelity. |
+| [Actual gallery-sync harness](../../tools/audit/gallery-sync-20261002/run.py) | 46 assertions over real synchronization/history source and held upload/API boundaries; three controls reject unrelated-error clearing, stale selection and missing provenance. Source files are synthetic and isolated. |
 | [Reel failure tests](../../apps/ios/tests/ReelClipFailureTests.swift) and [runner](../../apps/ios/tests/run-reel-clip-failures.sh) | 80 assertions over the actual production loop and recovery code; swallowed-error mutation caught. API/media doubles, no network/provider calls. |
 | [Reflection controller runner](../../tools/audit/call-20260919/reflection-controller/run.py) and [active fixture](../../tools/audit/call-20260919/reflection-controller/checks.swift) | 20 named scenarios, including seven consent boundaries; permission-epoch mutation caught. Historical baseline still reproduces its cancellation race. Controller/journal are real; video/API/upload implementations are doubles. |
-| [Saved-photo UI regression](../../apps/ios/RendpropUITests/BetaPolishUITests.swift) | New actual Debug UI library/compare/export-selection/publication case passed: one test, zero failures/skips. MockAPIClient and synthetic legacy photos; no save-to-Photos, upload, paid generation or camera certification. Remaining release-wide gates are pending. |
+| [Saved-photo UI regression](../../apps/ios/RendpropUITests/BetaPolishUITests.swift) | New actual Debug UI library/compare/export-selection/publication case and five existing queue/contact/metadata/room-tag regressions passed in preserved runs: six tests, zero failures/skips. The new case also passed one focused Release/arm64 simulator run on build 43. MockAPIClient and synthetic legacy photos; no save-to-Photos, upload, paid generation or camera certification. Remaining release-wide gates are pending. |
 
 Useful focused commands from the repository root:
 

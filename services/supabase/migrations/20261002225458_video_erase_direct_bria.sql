@@ -53,10 +53,22 @@ begin
 end $$;
 
 create or replace function public.video_erase_job_json(p_job uuid)
-returns jsonb language sql stable security definer set search_path=public as $$
-  select to_jsonb(j)||case when j.provider='bria' then jsonb_build_object('stages',
-    (select coalesce(jsonb_agg(to_jsonb(s) order by s.stage),'[]'::jsonb) from video_erase_stages s where s.job_id=j.id))
-    else '{}'::jsonb end from video_erase_jobs j where j.id=p_job;
+returns jsonb language plpgsql stable security definer set search_path=public as $$
+declare j video_erase_jobs; result jsonb; accessible boolean;
+begin
+  select * into j from video_erase_jobs where id=p_job;
+  if not found then return null; end if;
+  accessible:=public.studio_presenter_media_access(j.asset_id);
+  result:=to_jsonb(j)||case when j.provider='bria' then jsonb_build_object('stages',
+    (select coalesce(jsonb_agg(to_jsonb(s)||case when accessible then '{}'::jsonb
+      else jsonb_build_object('output_url',null) end order by s.stage),'[]'::jsonb)
+      from video_erase_stages s where s.job_id=j.id)) else '{}'::jsonb end;
+  -- Late receipts remain accountable after revocation, but must not grant a
+  -- fresh media capability or allow the handler to progress to a paid stage.
+  if not accessible then return result||jsonb_build_object('state','cancelled',
+    'output_url',null,'output_key',null,'error','Presenter source approval is no longer available'); end if;
+  return result;
+end;
 $$;
 
 create or replace function public.video_erase_finish(p_job uuid,p_state text,p_ref jsonb default null,p_url text default null,p_key text default null,p_error text default null,p_no_charge boolean default false)
@@ -102,6 +114,10 @@ begin
   if j.provider='bria' and j.state in ('failed','uncertain','cancelled') then
     update video_erase_stages set state='cancelled',cost_hold_released_at=coalesce(cost_hold_released_at,now()),updated_at=now() where job_id=j.id and state='pending';
   end if;
+  if not public.studio_presenter_media_access(j.asset_id) then
+    return video_erase_job_json(j.id)||jsonb_build_object('state','cancelled','output_url',null,
+      'output_key',null,'error','Presenter source approval is no longer available');
+  end if;
   return video_erase_job_json(j.id);
 end $$;
 
@@ -111,6 +127,9 @@ declare e plan_entitlements; a capture_assets; b video_erase_batches; j video_er
   cost numeric; mask_rate numeric; erase_rate numeric; config jsonb; batch_cost numeric; mw timestamptz; bw timestamptz;
 begin
   perform video_erase_authorize(p_org,p_user,p_listing);
+  -- Preserve the existing Presenter gate before idempotent replay and paid
+  -- admission, including reflected/browser-edited descendants of that source.
+  if not public.studio_presenter_media_access(p_asset) then raise exception 'RP409: Presenter source approval is no longer available'; end if;
   -- One org lock serializes all reservations and applies/cancels for this feature.
   perform video_erase_expire(p_org);
   select * into j from video_erase_jobs where org_id=p_org and user_id=p_user and idempotency_key=p_idem;
@@ -183,6 +202,7 @@ begin
   if p_consent is distinct from j.provider_config->>'consent_version' then raise exception 'RP403: Direct Bria processing consent is required'; end if;
   select * into b from video_erase_batches where id=j.batch_id for update;
   perform video_erase_authorize(p_org,p_user,b.listing_id);
+  if not public.studio_presenter_media_access(j.asset_id) then raise exception 'RP409: Presenter source approval is no longer available'; end if;
   select * into s from video_erase_stages where job_id=j.id and stage='erase' for update;
   if j.state in ('completed','failed','uncertain','cancelled') or b.state<>'open' or s.state<>'pending' then
     return jsonb_build_object('dispatch',false,'job',video_erase_job_json(j.id));
@@ -249,6 +269,7 @@ begin
   perform video_erase_authorize(p_org,p_user);
   select * into j from video_erase_jobs where id=p_job and org_id=p_org and user_id=p_user;
   if not found then raise exception 'RP404: Reflection job not found'; end if;
+  if not public.studio_presenter_media_access(j.asset_id) then raise exception 'RP409: Presenter source approval is no longer available'; end if;
   return video_erase_job_json(j.id);
 end $$;
 
@@ -261,6 +282,7 @@ begin
   select * into j from video_erase_jobs where org_id=p_org and user_id=p_user and idempotency_key=p_idem;
   if not found then return jsonb_build_object('job',null); end if;
   if j.request_hash<>p_hash then raise exception 'RP409: Idempotency key was used for a different request'; end if;
+  if not public.studio_presenter_media_access(j.asset_id) then raise exception 'RP409: Presenter source approval is no longer available'; end if;
   return jsonb_build_object('job',video_erase_job_json(j.id));
 end $$;
 
@@ -326,6 +348,9 @@ begin
   perform 1 from orgs where id=p_org for update;
   select * into b from video_erase_batches where id=p_batch and org_id=p_org and user_id=p_user for update;
   if not found then raise exception 'RP404: Reflection batch not found'; end if;
+  if not public.studio_presenter_media_access(p_original) or not public.studio_presenter_media_access(p_altered)
+    or exists(select 1 from public.video_erase_jobs where batch_id=b.id and not public.studio_presenter_media_access(asset_id))
+    then raise exception 'RP409: Presenter source approval is no longer available'; end if;
   if b.state='applied' then
     if b.original_asset_id is distinct from p_original or b.altered_asset_id is distinct from p_altered then raise exception 'RP409: Batch was already accepted with different video assets'; end if;
     select * into prov from media_provenance where id=b.provenance_id;

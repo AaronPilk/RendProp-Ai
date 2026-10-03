@@ -66,8 +66,9 @@ try:
  query((SQL/'tests/ci-bootstrap.sql').read_text())
  for path in sorted((SQL/'migrations').glob('*.sql')):query(path.read_text())
  ok('all real migrations apply from an empty database')
- query(MIGRATION.read_text());ok('execution migration replays safely')
- query((SQL/'migrations/20260924184319_studio_presenter_media_revocation.sql').read_text());ok('recursive media revocation migration replays safely')
+ # Exercise the current schema's actual revocation boundaries before replaying
+ # the historical patch. Otherwise a replay could conceal a replacement RPC
+ # that accidentally dropped its guard in a later migration.
  query('\n'.join(f"insert into auth.users(id,email) values('{u}','presenter-{i}@fixture.invalid');" for i,u in enumerate([A,B,C,M,X])))
  query(f"insert into orgs(id,name) values('{ORG}','Presenter fixture'),('{OTHER}','Other fixture');insert into memberships(user_id,org_id,role) values('{A}','{ORG}','agent'),('{B}','{ORG}','admin'),('{C}','{ORG}','agent'),('{M}','{ORG}','marketing'),('{X}','{OTHER}','owner');insert into listings(id,org_id,agent_id) values('{LIST}','{ORG}','{A}'),('{L2}','{ORG}','{A}'),('{XL}','{OTHER}','{X}');")
  for asset,listing,org,kind,duration in [(PHOTO,LIST,ORG,'photo',None),(PHOTO2,LIST,ORG,'photo',None),(VIDEO,LIST,ORG,'video',12),(VIDEO2,L2,ORG,'video',9),(XPHOTO,XL,OTHER,'photo',None)]:
@@ -182,17 +183,54 @@ try:
  erased=json.loads(query(f"set role service_role;select video_erase_reserve('{ORG}','{B}','{LIST}','{BATCH}','{CLIP}','{uid(5251)}','{'a'*64}',4);"))['job']
  ERASE_KEY=f'renders/{ORG}/{LIST}/fixture-reflection-clip.mp4';EREF={'request_id':'synthetic-reflection-job'}
  query(f"set role service_role;select video_erase_finish('{erased['id']}','completed',{lit(EREF)},'https://fixture.invalid/reflection.mp4','{ERASE_KEY}');select video_erase_apply('{ORG}','{B}','{BATCH}','{ASSET}','{REFLECT}');")
+ DIRECT_CONFIG={'mask_unit_cost_cents':2,'erase_unit_cost_cents':3,'price_version':'synthetic-presenter-revocation','output_hosts':['outputs.example.com']}
+ MASK_REF={'request_id':'synthetic-presenter-mask','status_url':'https://engine.prod.bria-api.com/v2/status/synthetic-presenter-mask'}
+ DIRECT_REF={'request_id':'synthetic-presenter-erase','status_url':'https://engine.prod.bria-api.com/v2/status/synthetic-presenter-erase'}
+ def direct_reserve(batch,idem):return f"select video_erase_reserve_direct('{ORG}','{B}','{LIST}','{batch}','{CLIP}','{idem}','{'b'*64}',4,{lit(DIRECT_CONFIG)},'bria-video-v1');"
+ DIRECT_BATCH,DIRECT_IDEM=uid(5260),uid(5261)
+ DIRECT_JOB=json.loads(query('set role service_role;'+direct_reserve(DIRECT_BATCH,DIRECT_IDEM)))['job']['id']
+ query(f"set role service_role;select video_erase_finish_stage('{DIRECT_JOB}','mask','completed',{lit(MASK_REF)},'https://outputs.example.com/mask.mp4');")
+ DIRECT_DONE_BATCH,DIRECT_DONE_IDEM=uid(5262),uid(5263)
+ DIRECT_DONE=json.loads(query('set role service_role;'+direct_reserve(DIRECT_DONE_BATCH,DIRECT_DONE_IDEM)))['job']['id']
+ DIRECT_KEY=f'video-reflections/{ORG}/{DIRECT_DONE}.mp4'
+ query(f"set role service_role;select video_erase_finish_stage('{DIRECT_DONE}','mask','completed',{lit(MASK_REF)},'https://outputs.example.com/mask.mp4');select video_erase_admit_stage('{ORG}','{B}','{DIRECT_DONE}','bria-video-v1');select video_erase_finish_stage('{DIRECT_DONE}','erase','completed',{lit(DIRECT_REF)},'https://outputs.example.com/erase.mp4');select video_erase_finish('{DIRECT_DONE}','completed',null,'https://fixture.invalid/direct.mp4','{DIRECT_KEY}');")
+ before=json.loads(query(f"set role service_role;select video_erase_get('{ORG}','{B}','{DIRECT_DONE}');"))
+ ok('approved Bria result retains both paid stage receipts before revocation',before['state']=='completed' and len(before['stages'])==2 and all(s['output_url'] and s['cost_ledger_id'] for s in before['stages']))
+ query(f"set role service_role;select video_erase_apply('{ORG}','{B}','{DIRECT_DONE_BATCH}','{ASSET}','{REFLECT}');")
+ LATE_MASK=json.loads(query('set role service_role;'+direct_reserve(uid(5266),uid(5267))))['job']['id']
+ LATE_ERASE=json.loads(query('set role service_role;'+direct_reserve(uid(5268),uid(5269))))['job']['id']
+ query(f"set role service_role;select video_erase_finish_stage('{LATE_ERASE}','mask','completed',{lit(MASK_REF)},'https://outputs.example.com/mask.mp4');select video_erase_admit_stage('{ORG}','{B}','{LATE_ERASE}','bria-video-v1');")
  vis=json.loads(query(f"set role service_role;select studio_presenter_media_visibility('{LIST}',array['{ASSET}'::uuid,'{EDIT}'::uuid,'{REFLECT}'::uuid],array['{NATIVE_RENDER['id']}'::uuid,'{EDIT_RENDER['id']}'::uuid],array['{EDIT_KEY}','{ERASE_KEY}','{REFLECT_KEY}']);"))
  ok('approved direct native, browser edit, and reflection descendants remain visible',all(vis['assets'].values()) and all(vis['renders'].values()) and all(vis['keys'].values()))
  revoke_prefix='begin;'+rpc(action='revoke_profile',payload={'profile_id':PROFILE,'expected_revision':2})
  revoked=query(revoke_prefix+f"select json_build_array(studio_presenter_media_access('{ASSET}'),studio_presenter_media_access('{EDIT}'),studio_presenter_media_access('{REFLECT}'),studio_presenter_render_access('{NATIVE_RENDER['id']}'),studio_presenter_render_access('{EDIT_RENDER['id']}'),studio_presenter_key_access('{LIST}','{ERASE_KEY}'));set role authenticated;set request.jwt.claim.sub='{B}';select json_build_array((select count(*) from capture_assets where id in ('{ASSET}','{EDIT}','{REFLECT}')),(select count(*) from renders where id in ('{NATIVE_RENDER['id']}','{EDIT_RENDER['id']}')),(select count(*) from media_provenance where id='{EDIT_PROOF}'));rollback;").splitlines()
  ok('revoked Presenter blocks new direct, native, edited and reflected capabilities',json.loads(revoked[-2])==[False]*6)
  ok('authenticated RLS hides retained native renders, edited capture rows and derived provenance',json.loads(revoked[-1])==[0,0,0])
- for sql in [f"set role authenticated;set request.jwt.claim.sub='{B}';select create_render_job('{LIST}','{ASSET}','smooth','{{}}','presenter-native-replay','app');",f"set role authenticated;set request.jwt.claim.sub='{B}';select publish_render('{NATIVE['id']}',12,1);",f"select video_erase_get('{ORG}','{B}','{erased['id']}');",f"select video_erase_existing('{ORG}','{B}','{uid(5251)}','{'a'*64}');",f"select video_erase_apply('{ORG}','{B}','{BATCH}','{ASSET}','{REFLECT}');"]:
-  error(revoke_prefix+sql,'RP409')
- ok('native idempotent publish and reflection status/replay cannot bypass revocation')
- late=query(revoke_prefix+f"select video_erase_finish('{erased['id']}','completed',{lit(EREF)},'https://fixture.invalid/reflection.mp4','{ERASE_KEY}');rollback;").splitlines()
- redacted=json.loads(late[-1]);ok('late reflection completion preserves accounting while withholding revoked output URL',redacted['output_url'] is None and redacted['output_key'] is None and redacted['cost_ledger_id'] is not None)
+ def reflection_revocation_checks(phase):
+  for sql in [f"set role authenticated;set request.jwt.claim.sub='{B}';select create_render_job('{LIST}','{ASSET}','smooth','{{}}','presenter-native-replay','app');",f"set role authenticated;set request.jwt.claim.sub='{B}';select publish_render('{NATIVE['id']}',12,1);",f"select video_erase_get('{ORG}','{B}','{erased['id']}');",f"select video_erase_existing('{ORG}','{B}','{uid(5251)}','{'a'*64}');",f"select video_erase_reserve('{ORG}','{B}','{LIST}','{uid(5252)}','{CLIP}','{uid(5253)}','{'d'*64}',4);",f"select video_erase_apply('{ORG}','{B}','{BATCH}','{ASSET}','{REFLECT}');"]:
+   error(revoke_prefix+sql,'RP409: Presenter source approval is no longer available')
+  ok(phase+': native and fal status/reserve/replay/acceptance enforce revoked ancestry')
+  for sql in [f"select video_erase_get('{ORG}','{B}','{DIRECT_JOB}');",f"select video_erase_get('{ORG}','{B}','{DIRECT_DONE}');",f"select video_erase_existing('{ORG}','{B}','{DIRECT_IDEM}','{'b'*64}');",direct_reserve(DIRECT_BATCH,DIRECT_IDEM),direct_reserve(uid(5264),uid(5265)),f"select video_erase_admit_stage('{ORG}','{B}','{DIRECT_JOB}','bria-video-v1');",f"select video_erase_apply('{ORG}','{B}','{DIRECT_DONE_BATCH}','{ASSET}','{REFLECT}');"]:
+   error(revoke_prefix+sql,'RP409: Presenter source approval is no longer available')
+  ok(phase+': Bria reads, initial and idempotent mask reservation, and erase admission enforce revoked ancestry')
+  late=query(revoke_prefix+f"select video_erase_finish('{erased['id']}','completed',{lit(EREF)},'https://fixture.invalid/reflection.mp4','{ERASE_KEY}');rollback;").splitlines()
+  redacted=json.loads(late[-1]);ok(phase+': late fal completion preserves accounting while withholding revoked output',redacted['state']=='cancelled' and redacted['output_url'] is None and redacted['output_key'] is None and redacted['cost_ledger_id'] is not None)
+  for name,sql in [('mask receipt',f"select video_erase_finish_stage('{DIRECT_JOB}','mask','completed',{lit(MASK_REF)},'https://outputs.example.com/mask.mp4');"),('erase receipt',f"select video_erase_finish_stage('{DIRECT_DONE}','erase','completed',{lit(DIRECT_REF)},'https://outputs.example.com/erase.mp4');"),('final result',f"select video_erase_finish('{DIRECT_DONE}','completed',null,'https://fixture.invalid/direct.mp4','{DIRECT_KEY}');")]:
+   payload=json.loads(query(revoke_prefix+sql+'rollback;').splitlines()[-1])
+   ok(phase+': late Bria '+name+' retains paid receipts while redacting every output capability',payload['state']=='cancelled' and payload['output_url'] is None and payload['output_key'] is None and all(s['output_url'] is None for s in payload['stages']) and any(s['cost_ledger_id'] for s in payload['stages']))
+  for name,job,ref,expected_ledgers in [('mask',LATE_MASK,MASK_REF,1),('erase',LATE_ERASE,DIRECT_REF,2)]:
+   q=f"select video_erase_finish_stage('{job}','{name}','completed',{lit(ref)},'https://outputs.example.com/{name}.mp4');"
+   late_first=query(revoke_prefix+q+q+f"select count(*) from cost_ledger where meta->>'erase_job_id'='{job}';rollback;").splitlines()
+   payload=json.loads(late_first[-2])
+   ok(phase+': first paid Bria '+name+' receipt after revocation is booked exactly once without output access',int(late_first[-1])==expected_ledgers and payload['state']=='cancelled' and all(s['output_url'] is None for s in payload['stages']) and any(s['cost_ledger_id'] for s in payload['stages']))
+  untouched=json.loads(query(f"select json_build_array((select state='pending' and admitted_at is null from video_erase_stages where job_id='{DIRECT_JOB}' and stage='erase'),(select count(*) from cost_ledger where meta->>'erase_job_id'='{DIRECT_JOB}'),(select count(*) from cost_ledger where meta->>'erase_job_id'='{DIRECT_DONE}'));"))
+  ok(phase+': revocation neither admits unpaid erase nor duplicates existing paid receipts',untouched==[True,1,2])
+ reflection_revocation_checks('current schema before historical replay')
+ query(MIGRATION.read_text());ok('execution migration replays safely at its historical boundary')
+ query((SQL/'migrations/20260924184319_studio_presenter_media_revocation.sql').read_text());ok('recursive media revocation migration replays safely over current Bria RPCs')
+ reflection_revocation_checks('after historical revocation replay')
+ query((SQL/'migrations/20261002225458_video_erase_direct_bria.sql').read_text());ok('direct Bria migration replay preserves Presenter gates')
+ reflection_revocation_checks('after direct Bria migration replay')
  legacy=query(revoke_prefix+f"select json_build_array(studio_presenter_media_access('{VIDEO}'),studio_presenter_key_access('{LIST}','uploads/{ORG}/{LIST}/{VIDEO}.mp4'));rollback;").splitlines()
  ok('ordinary original media preserves existing read behavior',json.loads(legacy[-1])==[True,True])
  LEGACY_PROOF=uid(5350);LEGACY_KEY='renders/legacy-compliance/ordinary.jpg'
