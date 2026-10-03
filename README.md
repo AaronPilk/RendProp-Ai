@@ -5,12 +5,16 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
-Internal **TestFlight 1.0.3 (43) is PREPARING**, not uploaded or verified available.
+Internal **TestFlight 1.0.3 (43) is AVAILABLE**, verified **3 October 2026 at
+00:55:46 UTC** (2 October locally) for the existing Rendprop team.
 The [Bria and saved-photo beta handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
 records consent v3, direct Bria limited to the internal scheme and an explicit
 authenticated tester allowlist, Latest/Decluttered/Staged downloads, separate
-listing selection and reel stop/resume with retained completed clips. The backend
-changes are not deployed; final CI, archive, deployment and Apple gates remain.
+listing selection and reel stop/resume with retained completed clips. All twelve
+CI jobs passed on uploaded runtime `8de8fd0`. Backend **ai-video v47** is live,
+JWT verification is enabled and all 30 deployed files match. The
+[delivery receipt](docs/releases/TESTFLIGHT-43-20261002.json) binds the signed
+archive, one internal upload, Apple availability, testing notes and schema readbacks.
 The single historical Bria output CDN is a narrow beta starting allowlist, with
 possible paid outputs stranded at unknown hosts. Normal fal processing and the
 existing AI clip allowance/budget contract remain. Local tests do not certify
@@ -19,13 +23,14 @@ camera or generated-media quality.
 Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
 and is **Waiting for Review**, with automatic release after approval. All twelve
 CI jobs passed on uploaded runtime `204594a`. Spatial capture remains confined
-to internal **TestFlight 41**; select **Previous Builds → 1.0.3 (41)** to keep
+to internal **TestFlight 43**; select **Previous Builds → 1.0.3 (43)** to keep
 testing it. The [App Store receipt](docs/releases/APPSTORE-42-20261002.json) and
 [release handoff](docs/handoff/APPSTORE-42-20261002.md) record the exact binary,
 Apple state and verification limits. Studio now waits for original media to be
 saved before accepting newly imported media; this fix is deployed and all 31 live assets
 match the release. Direct Bria was not enabled in build 42; its delivery snapshot
-is separate from the preparing internal build 43.
+is separate from the delivered internal build 43. The public build-42 binding and
+Waiting for Review state were read back after the internal upload.
 
 Internal **TestFlight 1.0.3 (41)** is available to the existing Rendprop team,
 verified **2 October 2026 at 17:23:58 UTC**. The
@@ -54,7 +59,7 @@ an Agent / Photographer onboarding choice, a separate client contact and photo
 per listing, private lead email routing, retained inquiry history and confirmed
 resends. Client pages can hide service promotions while retaining the contact
 form and privacy disclosure. This workflow is deployed to Studio, public pages
-and the backend, released in build 39 and retained in current build 41. All 12
+and the backend, released in build 39 and retained in current build 43. All 12
 workflow exact-source CI jobs passed; see the
 [release handoff](docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for live
 readbacks and the controlled phone/inbox acceptance still required.
@@ -67,7 +72,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
 [App Store submission receipt](docs/releases/APPSTORE-42-20261002.json) ·
-[Spatial TestFlight receipt](docs/releases/TESTFLIGHT-41-20261002.json) ·
+[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-43-20261002.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -109,8 +114,8 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Regular **1.0.3 (42)** submitted and **Waiting for Review**; public release follows Apple approval. Retains beta workflow fixes and stops unsent AI photo work after consent revocation. Internal **41** remains available for spatial tests. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
-| Preparing internal beta | **1.0.3 (43)** not uploaded; direct-Bria backend not deployed. Explicit internal-scheme/tester/consent gates, saved-photo version downloads and reel failure recovery are prepared. See the [handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md) for verified limits and remaining gates. |
+| iOS | Regular **1.0.3 (42)** submitted and **Waiting for Review**; public release follows Apple approval. Internal **43** is available for spatial and Bria beta tests. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
+| Internal beta | **1.0.3 (43)** delivered; direct-Bria backend **ai-video v47** deployed with one trusted tester, fresh consent, existing AI clip limits and budgets. Saved-photo libraries/downloads and reel failure recovery are delivered. Real provider quality and phone acceptance remain; see the [handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md). |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the
@@ -193,7 +198,7 @@ tests cannot validate physical camera, ARKit/LiDAR capture or thermal behavior.
 
 ## Workflow and release documentation
 
-- [Preparing Bria and saved-photo versions internal beta](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
+- [Delivered Bria and saved-photo versions internal beta](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
 - [Create with chat and Improve prompt](docs/studio/conversational-creation.md)
 - [Agency production, capture plans and review](docs/studio/agency-production-workflow.md)
 - [Named video projects, music, captions and editing copies](docs/studio/projects-and-finishing.md)

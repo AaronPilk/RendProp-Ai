@@ -8,7 +8,12 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
-Internal **TestFlight 1.0.3 (43): PREPARING**, not uploaded or verified available.
+Internal **TestFlight 1.0.3 (43): AVAILABLE**, verified **3 October 2026 at
+00:55:46 UTC** (2 October locally). Apple reports VALID / INTERNAL_ONLY /
+IN_BETA_TESTING in the existing Rendprop team group; English testing notes were
+verified at 00:56:33 UTC. The [delivery receipt](../../docs/releases/TESTFLIGHT-43-20261002.json)
+binds uploaded runtime `8de8fd0`, all twelve passing CI jobs, the signed archive
+and the retained actual Apple Distribution IPA.
 The [Bria and saved-photo versions handoff](../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
 records the new direct-Bria consent v3, an internal-scheme acknowledgement plus
 explicit server tester allowlist, saved Latest/Decluttered/Staged libraries,
@@ -16,9 +21,12 @@ viewed-version downloads and separate listing selection. Photo history remains
 local to the iPhone. Reel generation now stops on the first failure and retains
 completed clips for finishing without regeneration; the underlying fal 502 cause
 remains unproven. All 27 available beta attachments were reviewed with zero new
-crash reports surfaced. The dependent backend is not deployed and final source CI,
-archive, upload, Apple availability and phone checks are pending. These changes
-do not alter the submitted build-42 snapshot or certify camera/media quality.
+crash reports surfaced. The dependent **ai-video v47** backend is deployed; all 30
+files, schema bodies, grants and private beta configuration were verified.
+Six Debug UI cases and one focused Release/arm64 simulator case passed across
+preserved runs using production native code identical to the archive, synthetic
+photos and MockAPIClient. Camera/media quality, real provider output and Files/Photos delivery
+remain phone checks. The submitted build-42 snapshot remains unchanged.
 
 Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
 and Apple reports **Waiting for Review**. Release is automatic after approval.
@@ -28,7 +36,7 @@ twelve passing CI jobs and the actual uploaded Apple Distribution package.
 The regular scheme hides spatial capture and prevents new spatial admission
 and inherited upload recovery. AI photo batches stop unsent requests after
 consent revocation. Physical builds ignore simulator UI-test switches.
-For spatial testing, choose **TestFlight → Previous Builds → 1.0.3 (41)**;
+For spatial testing, choose **TestFlight → Previous Builds → 1.0.3 (43)**;
 build 42 excludes those experimental entry points. Submission does not certify
 physical camera quality or mean Apple has approved the update.
 
@@ -225,7 +233,7 @@ Money is represented as integer cents.
 
 ## Tests and phone acceptance
 
-- [Preparing build 43 tests and phone checklist](../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md#verification-and-evidence-boundaries)
+- [Delivered build 43 tests and phone checklist](../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md#verification-and-evidence-boundaries)
   links the new actual-source consent, photo-history, reflection and reel failure
   checks. The new Release saved-photo UI case uses MockAPIClient and synthetic
   photos; provider output, Files/Photos delivery and physical capture need phone

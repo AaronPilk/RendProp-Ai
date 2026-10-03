@@ -2,18 +2,31 @@
 
 ## Delivery status
 
-Internal **TestFlight 1.0.3 (43): PREPARING**. Build 43 has not been uploaded or
-verified available in Apple. The direct-Bria migration and dependent `ai-video`
-changes have not been deployed. Final exact-source CI, signed archive, deployment
-readbacks and Apple availability remain delivery gates. This document records
-prepared behavior and local verification; it is not a delivery receipt.
+Internal **TestFlight 1.0.3 (43): AVAILABLE**, verified **2026-10-03 00:55:46 UTC**
+(2 October locally) for the existing Rendprop team. Apple build
+`da5b14ab-5e37-4125-a5fa-35d671bc1927` is VALID / INTERNAL_ONLY / IN_BETA_TESTING,
+not expired and included in the existing internal group. English testing notes
+were verified at 00:56:33 UTC. One upload succeeded; no tester/group changes or
+public App Store submission were made for 43.
+
+The [delivery receipt](../releases/TESTFLIGHT-43-20261002.json) binds runtime
+`8de8fd070eec2d55b0f62e12fe8488c99752e8a3`, all twelve passing CI jobs, the
+source-bound signed archive and Apple readbacks. **ai-video v47** is ACTIVE with
+JWT verification; all **30 API-listed files** byte-match that source. The migration
+is live as **`20261003003531`**, from source
+`20261002225458_video_erase_direct_bria.sql`; do not apply it twice. Schema was
+applied before the handler, then source, all twelve SQL function bodies, expected
+grants, RLS and six private configuration values were verified. Job/stage client
+access is denied; the existing membership-scoped held-cents read remains.
+Security readback adds no ERROR/WARN over the existing 26 WARN entries. Quote and
+status GETs without authorization both return 401 before provider work.
 
 Regular **App Store 1.0.3 (42)** remains a separate submitted release. Its
 [handoff](APPSTORE-42-20261002.md) and
 [receipt](../releases/APPSTORE-42-20261002.json) are immutable snapshots. Internal
-build 41 remains the delivered spatial beta until build 43 availability is
-verified. No App Store binary or production provider selection is changed by
-preparing this beta.
+build 43 retains spatial testing. The public build-42 binding and Waiting for
+Review state were read back after the internal upload. No global provider override
+was enabled; regular App Store clients retain their existing fal transport.
 
 ## Direct Bria is an explicit internal beta
 
@@ -74,7 +87,7 @@ its missing guard. Historical migrations remain unchanged.
 
 ## Narrow output-host starting point and recovery limit
 
-The proposed starting allowlist contains only
+The deployed starting allowlist contains only
 **`d1ei2xrl63k822.cloudfront.net`**. A real February 2026
 [Bria-owned eraser example](https://replicate.com/bria/video-erase-object/examples)
 logs its native output under `/api/video/res/` on that exact host before copying
@@ -85,7 +98,10 @@ current direct v2 mask and erase outputs both use it. Current official video
 OpenAPI examples use placeholder result URLs; SDK examples do not establish a
 current generated-video host.
 
-Only the exact configured hostname is trusted. HTTPS, URL validation, rejected
+The beta is enabled for **one trusted owner** using six digest-confirmed private
+configuration values. The exact output host and 2¢/4.5¢ stage rates above are
+configured; the provider token already existed and was not read or embedded in
+the app. Only the exact configured hostname is trusted. HTTPS, URL validation, rejected
 redirects, credential-free media downloads and bounded size/time apply; there is
 no wildcard CloudFront, S3 or CDN permission. The API token is sent only to the
 fixed Bria API/status origin. A current result at any other host fails closed.
@@ -142,6 +158,39 @@ service has recovered.
 
 ## Verification and evidence boundaries
 
+All twelve CI jobs passed on the uploaded source in
+[run 37081287467](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37081287467).
+The earlier `e140442` candidate exposed missing Presenter ancestry/revocation
+guards in the new RPC replacements. Those were restored in `8de8fd0` and rejected
+by a pre-fix negative control before deployment; historical migrations were not
+rewritten.
+
+The first CI attempt on `8de8fd0` retained a real transient source-playback failure:
+the synthetic Studio export lasted **8.607033 seconds** with a **607 ms frame gap**
+and brief original-audio dropout. A single strict rerun on identical source passed
+all twelve jobs. Its actual H.264/AAC finishing artifact passed **11/11 checks**,
+lasted **8.0355 seconds**, changed to the photo at **4.05 seconds**, and recorded
+zero browser errors or external requests. The previously passing base artifact
+lasted **8.023167 seconds**. Failed and passing artifacts remain preserved privately;
+no exporter, fixture or tolerance changes were made. A passing rerun does not
+certify every timing condition under load.
+
+The final signed archive matches all **218 tracked inputs**, 139 tracked Swift
+sources plus one generated source, and arm64 UUID
+`21C2F4EF-ABD7-37DF-9DBF-443F0D25F04B`; archive and DerivedData dSYM bytes match.
+Local UI checks used the earlier native candidate with production native code
+identical to the final archive; backend guards/tests and documentation changed
+after those runs. Simulator checks are separate from uploaded-archive phone acceptance.
+
+The retained **actual uploaded IPA** was independently verified: valid Apple
+Distribution signature, Team `5F5C5G25Y6`, build 43 and the same arm64 UUID. Its
+37 file-backed native sections and seven resources byte-match the source archive;
+all eleven IPA app files match the retained re-signed app. The transfer-log path
+and checksum bind the package to the recorded upload. The IPA SHA-256 is
+`bb5f943ff98273989aac60f5fafdb37d1f87023fe5d901fb3ae21699439cd8c6`.
+Re-signing changes the executable checksum; no byte equality of the complete
+signed executable is claimed. The IPA and customer evidence remain private.
+
 All **27 available beta attachments were reviewed**. The reviewed feedback and
 readback surfaced **0 new crash reports**; this is not a complete crash census.
 Customer screenshots, contact information, account identifiers and audit evidence
@@ -156,7 +205,7 @@ remain private outside Git.
 | [Actual gallery-sync harness](../../tools/audit/gallery-sync-20261002/run.py) | 46 assertions over real synchronization/history source and held upload/API boundaries; three controls reject unrelated-error clearing, stale selection and missing provenance. Source files are synthetic and isolated. |
 | [Reel failure tests](../../apps/ios/tests/ReelClipFailureTests.swift) and [runner](../../apps/ios/tests/run-reel-clip-failures.sh) | 80 assertions over the actual production loop and recovery code; swallowed-error mutation caught. API/media doubles, no network/provider calls. |
 | [Reflection controller runner](../../tools/audit/call-20260919/reflection-controller/run.py) and [active fixture](../../tools/audit/call-20260919/reflection-controller/checks.swift) | 20 named scenarios, including seven consent boundaries; permission-epoch mutation caught. Historical baseline still reproduces its cancellation race. Controller/journal are real; video/API/upload implementations are doubles. |
-| [Saved-photo UI regression](../../apps/ios/RendpropUITests/BetaPolishUITests.swift) | New actual Debug UI library/compare/export-selection/publication case and five existing queue/contact/metadata/room-tag regressions passed in preserved runs: six tests, zero failures/skips. The new case also passed one focused Release/arm64 simulator run on build 43. MockAPIClient and synthetic legacy photos; no save-to-Photos, upload, paid generation or camera certification. Remaining release-wide gates are pending. |
+| [Saved-photo UI regression](../../apps/ios/RendpropUITests/BetaPolishUITests.swift) | New actual Debug UI library/compare/export-selection/publication case and five existing queue/contact/metadata/room-tag regressions passed in preserved runs: six tests, zero failures/skips in those accepted runs. The new case also passed one focused Release/arm64 simulator run on build 43. MockAPIClient and synthetic legacy photos; no save-to-Photos, upload, paid generation or camera certification. Exact-source CI/archive/Apple delivery is separately verified above. |
 
 Useful focused commands from the repository root:
 
@@ -169,16 +218,15 @@ deno test --deny-net --deny-env services/supabase/functions/ai-video/bria_test.t
 python3 services/supabase/tests/video_erase_direct_bria_pg.py
 ```
 
-## Delivery gates and phone acceptance
+## Delivery verification and phone acceptance
 
-1. Pin the final runtime source and pass its required CI/regular and internal-beta
-   build checks. Apply the reviewed schema before the dependent handler, preserve
-   JWT/authentication settings, and verify deployed source/grants/configuration.
-   Keep real tester IDs and credentials outside Git.
-2. Archive the internal scheme as build 43, inspect its actual package, upload once
-   and read back Apple processing, internal availability and testing notes. Record
-   deployed versions and final receipts before calling this release delivered.
-3. On an authorized phone, install 43 after availability is verified without
+1. Completed: exact-source CI and regular/internal build checks; schema before
+   handler; JWT, deployed source, grants, RLS and private beta configuration readbacks.
+   Tester IDs and credentials remain outside Git.
+2. Completed: signed source-bound internal archive, one upload, Apple processing,
+   internal availability and English testing notes. The delivery receipt records
+   the exact versions, hashes and verification limits.
+3. On an authorized phone, install available build 43 without
    deleting saved work. Confirm v2 consent requires a fresh v3 disclosure, decline
    blocks the tool, and revocation stops unsent work during quote/upload/poll.
 4. Compare saved Latest/Decluttered/Staged photos with their retained source. Check

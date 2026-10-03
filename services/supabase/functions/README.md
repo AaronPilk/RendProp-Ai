@@ -7,11 +7,21 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
-## Preparing direct Bria internal beta
+## Delivered direct Bria internal beta
 
 The [build-43 handoff](../../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
-is **PREPARING**: its migration and `ai-video` changes are not deployed and the
-TestFlight binary is not uploaded. Direct Bria requires the internal client's
+is delivered as internal **TestFlight 1.0.3 (43)**, verified available at
+**2026-10-03 00:55:46 UTC**. **ai-video v47** is ACTIVE with JWT verification;
+all 30 API-listed files match runtime `8de8fd0`. The migration is recorded live
+as `20261003003531`, from source `20261002225458_video_erase_direct_bria.sql`;
+do not apply it twice. All twelve SQL function bodies and expected grants match;
+job/stage RLS denies client access and service CRUD remains. The membership-scoped
+held-cents authenticated read is preserved. Security readback adds no ERROR/WARN
+over the existing 26 WARN entries. Quote and status probes return 401.
+Six private configuration values were digest-confirmed for one trusted owner.
+The [delivery receipt](../../../docs/releases/TESTFLIGHT-43-20261002.json) records
+the exact-source twelve passing CI jobs and Apple availability. Direct Bria requires
+the internal client's
 consent-v3 acknowledgement, `BRIA_BETA_ENABLED=true`, a server-configured
 `BRIA_BETA_USER_IDS` list containing the authenticated user, confirmed rates and
 exact output hosts. A saved API token does not switch providers. Other users and
@@ -32,8 +42,9 @@ See the [adapter tests](ai-video/bria_test.ts), [handler tests](ai-video/erase_t
 [migration](../migrations/20261002225458_video_erase_direct_bria.sql),
 [SQL contracts](../tests/video_erase_direct_bria.sql) and
 [disposable PostgreSQL runner](../tests/video_erase_direct_bria_pg.py).
-Apply schema before the dependent handler and verify deployed source/grants before
-enablement. Tester IDs, credentials and customer evidence stay outside Git.
+Schema was applied before the dependent handler; source, grants and configuration
+were read back before enablement. No paid provider jobs were submitted for delivery
+verification. Tester IDs, credentials and customer evidence stay outside Git.
 
 ## Delivered release checkpoints
 
