@@ -321,13 +321,13 @@
       "passed": true
     },
     {
-      "artifact": "app-video-production-readback/checker-result.json",
-      "sha256": "9cb6c09a7f07780d98f92ea4aee136e7c3b07b12e549064d83090ebce1e74545",
+      "artifact": "app-video-production-readback/live-verification.json",
+      "sha256": "b78133a84ad6cd7799c4fa64972d8c95fbcfc12c95b32fda8632c2305525d737",
       "passed": true
     },
     {
-      "artifact": "app-video-production-readback/negative-controls.json",
-      "sha256": "f6737a7a1275e5fbbec27e2d9a14c54d763caef78bf2e0a04055d771703a910b",
+      "artifact": "app-video-production-readback/checker-negative-controls.json",
+      "sha256": "4446a889d91c0b9e61bffafb0a9c5a8f736ccd383c2b33dda09b595b148fe96a",
       "passed": true
     }
   ]
