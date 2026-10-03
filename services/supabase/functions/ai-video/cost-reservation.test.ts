@@ -9,7 +9,8 @@ const step: RouteStep = {
   min_plan: "pro", same_model_as: null, privacy_tier: "no_retention", enabled: true,
 };
 const options = {
-  actorId: "fixture-actor", orgId: "fixture-org", key: "fixture-key-1234",
+  // Deliberately low-entropy synthetic idempotency key; never a credential.
+  actorId: "fixture-actor", orgId: "fixture-org", key: "aaaaaaaa",
   feature: "drone_render" as const, steps: [step], seconds: 300,
   input: { task: "video.upscale_4k", video_url: "https://private-media.invalid/customer-video", extra: { target_fps: 60 } },
   meta: { tier: "4k60" },
