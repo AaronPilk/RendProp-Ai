@@ -33,7 +33,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { recordAppAiCost } from "../_shared/ledger.ts";
 import { addressKey, hasSubstance, PropertyFacts, PropertyProvider } from "../_shared/property/provider.ts";
@@ -72,6 +72,7 @@ Deno.serve(async (req: Request) => {
 
     const user = await getUser(req);
     const orgId = await orgForUser(user.id, preferredOrg(req));
+    await assertPaidAiIdentity(user, orgId);
 
     const admin = adminClient();
     const akey = addressKey(address);

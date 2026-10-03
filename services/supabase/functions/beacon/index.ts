@@ -30,7 +30,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, clientIp, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { publicRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient } from "../_shared/supabase.ts";
 import { shouldCountView } from "./logic.ts";
 
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") throw new HttpError(405, "Only POST is supported");
 
     // Durable per-IP limit — beacons are frequent, so this is generous.
-    if (!(await durableRateLimit(`beacon:${clientIp(req)}`, 120, 60))) {
+    if (!(await publicRateLimit(`beacon:${clientIp(req)}`, 120, 60))) {
       throw new HttpError(429, "Too many requests");
     }
 
@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     // (IP, slug) per window — see the file header and shouldCountView.
     const countView = await shouldCountView(
       body.view_start,
-      () => durableRateLimit(`beaconview:${clientIp(req)}:${render.id}`, 1, VIEW_DEDUPE_WINDOW_SECONDS),
+      () => publicRateLimit(`beaconview:${clientIp(req)}:${render.id}`, 1, VIEW_DEDUPE_WINDOW_SECONDS),
     );
 
     const { error: mErr } = await admin.rpc("bump_metering", {

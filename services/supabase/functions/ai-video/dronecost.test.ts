@@ -510,7 +510,7 @@ Deno.test("wiring: the guard runs BEFORE any quota is charged", () => {
 
 Deno.test("wiring: the guard runs BEFORE the provider is called", () => {
   const guard = DRONE_ROUTE.indexOf("assertDroneWithinLimits({");
-  const submit = DRONE_ROUTE.indexOf("await runChain(");
+  const submit = DRONE_ROUTE.indexOf("await submitReservedVideo(");
   assert(guard > 0 && submit > 0, "both call sites must exist");
   assert(guard < submit, "nothing may reach a provider before the cost ceilings run");
 });
@@ -518,7 +518,7 @@ Deno.test("wiring: the guard runs BEFORE the provider is called", () => {
 Deno.test("wiring: the projected cost is composed with the org's monthly ceiling", () => {
   // Passed into guardGenerate so the check lands after the plan boundary and
   // before every meter — see guardGenerate's own comment.
-  assertStringIncludes(DRONE_ROUTE, 'guardGenerate(user.id, req, "drone", estimate.cents)');
+  assertStringIncludes(DRONE_ROUTE, 'guardGenerate(user, req, "drone", estimate.cents)');
   assertStringIncludes(INDEX_SRC, "assertMonthlyHeadroom({");
   // The ceiling and the spend total are the SAME two the RPC compares, read
   // rather than re-implemented.
@@ -535,10 +535,12 @@ Deno.test("wiring: the estimate is returned on the SUCCESS path", () => {
   }
 });
 
-Deno.test("wiring: a priced submission always writes its cost_ledger row", () => {
-  // The old F-E-15 residual gap — submit anyway, console.warn, record nothing —
-  // is gone, because a submission with no duration is now refused outright.
-  assertStringIncludes(DRONE_ROUTE, "recordRoutedAiCost(adminClient(), {");
+Deno.test("wiring: a priced submission uses the durable cost reservation and atomic settlement", () => {
+  // The helper commits a hold before POST. It atomically settles a receipt or
+  // retains that hold if the ledger is unavailable, rather than losing spend.
+  assertStringIncludes(DRONE_ROUTE, "submitReservedVideo({");
+  assertStringIncludes(DRONE_ROUTE, "minHoldCents: estimate.cents");
+  assert(!DRONE_ROUTE.includes("recordRoutedAiCost(adminClient(), {"));
   assert(
     !DRONE_ROUTE.includes("F-E-15 residual gap)"),
     "the unpriced-submit branch must not come back",

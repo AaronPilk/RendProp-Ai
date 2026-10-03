@@ -131,7 +131,7 @@ contract and must be preserved per function.
 | `ai-voice` | Authenticated voice catalog and narration with timing/alignment. |
 | `ai-chapters` | Authenticated room/chapter assistance. |
 | `coach` | Authenticated Ask Rendprop guidance. [Details](coach/README.md). |
-| `ai-enhance` | Validates and queues worker enhancement requests; acceptance is not proof the worker produced output. |
+| `ai-enhance` | Legacy worker enhancement queue is closed: authenticated POST returns 503 without changing a render job. Use the active photo/video tools. |
 | `spatial` | Capture/job lifecycle, gated provider execution and permission-checked scene/artifact access. [Details](spatial/README.md). |
 | `tours` | Published, non-sensitive tour payload by slug, including current source permission checks. |
 | `portfolio` | Published portfolio by handle; filters unavailable/revoked sources. |

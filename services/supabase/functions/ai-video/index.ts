@@ -141,8 +141,9 @@
 //
 // All four run before a meter is charged and before fal is called, so a refused
 // submission costs the org nothing and leaves no state to unwind. Nothing here
-// writes to cost_ledger, so the ceiling is checked, never double-counted: the
-// one row for an accepted submission is still written after fal accepts it.
+// The read-only precheck is followed by an atomic priced reservation before
+// POST. An accepted receipt swaps that hold for one estimated ledger row under
+// the same org lock; failed settlement/uncertain acceptance keep the hold.
 //
 // ── QUALITY GATE — POST /ai-video/drift (2026-09-07) ─────────────────────────
 //
@@ -222,8 +223,9 @@ import {
   readJsonLimited,
   respondError,
 } from "../_shared/http.ts";
-import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementFor, entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
@@ -241,6 +243,7 @@ import { persistResult, persistedUrl, routedR2Key, putBytes } from "../_shared/p
 import { R2_BUCKET_RENDERS } from "../_shared/r2.ts";
 import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
 import { createBriaAdapter } from "./bria.ts";
+import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
   extractJobToken,
@@ -368,11 +371,12 @@ interface GenerateCharge {
  * a pre-flight of log_job_cost()'s own check rather than a second ceiling.
  */
 async function guardGenerate(
-  userId: string,
+  user: PaidAiCaller,
   req: Request,
   kind: GenKind,
   projectedCents?: number,
 ): Promise<GenerateCharge> {
+  const userId = user.id;
   const orgId = await orgForUser(userId, preferredOrg(req));
   const admin = adminClient();
 
@@ -382,6 +386,8 @@ async function guardGenerate(
   if (!mem?.role || mem.role === "marketing") {
     throw new HttpError(403, "Your role does not permit AI video generation");
   }
+
+  await assertPaidAiIdentity(user, orgId);
 
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
@@ -406,15 +412,13 @@ async function guardGenerate(
     });
   }
 
-  // Idempotency soft-dedupe: when the client sends an Idempotency-Key, a
-  // duplicate submit inside 2 minutes is rejected instead of double-billed.
+  // A caller-selected key is required; a duplicate submit inside 2 minutes
+  // is rejected instead of double-billed.
   // NOT refunded on failure, deliberately (mirrors ai-chapters/index.ts
   // guardChapters): it is a short dedupe guard, not spend.
-  const idem = req.headers.get("idempotency-key")?.trim();
-  if (idem && idem.length <= 128) {
-    if (!(await durableRateLimit(`aividem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — this job was already started.", "conflict");
-    }
+  const idem = requiredIdempotencyKey(req);
+  if (!(await durableRateLimit(`aividem:${orgId}:${idem}`, 1, 120))) {
+    throw new HttpError(409, "Duplicate submission — this job was already started.", "conflict");
   }
   const burstKey = `aivideo:${orgId}`;
   const monthlyKey = `${meterKeyFor(kind)}:${orgId}`;
@@ -433,12 +437,10 @@ async function guardGenerate(
  * Hand back everything a submission that never reached the provider charged
  * (audit item 2 / F-E-16, mirrors ai-chapters/index.ts refundCharge exactly).
  *
- * Call ONLY when the provider submit itself threw — a fal/router submit that
- * THROWS never billed us, so nothing was produced for the quota it consumed.
- * Once a submit call RETURNS, the provider has ACCEPTED the job and the spend
- * is committed (see the COST LEDGER comments below); nothing past that point
- * is ever refunded, even if the async job later fails — that failure surfaces
- * from GET /ai-video/status, which never charged anything to begin with.
+ * Call ONLY for a failure before provider dispatch. A thrown POST can have
+ * been accepted remotely, so VideoDispatchUnconfirmed keeps BOTH its priced
+ * hold and allowance. Once a receipt returns the expense is committed;
+ * a later async failure never automatically refunds its original allowance.
  *
  * Best effort and never throws — see refundRateLimit().
  */
@@ -495,7 +497,8 @@ const DRIFT_LINEAGE_WINDOW_SECONDS = 6 * 3600;
 const DRIFT_MAX_REFUNDS_PER_MONTH = 20;
 
 /** Role gate + burst limiter for the check. Mirrors ai-copy's guardAssist(). */
-async function guardDriftCheck(userId: string, req: Request): Promise<string> {
+async function guardDriftCheck(user: PaidAiCaller, req: Request): Promise<string> {
+  const userId = user.id;
   const orgId = await orgForUser(userId, preferredOrg(req));
   const { data: mem, error: mErr } = await adminClient()
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
@@ -503,6 +506,7 @@ async function guardDriftCheck(userId: string, req: Request): Promise<string> {
   if (!mem?.role || mem.role === "marketing") {
     throw new HttpError(403, "Your role does not permit AI video generation");
   }
+  await assertPaidAiIdentity(user, orgId);
   if (!(await durableRateLimit(`aidrift:${orgId}`, DRIFT_MAX_PER_WINDOW, DRIFT_WINDOW_SECONDS))) {
     throw new HttpError(
       429,
@@ -519,9 +523,8 @@ async function guardDriftCheck(userId: string, req: Request): Promise<string> {
  * ── Why this is not refundGenerateCharge, and must not be confused with it ───
  *
  * refundGenerateCharge exists for a submission that never reached a provider:
- * "a fal/router submit that THROWS never billed us". Its own comment is
- * explicit that once a submit RETURNS, the spend is committed and "nothing past
- * that point is ever refunded, even if the async job later fails". That rule is
+ * its pre-dispatch charge refund. A thrown POST is not proof of no bill. This
+ * policy keeps accepted spend committed even if the async job later fails. That rule is
  * about VENDOR MONEY and it still holds here: the rejected clip was generated,
  * Seedance billed us for it, and its cost_ledger row stands untouched. So does
  * the retry's. COGS stays honest and GET /admin/spend still sees every cent.
@@ -985,6 +988,7 @@ Deno.serve(async (req) => {
     const eraseId = req.method === "GET" && seg.length === 1 && seg[0] === "status" ? extractEraseJob(req) : null;
     if (eraseAction || eraseId) {
       const orgId = await orgForUser(user.id, preferredOrg(req));
+      if (eraseAction === "submit") await assertPaidAiIdentity(user, orgId);
       return await eraseHandler(req, { orgId, userId: user.id }, eraseAction ?? "status", eraseId ?? undefined);
     }
 
@@ -1046,7 +1050,7 @@ Deno.serve(async (req) => {
 
       // Priced — now compose with the org's existing monthly COGS ceiling
       // (inside guardGenerate, before any meter is consumed) and charge.
-      const charge = await guardGenerate(user.id, req, "drone", estimate.cents);
+      const charge = await guardGenerate(user, req, "drone", estimate.cents);
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated): 4K tiers and the 1080p60 tier are separate tasks
@@ -1067,53 +1071,32 @@ Deno.serve(async (req) => {
           ...(interpolate ? { target_fps: fps } : {}),
         },
       };
-      // The submit itself failing means no provider ever accepted the job —
-      // hand the charge back (audit item 2). See refundGenerateCharge.
+      // Reserve the exact priced attempt under the workspace lock BEFORE POST.
+      // One eligible provider is attempted; lost acceptance keeps its hold.
       let attempt: ChainResult<JobRef>;
       try {
-        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+        attempt = await submitReservedVideo({
+          actorId: user.id, orgId, key: requiredIdempotencyKey(req),
+          feature: "drone_render", steps, input: genInput, seconds: estimate.seconds,
+          // Preserve the frame multiplier in estimated accounting as well as
+          // admission; releasing a 120fps hold to a 30fps ledger underbooks it.
+          unitCentsOverride: (step) => /topaz/i.test(step.model) ? estimate.unit_cents : undefined,
+          minHoldCents: estimate.cents,
+          meta: { tier, upscale_factor: upscale, target_fps: fps, interpolated: interpolate,
+            estimate_cents: estimate.cents, output_fps: outputFps },
+        }, {
+          rpc: async (name, args) => await adminClient().rpc(name, args),
+          submit: (step) => runChain(task, [step], (selected) => adapterFor(selected.provider).submit(selected, genInput)),
+        });
       } catch (e) {
-        await refundGenerateCharge(charge);
+        if (!(e instanceof VideoDispatchUnconfirmed)) await refundGenerateCharge(charge);
         throw e;
       }
       const step = attempt.step;
       const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
 
-      // COST LEDGER (F-E-15): Topaz bills per OUTPUT second, and the output runs
-      // the same wall-clock as the source, so units = the source duration. One
-      // org-scoped row, job_id = NULL, best effort. Written only after fal ACCEPTED
-      // the submit — the spend is committed at that point (E-network.md §1), and a
-      // retried Idempotency-Key was already 409'd above, so one render → one row.
-      //
-      // The row is now UNCONDITIONAL: assertDroneWithinLimits() above refuses a
-      // submission with no usable duration_s, so anything that reaches this
-      // point has one. That closes the F-E-15 residual gap the old branch
-      // documented (submit anyway, warn, record nothing) — a spend we could not
-      // price is a spend we now never make, rather than one the ledger, the
-      // per-org monthly ceiling and GET /admin/spend all miss.
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "drone_render",
-        step,
-        seconds: estimate.seconds,
-        // ONE route row cannot price Topaz: it bills per OUTPUT pixel-frame,
-        // so 4K60 is twice 4K30 while `video.upscale_4k` is a single row. The
-        // tier price in _shared/ledger.ts stays authoritative for Topaz; any
-        // other provider is billed at its own row price. NOTE this is the TIER
-        // price, deliberately unscaled by the frame-rate multiplier the
-        // pre-flight estimate applies — the estimate errs high on purpose so a
-        // 120 fps tap cannot slip past the ceiling, but the accounting stays on
-        // the number the three-way rate-card lockstep owns (see dronecost.ts).
-        unitCentsOverride: /topaz/i.test(step.model) ? DRONE_TIER_CENTS[tier] : undefined,
-        meta: {
-          tier,
-          request_id: attempt.value.id,
-          upscale_factor: upscale,
-          target_fps: fps,
-          interpolated: interpolate,
-          estimate_cents: estimate.cents,
-        },
-      });
+      // submitReservedVideo atomically swaps its hold for one ledger row;
+      // failed settlement retains the hold while the receipt remains usable.
       return json({
         ...sub,
         kind: "drone",
@@ -1204,7 +1187,7 @@ Deno.serve(async (req) => {
         style,
       });
 
-      const charge = await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
+      const charge = await guardGenerate(user, req, "aerial"); // validated — charge, then submit
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). GROUNDED is an image-to-video task carrying the
@@ -1233,39 +1216,27 @@ Deno.serve(async (req) => {
         aspect,
         resolution: "1080p",
       };
-      // The submit itself failing means no provider ever accepted the job —
-      // hand the charge back (audit item 2). See refundGenerateCharge.
+      // Fence the priced attempt before one potentially accepted provider POST.
       let attempt: ChainResult<JobRef>;
       try {
-        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+        attempt = await submitReservedVideo({
+          actorId: user.id, orgId, key: requiredIdempotencyKey(req),
+          feature: "aerial", steps, input: genInput, seconds,
+          meta: { grounded, seconds, aspect, motion: aerialMove.motion,
+            ...(aerialMove.substituted ? { motion_requested: aerialMove.requested } : {}) },
+        }, {
+          rpc: async (name, args) => await adminClient().rpc(name, args),
+          submit: (step) => runChain(task, [step], (selected) => adapterFor(selected.provider).submit(selected, genInput)),
+        });
       } catch (e) {
-        await refundGenerateCharge(charge);
+        if (!(e instanceof VideoDispatchUnconfirmed)) await refundGenerateCharge(charge);
         throw e;
       }
       const step = attempt.step;
       const modelId = step.model;
       const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
 
-      // COST LEDGER (F-E-15): a GROUNDED aerial is Seedance i2v (billed per output
-      // second); an UNGROUNDED one is Veo 3.1 Fast (a flat per-clip price — the
-      // repo has no per-second Veo rate). One org-scoped row, job_id = NULL, best
-      // effort, only after fal ACCEPTED the submit (spend committed; see §1).
-      // The step's own unit decides the maths: "second" bills per output second
-      // (grounded Seedance), "call" bills flat per clip (ungrounded Veo).
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "aerial",
-        step,
-        seconds,
-        meta: {
-          grounded,
-          seconds,
-          aspect,
-          request_id: attempt.value.id,
-          motion: aerialMove.motion,
-          ...(aerialMove.substituted ? { motion_requested: aerialMove.requested } : {}),
-        },
-      });
+      // Cost was settled once under the same lock that admitted its hold.
 
       // COMPLIANCE: an aerial is synthetic camera movement — HousingWire's
       // disclosure test names exactly this case, and WI Act 69 covers generated
@@ -1399,7 +1370,7 @@ Deno.serve(async (req) => {
       // row report no motion rather than one we never sent.
       const chosenMotion: ReelMotion | null = userMotion ? null : shotMotion;
 
-      const charge = await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
+      const charge = await guardGenerate(user, req, "reel"); // validated — charge, then submit
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). With the flag off this resolves to the one legacy
@@ -1427,11 +1398,16 @@ Deno.serve(async (req) => {
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
       };
-      // The submit itself failing means no provider ever accepted the job —
-      // hand the charge back (audit item 2). See refundGenerateCharge.
+      // A priced hold precedes one POST; a thrown submit is unconfirmed.
       let attempt: ChainResult<JobRef>;
       try {
-        attempt = await runChain(task, steps, async (step) => {
+        attempt = await submitReservedVideo({
+          actorId: user.id, orgId, key: requiredIdempotencyKey(req),
+          feature: "reel", steps, input: genInput, seconds: secs,
+          meta: { seconds: secs, ...(chosenMotion ? { motion: chosenMotion } : {}) },
+        }, {
+          rpc: async (name, args) => await adminClient().rpc(name, args),
+          submit: (selected) => runChain(task, [selected], async (step) => {
           try {
             return await adapterFor(step.provider).submit(step, genInput);
           } catch (error) {
@@ -1456,30 +1432,16 @@ Deno.serve(async (req) => {
             });
             throw error;
           }
+          }),
         });
       } catch (e) {
-        await refundGenerateCharge(charge);
+        if (!(e instanceof VideoDispatchUnconfirmed)) await refundGenerateCharge(charge);
         throw e;
       }
       const step = attempt.step;
       const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
 
-      // COST LEDGER (F-E-15): i2v bills per output second. One org-scoped row,
-      // job_id = NULL, best effort, only after the provider ACCEPTED the submit,
-      // and attributed to the provider/model that actually ran (contract §4).
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "reel",
-        step,
-        seconds: secs,
-        meta: {
-          seconds: secs,
-          space_type: space,
-          request_id: attempt.value.id,
-          ...(chosenMotion ? { motion: chosenMotion } : {}),
-          ...(room ? { room } : {}),
-        },
-      });
+      // submitReservedVideo settled one ledger row or retained its priced hold.
 
       const prov = await recordProvenance(req, {
         listingId: body.listing_id ?? reelListingId,
@@ -1552,7 +1514,7 @@ Deno.serve(async (req) => {
       const provenanceId = optionalUuid(body.provenance_id);
       const sourceAssetId = optionalUuid(body.asset_id);
 
-      const orgId = await guardDriftCheck(user.id, req);
+      const orgId = await guardDriftCheck(user, req);
 
       // ONE JUDGEMENT PER CLIP (step 3). Same 409 shape guardGenerate() uses
       // for a duplicate Idempotency-Key. Without it, re-posting the frames of a

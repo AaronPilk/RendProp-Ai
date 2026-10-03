@@ -132,8 +132,9 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertMarketingCopy } from "../_shared/fairhousing.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
@@ -306,7 +307,8 @@ async function presignGet(bucket: string, key: string, expiresIn: number): Promi
 // ── Guards ───────────────────────────────────────────────────────────────────
 
 /** Role gate: marketing is read-only, same rule as ai-photo / ai-video. */
-async function requireEditorRole(userId: string, req: Request, what: string): Promise<string> {
+async function requireEditorRole(user: PaidAiCaller, req: Request, what: string): Promise<string> {
+  const userId = user.id;
   const orgId = await orgForUser(userId, preferredOrg(req));
   const { data: mem, error: mErr } = await adminClient()
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
@@ -314,6 +316,7 @@ async function requireEditorRole(userId: string, req: Request, what: string): Pr
   if (!mem?.role || mem.role === "marketing") {
     throw new HttpError(403, `Your role does not permit ${what}`);
   }
+  await assertPaidAiIdentity(user, orgId);
   return orgId;
 }
 
@@ -334,18 +337,16 @@ interface Charge {
  * how `{}` bodies used to burn an org's allowance without a provider call ever
  * being made (audit round 4).
  */
-async function guardTTS(userId: string, req: Request): Promise<Charge> {
-  const orgId = await requireEditorRole(userId, req, "AI voiceovers");
+async function guardTTS(user: PaidAiCaller, req: Request): Promise<Charge> {
+  const orgId = await requireEditorRole(user, req, "AI voiceovers");
   // A degraded plan lookup is a 503, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.reels_per_month; // the CAP is shared; the counter is not
   if (monthlyCap <= 0) throw quotaError("AI voiceover", 0, 0, ent.plan);
 
-  const idem = req.headers.get("idempotency-key")?.trim();
-  if (idem && idem.length <= 128) {
-    if (!(await durableRateLimit(`aivoiceidem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — this voiceover was already started.", "conflict");
-    }
+  const idem = requiredIdempotencyKey(req);
+  if (!(await durableRateLimit(`aivoiceidem:${orgId}:${idem}`, 1, 120))) {
+    throw new HttpError(409, "Duplicate submission — this voiceover was already started.", "conflict");
   }
 
   const burstKey = `aivoice:${orgId}`;
@@ -645,7 +646,7 @@ Deno.serve(async (req) => {
 
       // ── CHARGE ── everything above is validated; the meter is charged here,
       // immediately before the billable call, and refunded on any failure.
-      const charge = await guardTTS(user.id, req);
+      const charge = await guardTTS(user, req);
 
       try {
         // Reserve an owned object key before provider dispatch. Account deletion

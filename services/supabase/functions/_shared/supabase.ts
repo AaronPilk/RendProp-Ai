@@ -72,6 +72,41 @@ export async function getUser(req: Request): Promise<User> {
   return data.user;
 }
 
+export type PaidAiCaller = Pick<User, "id" | "is_anonymous">;
+
+/**
+ * A free allowance cannot be renewed by minting another anonymous account.
+ * Use the Auth-validated user and the route's already resolved workspace, before
+ * charging a meter. An explicit StoreKit purchase remains usable by its guest
+ * owner: only a current, server-bound Apple subscription permits that exception.
+ * General getUser() deliberately continues to support anonymous local work.
+ */
+export async function assertPaidAiIdentity(user: PaidAiCaller, orgId: string): Promise<void> {
+  if (user.is_anonymous === false) return;
+  const denied = () => new HttpError(401, "Sign in to use AI tools, or restore your active subscription.", "unauthorized");
+  if (user.is_anonymous !== true) throw denied();
+  const unavailable = () => new HttpError(503, "Subscription access could not be verified. Please retry.", "upstream");
+  const admin = adminClient();
+  const { data: org, error: orgError } = await admin.from("orgs")
+    .select("plan_source,deleted_at").eq("id", orgId).maybeSingle();
+  if (orgError) throw unavailable();
+  if (!org || org.deleted_at !== null || org.plan_source !== "apple") throw denied();
+  const { data: plan, error: planError } = await admin.rpc("effective_plan", { p_org: orgId });
+  if (planError) throw unavailable();
+  if (!["starter", "pro", "team"].includes(plan)) throw denied();
+  const { data: subscription, error: subscriptionError } = await admin.from("apple_subscriptions")
+    .select("org_id,user_id,plan,status,expires_at")
+    .eq("org_id", orgId).eq("user_id", user.id).eq("plan", plan)
+    .in("status", ["active", "grace"]).limit(1).maybeSingle();
+  if (subscriptionError) throw unavailable();
+  // Match effective_plan's existing maximum Apple billing-retry grace. A stale
+  // active row for this guest cannot borrow another subscriber's newer expiry.
+  if (!subscription || subscription.org_id !== orgId || subscription.user_id !== user.id ||
+    subscription.plan !== plan || !["active", "grace"].includes(subscription.status) ||
+    typeof subscription.expires_at !== "string" || !Number.isFinite(Date.parse(subscription.expires_at)) ||
+    Date.parse(subscription.expires_at) < Date.now() - 16 * 86400_000) throw denied();
+}
+
 // Prefer owner > admin > agent > marketing when a user has multiple memberships.
 const ROLE_RANK: Record<string, number> = { owner: 0, admin: 1, agent: 2, marketing: 3 };
 

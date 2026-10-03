@@ -35,8 +35,8 @@
 //
 //  2. NO PLAN METERING, EVER. Customer service and first-project onboarding
 //     are free on every plan by product decision (see the task brief and
-//     0023's header) — there is no entitlement check and no monthly cap here,
-//     only the durable PER-USER rate limiter below (abuse protection, not a
+//     0023's header) — there is no paid-plan allowance or monthly cap here,
+//     only durable user and workspace safety limits (abuse protection, not a
 //     paid allowance, and never refunded on a failed generation the way the
 //     precious monthly quotas elsewhere in this codebase are).
 //
@@ -48,8 +48,9 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { entitlementFor } from "../_shared/entitlements.ts";
 import { recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute } from "../_shared/router.ts";
@@ -69,6 +70,8 @@ const BURST_MAX_PER_WINDOW = 12;
 const BURST_WINDOW_SECONDS = 300;
 const DAY_MAX_PER_WINDOW = 60;
 const DAY_WINDOW_SECONDS = 86400;
+/** Shared workspace safety fence; free access is independent of paid allowances. */
+const ORG_DAY_MAX_PER_WINDOW = 600;
 
 /** Keep the reply short and the bill small — a coaching message, not an essay. */
 const MAX_TOKENS = 600;
@@ -139,6 +142,15 @@ async function chooseChain(plan: string): Promise<RouteStep[]> {
     console.error("coach: resolveRoute threw; using the two-step fallback:", e instanceof Error ? e.message : String(e));
   }
   return [ANTHROPIC_FALLBACK, OPENAI_FALLBACK];
+}
+
+async function routingPlan(orgId: string): Promise<string> {
+  try {
+    const ent = await entitlementFor(orgId);
+    return ent.degraded ? "free" : cleanPlan(ent.plan);
+  } catch {
+    return "free";
+  }
 }
 
 // ── Body validation — every field is untrusted, nothing is a UUID here ──────
@@ -258,10 +270,15 @@ Deno.serve(async (req) => {
       "messages must be a non-empty array ending in a user message",
     );
 
+    // Resolve membership before any paid work. Client plan hints cannot select
+    // a premium route, and a missing workspace cannot produce unaccounted spend.
+    const orgId = await orgForUser(user.id, preferredOrg(req));
+    await assertPaidAiIdentity(user, orgId);
+    const plan = await routingPlan(orgId);
     const space = spaceTypeOf(body.space_type);
     const context: CoachContext = {
       listings: cleanListings(body.context?.listings),
-      plan: cleanPlan(body.context?.plan),
+      plan,
       screen: cleanScreen(body.context?.screen),
     };
     const validListingIds = new Set(context.listings.map((l) => l.id));
@@ -273,6 +290,9 @@ Deno.serve(async (req) => {
     }
     if (!(await durableRateLimit(`coachday:${user.id}`, DAY_MAX_PER_WINDOW, DAY_WINDOW_SECONDS))) {
       throw new HttpError(429, "You've reached today's message limit for the coach — try again tomorrow.", "rate_limited");
+    }
+    if (!(await durableRateLimit(`coachorgday:${orgId}`, ORG_DAY_MAX_PER_WINDOW, DAY_WINDOW_SECONDS))) {
+      throw new HttpError(429, "Your workspace has reached today's coach message limit — try again tomorrow.", "rate_limited");
     }
 
     const system = systemInstruction(space);
@@ -312,12 +332,10 @@ Deno.serve(async (req) => {
 
     const output = parseCoachOutput(attempt.value, validListingIds);
 
-    // Ledger — best effort, and never on the critical path: the user is
-    // waiting on `output` above, which is already computed. A membership
-    // lookup hiccup or a ledger insert failure must never turn a good reply
+    // Ledger — best effort: the user is waiting on `output` above, which is
+    // already computed. A ledger insert failure must never turn a good reply
     // into an error (header, point 2 — this feature has no quota to protect).
     try {
-      const orgId = await orgForUser(user.id, preferredOrg(req));
       await recordRoutedAiCost(adminClient(), {
         orgId,
         feature: "coach",
@@ -330,7 +348,7 @@ Deno.serve(async (req) => {
         },
       });
     } catch (e) {
-      console.error("coach: org resolve / ledger write failed (reply already returned):", e instanceof Error ? e.message : String(e));
+      console.error("coach: ledger write failed (reply already computed):", e instanceof Error ? e.message : String(e));
     }
 
     return json({

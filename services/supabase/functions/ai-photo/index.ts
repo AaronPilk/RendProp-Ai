@@ -79,8 +79,9 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
 import { type ProvenanceKind, recordProvenance } from "../_shared/provenance.ts";
@@ -118,7 +119,8 @@ const HELP_WINDOW_SECONDS = 300; // 120 suggest/improve calls / 5 min / org
 // enforced number and the published number are the same number.
 
 /** Role gate shared by both guards: marketing is read-only. */
-async function requireEditorRole(userId: string, req: Request, what: string): Promise<string> {
+async function requireEditorRole(user: PaidAiCaller, req: Request, what: string): Promise<string> {
+  const userId = user.id;
   const orgId = await orgForUser(userId, preferredOrg(req));
   const { data: mem, error: mErr } = await adminClient()
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
@@ -126,6 +128,7 @@ async function requireEditorRole(userId: string, req: Request, what: string): Pr
   if (!mem?.role || mem.role === "marketing") {
     throw new HttpError(403, `Your role does not permit ${what}`);
   }
+  await assertPaidAiIdentity(user, orgId);
   return orgId;
 }
 
@@ -144,8 +147,8 @@ interface EditCharge {
  * an org's burst + monthly quota with `{}` bodies that never reached Gemini
  * (audit round 4).
  */
-async function guardEdit(userId: string, req: Request): Promise<EditCharge> {
-  const orgId = await requireEditorRole(userId, req, "AI photo edits");
+async function guardEdit(user: PaidAiCaller, req: Request): Promise<EditCharge> {
+  const orgId = await requireEditorRole(user, req, "AI photo edits");
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.photo_edits_per_month;
@@ -153,11 +156,9 @@ async function guardEdit(userId: string, req: Request): Promise<EditCharge> {
 
   // Idempotency soft-dedupe: NOT refunded on failure, deliberately (mirrors
   // ai-chapters/index.ts guardChapters) — it is a short dedupe guard, not spend.
-  const idem = req.headers.get("idempotency-key")?.trim();
-  if (idem && idem.length <= 128) {
-    if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — this edit was already started.", "conflict");
-    }
+  const idem = requiredIdempotencyKey(req);
+  if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
+    throw new HttpError(409, "Duplicate submission — this edit was already started.", "conflict");
   }
   const burstKey = `aiphoto:${orgId}`;
   const monthlyKey = `aiphotomo:${orgId}`;
@@ -193,8 +194,8 @@ interface HelperCharge {
 }
 
 /** Helper modes: role gate + burst limiter only. Never touches the monthly meter. */
-async function guardHelper(userId: string, req: Request): Promise<HelperCharge> {
-  const orgId = await requireEditorRole(userId, req, "AI photo suggestions");
+async function guardHelper(user: PaidAiCaller, req: Request): Promise<HelperCharge> {
+  const orgId = await requireEditorRole(user, req, "AI photo suggestions");
   const burstKey = `aiphotohelp:${orgId}`;
   if (!(await durableRateLimit(burstKey, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS))) {
     throw new HttpError(429, "Too many suggestion requests for now — try again in a few minutes.", "rate_limited");
@@ -622,7 +623,7 @@ Deno.serve(async (req) => {
     // Helper modes: text/vision analysis only — no image generation, no monthly charge.
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
-      const helperCharge = await guardHelper(user.id, req);
+      const helperCharge = await guardHelper(user, req);
       try {
         return json({ suggestions: await suggestEdits(body.image_b64, mime, profile), space_type: space });
       } catch (e) {
@@ -638,7 +639,7 @@ Deno.serve(async (req) => {
       // Refuse before spending tokens polishing something we would never run.
       const promptSpace = await gateSpace();
       assertFairHousing(rough, "That idea", promptSpace);
-      const helperCharge = await guardHelper(user.id, req);
+      const helperCharge = await guardHelper(user, req);
       try {
         const improved = await improvePrompt(rough, space);
         // A safe request can still produce an unsafe suggestion. Use the same
@@ -681,7 +682,7 @@ Deno.serve(async (req) => {
     // Everything validated — NOW charge the quota, immediately before the
     // billable provider call. Keep the org it charged for the cost_ledger row,
     // and the plan for the router's RouteContext.
-    const charge = await guardEdit(user.id, req);
+    const charge = await guardEdit(user, req);
     const { orgId, plan } = charge;
 
     // ── ROUTER (flag-gated, additive) ────────────────────────────────────────

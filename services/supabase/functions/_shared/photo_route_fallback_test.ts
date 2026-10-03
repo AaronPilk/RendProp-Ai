@@ -258,7 +258,7 @@ for (const flag of [false, true]) {
           seen.push(url.pathname);
           let answer: unknown;
           if (url.pathname.endsWith("/auth/v1/user")) {
-            answer = { id: "fixture-user", aud: "authenticated" };
+            answer = { id: "fixture-user", aud: "authenticated", is_anonymous: false };
           } else if (url.pathname.endsWith("/rpc/active_org_for_user")) {
             answer = "fixture-org";
           } else if (url.pathname.endsWith("/memberships")) {
@@ -300,6 +300,7 @@ for (const flag of [false, true]) {
             headers: {
               "Authorization": "Bearer fixture-user-token",
               "Content-Type": "application/json",
+              "Idempotency-Key": "photo-fixture-key",
             },
             body: JSON.stringify({
               edit,
@@ -316,10 +317,12 @@ for (const flag of [false, true]) {
         assertEquals(
           charges.sort(),
           edit === "sky"
-            ? ["aiphoto:fixture-org", "aiphotomo:fixture-org"]
+            ? ["aiphoto:fixture-org", "aiphotomo:fixture-org", "aipidem:fixture-org:photo-fixture-key"]
             : [],
         );
-        assertEquals(refunds.sort(), charges);
+        // Retry protection is not an allowance and must survive a failed
+        // route lookup. Only burst/monthly charges are refundable.
+        assertEquals(refunds.sort(), edit === "sky" ? ["aiphoto:fixture-org", "aiphotomo:fixture-org"] : []);
         assertEquals(
           unexpected,
           [],

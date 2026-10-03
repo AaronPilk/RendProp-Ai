@@ -626,6 +626,12 @@ jobs:
           set -euo pipefail
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
           python3 services/supabase/tests/video_erase_direct_bria_pg.py
+      - name: Ordinary video priced admission, settlement and deletion races
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 services/supabase/tests/app_video_cost_pg.py
       # The spatial edge regression runs --cached-only without preparing its
       # own cache (the deletion runners do), so fill the Deno cache with every
       # first-party edge module's pinned std/npm imports first. This is the

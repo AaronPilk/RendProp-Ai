@@ -5,13 +5,20 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+The [2 October audit follow-up](docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)
+checks Claude's older report against the delivered source and live database.
+It records stricter AI admission, compatible guest subscription access,
+mandatory paid request keys and ordinary-video cost reservation races. Its
+delivery section is the authority for the subsequent backend rollout; the
+build-43 receipt below remains the historical upload snapshot.
+
 Internal **TestFlight 1.0.3 (43) is AVAILABLE**, verified **3 October 2026 at
 00:55:46 UTC** (2 October locally) for the existing Rendprop team.
 The [Bria and saved-photo beta handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
 records consent v3, direct Bria limited to the internal scheme and an explicit
 authenticated tester allowlist, Latest/Decluttered/Staged downloads, separate
 listing selection and reel stop/resume with retained completed clips. All twelve
-CI jobs passed on uploaded runtime `8de8fd0`. Backend **ai-video v47** is live,
+CI jobs passed on uploaded runtime `8de8fd0`. At that delivery, backend **ai-video v47** was live,
 JWT verification is enabled and all 30 deployed files match. The
 [delivery receipt](docs/releases/TESTFLIGHT-43-20261002.json) binds the signed
 archive, one internal upload, Apple availability, testing notes and schema readbacks.
