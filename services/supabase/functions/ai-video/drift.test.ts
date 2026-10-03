@@ -650,8 +650,8 @@ Deno.test("wiring: the body is validated BEFORE the burst limiter is touched", (
 
 Deno.test("wiring: the check is role-gated and org-scoped like every other route", () => {
   assertStringIncludes(INDEX_SRC, 'if (!mem?.role || mem.role === "marketing")');
-  assertStringIncludes(INDEX_SRC, "async function guardDriftCheck(userId: string, req: Request)");
-  assertStringIncludes(INDEX_SRC, "orgForUser(userId, preferredOrg(req))");
+  assertStringIncludes(INDEX_SRC, "async function guardDriftCheck(user: PaidAiCaller, req: Request)");
+  assertStringIncludes(INDEX_SRC, "orgForUser(user.id, preferredOrg(req))");
   // The org handed to the audit RPC is the one the JWT resolved to, never one
   // out of the request body.
   assertStringIncludes(DRIFT_ROUTE, "stampProvenanceQc(orgId, provenanceId,");

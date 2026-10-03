@@ -11,7 +11,7 @@ public App Store submission were made for 43.
 
 The [delivery receipt](../releases/TESTFLIGHT-43-20261002.json) binds runtime
 `8de8fd070eec2d55b0f62e12fe8488c99752e8a3`, all twelve passing CI jobs, the
-source-bound signed archive and Apple readbacks. **ai-video v47** is ACTIVE with
+source-bound signed archive and Apple readbacks. At that delivery, **ai-video v47** was ACTIVE with
 JWT verification; all **30 API-listed files** byte-match that source. The migration
 is live as **`20261003003531`**, from source
 `20261002225458_video_erase_direct_bria.sql`; do not apply it twice. Schema was
@@ -20,6 +20,11 @@ grants, RLS and six private configuration values were verified. Job/stage client
 access is denied; the existing membership-scoped held-cents read remains.
 Security readback adds no ERROR/WARN over the existing 26 WARN entries. Quote and
 status GETs without authorization both return 401 before provider work.
+
+The subsequent [audit follow-up](CLAUDE-AUDIT-FOLLOWUP-20261002.md) records current
+**ai-video v49** and stricter AI admission/video accounting. This build-43
+receipt remains the historical upload snapshot; Bria flags and the signed
+native binary were unchanged by that backend rollout.
 
 Regular **App Store 1.0.3 (42)** remains a separate submitted release. Its
 [handoff](APPSTORE-42-20261002.md) and

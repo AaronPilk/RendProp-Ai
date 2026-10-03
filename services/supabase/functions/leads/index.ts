@@ -29,7 +29,7 @@
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, clientIp, json, pathSegments, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
 import { ghlOrgTag } from "../_shared/ghl.ts";
-import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { publicRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient, getUser, userClient } from "../_shared/supabase.ts";
 import { verifyTurnstile } from "./turnstile.ts";
 import { deliverySummaries, resendClientLead } from "./client-delivery.ts";
@@ -212,7 +212,7 @@ Deno.serve(async (req) => {
 
     // Durable per-IP limit (Postgres-backed, shared across instances; falls
     // back to the in-memory limiter if the RPC is unavailable).
-    if (!(await durableRateLimit(`leads:${clientIp(req)}`, 20, 60))) {
+    if (!(await publicRateLimit(`leads:${clientIp(req)}`, 20, 60))) {
       throw new HttpError(429, "Too many requests, slow down", "rate_limited");
     }
 

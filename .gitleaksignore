@@ -3,3 +3,6 @@
 # Current receipts separate path and sha256 fields to avoid the API-name heuristic.
 a6826e25b2c6e956ae96fbbae531b1b9db531cf2:tools/audit/call-20260919/reflection-controller/receipt-fixed.json:generic-api-key:5
 a6826e25b2c6e956ae96fbbae531b1b9db531cf2:tools/audit/call-20260919/reflection-controller/receipt-baseline.json:generic-api-key:5
+# Exact historical false positive: a synthetic idempotency key in an offline
+# fixture with stubbed RPC/provider calls. The current fixture uses "aaaaaaaa".
+b886a3484c83815ce01105b6ff96b5d5c38b9754:services/supabase/functions/ai-video/cost-reservation.test.ts:generic-api-key:12

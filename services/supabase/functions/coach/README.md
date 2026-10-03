@@ -61,8 +61,10 @@ not a portable checked-in release command.
 
 ## Why this function is careful about resilience
 
-`coach.chat` is free on every plan (no entitlement check, no monthly quota —
-only the two per-user rate limits). Migration 0023 seeds no `note='legacy'`
+`coach.chat` is free on every plan (no plan access gate or monthly quota —
+the two per-user rate limits and a 600-message daily workspace safety cap).
+Workspace membership is resolved before paid work, and the server plan determines
+routing; degraded plan reads route as `free`. Migration 0023 seeds no `note='legacy'`
 row, so a disabled AI router normally resolves this task to an empty chain.
 When the resolved chain is empty, `index.ts`'s `chooseChain()` supplies a
 built-in Anthropic → OpenAI fallback using the current source constants.

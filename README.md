@@ -5,13 +5,23 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+The [2 October audit follow-up](docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)
+checks Claude's older report against the delivered source and live database.
+It records stricter AI admission, compatible guest subscription access,
+mandatory paid request keys and ordinary-video cost reservation races. Its
+delivery section is the authority for the subsequent backend rollout; the
+build-43 receipt below remains the historical upload snapshot. Backend rollout
+is verified: **ai-video v49**, all fifteen affected functions ACTIVE, 12/12 CI
+jobs passed, and the live billing migration/grants checked. See the
+[audit release receipt](docs/releases/AUDIT-COST-GUARDS-20261002.json).
+
 Internal **TestFlight 1.0.3 (43) is AVAILABLE**, verified **3 October 2026 at
 00:55:46 UTC** (2 October locally) for the existing Rendprop team.
 The [Bria and saved-photo beta handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
 records consent v3, direct Bria limited to the internal scheme and an explicit
 authenticated tester allowlist, Latest/Decluttered/Staged downloads, separate
 listing selection and reel stop/resume with retained completed clips. All twelve
-CI jobs passed on uploaded runtime `8de8fd0`. Backend **ai-video v47** is live,
+CI jobs passed on uploaded runtime `8de8fd0`. At that delivery, backend **ai-video v47** was live,
 JWT verification is enabled and all 30 deployed files match. The
 [delivery receipt](docs/releases/TESTFLIGHT-43-20261002.json) binds the signed
 archive, one internal upload, Apple availability, testing notes and schema readbacks.
@@ -115,7 +125,7 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
 | iOS | Regular **1.0.3 (42)** submitted and **Waiting for Review**; public release follows Apple approval. Internal **43** is available for spatial and Bria beta tests. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
-| Internal beta | **1.0.3 (43)** delivered; direct-Bria backend **ai-video v47** deployed with one trusted tester, fresh consent, existing AI clip limits and budgets. Saved-photo libraries/downloads and reel failure recovery are delivered. Real provider quality and phone acceptance remain; see the [handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md). |
+| Internal beta | **1.0.3 (43)** delivered; current backend **ai-video v49** retains direct Bria for one trusted tester with fresh consent, AI clip limits and budgets. The [audit rollout](docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md) adds stricter AI access and ordinary-video cost reservations. Saved-photo libraries/downloads and reel failure recovery are delivered. Real provider quality and phone acceptance remain; see the [beta handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md). |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

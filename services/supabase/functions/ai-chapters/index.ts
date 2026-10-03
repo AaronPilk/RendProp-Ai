@@ -59,8 +59,9 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
 import { recordAppAiCost } from "../_shared/ledger.ts";
@@ -320,7 +321,8 @@ interface Charge {
  * have validated — charging up front is how `{}` bodies used to burn an org's
  * allowance with no provider call ever made (audit round 4).
  */
-async function guardChapters(userId: string, req: Request, orgId: string): Promise<Charge> {
+async function guardChapters(user: PaidAiCaller, req: Request, orgId: string): Promise<Charge> {
+  const userId = user.id;
   const admin = adminClient();
   const { data: mem, error: mErr } = await admin
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
@@ -329,16 +331,16 @@ async function guardChapters(userId: string, req: Request, orgId: string): Promi
     throw new HttpError(403, "Your role does not permit AI room suggestions");
   }
 
+  await assertPaidAiIdentity(user, orgId);
+
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.renders_per_month; // the CAP is shared with renders; the counter is not
   if (monthlyCap <= 0) throw quotaError("AI room suggestions", 0, 0, ent.plan);
 
-  const idem = req.headers.get("idempotency-key")?.trim();
-  if (idem && idem.length <= 128) {
-    if (!(await durableRateLimit(`aichidem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — these room suggestions were already requested.", "conflict");
-    }
+  const idem = requiredIdempotencyKey(req);
+  if (!(await durableRateLimit(`aichidem:${orgId}:${idem}`, 1, 120))) {
+    throw new HttpError(409, "Duplicate submission — these room suggestions were already requested.", "conflict");
   }
 
   const burstKey = `aichapters:${orgId}`;
@@ -509,7 +511,7 @@ Deno.serve(async (req) => {
         "This asset belongs to another workspace — send X-Org-Id for the workspace that owns it.",
       );
     }
-    const charge = await guardChapters(user.id, req, asset.orgId); // validated — charge, then spend
+    const charge = await guardChapters(user, req, asset.orgId); // validated — charge, then spend
 
     const space = spaceTypeOf(asset.spaceType);
     const labels = allowedLabels(space);

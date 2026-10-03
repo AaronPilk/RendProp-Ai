@@ -240,10 +240,12 @@ export function formatDurationLimit(seconds: number): string {
  * scales the tier price by (output fps ÷ the tier's own fps), FLOORED at 1× so
  * a below-tier frame rate can never discount below the committed rate card.
  *
- * This scaling is estimate-side only. The cost_ledger row still records the
- * committed tier price (index.ts, `unitCentsOverride`), because that is the
- * number the three-way rate-card lockstep owns and this file does not get to
- * invent accounting. Erring HIGH on a pre-flight estimate is the doctrine
+ * Admission and estimated ledger accounting both preserve this frame-rate
+ * multiplier. The committed base tier prices remain the three-way rate-card
+ * values; the scaled estimate is marked price_estimated, pending invoice
+ * reconciliation. Releasing a frame-scaled hold to an unscaled ledger would
+ * reopen its headroom before the full estimated expense was booked.
+ * Erring HIGH on a pre-flight estimate is the doctrine
  * costs.py's qc_estimate_cents() already states in as many words: "an estimate
  * that is too low lets a call through that the cap should have stopped."
  *
