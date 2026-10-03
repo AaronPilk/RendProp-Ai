@@ -172,6 +172,11 @@ and net-receipts margins, annual discounts, actual provider billing units and
 paid paths that still need financial admission. Its proposed budgets are not
 deployed; the older pricing documents are marked historical.
 
+The [Claude audit reconciliation](docs/handoff/CLAUDE-AUDIT-RECONCILIATION-20261003.md)
+confirms the deployed versions and available crash-feedback inventory, corrects
+the 86% margin and anonymous-photo claims, and records why the older photo patch
+would regress the separate saved libraries already shipped in build 43.
+
 ## Start developing
 
 For Studio, use Node.js **22.12 or newer**:
