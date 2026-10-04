@@ -135,3 +135,7 @@ The [plan feature and allowance proposal](../PLAN-ALLOWANCES-20261004.md)
 records the current additive quantities, a concrete shared-budget scenario,
 annual choices and the cost assumptions that still need measurement. It does
 not change customer entitlements or establish the complete margin floor.
+
+The isolated branch is pushed for review in
+[draft PR #22](https://github.com/AaronPilk/RendProp-Ai/pull/22), based on the
+existing audit-cost branch. No shared branch was force-pushed or merged.

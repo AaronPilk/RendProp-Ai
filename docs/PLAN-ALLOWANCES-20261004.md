@@ -76,8 +76,9 @@ the owner's approved 75% floor; the owner has not selected 80% as a new floor.
 | Starter annual, conservative option | $490/year | 66 | $3.30 | $2.00 | 81.46% |
 | Pro annual, conservative option | $990/year | 150 | $7.50 | $4.00 | 80.09% |
 
-Annual prices fund twelve service months with ten monthly payments. Whole
-credits round down; residual pennies remain held. Team annual is not currently
+Annual prices are one charge equal to ten monthly prices, funding twelve
+service months. Whole credits round down; residual pennies remain held.
+Team annual is not currently
 sold. These pools are alternatives to the independent paid-generation bundles,
 not extra credits on top of them, and must not silently reduce existing paid
 commitments.
