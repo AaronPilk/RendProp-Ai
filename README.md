@@ -28,11 +28,11 @@ It records stricter AI admission, compatible guest subscription access,
 mandatory paid request keys and ordinary-video cost reservation races. Its
 delivery section is the authority for the subsequent backend rollout; the
 build-43 receipt below remains the historical upload snapshot. Backend rollout
-is verified: **ai-video v49**, all fifteen affected functions ACTIVE, 12/12 CI
+was verified at that rollout: **ai-video v49**, all fifteen affected functions ACTIVE, 12/12 CI
 jobs passed, and the live billing migration/grants checked. See the
 [audit release receipt](docs/releases/AUDIT-COST-GUARDS-20261002.json).
 
-Internal **TestFlight 1.0.3 (43) is AVAILABLE**, verified **3 October 2026 at
+Internal **TestFlight 1.0.3 (43) was AVAILABLE**, verified **3 October 2026 at
 00:55:46 UTC** (2 October locally) for the existing Rendprop team.
 The [Bria and saved-photo beta handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md)
 records consent v3, direct Bria limited to the internal scheme and an explicit
@@ -48,7 +48,7 @@ existing AI clip allowance/budget contract remain. Local tests do not certify
 camera or generated-media quality.
 
 Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
-and is **Waiting for Review**, with automatic release after approval. All twelve
+and was **Waiting for Review** at the recorded readback, with automatic release after approval. All twelve
 CI jobs passed on uploaded runtime `204594a`. Spatial capture remains confined
 to internal **TestFlight 43**; select **Previous Builds → 1.0.3 (43)** to keep
 testing it. The [App Store receipt](docs/releases/APPSTORE-42-20261002.json) and
@@ -58,6 +58,8 @@ saved before accepting newly imported media; this fix is deployed and all 31 liv
 match the release. Direct Bria was not enabled in build 42; its delivery snapshot
 is separate from the delivered internal build 43. The public build-42 binding and
 Waiting for Review state were read back after the internal upload.
+These receipts record those verification times; the 4 October source audit did
+not re-query or change Apple release state.
 
 Internal **TestFlight 1.0.3 (41)** is available to the existing Rendprop team,
 verified **2 October 2026 at 17:23:58 UTC**. The

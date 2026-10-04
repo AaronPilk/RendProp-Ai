@@ -140,11 +140,12 @@ class FoundationTests(unittest.TestCase):
 
     def test_complete_inventory(self):
         result = validate_capabilities(self.cap, SWIFT)
-        # Includes reflection, photographer/client and two photo-selection methods.
+        # Includes the dedicated measurements CAS route, reflection,
+        # photographer/client and two photo-selection methods.
         # Inventory coverage does not establish browser, phone or live parity.
-        self.assertEqual(result["apiMethods"], 64)
-        self.assertEqual(result["apiDeclarations"], 65)
-        self.assertEqual(result["capabilityGroups"], 18)
+        self.assertEqual(result["apiMethods"], 65)
+        self.assertEqual(result["apiDeclarations"], 66)
+        self.assertEqual(result["capabilityGroups"], 19)
         self.assertEqual(result["outsideProtocol"], 24)
         self.assertEqual(result["browserVerified"], 0)
 

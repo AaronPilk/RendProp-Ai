@@ -4392,7 +4392,7 @@ struct PhotoStudioView: View {
             Text("Each edit is saved separately. Find decluttered and staged photos in Photos. Choose a staged preview for the listing only after reviewing it.")
         }
         // Removal hides the family; source bytes remain available to earlier
-        // versions and existing reels. Public gallery removal is separate.
+        // versions and existing reels. Imported galleries preserve cloud photos.
         .confirmationDialog("Remove this photo from the gallery?", isPresented: $showPhotoDeleteConfirm,
                             titleVisibility: .visible, presenting: pendingPhotoDelete) { p in
             Button("Remove from gallery", role: .destructive) {
@@ -4401,7 +4401,11 @@ struct PhotoStudioView: View {
             }
             Button("Cancel", role: .cancel) { pendingPhotoDelete = nil }
         } message: { _ in
-            Text("This removes the photo family from the selected gallery. Your published listing updates when gallery sync finishes. Source files and edit history stay on this phone.")
+            if (model.listings.first(where: { $0.id == listing.id }) ?? listing).cloudImported == true {
+                Text("This hides the photo family from this iPhone's gallery. Photos already on the published listing remain online. Source files and edit history stay on this phone.")
+            } else {
+                Text("This removes the photo family from the selected gallery. Your published listing updates when gallery sync finishes. Source files and edit history stay on this phone.")
+            }
         }
         .confirmationDialog("Delete this clip?", isPresented: $showClipDeleteConfirm,
                             titleVisibility: .visible, presenting: pendingClipDelete) { clip in

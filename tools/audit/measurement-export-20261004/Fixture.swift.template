@@ -7,15 +7,24 @@ enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fil
 func coarseCoordinate(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
 struct AssertionFailure: Error { let message: String }
 enum PDFCapture {
-    struct PositionedText { let text: String; let y: CGFloat; let width: CGFloat }
+    struct PositionedText { let text: String; let y: CGFloat; let width: CGFloat; let height: CGFloat }
     static var pages: [[String]] = []
     static var positioned: [[PositionedText]] = []
+    static var rectangles: [[CGRect]] = []
+    static var pageBounds = CGRect.zero
+    static var transform = CGAffineTransform.identity
+    static var saves: [Int] = [], restores: [Int] = [], concatenations: [Int] = []
+    static var finalStateBalanced = false
     static func append(_ text: String, rectangle: CGRect) {
         pages[pages.count - 1].append(text)
-        positioned[positioned.count - 1].append(PositionedText(text: text, y: rectangle.minY, width: rectangle.width))
+        positioned[positioned.count - 1].append(PositionedText(text: text, y: rectangle.minY, width: rectangle.width, height: rectangle.height))
+        appendRectangle(rectangle)
+    }
+    static func appendRectangle(_ rectangle: CGRect) {
+        rectangles[rectangles.count - 1].append(rectangle.applying(transform))
     }
 }
-struct UIImage { func draw(in rectangle: CGRect) {} }
+struct UIImage { func draw(in rectangle: CGRect) { PDFCapture.appendRectangle(rectangle) } }
 struct UIFont {
     static func boldSystemFont(ofSize size: CGFloat) -> UIFont { UIFont() }
     static func systemFont(ofSize size: CGFloat) -> UIFont { UIFont() }
@@ -25,16 +34,42 @@ extension NSAttributedString.Key { static let font = NSAttributedString.Key("syn
 extension NSString {
     func draw(in rectangle: CGRect, withAttributes attributes: [NSAttributedString.Key: Any]) { PDFCapture.append(self as String, rectangle: rectangle) }
 }
-final class UIGraphicsPDFRendererContext { func beginPage() { PDFCapture.pages.append([]); PDFCapture.positioned.append([]) } }
+// Capture the real production transform at the graphics boundary. CoreGraphics
+// affine math remains real; glyph/image rasterization remains deliberately inert.
+final class CapturedCGContext {
+    private var stack: [CGAffineTransform] = []
+    func saveGState() { stack.append(PDFCapture.transform); PDFCapture.saves[PDFCapture.saves.count - 1] += 1 }
+    func concatenate(_ value: CGAffineTransform) {
+        PDFCapture.transform = PDFCapture.transform.concatenating(value)
+        PDFCapture.concatenations[PDFCapture.concatenations.count - 1] += 1
+    }
+    func restoreGState() {
+        PDFCapture.transform = stack.removeLast()
+        PDFCapture.restores[PDFCapture.restores.count - 1] += 1
+    }
+    var balanced: Bool { stack.isEmpty && PDFCapture.transform == .identity }
+}
+final class UIGraphicsPDFRendererContext {
+    let cgContext = CapturedCGContext()
+    func beginPage() {
+        PDFCapture.pages.append([]); PDFCapture.positioned.append([]); PDFCapture.rectangles.append([])
+        PDFCapture.saves.append(0); PDFCapture.restores.append(0); PDFCapture.concatenations.append(0)
+    }
+}
 final class UIGraphicsPDFRenderer {
-    init(bounds: CGRect) {}
+    init(bounds: CGRect) { PDFCapture.pageBounds = bounds }
     func writePDF(to url: URL, withActions body: (UIGraphicsPDFRendererContext) -> Void) throws {
-        PDFCapture.pages = []; PDFCapture.positioned = []; body(UIGraphicsPDFRendererContext())
+        PDFCapture.pages = []; PDFCapture.positioned = []; PDFCapture.rectangles = []
+        PDFCapture.saves = []; PDFCapture.restores = []; PDFCapture.concatenations = []
+        PDFCapture.transform = .identity
+        let context = UIGraphicsPDFRendererContext(); body(context)
+        PDFCapture.finalStateBalanced = context.cgContext.balanced
     }
 }
 __SAFETY__
 __PROVENANCE__
 __FORMAT__
+__PDF_LAYOUT__
 struct ActualScanArea {
 __HULL__
     static func area(_ points: [SIMD2<Float>]) -> Float { footprintArea(points) }
@@ -44,11 +79,10 @@ struct ActualPDF {
         try plan.validate()
         let allRows = try plan.worksheet()
         let title = address.isEmpty ? "Floor plan and measurements" : address
-        let dateLine = FloorMeasurementProvenance.dateLine(plan)
         let floors = Array(Set(allRows.map(\.floor))).sorted()
         let floorImages = Dictionary(uniqueKeysWithValues: floors.map { ($0, UIImage()) })
         let url = URL(fileURLWithPath: "/synthetic-export-no-files-written.pdf")
-        let pdf = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 842, height: 632))
+        __PDF_CONSTRUCTOR__
 __PDF_WRITE__
         return PDFCapture.pages
     }
@@ -129,7 +163,25 @@ __DRAW_TEXT__
         try check(!records.contains(where: { $0.contains("Upper phone") }), "source records are floor scoped")
         try check(FloorMeasurementProvenance.dateLine(plan).contains("1970-01-01 00:00 UTC"), "plan provenance uses its stored UTC updated date")
         try check(FloorMeasurementProvenance.disclosure.contains("not to scale") && FloorMeasurementProvenance.disclosure.contains("not a survey"), "disclosure includes schematic limitations")
+        let phoneNote = FloorMeasurementProvenance.phoneNote(plan: plan, floor: 0) ?? ""
+        try check(phoneNote.contains("straight 3D point-to-point") && phoneNote.contains("not a horizontal projection") && phoneNote.contains("both ends at the same height") && phoneNote.contains("verify against a tape"), "phone ruler note discloses straight 3D distance and same-height tape verification")
+        try check(FloorMeasurementProvenance.phoneNote(plan: plan, floor: 1) == phoneNote, "phone outline includes the ruler limitation on its own floor")
+        var manualOnly = plan; manualOnly.outlines.removeAll { $0.floor == 1 }; manualOnly.rooms.removeAll { $0.source == .phoneEstimate }
+        try check(FloorMeasurementProvenance.phoneNote(plan: manualOnly, floor: 0) == nil, "manual entries do not claim a phone ruler was used")
+        var upperOnlyPhone = plan; upperOnlyPhone.rooms.removeAll { $0.source == .phoneEstimate }
+        try check(FloorMeasurementProvenance.phoneNote(plan: upperOnlyPhone, floor: 0) == nil, "phone data on another floor does not mislabel the selected floor")
+        func checkPhysicalLayout() throws {
+            try check(PDFCapture.pageBounds == CGRect(x: 0, y: 0, width: 792, height: 612), "actual renderer uses standard US Letter landscape paper")
+            let inset = PDFCapture.pageBounds.insetBy(dx: 20 - 0.001, dy: 20 - 0.001)
+            try check(PDFCapture.rectangles.allSatisfy { $0.allSatisfy { inset.contains($0) } }, "every actual PDF drawing rectangle fits inside physical paper margins")
+            try check(PDFCapture.saves.allSatisfy { $0 == 1 } && PDFCapture.restores.allSatisfy { $0 == 1 } && PDFCapture.concatenations.allSatisfy { $0 == 1 } && PDFCapture.finalStateBalanced, "each actual page applies one transform and restores graphics state")
+            let transform = FloorMeasurementPDFLayout.contentTransform
+            try check(abs(transform.a - transform.d) < 0.000001 && transform.b == 0 && transform.c == 0, "actual Letter transform preserves the logical drawing aspect ratio")
+            let fullLogicalPage = CGRect(origin: .zero, size: FloorMeasurementPDFLayout.logicalSize).applying(transform)
+            try check(inset.contains(fullLogicalPage), "the entire original logical layout fits inside Letter margins")
+        }
         let pages = try ActualPDF.capture(plan: plan, floor: 0, address: captured.address)
+        try checkPhysicalLayout()
         let text = pages.flatMap { $0 }.joined(separator: "\n")
         try check(pages.count == 8, "actual PDF loop emits every floor worksheet, room record and outline wall page")
         try check(text.contains("Manual kitchen · Entered dimensions — verify"), "actual PDF retains manual room source")
@@ -139,6 +191,13 @@ __DRAW_TEXT__
         try check(text.contains("Finished outline area: 15.00 m²"), "actual PDF preserves linked-opening deduction")
         try check(text.contains("Plan last updated: 1970-01-01 00:00 UTC"), "actual PDF embeds plan date")
         try check(text.contains("not to scale; not a survey"), "actual PDF embeds schematic limitations")
+        let textPages = pages.filter { !$0.isEmpty }
+        try check(textPages.allSatisfy { $0.contains(where: { $0.contains(phoneNote) }) }, "all actual PDF text pages on phone-data floors contain the ruler limitation")
+        let footerTexts = PDFCapture.positioned.flatMap { $0 }.filter { $0.y == 552 }
+        try check(footerTexts.count == textPages.count && footerTexts.allSatisfy { $0.height == 80 && $0.text.contains("Plan last updated:") }, "actual PDF footers reserve enough layout height for limitation and date")
+        let manualPages = try ActualPDF.capture(plan: manualOnly, floor: 0, address: captured.address)
+        try check(!manualPages.flatMap { $0 }.contains(where: { $0.contains("Phone ruler:") }), "manual-only PDF does not include a false phone-ruler source disclosure")
+        try checkPhysicalLayout()
         // Exercise valid maximum-length names and the actual table pagination.
         var stress = FloorMeasurementPlan(); stress.version = 2
         stress.outlines = (0..<6).map { index in
@@ -148,6 +207,7 @@ __DRAW_TEXT__
         }
         stress.rooms = (0..<6).map { index in FloorMeasurementRoom(name: "Room " + String(repeating: "W", count: 34) + String(index), widthMeters: 1, lengthMeters: 1, xMeters: Double(index * 4)) }
         let stressPages = try ActualPDF.capture(plan: stress, floor: 0, address: "Synthetic stress listing")
+        try checkPhysicalLayout()
         try check(stressPages.count == 10, "actual maximum-name fixture paginates all six areas across five-row pages")
         let tablePages = PDFCapture.positioned.filter { $0.contains(where: { $0.text.contains("Area worksheet") }) }
         try check(tablePages.count == 2, "actual worksheet table uses a second page at six rows")
@@ -162,6 +222,6 @@ __DRAW_TEXT__
             }
         }
         try check(rowChecks == 6, "all maximum-length names retain provenance across actual pages")
-        print("PASS: \(assertions) production export admission/provenance/PDF-loop assertions; no UIKit renderer, network, camera or customer files")
+        print("PASS: \(assertions) production export admission/provenance/PDF-loop/Letter-layout assertions; no UIKit renderer, network, camera or customer files")
     }
 }

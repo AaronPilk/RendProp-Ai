@@ -15,13 +15,14 @@ once. It retains existing scans/uploads and uses private measurement metadata.
 The [4 October audit fixes](../../docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md)
 add an independent compare-and-set save, preserved conflicting local copies,
 safe create retries, legacy snapshot recovery, photo gallery reconciliation and
-export source/date records. These changes require backend delivery and a signed
+export source/date records, US Letter PDFs and explicit phone-ruler limitations.
+These changes require backend delivery and a signed
 app build. They are **not included in the released
 builds below**. Physical AR accuracy and Files/Photos delivery need owner checks.
 
 ## Release status
 
-Internal **TestFlight 1.0.3 (43): AVAILABLE**, verified **3 October 2026 at
+Internal **TestFlight 1.0.3 (43): recorded AVAILABLE**, verified **3 October 2026 at
 00:55:46 UTC** (2 October locally). Apple reports VALID / INTERNAL_ONLY /
 IN_BETA_TESTING in the existing Rendprop team group; English testing notes were
 verified at 00:56:33 UTC. The [delivery receipt](../../docs/releases/TESTFLIGHT-43-20261002.json)
@@ -42,7 +43,7 @@ photos and MockAPIClient. Camera/media quality, real provider output and Files/P
 remain phone checks. The submitted build-42 snapshot remains unchanged.
 
 Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
-and Apple reports **Waiting for Review**. Release is automatic after approval.
+and Apple reported **Waiting for Review** at the receipt's readback. Release is automatic after approval.
 The [receipt](../../docs/releases/APPSTORE-42-20261002.json) and
 [handoff](../../docs/handoff/APPSTORE-42-20261002.md) bind runtime `204594a`, all
 twelve passing CI jobs and the actual uploaded Apple Distribution package.
@@ -52,6 +53,7 @@ consent revocation. Physical builds ignore simulator UI-test switches.
 For spatial testing, choose **TestFlight → Previous Builds → 1.0.3 (43)**;
 build 42 excludes those experimental entry points. Submission does not certify
 physical camera quality or mean Apple has approved the update.
+The 4 October source audit did not re-query or change Apple release state.
 
 The [beta feedback release](../../docs/handoff/BETA-POLISH-20261002.md) is available
 as internal **TestFlight 1.0.3 (41)**, verified **2 October 2026 at 17:23:58 UTC**

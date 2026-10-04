@@ -18,10 +18,10 @@ or shared branch was changed by this work. These fixes need delivery.
 | Cover/review/badges | Cover comes from the approved selection; staging requires explicit review at both selection entry points. A compare presentation carries photo and cover intent together. File-grid badges describe the family's selected earlier version even when its latest version differs. Missing one file does not blank all badges. |
 | Coach address and workspace leak | Offline replies omit full addresses; transmitted history excludes local fallback messages and redacts retained legacy addresses. Requests capture owner/session/workspace and send the exact org header. Backend schema accepts the 14 actual native screens and preserves their scope. |
 | Failed FAL status looks processing/502 | Both polling paths recognize completed-with-error and failed result retrieval as terminal failure. Logs retain bounded provider status/class without raw bodies, prompts, keys or signed URLs. Catalog authentication explicitly leaves generation unverified. |
-| Export sources/freshness/layout | Images/PDFs include per-area entered/phone source, UTC plan date, calculated-edge labels and schematic/not-to-scale/not-survey text. All rooms get a dimension/source record, including when outlines define area. Sharing rechecks immutable geometry, provenance, address, binding, session, conflict and older-facts review. Worksheet rows paginate and separate wrapped names from source labels. |
+| Export sources/freshness/layout | Images/PDFs include per-area entered/phone source, UTC plan date, calculated-edge labels and schematic/not-to-scale/not-survey text. Phone-source floors explicitly describe the straight 3D ruler and matching endpoint height for horizontal lengths. PDFs use US Letter landscape with one centered transform. All rooms get a dimension/source record, including when outlines define area. Sharing rechecks immutable geometry, provenance, address, binding, session, conflict and older-facts review. Worksheet rows paginate and separate wrapped names from source labels. |
 | Remaining UI/source issues | Photo badges are named SwiftUI components; real-estate UI walks target Listings. Decimal feet are explained. The legacy convex-hull total is labeled Scan hull estimate with its limitation on the export. |
 
-The independent native review also found two additional data-loss paths and
+The independent native review also found three additional data-loss paths and
 reproduced them before the final fixes:
 
 1. **Lost create receipt plus measurement-only edit:** the old generic dirty
@@ -35,6 +35,13 @@ reproduced them before the final fixes:
    choice. Arbitrary photo edits or loading only shared measurements do not
    approve ordinary replacement. Shared-detail choice keeps a local measurement
    backup; keep-iPhone-details choice confirms the ordinary replacement.
+3. **Repeated shared loads replaced the backup:** loading shared measurements,
+   then choosing shared listing details copied the already adopted shared plan
+   over the phone backup. Sequential loads now retain that backup when the
+   typed plan and cached raw value still match the shared baseline. New pending
+   local geometry can replace it; shared absence cannot erase it. Actual-method
+   coverage includes both choices, noncanonical JSON, an absent shared plan,
+   restoring through CAS and deliberately empty local geometry.
 
 Successful and conflicting late replies also verify the current queue's base,
 pending state, binding and workspace. A shared reload during an in-flight save
@@ -69,23 +76,27 @@ software behavior; they do not certify camera accuracy or AI video quality.
 | Separately run ignored presenter controller | 119 SQL checks plus actual controller lifecycle test: 1 passed, 0 failed |
 | Photo history and actual publication bodies | 389 model assertions and 77 real gallery/publisher assertions; four compiled fault controls |
 | Native photo workflows | 2 passed: legacy siblings/cover/review/removal and saved declutter/staging libraries |
-| Final native measurement sync/recovery methods | 133 assertions and 18 compiled fault controls: actual wire, decoder, create replay, CAS, reload, explicit review, refresh, late replies and adoption |
+| Final native measurement sync/recovery methods | 139 assertions and 21 compiled fault controls: actual wire, decoder, create replay, CAS, reload, explicit review, refresh, late replies, repeated shared-load backups and adoption |
 | Measurement geometry/model | 628 assertions; exact dimensions, polygon areas, deductions, unit conversion, validation and wire persistence |
 | Coach native behavior | 37 offline reply and 32 privacy/scope assertions; four compiled fault controls |
 | Measurements database | 44 assertions on fresh apply and replay; actual two-writer race; removed-precondition and removed-lock controls caught |
 | Video budget database | 34 rejection assertions and 101 preserved ordinary-video assertions on fresh apply/replay; 51 reflection and 37 direct-Bria assertions; shared-ceiling races, eight settlers/one receipt and removed-lock control |
-| Export admission and actual PDF loops | 49 assertions and five compiled controls; six valid 40-character names/pagination tested at draw-position level |
+| Export admission and actual PDF loops | 71 assertions and eight compiled controls; Letter page bounds, per-page transforms, conditional 3D ruler wording and six valid 40-character names/pagination tested at draw-position level |
 | Photos-save export safety | 18 assertions and three compiled controls |
-| Native measurements UI | L outline and rectangle flows: 2 passed; final exporter L rerun: 1 passed; all pages of the generated synthetic PDFs visually inspected |
+| Native measurements UI | L outline and rectangle flows: 2 passed; prior exporter L rerun: 1 passed; final Letter exporter L rerun: 1 passed. All four final pages visually inspected with correct 792 × 612-point paper, sources, date and 15 m² net area. |
 | Final normal iPhone Release build | Unsigned `iphoneos` arm64 build succeeded with final recovery and late-reply guards; no upload/signing |
+| Web capability inventory and brand tokens | 17 checks passed with the dedicated measurements route mapped; missing-upload, low-contrast and disabled-validator controls each failed as required. Inventory coverage does not establish browser/device parity. |
 
 The L test verifies 16 m² gross, a 1 m² opening and 15 m² net, a marked calculated
 closing wall, actual export/3D/reopen and linked deletion without resurrection.
 The rectangle test checks overlap rejection, unit conversion and dimensions.
-The native runs precede the later conditional older-snapshot review card;
-that branch is covered by actual-method tests and the final Release compile,
-not a native tap-through. Maximum-length pagination has source-loop proof,
-not extreme-name UIKit glyph rasterization. Normal final PDF pages were inspected.
+The final Letter run compiled the current source but did not exercise the
+conditional older-snapshot review choice or phone-source warning rendering;
+those branches have actual-method/source-bound tests and the final Release
+compile, not a native tap-through. Maximum-length pagination has source-loop
+proof, not extreme-name UIKit glyph rasterization. Normal final PDF pages were
+inspected. Initial final-build/installation attempts hit disk exhaustion; failed
+logs were retained and only the successful retries count as acceptance.
 
 Source hashes and verification artifacts are indexed in
 [`CLAUDE-AUDIT-EVIDENCE-20261004.json`](CLAUDE-AUDIT-EVIDENCE-20261004.json).
@@ -120,6 +131,9 @@ contract. This change does not claim every listing edit is conflict-safe.
 Studio does not yet edit raw measurement geometry; exporting and attaching a
 plan image remain separate workflows. Imported edited cloud photos need a
 verified server provenance binding before edited bytes can be republished.
+Removing a family from an imported listing hides it on that iPhone; the additive
+cloud-gallery path preserves already published photos. Its confirmation now
+states that distinction rather than promising a public deletion.
 
 Allowance refund after a definite rejection is best effort, ordered after the
 durable release but not atomically coupled to it. Uncertain historical jobs and

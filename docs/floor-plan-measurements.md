@@ -86,6 +86,9 @@ manual-entry path.
 This is Rendprop's own tool built with public ARKit APIs; Apple's Measure app
 is not embedded. Check phone estimates against a tape before using them in a
 published plan. No simulator result certifies camera tracking or accuracy.
+Exports for floors containing phone estimates state that the ruler measures
+straight 3D point-to-point distance, with matching endpoint height required for
+horizontal lengths. The PDF uses US Letter landscape paper.
 
 ## Saving, syncing and sharing
 
@@ -130,6 +133,9 @@ details, or confirm replacement with this iPhone's details. Measurement reloads
 and arbitrary photo edits do not silently approve that replacement. Shared
 loads retain a separate local measurement copy for restoration. Late success
 or conflict replies cannot revive a queue replaced by a shared load.
+Loading shared measurements and then shared listing details preserves the same
+phone backup; new pending local geometry can replace it, and an absent shared
+plan cannot erase it.
 
 Studio retains the measurement data but does not yet display/edit this geometry.
 Export the plan image and attach it through Studio's existing floor

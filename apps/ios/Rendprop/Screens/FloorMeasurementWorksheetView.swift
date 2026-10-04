@@ -13,6 +13,15 @@ enum FloorMeasurementProvenance {
     static func sourceLabel(_ source: FloorMeasurementSource) -> String {
         source == .phoneEstimate ? "Phone estimate — verify" : "Entered dimensions — verify"
     }
+    static let phoneRulerLimitation = "Phone ruler: straight 3D point-to-point distance, not a horizontal projection. For horizontal dimensions, keep both ends at the same height; verify against a tape."
+    static func phoneNote(plan: FloorMeasurementPlan, floor: Int) -> String? {
+        let hasPhoneData = plan.outlines.contains { $0.floor == floor && $0.source == .phoneEstimate } ||
+            plan.rooms.contains { $0.floor == floor && $0.source == .phoneEstimate }
+        return hasPhoneData ? phoneRulerLimitation : nil
+    }
+    static func footer(plan: FloorMeasurementPlan, floor: Int, lead: String) -> String {
+        ([lead, phoneNote(plan: plan, floor: floor), dateLine(plan)].compactMap { $0 }).joined(separator: "\n")
+    }
     static func dateLine(_ plan: FloorMeasurementPlan) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
@@ -24,6 +33,28 @@ enum FloorMeasurementProvenance {
         plan.outlines.filter { $0.floor == floor }.map {
             "\($0.name): \(sourceLabel($0.source))" + ($0.closingWallCalculated ? "; calculated closing wall — verify" : "")
         } + plan.rooms.filter { $0.floor == floor }.map { "\($0.name): \(sourceLabel($0.source))" }
+    }
+}
+
+/// US Letter landscape paper, with one uniform transform for every page.
+/// Logical coordinates remain shared by the image, worksheet and wall records.
+enum FloorMeasurementPDFLayout {
+    static let pageBounds = CGRect(x: 0, y: 0, width: 792, height: 612)
+    static let logicalSize = CGSize(width: 842, height: 632)
+    static let margin: CGFloat = 20
+    static var contentTransform: CGAffineTransform {
+        let available = pageBounds.insetBy(dx: margin, dy: margin)
+        let scale = min(available.width / logicalSize.width, available.height / logicalSize.height)
+        let x = pageBounds.midX - logicalSize.width * scale / 2
+        let y = pageBounds.midY - logicalSize.height * scale / 2
+        return CGAffineTransform(translationX: x, y: y).scaledBy(x: scale, y: scale)
+    }
+    static func withPage(_ context: UIGraphicsPDFRendererContext, drawing: () -> Void) {
+        context.beginPage()
+        context.cgContext.saveGState()
+        context.cgContext.concatenate(contentTransform)
+        defer { context.cgContext.restoreGState() }
+        drawing()
     }
 }
 
@@ -208,6 +239,9 @@ enum FloorMeasurementExport {
                 .font(.system(size: 20)).foregroundStyle(Theme.inkDim)
             Text("Sources are marked on each area. Dashed closing walls are calculated — verify. Schematic, not to scale; not a survey. Full source, area and wall records are in the PDF.")
                 .font(.system(size: 19)).foregroundStyle(Theme.inkDim)
+            if let phoneNote = FloorMeasurementProvenance.phoneNote(plan: plan, floor: floor) {
+                Text(phoneNote).font(.system(size: 18)).foregroundStyle(Theme.inkDim)
+            }
         }.padding(48).frame(width: 1600, height: 1200).background(Theme.bg).environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: content); renderer.scale = 1
         guard let image = renderer.uiImage else { throw ExportError(message: "Couldn't create the plan image. Try again.") }
@@ -221,6 +255,9 @@ enum FloorMeasurementExport {
                 FloorMeasurementDrawing(plan: plan, floor: value)
                 Text(dateLine).font(.system(size: 21)).foregroundStyle(Theme.inkDim)
                 Text("Sources are marked on each area. Schematic, not to scale; not a survey. Verify entered dimensions, phone estimates and calculated closing walls.").font(.system(size: 21)).foregroundStyle(Theme.inkDim)
+                if let phoneNote = FloorMeasurementProvenance.phoneNote(plan: plan, floor: value) {
+                    Text(phoneNote).font(.system(size: 18)).foregroundStyle(Theme.inkDim)
+                }
             }.padding(48).frame(width: 1600, height: 1200).background(Theme.bg).environment(\.colorScheme, .light)
             let pageRenderer = ImageRenderer(content: drawing); pageRenderer.scale = 1
             guard let rendered = pageRenderer.uiImage else {
@@ -228,13 +265,15 @@ enum FloorMeasurementExport {
             }
             floorImages[value] = rendered
         }
-        let pdf = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 842, height: 632))
+        let pdf = UIGraphicsPDFRenderer(bounds: FloorMeasurementPDFLayout.pageBounds)
         try pdf.writePDF(to: url) { context in
             for value in floors {
                 let floorRows = allRows.filter { $0.floor == value }
-                context.beginPage(); floorImages[value]!.draw(in: CGRect(x: 21, y: 16, width: 800, height: 600))
+                FloorMeasurementPDFLayout.withPage(context) {
+                    floorImages[value]!.draw(in: CGRect(x: 21, y: 16, width: 800, height: 600))
+                }
                 for start in stride(from: 0, to: floorRows.count, by: 5) {
-                    context.beginPage()
+                    FloorMeasurementPDFLayout.withPage(context) {
                     drawText(title, x: 30, y: 24, width: 780, size: 19, bold: true)
                     drawText("\(FloorMeasurementPlan.floorName(value)) · Area worksheet", x: 30, y: 84, width: 780, size: 17, bold: true)
                     drawText(plan.outlines.contains { $0.floor == value } ? "Outline areas; rectangular rooms are not added to these totals." : "Room rectangles only; not a measured building area.", x: 30, y: 112, width: 780, size: 12)
@@ -254,13 +293,16 @@ enum FloorMeasurementExport {
                     }
                     let finished = floorRows.filter { $0.category == .finished }.reduce(0) { $0 + $1.netAreaMeters2 }
                     drawText("\(plan.outlines.contains { $0.floor == value } ? "Finished outline area" : "Room area total"): \(FloorMeasurementFormat.area(finished, unit: plan.unit))", x: 30, y: 520, width: 780, size: 15, bold: true)
-                    drawText("Garage, porch and unfinished areas are separate. Schematic, not to scale; not a survey.\nVerify entered dimensions and phone estimates; this does not certify advertised or appraisal living area.\n" + dateLine, x: 30, y: 552, width: 780, size: 11)
+                    drawText(FloorMeasurementProvenance.footer(plan: plan, floor: value,
+                        lead: "Garage, porch and unfinished areas are separate. Schematic, not to scale; not a survey.\nVerify entered dimensions; this does not certify advertised or appraisal living area."),
+                        x: 30, y: 552, width: 780, size: 11, height: 80)
+                    }
                 }
                 // All room sources/dimensions remain available even when floor
                 // outlines are the independent basis of the area worksheet.
                 let floorRooms = plan.rooms.filter { $0.floor == value }
                 for start in stride(from: 0, to: floorRooms.count, by: 6) {
-                    context.beginPage()
+                    FloorMeasurementPDFLayout.withPage(context) {
                     drawText(title, x: 30, y: 24, width: 780, size: 19, bold: true)
                     drawText("\(FloorMeasurementPlan.floorName(value)) · Room dimension and source record", x: 30, y: 84, width: 780, size: 17, bold: true)
                     drawText("Room rectangles are not added to outline totals. Entry sources are not a certification of accuracy.", x: 30, y: 115, width: 780, size: 12)
@@ -269,11 +311,14 @@ enum FloorMeasurementExport {
                         drawText(room.name + " · " + FloorMeasurementProvenance.sourceLabel(room.source), x: 30, y: y, width: 780, size: 13, bold: true)
                         drawText(room.displayDimensions(unit: plan.unit) + (room.heightMeters.map { " · Height " + FloorMeasurementInput.display($0, unit: plan.unit) } ?? " · Height not entered"), x: 30, y: y + 22, width: 780, size: 12)
                     }
-                    drawText("Schematic, not to scale; not a survey. Verify entered dimensions and phone estimates.\nThis does not certify advertised or appraisal living area.\n" + dateLine, x: 30, y: 552, width: 780, size: 11)
+                    drawText(FloorMeasurementProvenance.footer(plan: plan, floor: value,
+                        lead: "Schematic, not to scale; not a survey. Verify entered dimensions.\nThis does not certify advertised or appraisal living area."),
+                        x: 30, y: 552, width: 780, size: 11, height: 80)
+                    }
                 }
                 for outline in plan.outlines.filter({ $0.floor == value }) {
                     for start in stride(from: 0, to: outline.vertices.count, by: 20) {
-                        context.beginPage()
+                        FloorMeasurementPDFLayout.withPage(context) {
                         drawText("\(outline.name) · \(FloorMeasurementPlan.floorName(value))", x: 30, y: 24, width: 780, size: 19, bold: true)
                         drawText("Wall calculation record · " + FloorMeasurementProvenance.sourceLabel(outline.source), x: 30, y: 60, width: 780, size: 13)
                         drawText("Wall", x: 30, y: 100, width: 70, size: 13, bold: true)
@@ -289,7 +334,10 @@ enum FloorMeasurementExport {
                             drawText(String(format: "%.1f°", angle), x: 320, y: y, width: 300, size: 12)
                             drawText(outline.closingWallCalculated && index == outline.vertices.count - 1 ? "Calculated — verify" : "Entered", x: 640, y: y, width: 165, size: 12)
                         }
-                        drawText("Polygon area from the closed wall outline: \(FloorMeasurementFormat.area(outline.areaMeters2, unit: plan.unit)).\nPerimeter: \(FloorMeasurementInput.displayPerimeter(outline.perimeterMeters, unit: plan.unit)). Schematic, not to scale; not a survey.\n" + dateLine, x: 30, y: 552, width: 780, size: 11)
+                        drawText(FloorMeasurementProvenance.footer(plan: plan, floor: value,
+                            lead: "Polygon area from the closed wall outline: \(FloorMeasurementFormat.area(outline.areaMeters2, unit: plan.unit)).\nPerimeter: \(FloorMeasurementInput.displayPerimeter(outline.perimeterMeters, unit: plan.unit)). Schematic, not to scale; not a survey."),
+                            x: 30, y: 552, width: 780, size: 11, height: 80)
+                        }
                     }
                 }
             }
@@ -297,8 +345,8 @@ enum FloorMeasurementExport {
         return (image, url)
     }
 
-    private static func drawText(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat, size: CGFloat, bold: Bool = false) {
+    private static func drawText(_ text: String, x: CGFloat, y: CGFloat, width: CGFloat, size: CGFloat, bold: Bool = false, height: CGFloat = 60) {
         let font = bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size)
-        (text as NSString).draw(in: CGRect(x: x, y: y, width: width, height: 60), withAttributes: [.font: font, .foregroundColor: UIColor.black])
+        (text as NSString).draw(in: CGRect(x: x, y: y, width: width, height: height), withAttributes: [.font: font, .foregroundColor: UIColor.black])
     }
 }

@@ -114,17 +114,26 @@
     },
     "ordinaryRace": [
       {
-        "key": "5a032996-a04a-46aa-9f87-72a2095d74e8",
+        "requestIdentifier": {
+          "field": "key",
+          "uuid": "5a032996-a04a-46aa-9f87-72a2095d74e8"
+        },
         "exit": 3,
         "data": null,
         "budgetDenied": true
       },
       {
-        "key": "48e34255-75d3-4109-bcd4-ed3b3d7e4129",
+        "requestIdentifier": {
+          "field": "key",
+          "uuid": "48e34255-75d3-4109-bcd4-ed3b3d7e4129"
+        },
         "exit": 0,
         "data": {
           "id": "5438ff17-e82f-47d5-9e16-26382c96bfeb",
-          "key": "48e34255-75d3-4109-bcd4-ed3b3d7e4129",
+          "requestIdentifier": {
+            "field": "key",
+            "uuid": "48e34255-75d3-4109-bcd4-ed3b3d7e4129"
+          },
           "org_id": "33cc1d2d-6811-4eae-801d-222430912458",
           "reserved": true,
           "hold_cents": 4800,
@@ -142,7 +151,10 @@
           "budgetDenied": false,
           "data": {
             "id": "4dd4ca66-b0dd-4045-8339-3fe4620b3d49",
-            "key": "edd3e92f-dcb5-499d-9faa-fa804edb6697",
+            "requestIdentifier": {
+              "field": "key",
+              "uuid": "edd3e92f-dcb5-499d-9faa-fa804edb6697"
+            },
             "org_id": "a8e35da9-3135-42e5-b9c1-dd139007a38f",
             "reserved": true,
             "hold_cents": 4800,

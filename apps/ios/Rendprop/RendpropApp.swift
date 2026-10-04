@@ -599,7 +599,18 @@ final class AppModel: ObservableObject {
               let shared = remote.first(where: { $0.serverID == server && $0.serverOrgID == org }) else { throw CloudSyncError.identityChanged }
         var current = listings[i]
         var state = FloorMeasurementSyncState(expected: FloorMeasurementPlan.wireValue(in: shared.details))
-        state.savedLocalCopy = (try? current.floorMeasurements?.encodedWireValue()) ?? FloorMeasurementPlan.wireValue(in: current.details)
+        let prior = current.measurementSync
+        let localCopy = (try? current.floorMeasurements?.encodedWireValue()) ?? FloorMeasurementPlan.wireValue(in: current.details)
+        // A second shared reload (for example, choosing shared listing details)
+        // must not replace the saved phone plan with the already adopted plan.
+        // Compare typed geometry as well as the exact cached wire: a shared JSON
+        // string can be formatted differently from our canonical encoding.
+        let stillUsingSharedPlan = prior?.pending != true && prior?.conflict != true &&
+            current.floorMeasurements == FloorMeasurementPlan.decodeWireValue(prior?.expected) &&
+            FloorMeasurementPlan.wireValue(in: current.details) == prior?.expected
+        state.savedLocalCopy = stillUsingSharedPlan
+            ? prior?.savedLocalCopy ?? localCopy
+            : localCopy ?? prior?.savedLocalCopy
         if includeListingDetails {
             // Explicit user choice: older dirty snapshots cannot establish which
             // ordinary facts were intentionally edited. Never make this automatic.

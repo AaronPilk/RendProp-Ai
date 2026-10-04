@@ -441,13 +441,55 @@ __EDITOR_PERSIST__
         try await waitUntil { recoveredModel.api.snapshots.count == 1 && !recoveredModel.syncInFlight.contains(localID) }
         try check(recoveredModel.listings[0].needsServerSync == false && recoveredModel.listings[0].measurementSync?.factsReviewRequired == false && recoveredModel.api.snapshots[0].address == local.address, "Only explicit keep-local confirmation permits the reviewed ordinary PATCH")
 
-        let sharedChoiceModel = SyncModel(recoveredPrior)
+        var recoveredConflict = recoveredPrior
+        recoveredConflict.measurementSync?.conflict = true
+        let sharedChoiceModel = SyncModel(recoveredConflict)
         sharedChoiceModel.api.cloudRead = { [office] }
         try await sharedChoiceModel.reloadSharedMeasurements(localID)
         try check(sharedChoiceModel.listings[0].address == local.address && sharedChoiceModel.listings[0].needsServerSync == true && sharedChoiceModel.listings[0].measurementSync?.factsReviewRequired == true && sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire, "Loading only shared measurements does not approve unproven ordinary facts")
-        sharedChoiceModel.listings[0] = recoveredPrior
         try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
-        try check(sharedChoiceModel.listings[0].address == office.address && sharedChoiceModel.listings[0].sqft == office.sqft && sharedChoiceModel.listings[0].soldAt == office.soldAt && sharedChoiceModel.listings[0].details?["floorplan_url"] == office.details?["floorplan_url"] && sharedChoiceModel.listings[0].needsServerSync == false && sharedChoiceModel.listings[0].measurementSync?.factsReviewRequired != true && sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire && sharedChoiceModel.api.snapshots.isEmpty, "Explicit use-shared choice adopts office facts and retains local measurement backup without PATCH")
+        try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire && sharedChoiceModel.listings[0].floorMeasurements == plan, "Sequential shared measurements then shared facts retain the original phone backup")
+        try check(sharedChoiceModel.listings[0].address == office.address && sharedChoiceModel.listings[0].sqft == office.sqft && sharedChoiceModel.listings[0].soldAt == office.soldAt && sharedChoiceModel.listings[0].details?["floorplan_url"] == office.details?["floorplan_url"] && sharedChoiceModel.listings[0].needsServerSync == false && sharedChoiceModel.listings[0].measurementSync?.factsReviewRequired != true && sharedChoiceModel.api.snapshots.isEmpty, "Explicit use-shared choice adopts office facts and retains local measurement backup without PATCH")
+        var formattedOffice = office
+        let formattedWire = "\n" + wire + "\n"
+        formattedOffice.details?[FloorMeasurementPlan.wireKey] = formattedWire
+        formattedOffice.measurementSync = FloorMeasurementSyncState(expected: formattedWire)
+        sharedChoiceModel.api.cloudRead = { [formattedOffice] }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
+        try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire && sharedChoiceModel.listings[0].measurementSync?.expected == formattedWire && sharedChoiceModel.listings[0].floorMeasurements == plan, "Semantically identical shared JSON formatting does not replace the saved phone plan")
+        var absentOffice = office
+        absentOffice.floorMeasurements = nil
+        absentOffice.details = (absentOffice.details ?? [:]).filter { !FloorMeasurementPlan.isPlanKey($0.key) }
+        absentOffice.measurementSync = FloorMeasurementSyncState(expected: nil)
+        sharedChoiceModel.api.cloudRead = { [absentOffice] }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
+        try check(sharedChoiceModel.listings[0].floorMeasurements == nil && sharedChoiceModel.listings[0].measurementSync?.expected == nil && sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire, "Repeated shared absence retains the previous restorable phone plan")
+        let originalBackup = FloorMeasurementPlan.decodeWireValue(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy)!
+        try sharedChoiceModel.saveMeasurements(originalBackup, for: localID)
+        try await waitUntil { sharedChoiceModel.api.measurementSnapshots.count == 1 && !sharedChoiceModel.syncInFlight.contains(localID) }
+        try check(sharedChoiceModel.listings[0].floorMeasurements == newer && sharedChoiceModel.api.measurementSnapshots[0].measurementSync?.expected == nil && sharedChoiceModel.api.snapshots.isEmpty, "Original phone backup restores through CAS after both shared choices and shared absence")
+        let replacementGate = HeldBoundary()
+        sharedChoiceModel.api.measurementUpdate = { _ in await replacementGate.hold(); throw APIError.server(409) }
+        try sharedChoiceModel.saveMeasurements(casThird, for: localID)
+        try await waitUntil { replacementGate.arrivals == 1 }
+        sharedChoiceModel.api.cloudRead = { [office] }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == casThirdWire && sharedChoiceModel.listings[0].floorMeasurements == plan, "New pending local geometry replaces the old backup when loading shared measurements")
+        replacementGate.release()
+        try await waitUntil { !sharedChoiceModel.syncInFlight.contains(localID) }
+        let clearGate = HeldBoundary()
+        let deliberatelyEmpty = FloorMeasurementPlan(unit: .meters, rooms: [], updatedAt: fixedDate)
+        let deliberatelyEmptyWire = try deliberatelyEmpty.encodedWireValue()
+        sharedChoiceModel.api.measurementUpdate = { _ in await clearGate.hold(); throw APIError.server(409) }
+        try sharedChoiceModel.saveMeasurements(deliberatelyEmpty, for: localID)
+        try await waitUntil { clearGate.arrivals == 1 }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
+        try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == deliberatelyEmptyWire && FloorMeasurementPlan.decodeWireValue(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy)?.isEmpty == true, "An intentional empty local plan remains restorable across repeated shared loads")
+        clearGate.release()
+        try await waitUntil { !sharedChoiceModel.syncInFlight.contains(localID) }
         var ambiguousPrior = priorPending
         ambiguousPrior.details?[FloorMeasurementPlan.wireKey] = "{unsupported"
         FloorMeasurementSync.recoverLegacyPending(in: &ambiguousPrior)

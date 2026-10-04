@@ -20,12 +20,15 @@ def block(source, marker):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--inject-fault', choices=['ignore-geometry', 'ignore-conflict', 'ignore-facts-review', 'phone-as-manual', 'omit-room-records'])
+    p.add_argument('--inject-fault', choices=['ignore-geometry', 'ignore-conflict', 'ignore-facts-review', 'phone-as-manual', 'omit-room-records', 'nonstandard-paper', 'omit-page-transform', 'omit-phone-limitation'])
     args = p.parse_args()
     source = {q: q.read_text() for q in [EDITOR, WORKSHEET, DETAIL]}
     safety = block(source[EDITOR], 'enum FloorMeasurementExportSafety {')
     provenance = block(source[WORKSHEET], 'enum FloorMeasurementProvenance {')
     pdf = block(source[WORKSHEET], '        try pdf.writePDF(to: url)')
+    layout = block(source[WORKSHEET], 'enum FloorMeasurementPDFLayout {')
+    constructor = 'let pdf = UIGraphicsPDFRenderer(bounds: FloorMeasurementPDFLayout.pageBounds)'
+    assert source[WORKSHEET].count(constructor) == 1
     if args.inject_fault == 'ignore-geometry':
         assert safety.count('return saved == expected') == 1
         safety = safety.replace('return saved == expected', 'return true')
@@ -43,16 +46,34 @@ def main():
         before = 'let floorRooms = plan.rooms.filter { $0.floor == value }'
         assert pdf.count(before) == 1
         pdf = pdf.replace(before, 'let floorRooms: [FloorMeasurementRoom] = []')
+    elif args.inject_fault == 'nonstandard-paper':
+        before = 'width: 792, height: 612'
+        assert layout.count(before) == 1
+        layout = layout.replace(before, 'width: 842, height: 632')
+    elif args.inject_fault == 'omit-page-transform':
+        before = 'context.cgContext.concatenate(contentTransform)'
+        assert layout.count(before) == 1
+        layout = layout.replace(before, '_ = contentTransform')
+    elif args.inject_fault == 'omit-phone-limitation':
+        before = 'return hasPhoneData ? phoneRulerLimitation : nil'
+        assert provenance.count(before) == 1
+        provenance = provenance.replace(before, 'return nil')
     # Bind UI wiring and legacy labeling as well as the executable helper.
     assert 'canExport: { isFresh(item.plan) && isFresh(plan) }' in source[EDITOR]
     assert 'MeasurementExport(image: result.image, pdfURL: result.pdfURL, plan: plan)' in source[EDITOR]
     assert 'measurements.export").disabled(!isFresh(plan))' in source[EDITOR]
     assert 'Scan hull estimate ≈' in source[DETAIL]
     assert 'schematic, not to scale; not a survey. Hull area' in source[DETAIL]
+    # Verify both PNG construction paths call the same conditional production note.
+    selected_image = block(source[WORKSHEET], '        let content = VStack(')
+    other_image = block(source[WORKSHEET], '            let drawing = VStack(')
+    assert 'phoneNote(plan: plan, floor: floor)' in selected_image
+    assert 'phoneNote(plan: plan, floor: value)' in other_image
+    assert 'Text(phoneNote)' in selected_image and 'Text(phoneNote)' in other_image
     template = Path(__file__).with_name('Fixture.swift.template').read_text()
     replacements = {'__SAFETY__': safety, '__PROVENANCE__': provenance,
         '__FORMAT__': block(source[WORKSHEET], 'enum FloorMeasurementFormat {'),
-        '__PDF_WRITE__': pdf,
+        '__PDF_WRITE__': pdf, '__PDF_LAYOUT__': layout, '__PDF_CONSTRUCTOR__': constructor,
         '__DRAW_TEXT__': block(source[WORKSHEET], '    private static func drawText('),
         '__HULL__': block(source[DETAIL], '    private static func footprintArea(')}
     for key, value in replacements.items():

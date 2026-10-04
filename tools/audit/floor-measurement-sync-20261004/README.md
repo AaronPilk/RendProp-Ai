@@ -8,7 +8,8 @@ for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt \
   rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint \
   legacy-v2-accept drop-local-raw-mirror omit-cas-base ignore-pending-measurements \
   wrong-cas-workspace ignore-cas-conflict omit-facts-fingerprint \
-  ignore-facts-review skip-legacy-recovery ignore-cas-lineage; do
+  ignore-facts-review skip-legacy-recovery ignore-cas-lineage \
+  overwrite-shared-backup compare-backup-wire-only retain-backup-after-new-edit; do
   python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault"
 done
 ```
@@ -57,7 +58,13 @@ photos, camera sessions, customer rows or cloud writes.
   ordinary facts. An unreadable old baseline is preserved without a guessed CAS.
 - Actual shared reload rejects a local mutation made while its read was held.
   It retains the old measurement copy, adopts the exact shared base, and supports
-  restoring the local copy through actual measurement save. Late CAS success or
+  restoring the local copy through actual measurement save. Sequential shared
+  measurements and shared listing-detail choices preserve the original phone
+  backup without resetting fixture state. Repeated shared absence and equivalent
+  JSON formatting also preserve it; a genuinely new pending plan or intentional
+  empty plan becomes the new backup. Three copied-source controls remove backup
+  preservation, substitute encoded-string comparison, or prohibit backup renewal
+  and must fail the corresponding sequence assertions. Late CAS success or
   HTTP 409 after a shared load cannot revive or mark conflict on the replaced
   queue, and cannot submit a second measurement write or generic PATCH.
 - Dynamic dictionary keys retain exact spelling through snake-case DTO decoding.

@@ -33,7 +33,7 @@ def block(source, marker):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit", "discard-outline-only", "outline-fingerprint", "legacy-v2-accept", "drop-local-raw-mirror", "omit-cas-base", "ignore-pending-measurements", "wrong-cas-workspace", "ignore-cas-conflict", "omit-facts-fingerprint", "ignore-facts-review", "skip-legacy-recovery", "ignore-cas-lineage"])
+    parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit", "discard-outline-only", "outline-fingerprint", "legacy-v2-accept", "drop-local-raw-mirror", "omit-cas-base", "ignore-pending-measurements", "wrong-cas-workspace", "ignore-cas-conflict", "omit-facts-fingerprint", "ignore-facts-review", "skip-legacy-recovery", "ignore-cas-lineage", "overwrite-shared-backup", "compare-backup-wire-only", "retain-backup-after-new-edit"])
     args = parser.parse_args()
     out = Path(tempfile.mkdtemp(prefix="rendprop-floor-measurement-sync-", dir="/tmp"))
     source_bytes = {p: p.read_bytes() for p in [CLIENT, APP, SYNC, EDITOR]}
@@ -148,6 +148,17 @@ def main():
                               FloorMeasurementPlan.wireValue(in: receipt.details) == FloorMeasurementPlan.wireValue(in: snapshot.details) else { return }"""
         assert replacements["__SYNC_LISTING__"].count(before) == 1
         replacements["__SYNC_LISTING__"] = replacements["__SYNC_LISTING__"].replace(before, "// injected missing current-queue lineage guard")
+    elif args.inject_fault in ["overwrite-shared-backup", "retain-backup-after-new-edit"]:
+        before = """state.savedLocalCopy = stillUsingSharedPlan
+            ? prior?.savedLocalCopy ?? localCopy
+            : localCopy ?? prior?.savedLocalCopy"""
+        assert replacements["__RELOAD_SHARED__"].count(before) == 1
+        after = "state.savedLocalCopy = localCopy" if args.inject_fault == "overwrite-shared-backup" else "state.savedLocalCopy = prior?.savedLocalCopy ?? localCopy"
+        replacements["__RELOAD_SHARED__"] = replacements["__RELOAD_SHARED__"].replace(before, after)
+    elif args.inject_fault == "compare-backup-wire-only":
+        before = "current.floorMeasurements == FloorMeasurementPlan.decodeWireValue(prior?.expected)"
+        assert replacements["__RELOAD_SHARED__"].count(before) == 1
+        replacements["__RELOAD_SHARED__"] = replacements["__RELOAD_SHARED__"].replace(before, "localCopy == prior?.expected")
     # The Listing DTO still uses snake-case conversion. Its freeform dictionary
     # must therefore preserve keys itself on both create and PATCH readback.
     for marker in ["json: try listingBody(listing, forPatch: false)", "json: try listingBody(listing, forPatch: true)"]:
@@ -210,7 +221,10 @@ def main():
                 "omit-facts-fingerprint": "First create captures ordinary facts intent separately from measurements",
                 "ignore-facts-review": "Unproven legacy listing facts never reach generic PATCH",
                 "skip-legacy-recovery": "Legacy pending geometry recovers exact CAS baseline before generic acknowledgement",
-                "ignore-cas-lineage": "Late CAS success or conflict cannot revive a queue replaced by shared reload"}.get(args.inject_fault)
+                "ignore-cas-lineage": "Late CAS success or conflict cannot revive a queue replaced by shared reload",
+                "overwrite-shared-backup": "Sequential shared measurements then shared facts retain the original phone backup",
+                "compare-backup-wire-only": "Semantically identical shared JSON formatting does not replace the saved phone plan",
+                "retain-backup-after-new-edit": "New pending local geometry replaces the old backup when loading shared measurements"}.get(args.inject_fault)
     for label, command in [("compile", compile_command), ("run", [str(out / "checks")])]:
         result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)
         log = out / (label + ".log")
