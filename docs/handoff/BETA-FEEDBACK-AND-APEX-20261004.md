@@ -172,6 +172,27 @@ the full focused case passes again. Those failed logs are retained rather than
 reported as successful runs. The fixture uses MockAPIClient and procedural
 photos; it is not a physical-device, camera, actual Photos save or provider test.
 
+The first PR-24 CI run (`37230943082`) passed 11 of 12 required jobs. Its
+public-viewer check failed when returning from playback to Explore. The viewer
+and harness were identical to the previous passing PR-23 run; the failure's
+receipt did not retain timing values, so its exact cause cannot be recovered.
+Investigation found a concrete test defect: the reference clock was sampled
+before Playwright dispatched the click while the real video was advancing.
+The check now samples in the click capture phase, before the production handler,
+and deliberately advances playback by over 0.2 seconds before tapping. The
+original 0.15-second tolerance, source retention, muted/paused controls and
+accessible slider checks remain. No production viewer code changed.
+
+The corrected loopback Chromium test passes **195 assertions**. Playback advanced
+0.248406 seconds from the old sample but only 0.000329 seconds from the tap.
+Two independent controls compile and reach the intended assertion after 85
+earlier checks: restoring the stale sample fails even though the real handoff
+is preserved within 0.000152 seconds; injecting a real rewind fails with a
+4.288872-second position loss. Both have zero JavaScript errors. CI now requires
+both controls to fail for that exact reason and retains their numeric handoff
+receipts. This establishes the timing defect and continued rewind detection;
+it does not retroactively prove the first CI failure had that specific cause.
+
 New work is not automatically in a signed TestFlight build.
 The permission classification needs an admin function deployment; native changes
 need a signed build. The routine-metric correction does not rewrite historical
