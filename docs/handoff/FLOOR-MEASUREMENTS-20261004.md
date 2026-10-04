@@ -72,6 +72,13 @@ still lacks server revision/CAS protection against unseen concurrent office edit
 - CI registers the new model, wire, export and public rendering checks. Public
   handler tests are included by the existing edge-test discovery.
 
+The first PR secret scan mistook the literal schema name
+`floor_measurements_v1` for an API key; its exact finding is documented in
+`.gitleaksignore`, and the next scan passed. CI also discovered the Node-only
+renderer check under Deno's `_test.mjs` filename convention; it was renamed to
+`public-details-renderer-check.mjs` and remains explicitly run in the tour-host
+Node job. The five public-handler tests remain in Deno's discovery.
+
 The first UI attempt could not connect to the stale simulator testmanager socket.
 Restarting that dedicated simulator resolved it. A later expanded test used a
 ScrollView helper against a native Form; it was corrected to the frontmost

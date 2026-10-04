@@ -320,7 +320,7 @@ jobs:
       - name: npm ci (clean, lockfile-driven)
         run: npm ci
       - name: Private measurement drafts stay out of public listing facts
-        run: node --test ../../supabase/functions/tours/public-details-renderer_test.mjs
+        run: node --test ../../supabase/functions/tours/public-details-renderer-check.mjs
 
       - name: Typecheck
         run: npm run typecheck
