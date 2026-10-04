@@ -22,7 +22,7 @@ function withoutImports(source: string): string {
 // Production route bodies, price arithmetic, response envelope and reservation
 // helper run unchanged. Only Auth/DB, route resolution and provider boundaries
 // are isolated doubles. No environment, network, writes or provider requests.
-async function fixture(reserveLate = false) {
+async function fixture(reserveLate = false, priceRequestedTier = false) {
   const source = await Deno.readTextFile(
     new URL("./index.ts", import.meta.url),
   );
@@ -76,7 +76,15 @@ async function fixture(reserveLate = false) {
     "Deno.serve(async (req) => {",
     "export const handler = async (req: Request) => {",
   );
-  const routes = source.slice(drone, end);
+  let routes = source.slice(drone, end);
+  if (priceRequestedTier) {
+    const original = "        outputWidth,\n        outputHeight,";
+    assert(routes.includes(original), "Actual-output mutation anchor changed");
+    routes = routes.replace(
+      original,
+      "        outputWidth: tier === '1080p60' ? 1920 : outputWidth,\n        outputHeight: tier === '1080p60' ? 1080 : outputHeight,",
+    );
+  }
   const promptStart = source.indexOf("const SPACE_TYPES =");
   const promptEnd = source.indexOf("interface DroneBody", promptStart);
   assert(promptStart > 0 && promptEnd > promptStart);
@@ -99,15 +107,15 @@ async function fixture(reserveLate = false) {
     import {AERIAL_MOTION_TEXT,AERIAL_MOTIONS,buildReelPrompt,chooseReelMotion,groundedAerialMotion,normalizeRoom,parseReelMotion,REEL_MOTION_LABEL,REEL_MOTIONS} from ${
     JSON.stringify(new URL("./motion.ts", import.meta.url).href)
   };
-    import {APP_AI_UNIT_CENTS,assertDroneWithinLimits,DRONE_TIER_CENTS,DRONE_TIERS} from ${
+    import {APP_AI_UNIT_CENTS,assertDroneWithinLimits,droneReservation,DRONE_TIER_CENTS,DRONE_TIERS} from ${
     JSON.stringify(droneUrl)
   };
     import {submitReservedVideo,VideoDispatchUnconfirmed} from ${
     JSON.stringify(helperUrl)
   };
     type RouteStep=any;type JobRef=any;type JobTokenOwner=any;type ChainResult<T>={value:T,step:any};type GenerateInput=any;type DroneBody=any;type AerialBody=any;type ReelBody=any;type DroneEstimate=any;type AerialMotion=any;type ReelMotion=any;
-    export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]};
-    export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]});}
+    export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]};
+    export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]});}
     const getUser=async(_req:Request)=>({id:"actor-synthetic",is_anonymous:false});
     const userClient=(_req:Request)=>({});
     const orgForUser=async(..._a:any[])=>"org-synthetic";
@@ -115,7 +123,8 @@ async function fixture(reserveLate = false) {
     const preferredOrg=(_req:Request)=>undefined;
     const extractEraseJob=(_req:Request)=>null;
     const eraseHandler=async(..._a:any[])=>{throw Error("Reflection route must not be reached");};
-    const resolvePublicAsset=async(..._a:any[])=>({id:"asset-synthetic",listing_id:"listing-synthetic",kind:"video",url:"https://media-fixture.invalid/private-source-marker.mp4",duration_s:90,width:1920,height:1080,fps:60,space_type:"real_estate"});
+    const resolvePublicAsset=async(..._a:any[])=>({id:"asset-synthetic",org_id:"org-synthetic",listing_id:"listing-synthetic",kind:"video",url:"https://media-fixture.invalid/private-source-marker.mp4",duration_s:90,width:1920,height:1080,fps:60,space_type:"real_estate",transport_version:2,...state.options.asset});
+    const probeMP4Video=async(url:string,..._a:any[])=>{state.probes.push(url);if(state.options.probeError)throw new HttpError(409,"Upload the saved clip again");return {duration_s:90,billable_s:90,width:1920,height:1080,fps:60,...state.options.verifiedSource};};
     const listingSpaceType=async(..._a:any[])=>"real_estate";
     const MAX_IMAGE_B64_CHARS=12000000,ALLOWED_IMAGE_MIMES=["image/jpeg","image/png","image/webp"];
     const ADVERTISED_SECONDS={"video.reel_clip":[5,6],"video.aerial":[6,8],"video.aerial_no_photo":[4,6,8]};
@@ -125,10 +134,10 @@ async function fixture(reserveLate = false) {
     async ${functionBody(source, "submitEnvelope")}
     ${source.slice(promptStart, promptEnd)}
     ${functionBody(source, "cleanPrompt")}
-    const guardGenerate=async(_user:any,req:Request,..._a:any[])=>{requiredIdempotencyKey(req);return {orgId:"org-synthetic",plan:"team",monthlyKey:"monthly-synthetic",burstKey:"burst-synthetic"};};
+    const guardGenerate=async(_user:any,req:Request,feature:any,cents:any,sourceOrgId?:string)=>{requiredIdempotencyKey(req);state.charges.push({feature,cents});state.sourceOrgId=sourceOrgId;return {orgId:sourceOrgId??"org-synthetic",plan:"team",monthlyKey:"monthly-synthetic",burstKey:"burst-synthetic"};};
     const refundGenerateCharge=async(..._a:any[])=>{state.refunds++;};
     const routerEnabled=async()=>state.options.routerOn??false;
-    const resolveChain=async(_task:any,_context:any,legacy:any)=>[legacy,{...legacy,route_id:"eligible-second",provider:"other",model:"second-model"}];
+    const resolveChain=async(task:any,_context:any,legacy:any)=>[state.options.badRoute?{...legacy,model:"unknown-tariff-model"}:state.options.routerOn?{...legacy,route_id:"live-shaped-route",model:task.startsWith("video.upscale_")?"topaz/upscale/video":legacy.model,unit_cents:task==="video.upscale_1080p60"?4:8}:legacy,{...legacy,route_id:"eligible-second",provider:"other",model:"second-model"}];
     const runChain=async(_task:any,steps:any[],callback:any)=>{state.steps.push(steps);return {step:steps[0],value:await callback(steps[0])};};
     class ProviderError extends Error {status?:number;error_class?:string;}
     const echo={request_id:"accepted-provider-id",status_url:"https://queue.fal.run/model/requests/accepted-provider-id/status",response_url:"https://queue.fal.run/model/requests/accepted-provider-id"};
@@ -168,7 +177,7 @@ function req(
   extra: Record<string, unknown> = {},
 ) {
   const input = route === "drone"
-    ? { asset_id: "asset-synthetic", tier: "4k30", target_fps: 30 }
+    ? { asset_id: "asset-synthetic", tier: "4k30", target_fps: 30, ...extra }
     : {
       image_b64: image,
       mime: "image/jpeg",
@@ -276,6 +285,167 @@ Deno.test("Topaz actual handler pins the frame-scaled estimate to both hold and 
   assertEquals(f.state.ledger[0].p_units, 90);
   assertEquals(f.state.ledger[0].p_unit_cost_cents, 16);
   assertEquals(f.state.ledger[0].p_hold_cents, 1440);
+});
+
+async function actual4KHold(f: Awaited<ReturnType<typeof fixture>>) {
+  f.reset({
+    routerOn: true,
+    // The upload hints deliberately lie. They cannot affect the price.
+    asset: { width: 1920, height: 1080, fps: 30, duration_s: 5 },
+    verifiedSource: {
+      width: 3840,
+      height: 2160,
+      fps: 60,
+      duration_s: 300,
+      billable_s: 300,
+    },
+  });
+  const response = await f.handler(
+    req("drone", "actual-4k-source", { tier: "1080p60", target_fps: 60 }),
+  );
+  assertEquals(response.status, 202);
+  const body = await response.json();
+  assertEquals(body.upscale_factor, 1);
+  assertEquals(f.state.posts[0].input.extra, { upscale_factor: 1 });
+  assertEquals(body.source, {
+    width: 3840,
+    height: 2160,
+    fps: 60,
+    duration_s: 300,
+  });
+  assertEquals(body.estimated_cost.cents, 4800);
+  assertEquals(body.estimated_cost.unit_cents, 16);
+  assertEquals(f.state.charges, [{ feature: "drone", cents: 4800 }]);
+  assertEquals(f.state.ledger[0].p_hold_cents, 4800);
+  assertEquals(f.state.ledger[0].p_unit_cost_cents, 16);
+  assertEquals(f.state.ledger[0].p_units, 300);
+  assertEquals(body.estimated_cost.output_width, 3840);
+  assertEquals(body.estimated_cost.output_height, 2160);
+  assertEquals(f.state.posts.length, 1);
+  assertEquals(f.state.probes.length, 1);
+  assertEquals(f.state.sourceOrgId, "org-synthetic");
+}
+
+Deno.test("Topaz enabled live-shaped 1080 route holds and settles $48 for a verified 4K60 five-minute source", async () => {
+  await actual4KHold(await fixture());
+});
+
+Deno.test("pricing the requested tier rather than actual output is caught by the same handler contract", async () => {
+  const mutant = await fixture(false, true);
+  await assertRejects(() => actual4KHold(mutant));
+  assertEquals(
+    mutant.state.posts.length,
+    1,
+    "Negative control failed before its behavioral defect",
+  );
+  assertEquals(
+    mutant.state.ledger[0].p_hold_cents,
+    4800,
+    "Conservative reservation must survive even an underpriced informational estimate",
+  );
+});
+
+Deno.test("Topaz unsupported sources and frame rates fail before quota, hold and provider", async () => {
+  const f = await fixture();
+  for (
+    const [options, input, expected] of [
+      [{ asset: { transport_version: 1 } }, {}, 409],
+      [{ probeError: true }, {}, 409],
+      [{ verifiedSource: { fps: 120 } }, {}, 409],
+      [{ verifiedSource: { billable_s: 301 } }, {}, 400],
+      [{ verifiedSource: { width: 7680, height: 4320 } }, {}, 400],
+      [{}, { target_fps: 120 }, 400],
+    ] as const
+  ) {
+    f.reset(options);
+    const response = await f.handler(req("drone", "unsupported-source", input));
+    assertEquals(response.status, expected);
+    assertEquals(f.state.charges.length, 0);
+    assertEquals(f.state.rpcs.length, 0);
+    assertEquals(f.state.posts.length, 0);
+  }
+});
+
+Deno.test("Topaz refuses an unpriced provider/model and refunds its unused allowance", async () => {
+  const f = await fixture();
+  f.reset({ badRoute: true });
+  assertEquals((await f.handler(req("drone"))).status, 503);
+  assertEquals(f.state.rpcs.length, 0);
+  assertEquals(f.state.posts.length, 0);
+  assertEquals(f.state.refunds, 1);
+});
+
+Deno.test("Topaz cheaper informational estimates retain the highest published tariff in hold and ledger", async () => {
+  const f = await fixture();
+  f.reset({
+    routerOn: true,
+    verifiedSource: {
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      duration_s: 30,
+      billable_s: 30,
+    },
+  });
+  const response = await f.handler(
+    req("drone", "conservative-cheap-bucket", {
+      tier: "1080p60",
+      target_fps: 30,
+    }),
+  );
+  assertEquals(response.status, 202);
+  const body = await response.json();
+  assertEquals(body.estimated_cost.unit_cents, 2);
+  assertEquals(body.estimated_cost.cents, 60);
+  assertEquals(body.reserved_cost, {
+    unit_cents: 16,
+    cents: 480,
+    usd: "4.80",
+    basis: "published_maximum_tariff",
+  });
+  assertEquals(f.state.charges, [{ feature: "drone", cents: 480 }]);
+  assertEquals(f.state.ledger[0].p_hold_cents, 480);
+  assertEquals(f.state.ledger[0].p_unit_cost_cents, 16);
+  assertEquals(f.state.ledger[0].p_meta.estimate_cents, 480);
+});
+
+Deno.test("actual paid guard binds a resolved asset workspace when a multi-org caller omits X-Org-Id", async () => {
+  const source = await Deno.readTextFile(
+    new URL("./index.ts", import.meta.url),
+  );
+  const http = new URL("../_shared/http.ts", import.meta.url).href;
+  const idem = new URL("../_shared/idempotency.ts", import.meta.url).href;
+  const module = await import(encode(`
+    import {HttpError} from ${JSON.stringify(http)};
+    import {requiredIdempotencyKey} from ${JSON.stringify(idem)};
+    type PaidAiCaller=any;type GenKind=any;type GenerateCharge=any;
+    export const state:any={choices:[],meters:[]};
+    const preferredOrg=(req:Request)=>req.headers.get('X-Org-Id')??undefined;
+    const orgForUser=async(_u:string,preferred?:string)=>{state.choices.push(preferred);return preferred??'different-default-org';};
+    const adminClient=()=>({from:()=>({select:()=>({eq:()=>({eq:()=>({maybeSingle:async()=>({data:{role:'owner'},error:null})})})})})});
+    const assertPaidAiIdentity=async(..._a:any[])=>{};
+    const entitlementForCharge=async(_o:string)=>({plan:'team',cogs_ceiling_cents:6000});
+    const capFor=(..._a:any[])=>2,labelFor=(..._a:any[])=>'drone',meterKeyFor=(..._a:any[])=>'drone';
+    const quotaError=(..._a:any[])=>new HttpError(402,'quota');
+    const orgMonthSpendCents=async(..._a:any[])=>0;
+    const assertMonthlyHeadroom=(..._a:any[])=>{};
+    const durableRateLimit=async(key:string,..._a:any[])=>{state.meters.push(key);return true;};
+    const GEN_MAX_PER_WINDOW=8,GEN_WINDOW_SECONDS=60,MONTH_SECONDS=2592000;
+    export async ${functionBody(source, "guardGenerate")}
+  `));
+  const request = req("drone", "workspace-binding");
+  const charge = await module.guardGenerate(
+    { id: "member-of-two-orgs" },
+    request,
+    "drone",
+    4800,
+    "asset-owner-org",
+  );
+  assertEquals(charge.orgId, "asset-owner-org");
+  assertEquals(module.state.choices, ["asset-owner-org"]);
+  assert(
+    module.state.meters.every((key: string) => key.includes("asset-owner-org")),
+  );
 });
 
 Deno.test("all actual routes require affirmative reservation rather than an empty RPC reply", async () => {

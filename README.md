@@ -163,6 +163,33 @@ provider calls totaled **$0.2415 in estimated ledger cost**, not an invoice char
 records gates, pricing estimates and acceptance checks. Presenter generation stays
 disabled, and this work does not establish phone or spatial-quality acceptance.
 
+## Pricing and cost safety
+
+The [3 October pricing audit](docs/PRICING-AUDIT-20261003.md) verifies the current
+US subscription prices and live plan/routing configuration. **A 75% minimum
+margin is not currently enforced.** The report distinguishes customer-payment
+and net-receipts margins, annual discounts, actual provider billing units and
+paid paths that still need financial admission. Its proposed budgets are not
+deployed; the older pricing documents are marked historical.
+
+The [Claude audit reconciliation](docs/handoff/CLAUDE-AUDIT-RECONCILIATION-20261003.md)
+confirms the deployed versions and available crash-feedback inventory, corrects
+the 86% margin and anonymous-photo claims, and records why the older photo patch
+would regress the separate saved libraries already shipped in build 43.
+
+The [4 October Topaz and margin follow-up](docs/handoff/TOPAZ-AND-MARGIN-20261004.md)
+records confirmed Small Business approval, the owner's 75% floor after Apple's
+fee, and the correction deployed in `ai-video` v50 for a 4K source requested
+at the 1080p tier. All Topaz
+jobs retain the highest published tariff as a conservative budget reservation
+until trusted decoding or invoice reconciliation supports a lower amount.
+
+The [plan feature and allowance proposal](docs/PLAN-ALLOWANCES-20261004.md)
+compares current photo/video/voice/chapter quantities with a shared weighted
+AI balance. It includes concrete monthly and annual scenarios, keeps recurring
+cost assumptions explicit, and records the unfinished financial admission.
+These proposed quantities and customer credit packs are not deployed.
+
 ## Start developing
 
 For Studio, use Node.js **22.12 or newer**:
