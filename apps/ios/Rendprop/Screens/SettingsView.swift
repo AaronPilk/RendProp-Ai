@@ -116,6 +116,11 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section { WorkspaceEntry() }
+            Section {
+                DesktopStudioCard()
+            } header: {
+                Text("Desktop Studio")
+            }
 #if SPATIAL_CAPTURE_LAB
             Section {
                 NavigationLink {
@@ -2192,6 +2197,27 @@ struct AgentCardPreview: View {
     }
 }
 
+/// A named card keeps the desktop entry's layout out of the large detail/form
+/// builders. Opening Studio never transfers a token or starts a purchase.
+struct DesktopStudioCard: View {
+    private let studioURL = URL(string: "https://studio.rendprop.com/")!
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Keep creating on your computer", systemImage: "desktopcomputer")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text("Connect your Apple account in the iPhone app, then sign in with that same Apple account in Studio. Choose the same workspace to see uploaded listings and media. Files saved only on this phone must be uploaded first.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Link(destination: studioURL) {
+                Label("Open Rendprop Studio", systemImage: "arrow.up.right.square")
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+            }.accessibilityIdentifier("studio.desktopLink")
+            Text("studio.rendprop.com").font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 // MARK: - Profile tab (the friendly "about me / contact card" view)
 struct ProfileView: View {
     @EnvironmentObject var model: AppModel
@@ -3263,7 +3289,7 @@ struct AdminConsoleView: View {
                 Spacer(minLength: 8)
                 healthChip(provider.status)
             }
-            Text(Self.credentialLine(configured: provider.configured, env: provider.credentialEnv))
+            Text(Self.credentialLine(configured: provider.configured))
                 .font(.rpCaption)
                 .foregroundStyle(provider.configured == true ? Theme.inkDim : Theme.bad)
             Text(Self.lastSuccessLine(provider))
@@ -3702,6 +3728,7 @@ struct AdminConsoleView: View {
         switch state {
         case .working:      return Theme.good
         case .wrongKey:     return Theme.bad
+        case .permission:   return Theme.warn
         case .otherFailure: return Theme.bad
         case .unreachable:  return Theme.warn
         case .rateLimited:  return Theme.warn
@@ -3725,12 +3752,12 @@ struct AdminConsoleView: View {
         }
         let untested = report.notProbeableCount ?? 0
         if untested > 0 {
-            parts.append("\(untested) can't be tested without a real sign-in or aren't set")
+            parts.append("\(untested) were not verified: setup, permissions or a real sign-in may be required")
         }
         if report.lastProbeRecorded == false {
             parts.append("this run wasn't saved, so \"last tested\" won't update")
         }
-        return parts.isEmpty ? "Every key was asked directly." : parts.joined(separator: " · ")
+        return parts.isEmpty ? "Results apply to the endpoints tested." : parts.joined(separator: " · ")
     }
 
     /// "Testing 13 keys…" — the count comes from the last run when we have one,
@@ -3743,8 +3770,8 @@ struct AdminConsoleView: View {
     }
 
     private static func keyTestFooter(report: AdminProbeReport?, lastRun: AdminProbeLastRun?) -> String {
-        let base = "Each test is one free call that proves the key still works. "
-            + "The Health list below only shows keys that happened to be used recently."
+        let base = "Available free endpoints are checked directly. A restricted key may work for generation without allowing an account check. "
+            + "The Health list below shows recorded activity, not a live key test."
         guard let line = AdminProbeText.lastTested(lastRun) else {
             return report == nil ? "Never tested. " + base : base
         }
@@ -3773,10 +3800,11 @@ struct AdminConsoleView: View {
 
     private static func healthLabel(_ status: String?) -> String {
         switch (status ?? "").lowercased() {
-        case "ok":           return "Working"
-        case "idle":         return "No activity"
+        case "ok":           return "Recent activity"
+        case "idle":         return "No recent activity"
         case "unmetered":    return "Not metered"
-        case "unconfigured": return "Key missing"
+        case "unconfigured": return "Setup incomplete"
+        case "no_key_required": return "No key required"
         case "":             return "Unknown"
         default:             return AdminText.pretty(status ?? "unknown")
         }
@@ -3792,28 +3820,28 @@ struct AdminConsoleView: View {
         }
     }
 
-    private static func credentialLine(configured: Bool?, env: String?) -> String {
-        let name = trimmed(env) ?? "credential"
-        guard let configured else { return name + " — the server didn't say whether it is set" }
-        return configured ? name + " is set" : name + " is NOT set — this feature is off"
+    private static func credentialLine(configured: Bool?) -> String {
+        guard let configured else { return "Server setup wasn't reported." }
+        return configured ? "Required server configuration is set."
+            : "Server setup incomplete — check all required credentials."
     }
 
     private static func lastSuccessLine(_ provider: AdminHealthProvider) -> String {
         guard let date = provider.lastSuccessDate else {
             if trimmed(provider.ledgerProvider) == nil {
-                return "No success can be shown — this provider never writes ledger rows."
+                return "Activity isn't tracked in this ledger."
             }
-            return "No success recorded in the window."
+            return "No ledger activity recorded in the window."
         }
-        var line = "Last success " + Formatters.relative(date)
+        var line = "Last ledger activity " + Formatters.relative(date)
         if let detail = trimmed(provider.lastSuccessDetail) { line += " — " + detail }
         return line
     }
 
     private static func healthFooter(_ health: AdminHealthReport?) -> String {
-        let base = "This screen calls no provider API — success is inferred from ledger rows already written."
+        let base = "This list reports server configuration and ledger activity. It does not verify credentials or finished outputs."
         guard let health, let note = trimmed(health.note) else { return base }
-        return note
+        return base + " " + note
     }
 
     private static func lastFailureLine(_ failures: AdminJobFailures) -> String {

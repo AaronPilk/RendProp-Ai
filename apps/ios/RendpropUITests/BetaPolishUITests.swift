@@ -200,6 +200,10 @@ final class BetaPolishUITests: XCTestCase {
 
     func testSavedDeclutterAndStagingLibrariesKeepDownloadsAndListingChoiceSeparate() {
         launchDetail() // Existing procedural legacy fixture; MockAPIClient only.
+        let desktop = element("studio.desktopLink")
+        scrollTo(desktop)
+        XCTAssertTrue(desktop.isHittable, "Uploaded listings need a discoverable desktop continuation")
+        XCTAssertTrue(app.staticTexts["studio.rendprop.com"].exists)
         openDetail("detail.photoStudio", title: "AI Photo Studio")
         let declutter = app.buttons["studio.edit.declutter"]
         scrollTo(declutter); declutter.tap()
@@ -216,6 +220,8 @@ final class BetaPolishUITests: XCTestCase {
         library.buttons["Decluttered"].tap()
         let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
         XCTAssertEqual(cards.count, 3, "There is one saved clean photo per family after staging")
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 3,
+                       "Each retained declutter must expose its actual listing selection")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Change this photo with AI")).count, 0,
                        "Browsing old clean versions must not replace the current editing workspace")
         scrollTo(cards.firstMatch); cards.firstMatch.tap()
@@ -226,6 +232,8 @@ final class BetaPolishUITests: XCTestCase {
 
         scrollTo(library); library.buttons["Staged"].tap()
         XCTAssertEqual(cards.count, 3, "The staged library keeps one newest preview per family")
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0,
+                       "Unselected staged previews must not acquire a listing badge")
         scrollTo(cards.firstMatch); cards.firstMatch.tap()
         assertCompareContains("Virtually staged")
         let choices = app.scrollViews["photoVersion.savedChoices"]
@@ -261,12 +269,45 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
         scrollTo(library); library.buttons["Latest"].tap()
         XCTAssertEqual(cards.count, 3)
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0,
+                       "Selecting an older declutter keeps the latest staged tiles unselected")
         scrollTo(cards.firstMatch); cards.firstMatch.tap()
         assertCompareContains("Virtually staged")
         XCTAssertTrue(app.scrollViews["photoVersion.savedChoices"].buttons["Staged"].isSelected,
                       "Choosing the declutter for publication must not change the latest staging workspace")
         XCTAssertEqual(app.buttons["photoVersion.useOnListing"].label, "Use this version on listing")
         attach("saved-photo-library-latest-stage-retained")
+        app.buttons["Close"].tap()
+        app.navigationBars["Photos"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10))
+        // Exercise the exact listing file grid reported in beta feedback, not
+        // only the separate Photos library. File-row ids are kind-prefixed;
+        // the first compare action must still target the saved version id.
+        let filePhotos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "listing.filePhoto.photo-"))
+        scrollTo(filePhotos.firstMatch)
+        XCTAssertEqual(filePhotos.count, 3)
+        let fileSaves = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "listing.savePhoto.photo-"))
+        XCTAssertEqual(fileSaves.count, 3)
+        XCTAssertTrue(fileSaves.allElementsBoundByIndex.allSatisfy { $0.label == "Save this photo to your Photos app" },
+                      "Download controls must not inherit the open-photo label or selected state")
+        XCTAssertEqual(filePhotos.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0)
+        filePhotos.firstMatch.tap()
+        let fileSelection = app.buttons["photoVersion.useOnListing"]
+        XCTAssertTrue(fileSelection.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(fileSelection.label, "Use this version on listing")
+        fileSelection.tap() // No version-chip tap to repair a malformed id.
+        XCTAssertEqual(fileSelection.label, "Selected for listing", app.debugDescription)
+        app.buttons["Close"].tap()
+        let selectedFiles = filePhotos.matching(NSPredicate(format: "value == %@", "Selected for listing"))
+        let refreshed = NSPredicate { _, _ in selectedFiles.count == 1 }
+        expectation(for: refreshed, evaluatedWith: app); waitForExpectations(timeout: 10)
+        scrollTo(selectedFiles.firstMatch)
+        attach("listing-file-grid-selected-version")
+        selectedFiles.firstMatch.tap()
+        XCTAssertTrue(fileSelection.waitForExistence(timeout: 10))
+        let persisted = NSPredicate { _, _ in fileSelection.label == "Selected for listing" }
+        expectation(for: persisted, evaluatedWith: app); waitForExpectations(timeout: 5)
+        XCTAssertEqual(fileSelection.label, "Selected for listing", "The file viewer must use the persisted photo version id on first open")
         app.buttons["Close"].tap()
     }
 

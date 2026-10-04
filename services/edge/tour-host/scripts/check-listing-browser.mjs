@@ -18,7 +18,7 @@ mkdirSync(evidence, { recursive: true });
 const playwrightPath = arg("--playwright") || resolve(ROOT, "../../../apps/studio/node_modules/@playwright/test/index.mjs");
 const { chromium } = await import(pathToFileURL(playwrightPath).href);
 const fault = arg("--fault") || null;
-assert.ok(!fault || ["eager-media", "retain-media", "queued-close", "poster-cover", "explore-no-seek"].includes(fault), "Unknown negative control");
+assert.ok(!fault || ["eager-media", "retain-media", "queued-close", "poster-cover", "explore-no-seek", "stale-explore-reference", "explore-rewind"].includes(fault), "Unknown negative control");
 const sourceHash = createHash("sha256").update(readFileSync(join(ROOT, "src/player.ts"))).digest("hex");
 const sourceHashes = Object.fromEntries(readdirSync(join(ROOT, "src")).filter((name) => name.endsWith(".ts")).map((name) => ["src/" + name, createHash("sha256").update(readFileSync(join(ROOT, "src", name))).digest("hex")]));
 sourceHashes["scripts/check-listing-browser.mjs"] = createHash("sha256").update(readFileSync(join(ROOT, "scripts/check-listing-browser.mjs"))).digest("hex");
@@ -144,6 +144,11 @@ try {
       if (fault === "queued-close") { assert.ok(html.includes("if (active && !modal.open) closeVideo(false)"), "Queued-close control must mutate the actual fixed listener"); html = html.replace("if (active && !modal.open) closeVideo(false)", "if (active) closeVideo(false)"); }
       if (fault === "poster-cover") html = html.replace('src="/synthetic-main-photo.svg" alt=', 'src="/synthetic-poster.svg" alt=');
       if (fault === "explore-no-seek") html = html.replace('queueSeek(fraction*usableDuration());', '/* fault: scrolling does not seek */');
+      if (fault === "explore-rewind") {
+        const boundary = 'if (active) syncPosition(pendingSeek===null?video.currentTime:pendingSeek);';
+        assert.ok(html.includes(boundary), "Explore rewind control must alter the actual mode handoff");
+        html = html.replace(boundary, 'video.currentTime=0; ' + boundary);
+      }
       return send(200, html, { "Content-Type": "text/html; charset=utf-8" });
     }
     if (url.pathname === "/favicon.svg") return send(204, "");
@@ -294,8 +299,16 @@ try {
   await page.evaluate(() => { const v = document.querySelector("#flythrough-video"); v.pause(); v.currentTime = 1; });
   await page.waitForFunction(() => Math.abs(document.querySelector("#flythrough-video").currentTime - 1) < .08 && !document.querySelector("#flythrough-video").seeking);
   await page.locator('#flythrough-modal [data-video-seek="4"]').click();
-  await page.waitForFunction(() => Math.abs(document.querySelector("#flythrough-video").currentTime - 4) < .15 && !document.querySelector("#flythrough-video").seeking);
-  check(Math.abs((await snapshot()).time - 4) < .15, "Room chapter seeks the actual media timeline");
+  // Watch mode resumes playback after the chapter seek. Retain the real clock
+  // sample from the successful wait, rather than measuring it again later.
+  const chapterHandle = await page.waitForFunction(() => {
+    const v = document.querySelector("#flythrough-video");
+    return Math.abs(v.currentTime - 4) < .15 && !v.seeking
+      ? { time: v.currentTime, seeking: v.seeking, currentSrc: v.currentSrc } : false;
+  });
+  const chapterSeek = await chapterHandle.jsonValue(); await chapterHandle.dispose();
+  writeFileSync(join(evidence, 'chapter-seek.json'), JSON.stringify(chapterSeek, null, 2) + '\n');
+  check(Math.abs(chapterSeek.time - 4) < .15 && !chapterSeek.seeking, "Room chapter seeks the actual media timeline");
   // `currentTime` and `seeking=false` describe the media timeline, not the
   // compositor. Wait for a presented decoded frame before reading its pixels.
   const presented = await page.evaluate(() => new Promise((resolveFrame, reject) => {
@@ -307,11 +320,30 @@ try {
   const frame = await page.evaluate(() => { const v = document.querySelector("#flythrough-video"), c = document.createElement("canvas"); c.width = 32; c.height = 18; const ctx = c.getContext("2d"); ctx.drawImage(v, 0, 0, 32, 18); return Array.from(ctx.getImageData(0, 0, 32, 18).data); });
   writeFileSync(join(evidence, "decoded-frame.json"), JSON.stringify({ presented, channelValues: new Set(frame.filter((_, i) => i % 4 !== 3)).size, pixels: frame }, null, 2) + "\n");
   check(new Set(frame.filter((_, i) => i % 4 !== 3)).size > 80, "Seeking yields a real nonempty decoded test-pattern frame");
-  const switchAt=(await snapshot()).time, sourceBeforeExplore=(await snapshot()).currentSrc;
+  const beforeExplore = await snapshot();
+  await page.evaluate(() => {
+    document.querySelector('#flythrough-explore').addEventListener('click', () => {
+      const v = document.querySelector('#flythrough-video');
+      window.__exploreHandoff = { time: v.currentTime, currentSrc: v.currentSrc, duration: v.duration };
+    }, { capture: true, once: true });
+  });
+  // The chapter action resumes playback. A sample before Playwright dispatches
+  // the click is already stale by the time the production handler pauses it.
+  // Exercise real media-clock advancement, then sample at that exact boundary.
+  await page.waitForFunction((time) => {
+    const v = document.querySelector('#flythrough-video');
+    return !v.paused && v.currentTime > time + .2;
+  }, beforeExplore.time, { timeout: 4000 });
   await page.locator('#flythrough-explore').click();
   await page.waitForFunction(()=>document.querySelector('#flythrough-video').paused);
-  check(!(await snapshot()).controls && (await snapshot()).muted && Math.abs((await snapshot()).time-switchAt)<.15, "Returning to Explore pauses at the current playback position without losing the tour");
-  check((await snapshot()).currentSrc===sourceBeforeExplore && await page.locator('#flythrough-position').getAttribute('aria-valuenow').then(v=>Number(v)>=45 && Number(v)<=70), "Reverse switch retains source and synchronizes accessible position");
+  const handoff = await page.evaluate(() => window.__exploreHandoff), afterExplore = await snapshot();
+  const switchAt = fault === 'stale-explore-reference' ? beforeExplore.time : handoff.time;
+  const positionPercent = Number(await page.locator('#flythrough-position').getAttribute('aria-valuenow'));
+  writeFileSync(join(evidence, 'explore-handoff.json'), JSON.stringify({ beforeExplore, handoff, afterExplore,
+    positionPercent, toleranceSeconds: .15, staleDelta: afterExplore.time-beforeExplore.time,
+    handoffDelta: afterExplore.time-handoff.time }, null, 2) + '\n');
+  check(!afterExplore.controls && afterExplore.muted && Math.abs(afterExplore.time-switchAt)<.15, "Returning to Explore pauses at the current playback position without losing the tour");
+  check(afterExplore.currentSrc===handoff.currentSrc && Math.abs(positionPercent-100*handoff.time/handoff.duration)<=1, "Reverse switch retains source and synchronizes accessible position");
   await page.evaluate(()=>{const v=document.querySelector('#flythrough-viewer');v.scrollTop=(v.scrollHeight-v.clientHeight)*.25;v.dispatchEvent(new Event('scroll'));v.scrollTop=(v.scrollHeight-v.clientHeight)*.75;v.dispatchEvent(new Event('scroll'));});
   await page.waitForFunction(()=>{const v=document.querySelector('#flythrough-video');return Math.abs(v.currentTime-6)<.1&&!v.seeking;});
   check(Math.abs((await snapshot()).time-6)<.1 && (await snapshot()).paused, "Rapid Explore scroll changes resolve to the latest requested decoded position");
@@ -464,7 +496,7 @@ try {
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   console.log(`Listing browser: ${checks.length} assertions passed; real rendered page/720p H.264-AAC/ranges/transfer cancellation. Receipt: ${join(evidence, "receipt.json")}`);
 } catch (error) {
-  const failureState = await browserPage?.evaluate(() => { const v = document.querySelector("#flythrough-video"); return v ? { src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null; }).catch(() => null);
+  const failureState = await browserPage?.evaluate(() => { const v = document.querySelector("#flythrough-video"); return v ? { time: v.currentTime, duration: v.duration, controls: v.controls, muted: v.muted, src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null; }).catch(() => null);
   await browserPage?.screenshot({ path: join(evidence, "failure.png") }).catch(() => {});
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: false, sourcePlayerSha256: sourceHash, sourceHashes, fault, error: error.message, checks, navigationMeasurements, requests, mediaState, pageErrors, failureState }, null, 2) + "\n");
   throw error;
