@@ -36,11 +36,20 @@ called. This is an offline response check, not CoachView/consent UI or live
 Supabase publication/deletion verification. No iOS simulator or Xcode app build
 is launched by this portable gate.
 
+It also executes `run-coach-privacy.sh`: the full production model makes scripted
+offline-to-online sends, then resends a deliberately old/provider-echoed address
+bubble after a cached listing rename. The 32 assertions cover transcript redaction,
+local-only bubbles, scoped project/action IDs, missing workspace, and account,
+workspace, revision and industry changes during consent/provider awaits. Four
+separately compiled source mutants must fail their intended runtime assertions.
+Unrelated app/provider boundaries are inert; no real network, credentials or
+customer files are used.
+
 Server knowledge is independently executable without runtime permissions or
 downloads:
 
 ```sh
-deno test --cached-only --deny-net --deny-env --deny-run --deny-read --deny-write services/supabase/functions/coach/
+deno test --cached-only --deny-net --deny-env --deny-run --allow-read --deny-write services/supabase/functions/coach/
 ```
 
 The new `knowledge_test.ts` imports only local production knowledge/formatter

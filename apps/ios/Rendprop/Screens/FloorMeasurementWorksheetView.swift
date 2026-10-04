@@ -7,6 +7,26 @@ enum FloorMeasurementFormat {
     }
 }
 
+/// Sources describe entry provenance, not certified tape/laser accuracy.
+enum FloorMeasurementProvenance {
+    static let disclosure = "Drawn from entered measurements. Each area identifies entered dimensions or phone estimates. Schematic, not to scale; not a survey. Verify measurements and calculated closing walls before use. This does not certify advertised or appraisal living area."
+    static func sourceLabel(_ source: FloorMeasurementSource) -> String {
+        source == .phoneEstimate ? "Phone estimate — verify" : "Entered dimensions — verify"
+    }
+    static func dateLine(_ plan: FloorMeasurementPlan) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd HH:mm 'UTC'"
+        return "Plan last updated: " + formatter.string(from: plan.updatedAt)
+    }
+    static func records(plan: FloorMeasurementPlan, floor: Int) -> [String] {
+        plan.outlines.filter { $0.floor == floor }.map {
+            "\($0.name): \(sourceLabel($0.source))" + ($0.closingWallCalculated ? "; calculated closing wall — verify" : "")
+        } + plan.rooms.filter { $0.floor == floor }.map { "\($0.name): \(sourceLabel($0.source))" }
+    }
+}
+
 /// Each floor uses outlines when present, otherwise its rectangular room areas.
 /// These two bases are never added together or written into advertised living area.
 struct FloorMeasurementWorksheetView: View {
@@ -53,7 +73,7 @@ struct FloorMeasurementWorksheetView: View {
             Text("\(outlined ? "Finished outline area" : "Room area total"): \(area(finished))")
                 .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
                 .accessibilityIdentifier("measurements.finishedAreaTotal")
-            Text("A worksheet from entered dimensions. It does not set advertised square footage or certify appraisal living area.")
+            Text(FloorMeasurementProvenance.disclosure)
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
         }.padding().frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.card).clipShape(RoundedRectangle(cornerRadius: Theme.radius))
@@ -74,17 +94,18 @@ struct FloorMeasurementDrawing: View {
         let points: [FloorMeasurementPoint]
         let category: FloorMeasurementAreaCategory
         let calculatedClosingWall: Bool
+        let source: FloorMeasurementSource
     }
     private var parts: [Part] {
         let outlines = plan.outlines.filter { $0.floor == floor }
         if !outlines.isEmpty {
             return outlines.sorted { ($0.category == .openBelow ? 1 : 0) < ($1.category == .openBelow ? 1 : 0) }.map {
-                Part(id: $0.id, parentID: $0.deductionFromID, name: $0.name, points: $0.vertices, category: $0.category, calculatedClosingWall: $0.closingWallCalculated)
+                Part(id: $0.id, parentID: $0.deductionFromID, name: $0.name, points: $0.vertices, category: $0.category, calculatedClosingWall: $0.closingWallCalculated, source: $0.source)
             }
         }
         return plan.rooms.filter { $0.floor == floor }.map {
             let x = $0.xMeters, y = $0.yMeters, w = $0.rotatedWidthMeters, h = $0.rotatedLengthMeters
-            return Part(id: $0.id, parentID: nil, name: $0.name, points: [.init(x: x, y: y), .init(x: x + w, y: y), .init(x: x + w, y: y + h), .init(x: x, y: y + h)], category: .finished, calculatedClosingWall: false)
+            return Part(id: $0.id, parentID: nil, name: $0.name, points: [.init(x: x, y: y), .init(x: x + w, y: y), .init(x: x + w, y: y + h), .init(x: x, y: y + h)], category: .finished, calculatedClosingWall: false, source: $0.source)
         }
     }
 
@@ -110,6 +131,11 @@ struct FloorMeasurementDrawing: View {
                 context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 2, dash: polygon.category == .openBelow ? [5, 4] : []))
                 let p = labelPoint(polygon.points, excluding: polygons.filter { $0.parentID == polygon.id }.map(\.points))
                 context.draw(Text(polygon.name).font(.system(size: min(18, max(10, size.width / 35)), weight: .semibold)).foregroundColor(Theme.ink), at: location(p))
+                let sourceAt = location(p)
+                context.draw(Text(polygon.source == .phoneEstimate ? "Phone estimate" : "Entered")
+                    .font(.system(size: min(13, max(8, size.width / 60))))
+                    .foregroundColor(polygon.source == .phoneEstimate ? Theme.warn : Theme.inkDim),
+                    at: CGPoint(x: sourceAt.x, y: sourceAt.y + min(19, max(12, size.width / 65))))
                 for i in polygon.points.indices {
                     let a = polygon.points[i], b = polygon.points[(i + 1) % polygon.points.count]
                     if polygon.calculatedClosingWall && i == polygon.points.count - 1 {
@@ -123,7 +149,7 @@ struct FloorMeasurementDrawing: View {
                     }
                 }
             }
-        }.accessibilityLabel("Measured plan for \(FloorMeasurementPlan.floorName(floor))")
+        }.accessibilityLabel("Measurement layout for \(FloorMeasurementPlan.floorName(floor))")
     }
 
     /// Place labels inside concave areas rather than in an L-shaped notch.
@@ -169,17 +195,18 @@ enum FloorMeasurementExport {
         guard !rows.isEmpty else { throw ExportError(message: "Add an area on this floor before exporting.") }
         let title = address.isEmpty ? "Floor plan and measurements" : address
         let outlined = plan.outlines.contains { $0.floor == floor }
+        let dateLine = FloorMeasurementProvenance.dateLine(plan)
         let totals = FloorMeasurementAreaCategory.allCases.filter { $0 != .openBelow }.map { category in
             "\(category.label): \(FloorMeasurementFormat.area(rows.filter { $0.category == category }.reduce(0) { $0 + $1.netAreaMeters2 }, unit: plan.unit))"
         }
         let content = VStack(alignment: .leading, spacing: 22) {
             Text(title).font(.system(size: 36, weight: .semibold)).lineLimit(2).foregroundStyle(Theme.ink)
-            Text(FloorMeasurementPlan.floorName(floor)).font(.system(size: 25)).foregroundStyle(Theme.inkDim)
+            Text(FloorMeasurementPlan.floorName(floor) + " · " + dateLine).font(.system(size: 23)).foregroundStyle(Theme.inkDim)
             FloorMeasurementDrawing(plan: plan, floor: floor).frame(maxWidth: .infinity, maxHeight: .infinity)
             Text(totals.joined(separator: "   ·   ")).font(.system(size: 20)).foregroundStyle(Theme.ink)
             Text(outlined ? "Entered outlines · open-below areas are deducted only from their linked finished area" : "Entered rectangular room areas · not a measured building area")
                 .font(.system(size: 20)).foregroundStyle(Theme.inkDim)
-            Text("Dashed highlighted closing walls are calculated and need verification. Full area worksheet and wall lengths are in the PDF.")
+            Text("Sources are marked on each area. Dashed closing walls are calculated — verify. Schematic, not to scale; not a survey. Full source, area and wall records are in the PDF.")
                 .font(.system(size: 19)).foregroundStyle(Theme.inkDim)
         }.padding(48).frame(width: 1600, height: 1200).background(Theme.bg).environment(\.colorScheme, .light)
         let renderer = ImageRenderer(content: content); renderer.scale = 1
@@ -192,6 +219,8 @@ enum FloorMeasurementExport {
                 Text(title).font(.system(size: 34, weight: .semibold)).foregroundStyle(Theme.ink)
                 Text(FloorMeasurementPlan.floorName(value)).font(.system(size: 25)).foregroundStyle(Theme.inkDim)
                 FloorMeasurementDrawing(plan: plan, floor: value)
+                Text(dateLine).font(.system(size: 21)).foregroundStyle(Theme.inkDim)
+                Text("Sources are marked on each area. Schematic, not to scale; not a survey. Verify entered dimensions, phone estimates and calculated closing walls.").font(.system(size: 21)).foregroundStyle(Theme.inkDim)
             }.padding(48).frame(width: 1600, height: 1200).background(Theme.bg).environment(\.colorScheme, .light)
             let pageRenderer = ImageRenderer(content: drawing); pageRenderer.scale = 1
             guard let rendered = pageRenderer.uiImage else {
@@ -204,7 +233,7 @@ enum FloorMeasurementExport {
             for value in floors {
                 let floorRows = allRows.filter { $0.floor == value }
                 context.beginPage(); floorImages[value]!.draw(in: CGRect(x: 21, y: 16, width: 800, height: 600))
-                for start in stride(from: 0, to: floorRows.count, by: 7) {
+                for start in stride(from: 0, to: floorRows.count, by: 5) {
                     context.beginPage()
                     drawText(title, x: 30, y: 24, width: 780, size: 19, bold: true)
                     drawText("\(FloorMeasurementPlan.floorName(value)) · Area worksheet", x: 30, y: 84, width: 780, size: 17, bold: true)
@@ -213,9 +242,10 @@ enum FloorMeasurementExport {
                     drawText("Gross area", x: 310, y: 143, width: 150, size: 13, bold: true)
                     drawText("Deductions", x: 470, y: 143, width: 150, size: 13, bold: true)
                     drawText("Net area", x: 650, y: 143, width: 150, size: 13, bold: true)
-                    for (index, row) in floorRows.dropFirst(start).prefix(7).enumerated() {
-                        let y = CGFloat(173 + index * 48)
+                    for (index, row) in floorRows.dropFirst(start).prefix(5).enumerated() {
+                        let y = CGFloat(173 + index * 68)
                         drawText(row.name + " · " + row.category.label, x: 30, y: y, width: 270, size: 12)
+                        drawText(FloorMeasurementProvenance.sourceLabel(row.source), x: 30, y: y + 44, width: 270, size: 10)
                         drawText(FloorMeasurementFormat.area(row.grossAreaMeters2, unit: plan.unit), x: 310, y: y, width: 150, size: 12)
                         let parentID = plan.outlines.first(where: { $0.id == row.id })?.deductionFromID
                         let parentName = plan.outlines.first(where: { $0.id == parentID })?.name ?? "linked area"
@@ -224,13 +254,28 @@ enum FloorMeasurementExport {
                     }
                     let finished = floorRows.filter { $0.category == .finished }.reduce(0) { $0 + $1.netAreaMeters2 }
                     drawText("\(plan.outlines.contains { $0.floor == value } ? "Finished outline area" : "Room area total"): \(FloorMeasurementFormat.area(finished, unit: plan.unit))", x: 30, y: 520, width: 780, size: 15, bold: true)
-                    drawText("Gross minus explicitly linked open-below deductions equals net. Garage, porch and unfinished areas are separate.\nEntered measurements require verification; this report does not set advertised square footage or certify appraisal living area.", x: 30, y: 556, width: 780, size: 11)
+                    drawText("Garage, porch and unfinished areas are separate. Schematic, not to scale; not a survey.\nVerify entered dimensions and phone estimates; this does not certify advertised or appraisal living area.\n" + dateLine, x: 30, y: 552, width: 780, size: 11)
+                }
+                // All room sources/dimensions remain available even when floor
+                // outlines are the independent basis of the area worksheet.
+                let floorRooms = plan.rooms.filter { $0.floor == value }
+                for start in stride(from: 0, to: floorRooms.count, by: 6) {
+                    context.beginPage()
+                    drawText(title, x: 30, y: 24, width: 780, size: 19, bold: true)
+                    drawText("\(FloorMeasurementPlan.floorName(value)) · Room dimension and source record", x: 30, y: 84, width: 780, size: 17, bold: true)
+                    drawText("Room rectangles are not added to outline totals. Entry sources are not a certification of accuracy.", x: 30, y: 115, width: 780, size: 12)
+                    for (index, room) in floorRooms.dropFirst(start).prefix(6).enumerated() {
+                        let y = CGFloat(150 + index * 62)
+                        drawText(room.name + " · " + FloorMeasurementProvenance.sourceLabel(room.source), x: 30, y: y, width: 780, size: 13, bold: true)
+                        drawText(room.displayDimensions(unit: plan.unit) + (room.heightMeters.map { " · Height " + FloorMeasurementInput.display($0, unit: plan.unit) } ?? " · Height not entered"), x: 30, y: y + 22, width: 780, size: 12)
+                    }
+                    drawText("Schematic, not to scale; not a survey. Verify entered dimensions and phone estimates.\nThis does not certify advertised or appraisal living area.\n" + dateLine, x: 30, y: 552, width: 780, size: 11)
                 }
                 for outline in plan.outlines.filter({ $0.floor == value }) {
                     for start in stride(from: 0, to: outline.vertices.count, by: 20) {
                         context.beginPage()
                         drawText("\(outline.name) · \(FloorMeasurementPlan.floorName(value))", x: 30, y: 24, width: 780, size: 19, bold: true)
-                        drawText("Wall calculation record · \(outline.source == .phoneEstimate ? "Phone estimate" : "Entered measurements")", x: 30, y: 60, width: 780, size: 13)
+                        drawText("Wall calculation record · " + FloorMeasurementProvenance.sourceLabel(outline.source), x: 30, y: 60, width: 780, size: 13)
                         drawText("Wall", x: 30, y: 100, width: 70, size: 13, bold: true)
                         drawText("Length", x: 110, y: 100, width: 190, size: 13, bold: true)
                         drawText("Direction (clockwise from right)", x: 320, y: 100, width: 300, size: 13, bold: true)
@@ -244,7 +289,7 @@ enum FloorMeasurementExport {
                             drawText(String(format: "%.1f°", angle), x: 320, y: y, width: 300, size: 12)
                             drawText(outline.closingWallCalculated && index == outline.vertices.count - 1 ? "Calculated — verify" : "Entered", x: 640, y: y, width: 165, size: 12)
                         }
-                        drawText("Polygon area from the closed wall outline: \(FloorMeasurementFormat.area(outline.areaMeters2, unit: plan.unit)).\nPerimeter: \(FloorMeasurementInput.displayPerimeter(outline.perimeterMeters, unit: plan.unit)). Units and full-precision coordinates are retained in the saved plan.", x: 30, y: 555, width: 780, size: 11)
+                        drawText("Polygon area from the closed wall outline: \(FloorMeasurementFormat.area(outline.areaMeters2, unit: plan.unit)).\nPerimeter: \(FloorMeasurementInput.displayPerimeter(outline.perimeterMeters, unit: plan.unit)). Schematic, not to scale; not a survey.\n" + dateLine, x: 30, y: 552, width: 780, size: 11)
                     }
                 }
             }

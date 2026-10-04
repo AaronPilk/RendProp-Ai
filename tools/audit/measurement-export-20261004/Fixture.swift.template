@@ -1,0 +1,167 @@
+import Foundation
+import CoreGraphics
+
+// UI/PDF output boundaries only. The admission, source labels, PDF pages and
+// room/wall loops below are extracted unchanged from the production sources.
+enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/synthetic-export-no-customer-files/" + path) } }
+func coarseCoordinate(_ value: Double) -> Double { (value * 1000).rounded() / 1000 }
+struct AssertionFailure: Error { let message: String }
+enum PDFCapture {
+    struct PositionedText { let text: String; let y: CGFloat; let width: CGFloat }
+    static var pages: [[String]] = []
+    static var positioned: [[PositionedText]] = []
+    static func append(_ text: String, rectangle: CGRect) {
+        pages[pages.count - 1].append(text)
+        positioned[positioned.count - 1].append(PositionedText(text: text, y: rectangle.minY, width: rectangle.width))
+    }
+}
+struct UIImage { func draw(in rectangle: CGRect) {} }
+struct UIFont {
+    static func boldSystemFont(ofSize size: CGFloat) -> UIFont { UIFont() }
+    static func systemFont(ofSize size: CGFloat) -> UIFont { UIFont() }
+}
+struct UIColor { static let black = UIColor() }
+extension NSAttributedString.Key { static let font = NSAttributedString.Key("synthetic-font"); static let foregroundColor = NSAttributedString.Key("synthetic-color") }
+extension NSString {
+    func draw(in rectangle: CGRect, withAttributes attributes: [NSAttributedString.Key: Any]) { PDFCapture.append(self as String, rectangle: rectangle) }
+}
+final class UIGraphicsPDFRendererContext { func beginPage() { PDFCapture.pages.append([]); PDFCapture.positioned.append([]) } }
+final class UIGraphicsPDFRenderer {
+    init(bounds: CGRect) {}
+    func writePDF(to url: URL, withActions body: (UIGraphicsPDFRendererContext) -> Void) throws {
+        PDFCapture.pages = []; PDFCapture.positioned = []; body(UIGraphicsPDFRendererContext())
+    }
+}
+__SAFETY__
+__PROVENANCE__
+__FORMAT__
+struct ActualScanArea {
+__HULL__
+    static func area(_ points: [SIMD2<Float>]) -> Float { footprintArea(points) }
+}
+struct ActualPDF {
+    static func capture(plan: FloorMeasurementPlan, floor: Int, address: String) throws -> [[String]] {
+        try plan.validate()
+        let allRows = try plan.worksheet()
+        let title = address.isEmpty ? "Floor plan and measurements" : address
+        let dateLine = FloorMeasurementProvenance.dateLine(plan)
+        let floors = Array(Set(allRows.map(\.floor))).sorted()
+        let floorImages = Dictionary(uniqueKeysWithValues: floors.map { ($0, UIImage()) })
+        let url = URL(fileURLWithPath: "/synthetic-export-no-files-written.pdf")
+        let pdf = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 842, height: 632))
+__PDF_WRITE__
+        return PDFCapture.pages
+    }
+__DRAW_TEXT__
+}
+@main struct ActualMeasurementExportChecks {
+    static func main() {
+        do { try run() }
+        catch let failure as AssertionFailure { print("FAIL: " + failure.message); exit(1) }
+        catch { print("FAIL: unexpected error \(error)"); exit(1) }
+    }
+    static func run() throws {
+        var assertions = 0
+        func check(_ condition: Bool, _ message: String) throws {
+            guard condition else { throw AssertionFailure(message: message) }; assertions += 1
+        }
+        let main = FloorMeasurementOutline(name: "Main L", vertices: [.init(x: 0, y: 0), .init(x: 6, y: 0), .init(x: 6, y: 4), .init(x: 4, y: 4), .init(x: 4, y: 2), .init(x: 0, y: 2)])
+        var opening = FloorMeasurementOutline(name: "Opening", vertices: [.init(x: 1, y: 0.5), .init(x: 2, y: 0.5), .init(x: 2, y: 1.5), .init(x: 1, y: 1.5)])
+        opening.category = .openBelow; opening.deductionFromID = main.id; opening.closingWallCalculated = true
+        var upper = FloorMeasurementOutline(name: "Upper phone outline", floor: 1, vertices: [.init(x: 0, y: 0), .init(x: 3, y: 0), .init(x: 3, y: 4), .init(x: 0, y: 4)])
+        upper.source = .phoneEstimate
+        let manualRoom = FloorMeasurementRoom(name: "Manual kitchen", widthMeters: 3, lengthMeters: 4)
+        var phoneRoom = FloorMeasurementRoom(name: "Phone bedroom", widthMeters: 2, lengthMeters: 3, xMeters: 5)
+        phoneRoom.source = .phoneEstimate
+        var plan = FloorMeasurementPlan()
+        plan.version = 2; plan.unit = .meters; plan.outlines = [main, opening, upper]; plan.rooms = [manualRoom, phoneRoom]
+        plan.updatedAt = Date(timeIntervalSince1970: 0)
+        try plan.validate()
+        var captured = Listing(address: "Synthetic export listing", beds: 0, baths: 0, sqft: 0, price: .dollars(0))
+        captured.serverID = UUID(); captured.serverOrgID = UUID(); captured.cloudDraftOrgID = captured.serverOrgID
+        captured.floorMeasurements = plan
+        func admits(_ current: Listing?, snapshot: FloorMeasurementPlan = plan, context: Bool = true) -> Bool {
+            FloorMeasurementExportSafety.isFresh(snapshot: snapshot, current: current, captured: captured, contextMatches: context)
+        }
+        try check(admits(captured), "current revision export is allowed")
+        var changed = captured
+        changed.floorMeasurements?.updatedAt = Date(timeIntervalSince1970: 12345)
+        try check(admits(changed), "date normalization alone does not block export")
+        changed = captured; changed.floorMeasurements?.rooms[0].widthMeters = 3.1
+        try check(!admits(changed), "stale geometry cannot be exported")
+        changed = captured; changed.floorMeasurements?.rooms[0].source = .phoneEstimate
+        try check(!admits(changed), "changed source provenance cannot export old snapshot")
+        changed = captured; changed.floorMeasurements?.unit = .feet
+        try check(!admits(changed), "changed display units cannot export old snapshot")
+        changed = captured; changed.floorMeasurements?.outlines[1].closingWallCalculated = false
+        try check(!admits(changed), "closing-wall verification provenance is part of freshness")
+        changed = captured; changed.floorMeasurements?.outlines[0].name = "Changed floor"
+        try check(!admits(changed), "renamed outline invalidates exported snapshot")
+        changed = captured; changed.measurementSync = FloorMeasurementSyncState(conflict: true)
+        try check(!admits(changed), "shared edit conflict cannot export local snapshot")
+        changed = captured; changed.measurementSync = FloorMeasurementSyncState(factsReviewRequired: true)
+        try check(!admits(changed), "older listing facts review blocks export until acknowledged")
+        changed.measurementSync?.factsReviewRequired = false
+        try check(admits(changed), "explicit older listing facts acknowledgment allows current export")
+        changed = captured; changed.measurementSync = FloorMeasurementSyncState(pending: true)
+        try check(admits(changed), "pending local revision is preserved and can be exported")
+        try check(!admits(captured, context: false), "changed account/session/workspace context blocks export")
+        try check(!admits(nil), "removed listing blocks export")
+        changed = captured; changed.id = UUID(); try check(!admits(changed), "changed listing identity blocks export")
+        changed = captured; changed.serverID = UUID(); try check(!admits(changed), "changed server identity blocks export")
+        changed = captured; changed.serverOrgID = UUID(); try check(!admits(changed), "changed server workspace blocks export")
+        changed = captured; changed.cloudDraftOrgID = UUID(); try check(!admits(changed), "changed draft workspace blocks export")
+        changed = captured; changed.address = "Other listing"; try check(!admits(changed), "changed address blocks wrong-label export")
+        changed = captured; changed.isSample = true; try check(!admits(changed), "sample replacement blocks export")
+        changed = captured; changed.cloudUnavailable = true; try check(!admits(changed), "lost workspace access blocks export")
+        changed = captured; changed.floorMeasurements = nil; try check(!admits(changed), "cleared measurements block stale snapshot")
+        changed = captured; changed.floorMeasurements?.version = 99; try check(!admits(changed), "unsupported current geometry blocks export")
+        var invalid = plan; invalid.rooms[0].widthMeters = -1
+        try check(!admits(captured, snapshot: invalid), "invalid snapshot cannot export")
+        try check(abs(main.areaMeters2 - 16) < 0.0001, "concave actual outline area remains 16")
+        let actualHull = ActualScanArea.area(main.vertices.map { SIMD2<Float>(Float($0.x), Float($0.y)) })
+        try check(abs(actualHull - 20) < 0.0001, "actual legacy scan hull includes L notch and must be labeled approximate")
+        let records = FloorMeasurementProvenance.records(plan: plan, floor: 0)
+        try check(records.count == 4, "both outlined and room dimension sources survive")
+        try check(records.contains("Phone bedroom: Phone estimate — verify"), "phone source is not relabeled as manual")
+        try check(records.contains("Manual kitchen: Entered dimensions — verify"), "manual entry does not claim certified tape accuracy")
+        try check(records.contains(where: { $0.contains("Opening") && $0.contains("calculated closing wall — verify") }), "calculated closure remains explicitly disclosed")
+        try check(!records.contains(where: { $0.contains("Upper phone") }), "source records are floor scoped")
+        try check(FloorMeasurementProvenance.dateLine(plan).contains("1970-01-01 00:00 UTC"), "plan provenance uses its stored UTC updated date")
+        try check(FloorMeasurementProvenance.disclosure.contains("not to scale") && FloorMeasurementProvenance.disclosure.contains("not a survey"), "disclosure includes schematic limitations")
+        let pages = try ActualPDF.capture(plan: plan, floor: 0, address: captured.address)
+        let text = pages.flatMap { $0 }.joined(separator: "\n")
+        try check(pages.count == 8, "actual PDF loop emits every floor worksheet, room record and outline wall page")
+        try check(text.contains("Manual kitchen · Entered dimensions — verify"), "actual PDF retains manual room source")
+        try check(text.contains("Phone bedroom · Phone estimate — verify"), "actual PDF retains phone room source with outlines present")
+        try check(text.contains("Upper phone outline") && text.contains("Wall calculation record · Phone estimate — verify"), "actual PDF retains upper-floor phone outline source")
+        try check(text.contains("Calculated — verify"), "actual PDF never labels closing wall as measured")
+        try check(text.contains("Finished outline area: 15.00 m²"), "actual PDF preserves linked-opening deduction")
+        try check(text.contains("Plan last updated: 1970-01-01 00:00 UTC"), "actual PDF embeds plan date")
+        try check(text.contains("not to scale; not a survey"), "actual PDF embeds schematic limitations")
+        // Exercise valid maximum-length names and the actual table pagination.
+        var stress = FloorMeasurementPlan(); stress.version = 2
+        stress.outlines = (0..<6).map { index in
+            var value = FloorMeasurementOutline(name: String(repeating: "W", count: 39) + String(index), vertices: [.init(x: Double(index * 4), y: 0), .init(x: Double(index * 4 + 1), y: 0), .init(x: Double(index * 4 + 1), y: 1), .init(x: Double(index * 4), y: 1)])
+            value.source = index % 2 == 0 ? .manual : .phoneEstimate
+            return value
+        }
+        stress.rooms = (0..<6).map { index in FloorMeasurementRoom(name: "Room " + String(repeating: "W", count: 34) + String(index), widthMeters: 1, lengthMeters: 1, xMeters: Double(index * 4)) }
+        let stressPages = try ActualPDF.capture(plan: stress, floor: 0, address: "Synthetic stress listing")
+        try check(stressPages.count == 10, "actual maximum-name fixture paginates all six areas across five-row pages")
+        let tablePages = PDFCapture.positioned.filter { $0.contains(where: { $0.text.contains("Area worksheet") }) }
+        try check(tablePages.count == 2, "actual worksheet table uses a second page at six rows")
+        var rowChecks = 0
+        for page in tablePages {
+            let names = page.filter { $0.text.hasPrefix(String(repeating: "W", count: 39)) }
+            for name in names {
+                let source = page.first { $0.text.contains("dimensions — verify") || $0.text.contains("Phone estimate — verify") }
+                _ = source // exact source association is positional, not a guessed name label
+                try check(page.contains(where: { $0.y == name.y + 44 && $0.width == 270 && $0.text.contains("— verify") }), "maximum-length table names have a separate source position")
+                rowChecks += 1
+            }
+        }
+        try check(rowChecks == 6, "all maximum-length names retain provenance across actual pages")
+        print("PASS: \(assertions) production export admission/provenance/PDF-loop assertions; no UIKit renderer, network, camera or customer files")
+    }
+}

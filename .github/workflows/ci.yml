@@ -73,6 +73,12 @@ jobs:
         run: bash apps/ios/tests/run-photo-work-queue.sh
       - name: Photo edit lifecycle and background resource cleanup
         run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
+      - name: Legacy photo galleries, cover review and per-family selection
+        run: |
+          python3 tools/audit/photo-gallery-reconciliation-20261004/run.py
+          for fault in drop-legacy-reconciliation bypass-stage-review latest-as-cover blank-family-badges; do
+            python3 tools/audit/photo-gallery-reconciliation-20261004/run.py --inject-fault "$fault"
+          done
       - name: Listing unit fields and real estate metadata survive editing
         run: bash apps/ios/tests/run-listing-unit-form.sh
       - name: Owner cohort metrics preserve numeric wire keys
@@ -86,7 +92,7 @@ jobs:
             python3 tools/audit/floor-measurement-outline-editor-20261004/run.py --inject-fault "$fault"
           done
           python3 tools/audit/floor-measurement-sync-20261004/run.py
-          for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint legacy-v2-accept drop-local-raw-mirror; do
+          for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint legacy-v2-accept drop-local-raw-mirror omit-cas-base ignore-pending-measurements wrong-cas-workspace ignore-cas-conflict omit-facts-fingerprint ignore-facts-review skip-legacy-recovery ignore-cas-lineage; do
             python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault"
           done
       - name: Measured-plan Photos export fences permission and context changes
@@ -95,6 +101,7 @@ jobs:
           for fault in drop-context-check ignore-cancellation drop-completion-check; do
             python3 tools/audit/floor-measurement-export-20261004/run.py --inject-fault "$fault"
           done
+          bash tools/audit/measurement-export-20261004/run-controls.sh
       - name: Photographer preference, client drafts and confirmed contact transactions
         run: bash apps/ios/tests/run-client-contact.sh
       - name: App Store capture isolation and physical UI-test switch boundaries
@@ -225,6 +232,11 @@ jobs:
             /tmp/rendprop-outline-editor-*/*.log
             /tmp/rendprop-floor-measurement-sync-*/receipt.json
             /tmp/rendprop-floor-measurement-sync-*/*.log
+            /tmp/rendprop-measurement-export-*/receipt.json
+            /tmp/rendprop-measurement-export-*/*.log
+            /tmp/rendprop-measurement-export-controls*/*.log
+            /tmp/rendprop-photo-reconciliation-*/receipt.json
+            /tmp/rendprop-photo-reconciliation-*/*.log
           retention-days: 7
           if-no-files-found: warn
 
@@ -723,6 +735,7 @@ jobs:
           python3 tools/audit/run_subscription_trial_regression.py
           python3 tools/audit/run_workspace_selection.py
           python3 tools/audit/run_listing_gallery_selection.py
+          python3 tools/audit/run_listing_measurement_cas.py
           python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py

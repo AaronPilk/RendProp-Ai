@@ -769,6 +769,8 @@ protocol APIClient: Sendable {
     /// address, price, beds/baths/sqft, tagline, details, lat/lng, zillow_url,
     /// sold_at (JSON null to un-sell) and status (`uploading` → `processing`).
     func updateListing(_ listing: Listing) async throws -> Listing
+    /// Saves only measurements, conditional on the exact cached wire value.
+    func updateMeasurements(_ listing: Listing) async throws -> Listing
     /// Select uploaded gallery versions and a main image; nil gallery preserves
     /// a cloud listing's existing selection, while [] explicitly hides its gallery.
     func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws
@@ -1191,6 +1193,9 @@ protocol APIClient: Sendable {
 
 // MARK: - Convenience overloads (protocol requirements can't carry defaults)
 extension APIClient {
+    // Mock/unsupported transports fail closed instead of falling back to a full-row write.
+    func updateMeasurements(_ listing: Listing) async throws -> Listing { throw APIError.notConfigured }
+
     /// Capture uploads (the common case) don't specify a role or type.
     func requestUpload(filename: String, bytes: Int64,
                        listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {

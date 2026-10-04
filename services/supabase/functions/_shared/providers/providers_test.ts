@@ -462,7 +462,7 @@ Deno.test("chain: an exhausted multi-step chain is one 503 naming the task", asy
   assertStringIncludes((err as HttpError).message, "All providers for video.reel_clip are unavailable right now.");
 });
 
-Deno.test("chain: a chain of ONE surfaces the provider's own error (flag-off shape)", async () => {
+Deno.test("chain: a chain of ONE retains status/code and excludes the provider's raw body", async () => {
   const err = await assertRejects(() =>
     runChain("photo.sky", [step({ provider: "gemini", task: "photo.sky" })], () => {
       throw new ProviderError("gemini", "upstream", "gemini HTTP 502: upstream boom");
@@ -471,7 +471,8 @@ Deno.test("chain: a chain of ONE surfaces the provider's own error (flag-off sha
   assert(err instanceof HttpError);
   assertEquals((err as HttpError).status, 502);
   assertEquals((err as HttpError).code, "upstream");
-  assertStringIncludes((err as HttpError).message, "gemini HTTP 502");
+  assertEquals((err as HttpError).details?.provider, "gemini");
+  assert(!(err as HttpError).message.includes("upstream boom"));
 });
 
 // ── 8. THE ROUTED-JOB TOKEN (what ai-video puts in status_url) ───────────────

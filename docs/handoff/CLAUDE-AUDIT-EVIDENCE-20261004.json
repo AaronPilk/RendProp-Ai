@@ -1,0 +1,159 @@
+{
+  "recordedAtUTC": "2026-10-04T22:58:29.028977+00:00",
+  "branch": "fix/claude-audit-20261004",
+  "baseCommit": "576d532be2daa94dc2c8446fc66611fb4b2952be",
+  "delivery": "source fixes only; no production or Apple deployment",
+  "cameraCalls": 0,
+  "paidProviderCalls": 0,
+  "productionMutations": 0,
+  "appleWrites": 0,
+  "runtimeAndVerificationSourceHashes": {
+    ".github/workflows/ci.yml": "2b41f15b84e0819189473f835eb47c7a7019bf3cb9dcfdb999d588e062f5ec87",
+    "apps/ios/Rendprop/Coach/CoachAPI.swift": "e117106cead51392c2d54b21b0d5180ec03f57f090aa7d5627ab7baefdaec432",
+    "apps/ios/Rendprop/Coach/CoachModel.swift": "c06d0a7d33bb6385ac6d3ff0f441993cca02112b46d94b9a9a3a134cf67df463",
+    "apps/ios/Rendprop/Models/Listing.swift": "7f98ef8004b1cc169a11bbf17a2860531d69440dc5ce67b470f2500dca944bb5",
+    "apps/ios/Rendprop/Networking/APIClient.swift": "0802481216db628b70d7ee1260bf6f7c3078237a6ae9f6676d231afab85edd0b",
+    "apps/ios/Rendprop/Networking/LiveAPIClient.swift": "88265cfd8655c7da65db664b8a03f6c17a1d4d21e9bb696336c65ec7d614a44c",
+    "apps/ios/Rendprop/Networking/WorkspaceSync.swift": "9a6b2f7a50e854d801ad220ae2a309d0199f245f7885ac548df01c2afc625b7d",
+    "apps/ios/Rendprop/Photos/PhotoVersionHistory.swift": "8a86fe8adaa82d2df93ef309c2a5f9a0972c55a6e991da74c59336e9c75ab4aa",
+    "apps/ios/Rendprop/RendpropApp.swift": "799ab3f530ab0771e8dc2841249c90c5fe4fae3c497b6e48225bc7f2c70a7869",
+    "apps/ios/Rendprop/Screens/CloudMediaView.swift": "267226ee9f822a40d139e95a59dd4939723883aed150bfc770eddbf6163e598a",
+    "apps/ios/Rendprop/Screens/FloorMeasurementWorksheetView.swift": "75be35980c60ad49118aa10f1c71ec418a73d98198acaa6fa661a615714573f0",
+    "apps/ios/Rendprop/Screens/FloorMeasurementsView.swift": "88bef8087da87a28902c8d5cc8150f334f24b4a0789f0952b6ca5ec2dba5a2b9",
+    "apps/ios/Rendprop/Screens/FlythroughDetailView.swift": "db08f9c3ad9c034cddcfa1daec29c0f508746cd6e86f9512689198eb3122cf98",
+    "apps/ios/RendpropUITests/BetaPolishUITests.swift": "4c8e73b57504a0bed255e89ac8968641790e5693b0775934b41295efb6f88c19",
+    "apps/ios/RendpropUITests/ReviewerWalk.swift": "97fe04e57dddcd4bbc75fc6085b60633ee84ba165ddc337e416657f383857345",
+    "apps/ios/RendpropUITests/StoreShots.swift": "cf95ffb9cc88b8ba628dd86e4d84889f8eb38c8a512de7ed3e059aaaa5edddae",
+    "apps/ios/tests/PhotoVersionHistoryTests.swift": "6b2a5a39593a31843830c9cd7d065412abaa0ee201bee0bd12b492a8162aaf14",
+    "services/supabase/functions/_shared/paid-ai-auth.test.ts": "3437a24ff862c4c89d9e463724a1164f66ca0981ce9cee45b7a2c723fccf9279",
+    "services/supabase/functions/_shared/providers/chain.ts": "e088cc2082df0faee0b60aeb6e9d75a438b71bb6ea69678253dc1a444357cbdc",
+    "services/supabase/functions/_shared/providers/common.ts": "f9c132222fd140a6a4fc3bd814ea89a927ebea9c07af1a9cbe51dcaa26ee6cab",
+    "services/supabase/functions/_shared/providers/fal.ts": "e01d9e81f2b8880d378dbfbf4549a3995f4656d03c07c36ad4d971406a80a308",
+    "services/supabase/functions/_shared/providers/fal_submission_audit_test.ts": "0c46ccb634df8c6db79dd2e8450b7d16147ce5e063e94c2ae1f436b0d1c0ff91",
+    "services/supabase/functions/_shared/providers/providers_test.ts": "9432a1a90913fdb958c4ddf3516719781a3ced4a84e3d6b741c3deda50a0f298",
+    "services/supabase/functions/admin/probe.ts": "1520bf891ac97c7d8972df3d6da1d987489104139f02014fe15d7f0ab3560cda",
+    "services/supabase/functions/ai-video/cost-reservation-handler_test.ts": "c74e801327b695a90c58dc3e0510777ce3711b872b1c61a44d5c15a79495f94a",
+    "services/supabase/functions/ai-video/cost-reservation.ts": "d9892cd03297a134767e004c69658ec769b1d4d3e1d9aea5d8e93adb469ed6ac",
+    "services/supabase/functions/ai-video/drift.test.ts": "517611e6cc75436028625776e55fc3e3d60e3af1bffbd7a51a091b8d490992db",
+    "services/supabase/functions/ai-video/fal-status-handler_test.ts": "48ea5c34e7d894d5581ab08961eb7f161f628b12d56138f3e15c276241a0213b",
+    "services/supabase/functions/ai-video/index.ts": "981b217e27302118bd39338ed3fdf22455659f53d443db1ec329924cd01269fd",
+    "services/supabase/functions/coach/admission_test.ts": "2455387c09139447adab3a56b08c2dbd38e5323a5e4c020c71f022a8830a531f",
+    "services/supabase/functions/coach/index.ts": "8fe025792accb90cc3923aacfa82b4735e5af5a42b1e44ab93ebed3c0ce59c7f",
+    "services/supabase/functions/coach/knowledge.ts": "e1519dcb4bb27dddd34e14cf2cc3a90151764871c6053375022120a8501e08ba",
+    "services/supabase/functions/coach/prompt.ts": "ec4333d467fedd760a532e164e59d42fe3a36b72d912a877a976f23c66e0c87b",
+    "services/supabase/functions/listings/index.ts": "622b122938516ded6414e97d3d5e0cb866a7031160ee1e3040da4d3db02497b6",
+    "services/supabase/functions/listings/measurements_test.ts": "4fd059b6bebfbed229e51f9ca3fd8aa134b54c343f56ec7a8d7943193b9d1d41",
+    "services/supabase/functions/tours/index.ts": "c0f818a00a057e4d59622db9118c28f22db9eba13dbc9d53db02a69aa2a027ac",
+    "services/supabase/functions/tours/public-details-renderer-check.mjs": "35359ed88d50e9a89660a4175ea44e58f307c825a45cfd0dade99499e2279a55",
+    "services/supabase/functions/tours/public-details_test.ts": "69080552107a240e652bf6d1f1ad6560431440fb5784ff6b94b74d70101cb945",
+    "services/supabase/migrations/20261004215403_app_video_rejected_submission_release.sql": "598bb7efbceb549998035d3357d94cd0d944a0c41528a9d69c253beabd500afe",
+    "services/supabase/migrations/20261004220253_listing_measurement_compare_and_set.sql": "7b7b8c8c4f87a073e0ef9c5305ca1eed918975be620902bd7072fb23bbfdba78",
+    "services/supabase/tests/app_video_cost_pg.py": "c0da8cdd1398debec8f2f63b43f4c43303bfd3f6cb413415e2540c9ea8a7bf44",
+    "services/supabase/tests/app_video_rejections.sql": "cdc2436a9cf65da247129d3753c6387e9b1e058b9d3eee44891e89495dc92e1e",
+    "services/supabase/tests/listing_measurement_cas.sql": "1033bab9f972f90f632c09fc66aaecf487cb6e3904a56343fb69e378687c3747",
+    "tests/phase1/CoachOfflineTests.swift": "17a4d3f3c6c3de038b86101b7ee9cf91c3e3aaf96cf3dc8132f1ea93ba053f63",
+    "tests/phase1/CoachPrivacyTests.swift": "8dcb9828b27319c02afac48de711d52014c38cc5f3ca32328384ff2a036ecb7c",
+    "tests/phase1/run-coach-privacy.sh": "a00907c458a4339aa37208f740d3db57e17210060e933e3b1fa41a294d948cbf",
+    "tests/phase1/run-unit.sh": "c98a68dd4787edb3b3e3333dbc2849e79143cc965c903a566afe968704a7743b",
+    "tools/audit/floor-measurement-sync-20261004/Fixture.swift.template": "4ad5e1f50c5b48cd4457c69d1b7e2a1553706c11f727650bc05107a474e8c3fa",
+    "tools/audit/floor-measurement-sync-20261004/run.py": "2e1ee718c006207414b6819a336a3f6c3d184c3ffd5fed694b12aafd8444318b",
+    "tools/audit/measurement-export-20261004/Fixture.swift.template": "3e55b45a1ec1f079557f2d398aecb2162174ddfb213a76be0a419bfa560a16db",
+    "tools/audit/measurement-export-20261004/run-controls.sh": "460614e8e5c16b50990df05373c67ae0552c05fc0ae361e5a137971d4b5039a0",
+    "tools/audit/measurement-export-20261004/run.py": "db020f53179aa86b77564c4f743a48f391017c7fd43005deb9b9bc4dd0d3098d",
+    "tools/audit/photo-gallery-reconciliation-20261004/GalleryCases.swift.fragment": "f1c36302ab96e20ba26bea30439f88ac41e9bb0547ec1d3fc20677c31fe72279",
+    "tools/audit/photo-gallery-reconciliation-20261004/run.py": "cbbd08a123efca7189ad122d0344f61d3b0bd8ad0273e0434fa7bc7afe6ab719",
+    "tools/audit/run_listing_measurement_cas.py": "f7e34238e91ebd5194e967bb40b7a3ca7725129e68202afe719c32cf6279266a"
+  },
+  "artifacts": [
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/edge-tests-final.log",
+      "sha256": "01857f115ce9edbf886cda9a5028561de3f4f334949984b582a84cbca6763c00"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/release-build/build-final-cas.log",
+      "sha256": "7ff678c5d830fdd02be24e34f72d892e25fc03747b6224d9146bb046b9d85d4f"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/measurement-model-final.log",
+      "sha256": "3cfb9e51666439dc2760b591f12cd9e45e68fc0c175ce3cd00a501864bc02232"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/phase1-unit-final.log",
+      "sha256": "591cecc761476fd5ca61cdd349544cda771a4d965b48db94a8ead2e901a81eed"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/presenter-controller-sql.log",
+      "sha256": "cc6b98090fea4d024c35113a07fa6dcc06bb157cb693eb636ab27bd1a6e98689"
+    },
+    {
+      "path": "/Users/pilksclaes/Rendprop AI/core-readiness-20261001/build/pex-2jbc_4ni/receipt.json",
+      "sha256": "6fdf8ba3e4aba1a5c4234f3251f6bc52627cf37f78e24b057425b7eb2244a6a9"
+    },
+    {
+      "path": "/Users/pilksclaes/Rendprop AI/core-readiness-20261001/build/pex-2jbc_4ni/controller.log",
+      "sha256": "b71ad1486e7181a7532ae0c61c6d1bccb0197e04d52c24cd0f809b8a33c060af"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/photo-gallery/delivery-receipt.json",
+      "sha256": "2f60375a4ccaf5c1d45f819189c337de7c5c4d09aff689e6142cd70d4a006c68"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/measurement-native/delivery-receipt.json",
+      "sha256": "a31848f7a4c7617985b93d507c9d4bda06d12e7211e9fa4e3b8431c43ac3fca1"
+    },
+    {
+      "path": "/tmp/rendprop-floor-measurement-sync-zg7624pl/receipt.json",
+      "sha256": "72eade60ff68b012e939d9e2ecda435001bef90f5716aec2707c14ca54c3f1c6"
+    },
+    {
+      "path": "/tmp/rendprop-measurement-sync-controls-20261004.json",
+      "sha256": "cd2f45f83d2e4debffec66ce39523c5da089285ccbaa0f00d54313a25e3bb599"
+    },
+    {
+      "path": "/tmp/rendprop-measurement-cas-pg-iqmlvo28/receipt.json",
+      "sha256": "53d4065073e997837d0a9fe05b2137afdb1637f20673db87ad7d68b386a22035"
+    },
+    {
+      "path": "/tmp/rendprop-app-video-pg-i_11vrxc/receipt.json",
+      "sha256": "2b701c5d860b8fa750bdf6c90d1a9e298e812e343e117f15896fffc3d764b5d9"
+    },
+    {
+      "path": "/tmp/rendprop-measurement-export-yaz3w62a/receipt.json",
+      "sha256": "9fac95c053218f322cd10f9ecda2f66135d1790a692996f986b818ba23261bff"
+    }
+  ],
+  "checks": {
+    "edge": {
+      "passed": 1389,
+      "failed": 0,
+      "ignored": 1,
+      "ignoredTestSeparatelyPassed": true
+    },
+    "presenterSQL": 119,
+    "presenterController": 1,
+    "measurementsModel": 628,
+    "measurementsActualSync": 133,
+    "measurementsSyncControls": 18,
+    "measurementSQLFresh": 44,
+    "measurementSQLReplay": 44,
+    "photoHistory": 389,
+    "actualGalleryPublisher": 77,
+    "nativePhotos": 2,
+    "nativeMeasurementFlows": 2,
+    "finalNativeExportRerun": 1,
+    "coachOffline": 37,
+    "coachPrivacy": 32,
+    "coachPrivacyControls": 4,
+    "exportAssertions": 49,
+    "exportControls": 5,
+    "release": "unsigned iphoneos arm64 build succeeded"
+  },
+  "limits": [
+    "Actual FAL generation and historical fast rejection cause unverified.",
+    "Physical camera/AR and AI media quality not tested.",
+    "Native PDF workflows preceded the later conditional old-snapshot review UI; actual methods and final device compile cover those changes.",
+    "General non-measurement full-row edits retain existing concurrency contract.",
+    "Old Coach clients without workspace header receive409/local fallback; coordinate rollout.",
+    "Live migration/function/hash verification and new signed binary required before rollout."
+  ]
+}

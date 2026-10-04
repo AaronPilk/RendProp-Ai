@@ -2,8 +2,8 @@
 // router's `error_class` is derived from, SSRF-safe fetching, an in-process
 // semaphore, and the R2 side of persist().
 //
-// Nothing in here ever logs a credential or a signed URL. Vendor bodies are
-// truncated before they reach a log line, and presigned URLs are used and
+// Nothing in here ever logs a credential or a signed URL. Vendor bodies never
+// enter fetch errors; classifier-only snippets redact presigned URLs, used and
 // dropped — they are never returned, logged, or put in a JobRef.
 
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
@@ -44,12 +44,15 @@ export class ProviderError extends Error {
   readonly error_class: ErrorClass;
   readonly provider: string;
   readonly status?: number;
-  constructor(provider: string, error_class: ErrorClass, message: string, status?: number) {
+  /** Set only by a submit boundary that received a definitive non-allocation. */
+  readonly dispatch_rejected: boolean;
+  constructor(provider: string, error_class: ErrorClass, message: string, status?: number, dispatchRejected = false) {
     super(message);
     this.name = "ProviderError";
     this.provider = provider;
     this.error_class = error_class;
     this.status = status;
+    this.dispatch_rejected = dispatchRejected;
   }
   /** The HTTP status this failure should surface as when the chain is exhausted. */
   get httpStatus(): number {
@@ -64,6 +67,23 @@ export class ProviderError extends Error {
         return 502;
     }
   }
+}
+
+/** No timeout/conflict/early-data/5xx response proves that a POST was not accepted. */
+export function definitiveSubmitRejection(status: number, body: unknown): boolean {
+  const rejected = [400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(status);
+  if (!rejected) return false;
+  // Ambiguous receipt-shaped data anywhere in a bounded response is enough
+  // to keep the hold. Do not assume every vendor uses the same envelope.
+  let examined = 0;
+  const hasReceipt = (value: unknown, depth = 0): boolean => {
+    if (++examined > 100 || depth > 8) return true;
+    if (!value || typeof value !== "object") return false;
+    return Object.entries(value).some(([key, entry]) =>
+      (/^(request_?id|job_?id|task_?id|id)$/i.test(key) && entry != null && entry !== "") ||
+      (typeof entry === "object" && hasReceipt(entry, depth + 1)));
+  };
+  return !hasReceipt(body);
 }
 
 /** Default HTTP-status → error_class mapping. Adapters override per vendor. */
@@ -158,7 +178,7 @@ export async function fetchBounded(
     if (name === "TimeoutError" || name === "AbortError") {
       throw new ProviderError(provider, "timeout", `${provider} did not answer within ${Math.round(timeoutMs / 1000)}s`);
     }
-    throw new ProviderError(provider, "upstream", `${provider} request failed: ${snippet(e instanceof Error ? e.message : e, 120)}`);
+    throw new ProviderError(provider, "upstream", `${provider} request could not be reached`);
   }
 }
 
@@ -182,8 +202,9 @@ export async function fetchJson<T = Record<string, unknown>>(
     throw new ProviderError(
       provider,
       classify(res.status, body),
-      `${provider} HTTP ${res.status}: ${snippet(body)}`,
+      `${provider} request failed (HTTP ${res.status})`,
       res.status,
+      init.method?.toUpperCase() === "POST" && definitiveSubmitRejection(res.status, body),
     );
   }
   return (body ?? {}) as T;

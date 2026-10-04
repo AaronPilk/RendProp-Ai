@@ -196,6 +196,19 @@ function classifyFal(status: number, body: unknown): ErrorClass {
   return classifyStatus(status);
 }
 
+/** fal's terminal failure is COMPLETED plus error/error_type, not a new take. */
+export function falCompletedFailure(data: Record<string, unknown>): Extract<JobState, { status: "failed" }> | null {
+  const hasError = data.error != null && data.error !== false && data.error !== "";
+  const hasType = typeof data.error_type === "string" && data.error_type.trim().length > 0;
+  if (!hasError && !hasType) return null;
+  const errorClass = classifyFal(500, data.error ?? data.error_type);
+  return {
+    status: "failed", error_class: errorClass,
+    message: errorClass === "nsfw" ? "The service refused this content under its safety policy." :
+      "The video service could not complete this generation.",
+  };
+}
+
 // deno-lint-ignore no-explicit-any
 function extractResult(result: any): { url: string; mime: string; width?: number; height?: number; duration_s?: number } | null {
   const v = result?.video; // Topaz / Bria / Veo / Seedance: { video: { url } }
@@ -239,36 +252,41 @@ function extractResult(result: any): { url: string; mime: string; width?: number
   return null;
 }
 
-/** Last few log lines from a fal status body (?logs=1). */
-function logsTail(st: Record<string, unknown>): string[] {
-  const logs = Array.isArray(st.logs) ? st.logs : [];
-  return logs
-    .slice(-5)
-    .map((l) => String((l as Record<string, unknown>)?.message ?? ""))
-    .filter((m) => m.length > 0);
-}
-
 export const falAdapter: ProviderAdapter = {
   key: PROVIDER,
 
   async submit(step: RouteStep, input: GenerateInput): Promise<JobRef> {
-    const endpoint = falEndpoint(step.model);
-    const body = falInput(step, input);
+    let endpoint: string, body: Record<string, unknown>, headers: Record<string, string>;
+    try {
+      endpoint = falEndpoint(step.model);
+      body = falInput(step, input);
+      headers = falHeaders({ [FAL_OBJECT_LIFECYCLE_HEADER]: FAL_OBJECT_LIFECYCLE_VALUE });
+    } catch (error) {
+      // No network call has started. Status0 is an internal before-dispatch
+      // marker, never a fabricated upstream HTTP answer.
+      if (error instanceof ProviderError) {
+        throw new ProviderError(PROVIDER, error.error_class, "The service could not prepare this submission.", 0, true);
+      }
+      throw new ProviderError(PROVIDER, "validation", "The service could not prepare this submission.", 0, true);
+    }
     const data = await fetchJson<Record<string, unknown>>(
       PROVIDER,
       `${FAL_QUEUE_BASE}/${endpoint}`,
       {
         method: "POST",
-        headers: falHeaders({ [FAL_OBJECT_LIFECYCLE_HEADER]: FAL_OBJECT_LIFECYCLE_VALUE }),
+        headers,
         body: JSON.stringify(body),
       },
       BUDGETS.submitMs,
       classifyFal,
     );
     const { request_id, status_url, response_url } = data;
-    if (!request_id || !status_url || !response_url) {
-      throw new ProviderError(PROVIDER, "upstream", `Unexpected fal submit response (${endpoint}): ${snippet(data, 400)}`);
+    if (typeof request_id !== "string" || !/^[!-~]{1,256}$/.test(request_id) ||
+        typeof status_url !== "string" || typeof response_url !== "string") {
+      throw new ProviderError(PROVIDER, "upstream", "The service did not return a valid submission receipt.");
     }
+    requireHost(status_url, FAL_HOSTS, PROVIDER);
+    requireHost(response_url, FAL_HOSTS, PROVIDER);
     const echo = {
       request_id: String(request_id),
       status_url: String(status_url),
@@ -302,18 +320,25 @@ export const falAdapter: ProviderAdapter = {
     if (status === "IN_PROGRESS") return { status: "running" };
 
     if (status === "COMPLETED") {
+      const failed = falCompletedFailure(st);
+      if (failed) return failed;
       const responseUrl = requireHost(
         typeof st.response_url === "string" ? st.response_url : falResponseUrl(ref.poll_url),
         FAL_HOSTS,
         PROVIDER,
       );
-      const result = await fetchJson<Record<string, unknown>>(
-        PROVIDER,
-        responseUrl,
-        { method: "GET", headers: falHeaders() },
-        BUDGETS.pollMs,
-        classifyFal,
-      );
+      let result: Record<string, unknown>;
+      try {
+        result = await fetchJson<Record<string, unknown>>(
+          PROVIDER, responseUrl, { method: "GET", headers: falHeaders() }, BUDGETS.pollMs, classifyFal,
+        );
+      } catch (error) {
+        if (!(error instanceof ProviderError) || !error.status) throw error;
+        console.error("fal completed result failed", { provider_status: error.status, error_class: error.error_class });
+        return { status: "failed", error_class: error.error_class, message: "The video service could not return this generation." };
+      }
+      const resultFailed = falCompletedFailure(result);
+      if (resultFailed) return resultFailed;
       // Some fal image models report the safety verdict in the result body.
       const nsfwFlags = (result as { has_nsfw_concepts?: unknown }).has_nsfw_concepts;
       if (Array.isArray(nsfwFlags) && nsfwFlags.some(Boolean)) {
@@ -321,7 +346,7 @@ export const falAdapter: ProviderAdapter = {
       }
       const out = extractResult(result);
       if (!out) {
-        return { status: "failed", error_class: "upstream", message: `fal result had no media url: ${snippet(result)}` };
+        return { status: "failed", error_class: "upstream", message: "The service completed without a usable media file." };
       }
       return {
         status: "done",
@@ -334,11 +359,10 @@ export const falAdapter: ProviderAdapter = {
       };
     }
 
-    const tail = logsTail(st);
     return {
       status: "failed",
       error_class: "upstream",
-      message: tail.length > 0 ? tail.join(" | ").slice(0, 500) : `fal reported status ${status || "FAILED"}`,
+      message: "The video service could not complete this generation.",
     };
   },
 

@@ -557,6 +557,22 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         return mapListing(try decode(data))
     }
 
+    func updateMeasurements(_ listing: Listing) async throws -> Listing {
+        guard let target = listing.serverID, let org = listing.serverOrgID,
+              org == WorkspaceContext.selectedOrgID,
+              let state = listing.measurementSync, state.pending, !state.conflict,
+              let value = FloorMeasurementPlan.wireValue(in: listing.details) else {
+            throw CloudSyncError.identityChanged
+        }
+        var request = makeRequest(url: url(["listings", target.uuidString, "measurements"]), method: "PUT",
+            json: ["expected": state.expected as Any? ?? NSNull(), "value": value])
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+        })
+        return mapListing(try decode(data))
+    }
+
     func deleteListing(serverID: UUID) async throws {
         _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]),
                                           method: "DELETE"))
@@ -1540,8 +1556,12 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // other model-backed route on this client already uses the longer
         // timeout. The default 60 s was one slow answer away from throwing away
         // a reply the server had already paid for.
-        let data = try await execute(makeRequest(url: url(["coach"]), method: "POST", json: body),
-                                     session: aiSession)
+        guard let org = request.orgID, org == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        var httpRequest = makeRequest(url: url(["coach"]), method: "POST", json: body)
+        httpRequest.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(httpRequest, session: aiSession, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+        })
         // decodeExact, NOT decode: `CoachResponse` spells its own CodingKeys in
         // snake_case, which `.convertFromSnakeCase` cannot match. See the note
         // on `decodeExact`.
@@ -1843,7 +1863,9 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // Measurements, like indexing, are independent of the generic form's
         // details. Preserve all other keys, including an unsupported future
         // measurements value, and reject invalid/oversized writes before HTTP.
-        let details = try ListingWireDetails.merged(l)
+        let mergedDetails = try ListingWireDetails.merged(l)
+        // Private measurements have their own atomic endpoint. Full listing edits cannot replace them.
+        let details = forPatch ? mergedDetails.filter { !FloorMeasurementPlan.isPrivateKey($0.key) } : mergedDetails
         if !details.isEmpty {
             b["details"] = details
         } else if forPatch {
@@ -1916,7 +1938,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         l.serverID = serverID
         l.serverOrgID = dto.orgId.flatMap(UUID.init(uuidString:))
         l.cloudCreateReplayed = dto.createReplayed
-        l.floorMeasurements = FloorMeasurementPlan.decodeWireValue(l.details?[FloorMeasurementPlan.wireKey])
+        l.floorMeasurements = FloorMeasurementPlan.decodeWireValue(FloorMeasurementPlan.wireValue(in: l.details))
+        l.measurementSync = FloorMeasurementSyncState(expected: FloorMeasurementPlan.wireValue(in: l.details))
         if let raw = l.details?[Listing.searchIndexingKey]?.lowercased() {
             l.allowSearchIndexing = ["true", "1", "yes"].contains(raw)
         }

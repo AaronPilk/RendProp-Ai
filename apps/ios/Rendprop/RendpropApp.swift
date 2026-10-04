@@ -115,7 +115,7 @@ final class AppModel: ObservableObject {
     private var cloudRefreshOperation: UUID?
     var pendingCloudListingCount: Int {
         guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return 0 }
-        return listings.filter { CloudDraftCreation.canAutoSync($0, userID: owner) && ($0.serverID == nil || $0.needsServerSync == true) }.count
+        return listings.filter { CloudDraftCreation.canAutoSync($0, userID: owner) && ($0.serverID == nil || $0.needsServerSync == true || $0.measurementSync?.pending == true) }.count
     }
     private var spatialCapabilityFetch: Task<Void, Never>?
 
@@ -581,6 +581,55 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func saveMeasurements(_ plan: FloorMeasurementPlan, for id: UUID) throws {
+        guard let i = index(of: id) else { throw CloudSyncError.cloudMissing }
+        var changed = listings[i]
+        try FloorMeasurementSync.stage(plan, in: &changed)
+        listings[i] = changed
+        Task { [weak self] in await self?.syncListing(id) }
+    }
+
+    func reloadSharedMeasurements(_ id: UUID, includeListingDetails: Bool = false) async throws {
+        guard let snapshot = listings.first(where: { $0.id == id }), let server = snapshot.serverID, let org = snapshot.serverOrgID,
+              org == WorkspaceContext.selectedOrgID, let cloud = api as? WorkspaceSyncAPI else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID; let revision = AuthStore.shared.syncSessionRevision
+        let remote = try await cloud.cloudListings()
+        guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+              org == WorkspaceContext.selectedOrgID, let i = index(of: id), listings[i] == snapshot,
+              let shared = remote.first(where: { $0.serverID == server && $0.serverOrgID == org }) else { throw CloudSyncError.identityChanged }
+        var current = listings[i]
+        var state = FloorMeasurementSyncState(expected: FloorMeasurementPlan.wireValue(in: shared.details))
+        state.savedLocalCopy = (try? current.floorMeasurements?.encodedWireValue()) ?? FloorMeasurementPlan.wireValue(in: current.details)
+        if includeListingDetails {
+            // Explicit user choice: older dirty snapshots cannot establish which
+            // ordinary facts were intentionally edited. Never make this automatic.
+            current.needsServerSync = false
+            FloorMeasurementSync.adoptFacts(from: shared, current: &current)
+            if current.measurementSync?.factsReviewRequired == true { current.lastError = nil }
+        } else {
+            state.factsReviewRequired = current.measurementSync?.factsReviewRequired
+        }
+        current.measurementSync = state
+        current.floorMeasurements = shared.floorMeasurements
+        // Preserve non-measurement local edits while loading only the shared plan.
+        var details = (current.details ?? [:]).filter { !FloorMeasurementPlan.isPlanKey($0.key) }
+        for (key,value) in (shared.details ?? [:]) where FloorMeasurementPlan.isPlanKey(key) { details[key] = value }
+        current.details = details
+        listings[i] = current
+    }
+
+    func confirmLocalListingDetails(_ id: UUID) throws {
+        guard AuthStore.shared.isIdentified, let i = index(of: id), let org = listings[i].serverOrgID,
+              org == WorkspaceContext.selectedOrgID,
+              listings[i].cloudUnavailable != true, listings[i].measurementSync?.factsReviewRequired == true else {
+            throw CloudSyncError.identityChanged
+        }
+        guard listings[i].measurementSync?.conflict != true else { throw FloorMeasurementSyncError.conflict }
+        listings[i].measurementSync?.factsReviewRequired = false
+        listings[i].lastError = nil
+        Task { [weak self] in await self?.syncListing(id) }
+    }
+
     func setSold(_ sold: Bool, for id: UUID) {
         guard let i = index(of: id), !listings[i].isSample else { return }
         listings[i].soldAt = sold ? Date() : nil   // persists via didSet
@@ -732,6 +781,11 @@ final class AppModel: ObservableObject {
         guard !syncInFlight.contains(id) else { return }
         syncInFlight.insert(id)
         defer { syncInFlight.remove(id) }
+        if let i = index(of: id) {
+            var recovered = listings[i]
+            FloorMeasurementSync.recoverLegacyPending(in: &recovered)
+            if recovered != listings[i] { listings[i] = recovered }
+        }
 
         if let draft = listings.first(where: { $0.id == id }), draft.serverID == nil {
             guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
@@ -743,12 +797,39 @@ final class AppModel: ObservableObject {
         var attempts = 0
         while attempts < 3,
               let snapshot = listings.first(where: { $0.id == id }),
-              !snapshot.isSample, snapshot.serverID != nil, snapshot.cloudUnavailable != true, snapshot.needsServerSync == true {
+              !snapshot.isSample, snapshot.serverID != nil, snapshot.cloudUnavailable != true,
+              (snapshot.needsServerSync == true || (snapshot.measurementSync?.pending == true && snapshot.measurementSync?.conflict != true)) {
             attempts += 1
             guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }   // signed out: keep it dirty
             let owner = AuthStore.shared.userID
             let revision = AuthStore.shared.syncSessionRevision
             do {
+                if snapshot.measurementSync?.pending == true && snapshot.measurementSync?.conflict != true {
+                    let receipt = try await api.updateMeasurements(snapshot)
+                    guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+                          WorkspaceContext.selectedOrgID == snapshot.serverOrgID else { return }
+                    if let i = index(of: id), listings[i].serverID == snapshot.serverID,
+                       listings[i].serverOrgID == snapshot.serverOrgID {
+                        var current = listings[i]
+                        // A shared-version load during the request replaces the
+                        // queue. A late receipt cannot revive that discarded write.
+                        guard current.measurementSync?.pending == true,
+                              current.measurementSync?.conflict != true,
+                              current.measurementSync?.expected == snapshot.measurementSync?.expected,
+                              FloorMeasurementPlan.wireValue(in: receipt.details) == FloorMeasurementPlan.wireValue(in: snapshot.details) else { return }
+                        FloorMeasurementSync.acknowledge(submitted: snapshot, receipt: receipt, current: &current)
+                        FloorMeasurementSync.adoptFacts(from: receipt, current: &current)
+                        listings[i] = current
+                    }
+                    continue
+                }
+                guard snapshot.measurementSync?.conflict != true,
+                      snapshot.measurementSync?.factsReviewRequired != true else {
+                    if let i = index(of: id) {
+                        listings[i].lastError = "Your saved measurements and listing details are safe on this iPhone. Open Measurements to review the shared listing before syncing older edits."
+                    }
+                    return
+                }
                 _ = try await api.updateListing(snapshot)
                 guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision else { return }
                 if let i = index(of: id), listings[i] == snapshot {
@@ -756,6 +837,14 @@ final class AppModel: ObservableObject {
                 }
                 // else: edited again while the PATCH was in flight → loop once more
             } catch {
+                if snapshot.measurementSync?.pending == true, let apiError = error as? APIError, apiError.isConflict,
+                   let i = index(of: id), AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+                   WorkspaceContext.selectedOrgID == snapshot.serverOrgID,
+                   listings[i].serverID == snapshot.serverID, listings[i].serverOrgID == snapshot.serverOrgID,
+                   listings[i].measurementSync?.pending == true, listings[i].measurementSync?.conflict != true,
+                   listings[i].measurementSync?.expected == snapshot.measurementSync?.expected {
+                    listings[i].measurementSync?.conflict = true
+                }
                 return   // stays dirty; retried later
             }
         }
@@ -763,7 +852,7 @@ final class AppModel: ObservableObject {
 
     /// Push every dirty listing (called on launch and by pull-to-refresh).
     func syncDirtyListings() async {
-        let dirty = listings.filter { !$0.isSample && ($0.needsServerSync == true || $0.serverID == nil) }.map { $0.id }
+        let dirty = listings.filter { !$0.isSample && ($0.needsServerSync == true || $0.measurementSync?.pending == true || $0.serverID == nil) }.map { $0.id }
         for id in dirty {
             await syncListing(id)
         }
@@ -899,10 +988,11 @@ final class AppModel: ObservableObject {
             if let i = index(of: localID) { listings[i].cloudDraftOrgID = org }
         }
         let identity = CloudDraftCreation.Identity(userID: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision)
-        if live.cloudCreateFingerprint == nil { live.cloudCreateFingerprint = try CloudDraftCreation.fingerprint(live) }
+        try CloudDraftCreation.prepare(&live)
         if let i = index(of: localID), AuthStore.shared.isIdentified {
             listings[i].cloudSyncOwnerID = identity.userID.flatMap(UUID.init(uuidString:))
             listings[i].cloudCreateFingerprint = live.cloudCreateFingerprint
+            listings[i].cloudCreateFactsFingerprint = live.cloudCreateFactsFingerprint
         }
         return try await CloudDraftCreation.ensure(snapshot: live, identity: identity,
             create: { try await self.api.createListing($0) },
@@ -1074,7 +1164,7 @@ final class AppModel: ObservableObject {
         do {
             let photos = try selectedPhotos()
             if let mainPath, !photos.contains(where: { FileStore.relativePath(for: $0.enhancedURL) == mainPath }) {
-                throw PhotoVersionHistory.Failure.missingImage
+                throw PhotoVersionHistory.Failure.coverNotSelected
             }
             for photo in photos {
                 try requireIdentity()

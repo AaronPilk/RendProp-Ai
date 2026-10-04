@@ -11,8 +11,12 @@ on `feat/measurement-outlines-worksheet-20261004`: named room dimensions in
 feet/inches or metres, irregular wall outlines, categorized area worksheets,
 image and all-floors PDF export, 3D shapes and optional ARKit estimates.
 Calculated closing walls stay labeled; linked open-below deductions subtract
-once. It retains existing scans/uploads and uses the
-existing listing-details sync envelope. It is **not included in the released
+once. It retains existing scans/uploads and uses private measurement metadata.
+The [4 October audit fixes](../../docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md)
+add an independent compare-and-set save, preserved conflicting local copies,
+safe create retries, legacy snapshot recovery, photo gallery reconciliation and
+export source/date records. These changes require backend delivery and a signed
+app build. They are **not included in the released
 builds below**. Physical AR accuracy and Files/Photos delivery need owner checks.
 
 ## Release status

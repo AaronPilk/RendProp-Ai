@@ -32,7 +32,7 @@ for (const type of ["real_estate", "venue", "restaurant", "retail", "fitness", "
   for (const wire of [privateWire, outlineWire]) {
     const tour = buildDemoTour();
     tour.space_type = type;
-    const original = { ...tour.listing.details, floor_measurements_v1: wire, floor_measurements_v9: secret, unrelated_fact: "Public future property fact" };
+    const original = { ...tour.listing.details, floor_measurements_v1: wire, floor_measurements_v9: secret, floorMeasurementsV1: wire, FloorMeasurementsV99: secret, unrelated_fact: "Public future property fact" };
     tour.listing.details = publicListingDetails(original);
     assert.equal(original.floor_measurements_v1, wire, "Owner details retain the complete private v1 or v2 wire");
     assert.equal(tour.listing.details.unrelated_fact, original.unrelated_fact, "Unrelated public facts remain untouched");

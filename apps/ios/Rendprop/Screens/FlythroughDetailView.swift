@@ -1411,17 +1411,16 @@ struct FlythroughDetailView: View {
                     .font(.caption2).foregroundStyle(Theme.inkDim)
                     .lineLimit(1).minimumScaleFactor(0.8)
                 // Reserve the status line so adjacent thumbnails keep their
-                // top edges aligned when just one version is selected.
-                Label("Selected for listing", systemImage: "checkmark.circle.fill")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(Theme.good)
+                // top edges aligned when the selected version is a predecessor.
+                Label(item.publicationLabel ?? "Selection unavailable", systemImage: item.publicationLabel == nil ? "exclamationmark.circle" : "checkmark.circle.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(item.publicationLabel == nil || item.publicationLabel == "Not selected for listing" ? Theme.inkDim : Theme.good)
                     .lineLimit(1).minimumScaleFactor(0.75)
-                    .opacity(item.selectedForListing ? 1 : 0)
-                    .accessibilityHidden(!item.selectedForListing)
             }
         }
         .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text("Photo. \(item.dateLabel). Opens before and after."))
-        .accessibilityValue(item.selectedForListing ? "Selected for listing" : "Not selected for listing")
+        .accessibilityValue(item.publicationLabel ?? "Selection unavailable")
         .accessibilityIdentifier("listing.filePhoto.\(item.id)")
         // Keep the save action outside the label AND outside the open button's
         // accessibility modifiers, so VoiceOver does not call Save an opener.
@@ -2872,6 +2871,7 @@ struct ListingMediaItem: Identifiable, Hashable, Sendable {
     /// Local publication choice, resolved by the background file scan. Separate
     /// from saved-to-Photos state and from completed cloud publication.
     var selectedForListing = false
+    var publicationLabel: String? = nil
 
     /// True when opening this plays something rather than showing it.
     var isVideo: Bool {
@@ -3177,8 +3177,7 @@ extension ListingMediaItem {
         // information the first listing already contained.
         let photoDirectory = EnhancedPhoto.directory(for: request.listingID)
         let photoEntries = DiskScan.entries(of: photoDirectory)
-        let selectedIDs = (try? EnhancedPhoto.loadForListing(listingID: request.listingID))
-            .map { Set($0.map(\.id)) } ?? []
+        let selectionIndex = try? PhotoVersionHistory.load(directory: photoDirectory)
         for clip in DiskScan.motionClips(in: photoEntries) {
             items.append(ListingMediaItem(id: "clip-\(clip.name)", kind: .motionClip,
                                           url: clip.url, originalURL: nil,
@@ -3192,7 +3191,8 @@ extension ListingMediaItem {
                                           url: photo.enhancedURL,
                                           originalURL: separateOriginal ? photo.originalURL : nil,
                                           createdAt: entry.createdAt,
-                                          selectedForListing: selectedIDs.contains(photo.id)))
+                                          selectedForListing: selectionIndex?.isSelectedForListing(photo.id) == true,
+                                          publicationLabel: selectionIndex?.publicationLabel(for: photo.id)))
         }
         let plan = floorPlansDirectory
             .appendingPathComponent("\(request.listingID.uuidString).usdz")
@@ -3567,11 +3567,18 @@ struct EnhancedPhoto: Identifiable, Hashable, Sendable {
         let directory = enhancedURL.deletingLastPathComponent()
         guard let index = try? PhotoVersionHistory.load(directory: directory), let version = savedVersion else { return [self] }
         return index.history(for: version.id).map { saved in
-            EnhancedPhoto(id: saved.id, originalURL: saved.originalFile.map { directory.appendingPathComponent($0) }
-                          ?? directory.appendingPathComponent(saved.imageFile),
+            EnhancedPhoto(id: saved.id, originalURL: directory.appendingPathComponent(saved.reviewSourceFile(in: index)),
                           enhancedURL: directory.appendingPathComponent(saved.imageFile))
         }
     }
+}
+
+/// Presentation carries the user's cover intent atomically with its photo.
+/// A separate state read inside the cover closure can retain the old value.
+private struct PhotoComparePresentation: Identifiable {
+    let photo: EnhancedPhoto
+    var requestedCover = false
+    var id: String { photo.id }
 }
 
 extension EnhancedPhoto {
@@ -3580,9 +3587,10 @@ extension EnhancedPhoto {
         guard let choices = try PhotoVersionHistory.publicationVersions(directory: directory) else {
             return loadAll(listingID: listingID)
         }
+        let index = try PhotoVersionHistory.load(directory: directory)
         return choices.map { version in
             let output = directory.appendingPathComponent(version.imageFile)
-            return EnhancedPhoto(id: version.id, originalURL: version.originalFile.map { directory.appendingPathComponent($0) } ?? output,
+            return EnhancedPhoto(id: version.id, originalURL: directory.appendingPathComponent(version.reviewSourceFile(in: index)),
                                  enhancedURL: output)
         }.sorted { $0.id > $1.id }
     }
@@ -3609,7 +3617,7 @@ extension EnhancedPhoto {
         return entries.compactMap { file -> DatedPhoto? in
             if let version = knownFiles[file.name] {
                 guard history?.isVisible(version.id) == true else { return nil }
-                let source = version.originalFile.map { dir.appendingPathComponent($0) } ?? file.url
+                let source = history.map { dir.appendingPathComponent(version.reviewSourceFile(in: $0)) } ?? file.url
                 return DatedPhoto(photo: EnhancedPhoto(id: version.id, originalURL: source, enhancedURL: file.url),
                                   createdAt: version.createdAt)
             }
@@ -3849,10 +3857,17 @@ struct PhotoStudioView: View {
     }
 
     private func setMain(_ p: EnhancedPhoto) {
-        if p.savedVersion != nil {
-            do { try PhotoVersionHistory.select(id: p.id, directory: p.enhancedURL.deletingLastPathComponent()) }
-            catch { aiFailure = AIFailure(error); return }
+        do {
+            let directory = p.enhancedURL.deletingLastPathComponent()
+            try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
+                priorFile: p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent, directory: directory)
+            try PhotoVersionHistory.selectForPublication(id: p.id, directory: directory)
+        } catch PhotoVersionHistory.Failure.reviewRequired {
+            compare = PhotoComparePresentation(photo: p, requestedCover: true); return
+        } catch {
+            aiFailure = AIFailure(error); return
         }
+        loadExisting()
         model.setMainPhoto(FileStore.relativePath(for: p.enhancedURL), for: listing.id)
         Haptics.success()
     }
@@ -3867,6 +3882,7 @@ struct PhotoStudioView: View {
     @State private var photos: [EnhancedPhoto] = []
     @State private var libraryKind: PhotoVersionHistory.LibraryKind = .latest
     @State private var selectedPhotoIDs: Set<String> = []
+    @State private var publicationLabels: [String: String] = [:]
     @State private var galleryRetrying = false
     private var libraryPhotos: [EnhancedPhoto] {
         guard entry == .photos, libraryKind != .latest else { return photos }
@@ -3874,7 +3890,7 @@ struct PhotoStudioView: View {
         let directory = EnhancedPhoto.directory(for: listing.id)
         return index.libraryVersions(libraryKind).map { version in
             let image = directory.appendingPathComponent(version.imageFile)
-            return EnhancedPhoto(id: version.id, originalURL: version.originalFile.map { directory.appendingPathComponent($0) } ?? image,
+            return EnhancedPhoto(id: version.id, originalURL: directory.appendingPathComponent(version.reviewSourceFile(in: index)),
                                  enhancedURL: image)
         }
     }
@@ -3898,7 +3914,7 @@ struct PhotoStudioView: View {
     private var isProcessing: Bool { localProcessing || photoJobs.job?.running == true }
     @State private var photoSaveError: String?
     @State private var processingText = "Working on your photo…"
-    @State private var compare: EnhancedPhoto?
+    @State private var compare: PhotoComparePresentation?
     @State private var exportingPhotos: PhotoExportSelection?
     @State private var photoOwner = AuthStore.shared.userID
     @State private var aiFailure: AIFailure?
@@ -4313,8 +4329,8 @@ struct PhotoStudioView: View {
             }, onCancel: { showCamera = false })
             .ignoresSafeArea()
         }
-        .fullScreenCover(item: $compare, onDismiss: { loadExisting() }) { p in
-            PhotoCompareView(photo: p)
+        .fullScreenCover(item: $compare, onDismiss: { loadExisting() }) { presentation in
+            PhotoCompareView(photo: presentation.photo, requestedCover: presentation.requestedCover)
         }
         .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
@@ -4385,7 +4401,7 @@ struct PhotoStudioView: View {
             }
             Button("Cancel", role: .cancel) { pendingPhotoDelete = nil }
         } message: { _ in
-            Text("This hides the photo and its versions from this phone’s gallery. Source files and edit history stay on this phone. Photos already on a published tour are not removed.")
+            Text("This removes the photo family from the selected gallery. Your published listing updates when gallery sync finishes. Source files and edit history stay on this phone.")
         }
         .confirmationDialog("Delete this clip?", isPresented: $showClipDeleteConfirm,
                             titleVisibility: .visible, presenting: pendingClipDelete) { clip in
@@ -4466,8 +4482,9 @@ struct PhotoStudioView: View {
         // inside another Button's label never gets the tap).
         ZStack(alignment: .bottomTrailing) {
             if batchEdit == nil {
-                Button { compare = p } label: {
-                    thumb(p, selectedForListing: entry == .photos && selectedForListing)
+                Button { compare = PhotoComparePresentation(photo: p) } label: {
+                    thumb(p, selectedForListing: entry == .photos && selectedForListing,
+                          publicationLabel: entry == .photos ? publicationLabels[p.id] : nil)
                         .overlay { busyOverlay(p) }
                 }
                     .buttonStyle(ScalePressStyle())
@@ -4475,7 +4492,8 @@ struct PhotoStudioView: View {
                                              ? "Photo — the AI is working on this one"
                                              : "Photo — opens before-and-after compare"))
                     .accessibilityValue(entry == .photos
-                                        ? (selectedForListing ? "Selected for listing" : "Not selected for listing") : "")
+                                        ? (publicationLabels[p.id] ?? "Selection unavailable") : "")
+                    .accessibilityIdentifier("photos.version.\(p.id)")
                     .contextMenu { photoMenu(p) }
                 if !busyPhotoIDs.contains(p.id), entry != .photos || libraryKind == .latest { wandButton(p) }
                 // THE COVER, on the surface. It was a long-press and nothing
@@ -4858,29 +4876,13 @@ struct PhotoStudioView: View {
 
     // MARK: - Pieces
 
-    private func thumb(_ p: EnhancedPhoto, selectedForListing: Bool = false) -> some View {
+    private func thumb(_ p: EnhancedPhoto, selectedForListing: Bool = false, publicationLabel: String? = nil) -> some View {
         DetailPhotoThumb(url: p.enhancedURL, height: 150)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.border))
             .overlay(alignment: .topLeading) {
-                VStack(alignment: .leading, spacing: 4) {
-                    if isMain(p) {
-                        Label("Cover", systemImage: "star.fill")
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(Theme.accent, in: Capsule())
-                            .foregroundStyle(Color.white)
-                    }
-                    if selectedForListing {
-                        Label("Selected for listing", systemImage: "checkmark.circle.fill")
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(1).minimumScaleFactor(0.75)
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(Theme.good, in: Capsule())
-                            .foregroundStyle(Color.white)
-                            .accessibilityIdentifier("photos.listingSelected.\(p.id)")
-                    }
-                }.padding(8).allowsHitTesting(false)
+                PhotoPublicationBadges(isCover: isMain(p), publicationLabel: publicationLabel,
+                                       photoID: p.id, selectedForListing: selectedForListing)
             }
     }
 
@@ -5028,6 +5030,7 @@ struct PhotoStudioView: View {
                 .disabled(isProcessing || isCover)
                 .accessibilityLabel(Text(isCover ? "This is the cover photo"
                                                  : "Make this the cover photo"))
+                .accessibilityIdentifier("photos.cover.\(p.id)")
                 Spacer(minLength: 0)
             }
         }
@@ -5550,10 +5553,18 @@ struct PhotoStudioView: View {
     private func loadExisting() {
         photos = EnhancedPhoto.loadAll(listingID: listing.id)
         clips = SavedClip.loadAll(listingID: listing.id)
-        // Resolve actual publication choices on reload, not every body render.
-        // A broken history must never acquire a positive selection badge.
-        selectedPhotoIDs = (try? EnhancedPhoto.loadForListing(listingID: listing.id))
-            .map { Set($0.map(\.id)) } ?? []
+        // Resolve each family's metadata independently. A missing selected
+        // image still stops gallery upload, but doesn't erase other badges.
+        do {
+            let index = try PhotoVersionHistory.load(directory: dir)
+            selectedPhotoIDs = Set(index.versions.keys.filter(index.isSelectedForListing))
+            publicationLabels = Dictionary(uniqueKeysWithValues: index.versions.keys.map {
+                ($0, index.publicationLabel(for: $0) ?? "Not selected for listing")
+            })
+        } catch {
+            selectedPhotoIDs = []; publicationLabels = [:]
+            photoSaveError = error.localizedDescription
+        }
     }
 
     /// Photos added AFTER a tour was published still belong on its page.
@@ -5561,7 +5572,10 @@ struct PhotoStudioView: View {
     /// no-op on every visit but the first one after a change. Only for a
     /// listing that HAS a public page — there is nothing to add to otherwise.
     private func syncGalleryIfPublished() {
-        guard entry == .photos, !listing.isSample, !photos.isEmpty else { return }
+        guard entry == .photos, !listing.isSample else { return }
+        // An empty new phone must not clear cloud photos. An explicitly hidden
+        // final family, however, is a real user removal with retained history.
+        guard !photos.isEmpty || ((try? PhotoVersionHistory.load(directory: dir).versions.isEmpty) == false) else { return }
         let current = model.listings.first(where: { $0.id == listing.id })
         guard current?.serverShareURL != nil, let serverID = current?.serverID else { return }
         let localID = listing.id
@@ -5673,14 +5687,18 @@ struct PhotoStudioView: View {
     }
 
     private func delete(_ p: EnhancedPhoto) {
-        let wasMain = isMain(p)
         do {
             try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
                 priorFile: p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent, directory: dir)
+            let coverFile = mainRelPath.map { FileStore.url(fromRelativePath: $0).lastPathComponent }
+            let familyWasMain = try PhotoVersionHistory.familyContains(id: p.id, imageFile: coverFile, directory: dir)
             try PhotoVersionHistory.hide(id: p.id, directory: dir)
             loadExisting()
-            if wasMain {
-                model.setMainPhoto(photos.first.map { FileStore.relativePath(for: $0.enhancedURL) }, for: listing.id)
+            if familyWasMain {
+                let replacement = try PhotoVersionHistory.availableCoverVersion(directory: dir)
+                model.setMainPhoto(replacement.map { FileStore.relativePath(for: dir.appendingPathComponent($0.imageFile)) }, for: listing.id)
+            } else {
+                syncGalleryIfPublished()
             }
         } catch { photoSaveError = error.localizedDescription }
     }
@@ -5730,11 +5748,47 @@ enum PhotoEnhancer {
     }
 }
 
+/// Keep the thumbnail's generic metadata shallow. This named boundary also
+/// keeps publication and cover labels independent of save-to-Photos controls.
+private struct PhotoPublicationBadges: View {
+    let isCover: Bool
+    let publicationLabel: String?
+    let photoID: String
+    let selectedForListing: Bool
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if isCover {
+                PhotoPublicationBadge(title: "Cover", icon: "star.fill", color: Theme.accent)
+            }
+            if let publicationLabel {
+                PhotoPublicationBadge(title: publicationLabel,
+                    icon: publicationLabel == "Not selected for listing" ? "circle" : "checkmark.circle.fill",
+                    color: publicationLabel == "Not selected for listing" ? Theme.inkDim : Theme.good)
+                    .accessibilityIdentifier(selectedForListing ? "photos.listingSelected.\(photoID)" : "photos.listingVersion.\(photoID)")
+            }
+        }.padding(8).allowsHitTesting(false)
+    }
+}
+
+private struct PhotoPublicationBadge: View {
+    let title: String
+    let icon: String
+    let color: Color
+    var body: some View {
+        Label(title, systemImage: icon)
+            .font(.caption2.weight(.semibold))
+            .lineLimit(1).minimumScaleFactor(0.75)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(color, in: Capsule()).foregroundStyle(Color.white)
+    }
+}
+
 /// Full-screen before/after compare. Both images decode once, off the main
 /// thread, at screen resolution.
 struct PhotoCompareView: View {
     let photo: EnhancedPhoto
     var disclosure: String? = nil
+    var requestedCover = false
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthStore.shared
@@ -5745,6 +5799,7 @@ struct PhotoCompareView: View {
     @State private var exporting: PhotoExportSelection?
     @State private var selectionError: String?
     @State private var selectedForListing = false
+    @State private var imageLoadComplete = false
 
     private var viewed: EnhancedPhoto { selectedVersion ?? photo }
     private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
@@ -5807,6 +5862,10 @@ struct PhotoCompareView: View {
                 if !showOriginal, viewed.savedVersion?.effects.contains("stage") == true {
                     Text("Review against the original: check windows, doors, fixed appliances and furniture placement. AI can change details or use different furniture in another view.")
                         .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).padding(.horizontal)
+                    if imageLoadComplete && (original == nil || viewed.originalURL == viewed.enhancedURL) {
+                        Text("The earlier source isn't available for comparison. Restore it before selecting this staged version.")
+                            .font(.caption).foregroundStyle(.orange).padding(.horizontal)
+                    }
                 }
                 if !showOriginal, let savedDisclosure, !savedDisclosure.isEmpty {
                     Text(savedDisclosure).font(.caption).foregroundStyle(.white.opacity(0.85))
@@ -5829,8 +5888,10 @@ struct PhotoCompareView: View {
                             guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
                             let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
                             let familyWasMain = photo.history.contains { FileStore.relativePath(for: $0.enhancedURL) == priorMain }
-                            try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory)
-                            if familyWasMain { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
+                            try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
+                                priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
+                            try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory, reviewed: true)
+                            if familyWasMain || requestedCover { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
                             selectedForListing = true
                             if let listing = model.listings.first(where: { $0.id == listingID }),
                                listing.serverShareURL != nil, let serverID = listing.serverID {
@@ -5841,6 +5902,8 @@ struct PhotoCompareView: View {
                         Label(selectedForListing ? "Selected for listing" : "Use this version on listing", systemImage: "checkmark.circle")
                             .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
                     }.padding(.horizontal).accessibilityIdentifier("photoVersion.useOnListing")
+                        .disabled(enhanced == nil || (viewed.savedVersion?.effects.contains("stage") == true
+                            && (original == nil || viewed.originalURL == viewed.enhancedURL)))
                 }
                 Button { exporting = PhotoExportSelection(photos: [viewed], original: showOriginal) } label: {
                     Label(showOriginal ? (viewed.retainedSourceIsVerified ? "Download original" : "Download earlier source")
@@ -5863,7 +5926,7 @@ struct PhotoCompareView: View {
             let directory = viewed.enhancedURL.deletingLastPathComponent()
             selectedForListing = (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
             let target = viewed
-            enhanced = nil; original = nil
+            enhanced = nil; original = nil; imageLoadComplete = false
             let after = await AIImagePrep.decoded(at: target.enhancedURL, maxPixel: 2400)
             guard !Task.isCancelled, viewed.id == target.id else { return }
             enhanced = after
@@ -5871,6 +5934,7 @@ struct PhotoCompareView: View {
                 : await AIImagePrep.decoded(at: target.originalURL, maxPixel: 2400)
             guard !Task.isCancelled, viewed.id == target.id else { return }
             original = before
+            imageLoadComplete = true
         }
     }
 
@@ -10932,9 +10996,11 @@ struct FloorPlan2DView: View {
                     .foregroundStyle(Theme.ink)
                     .lineLimit(2)
                     .multilineTextAlignment(.center)
-                Text("Approximate — measured by phone scan, not a survey.")
+                Text("Phone scan estimates · schematic, not to scale; not a survey. Hull area may include unscanned space and is not verified living area.")
                     .font(.system(size: 22))
                     .foregroundStyle(Theme.inkDim)
+                Text("Exported: " + Date().formatted(date: .abbreviated, time: .shortened))
+                    .font(.system(size: 20)).foregroundStyle(Theme.inkDim)
             }
             .padding(48)
         }
@@ -10989,9 +11055,12 @@ private struct PlanExport: Identifiable {
 struct PlanExportSheet: View {
     let image: UIImage
     let address: String
-    var disclosure: String = "Dimensions and area are approximate — a phone scan is not a survey."
+    var disclosure: String = "Phone scan estimates. Schematic, not to scale; not a survey. Hull area can include unscanned space and does not certify advertised or appraisal living area."
     var additionalFile: URL? = nil
     var canExport: () -> Bool = { true }
+    // Re-evaluate the captured freshness closure when a cloud plan refreshes
+    // while this sheet is open; each save also checks it after permission awaits.
+    @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var saved = false
     @State private var isSaving = false
@@ -11046,6 +11115,11 @@ struct PlanExportSheet: View {
                         }.accessibilityIdentifier("measurements.sharePDF").disabled(!canExport())
                     }
 
+                    if !canExport() {
+                        Text("This plan changed elsewhere or has a shared-edit conflict. Load the current measurements before exporting.")
+                            .font(.rpCaption).foregroundStyle(Theme.warn).multilineTextAlignment(.center)
+                            .accessibilityIdentifier("measurements.exportChanged")
+                    }
                     if let saveError {
                         Text(saveError)
                             .font(.rpCaption)
@@ -11068,7 +11142,7 @@ struct PlanExportSheet: View {
     }
 
     private func save() {
-        guard canExport() else { saveError = "Your account or workspace changed. Reopen the plan before exporting."; return }
+        guard canExport() else { saveError = "These measurements, listing or workspace changed. Load the current plan before exporting."; return }
         isSaving = true
         saveError = nil
         let img = image
@@ -11354,10 +11428,10 @@ enum FloorPlanRenderer {
         // Area is an estimate, and it says so. A phone scan is not a measured survey,
         // and square footage is a number agents get sued over.
         //
-        // Summed PER ROOM, never as one hull over the whole storey: the convex hull
-        // of a single room's wall endpoints is close to its true footprint, but one
-        // hull thrown around an entire L-shaped floor bridges straight across the
-        // notch and invents square footage that does not exist.
+        // Summed PER ROOM, never as one hull over the whole storey. This is still
+        // a CONVEX HULL estimate: an L-shaped room bridges its notch, and adjacent
+        // scan-room hulls can overlap. Label the algorithm and approximation;
+        // this number must never be treated as measured or appraisal living area.
         var areaSqM: Float = 0
         for r in rooms {
             var pts: [SIMD2<Float>] = []
@@ -11375,7 +11449,7 @@ enum FloorPlanRenderer {
             if let storyLabel { scope = storyLabel }
             else if rooms.count > 1 || roomNames.count > 1 { scope = "scanned area" }
             else { scope = "this room" }
-            ctx.draw(Text("\(scope) ≈ \(Int(areaSqFt.rounded())) sq ft")
+            ctx.draw(Text("Scan hull estimate ≈ \(Int(areaSqFt.rounded())) sq ft · \(scope)")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(Theme.inkDim),
                      at: CGPoint(x: padLeft - 8, y: 16), anchor: .leading)

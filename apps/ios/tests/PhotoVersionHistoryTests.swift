@@ -65,7 +65,9 @@ struct PhotoVersionHistoryTests {
         check((try? Data(contentsOf: dir.appendingPathComponent("orig-capture.jpg"))) == original, "collision preserves originals")
 
         check(index.listingSelections?["capture"] == "declutter", "unreviewed staging keeps approved declutter on public listing")
-        try PhotoVersionHistory.select(id: "stage", directory: dir)
+        rejected("staging cannot bypass review through cover selection") { try PhotoVersionHistory.select(id: "stage", directory: dir) }
+        rejected("staging cannot bypass review through publication selection") { try PhotoVersionHistory.selectForPublication(id: "stage", directory: dir) }
+        try PhotoVersionHistory.select(id: "stage", directory: dir, reviewed: true)
         index = try PhotoVersionHistory.load(directory: dir)
         check(index.current["capture"] == "stage" && index.listingSelections?["capture"] == "stage", "reviewed saved version selected without a paid rerun")
         try PhotoVersionHistory.select(id: "declutter", directory: dir)
@@ -85,7 +87,7 @@ struct PhotoVersionHistoryTests {
         try Data("corrupt".utf8).write(to: indexURL)
         rejected("corrupt publication index cannot silently fall back to old photos") { _ = try PhotoVersionHistory.publicationVersions(directory: dir) }
         try goodIndex.write(to: indexURL)
-        try PhotoVersionHistory.select(id: "rustic", directory: dir)
+        try PhotoVersionHistory.select(id: "rustic", directory: dir, reviewed: true)
         try PhotoVersionHistory.hide(id: "rustic", directory: dir)
         index = try PhotoVersionHistory.load(directory: dir)
         check(!index.isVisible("rustic") && !index.isVisible("capture"), "gallery removal does not resurrect a predecessor")
@@ -222,6 +224,96 @@ struct PhotoVersionHistoryTests {
         check((try? Data(contentsOf: libraryIndexURL)) == beforeHiddenReject, "hidden-family selection rejection preserves current and public state")
         let visiblePublished = try PhotoVersionHistory.publicationVersions(directory: libraryDir)
         check(visiblePublished?.map(\.familyID) == ["bedroom"], "hidden family stays off publication without resurrecting an earlier image")
+
+        // Real migration sequence: three siblings, no index, then exactly one
+        // mutation. A one-photo fixture cannot detect a shrinking gallery.
+        for mutation in ["capture", "edit", "remove"] {
+            let older = root.appendingPathComponent("three-legacy-\(mutation)")
+            try FileManager.default.createDirectory(at: older, withIntermediateDirectories: true)
+            for id in ["old-a", "old-b", "old-c"] {
+                try Data("earlier-output-\(id)".utf8).write(to: older.appendingPathComponent("enh-\(id).jpg"))
+                try Data("earlier-source-\(id)".utf8).write(to: older.appendingPathComponent("orig-\(id).jpg"))
+            }
+            let previousBytes = try Dictionary(uniqueKeysWithValues: ["old-a", "old-b", "old-c"].map {
+                ($0, try Data(contentsOf: older.appendingPathComponent("enh-\($0).jpg")))
+            })
+            switch mutation {
+            case "capture":
+                try PhotoVersionHistory.saveCapture(original: Data("new-source".utf8), enhanced: Data("new-output".utf8), id: "new-photo", directory: older)
+            case "edit":
+                _ = try PhotoVersionHistory.trackExisting(id: "old-a", imageFile: "enh-old-a.jpg", priorFile: "orig-old-a.jpg", directory: older)
+                _ = try PhotoVersionHistory.saveEdit(jpeg: Data("clean-output".utf8), id: "old-a-clean", parentID: "old-a", sourceID: "old-a",
+                    edit: "declutter", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: older)
+            default:
+                _ = try PhotoVersionHistory.trackExisting(id: "old-a", imageFile: "enh-old-a.jpg", priorFile: "orig-old-a.jpg", directory: older)
+                try PhotoVersionHistory.hide(id: "old-a", directory: older)
+            }
+            let published = try PhotoVersionHistory.publicationVersions(directory: older)!
+            let expected: Set<String> = mutation == "capture" ? ["old-a", "old-b", "old-c", "new-photo"]
+                : mutation == "edit" ? ["old-a-clean", "old-b", "old-c"] : ["old-b", "old-c"]
+            check(Set(published.map(\.id)) == expected, "first \(mutation) reconciles every pre-history gallery sibling")
+            let reconciled = try PhotoVersionHistory.load(directory: older)
+            for id in ["old-a", "old-b", "old-c"] {
+                check(reconciled.versions[id]?.originalVerified == false && reconciled.versions[id]?.sourceHistoryKnown == false,
+                      "adoption keeps \(id) provenance unverified")
+                check((try? Data(contentsOf: older.appendingPathComponent("enh-\(id).jpg"))) == previousBytes[id], "first mutation retains all legacy photo bytes")
+            }
+            // An explicit legacy cover choice must also be the gallery choice.
+            try PhotoVersionHistory.selectForPublication(id: "old-b", directory: older)
+            check((try? PhotoVersionHistory.load(directory: older).isSelectedForListing("old-b")) == true, "legacy cover is selected for publication")
+            check((try? Set(PhotoVersionHistory.publicationVersions(directory: older)!.map(\.id))) == expected, "cover selection retains sibling gallery membership")
+        }
+
+        let partial = try PhotoVersionHistory.load(directory: libraryDir)
+        check(partial.publicationLabel(for: "bedroom-rustic") == "Decluttered version on listing", "latest staging identifies selected decluttered predecessor")
+        let selectedFile = libraryDir.appendingPathComponent("edit-bedroom-clean-2.jpg")
+        let selectedBytes = try Data(contentsOf: selectedFile)
+        try FileManager.default.removeItem(at: selectedFile)
+        rejected("missing family still fences wholesale publication") { _ = try PhotoVersionHistory.publicationVersions(directory: libraryDir) }
+        check((try? PhotoVersionHistory.load(directory: libraryDir).publicationLabel(for: "bedroom-rustic")) == "Decluttered version on listing", "missing selected bytes do not erase family selection metadata")
+        try selectedBytes.write(to: selectedFile)
+        check((try? PhotoVersionHistory.familyContains(id: "bedroom-rustic", imageFile: "edit-bedroom-clean-2.jpg", directory: libraryDir)) == true, "hidden earlier cover is resolved by family")
+        check((try? PhotoVersionHistory.availableCoverVersion(directory: libraryDir)?.effects.contains("stage")) == false, "fallback cover uses approved clean version rather than latest staging")
+
+        let cloudDir = root.appendingPathComponent("cloud-import")
+        try FileManager.default.createDirectory(at: cloudDir, withIntermediateDirectories: true)
+        try Data("old-photo".utf8).write(to: cloudDir.appendingPathComponent("enh-neighbor.jpg"))
+        try Data("cloud-original".utf8).write(to: cloudDir.appendingPathComponent("orig-cloud.jpg"))
+        try Data("cloud-staging".utf8).write(to: cloudDir.appendingPathComponent("cloud-photo-cloud.jpg"))
+        try PhotoVersionHistory.registerImport(id: "cloud", imageFile: "cloud-photo-cloud.jpg", originalFile: "orig-cloud.jpg", staged: true, altered: true, directory: cloudDir)
+        let imported = try PhotoVersionHistory.load(directory: cloudDir)
+        check(imported.current["cloud"] == "cloud" && imported.listingSelections?["cloud"] == "cloud-source", "staged cloud import keeps preview separate from publication")
+        check(imported.versions["cloud"]?.effects == ["stage"] && imported.versions["cloud"]?.originalVerified == false, "cloud import retains staged disclosure without certifying original")
+        check(imported.publicationLabel(for: "cloud") == "Earlier version on listing", "imported staging explains selected source")
+        check((try? Set(PhotoVersionHistory.publicationVersions(directory: cloudDir)!.map(\.id))) == ["neighbor", "cloud-source"], "cloud import retains pre-history neighbors and a complete selected source")
+        rejected("unreviewed cloud staging cannot become cover") { try PhotoVersionHistory.selectForPublication(id: "cloud", directory: cloudDir) }
+        try PhotoVersionHistory.selectForPublication(id: "cloud", directory: cloudDir, reviewed: true)
+        check((try? PhotoVersionHistory.load(directory: cloudDir).isSelectedForListing("cloud")) == true, "explicit cloud review enables staged publication")
+        try PhotoVersionHistory.selectForPublication(id: "cloud", directory: cloudDir)
+        check((try? PhotoVersionHistory.source(for: "cloud", edit: "stage", directory: cloudDir).id) == "cloud-source", "restyling cloud staging starts from retained source")
+        try PhotoVersionHistory.hide(id: "cloud", directory: cloudDir)
+        rejected("cloud re-import cannot resurrect a hidden family") {
+            try PhotoVersionHistory.registerImport(id: "cloud", imageFile: "cloud-photo-cloud.jpg", originalFile: "orig-cloud.jpg", staged: true, altered: true, directory: cloudDir)
+        }
+        check((try? PhotoVersionHistory.availableCoverVersion(directory: cloudDir)?.id) == "neighbor", "removing staged cover family chooses other actual publication image")
+        check((try? Set(PhotoVersionHistory.publicationVersions(directory: cloudDir)!.map(\.id))) == ["neighbor"], "hidden imported source and output cannot reappear as legacy siblings")
+        check((try? Data(contentsOf: cloudDir.appendingPathComponent("cloud-photo-cloud.jpg"))) == Data("cloud-staging".utf8), "removing imported family retains staged bytes")
+        try Data("other-original".utf8).write(to: cloudDir.appendingPathComponent("orig-other.jpg"))
+        try Data("other-ai-result".utf8).write(to: cloudDir.appendingPathComponent("cloud-photo-other.jpg"))
+        try PhotoVersionHistory.registerImport(id: "other", imageFile: "cloud-photo-other.jpg", originalFile: "orig-other.jpg", staged: false, altered: true, directory: cloudDir)
+        let otherImport = try PhotoVersionHistory.load(directory: cloudDir)
+        check(otherImport.listingSelections?["other"] == "other-source", "imported altered output also retains its earlier source selection until review")
+        check(otherImport.versions["other"]?.visibleLabel == "AI edited · Earlier edits unverified", "imported altered output cannot lose its AI label")
+
+        let noOriginalDir = root.appendingPathComponent("legacy-no-original")
+        try FileManager.default.createDirectory(at: noOriginalDir, withIntermediateDirectories: true)
+        try Data("earlier-unknown-history".utf8).write(to: noOriginalDir.appendingPathComponent("enh-old.jpg"))
+        _ = try PhotoVersionHistory.trackExisting(id: "old", imageFile: "enh-old.jpg", priorFile: nil, directory: noOriginalDir)
+        let unknownStage = try PhotoVersionHistory.saveEdit(jpeg: Data("staged-preview".utf8), id: "new-stage", parentID: "old", sourceID: "old",
+            edit: "stage", style: "modern", disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: noOriginalDir)
+        let unknownIndex = try PhotoVersionHistory.load(directory: noOriginalDir)
+        check(unknownStage.reviewSourceFile(in: unknownIndex) == "enh-old.jpg", "legacy staging without orig file compares retained pre-furniture source")
+        check(!unknownStage.originalVerified && unknownStage.caption.contains("unaltered original has not been verified"), "retained comparison cannot certify an unverified original")
 
         typealias Layout = PhotoExportLayout
         check(Layout.size(width: 4032, height: 3024, aspect: .original, framing: .crop) == .init(width: 4032, height: 3024), "default preserves every original pixel")

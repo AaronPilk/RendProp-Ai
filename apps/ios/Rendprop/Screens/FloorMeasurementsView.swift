@@ -19,6 +19,7 @@ struct FloorMeasurementsView: View {
     @State private var revisionAtOpen: UInt64 = 0
     @State private var workspaceAtOpen: UUID?
     @State private var didOpen = false
+    @State private var confirmPhoneDetails = false
 
     init(listing: Listing) {
         self.listing = listing
@@ -30,8 +31,8 @@ struct FloorMeasurementsView: View {
     private var floors: [Int] { Array(Set(plan.rooms.map(\.floor) + plan.outlines.map(\.floor) + [floor])).sorted() }
     private var hasFloorGeometry: Bool { !rooms.isEmpty || !outlines.isEmpty }
     private var unsupported: Bool {
-        listing.floorMeasurements == nil &&
-        !(listing.details?[FloorMeasurementPlan.wireKey] ?? "").isEmpty
+        let current = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        return current.floorMeasurements == nil && FloorMeasurementPlan.hasUnreadableValue(in: current.details)
     }
     private var currentContext: Bool {
         didOpen && auth.userID == ownerAtOpen && auth.syncSessionRevision == revisionAtOpen &&
@@ -42,6 +43,46 @@ struct FloorMeasurementsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 introduction
+                if model.listings.first(where: { $0.id == listing.id })?.measurementSync?.factsReviewRequired == true {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Review older saved edits").font(.rpHeadline)
+                        Text("Your measurements are kept on this iPhone. Choose which listing details to keep before older changes sync.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                        Button("Use shared listing details") {
+                            Task {
+                                do {
+                                    guard currentContext else { throw CloudSyncError.identityChanged }
+                                    try await model.reloadSharedMeasurements(listing.id, includeListingDetails: true)
+                                    plan = model.listings.first(where: { $0.id == listing.id })?.floorMeasurements ?? FloorMeasurementPlan()
+                                    error = nil
+                                } catch { self.error = error.localizedDescription }
+                            }
+                        }.accessibilityIdentifier("measurements.useSharedDetails")
+                        Button("Use this iPhone's listing details") { confirmPhoneDetails = true }
+                            .accessibilityIdentifier("measurements.usePhoneDetails")
+                    }.padding().background(Theme.card).clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+                }
+                if let current = model.listings.first(where: { $0.id == listing.id }), current.measurementSync?.conflict == true {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(FloorMeasurementSyncError.conflict.localizedDescription).font(.rpBody).foregroundStyle(Theme.warn)
+                        Button("Load shared measurements") {
+                            Task {
+                                do {
+                                    try await model.reloadSharedMeasurements(listing.id)
+                                    plan = model.listings.first(where: { $0.id == listing.id })?.floorMeasurements ?? FloorMeasurementPlan()
+                                    error = nil
+                                } catch { self.error = error.localizedDescription }
+                            }
+                        }.accessibilityIdentifier("measurements.reloadShared")
+                        Text("Your local version is kept on this iPhone. You can restore it after loading the shared version.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }.padding().background(Theme.card).clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+                } else if let backup = model.listings.first(where: { $0.id == listing.id })?.measurementSync?.savedLocalCopy,
+                          let saved = FloorMeasurementPlan.decodeWireValue(backup) {
+                    Button("Restore my saved local measurements") {
+                        do { try persist(saved) } catch { self.error = error.localizedDescription }
+                    }.accessibilityIdentifier("measurements.restoreLocal")
+                }
                 if unsupported {
                     Text("This listing has measurements in a format this version cannot open. Update the app before editing them.")
                         .font(.rpBody).foregroundStyle(Theme.warn)
@@ -75,7 +116,10 @@ struct FloorMeasurementsView: View {
                     Text(error).font(.rpBody).foregroundStyle(Theme.warn)
                         .accessibilityIdentifier("measurements.error")
                 }
-                Text("Measurements are saved to this listing. Cloud sync follows your listing's normal account and workspace rules.")
+                Text(FloorMeasurementProvenance.disclosure)
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .accessibilityIdentifier("measurements.sourceDisclosure")
+                Text("Measurements are saved on this iPhone and sync to the selected workspace. Conflicting edits stay on this phone until you choose the shared version.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
             }.padding()
         }
@@ -121,8 +165,8 @@ struct FloorMeasurementsView: View {
         }
         .sheet(item: $export) { item in
             PlanExportSheet(image: item.image, address: listing.address,
-                            disclosure: "Drawn from entered measurements. Calculated closing walls and phone estimates should be checked before use.",
-                            additionalFile: item.pdfURL, canExport: { currentContext })
+                            disclosure: FloorMeasurementProvenance.disclosure,
+                            additionalFile: item.pdfURL, canExport: { isFresh(item.plan) && isFresh(plan) })
         }
         .sheet(isPresented: $show3D) {
             NavigationStack {
@@ -138,6 +182,17 @@ struct FloorMeasurementsView: View {
         }
         .onChange(of: auth.syncSessionRevision) { _ in invalidateContext() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in invalidateContext() }
+        .alert("Replace the shared listing details?", isPresented: $confirmPhoneDetails) {
+            Button("Cancel", role: .cancel) {}
+            Button("Use iPhone details") {
+                do {
+                    guard currentContext else { throw CloudSyncError.identityChanged }
+                    try model.confirmLocalListingDetails(listing.id)
+                } catch { self.error = error.localizedDescription }
+            }
+        } message: {
+            Text("This saves this iPhone's address, price, square footage and other listing details over the shared version. Measurement conflicts must be resolved first.")
+        }
     }
 
     private var introduction: some View {
@@ -262,7 +317,7 @@ struct FloorMeasurementsView: View {
                     .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(14)
                     .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-            }.accessibilityIdentifier("measurements.export")
+            }.accessibilityIdentifier("measurements.export").disabled(!isFresh(plan))
             Button { show3D = true } label: {
                 Label("View measurement layout in 3D", systemImage: "cube.transparent")
                     .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(14)
@@ -279,7 +334,7 @@ struct FloorMeasurementsView: View {
               current.serverID == listing.serverID, current.serverOrgID == listing.serverOrgID else {
             throw MeasurementUIError(message: "This listing or account changed. Reopen Measurements before saving.")
         }
-        guard current.floorMeasurements != nil || (current.details?[FloorMeasurementPlan.wireKey] ?? "").isEmpty else {
+        guard current.floorMeasurements != nil || !FloorMeasurementPlan.hasUnreadableValue(in: current.details) else {
             throw MeasurementUIError(message: "These measurements changed to a format this app cannot open. Reopen the listing before editing.")
         }
         // Reject a cloud/local replacement rather than overwriting unseen work.
@@ -298,12 +353,8 @@ struct FloorMeasurementsView: View {
         let wire = try changed.encodedWireValue()
         var checkedListing = current; checkedListing.floorMeasurements = changed
         _ = try ListingWireDetails.merged(checkedListing)
-        model.modify(listing.id) {
-            $0.floorMeasurements = changed
-            var details = $0.details ?? [:]
-            details[FloorMeasurementPlan.wireKey] = wire
-            $0.details = details
-        }
+        _ = wire // encoding/size checked before the local mutation
+        try model.saveMeasurements(changed, for: listing.id)
         plan = changed; error = nil
     }
 
@@ -342,11 +393,18 @@ struct FloorMeasurementsView: View {
 
     private func makeExport() {
         do {
-            guard currentContext else { throw MeasurementUIError(message: "Your account or workspace changed. Reopen Measurements before exporting.") }
+            guard isFresh(plan) else { throw MeasurementUIError(message: "These measurements, listing or workspace changed. Load the current measurements before exporting.") }
             try plan.validate()
             let result = try FloorMeasurementExport.make(plan: plan, floor: floor, address: listing.address)
-            export = MeasurementExport(image: result.image, pdfURL: result.pdfURL)
+            export = MeasurementExport(image: result.image, pdfURL: result.pdfURL, plan: plan)
         } catch { self.error = error.localizedDescription }
+    }
+
+    /// Read-only export admission; it never stages a mutation or clears a conflict.
+    private func isFresh(_ snapshot: FloorMeasurementPlan) -> Bool {
+        FloorMeasurementExportSafety.isFresh(snapshot: snapshot,
+            current: model.listings.first(where: { $0.id == listing.id }),
+            captured: listing, contextMatches: !unsupported && currentContext)
     }
 
     private func areaText(_ squareMeters: Double) -> String {
@@ -356,6 +414,25 @@ struct FloorMeasurementsView: View {
         guard didOpen, !currentContext else { return }
         roomEditor = nil; outlineEditor = nil; export = nil; show3D = false
         error = "Your account or workspace changed. Reopen Measurements to continue."
+    }
+}
+
+/// Export the displayed revision only. Date normalization alone is harmless,
+/// but a geometry/source/unit replacement or an unresolved CAS conflict is not.
+enum FloorMeasurementExportSafety {
+    static func isFresh(snapshot: FloorMeasurementPlan, current: Listing?,
+                        captured: Listing, contextMatches: Bool) -> Bool {
+        guard contextMatches, let current,
+              current.id == captured.id, !current.isSample, current.cloudUnavailable != true,
+              current.serverID == captured.serverID, current.serverOrgID == captured.serverOrgID,
+              current.cloudDraftOrgID == captured.cloudDraftOrgID, current.address == captured.address,
+              current.measurementSync?.conflict != true,
+              current.measurementSync?.factsReviewRequired != true,
+              let savedPlan = current.floorMeasurements,
+              (try? snapshot.validate()) != nil, (try? savedPlan.validate()) != nil else { return false }
+        var expected = snapshot, saved = savedPlan
+        expected.updatedAt = Date(timeIntervalSince1970: 0); saved.updatedAt = expected.updatedAt
+        return saved == expected
     }
 }
 
@@ -380,6 +457,7 @@ private struct MeasurementExport: Identifiable {
     let id = UUID()
     let image: UIImage
     let pdfURL: URL
+    let plan: FloorMeasurementPlan
 }
 
 private func floorLabel(_ value: Int) -> String {
@@ -432,6 +510,10 @@ private struct MeasurementRoomForm: View {
                     dimension("Height (optional)", primary: $height, inches: $heightInches, id: "height")
                     Text("Measure wall to wall. Use your tape or laser measurements, or select the ruler for a phone estimate.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    if unit == .feet {
+                        Text("Enter feet and inches separately, for example 12 ft and 6 in. Decimal feet are also accepted: 12.5 ft means 12 ft 6 in, not 12 ft 5 in.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
                     if source == .phoneEstimate {
                         Text("This room includes phone estimates. Check them against a tape before publishing.")
                             .font(.rpCaption).foregroundStyle(Theme.warn)
@@ -791,6 +873,10 @@ private struct MeasurementOutlineForm: View {
             Picker("Direction", selection: $wallDirection) {
                 ForEach(MeasurementWallDirection.allCases, id: \.self) { value in Text(value.rawValue).tag(value) }
             }.accessibilityIdentifier("measurements.wallDirection")
+            if unit == .feet {
+                Text("Use feet and inches separately. Decimal feet are accepted: 12.5 ft = 12 ft 6 in.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
             if wallDirection == .custom {
                 TextField("Direction in degrees", text: $wallBearing).keyboardType(.decimalPad)
                     .accessibilityIdentifier("measurements.wallBearing")

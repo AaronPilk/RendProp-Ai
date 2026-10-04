@@ -1,0 +1,309 @@
+{
+  "kind": "Offline provider audit evidence snapshot; not a deployment or live-generation attestation",
+  "branch": "fix/claude-audit-20261004",
+  "sourceHashes": {
+    "services/supabase/functions/_shared/providers/common.ts": "f9c132222fd140a6a4fc3bd814ea89a927ebea9c07af1a9cbe51dcaa26ee6cab",
+    "services/supabase/functions/_shared/providers/chain.ts": "e088cc2082df0faee0b60aeb6e9d75a438b71bb6ea69678253dc1a444357cbdc",
+    "services/supabase/functions/_shared/providers/fal.ts": "e01d9e81f2b8880d378dbfbf4549a3995f4656d03c07c36ad4d971406a80a308",
+    "services/supabase/functions/_shared/providers/providers_test.ts": "9432a1a90913fdb958c4ddf3516719781a3ced4a84e3d6b741c3deda50a0f298",
+    "services/supabase/functions/_shared/providers/fal_submission_audit_test.ts": "0c46ccb634df8c6db79dd2e8450b7d16147ce5e063e94c2ae1f436b0d1c0ff91",
+    "services/supabase/functions/ai-video/index.ts": "981b217e27302118bd39338ed3fdf22455659f53d443db1ec329924cd01269fd",
+    "services/supabase/functions/ai-video/cost-reservation.ts": "d9892cd03297a134767e004c69658ec769b1d4d3e1d9aea5d8e93adb469ed6ac",
+    "services/supabase/functions/ai-video/cost-reservation-handler_test.ts": "c74e801327b695a90c58dc3e0510777ce3711b872b1c61a44d5c15a79495f94a",
+    "services/supabase/functions/ai-video/fal-status-handler_test.ts": "48ea5c34e7d894d5581ab08961eb7f161f628b12d56138f3e15c276241a0213b",
+    "services/supabase/functions/ai-video/drift.test.ts": "517611e6cc75436028625776e55fc3e3d60e3af1bffbd7a51a091b8d490992db",
+    "services/supabase/functions/admin/probe.ts": "1520bf891ac97c7d8972df3d6da1d987489104139f02014fe15d7f0ab3560cda",
+    "services/supabase/migrations/20261004215403_app_video_rejected_submission_release.sql": "598bb7efbceb549998035d3357d94cd0d944a0c41528a9d69c253beabd500afe",
+    "services/supabase/tests/app_video_rejections.sql": "cdc2436a9cf65da247129d3753c6387e9b1e058b9d3eee44891e89495dc92e1e",
+    "services/supabase/tests/app_video_cost_pg.py": "c0da8cdd1398debec8f2f63b43f4c43303bfd3f6cb413415e2540c9ea8a7bf44"
+  },
+  "evidence": [
+    {
+      "path": "/tmp/rendprop-provider-audit-deno-source-bound-final.json",
+      "sha256": "ac96e94363cd162268e6a14452fce5a5292110b14dc93db41bf2f66efe59f78a",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/rendprop-provider-audit-deno-source-bound-final.json"
+    },
+    {
+      "path": "/tmp/rendprop-provider-audit-deno-source-bound-final.log",
+      "sha256": "2273bfe03ba87bedfa2cc330f33d173e3b443b3aac9d4649b3644aadb810d46e",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/rendprop-provider-audit-deno-source-bound-final.log"
+    },
+    {
+      "path": "/tmp/rendprop-provider-audit-deno-complete.log",
+      "sha256": "f4f9148131bd90eeca7b10bc19cc636e92f9a72ed4c6aeeb140808e78bc09882",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/rendprop-provider-audit-deno-complete.log"
+    },
+    {
+      "path": "/tmp/rendprop-edge-tests-provider-repair.log",
+      "sha256": "72b8abe934d3a0ae5139b6ada11bebbce5defd8a9e9944c8fcf5a797d26d2f1e",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/rendprop-edge-tests-provider-repair.log"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/edge-tests-final.log",
+      "sha256": "01857f115ce9edbf886cda9a5028561de3f4f334949984b582a84cbca6763c00",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/edge-tests-final.log"
+    },
+    {
+      "path": "/Users/pilksclaes/Rendprop AI/core-readiness-20261001/build/pex-2jbc_4ni/receipt.json",
+      "sha256": "6fdf8ba3e4aba1a5c4234f3251f6bc52627cf37f78e24b057425b7eb2244a6a9",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/presenter-receipt.json"
+    },
+    {
+      "path": "/Users/pilksclaes/Rendprop AI/core-readiness-20261001/build/pex-2jbc_4ni/controller.log",
+      "sha256": "b71ad1486e7181a7532ae0c61c6d1bccb0197e04d52c24cd0f809b8a33c060af",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/presenter-controller.log"
+    },
+    {
+      "path": "/tmp/rendprop-app-video-pg-9dj8v0v1/receipt.json",
+      "sha256": "5781d0cc74a67dbcae00249ea6a2a4d514f4707e0f171f63b1f85b49ef24e9e2",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/pg-cost/receipt.json",
+      "historical": true,
+      "supersededReason": "Whole migration chain rerun after final CAS envelope tightening; use current final receipt for all-migration binding."
+    },
+    {
+      "path": "/tmp/rendprop-app-video-pg-i_11vrxc/receipt.json",
+      "sha256": "2b701c5d860b8fa750bdf6c90d1a9e298e812e343e117f15896fffc3d764b5d9",
+      "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/pg-cost-final/receipt.json"
+    }
+  ],
+  "results": {
+    "focusedDeno": {
+      "passed": 191,
+      "failed": 0,
+      "sourceUnchangedDuringRun": true,
+      "receipt": "/tmp/rendprop-provider-audit-deno-source-bound-final.json",
+      "log": "/tmp/rendprop-provider-audit-deno-source-bound-final.log"
+    },
+    "fullEdgeAtRecordedRun": {
+      "passed": 1389,
+      "failed": 0,
+      "ignored": 1,
+      "log": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/edge-tests-final.log"
+    },
+    "rejectionSqlFresh": {
+      "passed": true,
+      "assertions": 34
+    },
+    "rejectionSqlReplay": {
+      "passed": true,
+      "assertions": 34
+    },
+    "ordinarySqlFresh": "PASS ordinary video SQL: 101 assertions",
+    "ordinarySqlReplay": "PASS ordinary video SQL: 101 assertions",
+    "reflectionSqlAssertions": 51,
+    "directBriaSqlAssertions": 37,
+    "concurrentSettlement": {
+      "callers": 8,
+      "ledgerIds": [
+        "f991ec9d-73ba-41f1-9ecd-ae3f7b9fc030"
+      ],
+      "before": {
+        "held": 4800,
+        "spend": 4800,
+        "booked": 0,
+        "ledgers": 0,
+        "reservations": 1
+      },
+      "after": {
+        "held": 0,
+        "spend": 4800.0,
+        "booked": 4800.0,
+        "ledgers": 1,
+        "reservations": 1
+      }
+    },
+    "ordinaryRace": [
+      {
+        "key": "5a032996-a04a-46aa-9f87-72a2095d74e8",
+        "exit": 3,
+        "data": null,
+        "budgetDenied": true
+      },
+      {
+        "key": "48e34255-75d3-4109-bcd4-ed3b3d7e4129",
+        "exit": 0,
+        "data": {
+          "id": "5438ff17-e82f-47d5-9e16-26382c96bfeb",
+          "key": "48e34255-75d3-4109-bcd4-ed3b3d7e4129",
+          "org_id": "33cc1d2d-6811-4eae-801d-222430912458",
+          "reserved": true,
+          "hold_cents": 4800,
+          "total_cents": 4800.0
+        },
+        "budgetDenied": false
+      }
+    ],
+    "ordinaryReflectionOverlap": {
+      "ceiling": 4805,
+      "results": [
+        {
+          "feature": "ordinary",
+          "exit": 0,
+          "budgetDenied": false,
+          "data": {
+            "id": "4dd4ca66-b0dd-4045-8339-3fe4620b3d49",
+            "key": "edd3e92f-dcb5-499d-9faa-fa804edb6697",
+            "org_id": "a8e35da9-3135-42e5-b9c1-dd139007a38f",
+            "reserved": true,
+            "hold_cents": 4800,
+            "total_cents": 4800.0
+          }
+        },
+        {
+          "feature": "reflection",
+          "exit": 3,
+          "budgetDenied": true,
+          "data": null
+        }
+      ],
+      "totals": {
+        "spend": 4800,
+        "ordinaryHeld": 4800,
+        "reflectionHeld": 0
+      }
+    },
+    "removedLocksNegativeControl": {
+      "removed": "org advisory and row admission locks",
+      "caught": true,
+      "ceiling": 6000,
+      "totals": {
+        "held": 9600,
+        "spend": 9600,
+        "booked": 0,
+        "ledgers": 0,
+        "reservations": 2
+      }
+    },
+    "historicalFullEdgeProviderRepair": {
+      "passed": 1388,
+      "failed": 1,
+      "ignored": 1,
+      "failure": "_shared/paid-ai-auth.test.ts:163 source-order assertion",
+      "log": "/tmp/rendprop-edge-tests-provider-repair.log"
+    },
+    "presenterIgnoredTestClosure": {
+      "sqlChecks": 119,
+      "actualControllerDenoPassed": 1,
+      "actualControllerDenoFailed": 0,
+      "disposableClusterRemoved": true,
+      "receipt": "/Users/pilksclaes/Rendprop AI/core-readiness-20261001/build/pex-2jbc_4ni/receipt.json",
+      "controllerLog": "/Users/pilksclaes/Rendprop AI/core-readiness-20261001/build/pex-2jbc_4ni/controller.log"
+    }
+  },
+  "pgSourceMatch": {
+    "services/supabase/migrations/0001_init.sql": true,
+    "services/supabase/migrations/0002_multipart.sql": true,
+    "services/supabase/migrations/0003_app_publish.sql": true,
+    "services/supabase/migrations/0004_rate_limits.sql": true,
+    "services/supabase/migrations/0005_authz_hardening.sql": true,
+    "services/supabase/migrations/0005b_lock_down_rpc_definer_functions.sql": true,
+    "services/supabase/migrations/0006_p0_rpcs.sql": true,
+    "services/supabase/migrations/0007_p0_lockdown.sql": true,
+    "services/supabase/migrations/0008_audit_round4.sql": true,
+    "services/supabase/migrations/0008b_audit_round4_grant_fix.sql": true,
+    "services/supabase/migrations/0009_plan_coherence.sql": true,
+    "services/supabase/migrations/0010_pricing_entitlements_and_spend_ceiling.sql": true,
+    "services/supabase/migrations/0011_app_publish_and_lifecycle.sql": true,
+    "services/supabase/migrations/0012_provenance_and_unbranded.sql": true,
+    "services/supabase/migrations/0013_trial_includes_ai.sql": true,
+    "services/supabase/migrations/0014_upload_idempotency_and_quota_refunds.sql": true,
+    "services/supabase/migrations/0015_job_lease.sql": true,
+    "services/supabase/migrations/0016_enhancement_outcome.sql": true,
+    "services/supabase/migrations/0017_admin_role.sql": true,
+    "services/supabase/migrations/0018_ai_routes.sql": true,
+    "services/supabase/migrations/0019_subscriptions.sql": true,
+    "services/supabase/migrations/0020_app_events.sql": true,
+    "services/supabase/migrations/0021_launch_hardening.sql": true,
+    "services/supabase/migrations/0022_app_events_purge_schedule.sql": true,
+    "services/supabase/migrations/0023_coach_routes.sql": true,
+    "services/supabase/migrations/0024_spend_ceiling_lock.sql": true,
+    "services/supabase/migrations/0025_cost_ledger_idempotency.sql": true,
+    "services/supabase/migrations/0026_apple_transaction_binding.sql": true,
+    "services/supabase/migrations/0027_copy_routes.sql": true,
+    "services/supabase/migrations/0028_shotlist_route.sql": true,
+    "services/supabase/migrations/0029_media_qc.sql": true,
+    "services/supabase/migrations/0030_route_params.sql": true,
+    "services/supabase/migrations/0031_property_lookups.sql": true,
+    "services/supabase/migrations/0032_seats_and_invites.sql": true,
+    "services/supabase/migrations/0033_team_transactions.sql": true,
+    "services/supabase/migrations/0034_agent_reel_and_video_ladder.sql": true,
+    "services/supabase/migrations/0035_worker_publish_transaction.sql": true,
+    "services/supabase/migrations/0036_upload_publication_immutability.sql": true,
+    "services/supabase/migrations/0037_upload_transport_budget.sql": true,
+    "services/supabase/migrations/0038_anonymous_adoption_recovery.sql": true,
+    "services/supabase/migrations/0039_account_deletion_intent.sql": true,
+    "services/supabase/migrations/0040_spatial_jobs.sql": true,
+    "services/supabase/migrations/0041_spatial_provider_attempts.sql": true,
+    "services/supabase/migrations/0042_upload_operation_recovery.sql": true,
+    "services/supabase/migrations/0043_spatial_hardening.sql": true,
+    "services/supabase/migrations/0044_plan_rework_and_industry_trial.sql": true,
+    "services/supabase/migrations/0046_commercial_telemetry.sql": true,
+    "services/supabase/migrations/0047_lifecycle_notifications.sql": true,
+    "services/supabase/migrations/0048_brokerage.sql": true,
+    "services/supabase/migrations/0049_notification_drain_schedule.sql": true,
+    "services/supabase/migrations/0050_brokerage_contracts.sql": true,
+    "services/supabase/migrations/0051_brokerage_price_floor.sql": true,
+    "services/supabase/migrations/0052_retire_dying_models.sql": true,
+    "services/supabase/migrations/0053_invite_delivery.sql": true,
+    "services/supabase/migrations/0054_invite_link.sql": true,
+    "services/supabase/migrations/0055_video_reflection_jobs.sql": true,
+    "services/supabase/migrations/0056_active_photo_fallback.sql": true,
+    "services/supabase/migrations/20260914161954_studio_cross_device_workspace.sql": true,
+    "services/supabase/migrations/20260914164554_studio_documents_named_accounts.sql": true,
+    "services/supabase/migrations/20260914170849_studio_generated_quality_gate.sql": true,
+    "services/supabase/migrations/20260914173513_studio_edit_output_disclosure.sql": true,
+    "services/supabase/migrations/20260914174519_studio_voice_history_cleanup.sql": true,
+    "services/supabase/migrations/20260914175636_studio_account_cleanup_schedule.sql": true,
+    "services/supabase/migrations/20260914180739_studio_voice_storage_reservations.sql": true,
+    "services/supabase/migrations/20260914185000_studio_gallery_controls.sql": true,
+    "services/supabase/migrations/20260924153826_studio_production_reviews.sql": true,
+    "services/supabase/migrations/20260924174114_studio_presenter_workspace.sql": true,
+    "services/supabase/migrations/20260924180853_studio_presenter_execution.sql": true,
+    "services/supabase/migrations/20260924184052_studio_prompt_library.sql": true,
+    "services/supabase/migrations/20260924184319_studio_presenter_media_revocation.sql": true,
+    "services/supabase/migrations/20260924232058_studio_named_projects.sql": true,
+    "services/supabase/migrations/20260924232510_studio_project_media.sql": true,
+    "services/supabase/migrations/20260924232803_studio_property_music.sql": true,
+    "services/supabase/migrations/20260924235553_studio_editing_intelligence_routes.sql": true,
+    "services/supabase/migrations/20261001142823_team_invite_delivery_confirmation.sql": true,
+    "services/supabase/migrations/20261001143615_subscription_confirmed_trial_start.sql": true,
+    "services/supabase/migrations/20261001145730_workspace_selection.sql": true,
+    "services/supabase/migrations/20261001222809_photographer_client_delivery.sql": true,
+    "services/supabase/migrations/20261002160344_listing_gallery_selection.sql": true,
+    "services/supabase/migrations/20261002225458_video_erase_direct_bria.sql": true,
+    "services/supabase/migrations/20261003020955_app_video_cost_reservations.sql": true,
+    "services/supabase/migrations/20261004215403_app_video_rejected_submission_release.sql": true,
+    "services/supabase/migrations/20261004220253_listing_measurement_compare_and_set.sql": true,
+    "services/supabase/tests/ci-bootstrap.sql": true,
+    "services/supabase/tests/video_erase.sql": true,
+    "services/supabase/tests/video_erase_direct_bria.sql": true,
+    "services/supabase/tests/app_video_rejections.sql": true,
+    "services/supabase/tests/app_video_cost_pg.py": true
+  },
+  "limits": {
+    "providerCauseKnown": false,
+    "paidProviderRequests": 0,
+    "productionMutations": 0,
+    "providerCredentialsInspected": false,
+    "quotaRefundAtomicWithHoldRelease": false,
+    "allExecutedEdgeTestsPassed": true,
+    "fullEdgeIgnoredCount": 1,
+    "ignoredPresenterExecutedSeparately": true
+  },
+  "pgSourceBinding": {
+    "receipt": "/tmp/rendprop-app-video-pg-i_11vrxc/receipt.json",
+    "privateCopy": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/provider/pg-cost-final/receipt.json",
+    "sourceCount": 88,
+    "allRecordedSourcesMatchCurrent": true,
+    "commandCount": 125,
+    "expectedRefusalCommands": [
+      "race-reserve-0",
+      "cross-key-budget-fence",
+      "authenticated-table-denied",
+      "authenticated-reserve-denied",
+      "authenticated-settle-denied",
+      "anon-aggregate-denied"
+    ],
+    "passed": true
+  }
+}

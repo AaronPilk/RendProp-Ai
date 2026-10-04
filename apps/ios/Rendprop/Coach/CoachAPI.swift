@@ -36,7 +36,7 @@ struct CoachRequest: Sendable {
     struct Context: Sendable {
         var listings: [ListingContext]
         var plan: String
-        /// A hint only, never load-bearing — e.g. "home" | "settings".
+        /// A closed screen hint; matches AskAIScreen and the server's vocabulary.
         var screen: String?
     }
 
@@ -44,6 +44,9 @@ struct CoachRequest: Sendable {
     var messages: [Message]
     var spaceType: String
     var context: Context
+    /// Captured workspace routing metadata. This becomes X-Org-Id, never a
+    /// prompt/body field, and must not be reread after an asynchronous hop.
+    var orgID: UUID? = nil
 }
 
 /// The closed action enum — MUST stay in lockstep with `ACTION_TYPES` in

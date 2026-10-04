@@ -158,8 +158,17 @@ Deno.test("actual reflection submit and paid property lookup guard before dispat
   assert(video.includes('if (eraseAction === "submit") await assertPaidAiIdentity(user, orgId);'));
   assert(video.indexOf('if (eraseAction === "submit") await assertPaidAiIdentity(user, orgId);') < video.indexOf('return await eraseHandler(req'));
   const property = await Deno.readTextFile(new URL("../property/index.ts", import.meta.url));
-  assert(property.indexOf("await assertPaidAiIdentity(user, orgId)") < property.indexOf("await provider.lookup(address)"));
+  const propertyGuard = property.indexOf("await assertPaidAiIdentity(user, orgId)");
+  const propertyDispatch = property.indexOf("await provider.lookup(address)");
+  assert(propertyGuard >= 0 && propertyDispatch >= 0, "Actual paid property guard and dispatch must both exist");
+  assert(propertyGuard < propertyDispatch, "Paid property identity must precede provider dispatch");
   const coach = await Deno.readTextFile(new URL("../coach/index.ts", import.meta.url));
-  assert(coach.indexOf("await assertPaidAiIdentity(user, orgId)") < coach.indexOf('await durableRateLimit(`coachburst:'));
+  const coachGuard = coach.indexOf("await assertPaidAiIdentity(user, orgId)");
+  // Source formatting may split the call and its first argument across lines.
+  // Missing anchors must fail; indexOf=-1 must never satisfy ordering.
+  const coachMeter = coach.search(/await\s+durableRateLimit\(\s*`coachburst:/);
+  const coachDispatch = coach.search(/await\s+runChain\(\s*"coach\.chat"/);
+  assert(coachGuard >= 0 && coachMeter >= 0 && coachDispatch >= 0, "Actual Coach identity, burst admission and provider dispatch must all exist");
+  assert(coachGuard < coachMeter && coachMeter < coachDispatch, "Coach identity must precede rate admission and provider dispatch");
 });
 Deno.test("restore synthetic fetch boundary", () => { globalThis.fetch = originalFetch; });

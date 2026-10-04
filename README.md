@@ -5,6 +5,15 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+The [4 October audit remediation](docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md)
+addresses rejected-video budget holds, legacy photo publication, private
+measurement keys, concurrent room saves, Coach workspace/privacy checks and
+measurement export provenance. It is on isolated branch
+`fix/claude-audit-20261004` and requires backend migration/function delivery and
+a new signed app build. This source status does not change the release receipts
+below. FAL generation access and the earlier rejection cause remain unverified;
+an authenticated catalog response does not certify video generation.
+
 The [floor plan measurements update](docs/floor-plan-measurements.md) adds room
 dimensions, irregular wall outlines, categorized area worksheets, 2D/3D layouts,
 image/PDF export and an optional ARKit distance estimator. Calculated closing

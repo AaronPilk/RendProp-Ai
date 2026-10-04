@@ -198,6 +198,68 @@ final class BetaPolishUITests: XCTestCase {
         attach("photo-work-completed-global-status")
     }
 
+    func testLegacyGalleryKeepsSiblingsAndStagedCoverRequiresReview() {
+        launchDetail() // Three enh-/orig- pairs, deliberately no history file.
+        openDetail("detail.photos", title: "Photos")
+        let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
+        XCTAssertEqual(cards.count, 3)
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 3,
+                       "Every pre-history sibling remains eligible for publication")
+        // First history mutation is removal, not an all-photo fixture import.
+        scrollTo(cards.firstMatch); cards.firstMatch.press(forDuration: 1)
+        let remove = app.buttons.matching(NSPredicate(format: "label == %@", "Remove from gallery")).firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 5), app.debugDescription); remove.tap()
+        XCTAssertTrue(remove.waitForExistence(timeout: 5), app.debugDescription); remove.tap()
+        let two = NSPredicate { _, _ in cards.count == 2 }
+        expectation(for: two, evaluatedWith: app); waitForExpectations(timeout: 10)
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 2,
+                       "Removing one legacy family cannot empty the selected gallery")
+        let cover = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.cover.")).firstMatch
+        scrollTo(cover); cover.tap()
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "This is the cover photo")).count, 1,
+                       "A legacy cover is also an indexed publication choice")
+        app.navigationBars["Photos"].buttons.element(boundBy: 0).tap()
+        openDetail("detail.photoStudio", title: "AI Photo Studio")
+        let modern = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Modern — pick the photos")).firstMatch
+        scrollTo(modern); modern.tap()
+        let apply = app.buttons["studio.batchApply"]
+        scrollTo(apply); XCTAssertEqual(apply.label, "Apply to 2 photos"); apply.tap()
+        let finished = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Staging · Modern", "2 photos changed")).firstMatch
+        XCTAssertTrue(finished.waitForExistence(timeout: 40), app.debugDescription)
+        app.navigationBars["AI Photo Studio"].buttons.element(boundBy: 0).tap()
+        openDetail("detail.photos", title: "Photos")
+        XCTAssertEqual(cards.count, 2)
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Earlier version on listing")).count, 2,
+                       "Staging leaves both retained legacy choices on the listing")
+        let stagedCover = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.cover.")).firstMatch
+        scrollTo(stagedCover)
+        let versionID = String(stagedCover.identifier.dropFirst("photos.cover.".count))
+        stagedCover.tap()
+        assertCompareContains("Virtually staged")
+        let use = app.buttons["photoVersion.useOnListing"]
+        XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(use.label, "Use this version on listing", "The cover star opens review instead of publishing staging immediately")
+        attach("legacy-staging-cover-review-gate")
+        use.tap(); XCTAssertEqual(use.label, "Selected for listing")
+        app.buttons["Close"].tap()
+        let reviewedCover = app.buttons["photos.cover.\(versionID)"]
+        scrollTo(reviewedCover)
+        XCTAssertEqual(reviewedCover.label, "This is the cover photo", "The explicit review completes the requested cover change")
+        let reviewedCard = app.buttons["photos.version.\(versionID)"]
+        XCTAssertEqual(reviewedCard.value as? String, "Selected for listing")
+        // Hiding the family with the cover must choose a selected predecessor
+        // from the remaining family, never its unreviewed latest staging.
+        reviewedCard.press(forDuration: 1)
+        XCTAssertTrue(remove.waitForExistence(timeout: 5)); remove.tap()
+        XCTAssertTrue(remove.waitForExistence(timeout: 5)); remove.tap()
+        let one = NSPredicate { _, _ in cards.count == 1 }
+        expectation(for: one, evaluatedWith: app); waitForExpectations(timeout: 10)
+        XCTAssertEqual(cards.firstMatch.value as? String, "Earlier version on listing")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "This is the cover photo")).count, 0,
+                       "Fallback cover must not approve the remaining staged preview")
+        attach("legacy-gallery-retained-clean-cover-fallback")
+    }
+
     func testSavedDeclutterAndStagingLibrariesKeepDownloadsAndListingChoiceSeparate() {
         launchDetail() // Existing procedural legacy fixture; MockAPIClient only.
         let desktop = element("studio.desktopLink")
@@ -271,6 +333,8 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertEqual(cards.count, 3)
         XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0,
                        "Selecting an older declutter keeps the latest staged tiles unselected")
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Decluttered version on listing")).count, 3,
+                       "Latest staging must explain that the saved clean version is on the listing")
         scrollTo(cards.firstMatch); cards.firstMatch.tap()
         assertCompareContains("Virtually staged")
         XCTAssertTrue(app.scrollViews["photoVersion.savedChoices"].buttons["Staged"].isSelected,
@@ -291,6 +355,8 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(fileSaves.allElementsBoundByIndex.allSatisfy { $0.label == "Save this photo to your Photos app" },
                       "Download controls must not inherit the open-photo label or selected state")
         XCTAssertEqual(filePhotos.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0)
+        XCTAssertEqual(filePhotos.matching(NSPredicate(format: "value == %@", "Decluttered version on listing")).count, 3,
+                       "The listing file grid must identify each family's selected clean version")
         filePhotos.firstMatch.tap()
         let fileSelection = app.buttons["photoVersion.useOnListing"]
         XCTAssertTrue(fileSelection.waitForExistence(timeout: 10), app.debugDescription)

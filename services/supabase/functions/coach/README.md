@@ -30,11 +30,12 @@ Presenter generation.
 ## Run the tests
 
 ```
-deno test --cached-only --deny-net --deny-env --deny-run services/supabase/functions/coach/
+deno test --cached-only --allow-read --deny-net --deny-env --deny-run --deny-write services/supabase/functions/coach/
 ```
 
 Pure and offline after the pinned test dependencies have been cached — no env,
-network, live Supabase or provider call. `actions.ts`, `prompt.ts`
+network, live Supabase or provider call. Source reads bind the handler, membership
+lookup and native screen/industry vocabulary to production code. `actions.ts`, `prompt.ts`
 and `knowledge.ts` also pass `deno check` standalone; `index.ts` type-checks
 against the real `_shared/*` modules in the repository's edge-function CI job.
 
@@ -64,7 +65,14 @@ not a portable checked-in release command.
 `coach.chat` is free on every plan (no plan access gate or monthly quota —
 the two per-user rate limits and a 600-message daily workspace safety cap).
 Workspace membership is resolved before paid work, and the server plan determines
-routing; degraded plan reads route as `free`. Migration 0023 seeds no `note='legacy'`
+routing; degraded plan reads route as `free`. `X-Org-Id` is required and checked
+against membership before limits or providers. Clients without a selected workspace
+receive `409 conflict` (selected workspace required) and use on-device help. The native model captures
+the workspace/identity at chat creation, checks them across asynchronous hops, and
+excludes local fallback bubbles from later online history. Cached full addresses
+and remembered street-line variants are redacted again at the request boundary.
+All 14 native screens are accepted; unknown text cannot enter ledger metadata.
+Migration 0023 seeds no `note='legacy'`
 row, so a disabled AI router normally resolves this task to an empty chain.
 When the resolved chain is empty, `index.ts`'s `chooseChain()` supplies a
 built-in Anthropic → OpenAI fallback using the current source constants.

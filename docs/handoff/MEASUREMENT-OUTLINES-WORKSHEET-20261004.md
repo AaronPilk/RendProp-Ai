@@ -113,6 +113,39 @@ Private receipts are under
 `outline-workflow-2.xcresult`, `perimeter-final-receipt.json`, `sync-proof/`,
 `outline-editor/`, `native-attachments/` and `export-inspection/receipt.json`.
 
+## Audit follow-up source — 4 October 2026
+
+The current audit branch adds read-only export freshness checks against the
+latest listing revision, identity, source provenance and workspace context.
+Unresolved shared-edit conflicts block stale sharing without deleting pending
+local measurements. The open export sheet carries its rendered plan snapshot;
+a harmless date normalization alone does not invalidate it.
+
+PNG areas identify entered dimensions or phone estimates, and exports include
+the plan's last-updated date plus schematic/not-to-scale/not-survey limitations.
+PDFs retain every room's dimensions and source even on outlined floors, with
+separate full wall records and calculated-edge labels. Worksheet tables use five
+rows per page with separate source positions for wrapped maximum-length names.
+The older RoomPlan area is now explicitly labeled a scan hull estimate; the
+actual L-shaped 16 m² outline has a 20 m² convex hull, which is not certified
+living area. The feature guide explains decimal feet versus separate inches.
+
+The export-admission/source/PDF-loop runner executes 49 assertions and five
+compiled regression controls. It verifies the actual page and text loops with
+inert drawing boundaries; it does not claim UIKit rasterization or camera
+accuracy. The prior Photos-write permission/cancellation proof also still passes
+18 assertions and its three compiled controls. Both gates are in CI. Current
+native rendering evidence and final signed delivery belong in the overall audit
+receipt; the historical four-page PDF evidence above is not a claim about a new
+signed build.
+
+Measurements now have a dedicated compare-and-set source path instead of an
+unconditional whole-details update, plus load-shared/restore-local conflict UI.
+This requires its new backend migration and signed app delivery. No deployment
+or Apple upload is claimed by this follow-up. See the updated
+[feature guide](../floor-plan-measurements.md) for current behavior and phone
+checks.
+
 ## Phone acceptance
 
 Use the [feature guide](../floor-plan-measurements.md). Enter a tape-measured

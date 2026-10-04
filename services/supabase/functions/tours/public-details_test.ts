@@ -125,6 +125,9 @@ const details = {
   floor_measurements_v2: { private: "FutureOnlyMeasurementSentinel" },
   floor_measurements_internal: ["InternalOnlyMeasurementSentinel"],
   FLOOR_MEASUREMENTS_V99: "CaseOnlyMeasurementSentinel",
+  floorMeasurementsV1: "CamelOnlyMeasurementSentinel",
+  floorMeasurementsInternal: "CamelFutureMeasurementSentinel",
+  FloorMeasurementsV99: "CamelCaseMeasurementSentinel",
   floorplan_url: "https://media-fixture.invalid/public-floor-plan.png",
   floorplan_asset_id: "public-plan-asset",
   floorplan: { levels: [{ name: "Public first floor", sqft: 900 }] },
@@ -190,7 +193,7 @@ Deno.test("actual public tour response omits all reserved measurement metadata a
   assertPrivateAbsent(payload);
   const expected = Object.fromEntries(
     Object.entries(details).filter(([key]) =>
-      !key.toLowerCase().startsWith("floor_measurements_")
+      !["floor_measurements_v1", "floor_measurements_v2", "floor_measurements_internal", "FLOOR_MEASUREMENTS_V99", "floorMeasurementsV1", "floorMeasurementsInternal", "FloorMeasurementsV99"].includes(key)
     ),
   );
   assertEquals(payload.listing.details, expected);

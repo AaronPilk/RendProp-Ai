@@ -66,6 +66,8 @@ struct Listing: Identifiable, Codable, Hashable {
     var cloudDetachedServerID: UUID? = nil
     /// Initial facts fingerprint survives an interrupted first create.
     var cloudCreateFingerprint: String? = nil
+    /// Separates ordinary listing edits from measurement-only create retries.
+    var cloudCreateFactsFingerprint: String? = nil
     /// Response metadata used only while adopting a create receipt.
     var cloudCreateReplayed: Bool? = nil
     /// The published tour's server slug (never fabricated from the local UUID).
@@ -89,6 +91,8 @@ struct Listing: Identifiable, Codable, Hashable {
     /// True when a local edit (sold, Zillow, details, photo) hasn't been PATCHed to
     /// the server yet. Only meaningful once `serverID` is set.
     var needsServerSync: Bool? = nil
+    /// Measurement-only CAS state persists across offline edits and relaunches.
+    var measurementSync: FloorMeasurementSyncState? = nil
     /// Server `renders.id` of the published tour (from /renders/publish-app).
     var publishedRenderID: UUID? = nil
 
@@ -317,9 +321,9 @@ extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
              createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
-             tagline, details, floorMeasurements, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateReplayed, shareSlug, shareURL,
+             tagline, details, floorMeasurements, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
-             lastError, needsServerSync, publishedRenderID,
+             lastError, needsServerSync, measurementSync, publishedRenderID,
              unbrandedShareURL, stateCode, allowSearchIndexing,
              clientContact, clientContactDirty, clientContactLoaded, clientPhotoRelPath, clientPhotoDirty
     }
@@ -357,7 +361,7 @@ extension Listing {
                 floorMeasurements = nil
             }
         } else {
-            floorMeasurements = FloorMeasurementPlan.decodeWireValue(details?[FloorMeasurementPlan.wireKey])
+            floorMeasurements = FloorMeasurementPlan.decodeWireValue(FloorMeasurementPlan.wireValue(in: details))
         }
         clientContact = try c.decodeIfPresent(ListingClientContact.self, forKey: .clientContact)
         clientContactDirty = try c.decodeIfPresent(Bool.self, forKey: .clientContactDirty)
@@ -372,6 +376,7 @@ extension Listing {
         cloudSyncOwnerID = try c.decodeIfPresent(UUID.self, forKey: .cloudSyncOwnerID)
         cloudDetachedServerID = try c.decodeIfPresent(UUID.self, forKey: .cloudDetachedServerID)
         cloudCreateFingerprint = try c.decodeIfPresent(String.self, forKey: .cloudCreateFingerprint)
+        cloudCreateFactsFingerprint = try c.decodeIfPresent(String.self, forKey: .cloudCreateFactsFingerprint)
         cloudCreateReplayed = try c.decodeIfPresent(Bool.self, forKey: .cloudCreateReplayed)
         shareSlug        = try c.decodeIfPresent(String.self, forKey: .shareSlug)
         shareURL         = try c.decodeIfPresent(String.self, forKey: .shareURL)
@@ -381,10 +386,12 @@ extension Listing {
         aerialGeneratedAt = try c.decodeIfPresent(Date.self,  forKey: .aerialGeneratedAt)
         lastError        = try c.decodeIfPresent(String.self, forKey: .lastError)
         needsServerSync  = try c.decodeIfPresent(Bool.self,   forKey: .needsServerSync)
+        measurementSync = try c.decodeIfPresent(FloorMeasurementSyncState.self, forKey: .measurementSync)
         publishedRenderID = try c.decodeIfPresent(UUID.self,  forKey: .publishedRenderID)
         unbrandedShareURL = try c.decodeIfPresent(String.self, forKey: .unbrandedShareURL)
         stateCode        = try c.decodeIfPresent(String.self, forKey: .stateCode)
         allowSearchIndexing = try c.decodeIfPresent(Bool.self, forKey: .allowSearchIndexing)
+        FloorMeasurementSync.recoverLegacyPending(in: &self)
     }
 }
 
@@ -1264,6 +1271,25 @@ extension FloorMeasurementRoom {
 
 struct FloorMeasurementPlan: Codable, Hashable {
     static let wireKey = "floor_measurements_v1"
+    static func isPrivateKey(_ key: String) -> Bool {
+        key.lowercased().replacingOccurrences(of: "_", with: "").hasPrefix("floormeasurements")
+    }
+    static func isPlanKey(_ key: String) -> Bool {
+        key.lowercased().replacingOccurrences(of: "_", with: "") == "floormeasurementsv1"
+    }
+    static func wireValue(in details: [String: String]?) -> String? {
+        let values = Set((details ?? [:]).filter { isPlanKey($0.key) }.values)
+        return values.count == 1 ? values.first : nil
+    }
+    static func hasUnreadableValue(in details: [String: String]?) -> Bool {
+        let values = (details ?? [:]).filter { isPlanKey($0.key) }
+        return !values.isEmpty && decodeWireValue(wireValue(in: details)) == nil
+    }
+    static func replacingWire(in details: [String: String]?, with value: String) -> [String: String] {
+        var result = (details ?? [:]).filter { !isPlanKey($0.key) }
+        result[wireKey] = value
+        return result
+    }
     static let maximumRooms = 24
     static let maximumOutlines = 12
     static let maximumWireBytes = 10_000
@@ -1589,5 +1615,68 @@ enum FloorMeasurementInput {
             throw FloorMeasurementError.invalidInput
         }
         return value
+    }
+}
+
+struct FloorMeasurementSyncState: Codable, Hashable {
+    var expected: String? = nil
+    var pending = false
+    var conflict = false
+    var savedLocalCopy: String? = nil
+    /// Older snapshots cannot prove whether generic dirty state also contains
+    /// ordinary edits. Preserve them and require an explicit choice before PATCH.
+    var factsReviewRequired: Bool? = nil
+}
+
+enum FloorMeasurementSync {
+    static func recoverLegacyPending(in listing: inout Listing) {
+        guard listing.serverID != nil, listing.needsServerSync == true,
+              listing.measurementSync == nil, let plan = listing.floorMeasurements else { return }
+        let value = try? plan.encodedWireValue()
+        let unreadable = FloorMeasurementPlan.hasUnreadableValue(in: listing.details) || value == nil
+        listing.measurementSync = FloorMeasurementSyncState(
+            expected: FloorMeasurementPlan.wireValue(in: listing.details), pending: true,
+            conflict: unreadable, factsReviewRequired: true)
+        // Never choose between conflicting aliases or erase an unknown format.
+        if !unreadable, let value { listing.details = FloorMeasurementPlan.replacingWire(in: listing.details, with: value) }
+    }
+    static func stage(_ plan: FloorMeasurementPlan, in listing: inout Listing) throws {
+        var state = listing.measurementSync ?? FloorMeasurementSyncState(
+            expected: FloorMeasurementPlan.wireValue(in: listing.details))
+        guard !state.conflict else { throw FloorMeasurementSyncError.conflict }
+        let value = try plan.encodedWireValue()
+        listing.floorMeasurements = plan
+        listing.details = FloorMeasurementPlan.replacingWire(in: listing.details, with: value)
+        state.pending = true
+        listing.measurementSync = state
+    }
+    static func adoptFacts(from receipt: Listing, current: inout Listing) {
+        guard current.needsServerSync != true else { return }
+        let local = FloorMeasurementPlan.wireValue(in: current.details)
+        current.address = receipt.address; current.beds = receipt.beds; current.baths = receipt.baths
+        current.sqft = receipt.sqft; current.price = receipt.price; current.tagline = receipt.tagline
+        current.soldAt = receipt.soldAt; current.status = receipt.status
+        current.zillowURL = receipt.zillowURL; current.latitude = receipt.latitude; current.longitude = receipt.longitude
+        current.spaceTypeRaw = receipt.spaceTypeRaw; current.allowSearchIndexing = receipt.allowSearchIndexing
+        current.details = receipt.details
+        if current.measurementSync?.pending == true, let local {
+            current.details = FloorMeasurementPlan.replacingWire(in: current.details, with: local)
+        } else { current.floorMeasurements = receipt.floorMeasurements }
+    }
+    static func acknowledge(submitted: Listing, receipt: Listing, current: inout Listing) {
+        let sent = FloorMeasurementPlan.wireValue(in: submitted.details)
+        let accepted = FloorMeasurementPlan.wireValue(in: receipt.details)
+        guard sent == accepted else { return }
+        var state = current.measurementSync ?? FloorMeasurementSyncState()
+        state.expected = accepted
+        state.pending = FloorMeasurementPlan.wireValue(in: current.details) != sent
+        state.conflict = false
+        current.measurementSync = state
+    }
+}
+enum FloorMeasurementSyncError: LocalizedError {
+    case conflict
+    var errorDescription: String? {
+        "Measurements changed on another device. Your local copy is safe. Load the shared version to continue."
     }
 }
