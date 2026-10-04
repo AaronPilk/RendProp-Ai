@@ -1,0 +1,514 @@
+// Frozen complete v1 declarations from c2824e5f58be1ea4d431750573d11724727d8a47
+// Original source: apps/ios/Rendprop/Models/Listing.swift; full-file SHA256 2fd527d27a03c6aa409b9adb20de5b3e55e846f731a46ad56016a02cef4e007d
+// Details helper source: apps/ios/Rendprop/Networking/WorkspaceSync.swift; full-file SHA256 5ee8ce9cfaae2497cff70759916df55704c649e9066623d46aae62e22f21a42d
+// Declaration bytes SHA256 f9b56aeae7ca44cdbb35d4e3ce188eaf4b7388d7a70afc591eca0ba9cbdb9882
+// run.py only renames the FloorMeasurement / ListingWireDetails namespaces.
+import Foundation
+
+enum FloorMeasurementUnit: String, Codable, CaseIterable, Hashable, Identifiable {
+    case feet, meters
+
+    var id: String { rawValue }
+    var label: String { self == .feet ? "Feet" : "Meters" }
+}
+
+enum FloorMeasurementSource: String, Codable, Hashable {
+    case manual, phoneEstimate
+}
+
+enum FloorMeasurementError: Error, LocalizedError, Equatable {
+    case unsupportedVersion, tooManyRooms, invalidName, invalidDimension
+    case invalidPosition, invalidFloor, invalidRotation, duplicateRoom
+    case overlappingRooms, invalidInput, invalidInches, tooLarge, invalidDate
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedVersion: return "This measurement plan needs a newer app version."
+        case .tooManyRooms: return "A measurement plan can contain up to 24 rooms."
+        case .invalidName: return "Give each room a name of 1 to 40 characters."
+        case .invalidDimension: return "Room dimensions must be between 0.1 and 100 meters."
+        case .invalidPosition: return "Room positions must be within 200 meters of the plan origin."
+        case .invalidFloor: return "Choose a floor from the second basement through floor 21."
+        case .invalidRotation: return "Rotate rooms in quarter turns."
+        case .duplicateRoom: return "Each room must have its own identity."
+        case .overlappingRooms: return "Rooms on the same floor cannot overlap. Shared edges are allowed."
+        case .invalidInput: return "Enter a number using digits and a decimal point or comma."
+        case .invalidInches: return "Enter inches from 0 up to, but not including, 12."
+        case .tooLarge: return "This measurement plan is too large to save."
+        case .invalidDate: return "This measurement plan has an invalid update date."
+        }
+    }
+}
+
+struct FloorMeasurementRoom: Codable, Hashable, Identifiable {
+    var id = UUID()
+    var name: String
+    /// Zero is the first floor; negative floors are basements.
+    var floor: Int = 0
+    var widthMeters: Double
+    var lengthMeters: Double
+    var heightMeters: Double? = nil
+    var xMeters: Double = 0
+    var yMeters: Double = 0
+    var rotationQuarterTurns: Int = 0
+    var source: FloorMeasurementSource = .manual
+
+    var rotatedWidthMeters: Double {
+        rotationQuarterTurns % 2 == 0 ? widthMeters : lengthMeters
+    }
+
+    var rotatedLengthMeters: Double {
+        rotationQuarterTurns % 2 == 0 ? lengthMeters : widthMeters
+    }
+
+    var floorName: String { FloorMeasurementPlan.floorName(floor) }
+
+    func validate() throws {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              name.count <= 40,
+              name.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+            throw FloorMeasurementError.invalidName
+        }
+        try FloorMeasurementInput.validateDimension(widthMeters)
+        try FloorMeasurementInput.validateDimension(lengthMeters)
+        if let heightMeters { try FloorMeasurementInput.validateDimension(heightMeters) }
+        guard xMeters.isFinite, yMeters.isFinite,
+              (-200...200).contains(xMeters), (-200...200).contains(yMeters) else {
+            throw FloorMeasurementError.invalidPosition
+        }
+        guard (-2...20).contains(floor) else { throw FloorMeasurementError.invalidFloor }
+        guard (0...3).contains(rotationQuarterTurns) else { throw FloorMeasurementError.invalidRotation }
+    }
+
+    /// Rooms are axis-aligned after quarter-turn rotation. Only interior area
+    /// counts as overlap; floating point round-off at a shared edge does not.
+    func overlaps(_ other: FloorMeasurementRoom) -> Bool {
+        guard floor == other.floor else { return false }
+        let right = xMeters + rotatedWidthMeters
+        let top = yMeters + rotatedLengthMeters
+        let otherRight = other.xMeters + other.rotatedWidthMeters
+        let otherTop = other.yMeters + other.rotatedLengthMeters
+        let scale = max(1, abs(xMeters), abs(yMeters), abs(right), abs(top),
+                        abs(other.xMeters), abs(other.yMeters), abs(otherRight), abs(otherTop))
+        let tolerance = scale * Double.ulpOfOne * 8
+        return min(right, otherRight) - max(xMeters, other.xMeters) > tolerance
+            && min(top, otherTop) - max(yMeters, other.yMeters) > tolerance
+    }
+
+    func displayDimensions(unit: FloorMeasurementUnit) -> String {
+        "\(FloorMeasurementInput.display(rotatedWidthMeters, unit: unit)) × \(FloorMeasurementInput.display(rotatedLengthMeters, unit: unit))"
+    }
+}
+
+// Defaults for placement/source also apply when a version-one wire room omits
+// those optional editing fields. Identity and both measured sides are required.
+extension FloorMeasurementRoom {
+    enum CodingKeys: String, CodingKey {
+        case id, name, floor, widthMeters, lengthMeters, heightMeters
+        case xMeters, yMeters, rotationQuarterTurns, source
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        floor = try c.decodeIfPresent(Int.self, forKey: .floor) ?? 0
+        widthMeters = try c.decode(Double.self, forKey: .widthMeters)
+        lengthMeters = try c.decode(Double.self, forKey: .lengthMeters)
+        heightMeters = try c.decodeIfPresent(Double.self, forKey: .heightMeters)
+        xMeters = try c.decodeIfPresent(Double.self, forKey: .xMeters) ?? 0
+        yMeters = try c.decodeIfPresent(Double.self, forKey: .yMeters) ?? 0
+        rotationQuarterTurns = try c.decodeIfPresent(Int.self, forKey: .rotationQuarterTurns) ?? 0
+        source = try c.decodeIfPresent(FloorMeasurementSource.self, forKey: .source) ?? .manual
+    }
+}
+
+struct FloorMeasurementPlan: Codable, Hashable {
+    static let wireKey = "floor_measurements_v1"
+    static let maximumRooms = 24
+    static let maximumWireBytes = 10_000
+
+    var version: Int = 1
+    var unit: FloorMeasurementUnit = .feet
+    var rooms: [FloorMeasurementRoom] = []
+    var updatedAt = Date()
+
+    var hasOverlaps: Bool {
+        for i in rooms.indices {
+            for j in rooms.indices where j > i {
+                if rooms[i].overlaps(rooms[j]) { return true }
+            }
+        }
+        return false
+    }
+
+    /// Sum of entered room areas, not an independently measured building area.
+    /// Invalid plans (including overlaps) never contribute a misleading total.
+    var totalRoomAreaMeters2: Double {
+        guard (try? validate()) != nil else { return 0 }
+        return rooms.reduce(0) { $0 + $1.widthMeters * $1.lengthMeters }
+    }
+
+    func validate() throws {
+        guard version == 1 else { throw FloorMeasurementError.unsupportedVersion }
+        guard rooms.count <= Self.maximumRooms else { throw FloorMeasurementError.tooManyRooms }
+        guard updatedAt.timeIntervalSinceReferenceDate.isFinite else { throw FloorMeasurementError.invalidDate }
+        var ids = Set<UUID>()
+        for room in rooms {
+            try room.validate()
+            guard ids.insert(room.id).inserted else { throw FloorMeasurementError.duplicateRoom }
+        }
+        guard !hasOverlaps else { throw FloorMeasurementError.overlappingRooms }
+        guard try wireData().count <= Self.maximumWireBytes else { throw FloorMeasurementError.tooLarge }
+    }
+
+    func encodedWireValue() throws -> String {
+        try validate()
+        return String(decoding: try wireData(), as: UTF8.self)
+    }
+
+    static func decodeWireValue(_ raw: String?) -> FloorMeasurementPlan? {
+        guard let raw, raw.utf8.count <= maximumWireBytes,
+              let data = raw.data(using: .utf8),
+              let plan = try? JSONDecoder().decode(Self.self, from: data),
+              (try? plan.validate()) != nil else { return nil }
+        return plan
+    }
+
+    static func floorName(_ floor: Int) -> String {
+        switch floor {
+        case -2: return "Second basement"
+        case -1: return "Basement"
+        case 0: return "First floor"
+        default: return "Floor \(floor + 1)"
+        }
+    }
+
+    private func wireData() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(self)
+    }
+}
+
+enum FloorMeasurementInput {
+    /// Strict numeric entry: grouping, signs, exponents, and unit suffixes are
+    /// rejected. A single comma is accepted only as an unambiguous decimal.
+    static func meters(primary: String, inches: String = "", unit: FloorMeasurementUnit) throws -> Double {
+        let number = try decimal(primary)
+        let inchText = inches.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inchNumber = inchText.isEmpty ? 0 : try decimal(inchText)
+        guard inchNumber < 12 else { throw FloorMeasurementError.invalidInches }
+        let meters: Double
+        switch unit {
+        case .feet: meters = number * 0.3048 + inchNumber * 0.0254
+        case .meters:
+            guard inchNumber == 0 else { throw FloorMeasurementError.invalidInches }
+            meters = number
+        }
+        try validateDimension(meters)
+        return meters
+    }
+
+    static func validateDimension(_ meters: Double) throws {
+        guard meters.isFinite, (0.1...100).contains(meters) else {
+            throw FloorMeasurementError.invalidDimension
+        }
+    }
+
+    static func display(_ meters: Double, unit: FloorMeasurementUnit) -> String {
+        guard meters.isFinite, meters >= 0, meters <= 100 else { return "—" }
+        switch unit {
+        case .feet:
+            let totalInches = Int((meters / 0.0254).rounded())
+            return "\(totalInches / 12)′ \(totalInches % 12)″"
+        case .meters:
+            let formatter = NumberFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.numberStyle = .decimal
+            formatter.usesGroupingSeparator = false
+            formatter.maximumFractionDigits = 2
+            return "\(formatter.string(from: NSNumber(value: meters)) ?? "—") m"
+        }
+    }
+
+    private static func decimal(_ input: String) throws -> Double {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.utf8.count <= 64,
+              text.range(of: #"^(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)$"#, options: .regularExpression) != nil else {
+            throw FloorMeasurementError.invalidInput
+        }
+        if text.contains(",") {
+            let parts = text.split(separator: ",", omittingEmptySubsequences: false)
+            guard parts.count == 2, !text.contains(".") else { throw FloorMeasurementError.invalidInput }
+            // "1,000" could be one or one thousand. Never silently choose.
+            if (1...3).contains(parts[0].count), parts[0].first != "0", parts[1].count == 3 {
+                throw FloorMeasurementError.invalidInput
+            }
+        }
+        guard let value = Double(text.replacingOccurrences(of: ",", with: ".")), value.isFinite else {
+            throw FloorMeasurementError.invalidInput
+        }
+        return value
+    }
+}
+
+enum ListingWireDetails {
+    static let maxBytes = 16_000
+
+    enum ValidationError: LocalizedError {
+        case tooLarge
+        var errorDescription: String? {
+            "The listing details and measurements are too large to sync. Shorten the details and try again."
+        }
+    }
+
+    static func merged(_ listing: Listing) throws -> [String: String] {
+        var details = listing.details ?? [:]
+        if let plan = listing.floorMeasurements {
+            details[FloorMeasurementPlan.wireKey] = try plan.encodedWireValue()
+        }
+        if let allow = listing.allowSearchIndexing {
+            details[Listing.searchIndexingKey] = allow ? "true" : "false"
+        }
+        // The server bounds JSON.stringify(details) to 16,000 characters.
+        // Bounding UTF-8 bytes is conservative for its UTF-16 length check and
+        // includes escaping/envelope overhead rather than only the inner plan.
+        let encoded = try JSONSerialization.data(withJSONObject: details, options: [.sortedKeys, .withoutEscapingSlashes])
+        guard encoded.count <= maxBytes else { throw ValidationError.tooLarge }
+        return details
+    }
+}
+
+// Actual prior Listing stored properties and complete tolerant decoder.
+// Frozen extracted bytes SHA256 11575071741368043702693b4ff373a002bff1928197ed7bfcf6973bf0f4ff53
+struct LegacySnapshotListing: Identifiable, Codable, Hashable {
+    enum Status: String, Codable, CaseIterable {
+        case draft, uploading, processing, ready, expired
+    }
+
+    var id = UUID()
+    var address: String
+    var beds: Int
+    var baths: Double
+    var sqft: Int
+    var price: Money
+    var status: Status = .draft
+    /// Seeded demo listings show sample stats; real listings never do.
+    var isSample = false
+    /// Which business type created this listing. Optional so listings saved
+    /// before this field existed still decode — those legacy listings are
+    /// treated as real estate (the original default). A gym only ever sees gym
+    /// listings; real-estate sold houses never leak into Food mode.
+    var spaceTypeRaw: String? = nil
+    var createdAt = Date()
+    /// Optional so listings saved before these fields existed still decode.
+    var soldAt: Date? = nil
+    var zillowURL: String? = nil
+    /// The enhanced photo (path relative to Documents) shown as the card's hero
+    /// and in the public app link.
+    var mainPhotoRelPath: String? = nil
+    /// Cached geocode of `address` so we don't re-hit the geocoder every open.
+    var latitude: Double? = nil
+    var longitude: Double? = nil
+    /// Short description used by non-real-estate businesses in place of beds/baths
+    /// (e.g. "Rooftop cocktail bar", "12,000 sq ft event hall").
+    var tagline: String? = nil
+    /// Industry-specific fields keyed by DetailField.key (e.g. cuisineType,
+    /// membershipPrice, weeklySpecial). Optional/Codable-safe.
+    var details: [String: String]? = nil
+    /// Editable room measurements, separate from a RoomPlan scan. The raw
+    /// details value stays available when a newer wire version cannot decode.
+    var floorMeasurements: FloorMeasurementPlan? = nil
+    /// Per-listing client identity. Never changes the account owner's brand kit.
+    var clientContact: ListingClientContact? = nil
+    var clientContactDirty: Bool? = nil
+    var clientContactLoaded: Bool? = nil
+    var clientPhotoRelPath: String? = nil
+    var clientPhotoDirty: Bool? = nil
+
+    // MARK: - Cloud sync (local-first + cloud-publish, contract §4)
+    // All optional so listings saved before these fields existed still decode.
+    /// The server `listings.id` adopted on first publish. Once set, every server
+    /// call for this listing (uploads, publish) uses this id, not the local `id`.
+    var serverID: UUID? = nil
+    /// The shared workspace that owns this server row (including team listings).
+    var serverOrgID: UUID? = nil
+    /// The selected workspace when this local draft was created; retries never retarget it.
+    var cloudDraftOrgID: UUID? = nil
+    /// True for a row first discovered on another device. Optional for old snapshots.
+    var cloudImported: Bool? = nil
+    /// A complete cloud read no longer returned this listing. Keep local files,
+    /// but do not recreate or publish into a workspace whose access has changed.
+    var cloudUnavailable: Bool? = nil
+    /// Keeps automatic draft sync within the account that created this draft.
+    var cloudSyncOwnerID: UUID? = nil
+    /// Retained across account changes so returning to the same account can
+    /// reattach an authorized row without creating another listing.
+    var cloudDetachedServerID: UUID? = nil
+    /// Initial facts fingerprint survives an interrupted first create.
+    var cloudCreateFingerprint: String? = nil
+    /// Response metadata used only while adopting a create receipt.
+    var cloudCreateReplayed: Bool? = nil
+    /// The published tour's server slug (never fabricated from the local UUID).
+    var shareSlug: String? = nil
+    /// The full public share URL returned by the server (e.g. rendprop.com/f/<slug>).
+    var shareURL: String? = nil
+
+    // MARK: - Added 2026-09-03 (audit). ALL optional → snapshots from older builds decode.
+    /// Exterior photo (Documents-relative) used to ground the AI aerial intro so
+    /// the model sees THIS property. Defaults to the main photo when unset.
+    var exteriorPhotoRelPath: String? = nil
+    /// City/State (never the street) from the geocode placemark — sent to the
+    /// aerial generator as scenery context. Street address never leaves the phone.
+    var regionLabel: String? = nil
+    /// The latest generated aerial clip (Documents-relative) + when it was made.
+    var aerialRelPath: String? = nil
+    var aerialGeneratedAt: Date? = nil
+    /// Human-readable reason the last render/publish failed (shown on the card /
+    /// detail so the user can retry instead of a listing stuck "Working on it").
+    var lastError: String? = nil
+    /// True when a local edit (sold, Zillow, details, photo) hasn't been PATCHed to
+    /// the server yet. Only meaningful once `serverID` is set.
+    var needsServerSync: Bool? = nil
+    /// Server `renders.id` of the published tour (from /renders/publish-app).
+    var publishedRenderID: UUID? = nil
+
+    // MARK: - Added 2026-09-04 (compliance wave W2-C). ALL optional → older snapshots decode.
+    /// The MLS-safe UNBRANDED link (`/u/<slug>`) the server returns as
+    /// `unbranded_url` on publish. The branded `/f/` link carries the agent card,
+    /// the CTA and the lead form; unbranded virtual-tour rules ban all three, and
+    /// the unbranded field is the one that syndicates to Zillow/Realtor.com.
+    /// Optional: tours published by an earlier build have none, so
+    /// `serverUnbrandedURL` derives it instead.
+    var unbrandedShareURL: String? = nil
+    /// The geocode's administrative area ("CA", "NC") — city/state only, never
+    /// the street. Drives the California AB 723 compliance banner without
+    /// re-geocoding on every open.
+    var stateCode: String? = nil
+
+    // MARK: - Added 2026-09-12 (1.0.2). Optional → older snapshots decode.
+    /// SEARCH-ENGINE OPT-IN for this listing's hosted tour page, answered by the
+    /// owner on the publish screen. nil = never asked (the server's own default
+    /// applies, which is `noindex`); false = they said no; true = they said yes.
+    ///
+    /// WHY IT IS A FIELD AND NOT A `details` KEY, which is where the server
+    /// reads it from: `ListingFormData.apply(to:)` sets `details = nil` for
+    /// every real-estate listing, so a flag parked in that bag would be wiped
+    /// the first time an agent tapped "Edit details" — silently un-listing a
+    /// page they had asked to be listed. `LiveAPIClient.listingBody` merges this
+    /// into the wire `details` under the key the tour host actually reads
+    /// (`allow_indexing` — services/edge/tour-host/src/player.ts,
+    /// `allowsIndexing`), so the transport is unchanged and the local truth
+    /// survives every edit path.
+    var allowSearchIndexing: Bool? = nil
+
+    /// The wire key for `allowSearchIndexing`, inside the listing's `details`
+    /// bag. `allowsIndexing()` accepts three spellings and checks them in the
+    /// order `allow_indexing`, `allowIndexing`, `search_indexing`, stopping at
+    /// the first one present — so this one wins, and it is the spelling the
+    /// Worker's own tests, its README and the sitemap all use.
+    static let searchIndexingKey = "allow_indexing"
+}
+
+extension LegacySnapshotListing {
+    enum CodingKeys: String, CodingKey {
+        case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
+             createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
+             tagline, details, floorMeasurements, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateReplayed, shareSlug, shareURL,
+             exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
+             lastError, needsServerSync, publishedRenderID,
+             unbrandedShareURL, stateCode, allowSearchIndexing,
+             clientContact, clientContactDirty, clientContactLoaded, clientPhotoRelPath, clientPhotoDirty
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id               = try c.decodeIfPresent(UUID.self,   forKey: .id) ?? UUID()
+        address          = try c.decodeIfPresent(String.self, forKey: .address) ?? ""
+        beds             = try c.decodeIfPresent(Int.self,    forKey: .beds) ?? 0
+        baths            = try c.decodeIfPresent(Double.self, forKey: .baths) ?? 0
+        sqft             = try c.decodeIfPresent(Int.self,    forKey: .sqft) ?? 0
+        price            = try c.decodeIfPresent(Money.self,  forKey: .price) ?? Money(cents: 0)
+        // Unknown status raw values (from a newer build) degrade to .draft
+        // instead of throwing the whole snapshot away.
+        let statusRaw    = try c.decodeIfPresent(String.self, forKey: .status)
+        status           = statusRaw.flatMap(Status.init(rawValue:)) ?? .draft
+        isSample         = try c.decodeIfPresent(Bool.self,   forKey: .isSample) ?? false
+        spaceTypeRaw     = try c.decodeIfPresent(String.self, forKey: .spaceTypeRaw)
+        createdAt        = try c.decodeIfPresent(Date.self,   forKey: .createdAt) ?? Date()
+        soldAt           = try c.decodeIfPresent(Date.self,   forKey: .soldAt)
+        zillowURL        = try c.decodeIfPresent(String.self, forKey: .zillowURL)
+        mainPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .mainPhotoRelPath)
+        latitude         = try c.decodeIfPresent(Double.self, forKey: .latitude)
+        longitude        = try c.decodeIfPresent(Double.self, forKey: .longitude)
+        tagline          = try c.decodeIfPresent(String.self, forKey: .tagline)
+        details          = try c.decodeIfPresent([String: String].self, forKey: .details)
+        // Unsupported or damaged measurement data must not discard the rest
+        // of a saved listing. Only an absent local field recovers raw wire data;
+        // an explicit null remains cleared, and a future typed value stays nil.
+        if c.contains(.floorMeasurements) {
+            if let candidate = try? c.decodeIfPresent(FloorMeasurementPlan.self, forKey: .floorMeasurements),
+               (try? candidate.validate()) != nil {
+                floorMeasurements = candidate
+            } else {
+                floorMeasurements = nil
+            }
+        } else {
+            floorMeasurements = FloorMeasurementPlan.decodeWireValue(details?[FloorMeasurementPlan.wireKey])
+        }
+        clientContact = try c.decodeIfPresent(ListingClientContact.self, forKey: .clientContact)
+        clientContactDirty = try c.decodeIfPresent(Bool.self, forKey: .clientContactDirty)
+        clientContactLoaded = try c.decodeIfPresent(Bool.self, forKey: .clientContactLoaded)
+        clientPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .clientPhotoRelPath)
+        clientPhotoDirty = try c.decodeIfPresent(Bool.self, forKey: .clientPhotoDirty)
+        serverID         = try c.decodeIfPresent(UUID.self,   forKey: .serverID)
+        serverOrgID      = try c.decodeIfPresent(UUID.self,   forKey: .serverOrgID)
+        cloudDraftOrgID  = try c.decodeIfPresent(UUID.self, forKey: .cloudDraftOrgID)
+        cloudImported    = try c.decodeIfPresent(Bool.self,   forKey: .cloudImported)
+        cloudUnavailable = try c.decodeIfPresent(Bool.self,   forKey: .cloudUnavailable)
+        cloudSyncOwnerID = try c.decodeIfPresent(UUID.self, forKey: .cloudSyncOwnerID)
+        cloudDetachedServerID = try c.decodeIfPresent(UUID.self, forKey: .cloudDetachedServerID)
+        cloudCreateFingerprint = try c.decodeIfPresent(String.self, forKey: .cloudCreateFingerprint)
+        cloudCreateReplayed = try c.decodeIfPresent(Bool.self, forKey: .cloudCreateReplayed)
+        shareSlug        = try c.decodeIfPresent(String.self, forKey: .shareSlug)
+        shareURL         = try c.decodeIfPresent(String.self, forKey: .shareURL)
+        exteriorPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .exteriorPhotoRelPath)
+        regionLabel      = try c.decodeIfPresent(String.self, forKey: .regionLabel)
+        aerialRelPath    = try c.decodeIfPresent(String.self, forKey: .aerialRelPath)
+        aerialGeneratedAt = try c.decodeIfPresent(Date.self,  forKey: .aerialGeneratedAt)
+        lastError        = try c.decodeIfPresent(String.self, forKey: .lastError)
+        needsServerSync  = try c.decodeIfPresent(Bool.self,   forKey: .needsServerSync)
+        publishedRenderID = try c.decodeIfPresent(UUID.self,  forKey: .publishedRenderID)
+        unbrandedShareURL = try c.decodeIfPresent(String.self, forKey: .unbrandedShareURL)
+        stateCode        = try c.decodeIfPresent(String.self, forKey: .stateCode)
+        allowSearchIndexing = try c.decodeIfPresent(Bool.self, forKey: .allowSearchIndexing)
+    }
+}
+
+enum LegacySnapshotWireDetails {
+    static let maxBytes = 16_000
+
+    enum ValidationError: LocalizedError {
+        case tooLarge
+        var errorDescription: String? {
+            "The listing details and measurements are too large to sync. Shorten the details and try again."
+        }
+    }
+
+    static func merged(_ listing: LegacySnapshotListing) throws -> [String: String] {
+        var details = listing.details ?? [:]
+        if let plan = listing.floorMeasurements {
+            details[FloorMeasurementPlan.wireKey] = try plan.encodedWireValue()
+        }
+        if let allow = listing.allowSearchIndexing {
+            details[Listing.searchIndexingKey] = allow ? "true" : "false"
+        }
+        // The server bounds JSON.stringify(details) to 16,000 characters.
+        // Bounding UTF-8 bytes is conservative for its UTF-16 length check and
+        // includes escaping/envelope overhead rather than only the inner plan.
+        let encoded = try JSONSerialization.data(withJSONObject: details, options: [.sortedKeys, .withoutEscapingSlashes])
+        guard encoded.count <= maxBytes else { throw ValidationError.tooLarge }
+        return details
+    }
+}

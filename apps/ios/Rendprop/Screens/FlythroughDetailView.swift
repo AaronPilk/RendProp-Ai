@@ -10408,15 +10408,16 @@ struct FloorPlanView: View {
     private var measurementsSection: some View {
         let current = model.listings.first(where: { $0.id == listing.id }) ?? listing
         let count = current.floorMeasurements?.rooms.count ?? 0
+        let outlineCount = current.floorMeasurements?.outlines.count ?? 0
         return VStack(alignment: .leading, spacing: 12) {
             Label("Measurements", systemImage: "ruler")
                 .font(.rpTitle).foregroundStyle(Theme.ink)
-            Text("Enter room dimensions to draw a floor plan. Use a tape, laser measure or an optional phone estimate — furnished rooms work too.")
+            Text("Enter room dimensions or draw the home's wall outline. Review areas in the worksheet and download a plan. Furnished rooms work too.")
                 .font(.rpBody).foregroundStyle(Theme.inkDim)
             NavigationLink {
                 FloorMeasurementsView(listing: current)
             } label: {
-                Label(count == 0 ? "Enter measurements" : "Open measurements · \(count) rooms", systemImage: "ruler")
+                Label(outlineCount > 0 ? "Open measurements · \(outlineCount) outlines" : count == 0 ? "Enter measurements" : "Open measurements · \(count) rooms", systemImage: "ruler")
                     .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 14)
                     .background(Theme.accent).foregroundStyle(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

@@ -899,6 +899,8 @@ enum FloorMeasurementError: Error, LocalizedError, Equatable {
     case unsupportedVersion, tooManyRooms, invalidName, invalidDimension
     case invalidPosition, invalidFloor, invalidRotation, duplicateRoom
     case overlappingRooms, invalidInput, invalidInches, tooLarge, invalidDate
+    case tooManyOutlines, invalidVertices, selfIntersectingOutline, duplicateOutline
+    case overlappingOutlines, invalidDeduction, deductionOutsideOutline, overlappingDeductions
 
     var errorDescription: String? {
         switch self {
@@ -915,7 +917,265 @@ enum FloorMeasurementError: Error, LocalizedError, Equatable {
         case .invalidInches: return "Enter inches from 0 up to, but not including, 12."
         case .tooLarge: return "This measurement plan is too large to save."
         case .invalidDate: return "This measurement plan has an invalid update date."
+        case .tooManyOutlines: return "A measurement plan can contain up to 12 area outlines."
+        case .invalidVertices: return "An outline needs 3 to 64 distinct corners and walls from 0.1 to 100 meters."
+        case .selfIntersectingOutline: return "The outline crosses or doubles back on itself. Check its wall directions."
+        case .duplicateOutline: return "Each outline must have its own identity."
+        case .overlappingOutlines: return "Area outlines on the same floor cannot overlap. Shared walls are allowed."
+        case .invalidDeduction: return "An open-below area must name a finished area on the same floor to subtract from."
+        case .deductionOutsideOutline: return "Keep the open-below outline fully inside its finished area, without touching its walls."
+        case .overlappingDeductions: return "Open-below deductions on the same floor cannot overlap."
         }
+    }
+}
+
+/// Coordinates are meters relative to the plan origin. The last corner joins
+/// the first implicitly; repeating it would create a zero-length wall.
+struct FloorMeasurementPoint: Codable, Hashable {
+    var x: Double
+    var y: Double
+}
+
+enum FloorMeasurementAreaCategory: String, Codable, CaseIterable, Hashable, Identifiable {
+    case finished, unfinished, garage, porch, openBelow
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .finished: return "Finished"
+        case .unfinished: return "Unfinished"
+        case .garage: return "Garage"
+        case .porch: return "Porch / deck"
+        case .openBelow: return "Open below"
+        }
+    }
+}
+
+struct FloorMeasurementOutline: Codable, Hashable, Identifiable {
+    var id = UUID()
+    var name: String
+    var floor: Int = 0
+    var vertices: [FloorMeasurementPoint]
+    var category: FloorMeasurementAreaCategory = .finished
+    var deductionFromID: UUID? = nil
+    var heightMeters: Double? = nil
+    /// The entered walls remain authoritative. This records that the final
+    /// joining edge was calculated rather than independently measured.
+    var closingWallCalculated: Bool = false
+    var source: FloorMeasurementSource = .manual
+
+    var areaMeters2: Double { abs(FloorMeasurementPolygon.signedArea(vertices)) }
+    var edgeLengthsMeters: [Double] {
+        guard vertices.count > 1 else { return [] }
+        return vertices.indices.map {
+            FloorMeasurementPolygon.distance(vertices[$0], vertices[($0 + 1) % vertices.count])
+        }
+    }
+    var perimeterMeters: Double { edgeLengthsMeters.reduce(0, +) }
+    var floorName: String { FloorMeasurementPlan.floorName(floor) }
+
+    func validate() throws {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              name.count <= 40,
+              name.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+            throw FloorMeasurementError.invalidName
+        }
+        guard (-2...20).contains(floor) else { throw FloorMeasurementError.invalidFloor }
+        if let heightMeters { try FloorMeasurementInput.validateDimension(heightMeters) }
+        guard (3...64).contains(vertices.count) else { throw FloorMeasurementError.invalidVertices }
+        guard vertices.allSatisfy({ $0.x.isFinite && $0.y.isFinite
+            && (-200...200).contains($0.x) && (-200...200).contains($0.y) }) else {
+            throw FloorMeasurementError.invalidPosition
+        }
+        let tolerance = FloorMeasurementPolygon.tolerance(vertices)
+        for i in vertices.indices {
+            for j in vertices.indices where j > i {
+                guard FloorMeasurementPolygon.distance(vertices[i], vertices[j]) > tolerance else {
+                    throw FloorMeasurementError.invalidVertices
+                }
+            }
+        }
+        guard edgeLengthsMeters.allSatisfy({ $0 >= 0.1 - tolerance && $0 <= 100 + tolerance }) else {
+            throw FloorMeasurementError.invalidVertices
+        }
+        for i in vertices.indices {
+            let a = vertices[i], b = vertices[(i + 1) % vertices.count]
+            let c = vertices[(i + 2) % vertices.count]
+            // Collinear forward walls are allowed. A reversed run occupies the
+            // same boundary twice and cannot define a simple enclosed area.
+            if FloorMeasurementPolygon.orientation(a, b, c, tolerance: tolerance) == 0,
+               (b.x - a.x) * (c.x - b.x) + (b.y - a.y) * (c.y - b.y) < 0 {
+                throw FloorMeasurementError.selfIntersectingOutline
+            }
+            for j in vertices.indices where j > i {
+                if j == i + 1 || (i == 0 && j == vertices.count - 1) { continue }
+                if FloorMeasurementPolygon.intersects(a, b, vertices[j], vertices[(j + 1) % vertices.count],
+                                                       tolerance: tolerance) {
+                    throw FloorMeasurementError.selfIntersectingOutline
+                }
+            }
+        }
+        guard areaMeters2.isFinite, areaMeters2 > tolerance * perimeterMeters else {
+            throw FloorMeasurementError.invalidVertices
+        }
+    }
+}
+
+extension FloorMeasurementOutline {
+    enum CodingKeys: String, CodingKey {
+        case id, name, floor, vertices, category, deductionFromID, heightMeters, closingWallCalculated, source
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        floor = try c.decodeIfPresent(Int.self, forKey: .floor) ?? 0
+        vertices = try c.decode([FloorMeasurementPoint].self, forKey: .vertices)
+        category = try c.decodeIfPresent(FloorMeasurementAreaCategory.self, forKey: .category) ?? .finished
+        deductionFromID = try c.decodeIfPresent(UUID.self, forKey: .deductionFromID)
+        heightMeters = try c.decodeIfPresent(Double.self, forKey: .heightMeters)
+        closingWallCalculated = try c.decodeIfPresent(Bool.self, forKey: .closingWallCalculated) ?? false
+        source = try c.decodeIfPresent(FloorMeasurementSource.self, forKey: .source) ?? .manual
+    }
+}
+
+struct FloorMeasurementWorksheetRow: Hashable, Identifiable {
+    let id: UUID
+    let name: String
+    let floor: Int
+    let category: FloorMeasurementAreaCategory
+    let grossAreaMeters2: Double
+    let deductionAreaMeters2: Double
+    let netAreaMeters2: Double
+    let perimeterMeters: Double
+    let source: FloorMeasurementSource
+}
+
+/// Foundation-only simple-polygon predicates. Tolerance only absorbs floating
+/// point roundoff at shared boundaries, not a measurable gap or overlap.
+private enum FloorMeasurementPolygon {
+    static func distance(_ a: FloorMeasurementPoint, _ b: FloorMeasurementPoint) -> Double {
+        hypot(a.x - b.x, a.y - b.y)
+    }
+
+    static func tolerance(_ vertices: [FloorMeasurementPoint]) -> Double {
+        vertices.reduce(1) { max($0, abs($1.x), abs($1.y)) } * Double.ulpOfOne * 64
+    }
+
+    static func signedArea(_ vertices: [FloorMeasurementPoint]) -> Double {
+        guard let origin = vertices.first, vertices.count >= 3 else { return 0 }
+        // Translating to the first corner avoids cancellation from large plan
+        // positions when a small outline is far from the origin.
+        return vertices.indices.dropFirst().dropLast().reduce(0) { sum, i in
+            sum + cross(origin, vertices[i], vertices[i + 1]) / 2
+        }
+    }
+
+    static func cross(_ a: FloorMeasurementPoint, _ b: FloorMeasurementPoint, _ c: FloorMeasurementPoint) -> Double {
+        (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+    }
+
+    static func orientation(_ a: FloorMeasurementPoint, _ b: FloorMeasurementPoint,
+                            _ c: FloorMeasurementPoint, tolerance: Double) -> Int {
+        let value = cross(a, b, c)
+        let bound = tolerance * max(1, distance(a, b))
+        return value > bound ? 1 : (value < -bound ? -1 : 0)
+    }
+
+    static func onSegment(_ p: FloorMeasurementPoint, _ a: FloorMeasurementPoint,
+                          _ b: FloorMeasurementPoint, tolerance: Double) -> Bool {
+        orientation(a, b, p, tolerance: tolerance) == 0
+            && p.x >= min(a.x, b.x) - tolerance && p.x <= max(a.x, b.x) + tolerance
+            && p.y >= min(a.y, b.y) - tolerance && p.y <= max(a.y, b.y) + tolerance
+    }
+
+    static func intersects(_ a: FloorMeasurementPoint, _ b: FloorMeasurementPoint,
+                           _ c: FloorMeasurementPoint, _ d: FloorMeasurementPoint, tolerance: Double) -> Bool {
+        let abC = orientation(a, b, c, tolerance: tolerance), abD = orientation(a, b, d, tolerance: tolerance)
+        let cdA = orientation(c, d, a, tolerance: tolerance), cdB = orientation(c, d, b, tolerance: tolerance)
+        return (abC * abD < 0 && cdA * cdB < 0)
+            || (abC == 0 && onSegment(c, a, b, tolerance: tolerance))
+            || (abD == 0 && onSegment(d, a, b, tolerance: tolerance))
+            || (cdA == 0 && onSegment(a, c, d, tolerance: tolerance))
+            || (cdB == 0 && onSegment(b, c, d, tolerance: tolerance))
+    }
+
+    /// Winding-number containment explicitly excludes boundary points.
+    static func strictlyContains(_ vertices: [FloorMeasurementPoint], _ p: FloorMeasurementPoint,
+                                 tolerance: Double) -> Bool {
+        var winding = 0
+        for i in vertices.indices {
+            let a = vertices[i], b = vertices[(i + 1) % vertices.count]
+            if onSegment(p, a, b, tolerance: tolerance) { return false }
+            if a.y <= p.y && b.y > p.y && orientation(a, b, p, tolerance: tolerance) > 0 { winding += 1 }
+            if a.y > p.y && b.y <= p.y && orientation(a, b, p, tolerance: tolerance) < 0 { winding -= 1 }
+        }
+        return winding != 0
+    }
+
+    static func fullyContains(_ outer: [FloorMeasurementPoint], _ inner: [FloorMeasurementPoint]) -> Bool {
+        let epsilon = tolerance(outer + inner)
+        guard inner.allSatisfy({ strictlyContains(outer, $0, tolerance: epsilon) }) else { return false }
+        // Vertices alone are insufficient for a concave boundary: an inner
+        // edge can leave and re-enter a notch between two contained corners.
+        for i in outer.indices {
+            for j in inner.indices {
+                if intersects(outer[i], outer[(i + 1) % outer.count], inner[j], inner[(j + 1) % inner.count],
+                              tolerance: epsilon) { return false }
+            }
+        }
+        return true
+    }
+
+    private static func segmentEntersInterior(_ a: FloorMeasurementPoint, _ b: FloorMeasurementPoint,
+                                              of polygon: [FloorMeasurementPoint], tolerance: Double) -> Bool {
+        let dx = b.x - a.x, dy = b.y - a.y, lengthSquared = dx * dx + dy * dy
+        var cuts = [0.0, 1.0]
+        // When boundaries meet exactly at a polygon corner, there may be no
+        // proper edge crossing and no vertex strictly inside. Split at every
+        // such meeting instead of testing just the complete wall midpoint.
+        for point in polygon where onSegment(point, a, b, tolerance: tolerance) {
+            let along = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared
+            cuts.append(min(1, max(0, along)))
+        }
+        cuts.sort()
+        for i in cuts.indices.dropLast() where cuts[i + 1] > cuts[i] {
+            let midpoint = (cuts[i] + cuts[i + 1]) / 2
+            if strictlyContains(polygon, .init(x: a.x + midpoint * dx, y: a.y + midpoint * dy),
+                                tolerance: tolerance) { return true }
+        }
+        return false
+    }
+
+    static func interiorsOverlap(_ first: [FloorMeasurementPoint], _ second: [FloorMeasurementPoint]) -> Bool {
+        let epsilon = tolerance(first + second)
+        if first.contains(where: { strictlyContains(second, $0, tolerance: epsilon) })
+            || second.contains(where: { strictlyContains(first, $0, tolerance: epsilon) }) { return true }
+        let firstWinding = signedArea(first), secondWinding = signedArea(second)
+        for i in first.indices {
+            let a = first[i], b = first[(i + 1) % first.count]
+            for j in second.indices {
+                let c = second[j], d = second[(j + 1) % second.count]
+                let abC = orientation(a, b, c, tolerance: epsilon), abD = orientation(a, b, d, tolerance: epsilon)
+                let cdA = orientation(c, d, a, tolerance: epsilon), cdB = orientation(c, d, b, tolerance: epsilon)
+                if abC * abD < 0 && cdA * cdB < 0 { return true }
+                if abC == 0 && abD == 0 {
+                    let dx = b.x - a.x, dy = b.y - a.y, length = distance(a, b)
+                    let cAlong = ((c.x - a.x) * dx + (c.y - a.y) * dy) / length
+                    let dAlong = ((d.x - a.x) * dx + (d.y - a.y) * dy) / length
+                    let overlap = min(length, max(cAlong, dAlong)) - max(0, min(cAlong, dAlong))
+                    let sameInteriorSide = firstWinding * secondWinding * (dx * (d.x - c.x) + dy * (d.y - c.y)) > 0
+                    if overlap > epsilon && sameInteriorSide { return true }
+                }
+            }
+            if segmentEntersInterior(a, b, of: second, tolerance: epsilon) { return true }
+        }
+        for i in second.indices {
+            let a = second[i], b = second[(i + 1) % second.count]
+            if segmentEntersInterior(a, b, of: first, tolerance: epsilon) { return true }
+        }
+        return false
     }
 }
 
@@ -1005,12 +1265,16 @@ extension FloorMeasurementRoom {
 struct FloorMeasurementPlan: Codable, Hashable {
     static let wireKey = "floor_measurements_v1"
     static let maximumRooms = 24
+    static let maximumOutlines = 12
     static let maximumWireBytes = 10_000
 
     var version: Int = 1
     var unit: FloorMeasurementUnit = .feet
     var rooms: [FloorMeasurementRoom] = []
+    var outlines: [FloorMeasurementOutline] = []
     var updatedAt = Date()
+
+    var isEmpty: Bool { rooms.isEmpty && outlines.isEmpty }
 
     var hasOverlaps: Bool {
         for i in rooms.indices {
@@ -1029,8 +1293,10 @@ struct FloorMeasurementPlan: Codable, Hashable {
     }
 
     func validate() throws {
-        guard version == 1 else { throw FloorMeasurementError.unsupportedVersion }
+        guard version == 1 || version == 2,
+              version == 2 || outlines.isEmpty else { throw FloorMeasurementError.unsupportedVersion }
         guard rooms.count <= Self.maximumRooms else { throw FloorMeasurementError.tooManyRooms }
+        guard outlines.count <= Self.maximumOutlines else { throw FloorMeasurementError.tooManyOutlines }
         guard updatedAt.timeIntervalSinceReferenceDate.isFinite else { throw FloorMeasurementError.invalidDate }
         var ids = Set<UUID>()
         for room in rooms {
@@ -1038,7 +1304,73 @@ struct FloorMeasurementPlan: Codable, Hashable {
             guard ids.insert(room.id).inserted else { throw FloorMeasurementError.duplicateRoom }
         }
         guard !hasOverlaps else { throw FloorMeasurementError.overlappingRooms }
+        for outline in outlines {
+            try outline.validate()
+            guard ids.insert(outline.id).inserted else { throw FloorMeasurementError.duplicateOutline }
+        }
+        try validateOutlineRelationships()
         guard try wireData().count <= Self.maximumWireBytes else { throw FloorMeasurementError.tooLarge }
+    }
+
+    /// Each floor has exactly one area basis. Outlined floors use classified
+    /// outlines only; rectangle-only floors retain their entered room areas.
+    /// A room inside an outlined floor never increases its worksheet total.
+    func worksheet() throws -> [FloorMeasurementWorksheetRow] {
+        try validate()
+        let outlinedFloors = Set(outlines.map(\.floor))
+        var rows = outlines.map { outline in
+            let deduction = outlines.filter { $0.deductionFromID == outline.id }.reduce(0) { $0 + $1.areaMeters2 }
+            return FloorMeasurementWorksheetRow(id: outline.id, name: outline.name, floor: outline.floor,
+                category: outline.category, grossAreaMeters2: outline.areaMeters2,
+                deductionAreaMeters2: deduction,
+                netAreaMeters2: outline.category == .openBelow ? 0 : max(0, outline.areaMeters2 - deduction),
+                perimeterMeters: outline.perimeterMeters, source: outline.source)
+        }
+        rows += rooms.filter { !outlinedFloors.contains($0.floor) }.map { room in
+            let area = room.widthMeters * room.lengthMeters
+            return FloorMeasurementWorksheetRow(id: room.id, name: room.name, floor: room.floor,
+                category: .finished, grossAreaMeters2: area, deductionAreaMeters2: 0, netAreaMeters2: area,
+                perimeterMeters: 2 * (room.widthMeters + room.lengthMeters), source: room.source)
+        }
+        return rows.sorted {
+            if $0.floor != $1.floor { return $0.floor < $1.floor }
+            if $0.name != $1.name { return $0.name < $1.name }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+
+    private func validateOutlineRelationships() throws {
+        let solids = outlines.filter { $0.category != .openBelow }
+        let deductions = outlines.filter { $0.category == .openBelow }
+        guard solids.allSatisfy({ $0.deductionFromID == nil }) else { throw FloorMeasurementError.invalidDeduction }
+        for deduction in deductions {
+            guard let parentID = deduction.deductionFromID,
+                  let parent = solids.first(where: { $0.id == parentID }),
+                  parent.category == .finished, parent.floor == deduction.floor else {
+                throw FloorMeasurementError.invalidDeduction
+            }
+            guard FloorMeasurementPolygon.fullyContains(parent.vertices, deduction.vertices) else {
+                throw FloorMeasurementError.deductionOutsideOutline
+            }
+        }
+        for i in solids.indices {
+            for j in solids.indices where j > i && solids[i].floor == solids[j].floor {
+                if FloorMeasurementPolygon.interiorsOverlap(solids[i].vertices, solids[j].vertices) {
+                    throw FloorMeasurementError.overlappingOutlines
+                }
+            }
+        }
+        for i in deductions.indices {
+            for j in deductions.indices where j > i && deductions[i].floor == deductions[j].floor {
+                if FloorMeasurementPolygon.interiorsOverlap(deductions[i].vertices, deductions[j].vertices) {
+                    throw FloorMeasurementError.overlappingDeductions
+                }
+            }
+        }
+        for parent in solids {
+            let deducted = deductions.filter { $0.deductionFromID == parent.id }.reduce(0) { $0 + $1.areaMeters2 }
+            guard deducted.isFinite, parent.areaMeters2 - deducted >= 0 else { throw FloorMeasurementError.invalidDeduction }
+        }
     }
 
     func encodedWireValue() throws -> String {
@@ -1067,6 +1399,22 @@ struct FloorMeasurementPlan: Codable, Hashable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(self)
+    }
+}
+
+extension FloorMeasurementPlan {
+    enum CodingKeys: String, CodingKey { case version, unit, rooms, outlines, updatedAt }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        unit = try c.decode(FloorMeasurementUnit.self, forKey: .unit)
+        rooms = try c.decode([FloorMeasurementRoom].self, forKey: .rooms)
+        // Version one did not have this key. Version two requires the array so
+        // a malformed new payload cannot quietly fall back to stale rectangles.
+        outlines = version == 1 ? try c.decodeIfPresent([FloorMeasurementOutline].self, forKey: .outlines) ?? []
+            : try c.decode([FloorMeasurementOutline].self, forKey: .outlines)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
     }
 }
 
@@ -1198,6 +1546,17 @@ enum FloorMeasurementInput {
 
     static func display(_ meters: Double, unit: FloorMeasurementUnit) -> String {
         guard meters.isFinite, meters >= 0, meters <= 100 else { return "—" }
+        return formattedLength(meters, unit: unit)
+    }
+
+    /// An aggregate can exceed one wall's input limit (64 walls × 100 m).
+    /// Keep dimension entry validation independent from perimeter display.
+    static func displayPerimeter(_ meters: Double, unit: FloorMeasurementUnit) -> String {
+        guard meters.isFinite, (0...6_400).contains(meters) else { return "—" }
+        return formattedLength(meters, unit: unit)
+    }
+
+    private static func formattedLength(_ meters: Double, unit: FloorMeasurementUnit) -> String {
         switch unit {
         case .feet:
             let totalInches = Int((meters / 0.0254).rounded())

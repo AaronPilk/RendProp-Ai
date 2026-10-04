@@ -101,6 +101,25 @@ const privateWire = JSON.stringify({
   }],
   updatedAt: 1_000,
 });
+const privateOutlineWire = JSON.stringify({
+  version: 2,
+  unit: "meters",
+  rooms: [],
+  outlines: [{
+    name: "OutlineOnlyMeasurementSentinel",
+    floor: 0,
+    category: "finished",
+    vertices: [
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+      { x: 5, y: 2 },
+      { x: 2, y: 2 },
+      { x: 2, y: 5 },
+      { x: 0, y: 5 },
+    ],
+  }],
+  updatedAt: 1_000,
+});
 const details = {
   floor_measurements_v1: privateWire,
   floor_measurements_v2: { private: "FutureOnlyMeasurementSentinel" },
@@ -149,6 +168,7 @@ function assertPrivateAbsent(value: unknown) {
       "FutureOnlyMeasurementSentinel",
       "InternalOnlyMeasurementSentinel",
       "CaseOnlyMeasurementSentinel",
+      "OutlineOnlyMeasurementSentinel",
     ]
   ) {
     assert(
@@ -204,6 +224,27 @@ Deno.test("public filtering does not mutate the owner listing read or its measur
   );
 });
 
+Deno.test("actual tour response omits version-two outlines under the existing wire key while the owner read preserves them", async () => {
+  const f = await fixture();
+  f.state.listing = listing();
+  f.state.listing.details.floor_measurements_v1 = privateOutlineWire;
+  const response = await f.handler(request());
+  assertEquals(response.status, 200);
+  const payload = await response.json();
+  assertPrivateAbsent(payload);
+  assertEquals(payload.floorplan_url, details.floorplan_url);
+  const ownedResponse = await f.ownerRead(
+    new Request("https://edge-fixture.invalid/listings"),
+  );
+  assertEquals(ownedResponse.status, 200);
+  const owned = await ownedResponse.json();
+  assertEquals(owned[0].details.floor_measurements_v1, privateOutlineWire);
+  assertEquals(
+    JSON.parse(owned[0].details.floor_measurements_v1).outlines[0].name,
+    "OutlineOnlyMeasurementSentinel",
+  );
+});
+
 Deno.test("actual public response changes only the reserved private details namespace", async () => {
   const current = await fixture(), prior = await fixture(true);
   current.state.listing = listing();
@@ -240,5 +281,26 @@ Deno.test("copied actual-route bypass control exposes the sentinel and is reject
   assert(
     rejected,
     "Acceptance must detect bypassing the actual response filter",
+  );
+});
+
+Deno.test("copied actual-route bypass control exposes a version-two outline and is rejected", async () => {
+  const unsafe = await fixture(true);
+  unsafe.state.listing = listing();
+  unsafe.state.listing.details.floor_measurements_v1 = privateOutlineWire;
+  const payload = await (await unsafe.handler(request())).json();
+  assertEquals(
+    payload.listing.details.floor_measurements_v1,
+    privateOutlineWire,
+  );
+  let rejected = false;
+  try {
+    assertPrivateAbsent(payload);
+  } catch {
+    rejected = true;
+  }
+  assert(
+    rejected,
+    "Acceptance must detect leaking an outline-only version-two plan",
   );
 });

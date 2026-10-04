@@ -164,6 +164,7 @@
 		FFDE430BDCDF2D536BE7BBCD /* HomeListingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB70E1D3371927DB43F686D /* HomeListingsView.swift */; };
 		8A2B4E9A070B5D1A499F4993 /* FloorMeasurementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A029F82C6D91949EF45D49 /* FloorMeasurementsView.swift */; };
 		0D03A71F3525C76A1190378D /* RoomMeasureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6482062BAF59C7778ECDB84 /* RoomMeasureView.swift */; };
+		E5A9C88C79F17690EF02F33E /* FloorMeasurementWorksheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B237875EE276CFF9CAC5088 /* FloorMeasurementWorksheetView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -338,6 +339,7 @@
 		FCFC63BFC51CC5B643E6ACC9 /* BuildFourteenShots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildFourteenShots.swift; sourceTree = "<group>"; };
 		A9A029F82C6D91949EF45D49 /* FloorMeasurementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorMeasurementsView.swift; sourceTree = "<group>"; };
 		E6482062BAF59C7778ECDB84 /* RoomMeasureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMeasureView.swift; sourceTree = "<group>"; };
+		0B237875EE276CFF9CAC5088 /* FloorMeasurementWorksheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorMeasurementWorksheetView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -663,6 +665,7 @@
 			isa = PBXGroup;
 			children = (
 				A9A029F82C6D91949EF45D49 /* FloorMeasurementsView.swift */,
+				0B237875EE276CFF9CAC5088 /* FloorMeasurementWorksheetView.swift */,
 				B16A4437E4B485054F71E2EB /* AdminChurnView.swift */,
 				50A3FBBCA2E71A45901C2031 /* AdminCohortsView.swift */,
 				9CD9CD0718417F2C5891A5EF /* AdminConsoleView.swift */,
@@ -892,6 +895,7 @@
 			files = (
 				0D03A71F3525C76A1190378D /* RoomMeasureView.swift in Sources */,
 				8A2B4E9A070B5D1A499F4993 /* FloorMeasurementsView.swift in Sources */,
+				E5A9C88C79F17690EF02F33E /* FloorMeasurementWorksheetView.swift in Sources */,
 				4AEA3C8C014C2773A6D75CF5 /* APIClient.swift in Sources */,
 				83A435504C4EE4DD8F85E624 /* AdminChurnView.swift in Sources */,
 				02F19376A9CB330823DBD0A4 /* AdminCohortsView.swift in Sources */,

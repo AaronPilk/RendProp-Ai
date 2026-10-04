@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[3]
 CLIENT = ROOT / "apps/ios/Rendprop/Networking/LiveAPIClient.swift"
 APP = ROOT / "apps/ios/Rendprop/RendpropApp.swift"
 SYNC = ROOT / "apps/ios/Rendprop/Networking/WorkspaceSync.swift"
+EDITOR = ROOT / "apps/ios/Rendprop/Screens/FloorMeasurementsView.swift"
 
 
 def block(source, marker):
@@ -32,10 +33,10 @@ def block(source, marker):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit"])
+    parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit", "discard-outline-only", "outline-fingerprint", "legacy-v2-accept", "drop-local-raw-mirror"])
     args = parser.parse_args()
     out = Path(tempfile.mkdtemp(prefix="rendprop-floor-measurement-sync-", dir="/tmp"))
-    source_bytes = {p: p.read_bytes() for p in [CLIENT, APP, SYNC]}
+    source_bytes = {p: p.read_bytes() for p in [CLIENT, APP, SYNC, EDITOR]}
     client, app, sync = (source_bytes[p].decode() for p in [CLIENT, APP, SYNC])
     actual_sync = sync
     tolerant_map = block(client, "    struct TolerantStringMap: Decodable")
@@ -60,6 +61,16 @@ def main():
                 FloorMeasurementPlan.decodeWireValue(listing.details?[FloorMeasurementPlan.wireKey]) else { return false }"""
         assert sync.count(before) == 1
         sync = sync.replace(before, "// injected unsafe legacy comparison ignoring independent edits")
+    elif args.inject_fault == "discard-outline-only":
+        before = "if let plan = listing.floorMeasurements {"
+        assert sync.count(before) == 1
+        sync = sync.replace(before, "if let plan = listing.floorMeasurements, plan.version != 2 || !plan.rooms.isEmpty {")
+    elif args.inject_fault == "outline-fingerprint":
+        before = "try fingerprintFacts(listing, details: ListingWireDetails.merged(listing))"
+        assert sync.count(before) == 1
+        sync = sync.replace(before, """var rectanglesOnly = listing
+        if rectanglesOnly.floorMeasurements?.rooms.isEmpty == true { rectanglesOnly.floorMeasurements = nil }
+        return try fingerprintFacts(rectanglesOnly, details: ListingWireDetails.merged(rectanglesOnly))""")
     elif args.inject_fault == "rewrite-raw-keys":
         tolerant_map = '''    struct TolerantStringMap: Decodable {
         let value: [String: String]
@@ -96,7 +107,12 @@ def main():
         "__MODIFY__": block(app, "    func modify(_ id: UUID,"),
         "__MARK_DIRTY__": block(app, "    func markDirty(_ id: UUID)"),
         "__SYNC_LISTING__": block(app, "    func syncListing(_ id: UUID)"),
+        "__EDITOR_PERSIST__": block(source_bytes[EDITOR].decode(), "    private func persist(_ candidate: FloorMeasurementPlan)"),
     }
+    if args.inject_fault == "drop-local-raw-mirror":
+        before = "details[FloorMeasurementPlan.wireKey] = wire"
+        assert replacements["__EDITOR_PERSIST__"].count(before) == 1
+        replacements["__EDITOR_PERSIST__"] = replacements["__EDITOR_PERSIST__"].replace(before, "_ = wire // injected missing raw snapshot mirror")
     # The Listing DTO still uses snake-case conversion. Its freeform dictionary
     # must therefore preserve keys itself on both create and PATCH readback.
     for marker in ["json: try listingBody(listing, forPatch: false)", "json: try listingBody(listing, forPatch: true)"]:
@@ -109,22 +125,40 @@ def main():
     checks.write_text(source)
     compiled_sync = out / "WorkspaceSync.swift"
     compiled_sync.write_text(sync)
-    models = [ROOT / ("apps/ios/Rendprop/" + path) for path in ["Models/Listing.swift", "Models/ListingClientContact.swift", "Models/Money.swift", "Networking/NativeReelDraft.swift"]]
-    sources = [CLIENT, APP, SYNC] + models
+    models = [ROOT / ("apps/ios/Rendprop/" + path) for path in ["Models/Listing.swift", "Models/ListingClientContact.swift", "Models/Money.swift", "Networking/NativeReelDraft.swift", "Auth/AnonymousAdoptionRecovery.swift", "Auth/AdoptionLocalBindings.swift"]]
+    legacy_template = Path(__file__).with_name("LegacyModels.swift.template")
+    legacy_bytes = legacy_template.read_bytes()
+    legacy = legacy_bytes.decode().replace("FloorMeasurement", "LegacyFloorMeasurement").replace("ListingWireDetails", "LegacyListingWireDetails")
+    if args.inject_fault == "legacy-v2-accept":
+        before = "guard version == 1 else { throw LegacyFloorMeasurementError.unsupportedVersion }"
+        assert legacy.count(before) == 1
+        legacy = legacy.replace(before, "guard version == 1 || version == 2 else { throw LegacyFloorMeasurementError.unsupportedVersion }")
+    compiled_legacy = out / "LegacyModels.swift"
+    compiled_legacy.write_text(legacy)
+    sources = [CLIENT, APP, SYNC, EDITOR] + models
     source_bytes.update({p: p.read_bytes() for p in models})
     receipt = {"networkCalls": 0, "cameraCalls": 0, "userFilesAccessed": 0, "productionMutations": 0,
                "injectedFault": args.inject_fault,
                "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(source_bytes[p]).hexdigest() for p in sources},
+               "harnessHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+                                 for p in [Path(__file__), Path(__file__).with_name("Fixture.swift.template"), legacy_template]},
                "compiledExtractedBodyHashes": {key: hashlib.sha256(value.encode()).hexdigest() for key, value in replacements.items()},
+               "compiledAcceptanceSha256": hashlib.sha256(source.encode()).hexdigest(),
                "actualSyncSha256": hashlib.sha256(actual_sync.encode()).hexdigest(),
-               "compiledSyncSha256": hashlib.sha256(sync.encode()).hexdigest(), "commands": []}
-    compile_command = ["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library", *map(str, models), str(compiled_sync), str(checks), "-o", str(out / "checks")]
+               "compiledSyncSha256": hashlib.sha256(sync.encode()).hexdigest(),
+               "legacyReaderTemplateSha256": hashlib.sha256(legacy_bytes).hexdigest(),
+               "compiledLegacyReaderSha256": hashlib.sha256(legacy.encode()).hexdigest(), "commands": []}
+    compile_command = ["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library", *map(str, models), str(compiled_sync), str(compiled_legacy), str(checks), "-o", str(out / "checks")]
     expected = {"drop-wire": "Typed plan overrides stale wire independently of generic details",
                 "drop-fingerprint": "Measurement-only edits change the create fingerprint",
                 "ignore-dirty": "Dirty manual plan survives an older remote snapshot",
                 "drop-replay-adopt": "Unedited replay adopts the office measurement plan",
                 "rewrite-raw-keys": "Actual DTO decoder retains the exact measurements wire key",
-                "legacy-ignore-edit": "Legacy fingerprint cannot hide a new typed measurement edit"}.get(args.inject_fault)
+                "legacy-ignore-edit": "Legacy fingerprint cannot hide a new typed measurement edit",
+                "discard-outline-only": "Outline-only plan survives actual create and PATCH body assembly",
+                "outline-fingerprint": "Outline-only edits change the actual create fingerprint",
+                "legacy-v2-accept": "Frozen v1 reader refuses version-two outlines instead of interpreting them as an empty rectangle plan",
+                "drop-local-raw-mirror": "Actual editor saves the exact encoded outline wire and typed plan atomically in the same Listing"}.get(args.inject_fault)
     for label, command in [("compile", compile_command), ("run", [str(out / "checks")])]:
         result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)
         log = out / (label + ".log")

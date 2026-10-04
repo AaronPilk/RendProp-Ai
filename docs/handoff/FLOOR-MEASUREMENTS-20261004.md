@@ -1,5 +1,9 @@
 # Floor plan measurements — 4 October 2026
 
+The later [outline and worksheet expansion](MEASUREMENT-OUTLINES-WORKSHEET-20261004.md)
+adds irregular geometry and classified area calculations. The delivery and
+receipts below describe the earlier rectangular-room implementation.
+
 ## Delivery state
 
 Implemented on isolated branch `feat/floor-plan-measurements-20261004`, based on

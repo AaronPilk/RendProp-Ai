@@ -341,14 +341,14 @@ final class BetaPolishUITests: XCTestCase {
         scrollTo(export); export.tap()
         XCTAssertTrue(app.navigationBars["Export room plan"].waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertTrue(app.buttons["measurements.sharePDF"].exists, "The actual rendered plan has an image and PDF export")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Drawn from entered room dimensions")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Drawn from entered measurements")).firstMatch.exists)
         attach("measured-plan-export")
         app.navigationBars["Export room plan"].buttons["Done"].tap()
         let threeD = app.buttons["measurements.view3D"]
         scrollTo(threeD); threeD.tap()
-        XCTAssertTrue(app.navigationBars["3D room layout"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.navigationBars["3D measurement layout"].waitForExistence(timeout: 15), app.debugDescription)
         attach("measured-room-layout-3d")
-        app.navigationBars["3D room layout"].buttons["Done"].tap()
+        app.navigationBars["3D measurement layout"].buttons["Done"].tap()
         app.navigationBars["Measurements"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["Floor plan"].waitForExistence(timeout: 10))
         scrollTo(measurements)
@@ -377,6 +377,226 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10))
         XCTAssertEqual(roomButtons.count, 0, "Deleting the last room must not resurrect the raw cloud plan")
         attach("measured-plan-cleared")
+    }
+
+    func testIrregularOutlinesDeductAreaExportReopenAndDeleteLinkedOpenings() {
+        launchDetail()
+        openDetail("detail.floorPlan", title: "Floor plan")
+        let measurements = app.buttons["floorPlan.measurements"]
+        scrollTo(measurements); measurements.tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
+        let units = app.segmentedControls["measurements.units"]
+        scrollTo(units); units.buttons["Metres"].tap()
+
+        // This concave L is 16 m², not the 24 m² bounding rectangle.
+        beginMeasuredOutline("Main L")
+        let mainWalls = [("6", "Right →"), ("4", "Down ↓"), ("2", "Left ←"),
+                         ("2", "Up ↑"), ("4", "Left ←"), ("2", "Up ↑")]
+        for (index, wall) in mainWalls.enumerated() {
+            addOutlineWall(length: wall.0, direction: wall.1, expectedCount: index + 1)
+        }
+        reviewOutlineClosingWall()
+        XCTAssertTrue(app.staticTexts["Your entered walls close the outline."].exists, app.debugDescription)
+        XCTAssertFalse(element("measurements.calculatedClosingWarning").exists,
+                       "All six measured walls close the L; none may be relabeled as calculated")
+        saveMeasuredOutline()
+        assertFinishedOutlineArea("16.00")
+
+        // A 1 m² opening shares its parent's plan origin, remains fully inside
+        // the L, and is explicitly deducted once from that parent's area.
+        beginMeasuredOutline("Opening")
+        chooseOutlineMenu("measurements.outlineCategory", label: "Open below")
+        chooseOutlineMenu("measurements.deductionParent", label: "Main L")
+        for (index, wall) in [("1", "Right →"), ("1", "Down ↓"), ("1", "Left ←")].enumerated() {
+            addOutlineWall(length: wall.0, direction: wall.1, expectedCount: index + 1)
+        }
+        let startX = app.textFields["measurements.startX"]
+        scrollMeasurementFormTo(startX); replaceTrailingMeasurementField(startX, with: "1")
+        dismissMeasurementKeyboard()
+        let startY = app.textFields["measurements.startY"]
+        scrollMeasurementFormTo(startY); replaceTrailingMeasurementField(startY, with: "0.5")
+        dismissMeasurementKeyboard()
+        XCTAssertEqual(startX.value as? String, "1", app.debugDescription)
+        XCTAssertEqual(startY.value as? String, "0.5", app.debugDescription)
+        reviewOutlineClosingWall()
+        XCTAssertTrue(element("measurements.calculatedClosingWarning").exists, app.debugDescription)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "calculated, not measured")).firstMatch.exists,
+                      "The unentered final opening wall must remain explicitly calculated")
+        attach("outline-opening-calculated-closing-wall")
+        saveMeasuredOutline()
+
+        let outlineButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "measurements.outline."))
+        XCTAssertEqual(outlineButtons.count, 2, app.debugDescription)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "measurements.room.")).count, 0)
+        assertFinishedOutlineArea("15.00")
+        let calculation = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Main L", "16.00 m² − 1.00 m² deductions = 15.00 m²")).firstMatch
+        XCTAssertTrue(calculation.exists, app.debugDescription)
+        let deduction = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "1.00 m² deducted from Main L")).firstMatch
+        XCTAssertTrue(deduction.exists, app.debugDescription)
+        attach("irregular-outline-area-worksheet")
+
+        // Closing/reopening the editor must preserve precise walls and the
+        // measured closing basis while a metadata-only name edit is saved.
+        let mainButton = outlineButtons.matching(NSPredicate(format: "label CONTAINS %@", "Main L")).firstMatch
+        scrollTo(mainButton); mainButton.tap()
+        XCTAssertTrue(app.navigationBars["Edit floor outline"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(app.staticTexts["measurements.wallCount"].label, "6 walls entered")
+        XCTAssertFalse(element("measurements.calculatedClosingWarning").exists, app.debugDescription)
+        let name = app.textFields["measurements.outlineName"]
+        scrollMeasurementFormTo(name); name.tap(); replace(name, with: "Main L verified")
+        dismissMeasurementKeyboard()
+        saveMeasuredOutline()
+        assertFinishedOutlineArea("15.00")
+
+        let export = app.buttons["measurements.export"]
+        scrollTo(export); export.tap()
+        XCTAssertTrue(app.navigationBars["Export room plan"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.buttons["measurements.sharePDF"].exists,
+                      "The actual polygon drawing and worksheet must produce a downloadable PDF")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Drawn from entered measurements")).firstMatch.exists)
+        attach("irregular-outline-plan-and-pdf-export")
+        app.navigationBars["Export room plan"].buttons["Done"].tap()
+
+        let threeD = app.buttons["measurements.view3D"]
+        scrollTo(threeD); threeD.tap()
+        XCTAssertTrue(app.navigationBars["3D measurement layout"].waitForExistence(timeout: 15), app.debugDescription)
+        attach("irregular-outline-polygon-layout-3d")
+        app.navigationBars["3D measurement layout"].buttons["Done"].tap()
+
+        app.navigationBars["Measurements"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Floor plan"].waitForExistence(timeout: 10), app.debugDescription)
+        scrollTo(measurements)
+        XCTAssertTrue(measurements.label.contains("2 outlines"), measurements.label)
+        measurements.tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
+        assertFinishedOutlineArea("15.00")
+        XCTAssertEqual(outlineButtons.count, 2, "Both outlines survive reopening the saved listing")
+        attach("irregular-outline-plan-reopened")
+
+        let renamedMain = outlineButtons.matching(NSPredicate(format: "label CONTAINS %@", "Main L verified")).firstMatch
+        scrollTo(renamedMain); renamedMain.tap()
+        XCTAssertTrue(app.navigationBars["Edit floor outline"].waitForExistence(timeout: 10), app.debugDescription)
+        let delete = app.buttons["measurements.deleteOutline"]
+        scrollMeasurementFormTo(delete); delete.tap()
+        let confirm = app.buttons["Delete outline and linked openings"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Delete Main L verified and its 1 linked opening?"].exists,
+                      "The parent-deletion confirmation must explicitly name its linked opening")
+        confirm.tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(outlineButtons.count, 0)
+        XCTAssertFalse(app.buttons["measurements.export"].exists, "An empty plan cannot export stale geometry")
+        app.navigationBars["Measurements"].buttons.element(boundBy: 0).tap()
+        scrollTo(measurements)
+        XCTAssertEqual(measurements.label, "Enter measurements")
+        measurements.tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(outlineButtons.count, 0, "Deleting the final outline and linked opening must not resurrect raw cloud geometry")
+        XCTAssertFalse(app.buttons["measurements.export"].exists)
+        attach("irregular-outline-and-linked-opening-cleared")
+    }
+
+    private func beginMeasuredOutline(_ name: String) {
+        let add = app.buttons["measurements.addOutline"]
+        scrollTo(add); add.tap()
+        XCTAssertTrue(app.navigationBars["Draw a floor outline"].waitForExistence(timeout: 10), app.debugDescription)
+        let field = app.textFields["measurements.outlineName"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5), app.debugDescription)
+        field.tap(); field.typeText(name)
+        dismissMeasurementKeyboard()
+    }
+
+    private func addOutlineWall(length: String, direction: String, expectedCount: Int) {
+        let field = app.textFields["measurements.wallLength"]
+        scrollMeasurementFormTo(field); field.tap(); field.typeText(length)
+        dismissMeasurementKeyboard()
+        chooseOutlineMenu("measurements.wallDirection", label: direction)
+        let add = app.buttons["measurements.addWall"]
+        scrollMeasurementFormTo(add); add.tap()
+        let count = app.staticTexts["measurements.wallCount"]
+        let expected = "\(expectedCount) wall\(expectedCount == 1 ? "" : "s") entered"
+        let updated = NSPredicate { _, _ in count.exists && count.label == expected }
+        expectation(for: updated, evaluatedWith: app); waitForExpectations(timeout: 5)
+        XCTAssertFalse(element("measurements.outlineError").exists, app.debugDescription)
+    }
+
+    private func chooseOutlineMenu(_ id: String, label: String) {
+        let picker = app.buttons[id]
+        scrollMeasurementFormTo(picker); picker.tap()
+        let option = app.buttons[label].firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout: 5), app.debugDescription)
+        option.tap()
+    }
+
+    private func reviewOutlineClosingWall() {
+        let close = app.buttons["measurements.closeOutline"]
+        scrollMeasurementFormTo(close)
+        XCTAssertTrue(close.isEnabled, app.debugDescription); close.tap()
+        XCTAssertFalse(element("measurements.outlineError").exists, app.debugDescription)
+        let save = app.buttons["measurements.saveOutline"]
+        let ready = NSPredicate { _, _ in save.exists && save.isEnabled }
+        expectation(for: ready, evaluatedWith: app); waitForExpectations(timeout: 5)
+    }
+
+    private func saveMeasuredOutline() {
+        let save = app.buttons["measurements.saveOutline"]
+        let ready = NSPredicate { _, _ in save.exists && save.isEnabled }
+        expectation(for: ready, evaluatedWith: app); waitForExpectations(timeout: 5)
+        save.tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(element("measurements.outlineError").exists, app.debugDescription)
+    }
+
+    private func assertFinishedOutlineArea(_ value: String) {
+        let total = app.staticTexts.matching(NSPredicate(format: "label == %@", "Finished outline area: \(value) m²")).firstMatch
+        scrollTo(total)
+        XCTAssertTrue(total.exists, app.debugDescription)
+    }
+
+    private func dismissMeasurementKeyboard() {
+        guard app.keyboards.firstMatch.exists else { return }
+        let done = app.buttons["Done"].firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 5), app.debugDescription); done.tap()
+        let hidden = NSPredicate { _, _ in !self.app.keyboards.firstMatch.exists }
+        expectation(for: hidden, evaluatedWith: app); waitForExpectations(timeout: 5)
+    }
+
+    private func replaceTrailingMeasurementField(_ field: XCUIElement, with value: String) {
+        // A center tap on these right-aligned fields puts the caret before the
+        // digits. The old generic helper then inserted instead of replacing.
+        // Tap the trailing text edge to select an end caret before deletion.
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.999, dy: 0.5)).tap()
+        replace(field, with: value)
+        XCTAssertEqual(field.value as? String, value,
+                       "Position entry must contain exactly the requested synthetic coordinate: \(app.debugDescription)")
+    }
+
+    private func scrollMeasurementFormTo(_ control: XCUIElement) {
+        XCTAssertTrue(app.collectionViews.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        guard let form = app.collectionViews.allElementsBoundByIndex.reversed().first(where: {
+            $0.frame.width >= app.frame.width - 8 && $0.isHittable
+        }) else { XCTFail("No frontmost measurement form: \(app.debugDescription)"); return }
+        let navigation = app.navigationBars.allElementsBoundByIndex.reversed().first { $0.isHittable }
+        var rewinds = 0
+        for _ in 0..<18 {
+            let top = max(form.frame.minY, navigation?.frame.maxY ?? form.frame.minY) + 8
+            var bottom = min(form.frame.maxY, app.frame.maxY) - 28
+            if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY - 8) }
+            let height = max(0, bottom - top)
+            XCTAssertGreaterThan(height, 80, app.debugDescription)
+            let origin = form.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0))
+            let upper = origin.withOffset(CGVector(dx: 0, dy: top - form.frame.minY + height * 0.2))
+            let lower = origin.withOffset(CGVector(dx: 0, dy: top - form.frame.minY + height * 0.8))
+            guard control.exists else {
+                if rewinds < 4 { upper.press(forDuration: 0.01, thenDragTo: lower); rewinds += 1 }
+                else { lower.press(forDuration: 0.01, thenDragTo: upper) }
+                continue
+            }
+            if control.frame.height > 0, control.frame.minY >= top, control.frame.maxY <= bottom, control.isHittable { return }
+            if control.frame.minY < top { upper.press(forDuration: 0.01, thenDragTo: lower) }
+            else { lower.press(forDuration: 0.01, thenDragTo: upper) }
+        }
+        XCTFail("Measurement control did not enter the form viewport: \(control.debugDescription)\n\(app.debugDescription)")
     }
 
     private func addMeasuredRoom(_ name: String, length: String, width: String) {

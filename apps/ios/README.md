@@ -7,9 +7,11 @@ workflows, and connects a named account's workspace with
 backend; this is no longer an offline-only prototype.
 
 The [Measurements addition](../../docs/floor-plan-measurements.md) is implemented
-on `feat/floor-plan-measurements-20261004`: named room dimensions in feet/inches
-or metres, an editable floor layout, 2D/PDF export, 3D room boxes and optional
-ARKit point-to-point estimates. It retains existing scans/uploads and uses the
+on `feat/measurement-outlines-worksheet-20261004`: named room dimensions in
+feet/inches or metres, irregular wall outlines, categorized area worksheets,
+image and all-floors PDF export, 3D shapes and optional ARKit estimates.
+Calculated closing walls stay labeled; linked open-below deductions subtract
+once. It retains existing scans/uploads and uses the
 existing listing-details sync envelope. It is **not included in the released
 builds below**. Physical AR accuracy and Files/Photos delivery need owner checks.
 
