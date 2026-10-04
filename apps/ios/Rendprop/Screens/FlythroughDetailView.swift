@@ -653,6 +653,10 @@ struct FlythroughDetailView: View {
                     }
                     .accessibilityIdentifier("listing.productionPlan")
                 }
+                if !currentListing.isSample {
+                    DesktopStudioCard().padding(16)
+                        .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
+                }
                 tourSection
                 if let smoothing = tour?.motionSmoothing {
                     Text(smoothing == "unavailable"
@@ -738,7 +742,7 @@ struct FlythroughDetailView: View {
         .navigationDestination(isPresented: $showPhotosScreen) {
             PhotoStudioView(listing: currentListing, entry: .photos)
         }
-        .fullScreenCover(item: $openedFile) { item in
+        .fullScreenCover(item: $openedFile, onDismiss: { loadFiles(force: true) }) { item in
             ListingFileViewer(item: item)
         }
         // "Make a reel" opens REEL STUDIO, with this listing's photos and its
@@ -1406,14 +1410,22 @@ struct FlythroughDetailView: View {
                 Text(item.dateLabel)
                     .font(.caption2).foregroundStyle(Theme.inkDim)
                     .lineLimit(1).minimumScaleFactor(0.8)
+                // Reserve the status line so adjacent thumbnails keep their
+                // top edges aligned when just one version is selected.
+                Label("Selected for listing", systemImage: "checkmark.circle.fill")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(Theme.good)
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                    .opacity(item.selectedForListing ? 1 : 0)
+                    .accessibilityHidden(!item.selectedForListing)
             }
         }
         .buttonStyle(ScalePressStyle())
-        // OUTSIDE the button's label, not inside it: an overlay applied here is a
-        // sibling above the button and gets its own taps. Inside the label it
-        // would be swallowed by the row's own gesture.
-        .overlay(alignment: .topTrailing) { photoSaveBadge(item) }
         .accessibilityLabel(Text("Photo. \(item.dateLabel). Opens before and after."))
+        .accessibilityValue(item.selectedForListing ? "Selected for listing" : "Not selected for listing")
+        .accessibilityIdentifier("listing.filePhoto.\(item.id)")
+        // Keep the save action outside the label AND outside the open button's
+        // accessibility modifiers, so VoiceOver does not call Save an opener.
+        .overlay(alignment: .topTrailing) { photoSaveBadge(item) }
         .contextMenu { fileMenu(item) }
     }
 
@@ -1435,6 +1447,7 @@ struct FlythroughDetailView: View {
         .padding(4)
         .accessibilityLabel(Text(done ? "This photo is in your Photos app"
                                       : "Save this photo to your Photos app"))
+        .accessibilityIdentifier("listing.savePhoto.\(item.id)")
     }
 
     /// What happened to the last save, in a colour and with an icon rather than a
@@ -2856,6 +2869,9 @@ struct ListingMediaItem: Identifiable, Hashable, Sendable {
     /// one. Nil for every other kind, and nil for a photo that is its own before.
     let originalURL: URL?
     let createdAt: Date
+    /// Local publication choice, resolved by the background file scan. Separate
+    /// from saved-to-Photos state and from completed cloud publication.
+    var selectedForListing = false
 
     /// True when opening this plays something rather than showing it.
     var isVideo: Bool {
@@ -3161,6 +3177,8 @@ extension ListingMediaItem {
         // information the first listing already contained.
         let photoDirectory = EnhancedPhoto.directory(for: request.listingID)
         let photoEntries = DiskScan.entries(of: photoDirectory)
+        let selectedIDs = (try? EnhancedPhoto.loadForListing(listingID: request.listingID))
+            .map { Set($0.map(\.id)) } ?? []
         for clip in DiskScan.motionClips(in: photoEntries) {
             items.append(ListingMediaItem(id: "clip-\(clip.name)", kind: .motionClip,
                                           url: clip.url, originalURL: nil,
@@ -3173,7 +3191,8 @@ extension ListingMediaItem {
             items.append(ListingMediaItem(id: "photo-\(photo.id)", kind: .photo,
                                           url: photo.enhancedURL,
                                           originalURL: separateOriginal ? photo.originalURL : nil,
-                                          createdAt: entry.createdAt))
+                                          createdAt: entry.createdAt,
+                                          selectedForListing: selectedIDs.contains(photo.id)))
         }
         let plan = floorPlansDirectory
             .appendingPathComponent("\(request.listingID.uuidString).usdz")
@@ -3500,7 +3519,10 @@ private struct ListingFileViewer: View {
             // The photo studio's own before/after view, unchanged. A photo with no
             // separate "before" on disk is its own before, exactly as
             // `EnhancedPhoto.loadAll` records it.
-            PhotoCompareView(photo: EnhancedPhoto(id: item.id,
+            // File-row identity is kind-prefixed; saved history uses the raw
+            // photo version id. Keep the initial publication action accurate.
+            let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
+            PhotoCompareView(photo: EnhancedPhoto(id: photoID,
                                                   originalURL: item.originalURL ?? item.url,
                                                   enhancedURL: item.url))
         case .floorPlan:
@@ -3844,6 +3866,7 @@ struct PhotoStudioView: View {
 
     @State private var photos: [EnhancedPhoto] = []
     @State private var libraryKind: PhotoVersionHistory.LibraryKind = .latest
+    @State private var selectedPhotoIDs: Set<String> = []
     @State private var galleryRetrying = false
     private var libraryPhotos: [EnhancedPhoto] {
         guard entry == .photos, libraryKind != .latest else { return photos }
@@ -4290,7 +4313,7 @@ struct PhotoStudioView: View {
             }, onCancel: { showCamera = false })
             .ignoresSafeArea()
         }
-        .fullScreenCover(item: $compare) { p in
+        .fullScreenCover(item: $compare, onDismiss: { loadExisting() }) { p in
             PhotoCompareView(photo: p)
         }
         .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
@@ -4422,7 +4445,7 @@ struct PhotoStudioView: View {
 
     private var photoGrid: some View {
         LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(libraryPhotos) { p in photoCell(p) }
+            ForEach(libraryPhotos) { p in photoCell(p, selectedForListing: selectedPhotoIDs.contains(p.id)) }
         }
         // New AI edits and deletions settle into the grid instead of
         // popping — keyed on count so only inserts/removes animate.
@@ -4438,16 +4461,21 @@ struct PhotoStudioView: View {
     /// Selection: an edit from the bar is waiting for its targets, so a tap
     /// ticks the photo instead. The wand is not drawn — a tap that changes one
     /// photo while the screen is asking which photos to change is a trap.
-    @ViewBuilder private func photoCell(_ p: EnhancedPhoto) -> some View {
+    @ViewBuilder private func photoCell(_ p: EnhancedPhoto, selectedForListing: Bool) -> some View {
         // Wand overlay is a SIBLING of the thumb button (a Button
         // inside another Button's label never gets the tap).
         ZStack(alignment: .bottomTrailing) {
             if batchEdit == nil {
-                Button { compare = p } label: { thumb(p).overlay { busyOverlay(p) } }
+                Button { compare = p } label: {
+                    thumb(p, selectedForListing: entry == .photos && selectedForListing)
+                        .overlay { busyOverlay(p) }
+                }
                     .buttonStyle(ScalePressStyle())
                     .accessibilityLabel(Text(busyPhotoIDs.contains(p.id)
                                              ? "Photo — the AI is working on this one"
                                              : "Photo — opens before-and-after compare"))
+                    .accessibilityValue(entry == .photos
+                                        ? (selectedForListing ? "Selected for listing" : "Not selected for listing") : "")
                     .contextMenu { photoMenu(p) }
                 if !busyPhotoIDs.contains(p.id), entry != .photos || libraryKind == .latest { wandButton(p) }
                 // THE COVER, on the surface. It was a long-press and nothing
@@ -4830,19 +4858,29 @@ struct PhotoStudioView: View {
 
     // MARK: - Pieces
 
-    private func thumb(_ p: EnhancedPhoto) -> some View {
+    private func thumb(_ p: EnhancedPhoto, selectedForListing: Bool = false) -> some View {
         DetailPhotoThumb(url: p.enhancedURL, height: 150)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.border))
             .overlay(alignment: .topLeading) {
-                if isMain(p) {
-                    Label("Cover", systemImage: "star.fill")
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Theme.accent, in: Capsule())
-                        .foregroundStyle(Color.white)
-                        .padding(8)
-                }
+                VStack(alignment: .leading, spacing: 4) {
+                    if isMain(p) {
+                        Label("Cover", systemImage: "star.fill")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Theme.accent, in: Capsule())
+                            .foregroundStyle(Color.white)
+                    }
+                    if selectedForListing {
+                        Label("Selected for listing", systemImage: "checkmark.circle.fill")
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1).minimumScaleFactor(0.75)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Theme.good, in: Capsule())
+                            .foregroundStyle(Color.white)
+                            .accessibilityIdentifier("photos.listingSelected.\(p.id)")
+                    }
+                }.padding(8).allowsHitTesting(false)
             }
     }
 
@@ -5512,6 +5550,10 @@ struct PhotoStudioView: View {
     private func loadExisting() {
         photos = EnhancedPhoto.loadAll(listingID: listing.id)
         clips = SavedClip.loadAll(listingID: listing.id)
+        // Resolve actual publication choices on reload, not every body render.
+        // A broken history must never acquire a positive selection badge.
+        selectedPhotoIDs = (try? EnhancedPhoto.loadForListing(listingID: listing.id))
+            .map { Set($0.map(\.id)) } ?? []
     }
 
     /// Photos added AFTER a tour was published still belong on its page.

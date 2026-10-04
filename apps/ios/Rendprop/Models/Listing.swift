@@ -510,7 +510,7 @@ enum SpaceType: String, CaseIterable, Identifiable {
 
     var collectionTitle: String {
         switch self {
-        case .realEstate: return RealEstateRoleStore.current.isProducer ? "Client listings" : "My Homes"
+        case .realEstate: return RealEstateRoleStore.current.isProducer ? "Client listings" : "My Listings"
         case .venue:      return "My Venues"
         case .restaurant: return "My Places"
         case .retail:     return "My Stores"

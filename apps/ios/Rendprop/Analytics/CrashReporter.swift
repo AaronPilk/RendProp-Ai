@@ -98,18 +98,12 @@ final class CrashReporter: NSObject, MXMetricManagerSubscriber {
         report("error", props)
     }
 
-    // MARK: Metrics (one number, once a day)
+    // MARK: Routine performance metrics
 
     func didReceive(_ payloads: [MXMetricPayload]) {
-        for payload in payloads {
-            guard let launch = payload.applicationLaunchMetrics,
-                  let p50 = Self.medianMilliseconds(launch.histogrammedTimeToFirstDraw) else { continue }
-            report("error", [
-                "category": "metrics",
-                "launch_time_ms": String(p50),
-                "app_version": payload.latestApplicationVersion,
-            ])
-        }
+        // A launch-time histogram is a normal performance sample, not an app
+        // failure. Reporting it as `error` inflated the owner's error count.
+        // Actual crash, hang, CPU and disk diagnostics are reported above.
     }
 
     // MARK: Helpers

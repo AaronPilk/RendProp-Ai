@@ -75,6 +75,8 @@ jobs:
         run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
       - name: Listing unit fields and real estate metadata survive editing
         run: bash apps/ios/tests/run-listing-unit-form.sh
+      - name: Owner cohort metrics preserve numeric wire keys
+        run: bash apps/ios/tests/run-admin-cohort-decoding.sh --negative-controls
       - name: Floor measurements preserve dimensions, layout and wire data
         run: |
           bash apps/ios/tests/run-floor-measurements.sh

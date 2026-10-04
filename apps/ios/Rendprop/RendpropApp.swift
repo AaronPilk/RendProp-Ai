@@ -2834,8 +2834,8 @@ struct RootTabView: View {
                 .tag(0)
             HomeListingsView()
                 .tabItem {
-                    Label("\(SpaceType.current.spaceNounCap)s",
-                          systemImage: SpaceType.current.systemImage)
+                    Label(SpaceType.current == .realEstate ? "Listings" : "\(SpaceType.current.spaceNounCap)s",
+                          systemImage: SpaceType.current == .realEstate ? "list.bullet.rectangle" : SpaceType.current.systemImage)
                 }
                 .tag(1)
             ProfileView()
