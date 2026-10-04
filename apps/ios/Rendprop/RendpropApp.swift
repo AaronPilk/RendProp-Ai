@@ -4140,7 +4140,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         case .photos:    return "Add photos"
         case .photoStudio: return "AI Photo Studio"
         case .reel:      return "Make a reel"
-        case .floorPlan: return "Make a floor plan"
+        case .floorPlan: return "Floor plan & measurements"
         case .aerial:    return "Make an aerial shot"
         }
     }
@@ -4156,7 +4156,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
             ? "Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky"
             : "Declutter \u{00B7} furnish it \u{00B7} twilight \u{00B7} sky"
         case .reel:      return "Photos → one social video"
-        case .floorPlan: return "Scan in 3D or upload"
+        case .floorPlan: return "Measure, scan or upload"
         case .aerial:    return "A cinematic opening shot"
         }
     }

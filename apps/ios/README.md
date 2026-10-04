@@ -6,6 +6,13 @@ workflows, and connects a named account's workspace with
 [Studio](https://studio.rendprop.com/). The normal build uses the live Supabase
 backend; this is no longer an offline-only prototype.
 
+The [Measurements addition](../../docs/floor-plan-measurements.md) is implemented
+on `feat/floor-plan-measurements-20261004`: named room dimensions in feet/inches
+or metres, an editable floor layout, 2D/PDF export, 3D room boxes and optional
+ARKit point-to-point estimates. It retains existing scans/uploads and uses the
+existing listing-details sync envelope. It is **not included in the released
+builds below**. Physical AR accuracy and Files/Photos delivery need owner checks.
+
 ## Release status
 
 Internal **TestFlight 1.0.3 (43): AVAILABLE**, verified **3 October 2026 at

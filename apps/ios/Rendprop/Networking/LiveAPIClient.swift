@@ -541,7 +541,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     func createListing(_ listing: Listing) async throws -> Listing {
         guard let org = listing.cloudDraftOrgID else { throw CloudSyncError.identityChanged }
         var request = makeRequest(url: url(["listings"]), method: "POST",
-                                  json: listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())"))
+                                  json: try listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())"))
         request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         let data = try await execute(request)
         return mapListing(try decode(data))
@@ -553,7 +553,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let target = listing.serverID ?? listing.id
         let data = try await execute(makeRequest(url: url(["listings", target.uuidString]),
                                                  method: "PATCH",
-                                                 json: listingBody(listing, forPatch: true)))
+                                                 json: try listingBody(listing, forPatch: true)))
         return mapListing(try decode(data))
     }
 
@@ -1813,7 +1813,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// sends the FULL local truth, using JSON null to clear a server value the
     /// user removed (un-sell, drop the Zillow link, unknown beds) — a partial
     /// PATCH that omits them would leave stale values on the hosted page.
-    private func listingBody(_ l: Listing, forPatch: Bool) -> [String: Any] {
+    private func listingBody(_ l: Listing, forPatch: Bool) throws -> [String: Any] {
         var b: [String: Any] = [
             "space_type": l.spaceType.rawValue,
             "address": l.address,
@@ -1840,10 +1840,10 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // can never quietly index a page whose owner said no. A server that
         // does nothing with the key stores it harmlessly — publishing is
         // unaffected either way.
-        var details = l.details ?? [:]
-        if let allow = l.allowSearchIndexing {
-            details[Listing.searchIndexingKey] = allow ? "true" : "false"
-        }
+        // Measurements, like indexing, are independent of the generic form's
+        // details. Preserve all other keys, including an unsupported future
+        // measurements value, and reject invalid/oversized writes before HTTP.
+        let details = try ListingWireDetails.merged(l)
         if !details.isEmpty {
             b["details"] = details
         } else if forPatch {
@@ -1916,6 +1916,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         l.serverID = serverID
         l.serverOrgID = dto.orgId.flatMap(UUID.init(uuidString:))
         l.cloudCreateReplayed = dto.createReplayed
+        l.floorMeasurements = FloorMeasurementPlan.decodeWireValue(l.details?[FloorMeasurementPlan.wireKey])
         if let raw = l.details?[Listing.searchIndexingKey]?.lowercased() {
             l.allowSearchIndexing = ["true", "1", "yes"].contains(raw)
         }
@@ -1948,29 +1949,24 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     struct TolerantStringMap: Decodable {
         let value: [String: String]
 
-        private struct AnyKey: CodingKey {
-            var stringValue: String
-            var intValue: Int? { nil }
-            init?(stringValue: String) { self.stringValue = stringValue }
-            init?(intValue: Int) { return nil }
+        private struct Scalar: Decodable {
+            let value: String?
+            init(from decoder: Decoder) throws {
+                let c = try decoder.singleValueContainer()
+                if let s = try? c.decode(String.self) { value = s }
+                else if let i = try? c.decode(Int.self) { value = String(i) }
+                else if let d = try? c.decode(Double.self) { value = String(d) }
+                else if let b = try? c.decode(Bool.self) { value = String(b) }
+                else { value = nil } // null / arrays / objects remain tolerated.
+            }
         }
 
         init(from decoder: Decoder) throws {
-            var out: [String: String] = [:]
-            let c = try decoder.container(keyedBy: AnyKey.self)
-            for key in c.allKeys {
-                if let s = try? c.decode(String.self, forKey: key) {
-                    out[key.stringValue] = s
-                } else if let i = try? c.decode(Int.self, forKey: key) {
-                    out[key.stringValue] = String(i)
-                } else if let d = try? c.decode(Double.self, forKey: key) {
-                    out[key.stringValue] = String(d)
-                } else if let b = try? c.decode(Bool.self, forKey: key) {
-                    out[key.stringValue] = String(b)
-                }
-                // null / arrays / objects: skipped — tolerate, never throw.
-            }
-            value = out
+            // A String-keyed Dictionary bypasses convertFromSnakeCase. Dynamic
+            // details are stored keys, not DTO field names: rewriting them
+            // loses floor_measurements_v1, floorplan_url and future raw keys.
+            let c = try decoder.singleValueContainer()
+            value = try c.decode([String: Scalar].self).compactMapValues(\.value)
         }
     }
 

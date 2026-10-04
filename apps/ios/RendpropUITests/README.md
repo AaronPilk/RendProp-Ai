@@ -31,6 +31,7 @@ installed or tested a build.
 
 | Case | What it covers | Setup / limits |
 | --- | --- | --- |
+| `BetaPolishUITests/testManualMeasurementsCreateEditExportAndKeepScanChoice` | Actual measurement entry, two-room layout, overlap refusal, unit conversion, save/reopen, image/PDF export preview, 3D preview and clearing the last room | Synthetic listing and MockAPIClient. Does not open the AR estimator, invoke a camera, save to Photos, publish or prove live cloud sync. |
 | `DetailMetadataRegressionUITests` | Seven cold launches of the real listing detail/toolbox in Release, including samples, no media, source availability, photos, aerial, client contact, re-render navigation and industry labels | Simulator only; procedural local media and an offline identified fixture. Never invokes camera, AI, upload, render submission or contact save. Device archives exclude the fixture host. |
 | `RendpropUITests/testWalk` | Home, Add a home, Photo Studio, Reel Studio voice, Settings, owner console, routing, paywall and health screenshots (`01`–`09`) | Mock API. Missing controls are noted and skipped. Reel entry needs photos. |
 | `ReviewerWalk/testReviewerWalk` | Onboarding including the real-estate agent/photographer role choice, samples, profile, legal, deletion confirmation and AI consent (`r01`–`r11`) | Dedicated fresh app container before other cases create projects. Required screenshots, including `r01-role`, are asserted; sign-in `r10` is excluded for the mock identified session. Cancel is the only deletion action. |

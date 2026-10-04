@@ -340,9 +340,11 @@ enum CoachOffline {
             "Walk at a normal, steady pace — the way you'd show a friend around. Hold the phone " +
             "upright at chest height, keep it level, and turn the lights on first. One continuous " +
             "take, ending on your best shot."),
-        Topic(keywords: ["floor plan", "lidar", "roomplan"], reply:
-            "Scan a room in 3D by walking it with the phone — this needs an iPhone with LiDAR. Any " +
-            "other iPhone can upload a floor plan you already have instead."),
+        Topic(keywords: ["floor plan", "lidar", "roomplan", "measurements"], reply:
+            "Open a listing's Floor plan card → Measurements. Enter each room's length and width " +
+            "in feet and inches or metres, then arrange the rooms and export an image or PDF. " +
+            "Use tape or laser measurements, or the ruler button for an approximate phone distance. " +
+            "LiDAR phones can also scan rooms; any phone can upload a plan you already have."),
         // Two different things, two names: the server's free week (no card, no
         // account) and Apple's introductory offer on a paid plan (the only
         // "free trial" in the app — see OnboardingView).

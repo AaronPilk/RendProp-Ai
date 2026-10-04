@@ -231,7 +231,7 @@ private struct ListingToolboxGrid: View {
                 }
             }
             ListingToolLinkTile(
-                card: ListingToolCard(title: "Floor plan", sub: sample ? createFirst : "Scan in 3D or upload",
+                card: ListingToolCard(title: "Floor plan", sub: sample ? createFirst : "Measurements · scan · upload",
                                       icon: "cube.transparent", gradient: RPGradient.plan, dimmed: sample),
                 disabled: sample, accessibilityID: "detail.floorPlan",
                 destination: { AnyView(FloorPlanView(listing: destinationListing())) }
@@ -2656,6 +2656,9 @@ private enum PhotosLibrarySaver {
             "Rendprop isn't allowed to add to your Photos. Allow it in Settings → Rendprop → Photos, then try again."
         }
     }
+    struct ContextChanged: LocalizedError {
+        var errorDescription: String? { "Your account or workspace changed. Reopen the plan before exporting." }
+    }
 
     static func saveVideo(at url: URL) async throws {
         try await ensureAddAccess()
@@ -2664,8 +2667,9 @@ private enum PhotosLibrarySaver {
         }
     }
 
-    static func saveImage(_ image: UIImage) async throws {
+    @MainActor static func saveImage(_ image: UIImage, while canSave: @escaping @MainActor () -> Bool = { true }) async throws {
         try await ensureAddAccess()
+        guard !Task.isCancelled, canSave() else { throw ContextChanged() }
         try await PHPhotoLibrary.shared().performChanges {
             _ = PHAssetChangeRequest.creationRequestForAsset(from: image)
         }
@@ -10092,6 +10096,7 @@ struct LibraryImagePicker: UIViewControllerRepresentable {
 
 struct FloorPlanView: View {
     let listing: Listing
+    @EnvironmentObject private var model: AppModel
 
     @State private var showScanner = false
     @State private var showViewer = false       // 3D / AR (USDZ via QuickLook)
@@ -10187,6 +10192,7 @@ struct FloorPlanView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
+                measurementsSection
                 if RoomCaptureSession.isSupported {
                     VStack(spacing: 10) {
                         Image(systemName: planExists ? "cube.fill" : "cube.transparent")
@@ -10242,7 +10248,7 @@ struct FloorPlanView: View {
                     }
 
                     Divider().padding(.vertical, 6)
-                    Text("Already have blueprints or measurements?")
+                    Text("Already have a blueprint?")
                         .font(.rpKicker).foregroundStyle(Theme.inkDim)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     uploadSection
@@ -10254,7 +10260,7 @@ struct FloorPlanView: View {
                         Text(uploadedURL != nil ? "Floor plan ready" : "Add a floor plan")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
-                        Text("This device has no LiDAR for 3D scanning — but you can upload a PDF or image of your floor plan or blueprints. Your photos and video tour work on every device.")
+                        Text("You can enter room measurements above or upload a PDF or image here. LiDAR scanning is available on supported iPhones and iPads.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     }
@@ -10355,6 +10361,25 @@ struct FloorPlanView: View {
         } message: {
             Text(importError ?? "")
         }
+    }
+
+    private var measurementsSection: some View {
+        let current = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        let count = current.floorMeasurements?.rooms.count ?? 0
+        return VStack(alignment: .leading, spacing: 12) {
+            Label("Measurements", systemImage: "ruler")
+                .font(.rpTitle).foregroundStyle(Theme.ink)
+            Text("Enter room dimensions to draw a floor plan. Use a tape, laser measure or an optional phone estimate — furnished rooms work too.")
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+            NavigationLink {
+                FloorMeasurementsView(listing: current)
+            } label: {
+                Label(count == 0 ? "Enter measurements" : "Open measurements · \(count) rooms", systemImage: "ruler")
+                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Theme.accent).foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }.accessibilityIdentifier("floorPlan.measurements")
+        }.padding().background(Theme.card).clipShape(RoundedRectangle(cornerRadius: Theme.radius))
     }
 
     private func primaryButton(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
@@ -10918,9 +10943,12 @@ private struct PlanExport: Identifiable {
 /// Save / share a rendered room plan. "Saved to Photos" flips only when the
 /// Photos write actually succeeded (same rule as every other save on this
 /// screen — F-A-16).
-private struct PlanExportSheet: View {
+struct PlanExportSheet: View {
     let image: UIImage
     let address: String
+    var disclosure: String = "Dimensions and area are approximate — a phone scan is not a survey."
+    var additionalFile: URL? = nil
+    var canExport: () -> Bool = { true }
     @Environment(\.dismiss) private var dismiss
     @State private var saved = false
     @State private var isSaving = false
@@ -10939,7 +10967,7 @@ private struct PlanExportSheet: View {
                             .strokeBorder(Theme.border))
                         .accessibilityLabel(Text("Room plan image for \(address)"))
 
-                    Text("Dimensions and area are approximate — a phone scan is not a survey.")
+                    Text(disclosure)
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                         .multilineTextAlignment(.center)
@@ -10952,7 +10980,7 @@ private struct PlanExportSheet: View {
                             .background(Theme.accent).foregroundStyle(Color.white)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .disabled(saved || isSaving)
+                    .disabled(saved || isSaving || !canExport())
 
                     ShareLink(item: Image(uiImage: image),
                               preview: SharePreview(address.isEmpty ? "Room plan" : "Room plan — \(address)",
@@ -10962,6 +10990,17 @@ private struct PlanExportSheet: View {
                             .frame(maxWidth: .infinity).padding(.vertical, 13)
                             .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(!canExport())
+
+                    if let additionalFile {
+                        ShareLink(item: additionalFile) {
+                            Label("Share PDF · save to Files", systemImage: "doc.richtext")
+                                .font(.rpBody.weight(.semibold))
+                                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                                .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }.accessibilityIdentifier("measurements.sharePDF").disabled(!canExport())
                     }
 
                     if let saveError {
@@ -10986,14 +11025,16 @@ private struct PlanExportSheet: View {
     }
 
     private func save() {
+        guard canExport() else { saveError = "Your account or workspace changed. Reopen the plan before exporting."; return }
         isSaving = true
         saveError = nil
         let img = image
         Task {
             do {
-                try await PhotosLibrarySaver.saveImage(img)
+                try await PhotosLibrarySaver.saveImage(img, while: { canExport() })
                 await MainActor.run {
                     isSaving = false
+                    guard canExport() else { return }
                     saved = true
                     Haptics.success()
                 }

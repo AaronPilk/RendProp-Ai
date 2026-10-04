@@ -75,6 +75,19 @@ jobs:
         run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
       - name: Listing unit fields and real estate metadata survive editing
         run: bash apps/ios/tests/run-listing-unit-form.sh
+      - name: Floor measurements preserve dimensions, layout and wire data
+        run: |
+          bash apps/ios/tests/run-floor-measurements.sh
+          python3 tools/audit/floor-measurement-sync-20261004/run.py
+          for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit; do
+            python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault"
+          done
+      - name: Measured-plan Photos export fences permission and context changes
+        run: |
+          python3 tools/audit/floor-measurement-export-20261004/run.py
+          for fault in drop-context-check ignore-cancellation drop-completion-check; do
+            python3 tools/audit/floor-measurement-export-20261004/run.py --inject-fault "$fault"
+          done
       - name: Photographer preference, client drafts and confirmed contact transactions
         run: bash apps/ios/tests/run-client-contact.sh
       - name: App Store capture isolation and physical UI-test switch boundaries
@@ -306,6 +319,8 @@ jobs:
       # lockfile meant a clean install didn't resolve.
       - name: npm ci (clean, lockfile-driven)
         run: npm ci
+      - name: Private measurement drafts stay out of public listing facts
+        run: node --test ../../supabase/functions/tours/public-details-renderer_test.mjs
 
       - name: Typecheck
         run: npm run typecheck

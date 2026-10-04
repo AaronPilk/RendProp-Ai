@@ -1,0 +1,292 @@
+import Foundation
+import CryptoKit
+
+// No real documents, credentials, networking or camera APIs exist in this fixture.
+enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/\(path)") } }
+enum APIError: Error { case decoding }
+enum FixtureError: Error { case failed }
+struct AssertionFailure: Error { let message: String }
+func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+
+@MainActor final class WireClient {
+    enum Idempotency { case none, key(String) }
+    var requests: [URLRequest] = []
+    var response = Data()
+    func url(_ pieces: [String]) -> URL { URL(string: "https://fixture.invalid/" + pieces.joined(separator: "/"))! }
+    func makeRequest(url: URL, method: String, json: [String: Any], idempotency: Idempotency = .none) -> URLRequest {
+        var request = URLRequest(url: url); request.httpMethod = method
+        request.httpBody = try! JSONSerialization.data(withJSONObject: json)
+        if case .key(let key) = idempotency { request.setValue(key, forHTTPHeaderField: "Idempotency-Key") }
+        return request
+    }
+    func execute(_ request: URLRequest) async throws -> Data { requests.append(request); return response }
+    func body(_ listing: Listing, patch: Bool) throws -> [String: Any] { try listingBody(listing, forPatch: patch) }
+    func mapped(_ data: Data) throws -> Listing { mapListing(try decode(data)) }
+__CREATE__
+__UPDATE__
+__LISTING_BODY__
+__MAP_LISTING__
+__LISTING_DTO__
+__TOLERANT_MAP__
+__DECODE__
+__PARSE_DATE__
+__ISO_STRING__
+__WIRE_STATUS__
+__LOCAL_STATUS__
+}
+
+@MainActor final class HeldBoundary {
+    var arrivals = 0
+    private var continuation: CheckedContinuation<Void, Never>?
+    func hold() async {
+        arrivals += 1
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { let saved = continuation; continuation = nil; saved?.resume() }
+}
+@MainActor final class SyncAPI {
+    var snapshots: [Listing] = []
+    var update: (Listing) async throws -> Listing = { $0 }
+    func updateListing(_ listing: Listing) async throws -> Listing { snapshots.append(listing); return try await update(listing) }
+}
+enum Config { static let useLiveBackend = true; static let enableAuth = true }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var isIdentified = true
+    var isSignedIn = true
+    var userID: String? = "22222222-2222-4222-8222-222222222222"
+    var syncSessionRevision: UInt64 = 1
+}
+@MainActor final class SyncModel {
+    var listings: [Listing]
+    var syncInFlight = Set<UUID>()
+    let api = SyncAPI()
+    init(_ listing: Listing) { listings = [listing] }
+    func index(of id: UUID) -> Int? { listings.firstIndex(where: { $0.id == id }) }
+    func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool { false }
+    func ensureServerListing(_ draft: Listing) async throws -> UUID { throw FixtureError.failed }
+__MODIFY__
+__MARK_DIRTY__
+__SYNC_LISTING__
+}
+
+@main struct FloorMeasurementSyncChecks {
+    @MainActor static func main() async {
+        do { try await run() }
+        catch let failure as AssertionFailure { print("FAIL: \(failure.message)"); exit(1) }
+        catch { print("FAIL: unexpected fixture error \(error)"); exit(1) }
+    }
+
+    @MainActor static func run() async throws {
+        var checks = 0
+        func check(_ condition: Bool, _ message: String) throws {
+            guard condition else { throw AssertionFailure(message: message) }; checks += 1
+        }
+        func refuses(_ body: () throws -> Void, _ message: String) throws {
+            do { try body() } catch { checks += 1; return }
+            throw AssertionFailure(message: message)
+        }
+        func waitUntil(_ predicate: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while !predicate() {
+                if Date() > deadline { throw AssertionFailure(message: "Held fixture boundary timed out") }
+                await Task.yield()
+            }
+        }
+        // Frozen raw-details algorithm from the pre-measurements source.
+        // This represents pending cloudCreateFingerprint snapshots already on
+        // phones, independently of the current production implementation.
+        func priorFingerprint(_ listing: Listing) throws -> String {
+            let facts: [String: Any] = ["address": listing.address, "space": listing.spaceType.rawValue,
+                "beds": listing.beds, "baths": listing.baths, "sqft": listing.sqft, "price": listing.price.cents,
+                "tagline": listing.tagline ?? "", "details": listing.details ?? [:], "zillow": listing.zillowURL ?? "",
+                "lat": listing.latitude as Any? ?? NSNull(), "lng": listing.longitude as Any? ?? NSNull(),
+                "sold": listing.soldAt?.timeIntervalSince1970 as Any? ?? NSNull(), "indexing": listing.allowSearchIndexing as Any? ?? NSNull()]
+            let data = try JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys])
+            return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }
+        let sid = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let org = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let localID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let otherOrg = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        let fixedDate = Date(timeIntervalSinceReferenceDate: 1_000)
+        let room = FloorMeasurementRoom(id: UUID(uuidString: "55555555-5555-4555-8555-555555555555")!, name: "Living room", widthMeters: 3, lengthMeters: 4)
+        let plan = FloorMeasurementPlan(unit: .meters, rooms: [room], updatedAt: fixedDate)
+        var newer = plan; newer.rooms[0].widthMeters = 3.5; newer.updatedAt = fixedDate.addingTimeInterval(1)
+        let wire = try plan.encodedWireValue(), newerWire = try newer.encodedWireValue()
+        var local = Listing(id: localID, address: "Fixture property", beds: 2, baths: 1, sqft: 900, price: Money(cents: 100))
+        local.serverID = sid; local.serverOrgID = org; local.cloudDraftOrgID = org
+        local.mainPhotoRelPath = "Photos/owned-fixture.jpg"; local.exteriorPhotoRelPath = "Photos/owned-exterior.jpg"
+        local.details = ["floorplan_url": "https://fixture.invalid/owned-plan.svg", "year_built": "2001", "future_key_v4": "opaque", FloorMeasurementPlan.wireKey: newerWire]
+        local.floorMeasurements = plan; local.allowSearchIndexing = false
+        let client = WireClient()
+        let body = try client.body(local, patch: true)
+        let details = body["details"] as! [String: String]
+        try check(details[FloorMeasurementPlan.wireKey] == wire, "Typed plan overrides stale wire independently of generic details")
+        try check(details["floorplan_url"] == local.details?["floorplan_url"] && details["year_built"] == "2001" && details["future_key_v4"] == "opaque", "Measurement save preserves floor-plan URL and unrelated details")
+        try check(details[Listing.searchIndexingKey] == "false", "Measurement merge preserves explicit search preference")
+        try check(body["main_photo_key"] == nil && body["main_photo_asset_id"] == nil && body["gallery_asset_ids"] == nil, "Measurement PATCH never overwrites cloud photo or gallery selection")
+        try check(local.details?[FloorMeasurementPlan.wireKey] == newerWire, "Wire assembly leaves local raw details untouched")
+        var formless = local; formless.details = nil
+        try check((try client.body(formless, patch: false)["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == wire, "Typed plan is sent even when the generic form has no details")
+        let response: [String: Any] = ["id": sid.uuidString, "org_id": org.uuidString, "address": "Cloud facts", "beds": 3, "sqft": 1500, "price_cents": 3500, "details": details]
+        client.response = try JSONSerialization.data(withJSONObject: response)
+        let mapped = try client.mapped(client.response)
+        try check(mapped.details?[FloorMeasurementPlan.wireKey] == wire, "Actual DTO decoder retains the exact measurements wire key")
+        try check(mapped.floorMeasurements == plan && mapped.address == "Cloud facts" && mapped.serverOrgID == org, "Wire measurements hydrate alongside ordinary Listing facts")
+        try check(mapped.details?["floorplan_url"] == details["floorplan_url"] && mapped.allowSearchIndexing == false, "Snake-case freeform URL and indexing keys survive readback")
+        _ = try await client.createListing(local)
+        _ = try await client.updateListing(local)
+        try check(client.requests.count == 2, "Actual create and update reach the isolated request boundary once")
+        try check(client.requests[0].httpMethod == "POST" && client.requests[0].value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Actual create remains scoped to its original workspace")
+        try check(client.requests[1].url!.lastPathComponent.lowercased() == sid.uuidString.lowercased(), "Actual update uses the server listing identity")
+        let sent = try JSONSerialization.jsonObject(with: client.requests[1].httpBody!) as! [String: Any]
+        try check((sent["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == wire, "Actual PATCH request contains the validated wire plan")
+        var empty = local; empty.floorMeasurements = FloorMeasurementPlan(rooms: [], updatedAt: fixedDate)
+        let emptyBody = try client.body(empty, patch: true)["details"] as! [String: String]
+        try check(FloorMeasurementPlan.decodeWireValue(emptyBody[FloorMeasurementPlan.wireKey])?.rooms.isEmpty == true, "An empty supported plan deliberately clears all rooms")
+        var cleared = local; cleared.floorMeasurements = nil; cleared.details?.removeValue(forKey: FloorMeasurementPlan.wireKey)
+        try check((try client.body(cleared, patch: true)["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == nil, "Explicit nil and raw-key removal clears only measurements")
+        var future = local; future.floorMeasurements = nil
+        let futureWire = "{\"version\":7,\"future_room_shape\":\"opaque\"}"
+        future.details?[FloorMeasurementPlan.wireKey] = futureWire
+        let futureBody = try client.body(future, patch: true)["details"] as! [String: String]
+        try check(futureBody[FloorMeasurementPlan.wireKey] == futureWire, "Nil typed plan preserves future raw wire verbatim")
+        var invalidResponse = response; invalidResponse["details"] = [FloorMeasurementPlan.wireKey: "{broken", "year_built": 1998, "allow_indexing": false, "nested": ["x": 1], "missing": NSNull()]
+        let tolerant = try client.mapped(JSONSerialization.data(withJSONObject: invalidResponse))
+        try check(tolerant.floorMeasurements == nil && tolerant.address == "Cloud facts" && tolerant.beds == 3, "Malformed measurements do not crash or hide other listing facts")
+        try check(tolerant.details?[FloorMeasurementPlan.wireKey] == "{broken" && tolerant.details?["year_built"] == "1998" && tolerant.details?["allow_indexing"] == "false" && tolerant.details?["nested"] == nil, "Tolerant scalars retain exact keys and skip nested values")
+        var futureResponse = response; futureResponse["details"] = futureBody
+        let futureMapped = try client.mapped(JSONSerialization.data(withJSONObject: futureResponse))
+        try check(futureMapped.floorMeasurements == nil && futureMapped.details?[FloorMeasurementPlan.wireKey] == futureWire, "Future wire can round-trip through real mapping without replacement")
+        let restored = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(local))
+        try check(restored.floorMeasurements == plan && restored.mainPhotoRelPath == local.mainPhotoRelPath, "Local snapshot persists the typed plan and device photo path")
+        let legacyData = try JSONSerialization.data(withJSONObject: ["address": "Old phone snapshot", "details": [FloorMeasurementPlan.wireKey: wire]])
+        let legacy = try JSONDecoder().decode(Listing.self, from: legacyData)
+        try check(legacy.floorMeasurements == plan, "Old snapshots recover a valid raw plan when the typed field is absent")
+        let futureLocal = try JSONDecoder().decode(Listing.self, from: JSONSerialization.data(withJSONObject: ["address": "Future snapshot", "details": [FloorMeasurementPlan.wireKey: wire], "floorMeasurements": ["version": 7]]))
+        try check(futureLocal.floorMeasurements == nil, "Invalid present typed snapshot does not resurrect stale raw measurements")
+        var invalid = local; invalid.floorMeasurements?.rooms[0].widthMeters = .nan
+        let beforeInvalid = client.requests.count
+        do { _ = try await client.updateListing(invalid); throw AssertionFailure(message: "Invalid plan reached request execution") }
+        catch let error as FloorMeasurementError { try check(error == .invalidDimension && client.requests.count == beforeInvalid, "Invalid dimensions fail before actual HTTP boundary") }
+        var oversized = local; oversized.details?["large_note"] = String(repeating: "x", count: 16_000)
+        do { _ = try await client.createListing(oversized); throw AssertionFailure(message: "Oversized details reached request execution") }
+        catch is ListingWireDetails.ValidationError { try check(client.requests.count == beforeInvalid, "Full details envelope cap fails before actual HTTP boundary") }
+        var largePlan = plan
+        largePlan.rooms = (0..<24).map { i in
+            FloorMeasurementRoom(name: String(repeating: "e\u{301}\u{301}\u{301}\u{301}\u{301}", count: 40), widthMeters: 0.1, lengthMeters: 0.1, xMeters: Double(i))
+        }
+        var largeTyped = local; largeTyped.floorMeasurements = largePlan
+        do { _ = try await client.updateListing(largeTyped); throw AssertionFailure(message: "Oversized inner plan reached request execution") }
+        catch let error as FloorMeasurementError { try check(error == .tooLarge && client.requests.count == beforeInvalid, "Inner 10,000-byte model cap fails before actual HTTP boundary") }
+        var escaped = local; escaped.details?["quoted"] = String(repeating: "\"", count: 8_000)
+        try refuses({ _ = try client.body(escaped, patch: true) }, "JSON escaping overhead must count toward the details cap")
+        var unicode = local; unicode.details?["unicode"] = String(repeating: "😀", count: 4_000)
+        try refuses({ _ = try client.body(unicode, patch: true) }, "Details cap bounds UTF-8, including multibyte text")
+        let fingerprint = try CloudDraftCreation.fingerprint(local)
+        var measurementEdit = local; measurementEdit.floorMeasurements = newer
+        try check(try CloudDraftCreation.fingerprint(measurementEdit) != fingerprint, "Measurement-only edits change the create fingerprint")
+        var equivalent = local; equivalent.details?[FloorMeasurementPlan.wireKey] = wire
+        try check(try CloudDraftCreation.fingerprint(equivalent) == fingerprint, "Fingerprint uses the same validated merged wire truth as the request")
+
+        var remote = mapped; remote.floorMeasurements = newer; remote.details?[FloorMeasurementPlan.wireKey] = newerWire
+        let clean = try CloudListingMerge.merge(local: [local], remote: [remote], protected: [])[0]
+        try check(clean.floorMeasurements == newer && clean.id == localID && clean.serverID == sid, "Clean cloud merge copies measurements under the existing binding")
+        try check(clean.mainPhotoRelPath == local.mainPhotoRelPath && clean.exteriorPhotoRelPath == local.exteriorPhotoRelPath, "Measurement hydration preserves owned local media paths")
+        var dirty = local; dirty.needsServerSync = true
+        let dirtyMerged = try CloudListingMerge.merge(local: [dirty], remote: [remote], protected: [])[0]
+        try check(dirtyMerged.floorMeasurements == plan && dirtyMerged.details == local.details, "Dirty manual plan survives an older remote snapshot")
+        let protected = try CloudListingMerge.merge(local: [local], remote: [remote], protected: [localID])[0]
+        try check(protected.floorMeasurements == plan, "Protected upload/render plan cannot be replaced during refresh")
+        var oldCloud = remote; oldCloud.floorMeasurements = nil; oldCloud.details = ["old_fact": "kept"]
+        try check(try CloudListingMerge.merge(local: [dirty], remote: [oldCloud], protected: [])[0].floorMeasurements == plan, "Dirty local measurements survive a cloud snapshot from an older client")
+        let cleanAbsent = try CloudListingMerge.merge(local: [local], remote: [oldCloud], protected: [])[0]
+        try check(cleanAbsent.floorMeasurements == nil && cleanAbsent.details?[FloorMeasurementPlan.wireKey] == nil, "Acknowledged clean listings observe authoritative measurement deletion")
+        let unsupportedClean = try CloudListingMerge.merge(local: [local], remote: [futureMapped], protected: [])[0]
+        try check(unsupportedClean.floorMeasurements == nil && unsupportedClean.details?[FloorMeasurementPlan.wireKey] == futureWire, "Clean listings adopt unsupported future raw wire without retaining a stale typed plan")
+        let gone = try CloudListingMerge.merge(local: [dirty], remote: [], protected: [])[0]
+        try check(gone.floorMeasurements == plan && gone.cloudUnavailable == true, "Revoked or missing cloud membership preserves manual measurements locally")
+        var unbound = local; unbound.serverID = nil; unbound.serverOrgID = nil; unbound.cloudSyncOwnerID = org
+        try check(!CloudDraftCreation.canAutoSync(unbound, userID: otherOrg), "Another account cannot auto-upload the owner's manual measurements")
+        var unscoped = remote; unscoped.serverOrgID = nil
+        try refuses({ _ = try CloudListingMerge.merge(local: [local], remote: [unscoped], protected: []) }, "Unscoped cloud measurements cannot enter the listing")
+
+        let identity = CloudDraftCreation.Identity(userID: org.uuidString, revision: 10)
+        var activeIdentity = identity
+        var draft = unbound; draft.cloudCreateFingerprint = try CloudDraftCreation.fingerprint(draft)
+        var current: Listing? = draft
+        var replay = remote; replay.cloudCreateReplayed = true
+        _ = try await CloudDraftCreation.ensure(snapshot: draft, identity: identity, create: { _ in replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == newer && current?.needsServerSync == false, "Unedited replay adopts the office measurement plan")
+        var oldDraft = draft; oldDraft.floorMeasurements = nil
+        oldDraft.details?.removeValue(forKey: FloorMeasurementPlan.wireKey)
+        oldDraft.cloudCreateFingerprint = try priorFingerprint(oldDraft)
+        current = oldDraft
+        _ = try await CloudDraftCreation.ensure(snapshot: oldDraft, identity: identity, create: { _ in replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == newer && current?.needsServerSync == false, "Old raw-details fingerprints still adopt an unedited office replay")
+        current = oldDraft; current?.floorMeasurements = plan
+        _ = try await CloudDraftCreation.ensure(snapshot: oldDraft, identity: identity, create: { _ in replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == plan && current?.needsServerSync == true, "Legacy fingerprint cannot hide a new typed measurement edit")
+        var rawDraft = draft; rawDraft.floorMeasurements = FloorMeasurementPlan.decodeWireValue(rawDraft.details?[FloorMeasurementPlan.wireKey])
+        rawDraft.cloudCreateFingerprint = try priorFingerprint(rawDraft); current = rawDraft
+        _ = try await CloudDraftCreation.ensure(snapshot: rawDraft, identity: identity, create: { _ in replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.needsServerSync == false && current?.floorMeasurements == newer, "Legacy replay comparison is safe when the typed plan exactly matches raw wire")
+        current = draft
+        let createGate = HeldBoundary()
+        let pending = Task { @MainActor in
+            try await CloudDraftCreation.ensure(snapshot: draft, identity: identity, create: { _ in await createGate.hold(); return replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        }
+        try await waitUntil { createGate.arrivals == 1 }
+        current?.floorMeasurements = newer
+        createGate.release(); _ = try await pending.value
+        try check(current?.floorMeasurements == newer && current?.needsServerSync == true, "A measurement edit during create replay is queued for PATCH")
+        current = draft
+        let identityGate = HeldBoundary()
+        let switched = Task { @MainActor in
+            try await CloudDraftCreation.ensure(snapshot: draft, identity: identity, create: { _ in await identityGate.hold(); return replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        }
+        try await waitUntil { identityGate.arrivals == 1 }
+        activeIdentity = .init(userID: otherOrg.uuidString, revision: 11); identityGate.release()
+        do { _ = try await switched.value; throw AssertionFailure(message: "Account change adopted a measurement plan") }
+        catch is CloudSyncError { try check(current?.serverID == nil && current?.floorMeasurements == plan, "Create identity change preserves unbound manual measurements") }
+        activeIdentity = identity
+        var wrongOrg = replay; wrongOrg.serverOrgID = otherOrg
+        do { _ = try await CloudDraftCreation.ensure(snapshot: draft, identity: identity, create: { _ in wrongOrg }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in }); throw AssertionFailure(message: "Wrong workspace create adopted measurements") }
+        catch is CloudSyncError { try check(current?.serverID == nil, "Create receipt from another org cannot bind the manual plan") }
+
+        // Compile the actual AppModel modify/markDirty/syncListing methods and
+        // suspend their HTTP boundary to prove dirty acknowledgement ordering.
+        let model = SyncModel(local), updateGate = HeldBoundary()
+        model.api.update = { snapshot in await updateGate.hold(); return snapshot }
+        model.modify(localID) { $0.floorMeasurements = newer }
+        try await waitUntil { updateGate.arrivals == 1 }
+        try check(model.listings[0].needsServerSync == true && model.api.snapshots[0].floorMeasurements == newer, "Actual modify marks measurements dirty and dispatches the current plan")
+        var third = newer; third.rooms[0].lengthMeters = 5; third.updatedAt = fixedDate.addingTimeInterval(2)
+        model.modify(localID) { $0.floorMeasurements = third }
+        updateGate.release()
+        try await waitUntil { updateGate.arrivals == 2 }
+        try check(model.api.snapshots.count == 2 && model.api.snapshots[1].floorMeasurements == third && model.listings[0].needsServerSync == true, "Mid-PATCH measurement edits require a second save before acknowledgement")
+        updateGate.release()
+        try await waitUntil { !model.syncInFlight.contains(localID) }
+        try check(model.listings[0].needsServerSync == false && model.listings[0].floorMeasurements == third, "Only the acknowledged latest plan clears dirty state")
+        let failureModel = SyncModel(dirty), failureGate = HeldBoundary()
+        failureModel.api.update = { _ in await failureGate.hold(); throw FixtureError.failed }
+        let failed = Task { await failureModel.syncListing(localID) }
+        try await waitUntil { failureGate.arrivals == 1 }; failureGate.release(); await failed.value
+        try check(failureModel.listings[0].needsServerSync == true && failureModel.listings[0].floorMeasurements == plan, "Failed PATCH preserves dirty measurements for retry")
+        let cancelModel = SyncModel(dirty), cancelGate = HeldBoundary()
+        cancelModel.api.update = { _ in await cancelGate.hold(); try Task.checkCancellation(); return dirty }
+        let cancelled = Task { await cancelModel.syncListing(localID) }
+        try await waitUntil { cancelGate.arrivals == 1 }; cancelled.cancel(); cancelGate.release(); await cancelled.value
+        try check(cancelModel.listings[0].needsServerSync == true && cancelModel.listings[0].floorMeasurements == plan, "Cancelled PATCH does not clear a manual plan's dirty state")
+        let switchModel = SyncModel(dirty), switchGate = HeldBoundary()
+        switchModel.api.update = { snapshot in await switchGate.hold(); return snapshot }
+        let switchedUpdate = Task { await switchModel.syncListing(localID) }
+        try await waitUntil { switchGate.arrivals == 1 }
+        AuthStore.shared.syncSessionRevision += 1
+        switchGate.release(); await switchedUpdate.value
+        try check(switchModel.listings[0].needsServerSync == true && switchModel.listings[0].floorMeasurements == plan, "Account revision change cannot acknowledge another session's plan write")
+        print("PASS: \(checks) assertions; actual wire/create/PATCH/dirty-sync/replay sources; zero network or camera calls")
+    }
+}

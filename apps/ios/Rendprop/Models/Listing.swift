@@ -35,6 +35,9 @@ struct Listing: Identifiable, Codable, Hashable {
     /// Industry-specific fields keyed by DetailField.key (e.g. cuisineType,
     /// membershipPrice, weeklySpecial). Optional/Codable-safe.
     var details: [String: String]? = nil
+    /// Editable room measurements, separate from a RoomPlan scan. The raw
+    /// details value stays available when a newer wire version cannot decode.
+    var floorMeasurements: FloorMeasurementPlan? = nil
     /// Per-listing client identity. Never changes the account owner's brand kit.
     var clientContact: ListingClientContact? = nil
     var clientContactDirty: Bool? = nil
@@ -314,7 +317,7 @@ extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
              createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
-             tagline, details, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateReplayed, shareSlug, shareURL,
+             tagline, details, floorMeasurements, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, publishedRenderID,
              unbrandedShareURL, stateCode, allowSearchIndexing,
@@ -343,6 +346,19 @@ extension Listing {
         longitude        = try c.decodeIfPresent(Double.self, forKey: .longitude)
         tagline          = try c.decodeIfPresent(String.self, forKey: .tagline)
         details          = try c.decodeIfPresent([String: String].self, forKey: .details)
+        // Unsupported or damaged measurement data must not discard the rest
+        // of a saved listing. Only an absent local field recovers raw wire data;
+        // an explicit null remains cleared, and a future typed value stays nil.
+        if c.contains(.floorMeasurements) {
+            if let candidate = try? c.decodeIfPresent(FloorMeasurementPlan.self, forKey: .floorMeasurements),
+               (try? candidate.validate()) != nil {
+                floorMeasurements = candidate
+            } else {
+                floorMeasurements = nil
+            }
+        } else {
+            floorMeasurements = FloorMeasurementPlan.decodeWireValue(details?[FloorMeasurementPlan.wireKey])
+        }
         clientContact = try c.decodeIfPresent(ListingClientContact.self, forKey: .clientContact)
         clientContactDirty = try c.decodeIfPresent(Bool.self, forKey: .clientContactDirty)
         clientContactLoaded = try c.decodeIfPresent(Bool.self, forKey: .clientContactLoaded)
@@ -863,5 +879,356 @@ struct DetailField: Identifiable {
         default:
             return raw
         }
+    }
+}
+
+// MARK: - Editable floor measurements
+
+enum FloorMeasurementUnit: String, Codable, CaseIterable, Hashable, Identifiable {
+    case feet, meters
+
+    var id: String { rawValue }
+    var label: String { self == .feet ? "Feet" : "Meters" }
+}
+
+enum FloorMeasurementSource: String, Codable, Hashable {
+    case manual, phoneEstimate
+}
+
+enum FloorMeasurementError: Error, LocalizedError, Equatable {
+    case unsupportedVersion, tooManyRooms, invalidName, invalidDimension
+    case invalidPosition, invalidFloor, invalidRotation, duplicateRoom
+    case overlappingRooms, invalidInput, invalidInches, tooLarge, invalidDate
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedVersion: return "This measurement plan needs a newer app version."
+        case .tooManyRooms: return "A measurement plan can contain up to 24 rooms."
+        case .invalidName: return "Give each room a name of 1 to 40 characters."
+        case .invalidDimension: return "Room dimensions must be between 0.1 and 100 meters."
+        case .invalidPosition: return "Room positions must be within 200 meters of the plan origin."
+        case .invalidFloor: return "Choose a floor from the second basement through floor 21."
+        case .invalidRotation: return "Rotate rooms in quarter turns."
+        case .duplicateRoom: return "Each room must have its own identity."
+        case .overlappingRooms: return "Rooms on the same floor cannot overlap. Shared edges are allowed."
+        case .invalidInput: return "Enter a number using digits and a decimal point or comma."
+        case .invalidInches: return "Enter inches from 0 up to, but not including, 12."
+        case .tooLarge: return "This measurement plan is too large to save."
+        case .invalidDate: return "This measurement plan has an invalid update date."
+        }
+    }
+}
+
+struct FloorMeasurementRoom: Codable, Hashable, Identifiable {
+    var id = UUID()
+    var name: String
+    /// Zero is the first floor; negative floors are basements.
+    var floor: Int = 0
+    var widthMeters: Double
+    var lengthMeters: Double
+    var heightMeters: Double? = nil
+    var xMeters: Double = 0
+    var yMeters: Double = 0
+    var rotationQuarterTurns: Int = 0
+    var source: FloorMeasurementSource = .manual
+
+    var rotatedWidthMeters: Double {
+        rotationQuarterTurns % 2 == 0 ? widthMeters : lengthMeters
+    }
+
+    var rotatedLengthMeters: Double {
+        rotationQuarterTurns % 2 == 0 ? lengthMeters : widthMeters
+    }
+
+    var floorName: String { FloorMeasurementPlan.floorName(floor) }
+
+    func validate() throws {
+        guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              name.count <= 40,
+              name.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else {
+            throw FloorMeasurementError.invalidName
+        }
+        try FloorMeasurementInput.validateDimension(widthMeters)
+        try FloorMeasurementInput.validateDimension(lengthMeters)
+        if let heightMeters { try FloorMeasurementInput.validateDimension(heightMeters) }
+        guard xMeters.isFinite, yMeters.isFinite,
+              (-200...200).contains(xMeters), (-200...200).contains(yMeters) else {
+            throw FloorMeasurementError.invalidPosition
+        }
+        guard (-2...20).contains(floor) else { throw FloorMeasurementError.invalidFloor }
+        guard (0...3).contains(rotationQuarterTurns) else { throw FloorMeasurementError.invalidRotation }
+    }
+
+    /// Rooms are axis-aligned after quarter-turn rotation. Only interior area
+    /// counts as overlap; floating point round-off at a shared edge does not.
+    func overlaps(_ other: FloorMeasurementRoom) -> Bool {
+        guard floor == other.floor else { return false }
+        let right = xMeters + rotatedWidthMeters
+        let top = yMeters + rotatedLengthMeters
+        let otherRight = other.xMeters + other.rotatedWidthMeters
+        let otherTop = other.yMeters + other.rotatedLengthMeters
+        let scale = max(1, abs(xMeters), abs(yMeters), abs(right), abs(top),
+                        abs(other.xMeters), abs(other.yMeters), abs(otherRight), abs(otherTop))
+        let tolerance = scale * Double.ulpOfOne * 8
+        return min(right, otherRight) - max(xMeters, other.xMeters) > tolerance
+            && min(top, otherTop) - max(yMeters, other.yMeters) > tolerance
+    }
+
+    func displayDimensions(unit: FloorMeasurementUnit) -> String {
+        "\(FloorMeasurementInput.display(rotatedWidthMeters, unit: unit)) × \(FloorMeasurementInput.display(rotatedLengthMeters, unit: unit))"
+    }
+}
+
+// Defaults for placement/source also apply when a version-one wire room omits
+// those optional editing fields. Identity and both measured sides are required.
+extension FloorMeasurementRoom {
+    enum CodingKeys: String, CodingKey {
+        case id, name, floor, widthMeters, lengthMeters, heightMeters
+        case xMeters, yMeters, rotationQuarterTurns, source
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        floor = try c.decodeIfPresent(Int.self, forKey: .floor) ?? 0
+        widthMeters = try c.decode(Double.self, forKey: .widthMeters)
+        lengthMeters = try c.decode(Double.self, forKey: .lengthMeters)
+        heightMeters = try c.decodeIfPresent(Double.self, forKey: .heightMeters)
+        xMeters = try c.decodeIfPresent(Double.self, forKey: .xMeters) ?? 0
+        yMeters = try c.decodeIfPresent(Double.self, forKey: .yMeters) ?? 0
+        rotationQuarterTurns = try c.decodeIfPresent(Int.self, forKey: .rotationQuarterTurns) ?? 0
+        source = try c.decodeIfPresent(FloorMeasurementSource.self, forKey: .source) ?? .manual
+    }
+}
+
+struct FloorMeasurementPlan: Codable, Hashable {
+    static let wireKey = "floor_measurements_v1"
+    static let maximumRooms = 24
+    static let maximumWireBytes = 10_000
+
+    var version: Int = 1
+    var unit: FloorMeasurementUnit = .feet
+    var rooms: [FloorMeasurementRoom] = []
+    var updatedAt = Date()
+
+    var hasOverlaps: Bool {
+        for i in rooms.indices {
+            for j in rooms.indices where j > i {
+                if rooms[i].overlaps(rooms[j]) { return true }
+            }
+        }
+        return false
+    }
+
+    /// Sum of entered room areas, not an independently measured building area.
+    /// Invalid plans (including overlaps) never contribute a misleading total.
+    var totalRoomAreaMeters2: Double {
+        guard (try? validate()) != nil else { return 0 }
+        return rooms.reduce(0) { $0 + $1.widthMeters * $1.lengthMeters }
+    }
+
+    func validate() throws {
+        guard version == 1 else { throw FloorMeasurementError.unsupportedVersion }
+        guard rooms.count <= Self.maximumRooms else { throw FloorMeasurementError.tooManyRooms }
+        guard updatedAt.timeIntervalSinceReferenceDate.isFinite else { throw FloorMeasurementError.invalidDate }
+        var ids = Set<UUID>()
+        for room in rooms {
+            try room.validate()
+            guard ids.insert(room.id).inserted else { throw FloorMeasurementError.duplicateRoom }
+        }
+        guard !hasOverlaps else { throw FloorMeasurementError.overlappingRooms }
+        guard try wireData().count <= Self.maximumWireBytes else { throw FloorMeasurementError.tooLarge }
+    }
+
+    func encodedWireValue() throws -> String {
+        try validate()
+        return String(decoding: try wireData(), as: UTF8.self)
+    }
+
+    static func decodeWireValue(_ raw: String?) -> FloorMeasurementPlan? {
+        guard let raw, raw.utf8.count <= maximumWireBytes,
+              let data = raw.data(using: .utf8),
+              let plan = try? JSONDecoder().decode(Self.self, from: data),
+              (try? plan.validate()) != nil else { return nil }
+        return plan
+    }
+
+    static func floorName(_ floor: Int) -> String {
+        switch floor {
+        case -2: return "Second basement"
+        case -1: return "Basement"
+        case 0: return "First floor"
+        default: return "Floor \(floor + 1)"
+        }
+    }
+
+    private func wireData() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(self)
+    }
+}
+
+struct FloorMeasurementWall: Hashable {
+    let floor: Int
+    /// Horizontal: y = position, x = start...end. Vertical swaps x and y.
+    let horizontal: Bool
+    let position: Double
+    let start: Double
+    let end: Double
+    let height: Double
+}
+
+enum FloorMeasurementGeometry {
+    private struct WallGroup {
+        let floor: Int
+        let horizontal: Bool
+        let position: Double
+        var walls: [FloorMeasurementWall]
+    }
+
+    /// Shared room edges produce one wall surface. For a partially shared edge,
+    /// each interval uses the tallest active room, keeping height changes intact.
+    static func walls(for rooms: [FloorMeasurementRoom]) throws -> [FloorMeasurementWall] {
+        try FloorMeasurementPlan(rooms: rooms).validate()
+        var raw: [FloorMeasurementWall] = []
+        for room in rooms {
+            let right = room.xMeters + room.rotatedWidthMeters
+            let top = room.yMeters + room.rotatedLengthMeters
+            let height = room.heightMeters ?? 2.4
+            for y in [room.yMeters, top] {
+                raw.append(.init(floor: room.floor, horizontal: true, position: y,
+                                 start: room.xMeters, end: right, height: height))
+            }
+            for x in [room.xMeters, right] {
+                raw.append(.init(floor: room.floor, horizontal: false, position: x,
+                                 start: room.yMeters, end: top, height: height))
+            }
+        }
+        raw.sort {
+            if $0.floor != $1.floor { return $0.floor < $1.floor }
+            if $0.horizontal != $1.horizontal { return $0.horizontal }
+            if $0.position != $1.position { return $0.position < $1.position }
+            if $0.start != $1.start { return $0.start < $1.start }
+            if $0.end != $1.end { return $0.end < $1.end }
+            return $0.height < $1.height
+        }
+        var groups: [WallGroup] = []
+        for wall in raw {
+            if let last = groups.last, last.floor == wall.floor,
+               last.horizontal == wall.horizontal, near(last.position, wall.position) {
+                groups[groups.count - 1].walls.append(wall)
+            } else {
+                groups.append(.init(floor: wall.floor, horizontal: wall.horizontal,
+                                    position: wall.position, walls: [wall]))
+            }
+        }
+        var result: [FloorMeasurementWall] = []
+        for group in groups {
+            let edges = group.walls.flatMap { [$0.start, $0.end] }.sorted()
+            var boundaries: [Double] = []
+            for edge in edges {
+                if let last = boundaries.last, near(last, edge) { continue }
+                boundaries.append(edge)
+            }
+            for index in boundaries.indices.dropLast() {
+                let start = boundaries[index], end = boundaries[index + 1]
+                let midpoint = start + (end - start) / 2
+                guard let height = group.walls.filter({ $0.start < midpoint && $0.end > midpoint })
+                    .map(\.height).max() else { continue }
+                if let previous = result.last, previous.floor == group.floor,
+                   previous.horizontal == group.horizontal, previous.position == group.position,
+                   near(previous.end, start), near(previous.height, height) {
+                    result[result.count - 1] = .init(floor: group.floor, horizontal: group.horizontal,
+                                                    position: group.position, start: previous.start, end: end,
+                                                    height: max(previous.height, height))
+                } else {
+                    result.append(.init(floor: group.floor, horizontal: group.horizontal,
+                                        position: group.position, start: start, end: end, height: height))
+                }
+            }
+        }
+        return result
+    }
+
+    private static func near(_ a: Double, _ b: Double) -> Bool {
+        abs(a - b) <= max(1, abs(a), abs(b)) * Double.ulpOfOne * 8
+    }
+}
+
+/// Display text may round a valid measurement past a validation boundary.
+/// Preserve the original value only while both displayed fields are untouched.
+struct FloorMeasurementFieldReference {
+    let meters: Double
+    let primary: String
+    let inches: String
+
+    func resolve(primary: String, inches: String, unit: FloorMeasurementUnit) throws -> Double {
+        try FloorMeasurementInput.validateDimension(meters)
+        if primary == self.primary && inches == self.inches { return meters }
+        return try FloorMeasurementInput.meters(primary: primary, inches: inches, unit: unit)
+    }
+}
+
+enum FloorMeasurementInput {
+    /// Strict numeric entry: grouping, signs, exponents, and unit suffixes are
+    /// rejected. A single comma is accepted only as an unambiguous decimal.
+    static func meters(primary: String, inches: String = "", unit: FloorMeasurementUnit) throws -> Double {
+        let number = try decimal(primary)
+        let inchText = inches.trimmingCharacters(in: .whitespacesAndNewlines)
+        let inchNumber = inchText.isEmpty ? 0 : try decimal(inchText)
+        guard inchNumber < 12 else { throw FloorMeasurementError.invalidInches }
+        let meters: Double
+        switch unit {
+        case .feet: meters = number * 0.3048 + inchNumber * 0.0254
+        case .meters:
+            guard inchNumber == 0 else { throw FloorMeasurementError.invalidInches }
+            meters = number
+        }
+        try validateDimension(meters)
+        return meters
+    }
+
+    static func validateDimension(_ meters: Double) throws {
+        guard meters.isFinite, (0.1...100).contains(meters) else {
+            throw FloorMeasurementError.invalidDimension
+        }
+    }
+
+    static func display(_ meters: Double, unit: FloorMeasurementUnit) -> String {
+        guard meters.isFinite, meters >= 0, meters <= 100 else { return "—" }
+        switch unit {
+        case .feet:
+            let totalInches = Int((meters / 0.0254).rounded())
+            return "\(totalInches / 12)′ \(totalInches % 12)″"
+        case .meters:
+            let formatter = NumberFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.numberStyle = .decimal
+            formatter.usesGroupingSeparator = false
+            formatter.maximumFractionDigits = 2
+            return "\(formatter.string(from: NSNumber(value: meters)) ?? "—") m"
+        }
+    }
+
+    private static func decimal(_ input: String) throws -> Double {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, text.utf8.count <= 64,
+              text.range(of: #"^(?:[0-9]+(?:[.,][0-9]+)?|[.,][0-9]+)$"#, options: .regularExpression) != nil else {
+            throw FloorMeasurementError.invalidInput
+        }
+        if text.contains(",") {
+            let parts = text.split(separator: ",", omittingEmptySubsequences: false)
+            guard parts.count == 2, !text.contains(".") else { throw FloorMeasurementError.invalidInput }
+            // "1,000" could be one or one thousand. Never silently choose.
+            if (1...3).contains(parts[0].count), parts[0].first != "0", parts[1].count == 3 {
+                throw FloorMeasurementError.invalidInput
+            }
+        }
+        guard let value = Double(text.replacingOccurrences(of: ",", with: ".")), value.isFinite else {
+            throw FloorMeasurementError.invalidInput
+        }
+        return value
     }
 }
