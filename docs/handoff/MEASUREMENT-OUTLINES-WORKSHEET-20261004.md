@@ -93,12 +93,20 @@ JSON and HTML; publishing an attached image remains an explicit separate action.
   plist validation. CI registers all new model/editor/sync controls and retains
   their source-hashed receipts. Check the PR's current-head status before merging;
   local UI checks are not a substitute for that CI or a signed release.
+- The normal iPhone Release build passes against the final runtime source.
+  This is an unsigned compilation check, not an uploaded TestFlight binary.
 
 The first native attempt failed because automated typing inserted new offsets
 before existing digits. The corrected test explicitly sets the trailing caret
 and asserts both exact field values before saving. Its full rerun passes;
 the failed run is retained, not represented as a pass. No production coordinate
 validation was weakened for the test.
+
+The first PR-25 secret scan flagged the public schema field name
+`floor_measurements_v1` in the stable-key regression assertion and frozen
+older-reader fixture. Both exact historical findings are recorded in
+`.gitleaksignore`; no credential, path-wide exception or disabled scan is involved.
+Its failed log is retained separately from the current-head CI results.
 
 Private receipts are under
 `/Users/pilksclaes/LocalRendpropAudits/measurement-outlines-20261004/`, including

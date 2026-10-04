@@ -9,3 +9,7 @@ b886a3484c83815ce01105b6ff96b5d5c38b9754:services/supabase/functions/ai-video/co
 # Exact false positive: FloorMeasurementPlan.wireKey is the public schema-field
 # name "floor_measurements_v1", not a credential or an authentication key.
 43cec70151d42588694c23172decd27bbc6e0869:apps/ios/Rendprop/Models/Listing.swift:generic-api-key:1006
+# The same public schema name in a wire-key regression assertion and a frozen
+# older-reader model fixture. Exact findings only; neither line is a credential.
+f8a6074dbc5ae0965fdb1e0722c4f948778d37a6:apps/ios/tests/FloorMeasurementsTests.swift:generic-api-key:621
+f8a6074dbc5ae0965fdb1e0722c4f948778d37a6:tools/audit/floor-measurement-sync-20261004/LegacyModels.swift.template:generic-api-key:127
