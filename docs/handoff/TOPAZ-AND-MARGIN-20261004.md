@@ -90,7 +90,37 @@ reservation still survives that defective informational estimate. Lower-price,
 unsupported-source, duplicate, uncertain-POST and failed-settlement controls
 also run offline. No paid provider job or customer media is used.
 
-Final verification and deployment evidence will be added after the release.
+Runtime source `0b4a87b5647cfadd0dde77d0e4c1ea96f8a28428` was deployed on
+4 October to project `ymgqpbnjpztwjsyvceld`: **`ai-video` v50 ACTIVE**, with
+`verify_jwt: true`. Fresh API source readback returned **33/33 exact submitted
+files**, with no omissions or byte mismatches. The predeploy v49 files matched
+the intended base before replacement. An unauthenticated POST to
+`/ai-video/drone` returned **401**. No provider job was dispatched.
+
+Verification on that exact runtime source covered **1,329 distinct Deno
+tests, zero failures/ignored**, and **25 edge-entrypoint type checks**. The
+1,328 pure tests ran with cleared environment and no network, subprocess or
+write permission. The one SQL-backed Presenter controller registration ran
+separately against an owned Unix-socket-only disposable PostgreSQL instance,
+with 118 SQL checks and all 81 migrations applied/replayed. The initial broad
+runner receipt is retained as unsuccessful because it omitted that database
+fixture; the separate run closes the omitted test, rather than weakening its
+skip gate. Negative-control failures and the first host-compatibility failure
+are also retained.
+
+The ordinary-video journal PostgreSQL suite passed **101 assertions on fresh
+schema and 101 on replay**, plus concurrent $48 admission, settlement,
+reflection overlap, permissions and a lock-removal negative control. A tiny
+host AVAssetWriter H.264 fixture using the app's high-quality output settings
+passed the bounded probe and independent ffprobe comparison. This is host
+file compatibility evidence, not physical iPhone/camera acceptance. Independent
+review gave a GO for this narrow correction and retained the malformed
+decoder counterexample described above.
+
+No DDL, plan quantities, Apple products, native source, vendor credentials or
+paid provider requests were changed. The production receipt is
+`topaz-cost-fix-20261004/production-v50-receipt.json`; the offline pure-test
+receipt and separate Presenter receipt are retained beside the other evidence.
 Private artifacts are retained under
 `/Users/pilksclaes/LocalRendpropAudits/topaz-cost-fix-20261004/`,
 `topaz-output-fix-20261004/`, `topaz-decoder-review-20261004/`, and
@@ -101,3 +131,7 @@ Remaining work from the pricing audit: shared funded reservations across all
 paid paths; actual receipt/offer/refund/annual accounting; recurring-cost
 allocation; separate trial/TestFlight funding; provider invoice reconciliation.
 The complete list remains in [the 3 October audit](../PRICING-AUDIT-20261003.md).
+The [plan feature and allowance proposal](../PLAN-ALLOWANCES-20261004.md)
+records the current additive quantities, a concrete shared-budget scenario,
+annual choices and the cost assumptions that still need measurement. It does
+not change customer entitlements or establish the complete margin floor.
