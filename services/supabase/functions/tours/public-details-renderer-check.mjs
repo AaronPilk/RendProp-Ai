@@ -26,20 +26,23 @@ const { renderTourPage, sanitizeTourForUnbranded } = await load("player");
 const { buildDemoTour } = await load("demo");
 const secret = "PrivateOnlyMeasurementRendererSentinel";
 const privateWire = JSON.stringify({ version: 1, unit: "meters", rooms: [{ name: secret, widthMeters: 3, lengthMeters: 4 }], updatedAt: 1000 });
+const outlineWire = JSON.stringify({ version: 2, unit: "meters", rooms: [], outlines: [{ name: secret, floor: 0, category: "finished", vertices: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 2 }, { x: 2, y: 2 }, { x: 2, y: 5 }, { x: 0, y: 5 }] }], updatedAt: 1000 });
 let renderings = 0;
 for (const type of ["real_estate", "venue", "restaurant", "retail", "fitness", "other"]) {
-  const tour = buildDemoTour();
-  tour.space_type = type;
-  const original = { ...tour.listing.details, floor_measurements_v1: privateWire, floor_measurements_v9: secret, unrelated_fact: "Public future property fact" };
-  tour.listing.details = publicListingDetails(original);
-  assert.equal(original.floor_measurements_v1, privateWire, "Owner details retain the private wire");
-  assert.equal(tour.listing.details.unrelated_fact, original.unrelated_fact, "Unrelated public facts remain untouched");
-  const sanitized = sanitizeTourForUnbranded(tour);
-  assert.equal(sanitized.listing.details.floor_measurements_v1, undefined, "The unbranded input cannot recover filtered measurement data");
-  for (const options of [{}, { unbranded: true }, { embed: true }, { embed: true, unbranded: true }]) {
-    const html = renderTourPage(tour, "https://functions-fixture.invalid/v1", "fixture-public-key", "", options);
-    assert.ok(!html.includes(secret) && !html.toLowerCase().includes("floor_measurements_"), "Measurement metadata must not reach HTML, attributes or inline scripts");
-    renderings += 1;
+  for (const wire of [privateWire, outlineWire]) {
+    const tour = buildDemoTour();
+    tour.space_type = type;
+    const original = { ...tour.listing.details, floor_measurements_v1: wire, floor_measurements_v9: secret, unrelated_fact: "Public future property fact" };
+    tour.listing.details = publicListingDetails(original);
+    assert.equal(original.floor_measurements_v1, wire, "Owner details retain the complete private v1 or v2 wire");
+    assert.equal(tour.listing.details.unrelated_fact, original.unrelated_fact, "Unrelated public facts remain untouched");
+    const sanitized = sanitizeTourForUnbranded(tour);
+    assert.equal(sanitized.listing.details.floor_measurements_v1, undefined, "The unbranded input cannot recover filtered measurement data");
+    for (const options of [{}, { unbranded: true }, { embed: true }, { embed: true, unbranded: true }]) {
+      const html = renderTourPage(tour, "https://functions-fixture.invalid/v1", "fixture-public-key", "", options);
+      assert.ok(!html.includes(secret) && !html.toLowerCase().includes("floor_measurements_"), "Measurement metadata must not reach HTML, attributes or inline scripts");
+      renderings += 1;
+    }
   }
 }
 console.log(`PASS: ${renderings} actual branded/unbranded/embed renderer cases; private measurement metadata absent; owner details unchanged; zero network calls`);

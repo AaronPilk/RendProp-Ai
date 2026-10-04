@@ -6,8 +6,10 @@ continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
 The [floor plan measurements update](docs/floor-plan-measurements.md) adds room
-dimension entry, arranged 2D/3D layouts, image/PDF export and an optional ARKit
-distance estimator. Existing LiDAR scans and blueprint upload remain available.
+dimensions, irregular wall outlines, categorized area worksheets, 2D/3D layouts,
+image/PDF export and an optional ARKit distance estimator. Calculated closing
+walls are marked, and linked open-below deductions are subtracted once. Existing
+LiDAR scans and blueprint upload remain available.
 This isolated feature branch is **not shipped in TestFlight 43 or App Store 42**;
 physical measurement accuracy and owner-device acceptance remain pending.
 

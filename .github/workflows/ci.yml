@@ -80,8 +80,13 @@ jobs:
       - name: Floor measurements preserve dimensions, layout and wire data
         run: |
           bash apps/ios/tests/run-floor-measurements.sh
+          python3 apps/ios/tests/check-floor-measurement-controls.py
+          python3 tools/audit/floor-measurement-outline-editor-20261004/run.py
+          for fault in drop-original-geometry drop-original-vector drop-save-fence; do
+            python3 tools/audit/floor-measurement-outline-editor-20261004/run.py --inject-fault "$fault"
+          done
           python3 tools/audit/floor-measurement-sync-20261004/run.py
-          for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit; do
+          for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint legacy-v2-accept drop-local-raw-mirror; do
             python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault"
           done
       - name: Measured-plan Photos export fences permission and context changes
@@ -214,6 +219,12 @@ jobs:
             ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
             /tmp/rendprop-gallery-sync-fixture-*/receipt.json
             /tmp/rendprop-gallery-sync-fixture-*/*.log
+            /tmp/rendprop-floor-outline-controls-*/receipt.json
+            /tmp/rendprop-floor-outline-controls-*/*.log
+            /tmp/rendprop-outline-editor-*/receipt.json
+            /tmp/rendprop-outline-editor-*/*.log
+            /tmp/rendprop-floor-measurement-sync-*/receipt.json
+            /tmp/rendprop-floor-measurement-sync-*/*.log
           retention-days: 7
           if-no-files-found: warn
 

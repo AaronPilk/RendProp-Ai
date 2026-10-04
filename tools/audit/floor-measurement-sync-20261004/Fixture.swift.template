@@ -70,6 +70,21 @@ __MARK_DIRTY__
 __SYNC_LISTING__
 }
 
+struct MeasurementUIError: Error { let message: String }
+@MainActor final class PlanEditor {
+    let model: SyncModel
+    let listing: Listing
+    var plan: FloorMeasurementPlan
+    var unsupported = false
+    var currentContext = true
+    var error: String?
+    init(model: SyncModel, listing: Listing, plan: FloorMeasurementPlan) {
+        self.model = model; self.listing = listing; self.plan = plan
+    }
+    func save(_ candidate: FloorMeasurementPlan) throws { try persist(candidate) }
+__EDITOR_PERSIST__
+}
+
 @main struct FloorMeasurementSyncChecks {
     @MainActor static func main() async {
         do { try await run() }
@@ -287,6 +302,187 @@ __SYNC_LISTING__
         AuthStore.shared.syncSessionRevision += 1
         switchGate.release(); await switchedUpdate.value
         try check(switchModel.listings[0].needsServerSync == true && switchModel.listings[0].floorMeasurements == plan, "Account revision change cannot acknowledge another session's plan write")
-        print("PASS: \(checks) assertions; actual wire/create/PATCH/dirty-sync/replay sources; zero network or camera calls")
+        // Version two may consist only of an irregular outline. A rooms-only
+        // emptiness check would silently discard the feature's primary input.
+        let outline = FloorMeasurementOutline(id: UUID(uuidString: "66666666-6666-4666-8666-666666666666")!,
+            name: "Measured L-shaped first floor", floor: 0,
+            vertices: [.init(x: 0, y: 0), .init(x: 5, y: 0), .init(x: 5, y: 2),
+                       .init(x: 2, y: 2), .init(x: 2, y: 5), .init(x: 0, y: 5)], category: .finished)
+        let outlinePlan = FloorMeasurementPlan(version: 2, unit: .meters, rooms: [], outlines: [outline], updatedAt: fixedDate)
+        let outlineWire = try outlinePlan.encodedWireValue()
+        try check(!outlinePlan.isEmpty && outlinePlan.rooms.isEmpty, "An outline-only measurement plan is not an empty plan")
+        var outlineNewer = outlinePlan
+        outlineNewer.outlines[0].vertices[1].x = 6
+        outlineNewer.updatedAt = fixedDate.addingTimeInterval(3)
+        let outlineNewerWire = try outlineNewer.encodedWireValue()
+        var outlineLocal = local
+        outlineLocal.floorMeasurements = outlinePlan
+        // Deliberately stale raw wire: request assembly must use the current
+        // typed outline even before an editor has mirrored its local details.
+        outlineLocal.details?[FloorMeasurementPlan.wireKey] = wire
+        for isPatch in [false, true] {
+            let body = try client.body(outlineLocal, patch: isPatch)
+            try check((body["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == outlineWire,
+                      "Outline-only plan survives actual create and PATCH body assembly")
+            try check(body["sqft"] as? Int == local.sqft, "Measured outlines do not replace advertised listing area in a wire write")
+            try check(body["main_photo_key"] == nil && body["gallery_asset_ids"] == nil,
+                      "Outline-only writes do not clear separately owned listing media")
+        }
+        var outlineResponse = response
+        outlineResponse["details"] = try client.body(outlineLocal, patch: true)["details"]
+        client.response = try JSONSerialization.data(withJSONObject: outlineResponse)
+        let outlineMapped = try client.mapped(client.response)
+        try check(outlineMapped.floorMeasurements == outlinePlan && outlineMapped.details?[FloorMeasurementPlan.wireKey] == outlineWire,
+                  "Actual DTO mapping decodes an outline-only version-two plan under the existing wire key")
+        let outlineRequestStart = client.requests.count
+        _ = try await client.createListing(outlineLocal)
+        _ = try await client.updateListing(outlineLocal)
+        try check(client.requests.count == outlineRequestStart + 2, "Outline-only plans reach both actual create and PATCH request boundaries")
+        let outlineSent = try JSONSerialization.jsonObject(with: client.requests.last!.httpBody!) as! [String: Any]
+        try check((outlineSent["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == outlineWire,
+                  "The actual outline PATCH request preserves the complete version-two wire")
+        try check(client.requests.last!.url!.lastPathComponent.lowercased() == sid.uuidString.lowercased(),
+                  "Outline-only PATCH targets the bound server listing rather than an unbound local UUID")
+        let outlineRestored = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(outlineLocal))
+        try check(outlineRestored.floorMeasurements == outlinePlan && outlineRestored.sqft == local.sqft,
+                  "Local snapshots preserve irregular outlines without changing advertised area")
+        let rawOnlySnapshot = try JSONSerialization.data(withJSONObject: ["address": "New outline raw snapshot", "details": [FloorMeasurementPlan.wireKey: outlineWire]])
+        try check(try JSONDecoder().decode(Listing.self, from: rawOnlySnapshot).floorMeasurements == outlinePlan,
+                  "A current app recovers version-two outlines from raw-only snapshot details")
+
+        // Compile the complete frozen v1 reader, rather than simulating its
+        // version guard. Old clients must refuse v2, retain the raw string and
+        // save unrelated facts without overwriting it as an empty room plan.
+        try check(LegacyFloorMeasurementPlan.decodeWireValue(wire)?.rooms.count == 1,
+                  "Frozen prior reader still accepts a real supported version-one rectangle plan")
+        try check(LegacyFloorMeasurementPlan.decodeWireValue(outlineWire) == nil,
+                  "Frozen v1 reader refuses version-two outlines instead of interpreting them as an empty rectangle plan")
+        var oldReaderListing = outlineLocal
+        oldReaderListing.floorMeasurements = nil
+        oldReaderListing.details?[FloorMeasurementPlan.wireKey] = outlineWire
+        oldReaderListing.address = "Unrelated old-client fact edit"
+        try check(try LegacyListingWireDetails.merged(oldReaderListing)[FloorMeasurementPlan.wireKey] == outlineWire,
+                  "Frozen older write assembly preserves unreadable version-two raw wire verbatim")
+        try check(try ListingWireDetails.merged(oldReaderListing)[FloorMeasurementPlan.wireKey] == outlineWire,
+                  "Current raw-preserving write assembly keeps an unknown typed plan unchanged")
+        let editorModel = SyncModel(local)
+        let editor = PlanEditor(model: editorModel, listing: local, plan: plan)
+        try editor.save(outlinePlan)
+        let editorSaved = editorModel.listings[0]
+        let savedOutlineWire = try editorSaved.floorMeasurements!.encodedWireValue()
+        try check(editorSaved.details?[FloorMeasurementPlan.wireKey] == savedOutlineWire && editorSaved.floorMeasurements?.outlines.count == 1,
+                  "Actual editor saves the exact encoded outline wire and typed plan atomically in the same Listing")
+        let savedSnapshot = try JSONEncoder().encode(editorSaved)
+        let downgradedSnapshot = try JSONDecoder().decode(LegacySnapshotListing.self, from: savedSnapshot)
+        try check(downgradedSnapshot.floorMeasurements == nil && downgradedSnapshot.details?[FloorMeasurementPlan.wireKey] == savedOutlineWire,
+                  "The actual older Listing snapshot decoder refuses typed v2 and retains its exact mirrored raw wire")
+        try check(try LegacySnapshotWireDetails.merged(downgradedSnapshot)[FloorMeasurementPlan.wireKey] == savedOutlineWire,
+                  "The older snapshot write path preserves mirrored outline wire on unrelated facts edits")
+        let upgradedSnapshot = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(downgradedSnapshot))
+        try check(upgradedSnapshot.floorMeasurements == editorSaved.floorMeasurements && upgradedSnapshot.sqft == local.sqft,
+                  "The current app recovers the exact outline after a supported old-reader snapshot round trip")
+        editor.currentContext = false
+        try refuses({ try editor.save(outlineNewer) }, "Actual editor refuses to save an outline after an account or workspace context change")
+        var clearedOutline = outlineLocal
+        clearedOutline.floorMeasurements = FloorMeasurementPlan(version: 2, rooms: [], outlines: [], updatedAt: fixedDate)
+        let emptyOutlineWire = (try client.body(clearedOutline, patch: true)["details"] as! [String: String])[FloorMeasurementPlan.wireKey]!
+        try check(FloorMeasurementPlan.decodeWireValue(emptyOutlineWire)?.isEmpty == true && emptyOutlineWire != outlineWire,
+                  "Deleting the last outline writes a supported empty version-two plan as an intentional clear")
+        var unknownOutlineObject = try JSONSerialization.jsonObject(with: Data(outlineWire.utf8)) as! [String: Any]
+        var unknownOutlines = unknownOutlineObject["outlines"] as! [[String: Any]]
+        unknownOutlines[0]["category"] = "future-category"
+        unknownOutlineObject["outlines"] = unknownOutlines
+        let unknownOutlineWire = String(decoding: try JSONSerialization.data(withJSONObject: unknownOutlineObject), as: UTF8.self)
+        outlineResponse["details"] = [FloorMeasurementPlan.wireKey: unknownOutlineWire]
+        let unsupportedOutline = try client.mapped(JSONSerialization.data(withJSONObject: outlineResponse))
+        try check(unsupportedOutline.floorMeasurements == nil && unsupportedOutline.details?[FloorMeasurementPlan.wireKey] == unknownOutlineWire,
+                  "An unsupported outline category preserves raw wire while ordinary listing facts remain readable")
+        try check(try ListingWireDetails.merged(unsupportedOutline)[FloorMeasurementPlan.wireKey] == unknownOutlineWire,
+                  "An unsupported outline category is never silently replaced by an empty current plan")
+        var badOutline = outlineLocal
+        badOutline.floorMeasurements?.outlines[0].vertices[1].x = .infinity
+        let beforeBadOutline = client.requests.count
+        try refuses({ _ = try client.body(badOutline, patch: true) }, "Nonfinite outline vertices fail before any actual HTTP request")
+        try check(client.requests.count == beforeBadOutline, "Invalid outline validation has no HTTP side effects")
+
+        let outlineFingerprint = try CloudDraftCreation.fingerprint(outlineLocal)
+        var outlineEdit = outlineLocal; outlineEdit.floorMeasurements = outlineNewer
+        try check(try CloudDraftCreation.fingerprint(outlineEdit) != outlineFingerprint,
+                  "Outline-only edits change the actual create fingerprint")
+        var outlineRemote = outlineMapped
+        outlineRemote.floorMeasurements = outlineNewer
+        outlineRemote.details?[FloorMeasurementPlan.wireKey] = outlineNewerWire
+        let outlineClean = try CloudListingMerge.merge(local: [outlineLocal], remote: [outlineRemote], protected: [])[0]
+        try check(outlineClean.floorMeasurements == outlineNewer && outlineClean.mainPhotoRelPath == outlineLocal.mainPhotoRelPath,
+                  "Clean remote hydration adopts outline-only data and preserves local photos")
+        var outlineDirty = outlineLocal; outlineDirty.needsServerSync = true
+        try check(try CloudListingMerge.merge(local: [outlineDirty], remote: [outlineRemote], protected: [])[0].floorMeasurements == outlinePlan,
+                  "Dirty irregular outlines survive an older remote snapshot")
+        try check(try CloudListingMerge.merge(local: [outlineLocal], remote: [outlineRemote], protected: [localID])[0].floorMeasurements == outlinePlan,
+                  "Protected irregular outlines survive a concurrent refresh")
+        try check(try CloudListingMerge.merge(local: [outlineLocal], remote: [oldCloud], protected: [])[0].floorMeasurements == nil,
+                  "Clean outline-only plans observe authoritative remote deletion")
+        try check(try CloudListingMerge.merge(local: [outlineDirty], remote: [oldCloud], protected: [])[0].floorMeasurements == outlinePlan,
+                  "Dirty outline-only plans survive remote absence until their write is acknowledged")
+        try check(try CloudListingMerge.merge(local: [outlineLocal], remote: [unsupportedOutline], protected: [])[0].details?[FloorMeasurementPlan.wireKey] == unknownOutlineWire,
+                  "Clean outline-only plans adopt future raw content rather than resurrecting a stale typed outline")
+
+        var outlineDraft = outlineLocal; outlineDraft.serverID = nil; outlineDraft.serverOrgID = nil
+        outlineDraft.cloudCreateFingerprint = try CloudDraftCreation.fingerprint(outlineDraft)
+        var outlineReplay = outlineRemote; outlineReplay.cloudCreateReplayed = true
+        current = outlineDraft
+        _ = try await CloudDraftCreation.ensure(snapshot: outlineDraft, identity: identity, create: { _ in outlineReplay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == outlineNewer && current?.needsServerSync == false,
+                  "An unedited outline-only create replay adopts the office outline")
+        current = outlineDraft; current?.floorMeasurements = outlineNewer
+        _ = try await CloudDraftCreation.ensure(snapshot: outlineDraft, identity: identity, create: { _ in outlineReplay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == outlineNewer && current?.needsServerSync == true,
+                  "An outline-only edit during create replay remains dirty for its follow-up PATCH")
+        var priorOutlineDraft = outlineDraft
+        priorOutlineDraft.cloudCreateFingerprint = try priorFingerprint(priorOutlineDraft)
+        current = priorOutlineDraft; current?.floorMeasurements = outlineNewer
+        _ = try await CloudDraftCreation.ensure(snapshot: priorOutlineDraft, identity: identity, create: { _ in outlineReplay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == outlineNewer && current?.needsServerSync == true,
+                  "Legacy raw fingerprints cannot overlook an independent outline edit")
+        var alignedOutlineDraft = outlineDraft
+        alignedOutlineDraft.details?[FloorMeasurementPlan.wireKey] = outlineWire
+        alignedOutlineDraft.cloudCreateFingerprint = try priorFingerprint(alignedOutlineDraft)
+        current = alignedOutlineDraft
+        _ = try await CloudDraftCreation.ensure(snapshot: alignedOutlineDraft, identity: identity, create: { _ in outlineReplay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == outlineNewer && current?.needsServerSync == false,
+                  "An unedited outline matching raw wire remains compatible with a pending legacy create fingerprint")
+
+        // The actual anonymous-account journal rebinds identities only. It
+        // must preserve the newer local outline, its raw wire and listing area.
+        let adoption = AnonymousAdoptionRecovery.Pending(version: 1, operationID: UUID(), sourceUserID: org,
+            destinationUserID: otherOrg, sourceAccessToken: "inert-fixture-token", sourceRefreshToken: nil)
+        let journal = try AdoptionLocalBindings.capture(adoption, listings: [outlineLocal])
+        var detachedOutline = outlineEdit; detachedOutline.serverID = nil
+        let adopted = try journal.restoring([detachedOutline], pending: adoption, currentUserID: otherOrg, orgID: org)[0]
+        try check(adopted.floorMeasurements == outlineNewer && adopted.details == outlineEdit.details && adopted.needsServerSync == true,
+                  "Actual anonymous adoption preserves current outlines and raw wire while marking the rebound listing dirty")
+        try check(adopted.sqft == local.sqft && adopted.serverID == sid,
+                  "Anonymous adoption rebinds the same listing without replacing advertised area")
+        try check(try CloudDraftCreation.fingerprint(adopted) == CloudDraftCreation.fingerprint(outlineEdit),
+                  "Anonymous adoption does not change the facts fingerprint of an outline-only measurement plan")
+        try refuses({ _ = try journal.restoring([detachedOutline], pending: adoption, currentUserID: org, orgID: org) },
+                    "Another account cannot adopt an irregular outline through a foreign handoff")
+
+        let outlineModel = SyncModel(outlineLocal), outlineUpdateGate = HeldBoundary()
+        outlineModel.api.update = { snapshot in await outlineUpdateGate.hold(); return snapshot }
+        outlineModel.modify(localID) { $0.floorMeasurements = outlineNewer }
+        try await waitUntil { outlineUpdateGate.arrivals == 1 }
+        try check(outlineModel.listings[0].needsServerSync == true && outlineModel.api.snapshots[0].floorMeasurements == outlineNewer,
+                  "Actual AppModel modify sends an outline-only edit and marks it dirty")
+        outlineModel.modify(localID) { $0.floorMeasurements = clearedOutline.floorMeasurements }
+        outlineUpdateGate.release()
+        try await waitUntil { outlineUpdateGate.arrivals == 2 }
+        try check(outlineModel.api.snapshots[1].floorMeasurements?.isEmpty == true && outlineModel.listings[0].needsServerSync == true,
+                  "Deleting the last outline during a held PATCH dispatches a second empty version-two write")
+        outlineUpdateGate.release()
+        try await waitUntil { !outlineModel.syncInFlight.contains(localID) }
+        try check(outlineModel.listings[0].floorMeasurements?.isEmpty == true && outlineModel.listings[0].needsServerSync == false,
+                  "Only acknowledgment of the latest outline clear removes dirty state")
+        print("PASS: \(checks) assertions; actual wire/create/PATCH/dirty-sync/replay/adoption sources plus frozen v1 reader; zero network or camera calls")
     }
 }

@@ -19,6 +19,15 @@ elif sys.argv[3] == '--inject-overlap-loss':
 elif sys.argv[3] == '--inject-wire-resurrection':
     before = 'floorMeasurements = nil\n            }\n        } else {'
     after = 'floorMeasurements = FloorMeasurementPlan.decodeWireValue(details?[FloorMeasurementPlan.wireKey])\n            }\n        } else {'
+elif sys.argv[3] == '--inject-outline-area-error':
+    before = 'sum + cross(origin, vertices[i], vertices[i + 1]) / 2'
+    after = 'sum + cross(origin, vertices[i], vertices[i + 1]) / 3'
+elif sys.argv[3] == '--inject-outline-overlap-loss':
+    before = 'if FloorMeasurementPolygon.interiorsOverlap(solids[i].vertices, solids[j].vertices) {'
+    after = 'if false && FloorMeasurementPolygon.interiorsOverlap(solids[i].vertices, solids[j].vertices) {'
+elif sys.argv[3] == '--inject-outline-deduction-loss':
+    before = 'let deduction = outlines.filter { $0.deductionFromID == outline.id }.reduce(0) { $0 + $1.areaMeters2 }'
+    after = 'let deduction = 0.0'
 else:
     raise SystemExit('Unknown test option')
 assert source.count(before) == 1

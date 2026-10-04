@@ -146,6 +146,11 @@ are reasons to preserve that distinction, not a claim that Rendprop is certified
 
 ## Verification and remaining release work
 
+The later [irregular outline and area worksheet delivery](MEASUREMENT-OUTLINES-WORKSHEET-20261004.md)
+implements the straight-edge perimeter and classified worksheet described above.
+Its native, compatibility and export receipts are separate from this feedback
+audit. Both feature branches still need a signed app release.
+
 Verification completed:
 
 - Existing actual photo-history/export checks pass **340 assertions**.
