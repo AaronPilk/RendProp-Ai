@@ -85,6 +85,20 @@ Private evidence is under `/Users/pilksclaes/LocalRendpropAudits/`:
 proof), and `floor-measurements-20261004` (model, geometry, wire and public-route
 receipts). These are source-bound records, not customer or camera recordings.
 
+## Backend deployment
+
+The draft-measurement public-data filter is live in Supabase `tours` v48,
+ACTIVE with `verify_jwt: true`, deployed from runtime commit `43cec70` at
+2026-10-04 16:36:20 UTC. Readback matched all 13 submitted files with no extra
+or missing files. The unsigned edge-function probe remained 401; the public
+`estate-demo` listing remained 200 with no measurement namespace. These were
+read-only probes, not a live customer measurement injection. The pre-existing
+shared helper's already-audited, unused `assertPaidAiIdentity` export was also
+included; `tours` does not invoke it. No migration or auth-policy change occurred.
+See the [deployment receipt](../releases/FLOOR-MEASUREMENTS-20261004.json).
+
+The native feature still needs a signed TestFlight build and real-phone checks.
+
 ## Next device acceptance
 
 Use the [feature guide/checklist](../floor-plan-measurements.md). Compare AR

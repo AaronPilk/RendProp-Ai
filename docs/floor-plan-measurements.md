@@ -56,8 +56,9 @@ Offline race tests do not establish live conflict-free syncing.
 Studio retains the measurement data but does not yet display/edit these room
 layouts. Export the plan image and attach it through Studio's existing floor
 plan upload when you want it on a published listing. Draft measurement metadata
-must be excluded from the public tour payload; sharing an exported image is a
-separate deliberate action.
+is excluded from the public tour payload by deployed `tours` v48; sharing an
+exported image is a separate deliberate action. See the
+[backend deployment receipt](releases/FLOOR-MEASUREMENTS-20261004.json).
 
 Manual geometry, the AR estimator and exports make no AI-provider request and
 do not debit AI credits. Normal account/storage infrastructure still applies.
