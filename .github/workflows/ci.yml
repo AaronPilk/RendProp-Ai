@@ -204,6 +204,7 @@ jobs:
             ${{ runner.temp }}/rendprop-finishing-*/*.mp4
             ${{ runner.temp }}/rendprop-listing-browser-*/receipt.json
             ${{ runner.temp }}/rendprop-listing-browser-*/explore-handoff.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-seek.json
             ${{ runner.temp }}/rendprop-listing-browser-*/*.png
             ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json

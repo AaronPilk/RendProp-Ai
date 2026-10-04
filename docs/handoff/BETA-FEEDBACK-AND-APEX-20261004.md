@@ -193,6 +193,18 @@ both controls to fail for that exact reason and retains their numeric handoff
 receipts. This establishes the timing defect and continued rewind detection;
 it does not retroactively prove the first CI failure had that specific cause.
 
+The next run (`37232179306`) passed the positive browser flow and failed its
+first control earlier at the room-chapter position assertion. That check waited
+for the real seek to reach four seconds, then took a second clock sample after
+Watch mode had resumed playback. It now retains the actual media state inside
+the successful browser wait, at the unchanged 0.15-second threshold. Decoded
+frame checks remain; the test does not pause production playback to pass.
+Chapter-state artifacts and fuller failure-clock fields are now retained.
+The control gate correctly rejected this earlier failure rather than treating
+any nonzero exit as sufficient. That failed run remains in the private evidence.
+After this correction, the positive flow again passes all 195 assertions, and
+the exact negative-control CI step passes locally with both expected rejections.
+
 New work is not automatically in a signed TestFlight build.
 The permission classification needs an admin function deployment; native changes
 need a signed build. The routine-metric correction does not rewrite historical

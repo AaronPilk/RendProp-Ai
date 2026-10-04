@@ -299,8 +299,16 @@ try {
   await page.evaluate(() => { const v = document.querySelector("#flythrough-video"); v.pause(); v.currentTime = 1; });
   await page.waitForFunction(() => Math.abs(document.querySelector("#flythrough-video").currentTime - 1) < .08 && !document.querySelector("#flythrough-video").seeking);
   await page.locator('#flythrough-modal [data-video-seek="4"]').click();
-  await page.waitForFunction(() => Math.abs(document.querySelector("#flythrough-video").currentTime - 4) < .15 && !document.querySelector("#flythrough-video").seeking);
-  check(Math.abs((await snapshot()).time - 4) < .15, "Room chapter seeks the actual media timeline");
+  // Watch mode resumes playback after the chapter seek. Retain the real clock
+  // sample from the successful wait, rather than measuring it again later.
+  const chapterHandle = await page.waitForFunction(() => {
+    const v = document.querySelector("#flythrough-video");
+    return Math.abs(v.currentTime - 4) < .15 && !v.seeking
+      ? { time: v.currentTime, seeking: v.seeking, currentSrc: v.currentSrc } : false;
+  });
+  const chapterSeek = await chapterHandle.jsonValue(); await chapterHandle.dispose();
+  writeFileSync(join(evidence, 'chapter-seek.json'), JSON.stringify(chapterSeek, null, 2) + '\n');
+  check(Math.abs(chapterSeek.time - 4) < .15 && !chapterSeek.seeking, "Room chapter seeks the actual media timeline");
   // `currentTime` and `seeking=false` describe the media timeline, not the
   // compositor. Wait for a presented decoded frame before reading its pixels.
   const presented = await page.evaluate(() => new Promise((resolveFrame, reject) => {
@@ -488,7 +496,7 @@ try {
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   console.log(`Listing browser: ${checks.length} assertions passed; real rendered page/720p H.264-AAC/ranges/transfer cancellation. Receipt: ${join(evidence, "receipt.json")}`);
 } catch (error) {
-  const failureState = await browserPage?.evaluate(() => { const v = document.querySelector("#flythrough-video"); return v ? { src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null; }).catch(() => null);
+  const failureState = await browserPage?.evaluate(() => { const v = document.querySelector("#flythrough-video"); return v ? { time: v.currentTime, duration: v.duration, controls: v.controls, muted: v.muted, src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null; }).catch(() => null);
   await browserPage?.screenshot({ path: join(evidence, "failure.png") }).catch(() => {});
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: false, sourcePlayerSha256: sourceHash, sourceHashes, fault, error: error.message, checks, navigationMeasurements, requests, mediaState, pageErrors, failureState }, null, 2) + "\n");
   throw error;
