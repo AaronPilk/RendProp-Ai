@@ -170,6 +170,8 @@
 		F9D600443F0782FDE25DC642 /* Analytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 081F8CCD8CC9E70D6661BDCF /* Analytics.swift */; };
 		FB002B6FD89E7D735F7B02AA /* ReviewSubmitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BADA8D7E30F70E1206053437 /* ReviewSubmitView.swift */; };
 		FCD600BD10B725267F9FA236 /* SpatialCaptureIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 616B9D8BEE3606B8A5BEACC8 /* SpatialCaptureIntegrationTests.swift */; };
+		1C1B8301DA49F8E3D56C0417 /* FloorMeasurementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B48D86D9BE45EFEB5EAB218 /* FloorMeasurementsView.swift */; };
+		B93C7850012E8602A82153EC /* RoomMeasureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A83DF2788844EFDE136D4AC /* RoomMeasureView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -350,12 +352,15 @@
 		F74D4FA8CA617AF9D67A1D4B /* SessionConnection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionConnection.swift; sourceTree = "<group>"; };
 		F7EECFBEA591D0C1EBED0D27 /* VoiceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceRecorder.swift; sourceTree = "<group>"; };
 		FED8E0B6DC0EAF6F10BC3BF9 /* AnonymousAdoptionRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnonymousAdoptionRecovery.swift; sourceTree = "<group>"; };
+		0B48D86D9BE45EFEB5EAB218 /* FloorMeasurementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorMeasurementsView.swift; sourceTree = "<group>"; };
+		7A83DF2788844EFDE136D4AC /* RoomMeasureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMeasureView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
 		03A7D86327DBA76DCEA03785 /* Capture */ = {
 			isa = PBXGroup;
 			children = (
+				7A83DF2788844EFDE136D4AC /* RoomMeasureView.swift */,
 				94ABBEAD8C337C78410F602F /* CameraManager.swift */,
 				F240397BB93F44E578638712 /* CaptureView.swift */,
 				429DB8824CE4F774CA29E5F8 /* GuidanceOverlays.swift */,
@@ -451,6 +456,7 @@
 		2BBBDD7D95C0C5998CB4B8E4 /* Screens */ = {
 			isa = PBXGroup;
 			children = (
+				0B48D86D9BE45EFEB5EAB218 /* FloorMeasurementsView.swift */,
 				909019886C9DECFB740D03D2 /* AdminChurnView.swift */,
 				43D935C21C3B7D74F431BC8E /* AdminCohortsView.swift */,
 				7E85F1D22561FBB021FEE70C /* AdminConsoleView.swift */,
@@ -908,6 +914,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B93C7850012E8602A82153EC /* RoomMeasureView.swift in Sources */,
+				1C1B8301DA49F8E3D56C0417 /* FloorMeasurementsView.swift in Sources */,
 				9BE48DB811A0109484420497 /* APIClient.swift in Sources */,
 				2A0570B183F590CB9AC290E8 /* AdminChurnView.swift in Sources */,
 				B9F3EABC12DD626D2612E88D /* AdminCohortsView.swift in Sources */,

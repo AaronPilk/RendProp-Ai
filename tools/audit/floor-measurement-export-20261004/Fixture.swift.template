@@ -1,0 +1,170 @@
+import Foundation
+
+// Platform boundaries only. Actual save/permission/caller bodies are inserted
+// below unchanged; these doubles never import UIKit or Photos.
+struct UIImage {}
+enum PHAccessLevel { case addOnly }
+enum PHAuthorizationStatus { case notDetermined, authorized, limited, denied }
+enum FakeError: Error { case failedWrite }
+
+final class PhotoBoundary {
+    static let shared = PhotoBoundary()
+    private let lock = NSLock()
+    private var status: PHAuthorizationStatus = .authorized
+    private var permission: CheckedContinuation<PHAuthorizationStatus, Never>?
+    private var write: CheckedContinuation<Void, Error>?
+    private var holdWrite = false, failWrite = false
+    private var attempts = 0, creations = 0, successes = 0
+    private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
+    func reset(_ status: PHAuthorizationStatus = .authorized, hold: Bool = false, fail: Bool = false) {
+        locked { precondition(permission == nil && write == nil); self.status = status
+            holdWrite = hold; failWrite = fail; attempts = 0; creations = 0; successes = 0 }
+    }
+    var authorization: PHAuthorizationStatus { locked { status } }
+    var waitingPermission: Bool { locked { permission != nil } }
+    var waitingWrite: Bool { locked { write != nil } }
+    var writeAttempts: Int { locked { attempts } }
+    var creationRequests: Int { locked { creations } }
+    var completedWrites: Int { locked { successes } }
+    func request(_ continuation: CheckedContinuation<PHAuthorizationStatus, Never>) { locked { permission = continuation } }
+    func permit(_ status: PHAuthorizationStatus) {
+        let continuation = locked { let c = permission; permission = nil; self.status = status; return c }
+        precondition(continuation != nil); continuation?.resume(returning: status)
+    }
+    func beginWrite() { locked { attempts += 1 } }
+    func create() { locked { creations += 1 } }
+    func finish(_ continuation: CheckedContinuation<Void, Error>) {
+        let flags = locked { () -> (Bool, Bool) in
+            if holdWrite { write = continuation }
+            return (holdWrite, failWrite)
+        }
+        guard !flags.0 else { return }
+        if flags.1 { continuation.resume(throwing: FakeError.failedWrite) }
+        else { locked { successes += 1 }; continuation.resume() }
+    }
+    func completeWrite() {
+        let continuation = locked { let c = write; write = nil; successes += 1; return c }
+        precondition(continuation != nil); continuation?.resume()
+    }
+}
+
+final class PHPhotoLibrary {
+    static let instance = PHPhotoLibrary()
+    static func shared() -> PHPhotoLibrary { instance }
+    static func authorizationStatus(for level: PHAccessLevel) -> PHAuthorizationStatus { PhotoBoundary.shared.authorization }
+    static func requestAuthorization(for level: PHAccessLevel) async -> PHAuthorizationStatus {
+        await withCheckedContinuation { PhotoBoundary.shared.request($0) }
+    }
+    func performChanges(_ changes: @escaping () -> Void) async throws {
+        PhotoBoundary.shared.beginWrite(); changes()
+        try await withCheckedThrowingContinuation { PhotoBoundary.shared.finish($0) }
+    }
+}
+enum PHAssetChangeRequest {
+    static func creationRequestForAsset(from image: UIImage) -> Int { PhotoBoundary.shared.create(); return 1 }
+}
+@MainActor enum Haptics { static var count = 0; static func success() { count += 1 } }
+
+private enum PhotosLibrarySaver {
+__DENIED__
+__CONTEXT_CHANGED__
+__SAVE_IMAGE__
+__ENSURE_ACCESS__
+}
+
+@MainActor private final class PlanExportState {
+    var context = true, saved = false, isSaving = false
+    var saveError: String?
+}
+@MainActor private struct PlanExportHarness {
+    let image = UIImage()
+    private let state = PlanExportState()
+    var context: Bool { get { state.context } nonmutating set { state.context = newValue } }
+    var saved: Bool { get { state.saved } nonmutating set { state.saved = newValue } }
+    var isSaving: Bool { get { state.isSaving } nonmutating set { state.isSaving = newValue } }
+    var saveError: String? { get { state.saveError } nonmutating set { state.saveError = newValue } }
+    func canExport() -> Bool { context }
+    func invoke() { save() }
+__CALLER_SAVE__
+}
+
+@main struct Checks {
+    @MainActor static var assertions = 0
+    @MainActor static func check(_ value: @autoclosure () -> Bool, _ label: String) {
+        assertions += 1
+        guard value() else { print("FAIL: \(label)"); exit(1) }
+    }
+    @MainActor static func until(_ label: String, _ condition: () -> Bool) async {
+        for _ in 0..<100_000 { if condition() { return }; await Task.yield() }
+        print("FAIL: held boundary timeout: \(label)"); exit(1)
+    }
+    @MainActor static func main() async {
+        let boundary = PhotoBoundary.shared
+
+        boundary.reset(); Haptics.count = 0
+        let successful = PlanExportHarness(); successful.invoke()
+        await until("valid success") { !successful.isSaving }
+        check(boundary.writeAttempts == 1 && boundary.creationRequests == 1 && boundary.completedWrites == 1, "valid context writes exactly once")
+        check(successful.saved && successful.saveError == nil && Haptics.count == 1, "successful write marks saved and success once")
+
+        boundary.reset(.notDetermined, hold: true); Haptics.count = 0
+        let permitted = PlanExportHarness(); permitted.invoke()
+        await until("valid held permission") { boundary.waitingPermission }
+        check(boundary.writeAttempts == 0 && !permitted.saved, "valid first-use waits for permission")
+        boundary.permit(.authorized)
+        await until("valid held write") { boundary.waitingWrite }
+        check(boundary.writeAttempts == 1 && !permitted.saved && Haptics.count == 0, "valid permission still waits for write completion")
+        boundary.completeWrite()
+        await until("valid held completion") { !permitted.isSaving }
+        check(permitted.saved && permitted.saveError == nil && Haptics.count == 1, "valid first-use marks success only after completion")
+
+        boundary.reset(.notDetermined); Haptics.count = 0
+        let changed = PlanExportHarness(); changed.invoke()
+        await until("permission held") { boundary.waitingPermission }
+        check(boundary.writeAttempts == 0 && !changed.saved && changed.isSaving, "permission remains before write")
+        changed.context = false; boundary.permit(.authorized)
+        await until("changed during permission") { !changed.isSaving }
+        check(boundary.writeAttempts == 0 && boundary.creationRequests == 0, "context change during permission prevents write")
+        check(!changed.saved && changed.saveError != nil && Haptics.count == 0, "changed context never marks saved")
+
+        boundary.reset(.notDetermined)
+        let cancelled = Task { @MainActor in try await PhotosLibrarySaver.saveImage(UIImage()) }
+        await until("cancellable permission") { boundary.waitingPermission }
+        cancelled.cancel(); boundary.permit(.authorized)
+        let result = await cancelled.result
+        if case .failure = result { check(true, "cancellation throws") } else { check(false, "cancellation throws") }
+        check(boundary.writeAttempts == 0 && boundary.creationRequests == 0, "cancelled task never reaches Photos write")
+
+        boundary.reset(fail: true); Haptics.count = 0
+        let failed = PlanExportHarness(); failed.invoke()
+        await until("failed write") { !failed.isSaving }
+        check(boundary.writeAttempts == 1 && boundary.completedWrites == 0, "failed write not counted as completed")
+        check(!failed.saved && failed.saveError != nil && Haptics.count == 0, "failed Photos write never marks saved")
+
+        boundary.reset(.notDetermined); Haptics.count = 0
+        let denied = PlanExportHarness(); denied.invoke()
+        await until("denied permission held") { boundary.waitingPermission }; boundary.permit(.denied)
+        await until("denied permission result") { !denied.isSaving }
+        check(boundary.writeAttempts == 0 && !denied.saved && denied.saveError != nil, "denied permission has no write or success")
+
+        boundary.reset(.limited); Haptics.count = 0
+        let limited = PlanExportHarness(); limited.invoke()
+        await until("limited success") { !limited.isSaving }
+        check(boundary.completedWrites == 1 && limited.saved, "accepted limited access succeeds")
+
+        boundary.reset(); Haptics.count = 0
+        let invalid = PlanExportHarness(); invalid.context = false; invalid.invoke()
+        check(boundary.writeAttempts == 0 && !invalid.saved && invalid.saveError != nil, "invalid initial context prevents write")
+
+        boundary.reset(hold: true); Haptics.count = 0
+        let late = PlanExportHarness(); late.invoke()
+        await until("write completion held") { boundary.waitingWrite }
+        check(!late.saved && late.isSaving && boundary.completedWrites == 0, "success awaits actual completion")
+        late.context = false; boundary.completeWrite()
+        await until("stale completion") { !late.isSaving }
+        check(boundary.completedWrites == 1, "already submitted Photos write cannot be undone")
+        check(!late.saved && Haptics.count == 0, "stale completion never marks saved")
+
+        print("PASS: 9 scenarios, \(assertions) assertions")
+    }
+}

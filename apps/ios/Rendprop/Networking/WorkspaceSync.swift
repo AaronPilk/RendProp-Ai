@@ -20,18 +20,60 @@ struct CloudBrand {
     let fields: [String: String]
 }
 
+/// One details envelope is used for both writes and draft replay detection.
+/// A nil typed plan preserves an unknown/invalid wire value. Explicit removal
+/// must also remove its raw key, or save an empty supported plan.
+enum ListingWireDetails {
+    static let maxBytes = 16_000
+
+    enum ValidationError: LocalizedError {
+        case tooLarge
+        var errorDescription: String? {
+            "The listing details and measurements are too large to sync. Shorten the details and try again."
+        }
+    }
+
+    static func merged(_ listing: Listing) throws -> [String: String] {
+        var details = listing.details ?? [:]
+        if let plan = listing.floorMeasurements {
+            details[FloorMeasurementPlan.wireKey] = try plan.encodedWireValue()
+        }
+        if let allow = listing.allowSearchIndexing {
+            details[Listing.searchIndexingKey] = allow ? "true" : "false"
+        }
+        // The server bounds JSON.stringify(details) to 16,000 characters.
+        // Bounding UTF-8 bytes is conservative for its UTF-16 length check and
+        // includes escaping/envelope overhead rather than only the inner plan.
+        let encoded = try JSONSerialization.data(withJSONObject: details, options: [.sortedKeys, .withoutEscapingSlashes])
+        guard encoded.count <= maxBytes else { throw ValidationError.tooLarge }
+        return details
+    }
+}
+
 /// The actual asynchronous create handoff used by AppModel. Tests can suspend
 /// its create closure to exercise edits, deletion and account changes in flight.
 @MainActor enum CloudDraftCreation {
     struct Identity: Equatable { let userID: String?; let revision: UInt64 }
     static func fingerprint(_ listing: Listing) throws -> String {
+        try fingerprintFacts(listing, details: ListingWireDetails.merged(listing))
+    }
+    private static func fingerprintFacts(_ listing: Listing, details: [String: String]) throws -> String {
         let facts: [String: Any] = ["address": listing.address, "space": listing.spaceType.rawValue,
             "beds": listing.beds, "baths": listing.baths, "sqft": listing.sqft, "price": listing.price.cents,
-            "tagline": listing.tagline ?? "", "details": listing.details ?? [:], "zillow": listing.zillowURL ?? "",
+            "tagline": listing.tagline ?? "", "details": details, "zillow": listing.zillowURL ?? "",
             "lat": listing.latitude as Any? ?? NSNull(), "lng": listing.longitude as Any? ?? NSNull(),
             "sold": listing.soldAt?.timeIntervalSince1970 as Any? ?? NSNull(), "indexing": listing.allowSearchIndexing as Any? ?? NSNull()]
         let data = try JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys])
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+    private static func matchesFingerprint(_ listing: Listing, original: String) throws -> Bool {
+        if try fingerprint(listing) == original { return true }
+        // Prior snapshots hashed raw details. That remains safe only while the
+        // typed plan adds no independent edit; otherwise the old hash would
+        // overlook a measurement made while the create request was in flight.
+        guard listing.floorMeasurements == nil || listing.floorMeasurements ==
+                FloorMeasurementPlan.decodeWireValue(listing.details?[FloorMeasurementPlan.wireKey]) else { return false }
+        return try fingerprintFacts(listing, details: listing.details ?? [:]) == original
     }
     static func canAutoSync(_ listing: Listing, userID: UUID) -> Bool {
         !listing.isSample && listing.cloudUnavailable != true && listing.cloudDetachedServerID == nil &&
@@ -57,13 +99,14 @@ struct CloudBrand {
         latest.cloudSyncOwnerID = identity.userID.flatMap(UUID.init(uuidString:))
         latest.cloudDetachedServerID = nil
         latest.cloudUnavailable = false
-        if created.cloudCreateReplayed == true, let original = snapshot.cloudCreateFingerprint, try fingerprint(latest) == original {
+        if created.cloudCreateReplayed == true, let original = snapshot.cloudCreateFingerprint, try matchesFingerprint(latest, original: original) {
             // A receipt was lost and the office has since edited the row.
             // With no newer phone edit, adopt those facts instead of PATCHing
             // the old create payload back over the office's work.
             latest.address = created.address; latest.beds = created.beds; latest.baths = created.baths
             latest.sqft = created.sqft; latest.price = created.price; latest.tagline = created.tagline
             latest.details = created.details; latest.zillowURL = created.zillowURL; latest.soldAt = created.soldAt
+            latest.floorMeasurements = created.floorMeasurements
             latest.latitude = created.latitude; latest.longitude = created.longitude
             latest.spaceTypeRaw = created.spaceTypeRaw; latest.allowSearchIndexing = created.allowSearchIndexing
             latest.needsServerSync = false
@@ -227,6 +270,7 @@ enum CloudListingMerge {
                 merged.address = fresh.address; merged.beds = fresh.beds; merged.baths = fresh.baths
                 merged.sqft = fresh.sqft; merged.price = fresh.price; merged.tagline = fresh.tagline
                 merged.details = fresh.details; merged.spaceTypeRaw = fresh.spaceTypeRaw
+                merged.floorMeasurements = fresh.floorMeasurements
                 merged.soldAt = fresh.soldAt; merged.zillowURL = fresh.zillowURL
                 merged.latitude = fresh.latitude; merged.longitude = fresh.longitude
                 merged.allowSearchIndexing = fresh.allowSearchIndexing

@@ -61,6 +61,18 @@ const unbrandedUrl = (slug: string) => `${TOUR_BASE}/u/${slug}`;
 // at 500 provenance rows by the RPC; the page shows the most recent 40.
 const MAX_ALTERED_MEDIA = 40;
 
+/** Measurement drafts sync with the owner's listing, independently of public
+ * plan export. Keep their versioned metadata out of every public tour payload;
+ * public property facts and owner-selected floor-plan media remain unchanged. */
+function publicListingDetails(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([key]) =>
+      !key.toLowerCase().startsWith("floor_measurements_")
+    ),
+  );
+}
+
 /** The model family in plain words — the public page never names a vendor model. */
 function modelFamily(kind: string): string {
   return kind === "aerial" || kind === "reel" || kind === "video_reflection_removal"
@@ -464,7 +476,7 @@ Deno.serve(async (req) => {
       listing: {
         address: listing.address,
         tagline: listing.tagline,
-        details: listing.details ?? {},
+        details: publicListingDetails(listing.details),
         beds: listing.beds,
         baths: listing.baths,
         sqft: listing.sqft,

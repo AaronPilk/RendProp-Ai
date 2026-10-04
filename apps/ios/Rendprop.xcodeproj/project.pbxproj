@@ -162,6 +162,8 @@
 		FECBB1D3CFC854E498F2588F /* RendpropUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE47E2786B286E7686A64479 /* RendpropUITests.swift */; };
 		FEF26406D0DDF4AB9DA7A6B1 /* GuidedPanoramaPreviewStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 646471F4A387AB5B73A5F8BE /* GuidedPanoramaPreviewStore.swift */; };
 		FFDE430BDCDF2D536BE7BBCD /* HomeListingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB70E1D3371927DB43F686D /* HomeListingsView.swift */; };
+		8A2B4E9A070B5D1A499F4993 /* FloorMeasurementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A029F82C6D91949EF45D49 /* FloorMeasurementsView.swift */; };
+		0D03A71F3525C76A1190378D /* RoomMeasureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6482062BAF59C7778ECDB84 /* RoomMeasureView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -334,6 +336,8 @@
 		F902EC3FAE3CB781FA5E5A0F /* CoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachView.swift; sourceTree = "<group>"; };
 		FB2296848CBE319882226D1C /* ReviewPrompter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewPrompter.swift; sourceTree = "<group>"; };
 		FCFC63BFC51CC5B643E6ACC9 /* BuildFourteenShots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildFourteenShots.swift; sourceTree = "<group>"; };
+		A9A029F82C6D91949EF45D49 /* FloorMeasurementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorMeasurementsView.swift; sourceTree = "<group>"; };
+		E6482062BAF59C7778ECDB84 /* RoomMeasureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMeasureView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -455,6 +459,7 @@
 		5BDD63390664CAC6B618C304 /* Capture */ = {
 			isa = PBXGroup;
 			children = (
+				E6482062BAF59C7778ECDB84 /* RoomMeasureView.swift */,
 				D746633FD7B0C96F45695CBF /* CameraManager.swift */,
 				C668F17153B23B136BF59CD2 /* CaptureView.swift */,
 				3231FC8BA993B604957BA2A9 /* GuidanceOverlays.swift */,
@@ -657,6 +662,7 @@
 		CE36C401FF007C302A4EF57C /* Screens */ = {
 			isa = PBXGroup;
 			children = (
+				A9A029F82C6D91949EF45D49 /* FloorMeasurementsView.swift */,
 				B16A4437E4B485054F71E2EB /* AdminChurnView.swift */,
 				50A3FBBCA2E71A45901C2031 /* AdminCohortsView.swift */,
 				9CD9CD0718417F2C5891A5EF /* AdminConsoleView.swift */,
@@ -884,6 +890,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0D03A71F3525C76A1190378D /* RoomMeasureView.swift in Sources */,
+				8A2B4E9A070B5D1A499F4993 /* FloorMeasurementsView.swift in Sources */,
 				4AEA3C8C014C2773A6D75CF5 /* APIClient.swift in Sources */,
 				83A435504C4EE4DD8F85E624 /* AdminChurnView.swift in Sources */,
 				02F19376A9CB330823DBD0A4 /* AdminCohortsView.swift in Sources */,

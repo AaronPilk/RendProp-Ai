@@ -86,9 +86,9 @@ enum AskAIScreen: String {
                     "Should I use my own voice?",
                     "What do I post this to?"]
         case .floorPlan:
-            return ["How do I scan a second floor?",
-                    "Why did it miss a room?",
-                    "How slowly should I walk?",
+            return ["How do I enter room measurements?",
+                    "Can my phone measure a distance?",
+                    "How do I scan a second floor?",
                     "Can I upload a plan I already have?"]
         case .aerial:
             return ["What is an aerial intro for?",

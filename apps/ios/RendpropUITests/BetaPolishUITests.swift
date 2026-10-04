@@ -270,6 +270,87 @@ final class BetaPolishUITests: XCTestCase {
         app.buttons["Close"].tap()
     }
 
+    func testManualMeasurementsCreateEditExportAndKeepScanChoice() {
+        launchDetail()
+        openDetail("detail.floorPlan", title: "Floor plan")
+        let measurements = app.buttons["floorPlan.measurements"]
+        scrollTo(measurements); measurements.tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
+        addMeasuredRoom("Living room", length: "12", width: "10")
+        addMeasuredRoom("Office", length: "8", width: "9")
+        let roomButtons = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "measurements.room."))
+        XCTAssertEqual(roomButtons.count, 2, app.debugDescription)
+        scrollTo(roomButtons.firstMatch); roomButtons.firstMatch.tap()
+        let width = app.textFields["measurements.width"]
+        XCTAssertTrue(width.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(width.value as? String, "10")
+        width.tap(); replace(width, with: "11")
+        app.buttons["measurements.saveRoom"].tap()
+        let overlap = app.staticTexts["measurements.formError"]
+        XCTAssertTrue(overlap.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(overlap.label.lowercased().contains("overlap"), overlap.label)
+        app.navigationBars["Room measurements"].buttons["Cancel"].tap()
+        let units = app.segmentedControls["measurements.units"]
+        scrollTo(units); units.buttons["Metres"].tap()
+        scrollTo(roomButtons.firstMatch); roomButtons.firstMatch.tap()
+        XCTAssertEqual(app.textFields["measurements.width"].value as? String, "3.048")
+        app.buttons["measurements.saveRoom"].tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10))
+        let export = app.buttons["measurements.export"]
+        scrollTo(export); export.tap()
+        XCTAssertTrue(app.navigationBars["Export room plan"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.buttons["measurements.sharePDF"].exists, "The actual rendered plan has an image and PDF export")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Drawn from entered room dimensions")).firstMatch.exists)
+        attach("measured-plan-export")
+        app.navigationBars["Export room plan"].buttons["Done"].tap()
+        let threeD = app.buttons["measurements.view3D"]
+        scrollTo(threeD); threeD.tap()
+        XCTAssertTrue(app.navigationBars["3D room layout"].waitForExistence(timeout: 15), app.debugDescription)
+        attach("measured-room-layout-3d")
+        app.navigationBars["3D room layout"].buttons["Done"].tap()
+        app.navigationBars["Measurements"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.navigationBars["Floor plan"].waitForExistence(timeout: 10))
+        scrollTo(measurements)
+        XCTAssertTrue(measurements.label.contains("2 rooms"), measurements.label)
+        measurements.tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10))
+        scrollTo(roomButtons.firstMatch); roomButtons.firstMatch.tap()
+        XCTAssertEqual(app.textFields["measurements.width"].value as? String, "3.048")
+        XCTAssertEqual(app.textFields["measurements.length"].value as? String, "3.658")
+        app.navigationBars["Room measurements"].buttons["Cancel"].tap()
+        attach("measured-plan-reopened")
+        for _ in 0..<2 {
+            scrollTo(roomButtons.firstMatch); roomButtons.firstMatch.tap()
+            let delete = app.buttons["Delete this room"]
+            XCTAssertTrue(app.navigationBars["Room measurements"].waitForExistence(timeout: 10))
+            for _ in 0..<4 where !delete.isHittable { app.collectionViews.firstMatch.swipeUp() }
+            XCTAssertTrue(delete.isHittable, app.debugDescription); delete.tap()
+            XCTAssertTrue(app.buttons["Delete room"].waitForExistence(timeout: 5), app.debugDescription)
+            app.buttons["Delete room"].tap()
+            XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10))
+        }
+        XCTAssertEqual(roomButtons.count, 0)
+        XCTAssertFalse(app.buttons["measurements.export"].exists, "An empty plan cannot export stale geometry")
+        app.navigationBars["Measurements"].buttons.element(boundBy: 0).tap()
+        scrollTo(measurements); measurements.tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10))
+        XCTAssertEqual(roomButtons.count, 0, "Deleting the last room must not resurrect the raw cloud plan")
+        attach("measured-plan-cleared")
+    }
+
+    private func addMeasuredRoom(_ name: String, length: String, width: String) {
+        let add = app.buttons["measurements.addRoom"]
+        scrollTo(add); add.tap()
+        XCTAssertTrue(app.navigationBars["Add room"].waitForExistence(timeout: 10), app.debugDescription)
+        let field = app.textFields["measurements.roomName"]
+        field.tap(); field.typeText(name)
+        app.textFields["measurements.length"].tap(); app.textFields["measurements.length"].typeText(length)
+        app.textFields["measurements.width"].tap(); app.textFields["measurements.width"].typeText(width)
+        app.buttons["measurements.saveRoom"].tap()
+        XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.staticTexts["measurements.formError"].exists, app.debugDescription)
+    }
+
     private func applyThreeFixturePhotosAndWait(for title: String) {
         let apply = app.buttons["studio.batchApply"]
         scrollTo(apply)
