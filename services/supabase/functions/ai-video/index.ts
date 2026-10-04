@@ -110,40 +110,19 @@
 //
 // ── COST SAFETY on /drone ────────────────────────────────────────────────────
 //
-// The 4,000 sq ft field test: a 410 s 4K60 tour billed ~$48 from one tap, and
-// the route took it without comment — no ceiling, no confirmation, no estimate.
-// Topaz bills per OUTPUT second and the output runs the source's wall-clock, so
-// spend on this route is linear in a number the user picks by walking around a
-// house, on a plan whose whole monthly AI budget is $82.00.
-//
-// The per-generation cap this repo commits to elsewhere ($25.00,
-// MAX_GEN_COST_PER_JOB_CENTS) lives inside log_job_cost(), which raises RP404
-// without a render_job row to lock — and the in-app AI routes have none, so it
-// never applied here and never can. ./dronecost.ts is the pre-flight of the
-// checks that RPC would have made, with a per-submission ceiling DERIVED from
-// the duration cap at the top tier (300 s × 16.0¢ = $48.00) rather than
-// borrowed from a cap that cannot reach this route:
-//
-//   1. a submission with no usable duration_s is REFUSED (409 `conflict`, the
-//      same shape /declutter already uses) — Topaz cannot be priced per second
-//      without one, and a spend we cannot price is a spend we cannot cap;
-//   2. a source longer than DRONE_MAX_SOURCE_SECONDS is refused (400) with the
-//      length said in minutes, so an agent can act on it;
-//   3. the projected cost (duration × tier × output frame rate) over
-//      DRONE_MAX_SUBMISSION_CENTS is refused (400) naming the price and the
-//      length that would fit — in practice this catches a submission whose
-//      PRICE is out of line with its LENGTH (a `4k30` tap asking for 120 fps),
-//      since a full-length tour at the top tier is exactly at the ceiling;
-//   4. the projected cost is then composed with the org's EXISTING per-org
-//      monthly COGS ceiling — org_month_spend_cents() vs the plan's
-//      cogs_ceiling_cents, the same pair log_job_cost() compares — inside
-//      guardGenerate(), BEFORE any meter is consumed (402 `quota_exceeded`).
-//
-// All four run before a meter is charged and before fal is called, so a refused
-// submission costs the org nothing and leaves no state to unwind. Nothing here
-// The read-only precheck is followed by an atomic priced reservation before
-// POST. An accepted receipt swaps that hold for one estimated ledger row under
-// the same org lock; failed settlement/uncertain acceptance keep the hold.
+// Estimate the output from an immutable source's checked headers before any allowance
+// or paid POST. A requested 1080p tier does not downscale a 4K source: Topaz's
+// minimum factor is one, so its rate must still be the above-1080p rate.
+// The bounded MP4 probe supplies container geometry, duration and frame cadence;
+// it does not decode sample payloads. Client-upload hints never price this route. Unknown/unsupported media and
+// output above 60 fps are refused because their tariff is not verified.
+// ./dronecost.ts applies the 300-second, 4096-pixel-long-edge and $48 ceilings.
+// guardGenerate performs the monthly precheck, then submitReservedVideo locks
+// the workspace and commits a 16c/s maximum-published-tariff hold BEFORE one provider POST.
+// An accepted receipt swaps the hold for one estimated ledger row. Uncertain
+// acceptance or failed settlement retain the hold; neither triggers a retry.
+// These are published-rate estimates, not reconciled provider invoices or a
+// complete subscription margin fence (hosting and other AI paths are separate).
 //
 // ── QUALITY GATE — POST /ai-video/drift (2026-09-07) ─────────────────────────
 //
@@ -244,6 +223,7 @@ import { R2_BUCKET_RENDERS } from "../_shared/r2.ts";
 import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
 import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
+import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
   extractJobToken,
@@ -255,6 +235,7 @@ import {
 import {
   assertDroneWithinLimits,
   assertMonthlyHeadroom,
+  droneReservation,
   DRONE_TIER_CENTS,
   DRONE_TIERS,
   type DroneEstimate,
@@ -363,8 +344,8 @@ interface GenerateCharge {
  * otherwise picks the caller's highest-privilege membership, so a user in two
  * workspaces could have quota charged to the wrong one.
  *
- * `projectedCents` — when the caller can price the submission up front (today
- * only /drone, whose per-output-second rate card makes that exact) — is checked
+ * `projectedCents` — when the caller can reserve a conservative submission
+ * cost up front (today /drone) — is checked
  * against the org's EXISTING monthly COGS ceiling BEFORE any meter is consumed,
  * so a submission that cannot fit the budget burns no allowance on its way to
  * being refused. See assertMonthlyHeadroom() in ./dronecost.ts for why this is
@@ -375,9 +356,10 @@ async function guardGenerate(
   req: Request,
   kind: GenKind,
   projectedCents?: number,
+  sourceOrgId?: string,
 ): Promise<GenerateCharge> {
   const userId = user.id;
-  const orgId = await orgForUser(userId, preferredOrg(req));
+  const orgId = await orgForUser(userId, sourceOrgId ?? preferredOrg(req));
   const admin = adminClient();
 
   const { data: mem, error: mErr } = await admin
@@ -395,7 +377,7 @@ async function guardGenerate(
 
   // A zero allowance is a PLAN BOUNDARY, not a rate limit — 402 `plan_required`
   // so the app shows an upgrade prompt instead of "try again later". This is
-  // what keeps Topaz (up to $14.40 a tap) off the cheap plans.
+  // what keeps Topaz (up to $48 reserved per tap) off the cheap plans.
   if (monthlyCap <= 0) throw quotaError(labelFor(kind), 0, 0, ent.plan);
 
   // PROJECTED SPEND vs the org's monthly COGS ceiling. Ordered AFTER the plan
@@ -1002,55 +984,44 @@ Deno.serve(async (req) => {
       assert(body.asset_id, 400, "asset_id is required");
       const tier = body.tier ?? "4k30";
       const target = DRONE_TIERS[tier];
-      assert(target, 400, `tier must be one of ${Object.keys(DRONE_TIERS).join(", ")}`);
+      assert(Object.hasOwn(DRONE_TIERS, tier), 400, `tier must be one of ${Object.keys(DRONE_TIERS).join(", ")}`);
 
       const asset = await resolvePublicAsset(db, body.asset_id, req);
       assert(asset.kind === "video", 400, "drone-glide needs a video asset");
-
-      // Upscale factor from the SOURCE: reach the tier's long edge, never exceed
-      // it, never exceed 4K. Unknown dimensions fall back to the old defaults.
-      const srcLong = asset.width && asset.height ? Math.max(asset.width, asset.height) : null;
-      let upscale: number;
-      if (srcLong) {
-        upscale = Math.max(1, Math.min(4, Math.round((target.longEdge / srcLong) * 100) / 100));
-      } else {
-        upscale = tier === "1080p60" ? 1 : 2;
-      }
-      const outLong = srcLong ? Math.round(srcLong * upscale) : null;
-      assert(outLong == null || outLong <= 4096, 400, "This source is already above 4K; drone-glide would exceed the 4K ceiling");
-
-      // Target fps from the tier (client override bounded 24–120). No
-      // interpolation request when the source already runs at/above it.
-      let fps = Math.round(Number(body.target_fps ?? target.fps));
-      if (!Number.isFinite(fps)) throw new HttpError(400, "target_fps must be a number");
-      fps = Math.min(120, Math.max(24, fps));
-      const interpolate = asset.fps == null || asset.fps < fps - 0.5;
-
-      // COST SAFETY (the 4,000 sq ft field test: a 410 s 4K60 tour billed ~$48
-      // from one tap). Everything above this line is free; everything below it
-      // spends money. So the duration ceiling, the missing-duration refusal and
-      // the per-submission cost ceiling all run HERE — before guardGenerate()
-      // charges a meter and long before fal is called — and the estimate they
-      // return is the single place this submission's price is computed. Sizing,
-      // arithmetic and the fail-closed reasoning are all in ./dronecost.ts.
-      //
-      // Topaz preserves duration, so the OUTPUT runs at the source's
-      // wall-clock; the output FRAME RATE is the interpolation target when we
-      // ask for one, and otherwise the source's own rate (Topaz does not
-      // re-time what it is not asked to). That distinction is what the estimate
-      // is priced on, so a `4k30` tap that quietly emits 120 fps is costed as
-      // the 120 fps job it is rather than at the 30 fps tier price.
-      const outputFps = interpolate ? fps : (asset.fps ?? fps);
+      // V2 completion publishes once to a unique immutable key. Legacy final
+      // keys may retain write capabilities: do not price one representation
+      // and then let the provider fetch a replacement. Client metadata is only
+      // a hint; the bounded MP4 probe is the source of pricing dimensions/time.
+      assert(asset.transport_version === 2, 409,
+        "Upload the saved clip again before enhancing it; this older upload cannot be priced safely.");
+      const fps = Math.round(Number(body.target_fps ?? target.fps));
+      assert(Number.isFinite(fps) && fps >= 24 && fps <= 60, 400,
+        "Choose a frame rate from 24 to 60 fps. Higher frame rates are not priced yet.");
+      const source = await probeMP4Video(asset.url, (url, init) => fetch(url, init));
+      const srcLong = Math.max(source.width, source.height);
+      // Topaz's factor is at least one. A 4K source selected as 1080p stays 4K;
+      // never silently downscale it or reserve at the requested tier's rate.
+      const upscale = Math.max(1, Math.min(4, Math.round((target.longEdge / srcLong) * 100) / 100));
+      const outputWidth = Math.ceil(source.width * upscale);
+      const outputHeight = Math.ceil(source.height * upscale);
+      const interpolate = source.fps < fps - 0.5;
+      const outputFps = interpolate ? fps : source.fps;
       const estimate: DroneEstimate = assertDroneWithinLimits({
         tier,
-        durationS: asset.duration_s,
+        durationS: source.billable_s,
+        outputWidth,
+        outputHeight,
         outputFps,
         assetId: asset.id,
       });
+      // Header checks cannot establish decoded pictures for malformed avc1
+      // bytes. Keep the highest published tariff reserved/booked until trusted
+      // decoding or invoice reconciliation can support a cheaper cost bound.
+      const reservation = droneReservation(estimate);
 
       // Priced — now compose with the org's existing monthly COGS ceiling
       // (inside guardGenerate, before any meter is consumed) and charge.
-      const charge = await guardGenerate(user, req, "drone", estimate.cents);
+      const charge = await guardGenerate(user, req, "drone", reservation.cents, asset.org_id);
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated): 4K tiers and the 1080p60 tier are separate tasks
@@ -1075,15 +1046,16 @@ Deno.serve(async (req) => {
       // One eligible provider is attempted; lost acceptance keeps its hold.
       let attempt: ChainResult<JobRef>;
       try {
+        assert(steps[0]?.provider === "fal" && /^(?:fal-ai\/)?topaz\/upscale\/video$/.test(steps[0]?.model ?? "") && steps[0]?.unit === "second",
+          503, "This video route could not be priced safely. Please try again later.", "upstream");
         attempt = await submitReservedVideo({
           actorId: user.id, orgId, key: requiredIdempotencyKey(req),
           feature: "drone_render", steps, input: genInput, seconds: estimate.seconds,
-          // Preserve the frame multiplier in estimated accounting as well as
-          // admission; releasing a 120fps hold to a 30fps ledger underbooks it.
-          unitCentsOverride: (step) => /topaz/i.test(step.model) ? estimate.unit_cents : undefined,
-          minHoldCents: estimate.cents,
+          // The maximum published tariff prices admission and settlement.
+          unitCentsOverride: () => reservation.unit_cents,
+          minHoldCents: reservation.cents,
           meta: { tier, upscale_factor: upscale, target_fps: fps, interpolated: interpolate,
-            estimate_cents: estimate.cents, output_fps: outputFps },
+            estimate_cents: reservation.cents, output_fps: outputFps },
         }, {
           rpc: async (name, args) => await adminClient().rpc(name, args),
           submit: (step) => runChain(task, [step], (selected) => adapterFor(selected.provider).submit(selected, genInput)),
@@ -1105,7 +1077,7 @@ Deno.serve(async (req) => {
         target_fps: fps,
         upscale_factor: upscale,
         interpolated: interpolate,
-        source: { width: asset.width, height: asset.height, fps: asset.fps, duration_s: asset.duration_s },
+        source: { width: source.width, height: source.height, fps: source.fps, duration_s: source.duration_s },
         // ADDITIVE (cost safety): what this submission is expected to cost, so
         // the app can show a number instead of the user finding out on an
         // invoice. A new key on an existing object — AIVideoJobDTO decodes only
@@ -1113,6 +1085,7 @@ Deno.serve(async (req) => {
         // unaffected. Every refusal above carries the same figures in its error
         // details, so the client has one shape to read either way.
         estimated_cost: estimate,
+        reserved_cost: reservation,
       }, 202);
     }
 
@@ -2322,6 +2295,7 @@ async function failureError(st: Record<string, unknown>, responseUrl: string): P
 // ── asset resolution ──────────────────────────────────────────────────────────
 
 interface ResolvedAsset {
+  org_id: string;
   id: string;
   /** The listing the asset belongs to — the provenance row's anchor (W2-B3). */
   listing_id: string | null;
@@ -2332,6 +2306,7 @@ interface ResolvedAsset {
   height: number | null;
   fps: number | null;
   space_type: string | null;
+  transport_version: number;
 }
 
 /**
@@ -2344,7 +2319,7 @@ interface ResolvedAsset {
 async function resolvePublicAsset(db: any, assetId: string, req: Request): Promise<ResolvedAsset> {
   const { data, error } = await db
     .from("capture_assets")
-    .select("id, listing_id, kind, bucket, storage_key, uploaded, duration_s, width, height, fps, listings!inner(org_id, space_type, deleted_at)")
+    .select("id, listing_id, kind, bucket, storage_key, uploaded, duration_s, width, height, fps, transport_version, listings!inner(org_id, space_type, deleted_at)")
     .eq("id", assetId)
     .maybeSingle();
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);
@@ -2380,6 +2355,7 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
   }
   const num = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
   return {
+    org_id: listing.org_id,
     id: data.id as string,
     listing_id: (data.listing_id as string | null) ?? null,
     kind: data.kind as string,
@@ -2389,6 +2365,7 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
     height: num(data.height),
     fps: num(data.fps),
     space_type: listing.space_type ?? null,
+    transport_version: Number(data.transport_version),
   };
 }
 

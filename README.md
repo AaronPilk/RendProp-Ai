@@ -177,6 +177,12 @@ confirms the deployed versions and available crash-feedback inventory, corrects
 the 86% margin and anonymous-photo claims, and records why the older photo patch
 would regress the separate saved libraries already shipped in build 43.
 
+The [4 October Topaz and margin follow-up](docs/handoff/TOPAZ-AND-MARGIN-20261004.md)
+records confirmed Small Business approval, the owner's 75% floor after Apple's
+fee, and the correction for a 4K source requested at the 1080p tier. All Topaz
+jobs retain the highest published tariff as a conservative budget reservation
+until trusted decoding or invoice reconciliation supports a lower amount.
+
 ## Start developing
 
 For Studio, use Node.js **22.12 or newer**:

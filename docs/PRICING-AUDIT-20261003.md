@@ -1,5 +1,12 @@
 # Rendprop pricing audit — 3 October 2026
 
+**4 October clarification:** the owner confirmed Small Business Program approval
+(email received last week) and selected a 75% floor **after Apple's fee**.
+The effective date is still unverified. The Topaz correction and current
+policy are recorded in [the follow-up](handoff/TOPAZ-AND-MARGIN-20261004.md).
+The findings below retain the 3 October evidence and assumptions; the full
+margin floor remains unenforced.
+
 **Decision: current plans do not enforce a 75% minimum margin.** Do not use the older pricing documents as a profitability guarantee. Existing monthly prices may be retained only with a revised, funded usage policy and complete cost admission; simply topping up fal does not fix the economics.
 
 This audit reviewed source commit `a16465514f12d06bb61be405d12ce8dd7effd695`, live public plan/routing configuration, the public US App Store purchase catalog and current primary provider tariffs. No customer records, secret values, authenticated Apple account settings, vendor invoices or paid generation jobs were accessed. Runtime code, product prices, quotas, production configuration and vendor balances were not changed. This document and historical-document notices are documentation changes only.
