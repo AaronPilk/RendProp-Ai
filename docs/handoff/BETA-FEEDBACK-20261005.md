@@ -137,7 +137,10 @@ assertions** and **34 personal-card assertions**, with **seven logo/deletion** a
 The broader deletion check caught a real regression in the logo migration: its
 replacement writer omitted later voice/private-project object inventories, their
 write-deadline protection and actor-owned private-project metadata cleanup. A
-new corrective migration restores those exact protections while preserving logo
+logo migration now preserves those exact protections from its first application,
+so existing handlers cannot observe an incomplete deletion inventory between
+migration files. A separate guarded correction covers an earlier applied
+snapshot and is a no-op on the corrected fresh definition. Both preserve logo
 accounting, colleague media and existing function ACLs. The unchanged production
 review passes **69 checks**, private-project coverage passes **51**, and voice
 reservation coverage passes. The correction and isolated mixed-object coverage
@@ -175,16 +178,21 @@ the floor-plan attachment. The four new migrations must be applied in this order
 before their corresponding function handlers:
 
 1. `20261005150445_scoped_business_logo.sql` — workspace-owned immutable logos,
-   role/lineage checks, reservation/replay and cleanup accounting.
+   role/lineage checks, reservation/replay and cleanup accounting, preserving
+   existing voice/private-project inventories and active-write protection in the
+   original writer so deletion remains safe before the next migration.
 2. `20261005150951_nearby_places_reviewed_facts.sql` — bounded reviewed nearby note
    in the existing service-only facts CAS.
 3. `20261005160701_personal_public_card.sql` — account-owned explicitly reviewed
    public card and authorized listing-agent identity lookup.
 4. `20261005172028_restore_deletion_voice_and_project_inventory.sql` — restore
-   voice/private-project deletion inventories and active-write protection lost in
-   the logo extension. This correction must follow the logo migration and precede
-   any updated handler that can delete an account. Its exact-body replay is safe;
-   unfamiliar or partially modified deletion definitions fail closed.
+   voice/private-project deletion inventories and active-write protection for an
+   earlier applied logo snapshot. On the corrected logo migration it is a no-op.
+   This correction follows the logo migration and precedes updated handlers.
+   Its exact-body replay is safe; unfamiliar or partially modified deletion
+   definitions fail closed. A deployment that already applied the older logo
+   snapshot must pause/drain deletion admission until the repair commits,
+   including requests through the existing handler.
 
 Deploy the updated `me` and `tours` handlers after the schemas, and coordinate
 `coach`, `ai-photo`, `ai-video` and the public Worker with their native callers.

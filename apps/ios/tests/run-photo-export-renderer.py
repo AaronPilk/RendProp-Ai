@@ -39,6 +39,8 @@ receipt = {
     'passed': False,
     'start_source_sha256': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed},
     'simulator': None,
+    'toolchain': None,
+    'compile_deadlines_seconds': {'cold_actual': 300, 'warm_controls': 60},
     'commands': [],
     'runs': [],
     'limitations': ['Actual UIKit renderer and filesystem delivery tested using synthetic images.', 'No vendor calls, camera, Apple account or Photos-library writes.', 'SwiftUI app context dependencies are fixture doubles; full app compilation is separate.', 'The level adjustment rotates and crops a JPEG copy; it cannot recover unseen room geometry.'],
@@ -78,6 +80,12 @@ try:
     for name, (text, reason) in variants.items():
         assert name == 'actual' or text != base, f'{name} mutation anchor missing'
     sdk = command('sdk-discovery', ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], 30).stdout.strip()
+    receipt['toolchain'] = {
+        'architecture': architecture,
+        'sdk': sdk,
+        'swift': command('swift-version', ['xcrun', 'swiftc', '--version'], 30).stdout.strip(),
+        'xcode': command('xcode-version', ['xcodebuild', '-version'], 30).stdout.strip(),
+    }
     devices = json.loads(command('simulator-discovery', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 30).stdout)['devices']
     ios = [d for runtime, rows in devices.items() if 'iOS' in runtime for d in rows if d.get('isAvailable') and 'iPhone' in d['name']]
     assert ios, 'No available iPhone simulator'
@@ -104,7 +112,12 @@ try:
         path = out / f'{name}-PhotoExport.swift'
         path.write_text(text)
         binary = out / name
-        compile_result = command(f'{name}-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', f'{architecture}-apple-ios16.0-simulator', '-sdk', sdk, str(stubs), str(root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift'), str(path), str(fixture), '-o', str(binary)], 60)
+        # The first UIKit import builds the cold SDK module cache on hosted
+        # runners. CI reached this compile after successful boot readiness but
+        # exhausted the old 60-second limit. Keep a bounded first compile and
+        # the existing warm deadlines; a timeout still fails the entire gate.
+        compile_timeout = receipt['compile_deadlines_seconds']['cold_actual' if name == 'actual' else 'warm_controls']
+        compile_result = command(f'{name}-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', f'{architecture}-apple-ios16.0-simulator', '-sdk', sdk, str(stubs), str(root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift'), str(path), str(fixture), '-o', str(binary)], compile_timeout)
         result = command(name, ['xcrun', 'simctl', 'spawn', device['udid'], str(binary)], 30, check=False)
         log = result.stdout + result.stderr
         (out / f'{name}.log').write_text(log)

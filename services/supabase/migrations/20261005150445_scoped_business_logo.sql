@@ -307,7 +307,11 @@ begin
   select object_targets||coalesce(jsonb_agg(jsonb_build_object('bucket',p_render_bucket,'key',b.object_key,'valid',
     b.object_key='renders/'||b.org_id||'/brand/'||b.id||case when b.content_type='image/png' then '.png' else '.jpg' end)), '[]')
     into object_targets from public.org_brand_assets b where b.org_id=any(solo);
-  object_targets:=object_targets||spatial_keys;
+  object_targets:=object_targets||spatial_keys||public.studio_voice_deletion_targets(solo,p_upload_bucket);
+  object_targets:=object_targets||public.studio_project_deletion_targets(p_user,solo,p_upload_bucket);
+  select greatest(storage_after,max(write_deadline)+interval '1 hour') into storage_after from public.studio_project_media where actor_id=p_user or org_id=any(solo);
+  select greatest(storage_after,max(write_deadline)+interval '1 hour') into storage_after
+    from public.voice_storage_reservations where org_id=any(solo);
   if exists(select 1 from jsonb_array_elements(object_targets) t where t->>'valid' is distinct from 'true') then
     raise exception 'RP409: unverified media ownership requires assisted deletion; nothing was deleted';
   end if;
@@ -360,6 +364,7 @@ begin
   delete from public.photos where listing_id=any(listing_ids);
   delete from public.listings where org_id=any(solo);
   delete from public.memberships where org_id=any(solo);
+  delete from public.studio_project_media where actor_id=p_user;
   delete from public.orgs where id=any(solo);
   -- Preserve unproven old payloads, but do not let them run against a winner.
   update public.deletion_requests set status='pending',manual_review_required=true,
