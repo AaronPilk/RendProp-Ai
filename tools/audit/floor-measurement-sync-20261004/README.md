@@ -35,6 +35,16 @@ extracted body hashes, compile/run logs and a receipt in its printed owned
 only, must compile, and must fail their named assertion. The original runtime
 files are never edited. There are no live network requests, credentials, real
 photos, camera sessions, customer rows or cloud writes.
+Production and harness hashes must still match after compilation and execution;
+source changes during a run fail the gate.
+
+The `drop-replay-adopt` altered-source control retains the pre-create typed plan
+at final persistence of an unchanged replay. Its assertion remains "Unedited
+replay adopts the office measurement plan". Deleting only the first direct
+assignment no longer creates that defect: ordinary facts acknowledgement has an
+independent `FloorMeasurementSync.adoptFacts` path that restores the correct plan.
+The final-persistence mutation exercises the observable stale-plan defect across
+both valid adoption paths rather than weakening or disabling its assertion.
 
 ## Exercised behavior
 

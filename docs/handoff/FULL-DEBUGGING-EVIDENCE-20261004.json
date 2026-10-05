@@ -182,11 +182,11 @@
     },
     {
       "path": "tools/audit/floor-measurement-sync-20261004/README.md",
-      "sha256": "b18de31c85c1073bc8007429a43faa059b1a32d9df49baea01b531e8982007b6"
+      "sha256": "c2a2046e49f93db046899cf1f9246fb68a3cf92b36de06e826e14ce67d84637c"
     },
     {
       "path": "tools/audit/floor-measurement-sync-20261004/run.py",
-      "sha256": "2cb3267f9b96d4b02ac4031a91c6905f698aeb591e63ebeff54cec09a6fdf25c"
+      "sha256": "9631c2904bf5ba3b62fea325b832003ce2e3d2aeed9408b4d32504f261e21364"
     },
     {
       "path": "tools/audit/listing-create-intent-20261004/Fixture.swift.template",
@@ -347,6 +347,20 @@
       "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-gallery-measurement-remainder-final/receipt.json",
       "receiptSHA256": "d3f17ca7d421c10912c1c2188c2161f35887ec786c8262b61f25b1eaad9847f8",
       "passed": true
+    },
+    {
+      "name": "Measurement final positive and all 21 exact altered-source controls",
+      "assertions": 140,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/ios/measurement-sync/final-control-refresh/summary.json",
+      "receiptSHA256": "59e5c65525c75046f93f6db8fbc251d8071c578c5ab8ba34cd2d97339486790b",
+      "passed": true
+    },
+    {
+      "name": "Supported removal/deletion/adoption serialize with facts save; old actor is refused",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/facts-supported-authority-lock-proof.json",
+      "receiptSHA256": "40db47edadc0f15082691d49913daee3dc8c94c55cfc3f1ed6c5de187863d764",
+      "passed": true
     }
   ],
   "localGates": {
@@ -374,15 +388,19 @@
       "passed": 269,
       "expectedRed": 1,
       "expectedRedName": "each astra ceiling clears its route's visible answer and stays under the code clamp"
-    }
+    },
+    "nativeMeasurementControls": 21
   },
   "completeCI": {
-    "state": "Proof-only corrections verified locally; third complete CI run pending",
+    "state": "Fourth complete run pending after all 21 measurement controls pass locally on frozen source",
     "firstRunId": 37262547517,
     "firstRunSource": "3253bf8207e0d616dfeb81ad8743b4f9d2998cab",
     "secondRunId": 37262945554,
     "secondRunSource": "95f5af11b2908075117542a8dfa9498b154353b4",
-    "secondRunFailure": "Gallery fixture direct address write correctly refused after facts revocation; measurement negative expectation corrected before rerun"
+    "secondRunFailure": "Gallery fixture direct address write correctly refused after facts revocation; measurement negative expectation corrected before rerun",
+    "thirdRunId": 37263672387,
+    "thirdRunSource": "3a30f68609686c7a7816b335675d8acbbed6d6ed",
+    "thirdRunResult": "Eleven jobs passed; measurement positive passed140, but direct replay assignment removal was repaired by independent facts acknowledgement; fault control corrected without runtime/assertion change"
   },
   "liveTestFlight": "1.0.4 (44); historical receipt unchanged",
   "productionMutations": 0,
@@ -399,6 +417,7 @@
     "Workspace test uses current scoped PUT facts; separately tests legacy426 refuses without write",
     "Two exact historical checksum fingerprints recomputed; current fields separate path/sha256",
     "Gallery unrelated address mutation uses scoped facts RPC; authenticated gallery grants and all negatives retained",
-    "Measurement authenticated session-variable bypass must be permission-denied; accepted private plan remains unchanged"
+    "Measurement authenticated session-variable bypass must be permission-denied; accepted private plan remains unchanged",
+    "Measurement replay control retains stale typed plan at final replay persistence across both valid adoption paths; exact original rejection retained; all21 compile and reject locally"
   ]
 }

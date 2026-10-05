@@ -38,6 +38,9 @@ def main():
     args = parser.parse_args()
     out = args.output_dir or Path(tempfile.mkdtemp(prefix="rendprop-floor-measurement-sync-", dir="/tmp"))
     out.mkdir(parents=True, exist_ok=True)
+    fixture_template = Path(__file__).with_name("Fixture.swift.template")
+    legacy_template = Path(__file__).with_name("LegacyModels.swift.template")
+    harness_bytes = {p: p.read_bytes() for p in [Path(__file__).resolve(), fixture_template, legacy_template]}
     source_bytes = {p: p.read_bytes() for p in [CLIENT, APP, SYNC, EDITOR]}
     client, app, sync = (source_bytes[p].decode() for p in [CLIENT, APP, SYNC])
     actual_sync = sync
@@ -55,9 +58,17 @@ def main():
         assert sync.count(before) == 1
         sync = sync.replace(before, "if !protected.contains(existing.id) {")
     elif args.inject_fault == "drop-replay-adopt":
-        before = "latest.floorMeasurements = created.floorMeasurements"
-        assert sync.count(before) == 1
-        sync = sync.replace(before, "// injected missing typed replay adoption")
+        # Removing the first assignment alone is repaired by the independent
+        # facts acknowledgement/adoptFacts path. Retain the old typed plan at
+        # final persistence to exercise the same observable replay defect.
+        ensure = block(sync, "    static func ensure(snapshot: Listing,")
+        before = "        save(latest)"
+        assert ensure.count(before) == 1
+        corrupted = ensure.replace(before, """        if created.cloudCreateReplayed == true, unchanged {
+            latest.floorMeasurements = snapshot.floorMeasurements
+        }
+""" + before)
+        sync = sync.replace(ensure, corrupted)
     elif args.inject_fault == "legacy-ignore-edit":
         before = """guard listing.floorMeasurements == nil || listing.floorMeasurements ==
                 FloorMeasurementPlan.decodeWireValue(listing.details?[FloorMeasurementPlan.wireKey]) else { return false }"""
@@ -169,7 +180,7 @@ def main():
     # must therefore preserve keys itself on create and facts-CAS readback.
     for marker in ["json: try listingBody(listing, forPatch: false)", 'url(["listings", target.uuidString, "facts"])', "json: try ListingFactsSync.body(listing)"]:
         assert marker in client
-    source = Path(__file__).with_name("Fixture.swift.template").read_text()
+    source = harness_bytes[fixture_template].decode()
     for key, value in replacements.items():
         assert source.count(key) == 1, key
         source = source.replace(key, value)
@@ -178,8 +189,7 @@ def main():
     compiled_sync = out / "WorkspaceSync.swift"
     compiled_sync.write_text(sync)
     models = [ROOT / ("apps/ios/Rendprop/" + path) for path in ["Models/Listing.swift", "Models/ListingClientContact.swift", "Models/Money.swift", "Networking/NativeReelDraft.swift", "Auth/AnonymousAdoptionRecovery.swift", "Auth/AdoptionLocalBindings.swift"]]
-    legacy_template = Path(__file__).with_name("LegacyModels.swift.template")
-    legacy_bytes = legacy_template.read_bytes()
+    legacy_bytes = harness_bytes[legacy_template]
     legacy = legacy_bytes.decode().replace("FloorMeasurement", "LegacyFloorMeasurement").replace("ListingWireDetails", "LegacyListingWireDetails")
     if args.inject_fault == "legacy-v2-accept":
         before = "guard version == 1 else { throw LegacyFloorMeasurementError.unsupportedVersion }"
@@ -206,8 +216,7 @@ def main():
     receipt = {"networkCalls": 0, "cameraCalls": 0, "userFilesAccessed": 0, "productionMutations": 0,
                "injectedFault": args.inject_fault,
                "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(source_bytes[p]).hexdigest() for p in sources},
-               "harnessHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-                                 for p in [Path(__file__), Path(__file__).with_name("Fixture.swift.template"), legacy_template]},
+               "harnessHashes": {str(p.relative_to(ROOT)): hashlib.sha256(data).hexdigest() for p, data in harness_bytes.items()},
                "compiledExtractedBodyHashes": {key: hashlib.sha256(value.encode()).hexdigest() for key, value in replacements.items()},
                "compiledAcceptanceSha256": hashlib.sha256(source.encode()).hexdigest(),
                "actualSyncSha256": hashlib.sha256(actual_sync.encode()).hexdigest(),
@@ -242,17 +251,24 @@ def main():
         log = out / (label + ".log")
         log.write_text(result.stdout)
         receipt["commands"].append({"name": label, "exit": result.returncode, "log": str(log), "sha256": hashlib.sha256(log.read_bytes()).hexdigest()})
+        receipt["sourceHashesAtEnd"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
+        receipt["harnessHashesAtEnd"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in harness_bytes}
+        receipt["sourceBoundAtEnd"] = receipt["sourceHashes"] == receipt["sourceHashesAtEnd"]
+        receipt["harnessBoundAtEnd"] = receipt["harnessHashes"] == receipt["harnessHashesAtEnd"]
+        bound = receipt["sourceBoundAtEnd"] and receipt["harnessBoundAtEnd"]
         if label == "run":
-            receipt["passed"] = result.returncode == 0 if expected is None else result.returncode != 0 and expected in result.stdout
+            receipt["passed"] = bound and (result.returncode == 0 if expected is None else result.returncode == 1 and expected in result.stdout)
             if expected:
                 receipt["expectedRejection"] = expected
             elif receipt["passed"]:
                 count = re.search(r"(\d+) assertions", result.stdout)
                 assert count
                 receipt["assertions"] = int(count[1])
+        elif result.returncode or not bound:
+            receipt["passed"] = False
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
         print(label, result.returncode, result.stdout[-3500:] if label == "compile" or result.returncode == 0 else "Acceptance rejected the copied regression" if receipt.get("passed") else result.stdout[-3500:], flush=True)
-        if (label == "compile" and result.returncode) or (label == "run" and not receipt["passed"]):
+        if not bound or (label == "compile" and result.returncode) or (label == "run" and not receipt["passed"]):
             print("Evidence:", out, flush=True)
             raise SystemExit(1)
     print("Evidence:", out, flush=True)
