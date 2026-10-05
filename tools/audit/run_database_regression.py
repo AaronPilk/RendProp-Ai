@@ -45,11 +45,10 @@ KEPT_RED = {
 # activation stamp, org_is_real, cancelled_at, admin_cohorts/admin_churn; 213 for
 # the 0044 plan-rework / industry-trial section; 198 before that).
 #
-# CONCURRENT BRANCHES, now reconciled: 234 + 13 (0048) + 19 (0047) = 266. The
-# 0047 assertions are appended AFTER the 0048 block, so every assertion that
-# existed before either branch — #155, the kept-red astra ceiling below
-# included — keeps the number it had.
-INVARIANT_COUNT = 266
+# The 0047/0048 branches totalled 266. Apple chronology and listing facts
+# registration add four assertions, bringing the current inventory to 270.
+# The kept-red exception is identified by its exact name, not its row number.
+INVARIANT_COUNT = 270
 
 # These tests are transactional and rolled back. Require their exact completion
 # markers on both freshly migrated and historically replayed schemas; merely

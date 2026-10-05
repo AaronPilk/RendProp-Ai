@@ -31,6 +31,14 @@ async function fixture(run:(f:{call:(app:string,method:string,path:string,body?:
    }
    if(table==="deletion_requests")return json([]);
    if(table==="active_org_for_user")return json(active);
+   if(table==="save_listing_facts"){
+    assertEquals(body.p_actor,USER);
+    const row=rows.find(r=>r.id===body.p_listing&&r.org_id===body.p_org&&r.deleted_at===null);
+    if(!row)return json({code:"P0002",message:"Listing not found"},400);
+    // Closed transport scope fixture; atomic comparisons are exercised by the real SQL gate.
+    assertEquals(Object.keys(body.p_changes),["address"]);
+    Object.assign(row,body.p_changes);return json(row);
+   }
    if(table==="listings"){
     if(req.method==="POST"){const row={...body,id:body.id??crypto.randomUUID(),deleted_at:null};if(rows.some(r=>r.id===row.id))return json({code:"23505",message:"duplicate fixture"},409);rows.push(row);return json(row,201);}
     let selected=rows.filter(r=>r.deleted_at===null);
@@ -91,9 +99,13 @@ Deno.test("bound listing create and retry cannot follow another device's active 
  assertEquals(f.calls.filter(c=>c.path.endsWith("active_org_for_user")).length,0);
 }));
 Deno.test("bound listing edits and deletion refuse IDs from another selected workspace",()=>fixture(async f=>{
- assertEquals((await f.call("listings","PATCH","/"+ROW_B,{address:"Wrong workspace"},A)).status,404);
+ const edit=(before:string,address:string)=>({expected:{address:before},changes:{address},details_expected:{},details_changes:{}});
+ assertEquals((await f.call("listings","PUT","/"+ROW_B+"/facts",edit("Agency home","Wrong workspace"),A)).status,404);
  assertEquals((await f.call("listings","DELETE","/"+ROW_B,undefined,A)).status,404);
- assertEquals((await f.call("listings","PATCH","/"+ROW_A,{address:"Correct workspace"},A)).status,200);
+ assertEquals((await f.call("listings","PUT","/"+ROW_A+"/facts",edit("Personal home","Correct workspace"),A)).status,200);
+ for(const id of [ROW_A,ROW_B])assertEquals((await f.call("listings","PATCH","/"+id,{address:"Unsafe legacy edit"},A)).status,426);
+ assertEquals(f.calls.filter(c=>c.path.endsWith("listings")&&c.body?.address==="Unsafe legacy edit").length,0);
+ assertEquals((await f.call("listings","GET","",undefined,A)).body[0].address,"Correct workspace");
  assertEquals((await f.call("listings","GET","",undefined,B)).body[0].address,"Agency home");
 }));
 Deno.test("legacy listing create retains its existing active-workspace default",()=>fixture(async f=>{
