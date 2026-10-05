@@ -7,13 +7,14 @@ an inventory checker; its zero browser-proof count does not describe the newer
 release's separately executed browser suites.
 
 Original planning baseline: `f14081d`. The machine-readable API inventory was
-refreshed against `288737b` on October 5, including the photographer/client flow
-and the separate account-owned personal-card and workspace-logo contracts.
+refreshed against `27f5412` on October 5, including the photographer/client flow,
+the separate account-owned personal-card and workspace-logo contracts, and the
+source-only recipient-verification and lead-deletion API methods.
 This remains an inventory, **not verified parity**.
 Machine-readable truth: `packages/client-contracts/capabilities.json`. Its verifier
 compares every `APIClient` protocol method against the actual Swift file, detects missing,
 extra and duplicate mappings, and checks paths for capabilities outside that protocol.
-The current protocol has 70 distinct method names / 71 declarations (two
+The current protocol has 72 distinct method names / 73 declarations (two
 `completeUpload` overloads), grouped into 21 capabilities, plus 24 capabilities
 outside that protocol. The foundation gate verifies this current source inventory
 and brand token policy; live and browser receipts remain separate.

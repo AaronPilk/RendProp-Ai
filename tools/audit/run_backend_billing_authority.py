@@ -11,7 +11,14 @@ B={n:shutil.which(n)for n in('initdb','pg_ctl','createdb','psql')};assert all(B.
 CONN=['-h',str(SOCK),'-p','55469','-U','postgres'];DB='rendprop_billing_authority'
 TARGET=ROOT/'services/supabase/migrations/20261005220841_render_slug_crypto_entropy.sql'
 files=sorted(TARGET.parent.glob('*.sql'));fixture=ROOT/'services/supabase/tests/backend_billing_authority.sql'
-owned=[TARGET.parent/n for n in ['20261005220556_app_video_allowance_receipts.sql','20261005220709_apple_sandbox_authority_fence.sql',TARGET.name]]
+BROKERAGE=TARGET.parent/'20261005215707_brokerage_pricing_service_acl.sql'
+BROKERAGE_HELPERS=[
+ ('brokerage_price_cents','public.brokerage_price_cents(integer)'),
+ ('brokerage_price_floor_cents','public.brokerage_price_floor_cents()'),
+ ('brokerage_cogs_ceiling_cents','public.brokerage_cogs_ceiling_cents(public.brokerage_contracts)'),
+ ('brokerage_contract','public.brokerage_contract(uuid)'),
+ ('brokerage_quote','public.brokerage_quote(integer,integer,integer,integer,integer)')]
+owned=[BROKERAGE,*[TARGET.parent/n for n in ['20261005220556_app_video_allowance_receipts.sql','20261005220709_apple_sandbox_authority_fence.sql',TARGET.name]]]
 bound=[*files,fixture,Path(__file__).resolve(),*[ROOT/('services/supabase/functions/'+f)for f in ['ai-video/index.ts','ai-video/cost-reservation.ts','ai-video/cost-reservation.test.ts','ai-video/cost-reservation-handler_test.ts','ai-video/fal-status-handler_test.ts','ai-video/output-journal.test.ts','_shared/ratelimit.ts','_shared/ratelimit.test.ts','_shared/providers/common.ts','_shared/providers/jobtoken.ts','_shared/providers/providers_test.ts','_shared/providers/fal_submission_audit_test.ts','_shared/applejws.ts','_shared/applejws.test.ts','me/index.ts','apple-subscriptions/index.ts']],ROOT/'services/supabase/tests/ci-bootstrap.sql']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in bound}
 r={'passed':False,'sourceHashes':hashes,'migrationCount':len(files),'limits':['Synthetic local socket-only database','No provider calls/live writes','Unknown charged video holds never expire; no provider reconciliation or paid output proof','Sandbox purchase never creates service testing authority; App Review fixed lifetime caps remain operationally blocked']}
@@ -25,10 +32,28 @@ try:
  run('create',[B['createdb'],*CONN,DB]);PS=[B['psql'],'-X','--no-password',*CONN,'-d',DB,'-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PS,'-q','-f',str(ROOT/'services/supabase/tests/ci-bootstrap.sql')])
  attrs="select jsonb_agg(to_jsonb(x)order by oid)from(select oid,proowner,proacl,prosecdef,provolatile,proconfig,prorettype,proargtypes::text from pg_proc where oid in('public.apply_apple_entitlement_v2(uuid,uuid,text,text,text,text,text,text,timestamptz,boolean,text,timestamptz,timestamptz,timestamptz,timestamptz)'::regprocedure,'public.apply_apple_entitlement(uuid,uuid,text,text,text,text,text,text,timestamptz,boolean,text)'::regprocedure,'public.publish_render(uuid,numeric,numeric,jsonb,uuid)'::regprocedure))x"
+ # This migration changes ACLs only. Check every public function's body and
+ # security metadata, plus every unrelated function's ACL, at the actual
+ # migration boundary rather than comparing only the price's numeric output.
+ helper_oids=','.join("'"+signature+"'::regprocedure"for _,signature in BROKERAGE_HELPERS)
+ brokerage_metadata="select jsonb_agg(to_jsonb(x)order by oid)from(select oid,prosrc,proowner,prolang,prosecdef,provolatile,proconfig,prorettype,proargtypes::text,proargnames,proargmodes,pronargdefaults,proargdefaults::text from pg_proc where pronamespace='public'::regnamespace)x"
+ unrelated_acls="select jsonb_agg(to_jsonb(x)order by oid)from(select oid,proacl from pg_proc where pronamespace='public'::regnamespace and oid not in("+helper_oids+"))x"
+ helper_privileges="select jsonb_agg(to_jsonb(x)order by signature)from(select oid::regprocedure::text signature,has_function_privilege('anon',oid,'EXECUTE')anon,has_function_privilege('authenticated',oid,'EXECUTE')authenticated,has_function_privilege('service_role',oid,'EXECUTE')service_role from pg_proc where oid in("+helper_oids+"))x"
  prior_attrs=None
  for f in files:
+  if f==BROKERAGE:
+   before_brokerage=run('brokerage-metadata-before',[*PS,'-Atqc',brokerage_metadata]).stdout
+   before_unrelated_acls=run('brokerage-unrelated-acls-before',[*PS,'-Atqc',unrelated_acls]).stdout
+   historical_privileges=json.loads(run('brokerage-historical-privileges',[*PS,'-Atqc',helper_privileges]).stdout)
+   assert len(historical_privileges)==5 and all(x['anon']and x['authenticated']and x['service_role']for x in historical_privileges),'Historical Supabase grants must actually expose every helper'
   if f.name=='20261005220709_apple_sandbox_authority_fence.sql':prior_attrs=run('security-metadata-before', [*PS,'-Atqc',attrs]).stdout
   run('apply-'+f.stem,[*PS,'-q','-f',str(f)])
+  if f==BROKERAGE:
+   assert before_brokerage==run('brokerage-metadata-after',[*PS,'-Atqc',brokerage_metadata]).stdout,'Brokerage ACL migration changed a function body or security metadata'
+   assert before_unrelated_acls==run('brokerage-unrelated-acls-after',[*PS,'-Atqc',unrelated_acls]).stdout,'Brokerage ACL migration changed an unrelated function ACL'
+   final_privileges=json.loads(run('brokerage-final-privileges',[*PS,'-Atqc',helper_privileges]).stdout)
+   assert len(final_privileges)==5 and all(not x['anon']and not x['authenticated']and x['service_role']for x in final_privileges),'All five helper ACLs must change to service only'
+   r['brokerageAclOnly']={'allPublicFunctionBodiesAndSecurityMetadataPreserved':True,'unrelatedFunctionAclsPreserved':True,'historicalPrivileges':historical_privileges,'finalPrivileges':final_privileges}
  def proof(name):
   v=run(name,[*PS,'-Atq','-f',str(fixture)]);assert 'PASS: backend billing authority SQL assertions; all fixtures rolled back.'in v.stdout
   nums=re.findall(r'^\d+$',v.stdout,re.M);assert len(nums)==1;return int(nums[0])
@@ -57,6 +82,46 @@ try:
    run('restore-'+name,[*PS,'-qc',restore])
   else:run('restore-'+name,[*PS,'-qc',definition])
   assert proof('restored-'+name)==r['fresh']
+ # Reopen each omitted PUBLIC or direct-role grant in actual PostgreSQL. The
+ # fixture must fail for that exact signature/role; it cannot pass by testing
+ # only the original three pricing helpers or assuming anon has no inheritance.
+ r['brokerageAclControls']=[]
+ for function_name,signature in BROKERAGE_HELPERS:
+  for role in ['PUBLIC','anon','authenticated']:
+   name=function_name+'-'+role
+   grant_sql='grant execute on function '+signature+' to '+role
+   (OUT/('compile-'+name+'.sql')).write_text(grant_sql+';\n')
+   run('compile-'+name,[*PS,'-q','-f',str(OUT/('compile-'+name+'.sql'))])
+   v=run('control-'+name,[*PS,'-Atq','-f',str(fixture)],False)
+   expected='brokerage helper service ACL '+function_name+' denies '+role
+   assert v.returncode!=0 and 'BILLING FAIL: '+expected in v.stdout,(name,v.stdout[-2000:])
+   run('restore-'+name,[*PS,'-q','-f',str(BROKERAGE)])
+   assert proof('restored-'+name)==r['fresh']
+   r['brokerageAclControls'].append({'name':name,'compiled':True,'exactFailure':expected})
+ # Compile the previously committed three-helper migration against restored
+ # historical grants. This reproduces Claude's concrete missing COGS helper,
+ # instead of merely searching the fixed SQL for another revoke statement.
+ historical=ROOT/'services/supabase/migrations/20261005215707_brokerage_pricing_service_acl.sql'
+ prior_source=run('historical-three-helper-source',['git','-C',str(ROOT),'show','27f5412162c5ad97ee5146543c19ffef1a408b56:'+str(historical.relative_to(ROOT))]).stdout
+ assert 'brokerage_cogs_ceiling_cents'not in prior_source and 'brokerage_contract(uuid)'not in prior_source
+ (OUT/'historical-three-helper.sql').write_text(prior_source)
+ run('restore-historical-grants',[*PS,'-qc','grant execute on function '+','.join(s for _,s in BROKERAGE_HELPERS)+' to public,anon,authenticated'])
+ run('compile-historical-three-helper',[*PS,'-q','-f',str(OUT/'historical-three-helper.sql')])
+ v=run('control-historical-three-helper',[*PS,'-Atq','-f',str(fixture)],False)
+ expected='brokerage helper service ACL brokerage_cogs_ceiling_cents denies PUBLIC'
+ assert v.returncode!=0 and 'BILLING FAIL: '+expected in v.stdout,('historical-three-helper',v.stdout[-2000:])
+ run('restore-historical-three-helper',[*PS,'-q','-f',str(BROKERAGE)])
+ assert proof('restored-historical-three-helper')==r['fresh']
+ r['brokerageAclControls'].append({'name':'historical-three-helper','compiled':True,'exactFailure':expected,'sourceCommit':'27f5412162c5ad97ee5146543c19ffef1a408b56','sourceSha256':hashlib.sha256(prior_source.encode()).hexdigest()})
+ # Losing the service-role grant must also fail: service callers are real,
+ # not mocked or converted into SECURITY DEFINER to hide a permission error.
+ run('compile-brokerage-no-service',[*PS,'-qc','revoke execute on function public.brokerage_contract(uuid)from service_role'])
+ v=run('control-brokerage-no-service',[*PS,'-Atq','-f',str(fixture)],False)
+ expected='brokerage helper service ACL brokerage_contract permits service_role'
+ assert v.returncode!=0 and 'BILLING FAIL: '+expected in v.stdout,('brokerage-no-service',v.stdout[-2000:])
+ run('restore-brokerage-no-service',[*PS,'-q','-f',str(BROKERAGE)])
+ assert proof('restored-brokerage-no-service')==r['fresh']
+ r['brokerageAclControls'].append({'name':'brokerage-no-service','compiled':True,'exactFailure':expected})
  # Unknown definitions abort before overwriting any body or security metadata.
  snapshots="select jsonb_agg(to_jsonb(x)order by oid)from(select oid,prosrc,proowner,proacl,prosecdef,provolatile,proconfig from pg_proc where pronamespace='public'::regnamespace)x"
  for name,sig,migration,anchor in [
@@ -94,4 +159,4 @@ try:
  assert all(hashlib.sha256((ROOT/n).read_bytes()).hexdigest()==h for n,h in hashes.items());r['sourceBoundAtEnd']=True;r['passed']=True
 finally:
  if(DATA/'postmaster.pid').exists():run('stop',[B['pg_ctl'],'-D',str(DATA),'-m','fast','-w','stop'])
- (OUT/'receipt.json').write_text(json.dumps(r,indent=2));print(json.dumps({'output':str(OUT),'passed':r['passed'],'fresh':r.get('fresh'),'replay':r.get('replay'),'controls':len(r.get('controls',[]))}))
+ (OUT/'receipt.json').write_text(json.dumps(r,indent=2));print(json.dumps({'output':str(OUT),'passed':r['passed'],'fresh':r.get('fresh'),'replay':r.get('replay'),'controls':len(r.get('controls',[])),'brokerageAclControls':len(r.get('brokerageAclControls',[]))}))

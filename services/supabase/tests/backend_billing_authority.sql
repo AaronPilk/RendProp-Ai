@@ -4,11 +4,75 @@ create function pg_temp.billing_ok(label text,v boolean)returns void language pl
 create function pg_temp.billing_denied(label text,s text,fragment text)returns void language plpgsql as $$declare e text;begin begin execute s;exception when others then e:=sqlerrm;end;if e is null or position(fragment in e)=0 then raise exception 'BILLING FAIL: % wrong denial: %',label,coalesce(e,'accepted');end if;perform pg_temp.billing_ok(label,true);end$$;
 insert into auth.users(id,email,is_anonymous)values
  ('fa300505-0000-4000-8000-000000000001','billing-owner@fixture.invalid',false),
- ('fa300505-0000-4000-8000-000000000002','billing-other@fixture.invalid',false);
+ ('fa300505-0000-4000-8000-000000000002','billing-other@fixture.invalid',false),
+ ('fa300505-0000-4000-8000-000000000003','brokerage-owner@fixture.invalid',false);
 create temporary table billing_fixture as select org_id org,user_id actor from memberships where user_id::text like 'fa300505-%';
 grant select on billing_fixture to service_role,authenticated,anon;
 update orgs set plan='team',plan_source='manual'where id=(select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001');
 insert into listings(id,org_id,agent_id,address)select 'fa300505-0000-4000-8000-000000000011',org,actor,'Synthetic paid property'from billing_fixture where actor='fa300505-0000-4000-8000-000000000001';
+-- Include every brokerage_* function and the existing contract writer, so a
+-- missing helper/overload cannot pass by counting only the named revocations.
+create temporary table brokerage_helpers(name text primary key,signature text not null,command text not null);
+insert into brokerage_helpers values
+ ('brokerage_price_cents','public.brokerage_price_cents(integer)','select public.brokerage_price_cents(50)'),
+ ('brokerage_price_floor_cents','public.brokerage_price_floor_cents()','select public.brokerage_price_floor_cents()'),
+ ('brokerage_cogs_ceiling_cents','public.brokerage_cogs_ceiling_cents(public.brokerage_contracts)','select public.brokerage_cogs_ceiling_cents(null::public.brokerage_contracts)'),
+ ('brokerage_contract','public.brokerage_contract(uuid)','select public.brokerage_contract(null::uuid)'),
+ ('brokerage_quote','public.brokerage_quote(integer,integer,integer,integer,integer)','select public.brokerage_quote(50)');
+grant select on brokerage_helpers to service_role,authenticated,anon;
+select pg_temp.billing_ok('complete brokerage function inventory',
+ (select array_agg(p.oid order by p.oid)from pg_proc p where p.pronamespace='public'::regnamespace and p.proname like 'brokerage\_%'escape '\')=
+ (select array_agg(signature::regprocedure::oid order by signature::regprocedure::oid)from(
+  select signature from brokerage_helpers union all select 'public.brokerage_overview(uuid,uuid,interval)')all_brokerage));
+select pg_temp.billing_ok('brokerage helper remains invoker '||name,not p.prosecdef)
+ from brokerage_helpers h join pg_proc p on p.oid=h.signature::regprocedure;
+select pg_temp.billing_ok('brokerage helper service ACL '||h.name||' denies PUBLIC',
+ not exists(select 1 from pg_proc p cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))a
+  where p.oid=h.signature::regprocedure and a.grantee=0 and a.privilege_type='EXECUTE'))from brokerage_helpers h;
+select pg_temp.billing_ok('brokerage helper service ACL '||name||' denies '||role,
+ not has_function_privilege(role,signature,'EXECUTE'))
+ from brokerage_helpers cross join unnest(array['anon','authenticated'])role order by name,role;
+select pg_temp.billing_ok('brokerage helper service ACL '||name||' permits service_role',
+ has_function_privilege('service_role',signature,'EXECUTE'))from brokerage_helpers order by name;
+select pg_temp.billing_ok('brokerage overview remains service only',
+ has_function_privilege('service_role','public.brokerage_overview(uuid,uuid,interval)','EXECUTE')
+ and not has_function_privilege('anon','public.brokerage_overview(uuid,uuid,interval)','EXECUTE')
+ and not has_function_privilege('authenticated','public.brokerage_overview(uuid,uuid,interval)','EXECUTE'));
+select pg_temp.billing_ok('brokerage contract writer remains service only',
+ has_function_privilege('service_role','public.set_brokerage_contract(uuid,integer,text,text,integer,integer,integer,integer,integer,text,timestamptz,text,boolean)','EXECUTE')
+ and not has_function_privilege('anon','public.set_brokerage_contract(uuid,integer,text,text,integer,integer,integer,integer,integer,text,timestamptz,text,boolean)','EXECUTE')
+ and not has_function_privilege('authenticated','public.set_brokerage_contract(uuid,integer,text,text,integer,integer,integer,integer,integer,text,timestamptz,text,boolean)','EXECUTE')
+ and to_regprocedure('public.set_brokerage_contract(uuid,integer,text,text,integer,integer,integer,integer,integer,text,timestamptz,text)')is null);
+select pg_temp.billing_ok('brokerage contract table remains deny all',
+ not has_table_privilege('anon','public.brokerage_contracts','SELECT,INSERT,UPDATE,DELETE')
+ and not has_table_privilege('authenticated','public.brokerage_contracts','SELECT,INSERT,UPDATE,DELETE')
+ and(select relrowsecurity from pg_class where oid='public.brokerage_contracts'::regclass)
+ and not exists(select 1 from pg_policy where polrelid='public.brokerage_contracts'::regclass));
+set local role anon;
+select pg_temp.billing_denied('actual anon denies '||name,command,'permission denied for function '||name)from brokerage_helpers order by name;
+reset role;set local role authenticated;
+select pg_temp.billing_denied('actual authenticated denies '||name,command,'permission denied for function '||name)from brokerage_helpers order by name;
+reset role;set local role service_role;
+do $$declare o uuid;c public.brokerage_contracts;e public.plan_entitlements;q record;begin
+ select org into strict o from billing_fixture where actor='fa300505-0000-4000-8000-000000000003';
+ c:=public.set_brokerage_contract(o,50,'Synthetic Brokerage','brokerage-owner@fixture.invalid');
+ perform pg_temp.billing_ok('service contract uses unchanged list and floor',c.seats=50 and c.price_cents_per_seat=11900
+  and public.brokerage_price_cents(10)=14900 and public.brokerage_price_cents(50)=11900
+  and public.brokerage_price_cents(200)=8900 and public.brokerage_price_cents(9)is null and public.brokerage_price_floor_cents()=5000);
+ perform pg_temp.billing_ok('service contract lookup uses exact stored row',public.brokerage_contract(o)=c);
+ perform pg_temp.billing_ok('service COGS helper keeps contract arithmetic',public.brokerage_cogs_ceiling_cents(c)=51600);
+ e:=public.org_entitlement(o);
+ perform pg_temp.billing_ok('service billing dependencies keep contract projection',public.effective_plan(o)='brokerage'
+  and public.org_seats_allowed(o)=50 and e.plan='brokerage'and e.seats=50 and e.price_cents=595000 and e.cogs_ceiling_cents=51600
+  and e.renders_per_month=150 and e.photo_edits_per_month=2000 and e.reels_per_month=150 and e.aerials_per_month=50);
+ select * into strict q from public.brokerage_quote(50);
+ perform pg_temp.billing_ok('service quote keeps list floor and exact COGS',q.list_cents_per_seat=11900 and q.floor_cents_per_seat=5000
+  and q.mrr_at_list_cents=595000 and q.mrr_at_floor_cents=250000 and q.worst_case_cogs_cents=51600);
+ perform pg_temp.billing_denied('service writer still refuses under floor',format('select public.set_brokerage_contract(%L,50,null,null,4999)',o),'RP400');
+ perform pg_temp.billing_ok('service manager overview preserves contract capacity',
+  (public.brokerage_overview(o,'fa300505-0000-4000-8000-000000000003')#>>'{seats,allowed}')::integer=50);
+end$$;
+reset role;
 select pg_temp.billing_ok('exact-window RPCs service only',not has_function_privilege('authenticated','bump_rate_receipt(text,integer,integer,integer)','EXECUTE')and not has_function_privilege('anon','refund_rate_receipt(text,integer,timestamptz,integer)','EXECUTE'));
 select pg_temp.billing_ok('allowance receipt private',not has_table_privilege('authenticated','app_video_allowance_receipts','SELECT,INSERT,UPDATE,DELETE')and not has_table_privilege('service_role','app_video_allowance_receipts','UPDATE,DELETE'));
 select pg_temp.billing_ok('Sandbox ledger private',not has_table_privilege('authenticated','apple_sandbox_receipts','SELECT,INSERT,UPDATE,DELETE')and not has_function_privilege('authenticated','record_apple_sandbox_receipt(uuid,uuid,text,text,text,text,timestamptz)','EXECUTE'));

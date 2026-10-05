@@ -143,17 +143,17 @@ class FoundationTests(unittest.TestCase):
         # Includes the dedicated measurements CAS route, reflection,
         # photographer/client, photo selection and distinct personal-card/logo methods.
         # Inventory coverage does not establish browser, phone or live parity.
-        self.assertEqual(result["apiMethods"], 70)
-        self.assertEqual(result["apiDeclarations"], 71)
+        self.assertEqual(result["apiMethods"], 72)
+        self.assertEqual(result["apiDeclarations"], 73)
         self.assertEqual(result["capabilityGroups"], 21)
         self.assertEqual(result["outsideProtocol"], 24)
         self.assertEqual(result["browserVerified"], 0)
 
     def test_identity_methods_have_explicit_product_mappings(self):
         groups = {row["id"]: set(row["methods"]) for row in self.cap["api"]}
-        self.assertEqual(groups["listing-client-contact"], {"clientContact", "saveClientContact"})
+        self.assertEqual(groups["listing-client-contact"], {"clientContact", "saveClientContact", "requestClientRecipientVerification"})
         self.assertTrue({"realEstateRole", "updateRealEstateRole"} <= groups["account"])
-        self.assertIn("sendLeadToClient", groups["leads"])
+        self.assertEqual(groups["leads"], {"leads", "sendLeadToClient", "deleteLead"})
         self.assertEqual(groups["personal-public-card"], {"personalCard", "savePersonalCard"})
         self.assertEqual(groups["workspace-business-logo"],
                          {"businessLogo", "uploadBusinessLogo", "removeBusinessLogo"})
@@ -163,7 +163,7 @@ class FoundationTests(unittest.TestCase):
 
     def test_each_missing_identity_method_fails(self):
         for method in ["clientContact", "saveClientContact", "realEstateRole",
-                       "updateRealEstateRole", "sendLeadToClient", "personalCard",
+                       "updateRealEstateRole", "sendLeadToClient", "deleteLead", "requestClientRecipientVerification", "personalCard",
                        "savePersonalCard", "businessLogo", "uploadBusinessLogo", "removeBusinessLogo"]:
             with self.subTest(method=method):
                 incomplete = copy.deepcopy(self.cap)

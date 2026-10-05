@@ -39,7 +39,30 @@ jobs:
       - name: Phase 1 source and executable-Swift gates (tests/phase1/*.test.mjs)
         run: node --test tests/phase1/*.test.mjs
       - name: Draft corrections survive an older cloud snapshot
-        run: python3 tools/audit/complete-product-20260922/photos_sync.py
+        run: python3 tools/audit/complete-product-20260922/photos_sync.py --output-directory "$RUNNER_TEMP/rendprop-photos-sync/baseline"
+      - name: Draft sync rejects compiled dirty-write and identity regressions
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, sys
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'rendprop-photos-sync'
+          cases = [('dirty-write', ['--inject-fault'], 'expectedDirtyAssertionRejected'),
+                   ('photos-context', ['--inject-context-fault', 'photos'], 'expectedContextAssertionRejected'),
+                   ('receive-context', ['--inject-context-fault', 'receive'], 'expectedContextAssertionRejected')]
+          for name, flags, field in cases:
+              out = root / name
+              result = subprocess.run([sys.executable, 'tools/audit/complete-product-20260922/photos_sync.py', *flags, '--output-directory', str(out)], check=False)
+              receipt = json.loads((out / 'receipt.json').read_text())
+              if result.returncode != 1 or receipt.get('passed') is not False or receipt.get('compiled') is not True or receipt.get('sourceBoundAtEnd') is not True or receipt.get(field) is not True:
+                  raise SystemExit(f'{name}: expected a named runtime rejection after a successful source-bound compile')
+          PY
+      - name: Retain draft synchronization receipts and control logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: draft-synchronization-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-photos-sync/**/receipt.json
+            ${{ runner.temp }}/rendprop-photos-sync/**/*.log
       - name: Phone production plan preservation and sync receipts
         run: |
           production_test_dir=$(mktemp -d)
@@ -909,6 +932,7 @@ jobs:
           python3 tools/audit/run_team_readiness.py
           python3 tools/audit/run_subscription_trial_regression.py
           python3 tools/audit/run_subscription_chronology.py
+          python3 tools/audit/test_workspace_handler_inventory.py --out "$RUNNER_TEMP/rendprop-workspace-inventory"
           python3 tools/audit/run_workspace_selection.py
           python3 tools/audit/run_internal_testing_grants.py
           python3 tools/audit/run_private_internal_testing.py
@@ -948,6 +972,7 @@ jobs:
             /tmp/rendprop-privacy-receipt-*/**/receipt.json
             /tmp/rendprop-privacy-receipt-*/**/*.log
             /tmp/rendprop-photographer-client-*/*.json
+            ${{ runner.temp }}/rendprop-workspace-inventory/receipt.json
             build/pr-*/receipt.json
             build/pr-*/server.log
             build/pres-*/receipt.json

@@ -145,9 +145,11 @@ tester reports, keys, customer rows and images are not committed.
 
 - Photo authority: 29 fresh and 29 replay SQL assertions, 5 separately compiled
   semantic faults; actual Studio RPC adapter tests.
-- Billing/Sandbox/slugs: 35 fresh and 35 replay SQL assertions, 5 separately
-  compiled faults, both real quota-window race orders, guarded-definition
-  no-overwrite and security metadata equality.
+- Billing/Sandbox/slugs/brokerage: the follow-up proof passes 81 fresh and
+  81 replay SQL assertions, the original 5 compiled faults and 17 compiled ACL
+  controls, both real quota-window race orders, guarded-definition no-overwrite
+  and security metadata equality. It reproduces the previous three-helper ACL
+  omission and proves real service contract/entitlement/quote callers still work.
 - Native UI: three actual mocked Release UIKit cases, 0 failed/0 skipped.
   They use the real gallery, Reel and paywall presentation but no camera,
   picker, StoreKit purchase, real API or provider call.
@@ -204,6 +206,64 @@ partial diagnostics and a failed receipt. Privacy proof receipts mark success
 only after final source checks; four actual-runner groups detect file drift and
 reordered-success mutations. No runtime or quota was weakened for these repairs.
 
+The first PR 30 run exposed three more proof/inventory defects: draft-sync
+extraction omitted the real context predicate, the API inventory omitted two
+new methods, and workspace selection expected 28 handlers instead of 31.
+The repaired draft-sync gate passes 245 assertions and three compiled semantic
+controls; the related photos-first lifecycle gate passes 264 assertions,
+reproduces the historical discarded-edit defect and rejects three compiled
+regressions. All 146 native runtime inputs remain frozen. Workspace selection
+passes all 31 handlers, 28 fresh/replay SQL checks, both races and both existing
+controls. Its actual inventory parser also refuses 12 defective result variants
+and detects two compiled guard removals. The complete 72-method/73-declaration
+API inventory passes 17 checks and its three named controls. None of these
+inventory repairs establishes browser parity, camera quality or a live rollout.
+The separate manual upload gate also had an obsolete 100-case total. It now
+passes all 114 actual transport/publication cases, the Worker adapter typecheck
+and the compiled final-byte stream control. Its inventory proof separately
+rejects 12 defective outputs and detects two compiled guard removals.
+
+## Media-delivery compatibility and finite review authority
+
+The remaining media gate cannot be closed by turning off one public domain.
+Build 44 validates private library downloads as R2 S3 SigV4 URLs, with at most a
+600-second lifetime, and downloads without API headers or redirects. Preserve
+that contract. Its AI completion downloads also need header-free signed URLs.
+Studio's generated-result import adapter currently rejects R2 S3 result URLs;
+change it with the output-serving contract. Public pages need a byte boundary
+that resolves the exact published media identity and checks current approval
+on GET, HEAD, Range and conditional reads. An ancestry check or key prefix alone
+is not authority. Stream requires its own protected playback/segment strategy.
+Inventory every legacy reference and prove old URL denial before disabling all
+public R2 ingress; existing downloaded copies cannot be revoked.
+
+App Review access likewise needs separate finite actor/workspace authority.
+Sandbox renewal, Restore, reinstall, calendar rollover, quota refunds and plan
+changes must never replenish its lifetime budget. Existing owner and sponsored
+family grants are unlimited and cannot supply that boundary. A small expiring
+monthly entitlement alone is insufficient: every allowed provider attempt,
+including retries/helpers/queued work, needs pre-dispatch admission. Unpriced
+review actions must refuse dispatch. Provisioning a real review account, window,
+feature allowlist and funded budget remains an operational input; no such grant
+was created in this audit.
+
+## Follow-up review: complete brokerage ACL inventory
+
+Claude's review of `27f5412` correctly found that the pending brokerage ACL
+migration covered only three internal functions. The complete inventory also
+includes `brokerage_cogs_ceiling_cents(brokerage_contracts)` and
+`brokerage_contract(uuid)`. The latter's invoker mode and deny-all table policy
+already prevent direct client rows; that does not justify leaving its execute
+permission open. Existing service-only `brokerage_overview(uuid)` and the
+contract writer also need their ACLs preserved by the proof.
+
+The reviewed rationale misstated `effective_plan(uuid)` as SECURITY DEFINER.
+Current source keeps it SECURITY INVOKER and reads the contract table directly;
+`org_entitlement(uuid)` calls the contract/COGS helpers. This repair must preserve
+those function bodies, owners and security modes and prove service entitlement
+reads still work. The earlier full database receipt is historical evidence until
+the revised ACL migration receives a new complete regression receipt.
+
 ## Pricing gate: current allowances are not yet funded
 
 The [Topaz and margin policy](TOPAZ-AND-MARGIN-20261004.md),
@@ -235,6 +295,12 @@ proceeds-based period accounting, measured recurring allocations and invoice
 reconciliation. The existing weighted-credit proposal is unapproved. These are
 source-model scenarios, not actual margin results or authorization to reduce
 existing customer commitments. Internal testing remains separately owner-funded.
+
+The follow-up review's proposed `$10 / $21 / $53` provider limits are insufficient
+to enforce this target: they do not reserve the other serving costs, omit the
+lower annual envelopes, and `$53` exceeds Team's entire `$52.91` envelope. There
+is no evidence here that typical usage remains below the cap. No ceiling was
+changed or declared profitable on that basis.
 
 ## Deployment and remaining decisions
 
