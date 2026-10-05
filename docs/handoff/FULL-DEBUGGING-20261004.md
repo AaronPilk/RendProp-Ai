@@ -27,6 +27,29 @@ Existing capture/storage, photo history, measurement geometry/recovery, gallery 
 
 The accompanying `FULL-DEBUGGING-EVIDENCE-20261004.json` records final source hashes and the evidence boundary. CI results will be recorded after the isolated branch is committed and its complete twelve-job suite finishes. Individual fixtures execute actual Swift methods, complete Deno handlers, actual React browser workflows or real migrations against disposable socket-only PostgreSQL clusters. Deliberately removed guards must compile and fail at their named behavioral assertion.
 
+| Focused check | Result |
+|---|---|
+| Native facts, actual client wire, review and reply binding | 65 assertions; four compiled fault controls |
+| Native opened-form intent | 26 assertions; three compiled fault controls |
+| Create/replay retirement and newer edits | 79 assertions across ten scenarios; three compiled fault controls |
+| Apple identity-bound code | 27 assertions; four compiled fault controls |
+| Native export context | 102 assertions; four compiled fault controls |
+| Native shared-version review presentation | 27 assertions; two compiled fault controls |
+| Final native measurement synchronization | 140 assertions; complete CI reruns all 21 compiled fault controls on the committed source |
+| Studio | 441 unit tests; 10 connected facts, 16 property workflow, 9 contact navigation and 6 creation browser groups; meaningful navigation/facts controls |
+| Full facts Deno handler | 66 assertions in a closed synthetic Auth/PostgREST transport |
+| Ordinary facts SQL | 52 assertions on fresh/replayed schema, plus actual simultaneous same-field/disjoint-field clients |
+| Apple subscription SQL/adapters | 39 chronology and 26 trial assertions on fresh/replayed schema; 69 offline signed-adapter tests, 12 concurrent receipt races and seven staged-rollout assertions |
+| Floor-plan attachment | 25 real database assertions and 17 complete-handler tests, plus removed authority/comparison/client-boundary controls |
+| Complete invariant inventory | 269 pass, one exact owner-retained Astra ceiling assertion remains red; all 270 rows, order and completion markers required |
+| Final normal iPhone Release build | Unsigned `iphoneos` ARM64 build succeeded at 04:08:58 UTC on 5 October; every captured native/project input remained unchanged |
+
+The first complete CI attempt exposed two obsolete fixture expectations, not a failed product comparison: the central runner still required 266 instead of 270 invariant rows, and a workspace test expected the older broad PATCH behavior. The inventory now requires all 270 rows without weakening names, order, completion or negative controls. The workspace fixture exercises scoped `PUT /facts` and separately verifies unsafe legacy writes receive 426 without changing either workspace. Its nine tests pass. The full corrected central database runner and all 37 mocked runner controls and nine registration checks passed locally.
+
+The second attempt passed the complete 1,395-test edge suite and the central database checks, then exposed two further fixture expectations after ordinary authenticated column writes were revoked. The gallery fixture now changes its unrelated address through the scoped facts RPC and returns to the authenticated role for gallery permission checks. The measurement runner requires permission denial for a client trying to bypass its guard with a session variable, then verifies the accepted plan remained intact. Gallery checks, their fault controls and races, photographer/client delivery, and all twelve subsequent database/handler runners passed against a clean temporary source snapshot. Product grants and authorization controls were not relaxed.
+
+Secret scanning also matched two source SHA-256 values next to paths containing Auth/API names. Both values were recomputed and matched their files. Current evidence separates path and hash fields; only the two exact historical commit/file/rule/line fingerprints are excluded. No key or credential was committed and broad secret scanning remains enabled.
+
 The current beta-feedback read found **zero submitted screenshot or crash reports for build 44** at **03:14:07 UTC on 5 October**. That read does not establish the absence of unreported device crashes. The historical build-37 metadata stack overflow is distinct; current named SwiftUI components and the normal ARM64 Release build are checked separately.
 
 Private local evidence remains under `/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004`. Customer screenshots, customer inventory, tokens, keys, signed media URLs and raw private Apple responses are not added to Git.

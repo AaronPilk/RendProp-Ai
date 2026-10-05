@@ -145,6 +145,10 @@
       "sha256": "a745677560d9568251ed19e13f969f225b494fd736d3cbfcda69fde9904c4dad"
     },
     {
+      "path": "services/supabase/tests/listing_gallery_selection.sql",
+      "sha256": "3ea9d25f955bf13edc61fbff92a7265023edf48e77ef96ce63b4d82ed3bedf1d"
+    },
+    {
       "path": "services/supabase/tests/studio_floorplan_cas.sql",
       "sha256": "e5ee23bc6cd43819db499efaf0b917ea81a79895442c8716eff76b1d4f309b8d"
     },
@@ -257,6 +261,10 @@
       "sha256": "3221d7dc4ef3d6d9c7fe15968d0bf46bf2c6ea77a19a5c5f92047779ab7fc518"
     },
     {
+      "path": "tools/audit/run_listing_measurement_cas.py",
+      "sha256": "f8ffb2c23f1a4110b3142c89948f1dd6b0f46eed6e03b8bf33b7d77717a6348d"
+    },
+    {
       "path": "tools/audit/run_subscription_chronology.py",
       "sha256": "7325ff8cb4c6df7956338761ec36dc72f27085b088ceba4e8e323bab2536b77b"
     },
@@ -332,6 +340,13 @@
       "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-invariant-count-full-db-final/receipt.json",
       "receiptSHA256": "fc05218fe6b7d06b78359fbca0a7453b368454290877f7d0fc4930047cdc205a",
       "passed": true
+    },
+    {
+      "name": "Corrected gallery/measurement fixture remainder: twelve actual owned runners",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-gallery-measurement-remainder-final/receipt.json",
+      "receiptSHA256": "d3f17ca7d421c10912c1c2188c2161f35887ec786c8262b61f25b1eaad9847f8",
+      "passed": true
     }
   ],
   "localGates": {
@@ -362,9 +377,12 @@
     }
   },
   "completeCI": {
-    "state": "first run exposed stale test inventory/legacy-route expectations and two confirmed checksum false positives; corrected rerun pending",
+    "state": "Proof-only corrections verified locally; third complete CI run pending",
     "firstRunId": 37262547517,
-    "firstRunSource": "3253bf8207e0d616dfeb81ad8743b4f9d2998cab"
+    "firstRunSource": "3253bf8207e0d616dfeb81ad8743b4f9d2998cab",
+    "secondRunId": 37262945554,
+    "secondRunSource": "95f5af11b2908075117542a8dfa9498b154353b4",
+    "secondRunFailure": "Gallery fixture direct address write correctly refused after facts revocation; measurement negative expectation corrected before rerun"
   },
   "liveTestFlight": "1.0.4 (44); historical receipt unchanged",
   "productionMutations": 0,
@@ -379,6 +397,8 @@
   "correctedTestExpectations": [
     "Central inventory exact270; named exception/contiguous order/negative controls retained",
     "Workspace test uses current scoped PUT facts; separately tests legacy426 refuses without write",
-    "Two exact historical checksum fingerprints recomputed; current fields separate path/sha256"
+    "Two exact historical checksum fingerprints recomputed; current fields separate path/sha256",
+    "Gallery unrelated address mutation uses scoped facts RPC; authenticated gallery grants and all negatives retained",
+    "Measurement authenticated session-variable bypass must be permission-denied; accepted private plan remains unchanged"
   ]
 }

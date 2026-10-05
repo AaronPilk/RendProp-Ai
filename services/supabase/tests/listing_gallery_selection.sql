@@ -40,8 +40,21 @@ do $$declare f record;k1 text;k2 text;bad uuid;begin select * into f from galler
  k2:='renders/'||f.org||'/'||f.listing||'/gallery-'||f.p2||'.jpg';
  update listings set gallery_asset_ids=array[f.p2,f.p1],main_photo_key=k1 where id=f.listing;
  perform pg_temp.ok((select gallery_asset_ids=array[f.p2,f.p1]and main_photo_key=k1 from listings where id=f.listing),'owner direct REST selection retains order and canonical cover');
- update listings set address='Changed without touching publication'where id=f.listing;
+end$$;
+reset role;
+set local role service_role;
+do $$declare f record;k1 text;begin select * into f from gallery_fixture;
+ k1:='renders/'||f.org||'/'||f.listing||'/gallery-'||f.p1||'.jpg';
+ perform save_listing_facts(f.actor,f.org,f.listing,
+  jsonb_build_object('address',(select address from listings where id=f.listing)),
+  '{"address":"Changed without touching publication"}','{}','{}');
  perform pg_temp.ok((select gallery_asset_ids=array[f.p2,f.p1]and main_photo_key=k1 from listings where id=f.listing),'omitted photo columns preserve current publication');
+end$$;
+reset role;
+set local role authenticated;
+do $$declare f record;k1 text;k2 text;bad uuid;begin select * into f from gallery_fixture;
+ k1:='renders/'||f.org||'/'||f.listing||'/gallery-'||f.p1||'.jpg';
+ k2:='renders/'||f.org||'/'||f.listing||'/gallery-'||f.p2||'.jpg';
  update listings set gallery_asset_ids=array[f.p2]where id=f.listing;
  perform pg_temp.ok((select gallery_asset_ids=array[f.p2]and main_photo_key is null from listings where id=f.listing),'retiring a cover clears it without deleting media');
  perform pg_temp.denied(format('update listings set main_photo_key=%L where id=%L',k1,f.listing),'cover must belong to explicit gallery');
