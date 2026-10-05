@@ -6,14 +6,16 @@ ROOT=pathlib.Path(__file__).resolve().parents[2]
 SQL=ROOT/'services/supabase'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
 TARGET=SQL/'migrations/20261005150445_scoped_business_logo.sql'
+DELETION_REPAIR=SQL/'migrations/20261005172028_restore_deletion_voice_and_project_inventory.sql'
 TEST=SQL/'tests/org_brand_logo.sql'
+MEDIA_TEST=SQL/'tests/account_deletion_studio_inventory.sql'
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-brand-logo-',dir='/tmp'))
 DATA,SOCK=OUT/'cluster',OUT/'socket';SOCK.mkdir(mode=0o700)
 BINS={n:shutil.which(n)for n in ['initdb','pg_ctl','createdb','psql']};assert all(BINS.values())
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=5000'}
 CONN=['-h',str(SOCK),'-p','55462','-U','postgres']
 PSQL=[BINS['psql'],'-X','--no-password',*CONN,'-d','rendprop_logo','-v','ON_ERROR_STOP=1']
-tracked=[*MIGRATIONS,TEST,pathlib.Path(__file__).resolve(),SQL/'tests/ci-bootstrap.sql',SQL/'functions/me/brand-logo.ts',SQL/'functions/me/brand-image.ts',SQL/'functions/me/index.ts',SQL/'functions/_shared/r2.ts']
+tracked=[*MIGRATIONS,TEST,MEDIA_TEST,pathlib.Path(__file__).resolve(),SQL/'tests/ci-bootstrap.sql',SQL/'functions/me/brand-logo.ts',SQL/'functions/me/brand-image.ts',SQL/'functions/me/index.ts',SQL/'functions/_shared/r2.ts']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in tracked}
 receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'limits':['Owned socket-only plain Postgres','Synthetic auth/storage receipts','No hosted DB, provider, Apple or real object writes'],'passed':False}
 started=False
@@ -61,6 +63,7 @@ try:
  assert query('identity',"select current_setting('data_directory')||'|'||current_setting('listen_addresses')||'|'||current_database();").strip()==f'{DATA}||rendprop_logo'
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  for migration in MIGRATIONS:run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
+ run('deletion-repair-replay',[*PSQL,'-q','-1','-f',DELETION_REPAIR])
  positive=run('logo-positive',[*PSQL,'-At','-f',TEST])
  assert 'PASS: org logo lifecycle SQL assertions; all fixtures rolled back.'in positive
  # Named runtime controls mutate current exact SQL, not a parallel implementation.
@@ -70,7 +73,7 @@ try:
  ]:
   body=query(name+'-definition',f"select pg_get_functiondef('{definition}'::regprocedure);")
   if name=='omit-logo-deletion-inventory':
-   start=body.index('  select object_targets||coalesce(jsonb_agg(');end=body.index('  object_targets:=object_targets||spatial_keys;',start)
+   start=body.index('  select object_targets||coalesce(jsonb_agg(');end=body.index('  object_targets:=object_targets||spatial_keys||public.studio_voice_deletion_targets(',start)
    mutant=body[:start]+body[end:]
   else:
    assert body.count(anchor)==1;mutant=body.replace(anchor,replacement)
@@ -78,8 +81,33 @@ try:
   failed=run(name+'-negative',[*PSQL,'-At','-f',TEST],expected=3)
   assert 'LOGO FAIL: '+reason in failed,failed[-2000:]
   run(name+'-restore',[*PSQL,'-q','-1','-f',TARGET])
+  run(name+'-restore-studio-deletion',[*PSQL,'-q','-1','-f',DELETION_REPAIR])
   restored=run(name+'-restored',[*PSQL,'-At','-f',TEST]);assert 'PASS: org logo lifecycle SQL assertions; all fixtures rolled back.'in restored
  receipt['negativeControls']=['drop-publish-authority','omit-logo-deletion-inventory']
+ media_positive=run('studio-deletion-positive',[*PSQL,'-At','-f',MEDIA_TEST])
+ assert 'PASS: Studio deletion inventory SQL assertions; all fixtures rolled back.'in media_positive
+ definition=query('studio-deletion-definition',"select pg_get_functiondef('public.prepare_account_deletion(uuid,text,text)'::regprocedure);")
+ # Independent controls isolate each lost protection; the mixed-object case
+ # alone cannot detect a shorter voice deadline masked by a project deadline.
+ media_controls=[]
+ for name,anchor,replacement,reason in [
+  ('omit-voice-inventory','||public.studio_voice_deletion_targets(solo,p_upload_bucket)','','voice aliases and reservation inventoried exactly once'),
+  ('omit-voice-deadline',"  select greatest(storage_after,max(write_deadline)+interval '1 hour') into storage_after\n    from public.voice_storage_reservations where org_id=any(solo);",'','voice cleanup waits for original write deadline plus one hour'),
+  ('omit-project-inventory','  object_targets:=object_targets||public.studio_project_deletion_targets(p_user,solo,p_upload_bucket);','','project reserved chunks inventoried exactly once'),
+  ('omit-project-deadline',"  select greatest(storage_after,max(write_deadline)+interval '1 hour') into storage_after from public.studio_project_media where actor_id=p_user or org_id=any(solo);",'','private project cleanup waits for original write deadline plus one hour'),
+  ('omit-project-actor-cleanup','  delete from public.studio_project_media where actor_id=p_user;','','deleting actor private project metadata removed'),
+ ]:
+  assert definition.count(anchor)==1,name
+  query(name+'-apply',definition.replace(anchor,replacement))
+  failed=run(name+'-negative',[*PSQL,'-At','-f',MEDIA_TEST],expected=3)
+  assert 'DELETION MEDIA FAIL: '+reason in failed,failed[-2000:]
+  query(name+'-restore',definition)
+  restored=run(name+'-restored',[*PSQL,'-At','-f',MEDIA_TEST]);assert 'PASS: Studio deletion inventory SQL assertions; all fixtures rolled back.'in restored
+  media_controls.append(name)
+ receipt['negativeControls']+=media_controls
+ import re
+ check=re.search(r'\n(\d+)\nPASS: Studio deletion inventory',media_positive);assert check,media_positive[-800:]
+ receipt['studioDeletionAssertions']=int(check[1])
  races=[]
  for n,label in enumerate(['logo-first-text-waits','text-first-logo-waits'],1):
   actor=f'b0100504-0000-4000-8000-{n:012d}';operation=f'b0100505-0000-4000-8000-{n:012d}'

@@ -8,7 +8,9 @@ complete read at **15:55:35 UTC / 11:55:35 EDT** found three additional submissi
 **52 screenshot submissions, 53 images, 51 nonempty written comments, and one
 unchanged build-37 crash submission**. Both reads exhausted pagination and matched
 their reported totals. A third complete GET-only read at **16:41:09 UTC /
-12:41:09 EDT** returned the same records, with no added, removed or changed reports. Every comment and all 53 images were reviewed, including
+12:41:09 EDT** returned the same records. A fourth read at **17:15:42 UTC /
+13:15:42 EDT** again found no added, removed or changed reports. Every comment
+and all 53 images were reviewed, including
 the twelve submissions added since the October 4 review.
 The crash log was read separately. These are submitted feedback reports, not
 a census of all device crashes.
@@ -124,10 +126,22 @@ acknowledging a job, and refuses inaccessible or corrupt authoritative history.
 This includes two independently reproduced data-loss bugs: an unreadable new
 request marker previously fell back to an old receipt, and an unreadable clip
 manifest previously fell back to an empty old record and deleted paid clips.
-All failed intermediate attempts remain private and labeled failed.
+All failed intermediate attempts remain private and labeled failed. The UIKit
+runner now records discovery/boot failures before compilation, bounds every
+subprocess, and permits one explicitly recorded cold-runtime readiness retry;
+a boot timeout is never counted as a passed renderer test.
 
-Independent database checks pass **44 logo assertions** and **34 personal-card
-assertions**, two mutation controls and two real transaction races per feature.
+Independent database checks pass **44 logo assertions**, **10 Studio deletion
+assertions** and **34 personal-card assertions**, with **seven logo/deletion** and
+**two personal-card** mutation controls, plus two real transaction races per feature.
+The broader deletion check caught a real regression in the logo migration: its
+replacement writer omitted later voice/private-project object inventories, their
+write-deadline protection and actor-owned private-project metadata cleanup. A
+new corrective migration restores those exact protections while preserving logo
+accounting, colleague media and existing function ACLs. The unchanged production
+review passes **69 checks**, private-project coverage passes **51**, and voice
+reservation coverage passes. The correction and isolated mixed-object coverage
+run on a fresh complete schema; intermediate setup/replay failures remain failed.
 The facts runner passes **52 facts and six nearby assertions** on fresh and replay
 runs, with actual same-field/disjoint-field races. The full invariant set remains
 **269/270**, with the one explicitly recognized Astra answer-ceiling failure;
@@ -149,15 +163,16 @@ and keyboard-open personal-card Save followed by a team switch (sharing flows
 share one case). Both the **regular and TestFlight Lab unsigned physical iOS
 Release builds passed**, with unchanged source hashes. These are compile/UI
 proofs; there was no signing, archive upload or camera acceptance. The draft
-PR records all twelve CI jobs against the final exact commit. Receipts distinguish
+PR records the status of all twelve CI jobs against its exact commit; a failed
+or pending CI job is not a release pass. Receipts distinguish
 canceled/intermediate builds from verified final bytes.
 Actual StoreKit product/purchase UI remains unverified: the local StoreKitTest
 daemon refused configuration, and no real-purchase fallback ran.
 
 The nearby note adds only `nearbyAttractions` (maximum 500 characters) to the
 service-only facts RPC. It does not replace amenities, private measurements or
-the floor-plan attachment. The three new additive migrations must be applied in this order before their
-corresponding function handlers:
+the floor-plan attachment. The four new migrations must be applied in this order
+before their corresponding function handlers:
 
 1. `20261005150445_scoped_business_logo.sql` — workspace-owned immutable logos,
    role/lineage checks, reservation/replay and cleanup accounting.
@@ -165,6 +180,11 @@ corresponding function handlers:
    in the existing service-only facts CAS.
 3. `20261005160701_personal_public_card.sql` — account-owned explicitly reviewed
    public card and authorized listing-agent identity lookup.
+4. `20261005172028_restore_deletion_voice_and_project_inventory.sql` — restore
+   voice/private-project deletion inventories and active-write protection lost in
+   the logo extension. This correction must follow the logo migration and precede
+   any updated handler that can delete an account. Its exact-body replay is safe;
+   unfamiliar or partially modified deletion definitions fail closed.
 
 Deploy the updated `me` and `tours` handlers after the schemas, and coordinate
 `coach`, `ai-photo`, `ai-video` and the public Worker with their native callers.
