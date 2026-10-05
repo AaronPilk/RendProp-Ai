@@ -86,6 +86,7 @@ software behavior; they do not certify camera accuracy or AI video quality.
 | Native measurements UI | L outline and rectangle flows: 2 passed; prior exporter L rerun: 1 passed; final Letter exporter L rerun: 1 passed. All four final pages visually inspected with correct 792 × 612-point paper, sources, date and 15 m² net area. |
 | Final normal iPhone Release build | Unsigned `iphoneos` arm64 build succeeded with final recovery and late-reply guards; no upload/signing |
 | Web capability inventory and brand tokens | 17 checks passed with the dedicated measurements route mapped; missing-upload, low-contrast and disabled-validator controls each failed as required. Inventory coverage does not establish browser/device parity. |
+| Published-listing browser proof | 195 checks passed normally and with a deterministic 350 ms observer delay. Missing chapter seek, stale Explore reference and actual rewind each failed at their exact intended assertion; the extracted CI wrapper accepted all three controls. |
 
 The L test verifies 16 m² gross, a 1 m² opening and 15 m² net, a marked calculated
 closing wall, actual export/3D/reopen and linked deletion without resurrection.
@@ -97,6 +98,17 @@ compile, not a native tap-through. Maximum-length pagination has source-loop
 proof, not extreme-name UIKit glyph rasterization. Normal final PDF pages were
 inspected. Initial final-build/installation attempts hit disk exhaustion; failed
 logs were retained and only the successful retries count as acceptance.
+
+The final CI run at `96a4e2e` passed eleven jobs but missed the brief chapter-seek
+polling window while normal video playback advanced. A 350 ms test-observer
+delay reproduced the same failure without changing the page or decoder. The
+browser check now records the exact seek event, actual decoded frame and pixels
+from observers registered before the production click handler. It retains the
+seek precision, frame bounds, pixel threshold and bounded stall rejection;
+CI includes the delayed positive and a missing-seek fault. No product code or
+timeout was changed for that correction. The final delivery receipt must bind
+the subsequent commit and complete CI result before this branch is called
+verified.
 
 Source hashes and verification artifacts are indexed in
 [`CLAUDE-AUDIT-EVIDENCE-20261004.json`](CLAUDE-AUDIT-EVIDENCE-20261004.json).
@@ -126,8 +138,14 @@ must preserve its actual-output probe and 16¢/second worst-case hold. Do not
 deploy older shared branches that lack that guard. No existing migration was
 rewritten and Claude's shared checkout was not edited.
 
-Ordinary non-measurement full-row listing updates retain the existing concurrency
-contract. This change does not claim every listing edit is conflict-safe.
+**Shared-team launch remains blocked by ordinary listing writes.** A stale phone
+choosing a main photo or saving coordinates can still issue a full-row update
+and overwrite newer, unedited Studio facts, sold/archive state and floor-plan
+attachments. This path was verified in the current source; no corresponding
+production or physical-phone mutation was performed. Measurement saves are
+protected, but this branch does not fix the ordinary path. The next delivery
+needs explicit changed-field intent, atomic conflict protection, retained local
+conflicts and a safe rejection/upgrade boundary for older builds 42/43.
 Studio does not yet edit raw measurement geometry; exporting and attaching a
 plan image remain separate workflows. Imported edited cloud photos need a
 verified server provenance binding before edited bytes can be republished.

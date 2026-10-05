@@ -1,5 +1,5 @@
 {
-  "recordedAtUTC": "2026-10-04T23:36:32.200944+00:00",
+  "recordedAtUTC": "2026-10-05T00:11:25.158531+00:00",
   "branch": "fix/claude-audit-20261004",
   "baseCommit": "576d532be2daa94dc2c8446fc66611fb4b2952be",
   "delivery": "source fixes only; no production or Apple deployment",
@@ -10,7 +10,7 @@
   "runtimeAndVerificationSourceHashes": [
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "999c7dc6171b6cd2514eaf32067383de1be8b2e4fa8565fc04099027fb748810"
+      "sha256": "54db7f4e82660ab054f1a2e04fa82115abdae0510dc6ba5a08551e6c8dea6b89"
     },
     {
       "path": "apps/ios/Rendprop/Coach/CoachAPI.swift",
@@ -239,6 +239,78 @@
     {
       "path": "tools/web-client/verify_foundation.py",
       "sha256": "937860519886d5a212a1a346991efc2e9c82bf279a646d945ffb189aa9af7f90"
+    },
+    {
+      "path": "services/edge/tour-host/src/attribution.ts",
+      "sha256": "3ce74ea423100048c5b59a367c00717f7b78625e1bed1251189d0e1062b82077"
+    },
+    {
+      "path": "services/edge/tour-host/src/demo.ts",
+      "sha256": "131e13c8d3aecc442191bfa08beccb67b90f88288a1e5721f5ee4a8abb950035"
+    },
+    {
+      "path": "services/edge/tour-host/src/html.ts",
+      "sha256": "60448cb8c47e33f45cb62e11a668cef6e68b7f3620512e7c53b308e4ecc01b89"
+    },
+    {
+      "path": "services/edge/tour-host/src/index.ts",
+      "sha256": "329c649344bdcbe976ca533e2544d27ea77d3d800c5ba4ad733551648aad5cfd"
+    },
+    {
+      "path": "services/edge/tour-host/src/join.ts",
+      "sha256": "dc99f7a3d0fc3442120909203e20cd18c1cba125fe73392dab2b404b300d05b0"
+    },
+    {
+      "path": "services/edge/tour-host/src/jsonld.ts",
+      "sha256": "0ad3ab3f94dd199616f68dc834b32da29bf87153d84b2355c4818926f4c3e25c"
+    },
+    {
+      "path": "services/edge/tour-host/src/legal.ts",
+      "sha256": "1bdf96205966909fff09cf68152bdc284751d3628d2c831f638738c62d7e569e"
+    },
+    {
+      "path": "services/edge/tour-host/src/listing-player.ts",
+      "sha256": "bbf4c1a65b7534b2065a0caf7efdbaaa80a10306715412bef5041f93e6e3f5c7"
+    },
+    {
+      "path": "services/edge/tour-host/src/player.ts",
+      "sha256": "2f5e0d0c6e0d7c6657e22df31539f9774f41f3f52417ff65c105c9a64c45e902"
+    },
+    {
+      "path": "services/edge/tour-host/src/portfolio.ts",
+      "sha256": "440a085bd1b4bf86458d4f35a8ddfb6e814bf944ab8c17844c95513b619e05a9"
+    },
+    {
+      "path": "services/edge/tour-host/src/sitemap.ts",
+      "sha256": "6fe418e17f19365d6702d472c32e18e8e1f313e6e9ff53af2b17f4f4e01b9c0c"
+    },
+    {
+      "path": "services/edge/tour-host/src/spatial-manifest.ts",
+      "sha256": "750e13483bd08c541c969a103dd663bc3c9368ed438fbc204d513419613c3c93"
+    },
+    {
+      "path": "services/edge/tour-host/src/spatial-runtime.ts",
+      "sha256": "51c435a8040f693de9863b5d5dac875d87234fb7521b91cc5edff6afe34acf1d"
+    },
+    {
+      "path": "services/edge/tour-host/src/spatial-sog.ts",
+      "sha256": "f4a75590d0dbb3020a3a988161677a4005971b3604dff8a7169dfd794de054ae"
+    },
+    {
+      "path": "services/edge/tour-host/src/spatial.ts",
+      "sha256": "3696b8d01611c31e4325d7ac7177c12394d3999030a02c75ba031e9156d3e1fd"
+    },
+    {
+      "path": "services/edge/tour-host/src/types.ts",
+      "sha256": "ebe4c3a32736c46c2f0ab55fdcb56fa74bb83a4d0ada0a4d3a904e2421d855f8"
+    },
+    {
+      "path": "services/edge/tour-host/src/upstream.ts",
+      "sha256": "f0d5fbe2bbeba6a473af0ce6e7c2bc2b83d405af626f5cc4627ab83f46b273fb"
+    },
+    {
+      "path": "services/edge/tour-host/scripts/check-listing-browser.mjs",
+      "sha256": "fb5c2674135a819937ad4a3ede56c8c1b4fb3c0ef34c8bcfe1117da28dc0ca2d"
     }
   ],
   "artifacts": [
@@ -337,6 +409,98 @@
     {
       "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/measurement-native-letter/delivery-receipt.json",
       "sha256": "af5ca92ada64b707d459238999b0b8d158a359bcb84b5f4e50f3e1829b47620f"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/normal/explore-handoff.json",
+      "sha256": "c7b10cd8e7ce7274869c7cf1e2171039b56d9ad1e7113739d8366d4cf63ceef8"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/normal/chapter-seek.json",
+      "sha256": "ac2a36fca63fc4552b038255309ae09045c57242025551db3fb059725d225665"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/normal/decoded-frame.json",
+      "sha256": "02025d43c2d6e76885fcf6ed4d465df54dad3acaa032e55440aec1a226edef42"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/normal/chapter-observation.json",
+      "sha256": "34021f3bc123953d7e8a30989b22e117259451d7051267e40f9df67fa4f077f8"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/normal/receipt.json",
+      "sha256": "1ebfeb2952fb2bbac7fee1fcaf48d64309ebbef4781c97c9d4b03095969d6b71"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/delayed350/explore-handoff.json",
+      "sha256": "9d0c27c1b3f0e0cccc1895062fd4569505b145d437a18306d7826061eabdae9a"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/delayed350/chapter-seek.json",
+      "sha256": "69bc5909a0393977ae76089b04bb26cac9419eb98fa6c99282c1abab80eb5f45"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/delayed350/decoded-frame.json",
+      "sha256": "02025d43c2d6e76885fcf6ed4d465df54dad3acaa032e55440aec1a226edef42"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/delayed350/chapter-observation.json",
+      "sha256": "9331be2ae10ffb7590ca8179d2a4e0976b4f5e9eeebe8c9620d88d3c16852fbe"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/delayed350/receipt.json",
+      "sha256": "62f1587a9e3df8a46a5d77a21906ec5dc58aeff3c00e1cd84411c187fd0142bb"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/chapter-no-seek/chapter-observation.json",
+      "sha256": "738e7b43ec837fe37bcd07b18a7cc9147e9167d7f9e08555b66702bcde9fab8e"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/chapter-no-seek/receipt.json",
+      "sha256": "79bd3b188b3d3efe63786e42c12e995e7494a57c2b879c4e3d9f9796fc4db1c8"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/stale-explore-reference/explore-handoff.json",
+      "sha256": "00f407191113f963d3f0bc10a669c2f31ad89284862317e0e89fd6934d36098b"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/stale-explore-reference/chapter-seek.json",
+      "sha256": "ebbaa8030473f004f1304eacadb29bd48a98ba6fded2f76a7b0eca1fb9bbb197"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/stale-explore-reference/decoded-frame.json",
+      "sha256": "02025d43c2d6e76885fcf6ed4d465df54dad3acaa032e55440aec1a226edef42"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/stale-explore-reference/chapter-observation.json",
+      "sha256": "98c2dcc28a98f193a57d0e1c0b3ed5b0d3a8209f02421f0dba322bac65be841f"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/stale-explore-reference/receipt.json",
+      "sha256": "25705c024acd2d70ea09d40143a28f64b42e9ec4205eb672a1862353ffa668c0"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/explore-rewind/explore-handoff.json",
+      "sha256": "907e3afa1c4009af5cbe72f0a507c097196c5961fc4e956747c52266ef9f6401"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/explore-rewind/chapter-seek.json",
+      "sha256": "8504e8ff1c852605ed83e462df54592b1a32492e86e0d90ed3c081600cf48151"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/explore-rewind/decoded-frame.json",
+      "sha256": "02025d43c2d6e76885fcf6ed4d465df54dad3acaa032e55440aec1a226edef42"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/explore-rewind/chapter-observation.json",
+      "sha256": "21fc1d622887caccbab6d566524eae6a4ee313d268c1b2c12dc08f3cf0f3a10b"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/explore-rewind/receipt.json",
+      "sha256": "a64c08058d39a72e5ad5d730c508f8537f7ff7bf1276c27e0409bdc7b21e0e64"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/final-summary.json",
+      "sha256": "5b418c98921f4c73b48a99b806243dbc42a995adbd93758a4d6f5891e9bfc51c"
     }
   ],
   "checks": {
@@ -365,12 +529,15 @@
     "exportControls": 8,
     "release": "unsigned iphoneos arm64 build succeeded",
     "compiledReleaseSwiftSources": 135,
-    "finalNativeLetterExportRerun": 1
+    "finalNativeLetterExportRerun": 1,
+    "listingBrowserNormal": 195,
+    "listingBrowserDelayed350ms": 195,
+    "listingBrowserControls": 3
   },
   "limits": [
     "Actual FAL generation and historical fast rejection cause unverified.",
     "Physical camera/AR and AI media quality not tested.",
-    "General non-measurement full-row edits retain existing concurrency contract.",
+    "Shared-team launch blocked: stale ordinary phone photo/coordinate full-row writes can overwrite unedited Studio facts, sold/archive state and floor-plan attachments; older 42/43 clients also need a safe upgrade boundary.",
     "Old Coach clients without workspace header receive409/local fallback; coordinate rollout.",
     "Live migration/function/hash verification and new signed binary required before rollout.",
     "Final native Letter export verifies the normal manual L flow; conditional older-snapshot review and phone-warning glyph rasterization have actual-method/source-bound proof, not native tap-through."
@@ -428,7 +595,7 @@
       }
     ]
   },
-  "priorEvidenceCommit": "3653bb32a6a2a42ada41fa779c46fef75ac116c0",
+  "priorEvidenceCommit": "96a4e2ed33c2d26c823e6faafd06e8bf1ec55ebe",
   "historicalArtifacts": [
     {
       "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/release-build/build-final-cas.log",
@@ -459,6 +626,16 @@
       "sha256": "9fac95c053218f322cd10f9ecda2f66135d1790a692996f986b818ba23261bff",
       "sourceCommit": "3653bb32a6a2a42ada41fa779c46fef75ac116c0",
       "scope": "prior to final backup/export followups; retained evidence, not final source proof"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/ci-final-head-media-failure/Users/runner/work/_temp/rendprop-listing-browser-1NuVvA/receipt.json",
+      "sha256": "88fae9b0c0044434401dcab4e50510885d63ddb2c2dcde98b07dda47e8636d20",
+      "reason": "Failed CI browser receipt at 96a4e2e; transient chapter seek polling timed out. Failure evidence retained, not acceptance."
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-audit-20261004/browser-chapter-followup/old-delayed-failure.json",
+      "sha256": "ef363b006b152d819e1402ee8dc4559c8fee55d94a4d6c45649a0453ae39bcb8",
+      "reason": "Deterministic 350ms observer delay reproduces the original chapter poll timeout; failed evidence, not acceptance."
     }
   ],
   "finalClosure": {
@@ -469,10 +646,11 @@
       "Imported-photo removal confirmation states local hiding and continued public cloud photos.",
       "API inventory includes dedicated measurements compare-and-set operation.",
       "Exact historical scanner fingerprints suppress proven test UUID/source-digest false positives only; current evidence keeps paths separate from digests.",
-      "Export control wrapper uses portable grep and still requires expected status and named runtime failure."
+      "Export control wrapper uses portable grep and still requires expected status and named runtime failure.",
+      "Browser chapter proof is registered before the actual click and retains exact seek/decoded-frame pixels; normal and delayed350ms paths195checks each, three named negative controls preserved. No product runtime files changed."
     ],
     "nativeSourcesFrozen": true,
-    "currentHeadCI": "pending followup commit; final delivery receipt will bind exact head and check run",
+    "currentHeadCI": "Followup commit requires final-head CI; exact commit/run will be bound in the external delivery receipt.",
     "interruptedLocalChecks": "Initial final build/native installation and some control runs hit ENOSPC. Only successful retries are acceptance evidence; prior failed logs retained."
   }
 }
