@@ -224,6 +224,22 @@ passes all 114 actual transport/publication cases, the Worker adapter typecheck
 and the compiled final-byte stream control. Its inventory proof separately
 rejects 12 defective outputs and detects two compiled guard removals.
 
+The next CI run on `2036afe` passed 11 of 12 jobs and exposed a stale archive
+restoration fixture in the remaining native job. It cleared only `soldAt` while
+retaining the independent `cloudArchived` flag; the app correctly stayed archived.
+The repair exercises the actual `setSold(false)` and `modify` methods instead:
+85 facts-sync assertions and five compiled controls now pass, including a
+control that removes the real archive-clearing statement. The neighboring
+create/replay fixture had the same stale assumption; its actual restore action
+passes 79 assertions across 10 scenarios and four compiled controls, preserving
+the first-POST draft CAS, ready status and JSON-null sold marker. The native
+form harness now extracts that same added method from its shared template;
+29 assertions and all three original controls pass. No native runtime changed.
+Review, gallery, listing-unit and cohort preflights also pass; the original
+failed CI and local receipts are retained. These local repairs do not yet
+establish a successful full CI rerun. CI retains the repaired facts/review
+receipts and the previously omitted gallery race JSON sidecars.
+
 ## Media-delivery compatibility and finite review authority
 
 The remaining media gate cannot be closed by turning off one public domain.

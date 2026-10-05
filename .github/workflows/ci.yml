@@ -121,17 +121,17 @@ jobs:
       - name: Ordinary listing intent and shared-version review
         run: |
           python3 tools/audit/listing-facts-sync-20261004/run.py
-          for fault in broad-wire wrong-workspace late-conflict drop-receipt-scope; do
+          for fault in broad-wire wrong-workspace late-conflict drop-receipt-scope drop-archive-restore; do
             python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault "$fault"
           done
-          python3 tools/audit/listing-facts-review-20261004/run.py
+          python3 tools/audit/listing-facts-review-20261004/run.py --output-dir "$RUNNER_TEMP/rendprop-listing-facts-review-positive"
           for fault in drop-review-context expose-private-details; do
-            python3 tools/audit/listing-facts-review-20261004/run.py --inject-fault "$fault"
+            python3 tools/audit/listing-facts-review-20261004/run.py --inject-fault "$fault" --output-dir "$RUNNER_TEMP/rendprop-listing-facts-review-$fault"
           done
       - name: Create receipts retire consumed intent and preserve newer edits
         run: |
           python3 tools/audit/listing-create-intent-20261004/run.py
-          for fault in revive-replay-intent drop-replay-base retain-consumed-address; do
+          for fault in revive-replay-intent drop-replay-base retain-consumed-address drop-archive-restore; do
             python3 tools/audit/listing-create-intent-20261004/run.py --expect-regression --inject-fault "$fault"
           done
       - name: Native forms retain opened intent, exact cents and workspace binding
@@ -320,6 +320,10 @@ jobs:
             /tmp/rendprop-floor-measurement-sync-*/*.log
             /tmp/rendprop-listing-create-intent-*/receipt.json
             /tmp/rendprop-listing-create-intent-*/*.log
+            /tmp/rendprop-listing-facts-sync-*/receipt.json
+            /tmp/rendprop-listing-facts-sync-*/*.log
+            ${{ runner.temp }}/rendprop-listing-facts-review-*/receipt.json
+            ${{ runner.temp }}/rendprop-listing-facts-review-*/*.log
             /tmp/rendprop-listing-form-intent-*/receipt.json
             /tmp/rendprop-listing-form-intent-*/*.log
             /tmp/rendprop-measurement-export-*/receipt.json
@@ -969,6 +973,7 @@ jobs:
           path: |
             /tmp/rendprop-*/receipt.json
             /tmp/rendprop-*/*.log
+            /tmp/rendprop-gallery-selection-*/*.json
             /tmp/rendprop-privacy-receipt-*/**/receipt.json
             /tmp/rendprop-privacy-receipt-*/**/*.log
             /tmp/rendprop-photographer-client-*/*.json

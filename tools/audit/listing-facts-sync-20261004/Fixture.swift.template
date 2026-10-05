@@ -89,6 +89,7 @@ __RELOAD_SHARED__
 __CONFIRM_LOCAL__
 __FACTS_REVIEW_LOAD__
 __FACTS_REVIEW_RESOLVE__
+__SET_SOLD__
 __SET_PHOTO__
 __SET_COORDINATE__
 __MARK_DIRTY__
@@ -151,11 +152,43 @@ __SYNC_LISTING__
   try check(rawExpected["is247"]?["value"] as? Bool == false && rawExpected["is247"]?["present"] as? Bool == true,"Boolean detail keeps raw typed baseline")
   try check(rawExpected["hours"]?["value"] is NSNull && rawExpected["hours"]?["present"] as? Bool == true,"Existing JSON null retains its presence")
   try check(rawExpected["website"]?["present"] as? Bool == false,"New detail records absence separately")
-  var archivedRow=rawRow;archivedRow["status"]="archived"
-  let archived=try client.mapped(JSONSerialization.data(withJSONObject:archivedRow))
-  var available=archived;available.soldAt=nil
-  ListingFactsSync.stage(from:archived,in:&available)
-  try check(available.factsSync?.fields["status"]?.expected == .text("archived") && available.factsSync?.fields["status"]?.value == .text("ready"),"Clearing sold restores a Studio-archived listing explicitly")
+  for archivedKind in ["sold-and-archived","archived-only"] {
+   var archivedRow=rawRow;archivedRow["status"]="archived"
+   if archivedKind=="archived-only" {archivedRow["sold_at"]=NSNull()}
+   var archived=try client.mapped(JSONSerialization.data(withJSONObject:archivedRow))
+   archived.id=localID;archived.cloudSyncOwnerID=base.cloudSyncOwnerID
+   try check(archived.cloudArchived==true && archived.isInactive,"Actual DTO preserves independent Studio archive state")
+   var metadataOnly=archived;metadataOnly.soldAt=nil
+   ListingFactsSync.stage(from:archived,in:&metadataOnly)
+   try check(metadataOnly.isArchived && metadataOnly.factsSync?.fields["status"]==nil,"Clearing only a sold timestamp must not invent archive restoration intent")
+   var restoredRow=archivedRow;restoredRow["status"]="ready";restoredRow["sold_at"]=NSNull()
+   client.response=try JSONSerialization.data(withJSONObject:restoredRow)
+   let restoreModel=SyncModel(archived)
+   restoreModel.api.update={sent in try await client.updateListing(sent)}
+   // Exercise the actual user action and actual modify/stage path. A manual
+   // soldAt assignment deliberately does not restore cloudArchived=true.
+   restoreModel.setSold(false,for:localID)
+   let available=restoreModel.listings[0]
+   try check(available.factsSync?.fields["status"]?.expected == .text("archived") && available.factsSync?.fields["status"]?.value == .text("ready"),"Clearing sold restores a Studio-archived listing explicitly")
+   try check(available.soldAt==nil && available.cloudArchived==false && !available.isInactive,"Restore action clears both independent inactive markers")
+   let restorationBody=try ListingFactsSync.body(available)
+   let restoredExpected=restorationBody["expected"] as! [String:Any]
+   let restoredChanges=restorationBody["changes"] as! [String:Any]
+   let keys=archivedKind=="sold-and-archived" ? Set(["status","sold_at"]) : Set(["status"])
+   try check(Set(restoredExpected.keys)==keys && Set(restoredChanges.keys)==keys,"Archive restoration sends only explicit status and sold-marker intent")
+   try check(restoredExpected["status"] as? String=="archived" && restoredChanges["status"] as? String=="ready","Archive restoration retains exact archived-to-ready CAS")
+   if archivedKind=="sold-and-archived" {
+    try check(restoredExpected["sold_at"] as? String=="2026-10-04T12:00:00.123456+00:00" && restoredChanges["sold_at"] is NSNull,"Restore sold0 keeps raw sold timestamp as CAS and clears it with JSON null")
+   }
+   var oldCloud=archived;oldCloud.id=sid
+   let pendingRestore=try CloudListingMerge.merge(local:[available],remote:[oldCloud],protected:[])[0]
+   try check(pendingRestore.cloudArchived==false && !pendingRestore.isInactive && pendingRestore.factsSync?.fields["status"]?.value == .text("ready"),"Old archived cloud snapshot cannot erase pending restoration intent")
+   try await wait {restoreModel.listings[0].needsServerSync==false}
+   try check(restoreModel.api.snapshots.count==1,"Archive restoration dispatches one actual scoped facts write")
+   let restorationWire=try JSONSerialization.jsonObject(with:client.requests.last!.httpBody!) as! [String:Any]
+   try check(NSDictionary(dictionary:restorationWire).isEqual(to:restorationBody),"Actual restoration wire keeps status and sold0 intent exactly")
+   try check(restoreModel.listings[0].serverID==sid && restoreModel.listings[0].serverOrgID==org && !restoreModel.listings[0].isInactive && restoreModel.listings[0].factsSync?.fields.isEmpty==true,"Scoped ready receipt acknowledges restoration without losing binding")
+  }
   var pipeline=base;pipeline.status = .processing
   ListingFactsSync.stage(from:base,in:&pipeline)
   try check(pipeline.factsSync?.fields["status"] == nil,"Local render status is never ordinary listing intent")
