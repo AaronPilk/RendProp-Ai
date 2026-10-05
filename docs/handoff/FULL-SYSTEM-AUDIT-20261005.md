@@ -183,8 +183,9 @@ tester reports, keys, customer rows and images are not committed.
 Both unsigned physical Release variants (ordinary App Store and internal lab)
 compile from the final frozen native source. Neither Mach-O binary contains the
 simulator quota fixture. These are builds, not signed archives or uploads.
-Full database verification passed on clean source commit `77afb02`: all 103
-migrations apply, 84 replay at their supported historical points, and both
+Full database verification initially passed on clean source commit `77afb02`
+and was repeated successfully on `b758a1d` after the complete brokerage ACL
+repair: all 103 migrations apply, 84 replay at their supported historical points, and both
 270-invariant runs have 269 passes plus the same single documented Astra
 ceiling exception. There are no unexpected failures or stale exceptions.
 Actual publication and corrupted-Team negative controls fail as required;
@@ -261,8 +262,9 @@ The reviewed rationale misstated `effective_plan(uuid)` as SECURITY DEFINER.
 Current source keeps it SECURITY INVOKER and reads the contract table directly;
 `org_entitlement(uuid)` calls the contract/COGS helpers. This repair must preserve
 those function bodies, owners and security modes and prove service entitlement
-reads still work. The earlier full database receipt is historical evidence until
-the revised ACL migration receives a new complete regression receipt.
+reads still work. The complete database rerun on `b758a1d` supersedes the earlier
+SQL receipt; all 144 recorded inputs match, both invariant runs preserve the
+same single documented exception, and the owned database cluster stopped.
 
 ## Pricing gate: current allowances are not yet funded
 
