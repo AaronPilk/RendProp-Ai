@@ -905,11 +905,11 @@ struct SettingsView: View {
                 // week must not share its name (see OnboardingView).
                 LabeledContent("Existing trial access ends", value: ends.formatted(date: .abbreviated, time: .omitted))
             }
-            usageRow("Cloud tour renders", used: e.used["renders"], cap: e.rendersPerMonth)
-            usageRow("Photo edits", used: e.used["photo_edits"], cap: e.photoEditsPerMonth)
-            usageRow("Reel clips", used: e.used["reels"], cap: e.reelsPerMonth)
-            usageRow("Aerial intros", used: e.used["aerials"], cap: e.aerialsPerMonth)
-            usageRow("Video quality upgrades", used: e.used["drone"], cap: e.topazPerMonth)
+            usageRow("Cloud tour renders", used: e.used["renders"], cap: e.rendersPerMonth, plan: e.plan, source: e.planSource)
+            usageRow("Photo edits", used: e.used["photo_edits"], cap: e.photoEditsPerMonth, plan: e.plan, source: e.planSource)
+            usageRow("Reel clips", used: e.used["reels"], cap: e.reelsPerMonth, plan: e.plan, source: e.planSource)
+            usageRow("Aerial intros", used: e.used["aerials"], cap: e.aerialsPerMonth, plan: e.plan, source: e.planSource)
+            usageRow("Video quality upgrades", used: e.used["drone"], cap: e.topazPerMonth, plan: e.plan, source: e.planSource)
             DisclosureGroup("How video allowances work") {
                 Text(PlanAllowances.videoAllowanceExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
             }.accessibilityIdentifier("settings.videoAllowances")
@@ -928,16 +928,11 @@ struct SettingsView: View {
         }
     }
 
-    /// "7 of 150" — or "Not included" when the plan has no allowance for it.
+    /// "7 of 150", the verified testing marker's "Unlimited", or "Not included".
     /// Never a price: every price the app shows comes from StoreKit's
     /// `Product.displayPrice` on the paywall (App Store 3.1).
-    private func usageRow(_ title: String, used: Int?, cap: Int) -> some View {
-        let value: String
-        if cap > 0 {
-            value = "\(used ?? 0) of \(cap)"
-        } else {
-            value = "Not included"
-        }
+    private func usageRow(_ title: String, used: Int?, cap: Int, plan: String?, source: String?) -> some View {
+        let value = WorkspaceAllowanceDisplay.value(used: used, cap: cap, plan: plan, source: source)
         return LabeledContent(title, value: value)
             .foregroundStyle(cap > 0 ? Theme.ink : Theme.inkDim)
     }

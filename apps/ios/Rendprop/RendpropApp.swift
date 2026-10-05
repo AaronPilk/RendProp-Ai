@@ -1060,7 +1060,8 @@ final class AppModel: ObservableObject {
     }
 
     func isInSelectedWorkspace(_ listing: Listing) -> Bool {
-        guard Config.useLiveBackend, let selected = WorkspaceContext.selectedOrgID else { return true }
+        guard Config.useLiveBackend else { return true }
+        guard let selected = WorkspaceContext.selectedOrgID else { return false }
         guard !listing.isSample, let org = listing.serverOrgID ?? listing.cloudDraftOrgID else { return true }
         return org == selected
     }

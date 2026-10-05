@@ -96,6 +96,7 @@ import {
   throwRpc,
 } from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
+import { masterTestingAccess, privateTestingContext } from "../_shared/internal-testing.ts";
 import { isSpaceType, SPACE_TYPES } from "../_shared/spacetypes.ts";
 import {
   abortMultipartUpload,
@@ -296,8 +297,15 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   if (!orgRes.data) throw new HttpError(404, "Org not found");
   if (membershipRes.error || !membershipRes.data) throw new HttpError(503, "Workspace billing permissions could not be verified. Please retry.");
   const org = orgRes.data;
+  const testingAccess = entitlement.plan === "team" ? await privateTestingContext(admin, userId, orgId) : null;
+  const testingProjection = entitlement.plan === "team" && [entitlement.renders_per_month,
+    entitlement.photo_edits_per_month, entitlement.reels_per_month, entitlement.aerials_per_month,
+    entitlement.topaz_per_month, entitlement.cogs_ceiling_cents].every((cap) => cap === 2147483647);
+  if ((testingAccess && !testingProjection) || (testingProjection && !testingAccess && !(await masterTestingAccess(admin, orgId)))) {
+    throw new HttpError(503, "Your testing access changed while loading. Please refresh.", "upstream");
+  }
   const canManageSubscription = ENTITLEMENT_ROLES.has(String(membershipRes.data.role)) &&
-    !entitlement.degraded && entitlement.plan !== "brokerage" && org.plan_source !== "manual";
+    !entitlement.degraded && !testingAccess && entitlement.plan !== "brokerage" && org.plan_source !== "manual";
   // A new phone has no cached purchase/workspace intent. Let an authorized
   // purchaser compare its verified StoreKit original ID with this workspace's
   // existing bindings before Apple shows an upgrade or another purchase sheet.
@@ -355,7 +363,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     trial_ends_at: org.trial_ends_at ?? null,
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
-    plan_source: org.plan_source ?? null,          // 'apple' | 'manual' | 'trial' | null
+    plan_source: testingAccess ? "manual" : org.plan_source ?? null,
+    ...(testingAccess ? { plan_source_raw: org.plan_source ?? null, testing_access: { active: true, team_name: testingAccess.sponsor_org_name } } : {}),
     plan_expires_at: org.plan_expires_at ?? null,  // end of the paid/grace window
     apple_product_id: org.apple_product_id ?? null,
     // Bind purchase UI to the exact workspace the entitlement endpoint resolves.
@@ -367,7 +376,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       role: membershipRes.data.role,
       can_manage_subscription: canManageSubscription,
       original_transaction_ids: originalTransactionIDs,
-      source: entitlement.plan === "brokerage" ? "brokerage" : org.plan_source ?? null,
+      source: testingAccess ? "manual" : entitlement.plan === "brokerage" ? "brokerage" : org.plan_source ?? null,
     },
     entitlement: {
       plan: entitlement.plan,

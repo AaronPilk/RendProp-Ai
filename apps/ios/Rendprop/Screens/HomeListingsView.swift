@@ -181,6 +181,9 @@ struct HomeListingsView: View {
     @State private var isLoading = true
     @State private var search = ""
     @State private var pendingDelete: Listing?
+    @ObservedObject private var workspaceStore = WorkspaceStore.shared
+
+    private var needsWorkspaceSelection: Bool { Config.useLiveBackend && workspaceStore.selected == nil }
 
     /// Only listings for the CURRENT business type (a gym never sees houses),
     /// active (not sold), plus search.
@@ -234,6 +237,7 @@ struct HomeListingsView: View {
                         .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
                     }
                     .buttonStyle(ScalePressStyle())
+                    .disabled(needsWorkspaceSelection)
                     .padding(.horizontal)
                     .accessibilityLabel(Text("Add a \(noun)"))
                 }
@@ -271,6 +275,11 @@ struct HomeListingsView: View {
     private var listBody: some View {
         List {
             WorkspaceEntry()
+            if needsWorkspaceSelection {
+                workspaceSelectionPrompt
+                Text("Choose your own workspace to see your private listings, or a shared workspace to work with its team. Saved files stay on this iPhone.")
+                    .font(.footnote).foregroundStyle(Theme.inkDim)
+            }
             if let error = model.cloudSyncError {
                 Label(error, systemImage: "icloud.slash")
                     .font(.footnote).foregroundStyle(Theme.inkDim)
@@ -342,6 +351,11 @@ struct HomeListingsView: View {
         .listStyle(.plain)
         .searchable(text: $search, prompt: "Search \(noun)s")
         .refreshable { await model.refreshCloudWorkspace() }
+    }
+
+    private var workspaceSelectionPrompt: some View {
+        NavigationLink("Choose a workspace") { WorkspacePickerView() }
+            .accessibilityIdentifier("homes.chooseWorkspace")
     }
 
     private var rowInsets: EdgeInsets {
