@@ -20,6 +20,10 @@ struct WorkspacePickerView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(workspace.displayName).foregroundStyle(Theme.ink)
                                 Text(workspace.roleLabel).font(.caption).foregroundStyle(Theme.inkDim)
+                                if store.workspaces.filter({ $0.displayName.caseInsensitiveCompare(workspace.displayName) == .orderedSame }).count > 1 {
+                                    Text("Workspace ID · \(workspace.id.uuidString.lowercased().suffix(8))")
+                                        .font(.caption2).foregroundStyle(Theme.inkDim)
+                                }
                             }
                             Spacer()
                             if store.selected?.id == workspace.id { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent) }
@@ -29,7 +33,7 @@ struct WorkspacePickerView: View {
                     .accessibilityIdentifier("workspace.select.\(workspace.id.uuidString.lowercased())")
                 }
             } header: { Text("Your workspaces") } footer: {
-                Text("New homes, branding and plan changes use the workspace you choose. Existing work stays with its original workspace.")
+                Text("New listings and new subscriptions use the workspace you choose. Existing work and subscriptions stay with their original workspace. Identical names can belong to different workspaces; their IDs distinguish them.")
             }
             if model.workspaceSwitchIsBusy {
                 Section { Text("An upload or save is finishing. Wait for it to complete before switching.").foregroundStyle(Theme.inkDim) }

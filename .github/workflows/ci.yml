@@ -59,6 +59,8 @@ jobs:
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
         run: bash apps/ios/tests/run-photo-delivery.sh
+      - name: Actual UIKit JPEG exports, level crops and original-byte preservation
+        run: python3 apps/ios/tests/run-photo-export-renderer.py
       - name: Actual gallery sync races, warning recovery and provenance fences
         run: |
           python3 tools/audit/gallery-sync-20261002/run.py
@@ -67,6 +69,8 @@ jobs:
           done
       - name: Reel generation stops at failures and retains completed clips
         run: bash apps/ios/tests/run-reel-clip-failures.sh
+      - name: Paid reel requests survive lost responses and retain downloaded clips
+        run: python3 apps/ios/tests/run-reel-request-recovery.py
       - name: Reflection permission revocation fences pending requests
         run: python3 tools/audit/call-20260919/reflection-controller/run.py
       - name: Photo work survives navigation and fences account transitions
@@ -136,6 +140,12 @@ jobs:
           bash tools/audit/measurement-export-20261004/run-controls.sh
       - name: Photographer preference, client drafts and confirmed contact transactions
         run: bash apps/ios/tests/run-client-contact.sh
+      - name: Actual business cards, deliberate portfolio selection and scoped logo recovery
+        run: |
+          python3 tools/audit/native-profile-beta-20261005/run.py --out "$RUNNER_TEMP/rendprop-profile-beta-positive"
+          for fault in logo-late-context logo-old-draft portfolio-all-listings share-late-context share-unbound-workspace personal-inviter-brand personal-late-context personal-old-draft personal-broad-fields personal-untouched-adoption personal-erase-cache logo-stale-brand-read personal-erase-legacy logo-reload-stale-read; do
+            python3 tools/audit/native-profile-beta-20261005/run.py --fault "$fault" --out "$RUNNER_TEMP/rendprop-profile-beta-$fault"
+          done
       - name: App Store capture isolation and physical UI-test switch boundaries
         run: bash apps/ios/tests/run-app-store-boundaries.sh
       - name: Guided scan storage, pose epochs and native depth packing
@@ -288,6 +298,12 @@ jobs:
             /tmp/rendprop-app-store-boundaries-*/*.log
             /tmp/rendprop-photo-reconciliation-*/receipt.json
             /tmp/rendprop-photo-reconciliation-*/*.log
+            ${{ runner.temp }}/rendprop-profile-beta-*/receipt.json
+            ${{ runner.temp }}/rendprop-profile-beta-*/*.log
+            ${{ runner.temp }}/rendprop-photo-export-renderer-*/receipt.json
+            ${{ runner.temp }}/rendprop-photo-export-renderer-*/*.log
+            ${{ runner.temp }}/rendprop-reel-request-recovery-*/receipt.json
+            ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.log
           retention-days: 7
           if-no-files-found: warn
 
@@ -856,6 +872,8 @@ jobs:
           python3 tools/audit/run_listing_gallery_selection.py
           python3 tools/audit/run_listing_measurement_cas.py
           python3 tools/audit/run_listing_facts_cas.py
+          python3 tools/audit/run_brand_logo_regression.py
+          python3 tools/audit/run_personal_card_regression.py
           python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py

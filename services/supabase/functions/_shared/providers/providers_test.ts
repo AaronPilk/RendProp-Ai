@@ -12,7 +12,7 @@ import { checkSubstitution, classifyKie, kieAdapter, parseResultUrls } from "./k
 import { HF_MOTION_FALLBACK, hfInput, higgsfieldAdapter } from "./higgsfield.ts";
 import { imageSizeFor, mapWhisperWords } from "./openai.ts";
 import { assertNotCoveredModel, outputConfigFor } from "./anthropic.ts";
-import { geminiImagePayload } from "./gemini.ts";
+import { geminiAdapter, geminiImagePayload, supportsStagingReference } from "./gemini.ts";
 import { runChain } from "./chain.ts";
 import { extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
 import { ProviderError, snippet } from "./common.ts";
@@ -389,6 +389,52 @@ Deno.test("gemini 2.5 payload is the shipped one; 3.x pins imageSize to 1K", () 
   );
   const v3 = geminiImagePayload("gemini-3.1-flash-image", "PROMPT", "image/jpeg", "AAAA");
   assertEquals((v3.generationConfig as Record<string, unknown>).imageConfig, { imageSize: "1K" });
+});
+
+Deno.test("Gemini staging reference preserves target-first authority, reference bytes and 1K cost pin", async () => {
+  Deno.env.set("GEMINI_API_KEY", "synthetic-not-real");
+  let posts = 0;
+  await withFetch((_url, init) => {
+    posts++;
+    assertEquals(init?.method, "POST");
+    const body = JSON.parse(String(init?.body));
+    const parts = body.contents[0].parts;
+    assertEquals(parts.length, 4);
+    assertEquals(parts[1].inline_data, {mime_type:"image/jpeg",data:"TARGET"});
+    assertStringIncludes(parts[2].text, "Never copy its architecture");
+    assertEquals(parts[3].inline_data, {mime_type:"image/png",data:"REFERENCE"});
+    assertEquals(body.generationConfig.imageConfig, {imageSize:"1K"});
+    return Response.json({candidates:[{content:{parts:[{inlineData:{mimeType:"image/png",data:"OUTPUT"}}]}}]});
+  }, async () => {
+    const ref = await geminiAdapter.submit(step({provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.stage"}), {
+      task:"photo.stage",prompt:"Same movable furnishings",image_b64:"TARGET",
+      extra:{staging_reference_b64:"REFERENCE",staging_reference_mime:"image/png"},
+    });
+    assertEquals((await geminiAdapter.poll(ref)).status,"done");
+    assertEquals(posts,1);
+  });
+});
+
+for (const invalid of [
+  {task:"photo.declutter"}, {model:"unknown-image-model"},
+  {reference:""}, {reference:"A".repeat(6_000_001)},
+  {target:"A".repeat(6_000_001),reference:"B".repeat(6_000_000)}, {mime:"image/heic"},
+]) {
+  Deno.test(`invalid staging reference fails before vendor dispatch: ${Object.keys(invalid).join(",")}`, async () => {
+    let requests = 0;
+    await withFetch(() => { requests++; return Response.json({}); }, async () => {
+      await assertRejects(() => geminiAdapter.submit(step({provider:"gemini",model:invalid.model??"gemini-3.1-flash-image",task:"photo.stage"}), {
+        task:invalid.task??"photo.stage",image_b64:invalid.target??"TARGET",
+        extra:{staging_reference_b64:invalid.reference??"REFERENCE",staging_reference_mime:invalid.mime??"image/jpeg"},
+      }), ProviderError);
+      assertEquals(requests,0);
+    });
+  });
+}
+
+Deno.test("staging reference model capability is explicit, never inferred for an unknown route", () => {
+  assert(supportsStagingReference("gemini-3.1-flash-image"));
+  assert(!supportsStagingReference("gemini-3-unknown-image"));
 });
 
 // ── 7. THE CHAIN LOOP ────────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import simd
 import UniformTypeIdentifiers
 import AVFoundation   // Reel Studio: composition + stitch + export
 import AVKit          // Reel Studio / Aerial intro: VideoPlayer preview
+import CryptoKit
 
 /// Retains one feature tap while anonymous session creation reconnects. A
 /// second tap cannot enqueue the same paid action twice, and leaving the
@@ -231,11 +232,19 @@ private struct ListingToolboxGrid: View {
                 }
             }
             ListingToolLinkTile(
-                card: ListingToolCard(title: "Floor plan", sub: sample ? createFirst : "Measurements · scan · upload",
-                                      icon: "cube.transparent", gradient: RPGradient.plan, dimmed: sample),
+                card: ListingToolCard(title: "Measurements", sub: sample ? createFirst : "Outline · area worksheet · upload",
+                                      icon: "ruler", gradient: RPGradient.plan, dimmed: sample),
                 disabled: sample, accessibilityID: "detail.floorPlan",
                 destination: { AnyView(FloorPlanView(listing: destinationListing())) }
             )
+            ListingToolCard(title: "3D floor plan", sub: "Coming soon",
+                            icon: "cube.transparent", gradient: RPGradient.plan, dimmed: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("detail.floorPlanComingSoon")
+            ListingToolCard(title: "3D walkthrough", sub: "Coming soon · local tests in TestFlight Lab",
+                            icon: "rotate.3d", gradient: RPGradient.drone, dimmed: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("detail.spatialComingSoon")
             ListingToolButtonTile(
                 card: ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : (hasAerial ? "Aerial ready" : "AI opening shot"),
                                       icon: "airplane.departure", gradient: RPGradient.aerial, ai: true, dimmed: sample),
@@ -491,6 +500,8 @@ struct FlythroughDetailView: View {
     /// The file being viewed. ONE binding for every kind — `ListingFileViewer`
     /// switches internally — so `body` grows a single presentation modifier.
     @State private var openedFile: ListingMediaItem?
+    @State private var filePhotoExport: PhotoExportSelection?
+    @State private var filePhotoExportAdmission: (() -> Bool)?
     /// Result of a Save-to-Photos from the files list (success or the reason it
     /// failed), shown under the section rather than in an alert. `filesNoteOK`
     /// only decides the icon and the colour — a green tick reads as done from
@@ -639,22 +650,6 @@ struct FlythroughDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
-                if space == .realEstate && !currentListing.isSample {
-                    NavigationLink { ProductionPlanView(listing: currentListing) } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "checklist").font(.title2)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Plan your video").font(.rpHeadline)
-                                Text("Choose a format, collect your shots, continue in Studio.")
-                                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.caption.weight(.bold))
-                        }
-                        .padding(16).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .accessibilityIdentifier("listing.productionPlan")
-                }
                 if !currentListing.isSample {
                     DesktopStudioCard().padding(16)
                         .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
@@ -709,7 +704,7 @@ struct FlythroughDetailView: View {
         .background(Theme.bg)
         .navigationTitle(currentListing.address)
         .navigationBarTitleDisplayMode(.inline)
-        .askAI(.listing)
+        .askAI(.listing, listingID: listing.id)
         .task { if !currentListing.isSample { try? await model.refreshClientContact(for: listing.id) } }
         .disabled(isDeleting || connection.isWaiting)
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
@@ -748,7 +743,15 @@ struct FlythroughDetailView: View {
             PhotoStudioView(listing: currentListing, entry: .photos)
         }
         .fullScreenCover(item: $openedFile, onDismiss: { loadFiles(force: true) }) { item in
-            ListingFileViewer(item: item)
+            ListingFileViewer(item: item, listingID: listing.id)
+        }
+        .sheet(item: $filePhotoExport) { selection in
+            PhotoExportSheet(photos: selection.photos, includeOriginals: false,
+                             canExport: filePhotoExportAdmission ?? { false })
+        }
+        .onChange(of: auth.userID) { _ in filePhotoExport = nil; filePhotoExportAdmission = nil }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            filePhotoExport = nil; filePhotoExportAdmission = nil
         }
         // "Make a reel" opens REEL STUDIO, with this listing's photos and its
         // aerial intro — the same two things `PhotoStudioView` used to hand it
@@ -789,7 +792,7 @@ struct FlythroughDetailView: View {
         .sheet(isPresented: $showRoomTagger, onDismiss: roomTaggerDismissed) {
             if let a = asset {
                 RoomTaggerView(videoURL: a.localURL, tags: roomTagsBinding,
-                               suggest: roomTagSuggestSource)
+                               suggest: roomTagSuggestSource, listingID: listing.id)
             }
         }
         // `force`: this is the one presentation that can have written a file
@@ -1482,9 +1485,23 @@ struct FlythroughDetailView: View {
                 Label("Save to Photos", systemImage: "square.and.arrow.down")
             }
         }
+        if item.kind == .photo {
+            Button { downloadJPEG(item) } label: {
+                Label("Download JPEG for MLS", systemImage: "doc.badge.arrow.down")
+            }
+        }
         ShareLink(item: item.url) {
             Label("Share", systemImage: "square.and.arrow.up")
         }
+    }
+
+    @MainActor private func downloadJPEG(_ item: ListingMediaItem) {
+        let admission = mediaExportAdmission(for: currentListing)
+        guard item.kind == .photo, admission() else { return }
+        let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
+        filePhotoExportAdmission = admission
+        filePhotoExport = PhotoExportSelection(photos: [EnhancedPhoto(id: photoID,
+            originalURL: item.originalURL ?? item.url, enhancedURL: item.url)])
     }
 
     private func openFile(_ item: ListingMediaItem) {
@@ -3623,6 +3640,7 @@ private struct MediaThumb: View {
 /// finished reel or aerial from this screen at all.
 private struct ListingFilePreview: View {
     let item: ListingMediaItem
+    let listingID: UUID
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var saved = false
@@ -3701,7 +3719,7 @@ private struct ListingFilePreview: View {
             .background(Theme.bg)
             .navigationTitle(item.title)
             .navigationBarTitleDisplayMode(.inline)
-            .askAI(.files)
+            .askAI(.files, listingID: listingID)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -3744,6 +3762,7 @@ private struct ListingFilePreview: View {
 /// Each branch is a viewer that already exists and already works.
 private struct ListingFileViewer: View {
     let item: ListingMediaItem
+    let listingID: UUID
 
     var body: some View {
         switch item.kind {
@@ -3768,7 +3787,7 @@ private struct ListingFileViewer: View {
                     }
             }
         default:
-            ListingFilePreview(item: item)
+            ListingFilePreview(item: item, listingID: listingID)
         }
     }
 }
@@ -3918,6 +3937,71 @@ private struct PendingBatchEdit: Identifiable, Equatable {
     let multiple: Bool
 
     var id: String { style.map { "\(edit).\($0)" } ?? edit }
+}
+
+@MainActor private struct PhotoStagingSetup: Identifiable {
+    let id = UUID()
+    let pending: PendingBatchEdit
+    let targets: [EnhancedPhoto]
+    let references: [EnhancedPhoto]
+    private let owner = AuthStore.shared.userID
+    private let revision = AuthStore.shared.syncSessionRevision
+    private let workspace = WorkspaceContext.selectedOrgID
+    var isCurrent: Bool {
+        AuthStore.shared.userID == owner && AuthStore.shared.syncSessionRevision == revision
+            && WorkspaceContext.selectedOrgID == workspace
+    }
+}
+
+private struct PhotoStagingSetupView: View {
+    let setup: PhotoStagingSetup
+    let apply: (String?, String?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var referenceID = ""
+    @State private var brief = ""
+    @State private var sameRoomConfirmed = false
+    private var reference: EnhancedPhoto? { setup.references.first { $0.id == referenceID } }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Staging · \((setup.pending.style ?? "modern").capitalized)") {
+                    Text("\(setup.targets.count) selected photo\(setup.targets.count == 1 ? "" : "s"). Each photo is a separate edit and counts against your plan.")
+                    TextField("Furnishing brief (optional)", text: $brief, axis: .vertical)
+                        .lineLimit(2...4).onChange(of: brief) { value in
+                            if value.count > 600 { brief = String(value.prefix(600)) }
+                        }
+                    Text("Reuse a specific furniture description when you stage another angle of this room. Fixed features and clear access take priority.").font(.caption)
+                }
+                Section("Another view of the same room") {
+                    Picker("Furniture reference · Coming soon", selection: $referenceID) {
+                        Text("No reference").tag("")
+                        ForEach(setup.references) { photo in
+                            Text(photo.savedVersion?.title ?? "Reviewed staged photo").tag(photo.id)
+                        }
+                    }.disabled(true).onChange(of: referenceID) { _ in sameRoomConfirmed = false }
+                    if let reference {
+                        DetailPhotoThumb(url: reference.enhancedURL, height: 180)
+                        Toggle("This is the same room and I checked this furniture layout", isOn: $sameRoomConfirmed)
+                    } else if setup.references.isEmpty {
+                        Text("Reviewed staging references will be supported after their cost and output checks are approved.")
+                    }
+                    Text("Same-room photo references are not available yet. Use the same furnishing brief for each view, then compare every output; matching furniture is not guaranteed.").font(.caption)
+                }
+                Section {
+                    Button("Stage \(setup.targets.count) photo\(setup.targets.count == 1 ? "" : "s")") {
+                        guard setup.isCurrent, referenceID.isEmpty || sameRoomConfirmed else { return }
+                        dismiss()
+                        apply(referenceID.isEmpty ? nil : referenceID, brief.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : brief)
+                    }.disabled(!setup.isCurrent || (!referenceID.isEmpty && !sameRoomConfirmed))
+                        .accessibilityIdentifier("photoStage.apply")
+                    if !setup.isCurrent { Text("Your account or workspace changed. Reopen Staging.").foregroundStyle(.orange) }
+                }
+            }
+            .navigationTitle("Stage selected photos").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
 }
 
 /// The one-line verdict left on screen after a batch. `ok` is false when any
@@ -4156,6 +4240,7 @@ struct PhotoStudioView: View {
     @State private var wandPhoto: EnhancedPhoto?         // photo under the visible wand button
     @State private var showWandDialog = false            // wand → change-this-photo chooser
     @State private var stagePhoto: EnhancedPhoto?        // photo awaiting a staging style
+    @State private var stagingSetup: PhotoStagingSetup?
     @State private var showStageDialog = false           // staging style chooser
     @State private var suggestResult: SuggestResult?     // AI-suggested edits sheet payload
     @StateObject private var connection = FeatureSessionAction()
@@ -4210,7 +4295,7 @@ struct PhotoStudioView: View {
     /// fires the presenter's `onDisappear` — cancelling the animate task there
     /// left the grid stuck on "Animating photo…" forever (F-A-12).
     private var isPresentingOverlay: Bool {
-        compare != nil || exportingPhotos != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
+        compare != nil || exportingPhotos != nil || stagingSetup != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
             || showLibrary || showCamera
             || showWandDialog || showStageDialog || showPhotoDeleteConfirm
             || showClipDeleteConfirm
@@ -4255,7 +4340,7 @@ struct PhotoStudioView: View {
         .background(Theme.bg)
         .navigationTitle(entry == .photos ? "Photos" : "AI Photo Studio")
         .navigationBarTitleDisplayMode(.inline)
-        .askAI(entry == .photos ? .photos : .photoStudio)
+        .askAI(entry == .photos ? .photos : .photoStudio, listingID: listing.id)
         .toolbar {
             ToolbarItem(placement: .principal) { studioTitleBar }
         }
@@ -4271,11 +4356,11 @@ struct PhotoStudioView: View {
         .onChange(of: auth.userID) { newOwner in
             // Initial anonymous connection is expected when the first AI tap
             // reconnects. A change from an established owner closes old media.
-            if photoOwner != nil, photoOwner != newOwner { compare = nil; exportingPhotos = nil; dismiss() }
+            if photoOwner != nil, photoOwner != newOwner { compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss() }
             photoOwner = newOwner
         }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
-            compare = nil; exportingPhotos = nil; dismiss()
+            compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss()
         }
         .onDisappear {
             if !isPresentingOverlay { animateTask?.cancel() }
@@ -4329,15 +4414,17 @@ struct PhotoStudioView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(gallerySyncError).font(.rpCaption).foregroundStyle(Theme.warn)
                         .fixedSize(horizontal: false, vertical: true)
-                    Button {
-                        guard let serverID = model.listings.first(where: { $0.id == listing.id })?.serverID else { return }
-                        galleryRetrying = true
-                        Task {
-                            await model.syncGalleryPhotos(listingLocalID: listing.id, listingServerID: serverID)
-                            galleryRetrying = false
-                        }
-                    } label: { Label(galleryRetrying ? "Updating published photos…" : "Retry published photos", systemImage: "arrow.clockwise") }
+                    Button { retryPublishedPhotos() } label: {
+                        Label(galleryRetrying ? "Updating published photos…" : "Retry published photos", systemImage: "arrow.clockwise")
+                    }
                     .disabled(galleryRetrying).accessibilityIdentifier("photos.retryPublishedPhotos")
+                    if let review = galleryReviewPhoto {
+                        Button { compare = PhotoComparePresentation(photo: review, requestedCover: true) } label: {
+                            Label("Review cover selection", systemImage: "photo.on.rectangle")
+                        }.accessibilityIdentifier("photos.reviewPublishedSelection")
+                        Text("The cover must be a selected saved version. Review it separately; Retry only resends the selected gallery.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
                 }.frame(maxWidth: .infinity, alignment: .leading).card()
             }
             photoGrid
@@ -4565,6 +4652,16 @@ struct PhotoStudioView: View {
             PhotoCompareView(photo: presentation.photo, requestedCover: presentation.requestedCover)
         }
         .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
+        .sheet(item: $stagingSetup) { setup in
+            PhotoStagingSetupView(setup: setup) { referenceID, brief in
+                stagingSetup = nil
+                connection.run {
+                    guard setup.isCurrent else { return }
+                    startPhotoWork(setup.pending, targets: setup.targets, prompt: brief,
+                                   stagingReferenceID: referenceID)
+                }
+            }
+        }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
         .sheet(item: $customEditPhoto, onDismiss: { customBatchTargets = [] }) { p in
             CustomEditSheet(photo: p, api: model.api, space: space,
@@ -4885,6 +4982,12 @@ struct PhotoStudioView: View {
     private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
                         style: String? = nil, prompt: String? = nil) {
         guard !isProcessing else { return }
+        if edit == "stage" {
+            connection.run {
+                openStagingSetup(PendingBatchEdit(edit: edit, style: style, title: "Staging", multiple: false), targets: [p])
+            }
+            return
+        }
         connection.run { aiEditWithSession(p, edit, style: style, prompt: prompt) }
     }
 
@@ -4895,11 +4998,12 @@ struct PhotoStudioView: View {
                        targets: [p], prompt: prompt)
     }
 
-    private func startPhotoWork(_ pending: PendingBatchEdit, targets: [EnhancedPhoto], prompt: String?) {
+    private func startPhotoWork(_ pending: PendingBatchEdit, targets: [EnhancedPhoto], prompt: String?,
+                                stagingReferenceID: String? = nil) {
         guard !isProcessing else { return }
         let service = PhotoEditService(model: model, listing: listing, space: space)
         if service.start(title: pending.title, photos: targets, edit: pending.edit,
-                         style: pending.style, prompt: prompt) {
+                         style: pending.style, prompt: prompt, stagingReferenceID: stagingReferenceID) {
             batchNote = nil; batchEdit = nil; batchSelection.removeAll()
             Haptics.selection()
         }
@@ -5639,7 +5743,7 @@ struct PhotoStudioView: View {
         // Pre-tick the whole listing for the fan-out edits: with 17 photos the
         // answer is almost always "all of them", and un-ticking three is less
         // work than ticking fourteen. Never for the one-at-a-time edits.
-        batchSelection = multiple ? Set(photos.map(\.id)) : Set<String>()
+        batchSelection = multiple && edit != "stage" ? Set(photos.map(\.id)) : Set<String>()
         Haptics.selection()
     }
 
@@ -5711,6 +5815,8 @@ struct PhotoStudioView: View {
         guard !targets.isEmpty else { return }
         cancelBatchSelection()
         switch pending.edit {
+        case "stage":
+            connection.run { openStagingSetup(pending, targets: targets) }
         case "animate":
             // Never batched. `animate` is its own endpoint, its own poll and its
             // own charge; the chip is `multiple: false` so this is one photo.
@@ -5726,6 +5832,22 @@ struct PhotoStudioView: View {
         default:
             runBatch(pending, targets: targets)
         }
+    }
+
+    private func openStagingSetup(_ pending: PendingBatchEdit, targets: [EnhancedPhoto]) {
+        guard !isProcessing, !targets.isEmpty else { return }
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        guard let index = try? PhotoVersionHistory.load(directory: directory) else {
+            aiFailure = AIFailure(PhotoVersionHistory.Failure.invalidHistory); return
+        }
+        let references = index.versions.values.filter {
+            $0.effects.contains("stage") && $0.stagingReviewed == true && !index.hiddenFamilies.contains($0.familyID)
+        }.sorted { $0.createdAt > $1.createdAt }.compactMap { version -> EnhancedPhoto? in
+            guard (try? PhotoVersionHistory.stagingReference(id: version.id, directory: directory)) != nil else { return nil }
+            return EnhancedPhoto(id: version.id, originalURL: directory.appendingPathComponent(version.reviewSourceFile(in: index)),
+                                 enhancedURL: directory.appendingPathComponent(version.imageFile))
+        }
+        stagingSetup = PhotoStagingSetup(pending: pending, targets: targets, references: references)
     }
 
     /// Run ONE edit over MANY photos, in sequence, on the user's own account.
@@ -5800,6 +5922,32 @@ struct PhotoStudioView: View {
         } catch {
             selectedPhotoIDs = []; publicationLabels = [:]
             photoSaveError = error.localizedDescription
+        }
+    }
+
+    private var galleryReviewPhoto: EnhancedPhoto? {
+        guard let mainRelPath else { return nil }
+        let selected = (try? EnhancedPhoto.loadForListing(listingID: listing.id)) ?? []
+        guard !selected.contains(where: { FileStore.relativePath(for: $0.enhancedURL) == mainRelPath }) else { return nil }
+        return photos.flatMap(\.history).first { FileStore.relativePath(for: $0.enhancedURL) == mainRelPath }
+    }
+
+    @MainActor private func retryPublishedPhotos() {
+        guard !galleryRetrying, let live = model.listings.first(where: { $0.id == listing.id }),
+              live.cloudUnavailable != true, let serverID = live.serverID else { return }
+        let context = NativeMediaExportContext()
+        let targetID = live.id, main = live.mainPhotoRelPath, org = live.serverOrgID
+        let selected: [String]
+        do { selected = try EnhancedPhoto.loadForListing(listingID: targetID).map(\.id) }
+        catch { photoSaveError = error.localizedDescription; return }
+        galleryRetrying = true
+        Task { @MainActor in
+            defer { galleryRetrying = false }
+            guard context.isCurrent,
+                  let current = model.listings.first(where: { $0.id == targetID }), current.cloudUnavailable != true,
+                  current.serverID == serverID, current.serverOrgID == org, current.mainPhotoRelPath == main,
+                  (try? EnhancedPhoto.loadForListing(listingID: targetID).map(\.id)) == selected else { return }
+            await model.syncGalleryPhotos(listingLocalID: targetID, listingServerID: serverID)
         }
     }
 
@@ -6036,8 +6184,12 @@ struct PhotoCompareView: View {
     @State private var selectionError: String?
     @State private var selectedForListing = false
     @State private var imageLoadComplete = false
+    @State private var stagingReview = PhotoVersionHistory.StagingReview()
 
     private var viewed: EnhancedPhoto { selectedVersion ?? photo }
+    private var needsStagingReview: Bool {
+        viewed.savedVersion?.effects.contains("stage") == true && viewed.savedVersion?.stagingReviewed != true
+    }
     private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
     private var savedDisclosure: String? { viewed.savedVersion?.reviewDisclosure ?? (viewed.id == photo.id ? disclosure : nil) }
     private var versionChoices: [EnhancedPhoto] {
@@ -6102,6 +6254,9 @@ struct PhotoCompareView: View {
                         Text("The earlier source isn't available for comparison. Restore it before selecting this staged version.")
                             .font(.caption).foregroundStyle(.orange).padding(.horizontal)
                     }
+                    if needsStagingReview {
+                        stagingReviewChecklist
+                    }
                 }
                 if !showOriginal, let savedDisclosure, !savedDisclosure.isEmpty {
                     Text(savedDisclosure).font(.caption).foregroundStyle(.white.opacity(0.85))
@@ -6120,13 +6275,17 @@ struct PhotoCompareView: View {
                 if !showOriginal, viewed.savedVersion != nil {
                     Button {
                         do {
+                            guard !needsStagingReview || stagingReview.isComplete else {
+                                throw PhotoVersionHistory.Failure.reviewRequired
+                            }
                             let directory = viewed.enhancedURL.deletingLastPathComponent()
                             guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
                             let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
                             let familyWasMain = photo.history.contains { FileStore.relativePath(for: $0.enhancedURL) == priorMain }
                             try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
                                 priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
-                            try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory, reviewed: true)
+                            try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory,
+                                reviewed: stagingReview.isComplete)
                             if familyWasMain || requestedCover { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
                             selectedForListing = true
                             if let listing = model.listings.first(where: { $0.id == listingID }),
@@ -6139,7 +6298,8 @@ struct PhotoCompareView: View {
                             .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
                     }.padding(.horizontal).accessibilityIdentifier("photoVersion.useOnListing")
                         .disabled(enhanced == nil || (viewed.savedVersion?.effects.contains("stage") == true
-                            && (original == nil || viewed.originalURL == viewed.enhancedURL)))
+                            && (original == nil || viewed.originalURL == viewed.enhancedURL
+                                || (needsStagingReview && !stagingReview.isComplete))))
                 }
                 Button { exporting = PhotoExportSelection(photos: [viewed], original: showOriginal) } label: {
                     Label(showOriginal ? (viewed.retainedSourceIsVerified ? "Download original" : "Download earlier source")
@@ -6162,6 +6322,7 @@ struct PhotoCompareView: View {
             let directory = viewed.enhancedURL.deletingLastPathComponent()
             selectedForListing = (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
             let target = viewed
+            stagingReview = PhotoVersionHistory.StagingReview()
             enhanced = nil; original = nil; imageLoadComplete = false
             let after = await AIImagePrep.decoded(at: target.enhancedURL, maxPixel: 2400)
             guard !Task.isCancelled, viewed.id == target.id else { return }
@@ -6171,7 +6332,26 @@ struct PhotoCompareView: View {
             guard !Task.isCancelled, viewed.id == target.id else { return }
             original = before
             imageLoadComplete = true
+            if showOriginal, before != nil, target.originalURL != target.enhancedURL {
+                stagingReview.comparedSource = true
+            }
         }
+        .onChange(of: showOriginal) { showing in
+            if showing, original != nil, viewed.originalURL != viewed.enhancedURL {
+                stagingReview.comparedSource = true
+            }
+        }
+    }
+
+    private var stagingReviewChecklist: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(stagingReview.comparedSource ? "Source comparison opened" : "Open the original or earlier source above, then check this version.")
+                .font(.caption).foregroundStyle(.orange)
+            Toggle("Windows, walls and fixed appliances match the source", isOn: $stagingReview.fixedFeaturesMatch)
+            Toggle("Doors, exits and walking routes remain clear", isOn: $stagingReview.accessIsClear)
+            Toggle("Furniture matches my other published views, or this is the only view", isOn: $stagingReview.furnitureMatchesOtherViews)
+        }.font(.caption).padding(.horizontal)
+            .accessibilityIdentifier("photoVersion.stagingReview")
     }
 
     private func versionChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -6984,7 +7164,7 @@ struct AerialIntroSheet: View {
             .background(Theme.bg)
             .navigationTitle("Aerial intro")
             .navigationBarTitleDisplayMode(.inline)
-            .askAI(.aerial)
+            .askAI(.aerial, listingID: listing.id)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
@@ -7766,22 +7946,57 @@ private struct PendingReelClips: Codable {
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// The parked set, or nil when there is nothing to resume. A record whose
-    /// files have gone (Clear local data, a listing delete) clears itself rather
-    /// than offering a resume that would stitch nothing.
-    static func load(for id: UUID) -> PendingReelClips? {
-        guard let data = UserDefaults.standard.data(forKey: key(id)),
-              let parked = try? JSONDecoder().decode(PendingReelClips.self, from: data) else { return nil }
-        guard !parked.clipURLs.isEmpty else {
-            clear(for: id)
-            return nil
+    /// Reading never deletes clip files. An unreadable authoritative manifest
+    /// must not revive old preferences or turn a missing record into new work.
+    static func readRecord(for id: UUID) throws -> PendingReelClips? {
+        do {
+            let target = directory(for: id).appendingPathComponent("manifest.json")
+            let data = FileManager.default.fileExists(atPath: target.path)
+                ? try Data(contentsOf: target) : UserDefaults.standard.data(forKey: key(id))
+            guard let data else { return nil }
+            let parked = try JSONDecoder().decode(Self.self, from: data)
+            guard parked.listingID == id else { throw CocoaError(.fileReadCorruptFile) }
+            return parked
+        } catch {
+            throw AIImagePrep.error("Saved clip history couldn't be read. Your clip files have been kept. Check this phone's storage and reopen Reel Studio before retrying.")
         }
+    }
+
+    static func load(for id: UUID) -> PendingReelClips? {
+        guard let parked = try? readRecord(for: id), !parked.clipURLs.isEmpty else { return nil }
         return parked
     }
 
-    func save() {
-        guard let data = try? JSONEncoder().encode(self) else { return }
-        UserDefaults.standard.set(data, forKey: Self.key(listingID))
+    func save() { try? saveDurably() }
+
+    func saveDurably() throws {
+        _ = try Self.readRecord(for: listingID)
+        let data = try JSONEncoder().encode(self)
+        let target = Self.directory(for: listingID).appendingPathComponent("manifest.json")
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: target, options: .atomic)
+        guard try Data(contentsOf: target) == data else { throw AIImagePrep.error("Couldn't save the retained clips. Free some space and retry the saved request.") }
+        // Old records remain readable, but this verified file is authoritative.
+        UserDefaults.standard.removeObject(forKey: Self.key(listingID))
+    }
+
+    /// Retire only this run's copies after its finished reel is written.
+    /// Earlier paid clips and unrelated files remain available for finishing.
+    static func retire(_ clips: [URL], for id: UUID) {
+        guard let parked = load(for: id) else { return }
+        let chosen = Set(clips.map { $0.standardizedFileURL })
+        let dir = directory(for: id).standardizedFileURL
+        let removed = parked.relPaths.filter {
+            let url = FileStore.url(fromRelativePath: $0).standardizedFileURL
+            return chosen.contains(url) && url.deletingLastPathComponent().standardizedFileURL == dir
+        }
+        let remaining = parked.relPaths.filter { !removed.contains($0) }
+        if remaining.isEmpty {
+            UserDefaults.standard.removeObject(forKey: key(id))
+            try? FileManager.default.removeItem(at: directory(for: id).appendingPathComponent("manifest.json"))
+        }
+        else { PendingReelClips(listingID: id, savedAt: parked.savedAt, relPaths: remaining).save() }
+        for path in removed { try? FileManager.default.removeItem(at: FileStore.url(fromRelativePath: path)) }
     }
 
     /// Forget the record AND delete the parked mp4s. Only ever called once the
@@ -7789,6 +8004,60 @@ private struct PendingReelClips: Codable {
     static func clear(for id: UUID) {
         UserDefaults.standard.removeObject(forKey: key(id))
         try? FileManager.default.removeItem(at: directory(for: id))
+    }
+}
+
+/// One confirmed provider receipt. A connection or download failure can resume
+/// this request without submitting or charging for a second generation.
+private struct PendingReelRequest: Codable, Sendable {
+    struct Context: Codable, Sendable, Equatable {
+        let listingID: UUID
+        let serverListingID: UUID?
+        let owner: String
+        let workspace: UUID?
+    }
+    let context: Context
+    let photoNumber: Int
+    let job: AIVideoJob
+    var operationID: String? = nil
+    var inputDigest: String? = nil
+    var submissionUnconfirmed: Bool? = nil
+    static func key(_ context: Context) -> String {
+        "reel.request.\(context.listingID).\(context.owner).\(context.workspace?.uuidString ?? "local")"
+    }
+    static func file(_ context: Context) -> URL {
+        let hash = SHA256.hash(data: Data(key(context).utf8)).map { String(format: "%02x", $0) }.joined()
+        return FileStore.documents.appendingPathComponent("reel-requests", isDirectory: true).appendingPathComponent(hash + ".json")
+    }
+    static func load(_ context: Context) -> PendingReelRequest? {
+        let target = file(context)
+        let data = FileManager.default.fileExists(atPath: target.path)
+            ? (try? Data(contentsOf: target)) : UserDefaults.standard.data(forKey: key(context))
+        guard let data,
+              let request = try? JSONDecoder().decode(Self.self, from: data), request.context == context,
+              request.job.kind == "reel", (1...8).contains(request.photoNumber) else { return nil }
+        return request
+    }
+    static func exists(_ context: Context) -> Bool {
+        FileManager.default.fileExists(atPath: file(context).path) || UserDefaults.standard.data(forKey: key(context)) != nil
+    }
+    static func forget(_ context: Context) {
+        try? FileManager.default.removeItem(at: file(context))
+        UserDefaults.standard.removeObject(forKey: key(context))
+    }
+    func save() throws {
+        let data = try JSONEncoder().encode(self)
+        let target = Self.file(context)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: target, options: .atomic)
+        guard try Data(contentsOf: target) == data else { throw AIImagePrep.error("Couldn't save the video request. Free some space and try again.") }
+        UserDefaults.standard.removeObject(forKey: Self.key(context))
+    }
+    func clear() {
+        // A late completion cannot remove a different receipt.
+        guard Self.load(context)?.job.requestId == job.requestId else { return }
+        try? FileManager.default.removeItem(at: Self.file(context))
+        UserDefaults.standard.removeObject(forKey: Self.key(context))
     }
 }
 
@@ -7911,10 +8180,14 @@ struct ReelStudioView: View {
     /// billed but never stitched (the 4,000 sq ft field test). Loaded on open,
     /// exactly like `AerialIntroSheet` resumes a `PendingAerialJob`.
     @State private var parkedClips: PendingReelClips?
+    @State private var pendingRequest: PendingReelRequest?
+    @State private var unreadablePendingContext: PendingReelRequest.Context?
+    @State private var reelOwner = AuthStore.shared.userID
     /// Close was tapped while a job was running — ask before cancelling it, the
     /// way the aerial sheet already does.
     @State private var showCloseConfirm = false
     @State private var showDiscardParkedConfirm = false
+    @State private var showDiscardPendingConfirm = false
 
     // MARK: Voiceover step state (optional — see docs/VOICEOVER-CONTRACT.md)
     //
@@ -7957,7 +8230,7 @@ struct ReelStudioView: View {
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
-    private var canGenerate: Bool { totalSelected >= 2 && totalSelected <= 9 }
+    private var canGenerate: Bool { totalSelected >= 2 && totalSelected <= 9 && pendingRequest == nil && unreadablePendingContext == nil }
     /// A job is in flight — AI clips are being generated, or the stitch is
     /// running. Closing now cancels it, so Close asks first (F-A-05 / the
     /// 4,000 sq ft field test).
@@ -8005,7 +8278,7 @@ struct ReelStudioView: View {
             .background(Theme.bg)
             .navigationTitle("Reel Studio")
             .navigationBarTitleDisplayMode(.inline)
-            .askAI(.reelStudio)
+            .askAI(.reelStudio, listingID: listing.id)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     // UNGUARDED Close was half of the money bug: one tap ran
@@ -8043,6 +8316,7 @@ struct ReelStudioView: View {
             // Pick up clips a previous run generated and was charged for but
             // never stitched — the reel equivalent of resuming a pending aerial.
             if !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
+            reloadPendingRequest()
         }
         .onChange(of: phase) { p in
             let wantHold = (p == .generating || p == .stitching)
@@ -8067,6 +8341,13 @@ struct ReelStudioView: View {
             if recorder.isRecording { recorder.cancel() }
             if idleHeld { IdleTimer.release(); idleHeld = false }
         }
+        .onChange(of: auth.userID) { owner in
+            if reelOwner != nil, reelOwner != owner { workTask?.cancel(); pendingRequest = nil; dismiss() }
+            reelOwner = owner
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            workTask?.cancel(); pendingRequest = nil; dismiss()
+        }
         .confirmationDialog("Still making your reel", isPresented: $showCloseConfirm,
                             titleVisibility: .visible) {
             Button("Close anyway") {
@@ -8075,7 +8356,7 @@ struct ReelStudioView: View {
             }
             Button("Keep waiting", role: .cancel) {}
         } message: {
-            Text("Every clip you've already paid for is kept on this phone. Reopen Reel Studio and finish the reel from them — you won't be charged for the same clips twice.")
+            Text("Completed clips are kept on this phone. Reopen Reel Studio to finish from them or check a saved video request. A submission without a receipt needs review before you generate again.")
         }
         .confirmationDialog("Discard these clips?", isPresented: $showDiscardParkedConfirm,
                             titleVisibility: .visible) {
@@ -8083,6 +8364,15 @@ struct ReelStudioView: View {
             Button("Keep them", role: .cancel) {}
         } message: {
             Text("These clips were already generated and already charged. Deleting them means making them again costs another round of AI.")
+        }
+        .confirmationDialog("Forget the saved request?", isPresented: $showDiscardPendingConfirm, titleVisibility: .visible) {
+            Button("Forget request", role: .destructive) {
+                if let context = pendingRequest?.context ?? unreadablePendingContext { PendingReelRequest.forget(context) }
+                reloadPendingRequest()
+            }
+            Button("Keep request", role: .cancel) {}
+        } message: {
+            Text("This does not cancel the remote job or refund it. Generating this photo again may count another clip. Finished clips stay on this phone.")
         }
         // Asked ONLY when there are already words in the box. The likeliest
         // words are the transcript of a recording the agent made themselves
@@ -8126,6 +8416,7 @@ struct ReelStudioView: View {
         // with no AI call, so an expired session must never stand between the
         // agent and the reel he has already bought (the 4,000 sq ft field test).
         parkedClipsCard
+        pendingRequestCard
 
         // The reel this listing ALREADY has, also outside the gate and for the
         // same reason: it is a finished mp4 on this phone that has already been
@@ -8695,6 +8986,7 @@ struct ReelStudioView: View {
                     .foregroundStyle(Theme.warn)
             }
             clipFailureDetails
+            pendingRequestCard
             if let parkedClips {
                 Text("\(parkedClips.clipURLs.count) finished clip\(parkedClips.clipURLs.count == 1 ? " is" : "s are") saved. You can finish a shorter reel from those clips without generating again.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -9701,6 +9993,82 @@ struct ReelStudioView: View {
         // A run that failed part-way parked its billed clips — surface them again
         // rather than letting "Try again" charge for the same clips twice.
         parkedClips = listing.isSample ? nil : PendingReelClips.load(for: listing.id)
+        reloadPendingRequest()
+    }
+
+    private func reloadPendingRequest() {
+        guard !listing.isSample, let owner = auth.userID,
+              let live = model.listings.first(where: { $0.id == listing.id }), live.cloudUnavailable != true else {
+            pendingRequest = nil; unreadablePendingContext = nil; return
+        }
+        let context = PendingReelRequest.Context(listingID: live.id, serverListingID: live.serverID,
+            owner: owner, workspace: WorkspaceContext.selectedOrgID)
+        pendingRequest = PendingReelRequest.load(context)
+        unreadablePendingContext = pendingRequest == nil && PendingReelRequest.exists(context) ? context : nil
+    }
+
+    @ViewBuilder private var pendingRequestCard: some View {
+        if let request = pendingRequest {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(request.submissionUnconfirmed == true ? "Photo \(request.photoNumber) submission needs review" : "Photo \(request.photoNumber) has a saved video request", systemImage: "clock.arrow.circlepath")
+                    .font(.rpBody.weight(.semibold))
+                if request.submissionUnconfirmed == true {
+                    Text("The submission ended without a usable receipt. It may already count a clip. There is no automatic retry or result lookup. Review your usage before forgetting this request; generating again may count another clip.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                } else {
+                    Text("Check this existing request before generating again. Recovery checks its status and downloads its clip; it sends no new generation. Remote results can expire.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    Button("Recover saved request") { connection.run { recoverPendingRequest(request) } }
+                        .disabled(isWorking).accessibilityIdentifier("reel.recover-request")
+                }
+                Button("Forget request…") { showDiscardPendingConfirm = true }.disabled(isWorking)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        } else if unreadablePendingContext != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("An earlier video request cannot be read").font(.rpBody.weight(.semibold))
+                Text("Generating is paused because that request may already count a clip. Review your usage before deliberately forgetting it.").font(.rpCaption)
+                Button("Forget request…") { showDiscardPendingConfirm = true }.disabled(isWorking)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        }
+    }
+
+    private func recoverPendingRequest(_ request: PendingReelRequest) {
+        guard !isWorking, request.submissionUnconfirmed != true,
+              pendingRequest?.job.requestId == request.job.requestId else { return }
+        let api = model.api, revision = auth.syncSessionRevision
+        let validate: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard auth.userID == request.context.owner, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == request.context.workspace,
+                  let current = model.listings.first(where: { $0.id == request.context.listingID }),
+                  current.cloudUnavailable != true, current.serverID == request.context.serverListingID else {
+                throw CancellationError()
+            }
+        }
+        let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-recovery-\(UUID())", isDirectory: true)
+        phase = .generating; completedClips = 0; totalClips = 1
+        statusText = "Checking saved request for photo \(request.photoNumber)…"
+        failure = nil; clipIssues = []
+        workTask = Task {
+            do {
+                try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+                let clip = try await Self.retrieveClip(job: request.job, pending: request, api: api,
+                    into: tmpDir, index: request.photoNumber - 1, clearReceiptOnDownload: false, requireCurrent: validate)
+                try validate()
+                _ = try Self.retainRecoveredClip(clip, for: request.context.listingID)
+                request.clear()
+                try? FileManager.default.removeItem(at: tmpDir)
+                parkedClips = PendingReelClips.load(for: request.context.listingID)
+                reloadPendingRequest(); phase = .setup
+            } catch {
+                try? FileManager.default.removeItem(at: tmpDir)
+                reloadPendingRequest()
+                if error is CancellationError || Task.isCancelled { return }
+                clipIssues = [ReelClipIssue(photoNumber: request.photoNumber, error: error)]
+                failure = ReelClipIssue.failure(for: error, title: "Couldn't recover the clip")
+                phase = .failed
+            }
+        }
     }
 
     /// Open a reel that already exists on disk — same result screen as a fresh
@@ -9826,6 +10194,9 @@ struct ReelStudioView: View {
         let isPortrait = portrait
         let prompt = motionPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let listingID = listing.id
+        let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
+        let reelWorkspace = WorkspaceContext.selectedOrgID
+        let reelConsentRevision = AIConsent.shared.revocationRevision
         // Caption text is resolved HERE (main actor, plain Sendable strings) —
         // the CALayers themselves are built inside the nonisolated stitch.
         let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
@@ -9906,15 +10277,35 @@ struct ReelStudioView: View {
                 // Kept in step with `clipURLs` so a failed clip cannot slide every
                 // later caption onto the wrong picture.
                 var usedShots: [AIShot?] = []
+                let targetServerID = reelListingServerID
+                let recoveryContext = reelActor.map { PendingReelRequest.Context(listingID: listingID,
+                    serverListingID: targetServerID, owner: $0, workspace: reelWorkspace) }
+                let requireCurrent: @MainActor @Sendable () throws -> Void = {
+                    try Task.checkCancellation()
+                    guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {
+                        throw CancellationError()
+                    }
+                    guard auth.userID == reelActor, auth.syncSessionRevision == reelRevision,
+                          WorkspaceContext.selectedOrgID == reelWorkspace,
+                          let current = model.listings.first(where: { $0.id == listingID }),
+                          current.cloudUnavailable != true, current.serverID == targetServerID else {
+                        throw CancellationError()
+                    }
+                }
                 for (i, photo) in ordered.enumerated() {
                     try Task.checkCancellation()
+                    try requireCurrent()
+                    guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {
+                        throw CancellationError()
+                    }
                     await MainActor.run { statusText = "Photo \(i + 1) of \(ordered.count) — making video…" }
                     let shot = Self.shot(for: photo, in: plan)
                     do {
                         let clip = try await Self.makeClip(photo: photo, prompt: prompt,
                                                            shot: shot, shotCount: ordered.count,
                                                            api: api, listingServerID: reelListingServerID,
-                                                           into: tmpDir, index: i)
+                                                           into: tmpDir, index: i, recoveryContext: recoveryContext,
+                                                           requireCurrent: requireCurrent)
                         clipURLs.append(clip)
                         usedShots.append(shot)
                         billedClips.append(clip)   // paid for the moment it lands
@@ -9969,6 +10360,7 @@ struct ReelStudioView: View {
                                                   "transition": transition.rawValue,
                                                   "planned": wasPlanned])
                 }
+                PendingReelClips.retire(billedClips, for: listingID)
                 // The new reel is safely on disk AND on screen — now, and only
                 // now, trim the older ones so Documents/reels can't grow without
                 // bound (F-A-23). Off the main actor and never cancellable: a
@@ -9996,6 +10388,7 @@ struct ReelStudioView: View {
                 }
                 await MainActor.run {
                     parkedClips = PendingReelClips.load(for: listingID)
+                    reloadPendingRequest()
                     phase = .failed
                     failure = ReelClipIssue.failure(for: error, title: "Couldn't make the reel")
                 }
@@ -10017,35 +10410,41 @@ struct ReelStudioView: View {
     /// cancelled task is exactly how this work would get lost a second time.
     nonisolated private static func parkClips(_ clips: [URL], for listingID: UUID, tmpDir: URL) {
         let fm = FileManager.default
-        defer { try? fm.removeItem(at: tmpDir) }
+        var canRemoveTemporary = clips.isEmpty
+        defer { if canRemoveTemporary { try? fm.removeItem(at: tmpDir) } }
         guard !clips.isEmpty else { return }
         let dir = PendingReelClips.directory(for: listingID)
+        let previous: PendingReelClips?
         do {
+            previous = try PendingReelClips.readRecord(for: listingID)
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {
-            return   // nowhere to put them; the defer still clears tmp
+            return   // Keep the only copies when storage/history is unavailable.
         }
         // Start from what is already parked, dropping any entry whose file has
         // since gone so the record can't accumulate dead paths.
-        var relPaths = (PendingReelClips.load(for: listingID)?.clipURLs ?? [])
+        var relPaths = (previous?.clipURLs ?? [])
             .map { FileStore.relativePath(for: $0) }
-        let stamp = Int(Date().timeIntervalSince1970)
-        for (i, clip) in clips.enumerated() {
+        var allRetained = true
+        for clip in clips {
             guard fm.fileExists(atPath: clip.path) else { continue }
-            let dest = dir.appendingPathComponent("clip-\(stamp)-\(i).mp4")
-            try? fm.removeItem(at: dest)
+            if relPaths.contains(FileStore.relativePath(for: clip)) { continue }
+            let dest = dir.appendingPathComponent("clip-\(UUID().uuidString).mp4")
             do {
                 try fm.moveItem(at: clip, to: dest)
             } catch {
                 // tmp and Documents are the same volume so a move should not
                 // fail — but a copy is the difference between keeping the agent's
                 // money and losing it, so try that before giving up on this clip.
-                do { try fm.copyItem(at: clip, to: dest) } catch { continue }
+                do { try fm.copyItem(at: clip, to: dest) } catch { allRetained = false; continue }
             }
             relPaths.append(FileStore.relativePath(for: dest))
         }
         guard !relPaths.isEmpty else { return }
-        PendingReelClips(listingID: listingID, savedAt: Date(), relPaths: relPaths).save()
+        do {
+            try PendingReelClips(listingID: listingID, savedAt: Date(), relPaths: relPaths).saveDurably()
+            canRemoveTemporary = allRetained
+        } catch { return }
     }
 
     /// Stitch the parked clips into a reel. NO AI call, no network, no spend —
@@ -10061,7 +10460,6 @@ struct ReelStudioView: View {
         let clips = (selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) })
             + (parkedClips?.clipURLs ?? [])
         guard !clips.isEmpty else {
-            PendingReelClips.clear(for: listing.id)
             parkedClips = nil
             return
         }
@@ -10100,8 +10498,8 @@ struct ReelStudioView: View {
                     // The clips now live inside a finished reel on disk, so the
                     // parked copy has done its job and can go. This is the ONLY
                     // automatic delete of paid clips in the whole flow.
-                    PendingReelClips.clear(for: listingID)
-                    parkedClips = nil
+                    PendingReelClips.retire(clips, for: listingID)
+                    parkedClips = PendingReelClips.load(for: listingID)
                     reelURL = outURL
                     player = AVPlayer(url: outURL)
                     lastReel = outURL
@@ -10150,7 +10548,15 @@ struct ReelStudioView: View {
     nonisolated private static func makeClip(photo: EnhancedPhoto, prompt: String,
                                              shot: AIShot?, shotCount: Int,
                                              api: APIClient, listingServerID: UUID?,
-                                             into dir: URL, index: Int) async throws -> URL {
+                                             into dir: URL, index: Int,
+                                             recoveryContext: PendingReelRequest.Context? = nil,
+                                             requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() }) async throws -> URL {
+        try await requireCurrent()
+        guard let recoveryContext else { throw AIImagePrep.error("Reconnect your account before generating this clip.") }
+        if PendingReelRequest.exists(recoveryContext) {
+            throw AIImagePrep.error("Recover or forget the saved video request before generating again.")
+        }
+        _ = try PendingReelClips.readRecord(for: recoveryContext.listingID)
         guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else {
             throw AIImagePrep.error("Couldn't read that photo.")
         }
@@ -10164,14 +10570,39 @@ struct ReelStudioView: View {
         // the server's stronger default and wrote our own words into the
         // listing's provenance log as if the agent had typed them.
         let typed: String? = prompt.isEmpty ? nil : prompt
+        try await requireCurrent()
+        let operationID = UUID().uuidString
+        var intent = try JSONEncoder().encode([typed ?? "", shot?.motion ?? "", shot?.room ?? "",
+            String(index), String(shotCount), listingServerID?.uuidString ?? ""])
+        intent.append(jpeg)
+        let digest = SHA256.hash(data: intent).map { String(format: "%02x", $0) }.joined()
+        let submission = PendingReelRequest(context: recoveryContext, photoNumber: index + 1,
+            job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"),
+            operationID: operationID, inputDigest: digest, submissionUnconfirmed: true)
+        try submission.save() // Atomic marker and readback BEFORE any paid POST.
+        try await requireCurrent()
         let job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
                                                 mime: "image/jpeg", prompt: typed, seconds: 5,
                                                 motion: shot?.motion, room: shot?.room,
                                                 shotIndex: index, shotCount: shotCount,
                                                 listingServerID: listingServerID,
                                                 label: Self.clipLabel(shot: shot, index: index),
-                                                idempotencyKey: UUID().uuidString)
+                                                idempotencyKey: operationID)
+        let pending = PendingReelRequest(context: recoveryContext, photoNumber: index + 1, job: job,
+            operationID: operationID, inputDigest: digest, submissionUnconfirmed: false)
+        try pending.save()
+        let clip = try await retrieveClip(job: job, pending: pending, api: api, into: dir, index: index,
+                                         clearReceiptOnDownload: false, requireCurrent: requireCurrent)
+        try await requireCurrent()
+        let retained = try retainRecoveredClip(clip, for: pending.context.listingID)
+        pending.clear()
+        return retained
+    }
 
+    nonisolated private static func retrieveClip(job: AIVideoJob, pending: PendingReelRequest?, api: APIClient,
+        into dir: URL, index: Int, clearReceiptOnDownload: Bool = false,
+        requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() }) async throws -> URL {
+        guard pending?.submissionUnconfirmed != true else { throw AIImagePrep.error("That submission has no receipt to recover. Review it before generating again.") }
         let deadline = Date().addingTimeInterval(5 * 60)
         var remoteURL: URL?
         while remoteURL == nil {
@@ -10179,12 +10610,14 @@ struct ReelStudioView: View {
                 throw AIImagePrep.error("The clip took too long.")
             }
             try await Task.sleep(nanoseconds: 5_000_000_000)
+            try await requireCurrent()
             switch try await api.aiVideoStatus(job) {
             case .processing:
                 break   // keep polling — the caller shows "Clip X of N"
             case .completed(let videoURL):
                 remoteURL = videoURL
             case .failed(let message):
+                pending?.clear()
                 throw AIImagePrep.error(message)
             }
         }
@@ -10192,13 +10625,41 @@ struct ReelStudioView: View {
             throw AIImagePrep.error("The AI didn't return a clip.")
         }
 
+        try await requireCurrent()
         let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
+        defer { try? FileManager.default.removeItem(at: tmp) }
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)).")
+        }
+        try await requireCurrent()
+        guard ((try? tmp.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 else {
+            throw AIImagePrep.error("The completed clip was empty. Recover the saved request to download it again.")
         }
         let dest = dir.appendingPathComponent("clip-\(index).mp4")
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tmp, to: dest)
+        if clearReceiptOnDownload { pending?.clear() }
+        return dest
+    }
+
+    /// Recovery acknowledges only after the completed clip is retained and
+    /// addressable. A full disk keeps its accepted receipt available to retry.
+    nonisolated private static func retainRecoveredClip(_ clip: URL, for listingID: UUID) throws -> URL {
+        let fm = FileManager.default
+        let bytes = try clip.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard bytes > 0 else { throw AIImagePrep.error("The recovered clip is empty. Retry the saved request.") }
+        let dir = PendingReelClips.directory(for: listingID)
+        var relPaths = (try PendingReelClips.readRecord(for: listingID)?.clipURLs ?? []).map { FileStore.relativePath(for: $0) }
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let dest = dir.appendingPathComponent("clip-recovered-\(UUID().uuidString).mp4")
+        do { try fm.moveItem(at: clip, to: dest) }
+        catch { try fm.copyItem(at: clip, to: dest) }
+        relPaths.append(FileStore.relativePath(for: dest))
+        try PendingReelClips(listingID: listingID, savedAt: Date(), relPaths: relPaths).saveDurably()
+        guard PendingReelClips.load(for: listingID)?.clipURLs.contains(dest) == true,
+              (try? dest.resourceValues(forKeys: [.fileSizeKey]).fileSize) == bytes else {
+            throw AIImagePrep.error("Couldn't retain the recovered clip. Free some space and retry the saved request.")
+        }
         return dest
     }
 
@@ -10535,7 +10996,7 @@ struct FloorPlanView: View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
                 measurementsSection
-                if RoomCaptureSession.isSupported {
+                if RoomCaptureSession.isSupported && planExists {
                     VStack(spacing: 10) {
                         Image(systemName: planExists ? "cube.fill" : "cube.transparent")
                             .font(.system(size: 44, weight: .light))
@@ -10570,7 +11031,8 @@ struct FloorPlanView: View {
                         }
                         // Destructive: a successful re-scan overwrites the saved
                         // USDZ + geometry, so confirm first (F-A-17).
-                        secondaryButton("Scan again", "arrow.clockwise") { showRescanConfirm = true }
+                        Text("New 3D scans are coming soon. Your saved plan remains available.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         ShareLink(item: usdzURL) {
                             Label("Share the 3D model", systemImage: "square.and.arrow.up")
                                 .font(.rpBody.weight(.semibold))
@@ -10599,10 +11061,10 @@ struct FloorPlanView: View {
                         Image(systemName: uploadedURL != nil ? "doc.richtext" : "square.and.arrow.up.on.square")
                             .font(.system(size: 40, weight: .light))
                             .foregroundStyle(Theme.accent)
-                        Text(uploadedURL != nil ? "Floor plan ready" : "Add a floor plan")
+                        Text(uploadedURL != nil ? "Floor plan ready" : "Upload a floor plan")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
-                        Text("You can enter room measurements above or upload a PDF or image here. LiDAR scanning is available on supported iPhones and iPads.")
+                        Text("Enter measurements above or upload a PDF or image from your measuring software. Automatic 3D floor-plan scanning is coming soon.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     }
@@ -10614,9 +11076,9 @@ struct FloorPlanView: View {
             .padding()
         }
         .background(Theme.bg)
-        .navigationTitle("Floor plan")
+        .navigationTitle("Measurements & plans")
         .navigationBarTitleDisplayMode(.inline)
-        .askAI(.floorPlan)
+        .askAI(.floorPlan, listingID: listing.id)
         .onAppear { refreshState() }
         .fullScreenCover(isPresented: $showScanner) {
             RoomScanView(exportURL: usdzURL) { url in

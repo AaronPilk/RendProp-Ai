@@ -1625,6 +1625,7 @@ const COHORT_NOTE =
   "whole one.";
 
 const CHURN_NOTE =
+  "This owner report summarizes subscriptions across workspaces; it is not your personal renewal setting. Auto-renew off means a subscriber stopped the next renewal. It does not mean a provider key is disabled, and current paid access may continue until expiry. " +
   "Cancellations that are STILL IN FORCE: a subscriber who cancelled and came " +
   "back inside the window is not counted, because a win-back clears the " +
   "cancellation date. A cancellation is either a subscription that ended " +

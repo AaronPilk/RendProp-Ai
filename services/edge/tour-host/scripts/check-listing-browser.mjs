@@ -85,6 +85,13 @@ function fixture({ slow = false, missing = false, failed = false, spatial = fals
   return tour;
 }
 
+// Reviewed nearby-place text is escaped; it never adds travel/demographic claims.
+{
+  const tour = fixture(); tour.listing.details.nearbyAttractions = 'Apple Maps: Synthetic park <script>alert(1)</script> · approx. 0.5 mi';
+  const html = renderTourPage(tour, "http://127.0.0.1/api", "", "", { origin: "http://127.0.0.1" });
+  check(html.includes('id="nearby"') && html.includes('Synthetic park &lt;script&gt;alert(1)&lt;/script&gt;'), 'Reviewed nearby note renders as escaped property information');
+  check(html.includes('straight-line distances, not travel times'), 'Public nearby notes preserve distance limitations');
+}
 // Actual property-cover priority, without an account or media fetch.
 for (const test of [
   { name: "explicit selected cover", cover: "/synthetic-main.svg", gallery: ["/synthetic-sign.svg", "/synthetic-main.svg"], expected: "/synthetic-main.svg" },
@@ -254,6 +261,20 @@ try {
       navigationMeasurements.push(measurement);
       check(measurement.headingTop >= measurement.navBottom - 1 && measurement.headingBottom < 844, target + " heading is visible below the actual wrapped navigation at " + width + "px");
     }
+  }
+  for (const width of [320, 375, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.evaluate(() => document.querySelectorAll('#listing-nav a, #listing-nav button').forEach(el => el.style.fontSize = '26px'));
+    const largeText = await page.evaluate(() => {
+      const groups = ['.listing-nav-links', '.listing-nav-actions'].map(selector => [...document.querySelector(selector).children].map(el => {
+        const r = el.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, height:r.height, width:r.width, clipped:el.scrollWidth>el.clientWidth+1 };
+      }));
+      return { pageOverflow:document.documentElement.scrollWidth>innerWidth, groups };
+    });
+    navigationMeasurements.push({ target:'navigation-200-percent-text', width, ...largeText });
+    check(!largeText.pageOverflow && largeText.groups.every(group=>group.every(el=>el.left>=0&&el.right<=width&&el.height>=44&&el.width>=44&&!el.clipped)), 'Navigation controls fit and remain tappable with 200% text at '+width+'px');
+    check(largeText.groups.every(group=>group.every(el=>Math.abs(el.top-group[0].top)<1)), 'Each mobile navigation row stays aligned with 200% text at '+width+'px');
+    await page.evaluate(() => document.querySelectorAll('#listing-nav a, #listing-nav button').forEach(el => el.style.removeProperty('font-size')));
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => { scrollTo(0, 120); window.__savedScroll = scrollY; });

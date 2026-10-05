@@ -7,6 +7,7 @@ import type { RouteStep } from "../router.ts";
 import { HttpError } from "../http.ts";
 import { runChain } from "./chain.ts";
 import { falAdapter } from "./fal.ts";
+import { ProviderError } from "./common.ts";
 import {
   submitReservedVideo,
   VideoDispatchUnconfirmed,
@@ -266,7 +267,7 @@ for (
     });
   });
 }
-for (const status of [422, 500]) {
+for (const status of [422]) {
   Deno.test(`completed fal result HTTP${status} returns failed, not thrown poll502`, async () => {
     await mocked(
       async () => {
@@ -288,6 +289,28 @@ for (const status of [422, 500]) {
           })
           : Response.json({ detail: marker }, { status }),
     );
+  });
+}
+for (const status of [408, 429, 500, 503]) {
+  Deno.test(`completed fal result HTTP${status} retains the accepted job for retrieval`, async () => {
+    let resultGets = 0, posts = 0;
+    await mocked(async () => {
+      const ref = { id: receipt.request_id, provider: "fal", model: step.model,
+        poll_url: receipt.status_url, submitted_at: new Date().toISOString() };
+      const error = await assertRejects(() => falAdapter.poll(ref), ProviderError);
+      assertEquals(error.status, status);
+      assert(!error.message.includes(marker));
+      const result = await falAdapter.poll(ref);
+      assertEquals(result.status, "done");
+      assertEquals(resultGets, 2);
+      assertEquals(posts, 0);
+    }, (url, init) => {
+      if (init?.method === "POST") posts++;
+      if (url.includes("/status")) return Response.json({status:"COMPLETED",response_url:receipt.response_url});
+      resultGets++;
+      return resultGets === 1 ? Response.json({detail:marker},{status})
+        : Response.json({video:{url:"https://synthetic.invalid/retained.mp4"}});
+    });
   });
 }
 Deno.test("actual fal catalog authentication never asserts generation is available", async () => {

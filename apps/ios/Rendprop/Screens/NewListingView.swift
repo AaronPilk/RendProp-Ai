@@ -119,6 +119,12 @@ struct ListingFormData: Equatable {
             if baths != original.baths { l.baths = baths }
             if sqft != original.sqft { l.sqft = sqftValue }
             if priceDollars != original.priceDollars { l.price = priceValue }
+            let key = "nearbyAttractions"
+            if details[key] != original.details[key] {
+                let value = details[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if value.isEmpty { l.details?.removeValue(forKey: key) }
+                else { if l.details == nil { l.details = [:] }; l.details?[key] = String(value.prefix(500)) }
+            }
         } else {
             if tagline != original.tagline { l.tagline = trimmedTagline }
             for key in spaceType.detailFields.map(\.key) where details[key] != original.details[key] {
@@ -232,6 +238,9 @@ struct ListingFieldsForm<Middle: View>: View {
             middle()
             if space.showsPropertyDetails {
                 propertyDetailsCard
+                NearbyPlacesEditor(address: form.address, value: Binding(
+                    get: { form.details["nearbyAttractions"] ?? "" },
+                    set: { form.details["nearbyAttractions"] = $0 }))
             } else {
                 taglineCard
                 businessDetailsCard
@@ -1447,5 +1456,143 @@ final class AddressCompleter: NSObject, ObservableObject, MKLocalSearchCompleter
     nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
         // A failed lookup must never block typing — the field still works.
         Task { @MainActor in self.suggestions = [] }
+    }
+}
+
+private struct NearbyPlaceChoice: Identifiable {
+    let id: String
+    let name: String
+    let metres: Double
+    var line: String { "\(name) · approx. \(String(format: "%.1f", metres / 1609.344)) mi" }
+}
+
+/// Every search is deliberate. Neither geocoding nor a delayed Maps response
+/// can write into a different address/account/workspace's form.
+@MainActor private final class NearbyPlacesSearch: ObservableObject {
+    @Published var choices: [NearbyPlaceChoice] = []
+    @Published var locationLabel = ""
+    @Published var isLoading = false
+    @Published var error: String?
+    private var generation = UUID()
+    private let geocoder = CLGeocoder()
+    private var search: MKLocalSearch?
+    private var context: String?
+    static var currentContext: String {
+        "\(AuthStore.shared.userID ?? "local")|\(AuthStore.shared.syncSessionRevision)|\(WorkspaceContext.selectedOrgID?.uuidString ?? "local")"
+    }
+    var hasCurrentContext: Bool { context == Self.currentContext }
+    func cancel() {
+        generation = UUID(); geocoder.cancelGeocode(); search?.cancel(); search = nil
+        isLoading = false; choices = []; locationLabel = ""; context = nil; error = nil
+    }
+    func find(address: String) async {
+        cancel()
+        let opened = Self.currentContext
+        context = opened
+        let token = generation
+        isLoading = true
+        defer { if generation == token { isLoading = false } }
+        do {
+            let matches = try await geocoder.geocodeAddressString(address)
+            guard generation == token, opened == Self.currentContext else { return }
+            guard matches.count == 1, let match = matches.first, let origin = match.location,
+                  CLLocationCoordinate2DIsValid(origin.coordinate) else {
+                error = "Couldn't identify one property. Enter a complete street address and try again."
+                return
+            }
+            locationLabel = [match.name, match.locality, match.administrativeArea, match.postalCode]
+                .compactMap { $0 }.joined(separator: ", ")
+            let request = MKLocalPointsOfInterestRequest(center: origin.coordinate, radius: 5_000)
+            request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.park, .museum, .cafe, .restaurant, .store, .publicTransport])
+            let next = MKLocalSearch(request: request); search = next
+            let response = try await next.start()
+            guard generation == token, opened == Self.currentContext else { return }
+            var seen = Set<String>()
+            choices = response.mapItems.compactMap { item -> NearbyPlaceChoice? in
+                guard let raw = item.name, CLLocationCoordinate2DIsValid(item.placemark.coordinate) else { return nil }
+                let name = String(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.map(String.init).joined().prefix(80))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let metres = origin.distance(from: CLLocation(latitude: item.placemark.coordinate.latitude, longitude: item.placemark.coordinate.longitude))
+                guard !name.isEmpty, metres.isFinite, metres >= 0, metres <= 5_000 else { return nil }
+                let key = "\(name.lowercased())|\(Int(metres / 20))"
+                guard seen.insert(key).inserted else { return nil }
+                return NearbyPlaceChoice(id: key, name: name, metres: metres)
+            }.sorted { $0.metres < $1.metres }.prefix(20).map { $0 }
+            if choices.isEmpty { error = "No nearby places came back. You can enter a reviewed note yourself." }
+        } catch {
+            guard generation == token, opened == Self.currentContext else { return }
+            self.error = "Apple Maps couldn't complete the search. Try again or enter a reviewed note yourself."
+        }
+    }
+}
+
+private struct NearbyPlacesEditor: View {
+    let address: String
+    @Binding var value: String
+    @StateObject private var lookup = NearbyPlacesSearch()
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var selected = Set<String>()
+    @State private var verifiedLocation = false
+    @State private var changedAddress = false
+    private var canApply: Bool {
+        verifiedLocation && !selected.isEmpty && selected.count <= 3 && lookup.hasCurrentContext
+    }
+    var body: some View {
+        DisclosureGroup("Nearby places (optional)") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Search Apple Maps, check the property location, then choose up to 3 places to include. Distances are approximate straight-line distances, not driving or walking times.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button {
+                    selected = []; verifiedLocation = false
+                    Task { await lookup.find(address: address.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                } label: {
+                    Label(lookup.isLoading ? "Finding places…" : "Find nearby places", systemImage: "map")
+                }.disabled(lookup.isLoading || address.trimmingCharacters(in: .whitespacesAndNewlines).count < 6)
+                    .accessibilityIdentifier("listing.nearby.search")
+                if !lookup.locationLabel.isEmpty {
+                    Text("Search location: \(lookup.locationLabel)").font(.rpCaption)
+                    Toggle("This is the property's location", isOn: $verifiedLocation).font(.rpCaption)
+                }
+                ForEach(lookup.choices) { place in
+                    Button {
+                        if selected.contains(place.id) { selected.remove(place.id) }
+                        else if selected.count < 3 { selected.insert(place.id) }
+                    } label: {
+                        HStack(alignment: .top) {
+                            Image(systemName: selected.contains(place.id) ? "checkmark.circle.fill" : "circle")
+                            Text(place.line).multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                        }.font(.rpCaption).padding(.vertical, 8)
+                    }.foregroundStyle(Theme.accent)
+                        .disabled(!selected.contains(place.id) && selected.count >= 3)
+                }
+                if !lookup.choices.isEmpty {
+                    Button("Add selected places") {
+                        guard canApply else { lookup.error = "The account or workspace changed. Find the places again before adding them."; return }
+                        let lines = lookup.choices.filter { selected.contains($0.id) }.map(\.line)
+                        value = String(("Apple Maps: " + lines.joined(separator: "; ")).prefix(500))
+                        changedAddress = false
+                        lookup.cancel(); selected = []; verifiedLocation = false
+                    }.disabled(!canApply).accessibilityIdentifier("listing.nearby.apply")
+                }
+                if !lookup.choices.isEmpty && !lookup.hasCurrentContext {
+                    Text("The account or workspace changed. Find the places again before adding them.")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                }
+                if let error = lookup.error { Text(error).font(.rpCaption).foregroundStyle(Theme.warn) }
+                if changedAddress && !value.isEmpty {
+                    Text("The address changed. Review or remove the saved nearby-place note before publishing.")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                }
+                TextField("Reviewed nearby-place note", text: $value, axis: .vertical)
+                    .font(.rpBody).padding(12)
+                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityIdentifier("listing.nearby.note")
+                    .onChange(of: value) { text in if text.count > 500 { value = String(text.prefix(500)) } }
+                if !value.isEmpty { Button("Remove nearby-place note", role: .destructive) { value = ""; changedAddress = false } }
+            }.padding(.top, 12)
+        }.font(.rpHeadline).foregroundStyle(Theme.ink).card()
+            .onChange(of: address) { _ in lookup.cancel(); selected = []; verifiedLocation = false; changedAddress = true }
+            .onDisappear { lookup.cancel() }
     }
 }

@@ -710,7 +710,7 @@ Deno.test("wiring: /ai-video/status stays backward compatible", () => {
   // The processing and failed shapes are untouched.
   assertStringIncludes(
     INDEX_SRC,
-    'return json({ status: "failed", error: "The video service could not complete this generation.",',
+    'return json({ status: "failed", error: terminalFailure?.message ?? "The video service could not complete this generation.",',
   );
 });
 

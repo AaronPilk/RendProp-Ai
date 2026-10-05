@@ -13,9 +13,10 @@ def block(text,marker):
   depth+=(text[end]=='{')-(text[end]=='}');end+=1
  return text[start:end]
 apierror=block(api,'enum APIError: Error, LocalizedError')
+job=block(api,'struct AIVideoJob: Codable, Sendable')
 failure=source[source.index('struct AIFailure: Identifiable'):source.index('/// Loud, unmissable failure card')]
 issue=source[source.index('struct ReelClipIssue: Identifiable'):source.index('struct ReelStudioView: View')]
-pending=source[source.index('private struct PendingReelClips: Codable'):source.index('// MARK: - Reel Studio (')].replace('private struct','struct',1)
+pending=source[source.index('private struct PendingReelClips: Codable'):source.index('// MARK: - Reel Studio (')].replace('private struct','struct')
 loop=block(source,'                for (i, photo) in ordered.enumerated()')
 park=block(source,'    nonisolated private static func parkClips(').replace('private static','static',1)
 assert 'Self.parkClips(billedClips, for: listingID, tmpDir: tmpDir)' in source
@@ -39,7 +40,9 @@ harness=r'''
     init(api: ClipAPI) { self.api = api }
     static func shot(for: EnhancedPhoto, in: [AIShot]) -> AIShot? { nil }
     static func makeClip(photo: EnhancedPhoto, prompt: String, shot: AIShot?, shotCount: Int,
-                         api: ClipAPI, listingServerID: UUID?, into dir: URL, index: Int) async throws -> URL {
+                         api: ClipAPI, listingServerID: UUID?, into dir: URL, index: Int,
+                         recoveryContext: PendingReelRequest.Context? = nil,
+                         requireCurrent: @MainActor @Sendable () throws -> Void = {}) async throws -> URL {
         api.calls.append(index)
         if let error = api.errors[index] { throw error }
         let file=dir.appendingPathComponent("clip-\(index).mp4")
@@ -50,6 +53,9 @@ harness=r'''
         try FileManager.default.createDirectory(at: tmpDir,withIntermediateDirectories: true)
         let ordered=(0..<count).map { EnhancedPhoto(id: String($0)) }
         let plan: [AIShot]=[];let prompt="";let reelListingServerID: UUID?=nil
+        let recoveryContext: PendingReelRequest.Context?=nil
+        let requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() }
+        let reelConsentRevision=AIConsent.shared.revocationRevision
         var clipURLs: [URL]=[];var usedShots: [AIShot?]=[]
         do {
 __LOOP__
@@ -63,7 +69,7 @@ __LOOP__
 __PARK__
 }
 '''
-pathlib.Path(sys.argv[2]).write_text('import Foundation\n'+apierror+'\n'+failure+'\n'+issue+'\n'+pending+'\n'+harness.replace('__LOOP__',loop).replace('__PARK__',park))
+pathlib.Path(sys.argv[2]).write_text('import Foundation\nimport CryptoKit\nenum AIImagePrep { static func error(_ m:String)->Error { NSError(domain: \"synthetic\", code:1,userInfo:[NSLocalizedDescriptionKey:m]) } }\n@MainActor final class AIConsent { static let shared=AIConsent();var isGranted=true;var revocationRevision=0 }\n'+apierror+'\n'+job+'\n'+failure+'\n'+issue+'\n'+pending+'\n'+harness.replace('__LOOP__',loop).replace('__PARK__',park))
 PY
 xcrun swiftc -swift-version 5 -parse-as-library \
   "$reel_clip_test_dir/Production.swift" \

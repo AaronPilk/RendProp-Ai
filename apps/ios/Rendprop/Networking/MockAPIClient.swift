@@ -226,6 +226,49 @@ actor MockAPIClient: APIClient {
         _ = fields
     }
 
+    private var businessLogos: [UUID: String] = [:]
+    private var businessLogoOperations: [UUID: (org: UUID, bytes: Data, expected: String?, url: String)] = [:]
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard !image.isEmpty, image.count <= 512 * 1024, ["image/png", "image/jpeg"].contains(contentType) else { throw CloudSyncError.invalidResponse }
+        if let previous = businessLogoOperations[operationID] {
+            guard previous.org == orgID, previous.bytes == image, previous.expected == expectedLogoURL,
+                  businessLogos[orgID] == previous.url else { throw ClientContactError.conflict }
+            return .init(ok: true, orgID: orgID, businessLogoURL: previous.url, replayed: true)
+        }
+        guard businessLogos[orgID] == expectedLogoURL else { throw ClientContactError.conflict }
+        let value = "https://assets.fixture.invalid/brand/\(orgID.uuidString.lowercased())/\(operationID.uuidString.lowercased()).png"
+        businessLogos[orgID] = value
+        businessLogoOperations[operationID] = (orgID, image, expectedLogoURL, value)
+        return .init(ok: true, orgID: orgID, businessLogoURL: value)
+    }
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard businessLogos[orgID] == expectedLogoURL || businessLogos[orgID] == nil else { throw ClientContactError.conflict }
+        businessLogos.removeValue(forKey: orgID)
+        return .init(ok: true, orgID: orgID, businessLogoURL: nil)
+    }
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt {
+        .init(ok: true, orgID: orgID, businessLogoURL: businessLogos[orgID])
+    }
+
+    private var personalCards: [UUID: PersonalCardReceipt] = [:]
+    func personalCard() async throws -> PersonalCardReceipt {
+        guard let owner = await AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        return personalCards[owner] ?? .init(ok: true, userID: owner, spaceType: nil, publicCard: nil)
+    }
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt {
+        let current = try await personalCard()
+        guard current.userID == expected.userID, SpaceType(rawValue: spaceType) != nil,
+              Set(fields.keys).isSubset(of: Set(AgentCard.fieldNames)) else { throw CloudSyncError.identityChanged }
+        var desired = current.publicCard ?? [:]
+        for (key, value) in fields { if value.isEmpty { desired.removeValue(forKey: key) } else { desired[key] = value } }
+        if current.publicCard != nil && desired == current.publicCard && current.spaceType == spaceType { return current }
+        guard current.spaceType == expected.spaceType,
+              fields.keys.allSatisfy({ current.publicCard?[$0] == expected.publicCard?[$0] }) else { throw ClientContactError.conflict }
+        let receipt = PersonalCardReceipt(ok: true, userID: current.userID, spaceType: spaceType, publicCard: desired)
+        personalCards[current.userID] = receipt
+        return receipt
+    }
+
     // MARK: - Admin console (offline sample data)
     //
     // Believable enough to exercise every state of AdminConsoleView without a

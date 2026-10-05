@@ -1002,9 +1002,10 @@ final class AppModel: ObservableObject {
                 await self.syncDirtyListings()
                 // Brand reads are independent of media and use the same account
                 // fence. A transient brand error must not roll back listing sync.
+                let personalReadVersion = AgentCard.personalReadVersion
                 if let brand = try? await cloud.cloudBrand(), !Task.isCancelled,
                    AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision {
-                    AgentCard.acceptCloud(brand)
+                    AgentCard.acceptCloud(brand, personalReadVersion: personalReadVersion)
                 }
             } catch is CancellationError {
                 return
@@ -2759,7 +2760,9 @@ private struct RendpropLaunchContent: View {
     var body: some View {
         Group {
 #if targetEnvironment(simulator)
-            if DetailMetadataRegressionHost.requestedCase != nil {
+            if ProfileFeedbackFixtureHost.isRequested {
+                ProfileFeedbackFixtureHost()
+            } else if DetailMetadataRegressionHost.requestedCase != nil {
                 DetailMetadataRegressionHost()
             } else {
                 normalContent
@@ -3190,7 +3193,7 @@ struct HomeDashboardView: View {
                     .modifier(Reveal(index: 1, on: revealed))
                 showroomSection
                     .modifier(Reveal(index: 2, on: revealed))
-                demoSection
+                appGuideSection
                     .modifier(Reveal(index: 3, on: revealed))
                 howItWorksSection
                     .modifier(Reveal(index: 4, on: revealed))
@@ -3610,14 +3613,29 @@ struct HomeDashboardView: View {
             // every frame and then fails at /start is a dead feature on Home.
             if model.isSpatialWalkthroughAvailable {
                 featureButton(.spatial)
+            } else {
+                comingSoonTile("3D walkthrough", "Room-by-room exploration", "rotate.3d")
             }
             featureButton(.photos)
             featureButton(.photoStudio)
             featureButton(.reel)
             featureButton(.floorPlan)
+            comingSoonTile("3D floor plan", "Scan and build a room model", "cube.transparent")
             featureButton(.aerial)
             agentCardTile
         }
+    }
+
+    private func comingSoonTile(_ title: String, _ description: String, _ icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: icon).font(.title2).foregroundStyle(Theme.accent)
+            Text(title).font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text("Coming soon").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+            Text(description).font(.caption).foregroundStyle(Theme.inkDim)
+        }
+        .padding(14).frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: Theme.radius))
+        .accessibilityElement(children: .combine)
     }
 
     /// One gated tile. Tapping never starts loose work — `open` picks the home
@@ -3714,6 +3732,22 @@ struct HomeDashboardView: View {
     }
 
     // MARK: Live demo — the real scroll-scrub player, right on Home
+
+    private var appGuideSection: some View {
+        NavigationLink { AppGuideView() } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "hand.tap.fill").font(.title2).foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Take an app walkthrough").font(.rpHeadline).foregroundStyle(Theme.ink)
+                    Text("Tap through each feature, from your first listing to sharing the finished work.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
+            }.padding(18).card()
+        }.buttonStyle(ScalePressStyle())
+            .accessibilityIdentifier("home.appGuide")
+    }
 
     @ViewBuilder private var demoSection: some View {
         if let demo = demoListing {
@@ -4325,7 +4359,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         case .photos:    return "Add photos"
         case .photoStudio: return "AI Photo Studio"
         case .reel:      return "Make a reel"
-        case .floorPlan: return "Floor plan & measurements"
+        case .floorPlan: return "Measurements"
         case .aerial:    return "Make an aerial shot"
         }
     }
@@ -4341,7 +4375,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
             ? "Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky"
             : "Declutter \u{00B7} furnish it \u{00B7} twilight \u{00B7} sky"
         case .reel:      return "Photos → one social video"
-        case .floorPlan: return "Measure, scan or upload"
+        case .floorPlan: return "Draw an outline or upload a plan"
         case .aerial:    return "A cinematic opening shot"
         }
     }
@@ -4355,7 +4389,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         case .photos:    return "photo.stack"
         case .photoStudio: return "wand.and.stars"
         case .reel:      return "film.stack"
-        case .floorPlan: return "cube.transparent"
+        case .floorPlan: return "ruler"
         case .aerial:    return "airplane.departure"
         }
     }

@@ -1,7 +1,11 @@
 # Floor plans and measurements
 
-The Floor plan card includes Measurements alongside LiDAR scan and blueprint
-upload. Measurements supports rectangular rooms and irregular wall outlines
+The October 5 feedback source separates the **Measurements** card (manual entry,
+worksheet and blueprint upload) from **3D floor plan — Coming soon**. New automatic
+scans are disabled in the ordinary flow; saved scans remain viewable and exportable.
+The local capture experiments remain separate in the TestFlight Lab. These latest
+UI changes need a signed release; see [the feedback follow-up](handoff/BETA-FEEDBACK-20261005.md).
+Measurements supports rectangular rooms and irregular wall outlines
 with an area worksheet. The outline expansion is on
 `feat/measurement-outlines-worksheet-20261004`; it needs a signed app build.
 The earlier room-entry delivery is documented in
@@ -9,7 +13,7 @@ The earlier room-entry delivery is documented in
 
 ## Using it
 
-1. Open a listing → Floor plan → Enter measurements.
+1. Open a listing → Measurements → Enter measurements (Floor plan in build 44).
 2. Choose feet/inches or metres, then add a named room. Enter its length and
    width from a tape or laser measure. Height is optional. Enter feet and inches
    separately, or use decimal feet: 12.5 ft means 12 ft 6 in.

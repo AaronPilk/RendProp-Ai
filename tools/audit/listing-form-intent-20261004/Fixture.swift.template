@@ -86,6 +86,15 @@ __REUSE_SAVE__
     var deleteDetail = originalVenue; deleteDetail.details["capacitySeated"] = ""; var removed = latestVenue; deleteDetail.applyEdits(from: originalVenue, to: &removed)
     try check(removed.details?["capacitySeated"] == nil && removed.details?["future_metadata"] == "private-fresh", "Explicit cleared business input deletes only that key")
 
+    var nearbyForm = original; nearbyForm.details["nearbyAttractions"] = "Apple Maps: Synthetic park · approx. 0.5 mi"
+    var nearbyListing = office; nearbyForm.applyEdits(from: original, to: &nearbyListing)
+    try check(nearbyListing.details?["nearbyAttractions"] == "Apple Maps: Synthetic park · approx. 0.5 mi", "Real estate form applies only the deliberately reviewed nearby note")
+    try check(nearbyListing.sqft == office.sqft && nearbyListing.details?["floorplan_asset_id"] == office.details?["floorplan_asset_id"], "Nearby form edit preserves untouched property facts and plan")
+    let nearbyOriginal = ListingFormData(listing: nearbyListing)
+    var nearbyClear = nearbyOriginal; nearbyClear.details["nearbyAttractions"] = ""
+    nearbyClear.applyEdits(from: nearbyOriginal, to: &nearbyListing)
+    try check(nearbyListing.details?["nearbyAttractions"] == nil, "Deliberate nearby clear removes the note")
+
     let identityModel = SyncModel(base), identitySheet = EditSheetFixture(listing: base, model: identityModel); identitySheet.form.address = "Should remain unsubmitted"
     let oldActor = AuthStore.shared.userID; AuthStore.shared.userID = UUID().uuidString; identitySheet.saveNow(); AuthStore.shared.userID = oldActor
     try check(identityModel.listings[0] == base && !identitySheet.dismissed, "Account replacement rejects an old sheet save")

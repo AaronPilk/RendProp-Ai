@@ -2592,6 +2592,11 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
   if (!isRE) out.push(renderIndustrySection(tour, unbranded));
 
   // Story.
+  const nearby = isRE ? detStr(tour, "nearbyAttractions").slice(0, 500) : "";
+  if (nearby) {
+    out.push(sec("nearby", "Nearby places", "Around the property",
+      `<div class="lp-prose"><p>${escapeHtml(nearby)}</p><p>Owner-reviewed information. Distances are approximate straight-line distances, not travel times.</p></div>`));
+  }
   const story = paragraphs(det(tour, "story", "description", "about"));
   if (story.length) {
     out.push(sec("story", "The story", detStr(tour, "story_title") || (isRE ? "How this home lives" : "About the space"),
@@ -3291,7 +3296,7 @@ ${footerHtml}
   ${safeUrl(tour.floorplan_url || "") ? `<a href="#plan">Floor plan</a>` : ""}
   ${!unbranded ? `<a href="#endcard">Contact</a>` : ""}
   </div><div class="listing-nav-actions">
-  ${hasVideo ? `<button type="button" class="watch-button" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button>` : ""}
+  ${hasVideo ? `<button type="button" class="watch-button" data-open-flythrough aria-label="Open fly-through" aria-haspopup="dialog">Fly-through</button>` : ""}
   ${shareHtml}
   <a href="#listing-top" class="listing-backtop">Top ↑</a>
   </div>

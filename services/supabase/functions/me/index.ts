@@ -26,6 +26,13 @@
 //                                  + `space_type` (the workspace's industry, one of the six
 //                                  the app knows; 400 otherwise — 0044 reads it for the
 //                                  industry-aware trial)
+//   GET/PATCH /me/card         -> { ok, user_id, space_type, public_card }
+//                                  Account-owned reviewed card; changes + present/value CAS.
+//                                  Public text never changes sign-in or notification email.
+//   POST   /me/brand/logo       -> { ok, org_id, business_logo_url, replayed? }
+//   POST   /me/brand/logo/clear -> { ok, org_id, business_logo_url: null }
+//                                  Selected owner/admin, exact expected URL;
+//                                  POST keeps older handlers from treating this as account deletion.
 //   GET    /me/compliance       -> { org_id, from, to, count, truncated, rows[] }
 //                                  ?from=&to=&listing_id=&limit=&format=csv&scope=
 //                                  The BROKER-EXPORTABLE AI audit log: every
@@ -72,6 +79,8 @@
 
 import { deleteAccount, sweepAccounts } from "./deletion.ts";
 import { saveProfileRole } from "./profile.ts";
+import { personalCard } from "./card.ts";
+import { brandLogo } from "./brand-logo.ts";
 import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
 import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
 import { handleOptions } from "../_shared/cors.ts";
@@ -92,6 +101,8 @@ import {
   abortMultipartUpload,
   deleteObjects,
   publicR2Url,
+  inspectBrandLogo,
+  writeBrandLogo,
   R2_BUCKET_RENDERS,
   R2_BUCKET_UPLOADS,
   type R2Object,
@@ -143,6 +154,24 @@ Deno.serve(async (req) => {
 
     const user = await getUser(req);
 
+    if (seg.length === 1 && seg[0] === "card") {
+      assert(req.method === "GET" || req.method === "PATCH",405,"Use GET or PATCH for your personal card.");
+      return json(await personalCard(adminClient(),user.id,req.method === "PATCH" ? await readJsonLimited(req,24576) : undefined));
+    }
+
+    const logoUpload = seg.length === 2 && seg[0] === "brand" && seg[1] === "logo";
+    const logoClear = seg.length === 3 && seg[0] === "brand" && seg[1] === "logo" && seg[2] === "clear";
+    if (logoUpload || logoClear) {
+      assert(req.method === "POST", 405, "Use POST for a business logo.");
+      const selected = requestedWorkspace(req);
+      assert(selected, 409, "Choose a workspace before changing its logo.");
+      const directory = await workspaceDirectory(adminClient(), user.id, selected);
+      const membership = directory.workspaces.find((w) => w.id === selected);
+      assert(membership && ["owner", "admin"].includes(membership.role), 403, "Only the workspace owner or an admin can change its logo.");
+      assert(await durableRateLimit(`brandlogoburst:${user.id}`, 30, 300), 429, "Please wait before retrying your logo upload.");
+      return await brandLogo(req, adminClient(), user.id, selected, { publicURL: publicR2Url, write: writeBrandLogo, inspect: inspectBrandLogo }, logoClear ? "clear" : "upload");
+    }
+
     if (req.method === "GET" && seg[0] === "workspaces" && seg.length === 1) {
       return json(await workspaceDirectory(adminClient(), user.id, requestedWorkspace(req)));
     }
@@ -175,7 +204,10 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg[0] === "entitlement") {
       return await handleEntitlement(req, user.id);
     }
-    if (req.method === "DELETE") return await handleDelete(user.id, user.email ?? null);
+    if (req.method === "DELETE") {
+      assert(seg.length === 0, 404, "Account deletion is only available at DELETE /me.");
+      return await handleDelete(user.id, user.email ?? null);
+    }
 
     throw new HttpError(
       405,
@@ -231,7 +263,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     entitlement,
     membershipRes,
   ] = await Promise.all([
-      db.from("profiles").select("id, email, name, avatar_url, phone, real_estate_role").eq("id", userId).maybeSingle(),
+      db.from("profiles").select("id, email, name, avatar_url, phone, real_estate_role, public_card").eq("id", userId).maybeSingle(),
       db.from("orgs").select(
         "id, name, handle, space_type, plan, trial_ends_at, brand_kit, plan_source, plan_expires_at, apple_product_id",
       ).eq("id", orgId).maybeSingle(),
@@ -258,6 +290,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       admin.from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle(),
     ]);
 
+  if (profileRes.error) throw new HttpError(503,"Your personal profile could not be verified. Please retry.");
+  if (!profileRes.data) throw new HttpError(403,"Your account is unavailable. Please sign in again.");
   if (orgRes.error) throw new HttpError(500, `Org lookup failed: ${orgRes.error.message}`);
   if (!orgRes.data) throw new HttpError(404, "Org not found");
   if (membershipRes.error || !membershipRes.data) throw new HttpError(503, "Workspace billing permissions could not be verified. Please retry.");
@@ -311,7 +345,9 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
 
   return json({
-    user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null },
+    user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
+      public_card: profileRes.data?.public_card ? Object.fromEntries(Object.entries(profileRes.data.public_card).filter(([key])=>key!=="space_type")) : null,
+      public_card_space_type: profileRes.data?.public_card?.space_type ?? null },
     workspaces: directory.workspaces,
     org: { id: org.id, name: org.name, handle: org.handle, space_type: org.space_type, plan: org.plan, brand_kit: org.brand_kit },
     plan: entitlement.plan,          // EFFECTIVE (expired trial → free)
@@ -497,9 +533,9 @@ async function handleNotificationsPatch(req: Request, userId: string): Promise<R
 // Writes the agent/business card into org.brand_kit. The PUBLIC tours and
 // portfolio functions allow-list exactly these display fields, so this is the
 // single write path that makes the card appear on every hosted share link.
-// Uses the user client: RLS (owner/admin, 0007) + the column-scoped grant
-// (0005) restrict the update to orgs the caller may edit, and `plan` stays
-// untouchable.
+// Service-only atomic explicit-field merge retains owner/admin authority
+// (0007), deletion and selected-org fencing. Protected logo and plan stay
+// outside this ordinary patch.
 //
 // Also accepts the org columns the card needs (audit F-supabase-15/06):
 //   handle      public portfolio slug (/a/:handle) — ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$,
@@ -520,7 +556,6 @@ const BRAND_FIELDS = [
   "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent",
 ] as const;
 const MAX_BRAND_FIELD_CHARS = 300;
-const MAX_BRAND_KIT_BYTES = 8_000;
 const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
 const RESERVED_HANDLES = new Set([
@@ -529,15 +564,10 @@ const RESERVED_HANDLES = new Set([
   "estate-demo", "about", "blog", "contact", "portfolio", "agent", "agents",
 ]);
 
-function isPlaceholderOrgName(name: unknown): boolean {
-  const s = String(name ?? "").trim();
-  return s === "" || s === "My business" || s.includes("@");
-}
-
 async function handleBrandPatch(req: Request, userId: string): Promise<Response> {
-  const db = userClient(req);
   const orgId = await orgForUser(userId, preferredOrg(req));
-  const body = await readJson<Record<string, unknown>>(req);
+  const body = await readJsonLimited<Record<string, unknown>>(req, 12_000);
+  assert(body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).every((key) => [...BRAND_FIELDS, "handle", "org_name", "space_type"].includes(key)), 400, "Unsupported brand fields. Upload or remove a business logo with the logo endpoint.");
 
   const patch: Record<string, string | null> = {};
   for (const f of BRAND_FIELDS) {
@@ -584,28 +614,9 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
   assert(Object.keys(patch).length + Object.keys(orgPatch).length > 0, 400,
     `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}, handle, org_name, space_type`);
 
-  const { data: org, error: oErr } = await db
-    .from("orgs").select("id, name, handle, space_type, brand_kit").eq("id", orgId).maybeSingle();
-  if (oErr) throw new HttpError(500, `Org lookup failed: ${oErr.message}`);
-  if (!org) throw new HttpError(404, "Org not found");
-
-  const merged: Record<string, unknown> = { ...((org.brand_kit as Record<string, unknown> | null) ?? {}) };
-  for (const [k, v] of Object.entries(patch)) {
-    if (v === null) delete merged[k];
-    else merged[k] = v;
-  }
-  assert(JSON.stringify(merged).length <= MAX_BRAND_KIT_BYTES, 400, "brand kit is too large");
-
-  // Heal a placeholder/email org name from the card name (see header).
-  if (!("name" in orgPatch) && typeof patch.name === "string" && isPlaceholderOrgName(org.name)) {
-    orgPatch.name = patch.name;
-  }
-
-  const update: Record<string, unknown> = { ...orgPatch };
-  if (Object.keys(patch).length > 0) update.brand_kit = merged;
-
-  const { data: updated, error: upErr } = await db
-    .from("orgs").update(update).eq("id", orgId).select("id, name, handle, space_type, brand_kit").maybeSingle();
+  const { data: updated, error: upErr } = await adminClient().rpc("merge_org_brand_fields", {
+    p_actor: userId, p_org: orgId, p_brand: patch, p_org_fields: orgPatch,
+  });
   if (upErr) {
     // 23505 = unique_violation on orgs.handle.
     if ((upErr as { code?: string }).code === "23505" || /duplicate key|orgs_handle_key/i.test(upErr.message)) {
@@ -616,16 +627,17 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
     if ((upErr as { code?: string }).code === "23514" || /orgs_space_type_check/i.test(upErr.message)) {
       throw new HttpError(400, `space_type must be one of ${SPACE_TYPES.join(", ")}`);
     }
-    throw new HttpError(500, `Brand update failed: ${upErr.message}`);
+    if (/RP\d{3}:/.test(upErr.message)) throwRpc(upErr.message);
+    throw new HttpError(503, "Your brand card could not be saved. Please retry.", "upstream");
   }
-  // RLS (owner/admin only) filtered the row: a member without the right role.
+  // SQL checks current owner/admin authority at the same atomic write.
   if (!updated) throw new HttpError(403, "Only the workspace owner or an admin can edit the brand card");
 
   const handle = (updated.handle as string | null) ?? null;
   return json({
     ok: true,
-    brand_kit: updated.brand_kit ?? merged,
-    org: { name: updated.name, handle, space_type: updated.space_type ?? org.space_type ?? null },
+    brand_kit: updated.brand_kit ?? {},
+    org: { name: updated.name, handle, space_type: updated.space_type ?? null },
     portfolio_url: handle ? `${TOUR_BASE}/a/${handle}` : null,
   });
 }

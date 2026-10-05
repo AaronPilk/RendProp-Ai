@@ -4,6 +4,16 @@ import Foundation
 /// `RenderTier`; the model keeps it nested as `Render.Tier`. Same type.
 typealias RenderTier = Render.Tier
 
+struct BusinessLogoReceipt: Codable, Equatable, Sendable {
+    let ok: Bool
+    let orgID: UUID
+    let businessLogoURL: String?
+    var replayed: Bool? = nil
+    enum CodingKeys: String, CodingKey {
+        case ok, replayed; case orgID = "org_id", businessLogoURL = "business_logo_url"
+    }
+}
+
 /// Result of `POST /uploads`. Expresses BOTH server modes (contract §2.1):
 ///  • `.single`    — one presigned PUT (`putURL`), files ≤ 64 MB / photos.
 ///  • `.multipart` — R2/S3 multipart (`uploadID` + `partSize` + `partCount`),
@@ -227,8 +237,12 @@ struct AIPhotoEditRequest: Sendable, Hashable {
     var edit: String
     /// Stage only ("modern" | "rustic" | "minimalist" | "scandinavian").
     var style: String? = nil
-    /// Custom only (free text, ≤ 600 chars server-side).
+    /// Custom instruction or staging furnishing brief (≤ 600 chars).
     var prompt: String? = nil
+    /// Staging only. A reviewed version in this listing, selected explicitly
+    /// as a reference for movable furniture in another view of the same room.
+    var stagingReferenceBase64: String? = nil
+    var stagingReferenceMime: String? = nil
     /// The LISTING's business type (`SpaceType.rawValue`) — selects the
     /// industry prompt set and scopes the fair-housing gate server-side. Set it
     /// from the listing in hand; nil falls back to `SpaceType.current`.
@@ -886,6 +900,11 @@ protocol APIClient: Sendable {
     /// functions allow-list exactly these fields). Empty-string values clear
     /// the field server-side. Best-effort: callers fire-and-forget.
     func updateBrand(_ fields: [String: String]) async throws
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt
+    func personalCard() async throws -> PersonalCardReceipt
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt
     func realEstateRole() async throws -> RealEstateRole
     func updateRealEstateRole(_ role: RealEstateRole) async throws
     func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact?
@@ -1193,6 +1212,11 @@ protocol APIClient: Sendable {
 
 // MARK: - Convenience overloads (protocol requirements can't carry defaults)
 extension APIClient {
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func personalCard() async throws -> PersonalCardReceipt { throw APIError.notConfigured }
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt { throw APIError.notConfigured }
     // Mock/unsupported transports fail closed instead of falling back to a full-row write.
     func updateMeasurements(_ listing: Listing) async throws -> Listing { throw APIError.notConfigured }
 

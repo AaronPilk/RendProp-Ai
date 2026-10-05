@@ -51,6 +51,9 @@ async function fixture(bypassFilter = false) {
     import {buildCta} from ${
     JSON.stringify(new URL("./cta.ts", import.meta.url).href)
   };
+    import {buildPersonalListingCard} from ${
+    JSON.stringify(new URL("../_shared/agentcard.ts", import.meta.url).href)
+  };
     type MediaSourceRefs={renders:string[]};
     type SpatialChapter={label:string,t_ms:number,sort:number};
     const TOUR_BASE="https://tour-fixture.invalid";
@@ -62,7 +65,10 @@ async function fixture(bypassFilter = false) {
     export const state:any={listing:null,client:null,published:true,revoked:false,reads:[]};
     const render={id:"render-fixture",job_id:"job-fixture",listing_id:"listing-fixture",slug:"private-measurement-fixture",duration_s:8,speed_factor:1,video_key:"renders/fixture/video.mp4",stream_uid:null,poster_key:"renders/fixture/poster.jpg",staged:false,published_at:"2030-01-01T00:00:00Z"};
     const rows:any={renders:render,orgs:{handle:"fixture-agent",brand_kit:{name:"Synthetic Public Agent"}},profiles:{name:"Synthetic Public Agent"},render_jobs:{capture_asset_id:null}};
-    const adminClient=()=>({from:(table:string)=>{
+    const adminClient=()=>({rpc:async(name:string,args:any)=>{
+      if(name!=="public_listing_agent_identity" || args.p_listing!=="listing-fixture" || Object.keys(args).length!==1)throw Error("Unexpected identity RPC");
+      return {error:null,data:{personal_card:null,profile_name:"Synthetic Public Agent",legacy_owned_single_member:false,org_business:{},org_handle:"fixture-agent",legacy_brand:{},legacy_portrait:null}};
+    },from:(table:string)=>{
       const query:any={select:(fields:string)=>{state.reads.push({table,fields});return query;},eq:()=>query,not:()=>query,
         maybeSingle:async()=>({data:table==="listings"?state.listing:table==="listing_client_contacts"?state.client:table==="renders"&&!state.published?null:rows[table]??null,error:null})};
       return query;
@@ -73,12 +79,12 @@ async function fixture(bypassFilter = false) {
     const alteredMediaFor=async()=>[];
     const bindSpatialChapters=(chapters:any)=>chapters;
     const resolveContactPhoto=async(_admin:any,row:any)=>row;
-    const buildAgentCard=(kit:any)=>kit;
     const publicR2Url=(key:string|null)=>key?"https://media-fixture.invalid/"+key:null;
     const streamHlsUrl=()=>null;
     export ${productionFunction(source, "publicListingDetails")}
     ${productionFunction(source, "floorplanUrl")}
     ${productionFunction(source, "formatUSD")}
+    async ${productionFunction(source, "listingAgentIdentity")}
     ${handler}
     export const ownerRead=async(req:Request)=>{
       const id=undefined,explicitOrg="org-fixture";

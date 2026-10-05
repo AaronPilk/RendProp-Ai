@@ -39,6 +39,22 @@ Build 44 retains this ordinary-write bug; the independent measurements CAS
 protects its own private plan. Team rollout needs changed-field intent, atomic
 conflict protection and a safe compatibility boundary for older clients.
 
+The [complete October 5 beta follow-up](docs/handoff/BETA-FEEDBACK-20261005.md)
+reviews all 52 submitted reports/53 images, including three reports received during
+the review. Its source work replaces Home samples
+with an interactive app guide, separates Measurements from Coming soon 3D cards,
+adds card-only/selected-listing sharing and JPEG export, simplifies plan selection,
+adds authorized Coach context and a distinct hosted business logo, and recovers
+accepted reel requests without another paid generation. Mobile public navigation
+also supports large text, and reviewed nearby places use explicit Apple Maps lookup.
+Personal Profile identity is separated from a selected team's branding, with an
+explicit Save action. Video allowances distinguish cloud renders from quality
+upgrades without changing plan prices or quotas.
+These changes are **not yet a TestFlight upload or production rollout**. Stronger
+staging prompts still need real output-quality acceptance. The additional staging
+reference-image option is Coming soon and refuses generation before quota or
+provider dispatch until its input costs are included in reviewed pricing.
+
 The [full debugging follow-up](docs/handoff/FULL-DEBUGGING-20261004.md) implements
 those safeguards on isolated source branch `fix/full-debugging-20261004`, with
 retained conflicts, creation-retry protection, account-bound exports/Apple

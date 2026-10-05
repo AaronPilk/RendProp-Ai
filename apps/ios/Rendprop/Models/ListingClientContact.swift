@@ -1,5 +1,55 @@
 import Foundation
 
+/// Formatting never guesses a country for an international number. A domestic
+/// ten-digit entry gains dashes; explicit country codes and extensions survive.
+enum PhoneNumberPresentation {
+    /// Preserve spacing while an international number is typed. Trimming a
+    /// trailing space on each keystroke joins the next country/local group.
+    static func editing(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("+") ? value : formatted(value)
+    }
+    static func formatted(_ raw: String) -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.hasPrefix("+"), value.unicodeScalars.allSatisfy({
+            (48...57).contains($0.value) || " ()-.".unicodeScalars.contains($0)
+        }) else { return value }
+        let digits = value.filter { $0 >= "0" && $0 <= "9" }
+        if digits.count == 11, digits.hasPrefix("1") {
+            return "1-" + groups(String(digits.dropFirst()))
+        }
+        guard digits.count <= 10 else { return value }
+        return groups(digits)
+    }
+
+    private static func groups(_ digits: String) -> String {
+        var remainder = digits[...], pieces: [String] = []
+        for count in [3, 3, 4] where !remainder.isEmpty {
+            pieces.append(String(remainder.prefix(count)))
+            remainder = remainder.dropFirst(min(count, remainder.count))
+        }
+        return pieces.joined(separator: "-")
+    }
+
+    static func dialString(_ raw: String) -> String? {
+        let pattern = "^\\s*(\\+?[0-9][0-9\\s().-]*?)(?:\\s*(?:ext\\.?|x|#)\\s*([0-9]+))?\\s*$"
+        guard let expression = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = expression.firstMatch(in: raw, range: NSRange(raw.startIndex..., in: raw)),
+              let numberRange = Range(match.range(at: 1), in: raw) else { return nil }
+        let number = raw[numberRange]
+        let digits = number.filter { $0 >= "0" && $0 <= "9" }
+        guard (3...20).contains(digits.count) else { return nil }
+        var result = (number.hasPrefix("+") ? "+" : "") + digits
+        if let extensionRange = Range(match.range(at: 2), in: raw) {
+            result += ";ext=" + raw[extensionRange]
+        }
+        return result
+    }
+
+    static func telephoneURL(_ raw: String) -> URL? {
+        dialString(raw).flatMap { URL(string: "tel:" + $0) }
+    }
+}
+
 /// A usage preference, never a workspace membership or permission.
 enum RealEstateRole: String, Codable, CaseIterable, Identifiable {
     case agent

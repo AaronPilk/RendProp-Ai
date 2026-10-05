@@ -10,6 +10,14 @@ struct PhotoVersionHistoryTests {
         func rejected(_ message: String, _ operation: () throws -> Void) {
             do { try operation(); preconditionFailure(message) } catch { checks += 1 }
         }
+        for flags in 0..<16 {
+            var review = PhotoVersionHistory.StagingReview()
+            review.comparedSource = flags & 1 != 0
+            review.fixedFeaturesMatch = flags & 2 != 0
+            review.accessIsClear = flags & 4 != 0
+            review.furnitureMatchesOtherViews = flags & 8 != 0
+            check(review.isComplete == (flags == 15), "staging review requires source, fixed features, access and other-view checks")
+        }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("photo-history-tests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let dir = root.appendingPathComponent("home")
@@ -65,11 +73,28 @@ struct PhotoVersionHistoryTests {
         check((try? Data(contentsOf: dir.appendingPathComponent("orig-capture.jpg"))) == original, "collision preserves originals")
 
         check(index.listingSelections?["capture"] == "declutter", "unreviewed staging keeps approved declutter on public listing")
+        rejected("unreviewed staging cannot be a furnishing reference") { _ = try PhotoVersionHistory.stagingReference(id: "stage", directory: dir) }
+        rejected("declutter cannot be mislabeled as a reviewed furnishing reference") { _ = try PhotoVersionHistory.stagingReference(id: "declutter", directory: dir) }
         rejected("staging cannot bypass review through cover selection") { try PhotoVersionHistory.select(id: "stage", directory: dir) }
         rejected("staging cannot bypass review through publication selection") { try PhotoVersionHistory.selectForPublication(id: "stage", directory: dir) }
         try PhotoVersionHistory.select(id: "stage", directory: dir, reviewed: true)
         index = try PhotoVersionHistory.load(directory: dir)
         check(index.current["capture"] == "stage" && index.listingSelections?["capture"] == "stage", "reviewed saved version selected without a paid rerun")
+        check(index.versions["stage"]?.stagingReviewed == true, "explicit source/access/room review persists for reference eligibility")
+        check((try? PhotoVersionHistory.stagingReference(id: "stage", directory: dir))?.id == "stage", "reviewed retained staging is eligible in the same listing directory")
+        rejected("another listing directory cannot resolve this furnishing reference") { _ = try PhotoVersionHistory.stagingReference(id: "stage", directory: root.appendingPathComponent("other-listing")) }
+        let referenceDir = root.appendingPathComponent("reference-lineage")
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: enhanced, id: "room", directory: referenceDir)
+        _ = try PhotoVersionHistory.saveEdit(jpeg: Data("reference".utf8), id: "reviewed", parentID: "room", sourceID: "room", edit: "stage", style: "modern", disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: referenceDir)
+        try PhotoVersionHistory.selectForPublication(id: "reviewed", directory: referenceDir, reviewed: true)
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: enhanced, id: "angle", directory: referenceDir)
+        let referenced = try PhotoVersionHistory.saveEdit(jpeg: Data("other-angle".utf8), id: "consistent-intent", parentID: "angle", sourceID: "angle", edit: "stage", style: "modern", disclosure: "Review before publishing", provenanceID: "provider", provenanceRecorded: true, directory: referenceDir, stagingReferenceID: "reviewed", stagingBrief: "Oak bed along the back wall")
+        check(referenced.stagingReferenceID == "reviewed" && referenced.stagingBrief == "Oak bed along the back wall", "reference and furnishing brief retained with exact output lineage")
+        check(referenced.sourceID == "angle" && referenced.originalFile == "orig-angle.jpg", "furnishing reference cannot replace the target's source or original")
+        check(referenced.stagingReviewed == nil, "reviewed reference cannot approve a new output")
+        check((try? PhotoVersionHistory.load(directory: referenceDir))?.versions["consistent-intent"]?.stagingReferenceID == "reviewed", "reference metadata survives reload")
+        try PhotoVersionHistory.hide(id: "reviewed", directory: referenceDir)
+        rejected("hidden reviewed reference cannot be sent by a new edit") { _ = try PhotoVersionHistory.stagingReference(id: "reviewed", directory: referenceDir) }
         try PhotoVersionHistory.select(id: "declutter", directory: dir)
         index = try PhotoVersionHistory.load(directory: dir)
         check(index.current["capture"] == "declutter" && index.listingSelections?["capture"] == "declutter", "declutter restored after staging")

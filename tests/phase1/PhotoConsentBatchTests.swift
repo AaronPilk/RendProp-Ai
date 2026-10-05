@@ -11,7 +11,7 @@ struct EnhancedPhoto {
     let id: String
     var originalURL: URL { directory(for: UUID()).appendingPathComponent(id + ".jpg") }
     var enhancedURL: URL { originalURL }
-    static func directory(for listingID: UUID) -> URL { URL(fileURLWithPath: "/synthetic-photo-consent") }
+    static func directory(for listingID: UUID) -> URL { URL(fileURLWithPath: "/synthetic-photo-consent", isDirectory: true) }
     private func directory(for listingID: UUID) -> URL { Self.directory(for: listingID) }
 }
 struct Listing {
@@ -27,6 +27,7 @@ struct AIPhotoEditRequest {
     let mime: String
     let edit: String
     var style: String?; var prompt: String?; var spaceType: String?
+    var stagingReferenceBase64: String?; var stagingReferenceMime: String?
     var listingServerID: UUID?; var label: String?; var originalAssetID: String?; var idempotencyKey: String?
 }
 struct AIPhotoEditResult {
@@ -105,7 +106,7 @@ struct UIImage {
     func jpegData(compressionQuality: Double) -> Data? { data }
 }
 @MainActor enum PhotoVersionHistory {
-    enum Failure: Error { case missingImage }
+    enum Failure: Error { case missingImage, changedVersion, reviewRequired }
     struct Version {
         var id: String; var imageFile: String; var originalFile: String?; var originalVerified = true
         var effects: [String] = []
@@ -116,9 +117,13 @@ struct UIImage {
     static func source(for parent: String, edit: String, directory: URL) throws -> Version {
         .init(id: parent, imageFile: parent + ".jpg", originalFile: parent + ".jpg")
     }
+    static func stagingReference(id: String, directory: URL) throws -> Version {
+        throw Failure.reviewRequired // These consent-only cases never opt in.
+    }
     static func saveEdit(jpeg: Data, id: String, parentID: String, sourceID: String, edit: String, style: String?,
                          disclosure: String, provenanceID: String?, provenanceRecorded: Bool, directory: URL,
-                         originalAssetID: String?, serverListingID: String?) throws -> Version {
+                         originalAssetID: String?, serverListingID: String?,
+                         stagingReferenceID: String? = nil, stagingBrief: String? = nil) throws -> Version {
         PhotoBoundary.saved.append(String(data: jpeg, encoding: .utf8)!)
         return .init(id: id, imageFile: id + ".jpg", originalFile: parentID + ".jpg", effects: [edit])
     }

@@ -19,6 +19,7 @@
 
 import { ACTION_TYPES } from "./actions.ts";
 import { knowledgeBlock } from "./knowledge.ts";
+import type { CoachAccount } from "./context.ts";
 
 // ── Space-type vocabulary (mirror of Models/Listing.swift SpaceType) ────────
 
@@ -124,13 +125,14 @@ export function vocabFor(space: SpaceType): SpaceVocab {
 // ── Context (what AppModel already knows, no photo/video ever included) ────
 
 /**
- * One of the user's own projects, as CoachModel.swift builds it from AppModel
- * — never from the server's own listings table (the coach never queries the
- * DB for this; see docs/COACH-CONTRACT.md "no round trip"). All counts, no
- * media: this is the whole reason the feature can be TEXT ONLY.
+ * Bounded device progress hints, with a cloud row id checked against the selected
+ * workspace by context.ts. Counts and closed states only; no media is included.
  */
 export interface CoachListingCtx {
   id: string;
+  /** Device route id can differ from its authorized cloud row id. */
+  serverID?: string | null;
+  localDraft?: boolean;
   /** A street-name-only label supplied by the native privacy boundary.
    * Never automatically populate this with a full cached postal address. */
   title: string;
@@ -142,17 +144,21 @@ export interface CoachListingCtx {
   photos: number;
   edits: number;
   reels: number;
+  /** Device-reported categorical recovery hint, never a raw error. */
+  attention?: string | null;
+  /** Closed server state, only for a listing verified in the chosen workspace. */
+  status?: string | null;
 }
 
 export interface CoachContext {
   listings: CoachListingCtx[];
-  /** Client-reported plan name ("free" | "starter" | "solo" | "pro" | "team" |
-   *  "trial"). Used only to word plan-aware copy — never to gate anything;
-   *  coach is free on every plan by product rule (see 0023's own header). */
+  /** Effective database plan; client plan hints never select a route. */
   plan: string;
   /** Optional current screen name, e.g. "home" | "settings" | "photo_studio" —
    *  a hint only, never load-bearing. */
   screen: string | null;
+  selectedListingId?: string | null;
+  account?: CoachAccount;
 }
 
 // ── The action protocol embedded in the prompt ──────────────────────────────
@@ -166,7 +172,7 @@ const ACTION_MEANINGS: Record<string, string> = {
     "open that project's AI Photo Studio (sky, twilight, lawn, tidy, virtual staging). Needs listing_id.",
   open_reel: "open that project's reel maker. Needs listing_id.",
   open_floor_plan:
-    "open that project's floor plan card (entered wall outlines/room dimensions and area worksheet, LiDAR scan, or upload an existing plan). Needs listing_id.",
+    "open that project's Measurements card (manual wall outlines, room dimensions, area worksheet, or upload an existing plan). Automatic 3D generation is Coming soon. Needs listing_id.",
   open_aerial: "open that project's AI aerial intro tool. Needs listing_id.",
   share_tour:
     "open that project's finished tour, where both the branded and unbranded share links live. Needs listing_id.",
@@ -200,6 +206,12 @@ export function systemInstruction(space: SpaceType): string {
     "You are Coach, the assistant built into the Rendprop iPhone app. Rendprop turns a phone " +
     "walkthrough into a shareable, drone-style property tour. You have two jobs, and you " +
     "always know which one you're doing from what the user just said:",
+    "Use the selected project when one is supplied. Device progress is a hint; server status and account snapshot are verified in the chosen workspace. " +
+    "For account questions, use only that snapshot and say when a value is unavailable. It does not contain all account history, media, billing receipts, credentials or private contacts. " +
+    "Never claim you changed a subscription, retried a job or repaired a provider. A button opens the relevant screen for the user to review and act. " +
+    "Renewal off means the workspace subscription will not renew; current paid access can remain until its end date. It is not proof of expired access or a broken API key. " +
+    "For Needs attention, give a safe review action. Never repeat or invent a raw upstream error. Cloud access or facts review: open Home, then review the project's details or Measurements; upload/render/publish: open the tour to review and retry. " +
+    "A retry can incur normal feature usage; do not promise a free retry, immediate repair or automatic publication.",
     "",
     "JOB 1 — ONBOARDING. Guide the user through their first (or next) project, one step at a " +
     "time. Never dump the whole plan on them. Give exactly ONE next step and exactly ONE " +
@@ -272,6 +284,8 @@ function describeListing(l: CoachListingCtx, space: SpaceType): string {
     `photos=${l.photos}`,
     `photo_edits=${l.edits}`,
     `reels=${l.reels}`,
+    `server_status=${l.status ?? "unavailable"}`,
+    `device_attention=${l.attention ?? "none"}`,
   ];
   return `  - ${bits.join(", ")}`;
 }
@@ -297,6 +311,12 @@ export function buildUserTurn(args: UserTurnArgs): string {
     (context.screen
       ? ` They are currently on the "${context.screen}" screen.`
       : ""),
+    context.account
+      ? `Verified selected-workspace account snapshot (null means unavailable; renders use the UTC calendar month, other meters use their own rolling window): ${JSON.stringify(context.account)}`
+      : "Account details are unavailable. Open Plan & usage to verify current billing and usage.",
+    context.selectedListingId
+      ? `Selected project id: ${context.selectedListingId}. Use this project unless the user explicitly chooses another.`
+      : "No project is selected. Ask which project when the question needs one and multiple projects exist.",
     "Their projects right now (this is the ONLY source of listing ids you may use):",
     listingLines,
     "",

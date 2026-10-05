@@ -50,7 +50,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
     fact:
       "No account is required to record, edit, build or publish a tour, or to use the AI Photo " +
-      "Studio, reels, aerial intros and floor plans. The app connects through an anonymous " +
+      "Studio, reels, aerial intros and manual Measurements. The app connects through an anonymous " +
       "session. Publishing needs an internet connection. Sign in with Apple is optional " +
       "for accessing your workspace on another device.",
   },
@@ -102,16 +102,19 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "so a viewer's trust in the rest of the tour stays intact.",
   },
   {
-    topic: "Floor plans — what they do",
+    topic: "Measurements and floor plans — current availability",
     source:
       "FloorMeasurementsView.swift + floor-plan-measurements handoff + support.html",
     fact:
-      "Open a listing's Floor plan card → Measurements. Draw a floor outline by entering each " +
+      "Open a listing's Measurements card. Draw a floor outline by entering each " +
       "wall's length and direction, or enter rectangular room dimensions. Review the area " +
       "worksheet and export an image or PDF. Garage, porch and unfinished areas stay separate; " +
       "open-below areas are deducted only from their chosen finished outline. Calculated closing " +
       "walls and phone estimates need checking. These totals do not set advertised living area. " +
-      "LiDAR phones can also scan rooms with RoomPlan; any phone can upload an existing PDF or image.",
+      "Any phone can upload an existing PDF or image. Automatic 3D floor plans and 3D walkthroughs " +
+      "are Coming soon. The separate TestFlight Lab keeps local capture tests available; it is " +
+      "not the normal listing workflow. The ordinary listing detail no longer has a Plan your " +
+      "video entry; agency and Studio capture planning remain available in their own workflows.",
   },
   {
     topic: "Filming tips for a good walkthrough",
@@ -177,17 +180,19 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "What the app needs to run",
     source: "support.html",
     fact:
-      "An iPhone on iOS 16 or later. The app is free to download. Scanning a room into a floor " +
-      "plan needs an iPhone with a LiDAR sensor; on any other iPhone, upload a plan instead.",
+      "An iPhone on iOS 16 or later. The app is free to download. Manual Measurements and plan " +
+      "uploads work without LiDAR. Automatic 3D floor plans and 3D walkthroughs are Coming soon; " +
+      "LiDAR capture experiments belong to the separate TestFlight Lab.",
   },
   {
     topic: "A render or upload failed",
     source: "support.html",
     fact:
-      "Uploads resume on their own, so a dropped connection mid-upload is usually fixed by " +
-      "reopening the app on a better connection. A job that fails gives its monthly allowance " +
-      "back automatically. If the same walkthrough fails twice, contact support with the " +
-      "listing name and roughly when it was tried.",
+      "Open the affected project to review its status and available retry action. Check the " +
+      "connection before retrying an upload. If details need review or workspace access has " +
+      "changed, review those first. Plan & usage shows the current allowance; do not promise " +
+      "that every failed attempt is refunded. If the same walkthrough fails twice, contact " +
+      "support with the listing name and roughly when it was tried.",
   },
   {
     topic: "Your content and privacy",

@@ -20,9 +20,9 @@ finally { Object.defineProperty(Deno, "serve", descriptor); }
 const { handleCreative } = await import("../studio/creative.ts");
 const { adminClient } = await import("./supabase.ts");
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
-type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean };
+type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean };
 async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "history" | "portfolio", opts: Options = {}) {
-  const previous = globalThis.fetch; let checks = 0, profileRead = false, contactReads=0,listingReads=0; const seen: Record<string, unknown>[] = [];
+  const previous = globalThis.fetch; let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0; const seen: Record<string, unknown>[] = [];
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init), url = new URL(req.url);
     assertEquals(url.hostname, "media-privacy-fixture.invalid");
@@ -37,6 +37,12 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
         !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.revokeCoverAtFinal && checks>=5 && [galleryId,galleryKey].includes(v)) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
     }
     if (url.pathname === "/rest/v1/rpc/publish_render") return response({ id: renderId, listing_id: listing, slug: "fixture-tour", video_key: key });
+    if (url.pathname === "/rest/v1/rpc/public_listing_agent_identity") {
+      const args=await req.json();assertEquals(args,{p_listing:listing});profileRead=true;identityReads++;
+      if(opts.identityFailure)return new Response(JSON.stringify({message:"private SQL outage detail"}),{status:503,headers:{"content-type":"application/json"}});
+      const identity=opts.identity??{personal_card:null,profile_name:"Fixture Agent",legacy_owned_single_member:false,org_business:{},org_handle:"fixture",legacy_brand:{},legacy_portrait:null};
+      return response(opts.changeIdentity&&identityReads>1?{...identity,personal_card:null,profile_name:null}:identity);
+    }
     if (url.pathname === "/rest/v1/rpc/assert_studio_edit_quality") return response(null);
     const table = url.pathname.split("/").pop();
     if (table === "renders") { const row = { id: renderId, job_id: jobId, listing_id: listing, slug: "fixture-tour", video_key: key, poster_key: `${prefix}/poster.jpg`, published_at: "2026-09-24T00:00:00Z", duration_s: 5 }; return response(handler === "portfolio" ? [row] : row); }
@@ -146,6 +152,28 @@ Deno.test("actual client tour discards mixed revisions and revoked headshot with
 Deno.test("ordinary actual tour retains the agent mode when no client is assigned",async()=>{
  const r=await invoke("tour");assertEquals(r.status,200);assertEquals(r.body.agent_card.name,"Fixture Agent");
  assertEquals(r.body.client_mode,false);assertEquals(r.body.hide_rendprop_branding,false);
+});
+Deno.test("actual public team tour shows only assigned reviewed member plus scoped agency brand",async()=>{
+ const identity={personal_card:{name:"Member Public",phone:"5552220002",email:"member-public@fixture.invalid"},profile_name:"Member Profile",legacy_owned_single_member:false,org_business:{brokerage:"Office",business_logo_url:`https://media-fixture.invalid/renders/${org}/brand/logo.png`},org_handle:"office",legacy_brand:{name:"Inviter",email:"inviter@fixture.invalid"},legacy_portrait:null};
+ const r=await invoke("tour",{identity});assertEquals(r.status,200);assertEquals(r.body.agent_card,{name:"Member Public",handle:"office",phone:"5552220002",email:"member-public@fixture.invalid",brokerage:"Office",business_logo_url:`https://media-fixture.invalid/renders/${org}/brand/logo.png`});assert(!JSON.stringify(r.body).includes("inviter@"));
+});
+Deno.test("actual no-card and removed member tours never use inviter contact",async()=>{
+ for(const profile_name of["Member Profile",null]){
+  const r=await invoke("tour",{identity:{personal_card:null,profile_name,legacy_owned_single_member:false,org_business:{brokerage:"Office"},org_handle:"office",legacy_brand:{name:"Inviter",email:"inviter@fixture.invalid"},legacy_portrait:null}});
+  assertEquals(r.status,200);assertEquals(r.body.agent_card,{name:profile_name,handle:"office",brokerage:"Office"});assert(!JSON.stringify(r.body).includes("inviter@"));
+ }
+});
+Deno.test("actual public identity change or unavailable authority discards assembled contact and media",async()=>{
+ for(const opts of[{changeIdentity:true},{identityFailure:true}]){const r=await invoke("tour",opts);assertEquals(r.status,503);assert(!JSON.stringify(r.body).includes("Fixture Agent"));assert(!JSON.stringify(r.body).includes("media-fixture.invalid"));assert(!JSON.stringify(r.body).includes("private SQL"));}
+});
+Deno.test("actual explicit client delivery remains first without personal identity lookup",async()=>{
+ const r=await invoke("tour",{clientContact:true,identityFailure:true});assertEquals(r.status,200);assertEquals(r.body.agent_card.name,"Client Realtor");
+});
+Deno.test("actual public legacy portrait needs exact configured origin and final asset visibility",async()=>{
+ const base={personal_card:{name:"Owner Public"},profile_name:"Owner Profile",legacy_owned_single_member:false,org_business:{},org_handle:"owner",legacy_brand:{},legacy_portrait:{asset_id:galleryId,storage_key:galleryKey,url:`https://media-fixture.invalid/${galleryKey}`}};
+ const good=await invoke("tour",{identity:base});assertEquals(good.status,200);assertEquals(good.body.agent_card.avatar_url,`https://media-fixture.invalid/${galleryKey}`);assert((good.seen.at(-1)!.p_assets as string[]).includes(galleryId));
+ const foreign=await invoke("tour",{identity:{...base,legacy_portrait:{...base.legacy_portrait,url:`https://foreign.fixture.invalid/${galleryKey}`}}});assertEquals(foreign.status,200);assertEquals(foreign.body.agent_card.avatar_url,undefined);
+ const revoked=await invoke("tour",{identity:base,denyOptional:true});assertEquals(revoked.status,404);assert(!JSON.stringify(revoked.body).includes("Owner Public"));
 });
 Deno.test("actual public cover resolves the saved gallery selection and joins final visibility fencing",async()=>{
   const r=await invoke("tour",{mainPhotoKey:galleryKey});assertEquals(r.status,200);assertEquals(r.body.cover_url,`https://media-fixture.invalid/${galleryKey}`);

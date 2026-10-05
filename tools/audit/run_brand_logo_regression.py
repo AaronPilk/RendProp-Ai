@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Focused logo journal/publication/deletion proof in an owned disposable DB."""
+from datetime import datetime,timezone
+import hashlib,json,os,pathlib,shutil,subprocess,tempfile,time
+ROOT=pathlib.Path(__file__).resolve().parents[2]
+SQL=ROOT/'services/supabase'
+MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
+TARGET=SQL/'migrations/20261005150445_scoped_business_logo.sql'
+TEST=SQL/'tests/org_brand_logo.sql'
+OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-brand-logo-',dir='/tmp'))
+DATA,SOCK=OUT/'cluster',OUT/'socket';SOCK.mkdir(mode=0o700)
+BINS={n:shutil.which(n)for n in ['initdb','pg_ctl','createdb','psql']};assert all(BINS.values())
+ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=5000'}
+CONN=['-h',str(SOCK),'-p','55462','-U','postgres']
+PSQL=[BINS['psql'],'-X','--no-password',*CONN,'-d','rendprop_logo','-v','ON_ERROR_STOP=1']
+tracked=[*MIGRATIONS,TEST,pathlib.Path(__file__).resolve(),SQL/'tests/ci-bootstrap.sql',SQL/'functions/me/brand-logo.ts',SQL/'functions/me/brand-image.ts',SQL/'functions/me/index.ts',SQL/'functions/_shared/r2.ts']
+hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in tracked}
+receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'limits':['Owned socket-only plain Postgres','Synthetic auth/storage receipts','No hosted DB, provider, Apple or real object writes'],'passed':False}
+started=False
+
+def run(name,args,expected=0,timeout=45):
+ result=subprocess.run([str(x)for x in args],env=ENV,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=timeout)
+ (OUT/(name+'.log')).write_text(result.stdout)
+ assert result.returncode==expected,(name,result.returncode,result.stdout[-2500:])
+ return result.stdout
+
+def query(name,sql,expected=0):
+ path=OUT/(name+'.sql');path.write_text(sql)
+ return run(name,[*PSQL,'-At','-f',path],expected)
+
+def race(label,first,second,actor,org,operation):
+ f1=(OUT/(label+'-first.log')).open('w');f2=(OUT/(label+'-second.log')).open('w')
+ first_proc=subprocess.Popen(PSQL,env={**ENV,'PGAPPNAME':'logo-proof-first'},text=True,stdin=subprocess.PIPE,stdout=f1,stderr=subprocess.STDOUT)
+ second_proc=None
+ try:
+  first_proc.stdin.write("begin;set local role service_role;"+first+"\n\\echo LOGO_LOCK_HELD\n");first_proc.stdin.flush()
+  deadline=time.monotonic()+5
+  while 'LOGO_LOCK_HELD'not in (OUT/(label+'-first.log')).read_text():
+   assert first_proc.poll()is None and time.monotonic()<deadline,label;time.sleep(.03)
+  second_proc=subprocess.Popen([*PSQL,'-c','set role service_role;'+second],env={**ENV,'PGAPPNAME':'logo-proof-second'},text=True,stdout=f2,stderr=subprocess.STDOUT)
+  deadline=time.monotonic()+5;blocked=False
+  while time.monotonic()<deadline:
+   waiting=query(label+'-lock-observation',"select count(*) from pg_stat_activity where application_name='logo-proof-second' and wait_event_type='Lock';")
+   if waiting.strip()=='1':blocked=True;break
+   assert second_proc.poll()is None,label;time.sleep(.03)
+  assert blocked,label+' never held actual authorization/org write boundary'
+  first_proc.stdin.write('commit;\n\\q\n');first_proc.stdin.flush();first_proc.wait(timeout=10);second_proc.wait(timeout=10)
+  assert first_proc.returncode==second_proc.returncode==0,label
+  result=query(label+'-final',f"select brand_kit->>'title'='Concurrent title' and brand_kit->>'business_logo_url' like '%{operation}.png' from orgs where id='{org}';")
+  assert result.strip()=='t',result
+  return{'name':label,'observedLock':True,'bothFieldsPreserved':True}
+ finally:
+  for process in [first_proc,second_proc]:
+   if process and process.poll()is None:process.terminate();process.wait(timeout=10)
+  f1.close();f2.close()
+
+try:
+ run('init',[BINS['initdb'],'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
+ run('start',[BINS['pg_ctl'],'-D',DATA,'-l',OUT/'postgres.log','-w','-t','30','-o',f"-k {SOCK} -p 55462 -c listen_addresses='' -c shared_buffers=16MB -c max_connections=15",'start']);started=True
+ run('create',[BINS['createdb'],'--no-password',*CONN,'rendprop_logo'])
+ assert query('identity',"select current_setting('data_directory')||'|'||current_setting('listen_addresses')||'|'||current_database();").strip()==f'{DATA}||rendprop_logo'
+ run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
+ for migration in MIGRATIONS:run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
+ positive=run('logo-positive',[*PSQL,'-At','-f',TEST])
+ assert 'PASS: org logo lifecycle SQL assertions; all fixtures rolled back.'in positive
+ # Named runtime controls mutate current exact SQL, not a parallel implementation.
+ for name,definition,anchor,replacement,reason in [
+  ('drop-publish-authority','public.publish_org_brand_logo(uuid,uuid,uuid,text)','o:=public.lock_org_brand_authority(p_actor,p_org);','select * into o from public.orgs where id=p_org;','role revoked after storage blocks publication'),
+  ('omit-logo-deletion-inventory','public.prepare_account_deletion(uuid,text,text)',"select object_targets||coalesce(jsonb_agg(jsonb_build_object('bucket',p_render_bucket,'key',b.object_key,'valid',", "select object_targets||coalesce(jsonb_agg(jsonb_build_object('bucket',p_render_bucket,'key',b.object_key,'valid',",'deletion inventories current and staged immutable logos'),
+ ]:
+  body=query(name+'-definition',f"select pg_get_functiondef('{definition}'::regprocedure);")
+  if name=='omit-logo-deletion-inventory':
+   start=body.index('  select object_targets||coalesce(jsonb_agg(');end=body.index('  object_targets:=object_targets||spatial_keys;',start)
+   mutant=body[:start]+body[end:]
+  else:
+   assert body.count(anchor)==1;mutant=body.replace(anchor,replacement)
+  query(name+'-apply',mutant)
+  failed=run(name+'-negative',[*PSQL,'-At','-f',TEST],expected=3)
+  assert 'LOGO FAIL: '+reason in failed,failed[-2000:]
+  run(name+'-restore',[*PSQL,'-q','-1','-f',TARGET])
+  restored=run(name+'-restored',[*PSQL,'-At','-f',TEST]);assert 'PASS: org logo lifecycle SQL assertions; all fixtures rolled back.'in restored
+ receipt['negativeControls']=['drop-publish-authority','omit-logo-deletion-inventory']
+ races=[]
+ for n,label in enumerate(['logo-first-text-waits','text-first-logo-waits'],1):
+  actor=f'b0100504-0000-4000-8000-{n:012d}';operation=f'b0100505-0000-4000-8000-{n:012d}'
+  query(label+'-seed',f"insert into auth.users(id,email,is_anonymous)values('{actor}','race{n}@fixture.invalid',false);")
+  org=query(label+'-org',f"select org_id from memberships where user_id='{actor}';").strip()
+  url=f'https://cdn.fixture.invalid/renders/{org}/brand/{operation}.png'
+  query(label+'-prepare',f"set role service_role;select prepare_org_brand_logo('{actor}','{org}','{operation}',null,100,'image/png',repeat('a',64),'{url}');")
+  logo=f"select publish_org_brand_logo('{actor}','{org}','{operation}','synthetic-etag');"
+  text=f"select merge_org_brand_fields('{actor}','{org}','{{\"title\":\"Concurrent title\"}}','{{}}');"
+  races.append(race(label,logo if n==1 else text,text if n==1 else logo,actor,org,operation))
+ receipt['races']=races
+ # Existing complete invariant contract, with precisely the retained known red.
+ invariants=run('invariants',[*PSQL,'-f',SQL/'tests/invariants.sql'],expected=3)
+ import re
+ failed=[line for line in invariants.splitlines()if re.search(r'\|\s*f\s*\|',line)]
+ assert len(failed)==1 and failed[0].split('|',3)[1].strip()=="each astra ceiling clears its route's visible answer and stays under the code clamp",failed
+ rows=[line for line in invariants.splitlines()if re.match(r'^\s*\d+\s*\|',line)and re.search(r'\|\s*[tf]\s*\|',line)]
+ receipt['invariants']={'passed':len(rows)-1,'knownRed':1,'total':len(rows)}
+ assert all(hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest for name,digest in hashes.items()),'Source changed during proof'
+ check=re.search(r'\n(\d+)\nPASS: org logo lifecycle',positive);assert check,positive[-800:]
+ receipt.update(passed=True,sqlAssertions=int(check[1]))
+finally:
+ if started and (DATA/'postmaster.pid').exists():run('stop',[BINS['pg_ctl'],'-D',DATA,'-m','fast','-w','-t','30','stop'])
+ receipt['finishedAt']=datetime.now(timezone.utc).isoformat();(OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+ print('Logo evidence:',OUT,flush=True)
+print('PASS: bounded scoped logo lifecycle, source-mutant controls and actual concurrent org serialization.',flush=True)

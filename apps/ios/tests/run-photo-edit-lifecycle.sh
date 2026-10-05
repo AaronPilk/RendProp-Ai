@@ -26,7 +26,7 @@ private let process:(EnhancedPhoto) async throws -> Void
 init(model:AppModel,listing:Listing,process:@escaping (EnhancedPhoto) async throws -> Void) {
 self.model=model;self.listing=listing;self.process=process
 }
-func edit(_ photo:EnhancedPhoto,edit:String,style:String?,prompt:String?,batch:Bool) async throws {
+func edit(_ photo:EnhancedPhoto,edit:String,style:String?,prompt:String?,batch:Bool,stagingReferenceID:String?=nil) async throws {
 try requireUnsentWork(); try await process(photo); try requireIdentity()
 }
 '''

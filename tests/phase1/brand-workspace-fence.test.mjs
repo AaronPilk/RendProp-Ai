@@ -89,13 +89,16 @@ test('actual portfolio selection and files cannot mix or overwrite another works
   const source = readFileSync(new URL('../../apps/ios/Rendprop/Screens/SettingsView.swift', import.meta.url), 'utf8');
   const properties = ['private var workspaceListings:', 'private var shareable:', 'private var realCount:'].map(signature => block(source, signature).replace('private var', 'var')).join('\n');
   const eligible = block(source, '    static func eligible(');
+  const selected = block(source, '    static func selected(');
+  const phone = block(readFileSync(new URL('../../apps/ios/Rendprop/Models/ListingClientContact.swift', import.meta.url), 'utf8'), 'enum PhoneNumberPresentation');
   const build = block(source, '    static func build(listings: [Listing], agent: AgentCard, headshotBase64:');
   const scaffold = String.raw`
 import Foundation
 struct Price { var cents = 0; var formatted = "" }
-struct Listing { let address: String; let org: UUID; var isSample = false; var isSold = false; var belongsToCurrentType = true; var serverShareURL: URL? = URL(string: "https://fixture.invalid/tour"); var mainPhotoURL: URL? = nil; var price = Price(); var subtitleLine = "Fixture" }
-struct AgentCard { var isSet = true; var initials = "AA"; var name = "Selected agency"; var brokerageLine = "Agency"; var email = "fixture@invalid" }
-struct SpaceType { static let current = SpaceType(); let spaceNoun = "home"; let spaceNounCap = "Home" }
+struct Listing { var id = UUID(); let address: String; let org: UUID; var serverOrgID: UUID? { org }; var isSample = false; var isSold = false; var cloudUnavailable: Bool? = nil; var spaceType = SpaceType.current; var belongsToCurrentType = true; var serverShareURL: URL? = URL(string: "https://fixture.invalid/tour"); var mainPhotoURL: URL? = nil; var price = Price(); var subtitleLine = "Fixture" }
+struct AgentCard { var isSet = true; var initials = "AA"; var name = "Selected agency"; var brokerage = "Agency"; var phone = "+44 20 7946 0958"; var email = "fixture@invalid"; var publicBusinessLogoURL: String? = nil }
+struct SpaceType: Equatable { static let current = SpaceType(); let spaceNoun = "home"; let spaceNounCap = "Home" }
+PHONE
 enum Config { static let useLiveBackend = true }
 enum WorkspaceContext { static var selectedOrgID: UUID? }
 enum FileStore { static var documents: URL { URL(fileURLWithPath: CommandLine.arguments[1]) } }
@@ -107,6 +110,7 @@ enum PortfolioExporter {
  static func esc(_ value: String) -> String { value }
  static func photoBase64(_ url: URL) -> String? { nil }
 ELIGIBLE
+SELECTED
 BUILD
 }
 @main enum Main {
@@ -118,6 +122,9 @@ BUILD
   WorkspaceContext.selectedOrgID = b
   let profile = Profile(model: Model(listings: [personal, team], selected: b))
   try check(profile.realCount == 1 && profile.shareable.map(\.address) == ["Team listing"], "selected portfolio count and contents exclude personal workspace")
+  try check(PortfolioExporter.selected(profile.workspaceListings, ids: [team.id], type: .current)?.map(\.id) == [team.id], "explicit published choice excludes a foreign-workspace UUID")
+  try check(PortfolioExporter.selected(profile.workspaceListings, ids: [personal.id], type: .current) == nil, "a stale foreign-workspace selection cannot be admitted")
+  try check(PortfolioExporter.selected(profile.workspaceListings, ids: [], type: .current) == nil, "empty selection cannot implicitly share every house")
   let first = PortfolioExporter.build(listings: profile.workspaceListings, agent: AgentCard(), headshotBase64: "TEAM-HEADSHOT")!
   let firstBytes = try String(contentsOf: first, encoding: .utf8)
   try check(firstBytes.contains("Team listing") && !firstBytes.contains("Personal listing") && firstBytes.contains("TEAM-HEADSHOT"), "real HTML contains only selected listings and captured headshot")
@@ -129,7 +136,7 @@ BUILD
  }
 }
 `;
-  const render = (props, builder) => scaffold.replace('PROPERTIES', props).replace('ELIGIBLE', eligible).replace('BUILD', builder);
+  const render = (props, builder) => scaffold.replace('PROPERTIES', props).replace('ELIGIBLE', eligible).replace('SELECTED', selected).replace('PHONE', phone).replace('BUILD', builder);
   const out = mkdtempSync(join(tmpdir(), 'rendprop-portfolio-workspace-'));
   run(out, 'actual-portfolio', render(properties, build), 0);
   run(out, 'missing-workspace-filter', render(properties.replace('model.listings.filter { model.isInSelectedWorkspace($0) }', 'model.listings'), build), 1);

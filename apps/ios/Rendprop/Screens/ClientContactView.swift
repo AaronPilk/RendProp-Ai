@@ -134,7 +134,9 @@ struct ClientContactFields: View {
                                field: .brokerage, focus: $focused, next: .title, contentType: .organizationName)
             ClientContactInput(title: "Title (optional)", prompt: "e.g. Real estate agent", text: optional(\.title),
                                field: .title, focus: $focused, next: .phone)
-            ClientContactInput(title: "Public phone (optional)", prompt: "Phone shown to buyers", text: optional(\.phone),
+            ClientContactInput(title: "Public phone (optional)", prompt: "Phone shown to buyers", text: Binding(
+                get: { PhoneNumberPresentation.editing(contact.publicCard.phone ?? "") },
+                set: { contact.publicCard.phone = $0.isEmpty ? nil : PhoneNumberPresentation.editing($0) }),
                                field: .phone, focus: $focused, next: .publicEmail, keyboard: .phonePad, contentType: .telephoneNumber)
             ClientContactInput(title: "Public email (optional)", prompt: "Email shown to buyers", text: optional(\.email),
                                field: .publicEmail, focus: $focused, next: .website, keyboard: .emailAddress,
@@ -190,7 +192,7 @@ private struct ClientContactPublicPreview: View {
                         .font(.rpHeadline).foregroundStyle(Theme.ink)
                     if let brokerage = card.brokerage, !brokerage.isEmpty { Text(brokerage).font(.rpCaption).foregroundStyle(Theme.inkDim) }
                     if let title = card.title, !title.isEmpty { Text(title).font(.rpCaption).foregroundStyle(Theme.inkDim) }
-                    if let phone = card.phone, !phone.isEmpty { Label(phone, systemImage: "phone.fill").font(.rpCaption).foregroundStyle(Theme.accent) }
+                    if let phone = card.phone, !phone.isEmpty { Label(PhoneNumberPresentation.formatted(phone), systemImage: "phone.fill").font(.rpCaption).foregroundStyle(Theme.accent) }
                     if let email = card.email, !email.isEmpty { Label(email, systemImage: "envelope.fill").font(.rpCaption).foregroundStyle(Theme.accent) }
                     if let website = card.website, !website.isEmpty { Label(website, systemImage: "globe").font(.rpCaption).foregroundStyle(Theme.accent) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
@@ -255,6 +257,7 @@ struct ListingClientContactEditor: View {
     let listing: Listing
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var auth = AuthStore.shared
     @State private var contact: ListingClientContact
     @State private var photo: UIImage?
     @State private var picker: PhotosPickerItem?
@@ -264,11 +267,15 @@ struct ListingClientContactEditor: View {
     @State private var error: String?
     @State private var context: Context?
     @State private var reloadConfirm = false
+    @State private var contextInvalidated = false
     private struct Context: Equatable { let owner: String?; let revision: UInt64; let org: UUID? }
     private var current: Context { .init(owner: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID) }
     private var live: Listing { model.listings.first(where: { $0.id == listing.id }) ?? listing }
+    private var hasFreshContext: Bool { !contextInvalidated && context == current }
     init(listing: Listing) {
         self.listing = listing
+        _context = State(initialValue: Context(owner: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID))
         _contact = State(initialValue: listing.clientContact ?? ListingClientContact(listingID: listing.serverID ?? listing.id,
             enabled: RealEstateRoleStore.current.isProducer, publicCard: ClientPublicCard(), recipientEmail: ""))
     }
@@ -294,12 +301,14 @@ struct ListingClientContactEditor: View {
             }.padding(Theme.spacing)
         }
             .background(Theme.bg).tint(Theme.accent)
+            .disabled(saving || loading || !hasFreshContext)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { saveBar }
             .navigationTitle("Listing contact").navigationBarTitleDisplayMode(.inline)
             .toolbar(.hidden, for: .tabBar)
-            .disabled(saving || loading || (context != nil && context != current))
-            .task { if context == nil { context = current; await load() } }
+            .task { await load() }
+            .onChange(of: auth.syncSessionRevision) { _ in invalidateContext() }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in invalidateContext() }
             .confirmationDialog("Replace this phone's draft with the latest client details?", isPresented: $reloadConfirm, titleVisibility: .visible) {
                 Button("Reload latest details", role: .destructive) { Task { await load(discardDraft: true) } }
             }
@@ -307,7 +316,7 @@ struct ListingClientContactEditor: View {
                 guard let item else { return }; let expected = current
                 Task { @MainActor in
                     if let data = try? await item.loadTransferable(type: Data.self), data.count <= 20_000_000,
-                       let image = ClientContactPhotoStore.thumbnail(data), picker == item, context == expected, current == expected {
+                       let image = ClientContactPhotoStore.thumbnail(data), picker == item, hasFreshContext, context == expected, current == expected {
                         photo = image; photoChanged = true
                     }
                 }
@@ -344,12 +353,18 @@ struct ListingClientContactEditor: View {
     private var saveBar: some View {
         VStack(spacing: 8) {
             PrimaryButton(title: saving ? "Saving…" : contact.enabled ? "Save client details" : "Use my account card",
-                          systemImage: saving ? nil : "checkmark", isDisabled: saving || loading) {
+                          systemImage: saving ? nil : "checkmark", isDisabled: saving || loading || !hasFreshContext) {
                 // Commit through the existing validated/session-fenced path;
                 // the fixed action stays above the keyboard while editing.
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                 Task { await save() }
             }.accessibilityIdentifier("clientContact.save")
+            if !hasFreshContext {
+                Text(ClientContactError.changed.localizedDescription)
+                    .font(.rpCaption).foregroundStyle(Theme.warn)
+                    .accessibilityIdentifier("clientContact.staleContext")
+                Button("Close editor") { dismiss() }.font(.rpCaption.weight(.semibold))
+            }
             if saving { ProgressView().tint(Theme.accent) }
             Text("Form inquiries stay in your Leads. When your client's card is on, inquiries are also emailed to the lead address.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -359,10 +374,11 @@ struct ListingClientContactEditor: View {
             .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
     }
     @MainActor private func load(discardDraft: Bool = false) async {
+        guard hasFreshContext else { error = ClientContactError.changed.localizedDescription; return }
         loading = true; defer { loading = false }
         do {
             try await model.refreshClientContact(for: listing.id, discardDraft: discardDraft)
-            guard context == current else { throw ClientContactError.changed }
+            guard hasFreshContext else { throw ClientContactError.changed }
             if let stored = live.clientContact { contact = stored }
             else if discardDraft { contact = .init(listingID: live.serverID ?? live.id, enabled: RealEstateRoleStore.current.isProducer, publicCard: .init(), recipientEmail: "") }
             photo = live.clientPhotoRelPath.flatMap { UIImage(contentsOfFile: FileStore.url(fromRelativePath: $0).path) }
@@ -370,7 +386,8 @@ struct ListingClientContactEditor: View {
         } catch { self.error = UserFacingError.message(error, fallback: "Client details couldn't be loaded. Your saved draft is still here.") }
     }
     @MainActor private func save() async {
-        guard !saving, context == current else { return }
+        guard !saving else { return }
+        guard hasFreshContext else { error = ClientContactError.changed.localizedDescription; return }
         saving = true; defer { saving = false }
         var persistedDraft = false
         do {
@@ -387,13 +404,17 @@ struct ListingClientContactEditor: View {
             try model.setClientContactDraft(contact, photoPath: path, photoDirty: photoChanged && photo != nil || live.clientPhotoDirty == true, for: listing.id)
             persistedDraft = true; photoChanged = false
             try await model.syncClientContactBeforePublish(listing.id)
-            guard context == current else { throw ClientContactError.changed }
+            guard hasFreshContext else { throw ClientContactError.changed }
             Haptics.success(); dismiss()
         } catch {
             // The upload may be confirmed even when PUT is not. Keep its saved
             // receipt for Retry; a newly selected photo or Remove clears it.
-            if persistedDraft, context == current, let stored = live.clientContact { contact = stored }
+            if persistedDraft, hasFreshContext, let stored = live.clientContact { contact = stored }
             self.error = UserFacingError.message(error, fallback: "Couldn't save the client details. Your draft is saved on this phone. Try again when connected.")
         }
+    }
+    private func invalidateContext() {
+        contextInvalidated = true
+        error = ClientContactError.changed.localizedDescription
     }
 }

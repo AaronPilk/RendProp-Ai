@@ -24,6 +24,18 @@ need owner checks.
 
 ## Release status
 
+The [October 5 complete feedback follow-up](../../docs/handoff/BETA-FEEDBACK-20261005.md)
+is isolated source work after build 44. Home and collections use a clickable app
+guide instead of sample listings. Measurements remains usable for entered rooms,
+outlines, worksheets and uploaded plans; automatic 3D capture cards say Coming soon
+and saved scans remain viewable. Profile gains contact-only business-card sharing,
+chosen portfolio listings and a distinct hosted business logo. Personal cards use
+account identity rather than the selected workspace's branding and have an explicit
+Save action. Identically named workspaces show distinct workspace IDs. Other changes include
+JPEG/Files download, clearer plan selection, scoped Coach recovery, reviewed nearby
+places and recovery of existing accepted reel jobs. The report distinguishes source
+checks from signed release, real camera/AR and paid AI output acceptance.
+
 Internal **TestFlight 1.0.4 (44): AVAILABLE**, verified **5 October 2026 at
 01:32:22 UTC** (4 October locally) for the existing Rendprop team. Apple reports
 VALID / INTERNAL_ONLY / IN_BETA_TESTING, with the build included in that group.

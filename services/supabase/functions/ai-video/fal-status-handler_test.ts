@@ -88,7 +88,7 @@ async function run(
     const response = await f.handler(request()), body = await response.json();
     assert(!JSON.stringify(body).includes(privateMarker));
     assert(!JSON.stringify(logs).includes(privateMarker));
-    return { body, calls, status: response.status };
+    return { body, calls, logs, status: response.status };
   } finally {
     globalThis.fetch = actual;
     console.error = log;
@@ -105,7 +105,7 @@ Deno.test("actual legacy status COMPLETED+error_type returns failed without fetc
   assertEquals(r.body.status, "failed");
   assertEquals(r.calls.length, 1);
 });
-for (const status of [422, 500]) {
+for (const status of [422]) {
   Deno.test(`actual legacy completed result HTTP${status} is failed rather than thrown502`, async () => {
     const r = await run({ status: "COMPLETED" }, status, {
       detail: privateMarker,
@@ -116,6 +116,76 @@ for (const status of [422, 500]) {
     assertEquals(r.calls.length, 2);
   });
 }
+for (const status of [408, 429, 500, 503]) {
+  Deno.test(`actual legacy completed result HTTP${status} preserves saved-request recovery`, async () => {
+    const r = await run({status:"COMPLETED"},status,{detail:privateMarker});
+    assertEquals(r.status,502);
+    assertEquals(r.body.provider_status,status);
+    assertEquals(r.body.failure_phase,"result");
+    assertEquals(r.body.retry_existing_job,true);
+    assertEquals(r.calls.length,2);
+    assertEquals((r.logs[0][1] as Record<string,unknown>).provider_status,status);
+    assert(!Object.hasOwn(r.body,"status"),"Do not turn transient retrieval into terminal failed");
+  });
+}
+Deno.test("actual legacy failed safety job retains classification without a raw reason", async () => {
+  const r=await run({status:"FAILED",error_type:"SAFETY_CHECK_FAILED",error:privateMarker});
+  assertEquals(r.body.status,"failed");
+  assertEquals(r.body.error_class,"nsfw");
+  assertEquals(r.body.failure_phase,"generation");
+  assertEquals(r.calls.length,1);
+});
+
+Deno.test("actual routed status maps poll failure to sanitized recoverable HTTP facts", async () => {
+  const source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+  const module=await import(encode(`
+    import {HttpError,json,respondError} from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
+    import {asHttpError} from ${JSON.stringify(new URL("../_shared/providers/chain.ts",import.meta.url).href)};
+    import {ProviderError} from ${JSON.stringify(new URL("../_shared/providers/common.ts",import.meta.url).href)};
+    type RouterJobToken=any;type JobRef=any;type JobState=any;
+    const adapterFor=()=>({poll:async()=>{throw new ProviderError("fal","rate_limit",${JSON.stringify(privateMarker)},429);}});
+    const routedR2Key=()=>{throw Error("No persist after poll failure");},persistedUrl=routedR2Key,uncheckedDriftBlock=routedR2Key;
+    async ${functionBody(source,"routedStatus")}
+    export async function run(){try{return await routedStatus("synthetic-org",{p:"fal",m:"synthetic-model",i:"id",u:"synthetic-url",t:"now"});}catch(e){return respondError(e);}}
+  `));
+  const before=console.error,logs:unknown[][]=[];console.error=(...v:unknown[])=>logs.push(v);
+  try {
+    const response=await module.run(),body=await response.json();
+    assertEquals(response.status,429);
+    assertEquals(body.provider_status,429);
+    assertEquals(body.error_class,"rate_limit");
+    assert(!JSON.stringify(body).includes(privateMarker));
+    assert(!JSON.stringify(logs).includes(privateMarker));
+  } finally {console.error=before;}
+});
+
+Deno.test("actual routed signed-result persistence failure retries the same completed job without submit", async () => {
+  const source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+  const module=await import(encode(`
+    import {HttpError,json,respondError} from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
+    import {asHttpError} from ${JSON.stringify(new URL("../_shared/providers/chain.ts",import.meta.url).href)};
+    type RouterJobToken=any;type JobRef=any;type JobState=any;
+    export const counts={polls:0,persists:0,submits:0};
+    const adapterFor=()=>({poll:async()=>{counts.polls++;return {status:"done",mime:"video/mp4",result_url:"https://private.invalid/clip?token=${privateMarker}"};},
+      persist:async()=>{counts.persists++;if(counts.persists===1)throw Error(${JSON.stringify(privateMarker)});return {key:"synthetic-retained"};}});
+    const routedR2Key=()=>"synthetic-destination",persistedUrl=()=>"https://public.invalid/retained.mp4",uncheckedDriftBlock=()=>({publishable:false});
+    async ${functionBody(source,"routedStatus")}
+    export async function run(){try{return await routedStatus("synthetic-org",{p:"fal",m:"synthetic-model",i:"same-job",u:"synthetic-url",t:"now"});}catch(e){return respondError(e);}}
+  `));
+  const before=console.error,logs:unknown[][]=[];console.error=(...v:unknown[])=>logs.push(v);
+  try {
+    const first=await module.run(),error=await first.json();
+    assertEquals(first.status,503);
+    assertEquals(error.retry_existing_job,true);
+    assertEquals(error.failure_phase,"persistence");
+    assert(!Object.hasOwn(error,"status"));
+    const second=await module.run(),done=await second.json();
+    assertEquals(second.status,200);assertEquals(done.status,"completed");
+    assertEquals(done.video_url,"https://public.invalid/retained.mp4");
+    assertEquals(module.counts,{polls:2,persists:2,submits:0});
+    assert(!JSON.stringify([error,done,logs]).includes(privateMarker));
+  } finally {console.error=before;}
+});
 Deno.test("actual legacy completed result body with error is failed", async () => {
   const r = await run({ status: "COMPLETED" }, 200, { error: privateMarker });
   assertEquals(r.body.status, "failed");

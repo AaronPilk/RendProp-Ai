@@ -572,7 +572,7 @@ enum SpaceType: String, CaseIterable, Identifiable {
     var detailFields: [DetailField] {
         switch self {
         case .realEstate:
-            return []
+            return [DetailField("nearbyAttractions", "Nearby places (reviewed)", .text)]
         case .venue:
             return [
                 DetailField("capacitySeated", "Max seated guests", .number),
