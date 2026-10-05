@@ -98,6 +98,9 @@ struct Entitlements: Codable, Hashable {
     /// This window's usage. Keys: renders, photo_edits, reels, aerials, drone.
     var used: [String: Int]
     var leads: Int
+    /// /me plan_source. Optional for older responses; used only for displaying
+    /// the private testing allowance, never for granting access.
+    var planSource: String? = nil
 
     /// Monthly cap for a `used` key (renders | photo_edits | reels | aerials | drone).
     func cap(for feature: String) -> Int {

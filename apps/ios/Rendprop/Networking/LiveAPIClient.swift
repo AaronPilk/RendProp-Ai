@@ -1769,7 +1769,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                 aerialsPerMonth: ent.aerialsPerMonth?.value ?? 0,
                 topazPerMonth: ent.topazPerMonth?.value ?? 0,
                 used: used,
-                leads: usage?.leads?.value ?? 0)
+                leads: usage?.leads?.value ?? 0,
+                planSource: dto.planSource)
         }
         // Admin flag: whatever the SERVER says, never a local rule. Today's /me
         // sends neither field, so both stay nil and the owner console probes
@@ -2413,6 +2414,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let org: Org?
         let plan: String?
         let planRaw: String?
+        let planSource: String?
         let trialEndsAt: String?
         let entitlement: Entitlement?
         let usage: Usage?

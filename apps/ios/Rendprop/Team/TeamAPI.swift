@@ -1,5 +1,24 @@
 import Foundation
 
+/// Display-only compatibility contract for the private owner-testing grant.
+/// Other large caps stay finite, and zero/negative values keep their usual meaning.
+/// The server remains the authority for every allowance and paid operation.
+enum WorkspaceAllowanceDisplay {
+    static let ownerTestingUnlimitedCap = Int(Int32.max)
+
+    static func isUnlimitedTesting(cap: Int, plan: String?, source: String? = nil) -> Bool {
+        cap == ownerTestingUnlimitedCap && plan?.lowercased() == "team" &&
+            (source == nil || source?.lowercased() == "manual")
+    }
+
+    static func value(used: Int?, cap: Int, plan: String?, source: String? = nil) -> String {
+        if isUnlimitedTesting(cap: cap, plan: plan, source: source) {
+            return "\(used ?? 0) used · Unlimited"
+        }
+        return cap > 0 ? "\(used ?? 0) of \(cap)" : "Not included"
+    }
+}
+
 // Seats: the app half of services/supabase/functions/team.
 //
 // DELIBERATELY NOT ON THE `APIClient` PROTOCOL. Every method added there must
@@ -20,10 +39,33 @@ struct TeamSummary: Decodable, Sendable {
     let orgId: String
     let orgName: String?
     let plan: String?
+    /// Optional on older /team responses. A present nonmanual source cannot
+    /// claim the private testing grant even when its numeric cap matches.
+    let planSource: String?
+    let accessMode: String?
     let canManage: Bool
     let seats: Seats
     let members: [Member]
     let invites: [Invite]
+
+    var isPrivateTesting: Bool { accessMode == "private_testing" }
+    var accessLabel: String { isPrivateTesting ? "Private testing accounts" : "Shared workspace" }
+    var accessExplanation: String {
+        isPrivateTesting
+            ? "Each person keeps their own homes, tours and leads private. This team provides testing access without sharing listings."
+            : "This is a shared workspace. Its homes, tours and leads are visible to team members."
+    }
+
+    var hasUnlimitedTestingSeats: Bool {
+        WorkspaceAllowanceDisplay.isUnlimitedTesting(cap: seats.allowed, plan: plan, source: planSource)
+    }
+
+    var seatUsageLabel: String {
+        if hasUnlimitedTestingSeats {
+            return WorkspaceAllowanceDisplay.value(used: seats.used, cap: seats.allowed, plan: plan, source: planSource)
+        }
+        return "\(seats.used) of \(seats.allowed)"
+    }
 
     struct Seats: Decodable, Sendable {
         let used: Int
@@ -38,7 +80,9 @@ struct TeamSummary: Decodable, Sendable {
         let name: String?
         let email: String?
         let isYou: Bool
+        let accessMode: String?
         var id: String { userId }
+        var isPrivateTesting: Bool { accessMode == "private_testing" }
 
         /// What to show as the person's name. An invited agent who signed in
         /// with Apple and withheld their name has neither, so the role is the
@@ -49,12 +93,18 @@ struct TeamSummary: Decodable, Sendable {
             return roleLabel
         }
         var roleLabel: String {
+            if isPrivateTesting { return "Private testing account" }
             switch role {
             case "owner":     return "Owner"
             case "admin":     return "Admin"
             case "marketing": return "Marketing"
             default:          return "Agent"
             }
+        }
+        var removalExplanation: String {
+            isPrivateTesting
+                ? "Their testing access ends. Their private homes, tours and leads stay in their own account."
+                : "\(displayName) loses access to this shared workspace. Its homes, tours and leads stay with the team."
         }
     }
 
@@ -95,6 +145,15 @@ struct TeamJoined: Decodable, Sendable {
     let orgId: String
     let orgName: String?
     let role: String?
+    let accessMode: String?
+    let teamName: String?
+
+    var confirmationMessage: String {
+        if accessMode == "private_testing" {
+            return "\(teamName ?? "The team") provides your testing access. Your homes, tours and leads stay private in your own workspace. Other people's listings are not added to your account."
+        }
+        return "You've joined \(orgName ?? "the team"). This is a shared workspace: its homes, tours and leads are visible to team members. Your personal workspace stays separate."
+    }
 }
 
 enum TeamAPI {

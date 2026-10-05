@@ -82,6 +82,7 @@ import {
   throwRpc,
 } from "../_shared/http.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { privateTestingHostMode, privateTestingContext, privateTestingMembers } from "../_shared/internal-testing.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { generateCode, hashCode, normalizeCode, normalizeEmail } from "./codes.ts";
 
@@ -265,8 +266,12 @@ Deno.serve(async (req) => {
       const { data, error } = await adminClient()
         .rpc("accept_org_invite", { p_user: user.id, p_token_hash: await hashCode(code) });
       if (error) throwRpc(error.message);
-      const r = (data ?? {}) as { org_id?: string; org_name?: string | null; role?: string };
-      return json({ ok: true, org_id: r.org_id ?? null, org_name: r.org_name ?? null, role: r.role ?? null });
+      const r = (data ?? {}) as { org_id?: string; org_name?: string | null; role?: string; private_testing?: boolean; team_name?: string };
+      if (r.private_testing === true && (!r.org_id || !r.org_name || typeof r.team_name !== "string")) {
+        throw new HttpError(503, "Your private testing workspace could not be verified. Please retry.");
+      }
+      return json({ ok: true, org_id: r.org_id ?? null, org_name: r.org_name ?? null, role: r.role ?? null,
+        ...(r.private_testing === true ? { access_mode: "private_testing", team_name: r.team_name } : {}) });
     }
 
     // ── Everything below acts on the CALLER'S org ────────────────────────────
@@ -286,6 +291,10 @@ Deno.serve(async (req) => {
     // ── GET /team ────────────────────────────────────────────────────────────
     if (req.method === "GET" && seg.length === 0) {
       const seats = await seatCounts(admin, orgId);
+      const [privateMembers, privateTeam] = canManage && !(user as { is_anonymous?: boolean }).is_anonymous
+        ? await Promise.all([privateTestingMembers(admin, user.id, orgId), privateTestingHostMode(admin, user.id, orgId)])
+        : [[], null] as const;
+      const privateAccess = await privateTestingContext(admin, user.id, orgId);
       const { data: rows, error: membersError } = await admin
         .from("memberships").select("user_id, role").eq("org_id", orgId);
       if (membersError) throw new HttpError(503, "The team could not be loaded. Please retry.");
@@ -315,10 +324,12 @@ Deno.serve(async (req) => {
       return json({
         org_id: orgId,
         org_name: org?.name ?? null,
-        plan: org?.plan ?? null,
-        can_manage: canManage,
+        plan: privateAccess ? "team" : org?.plan ?? null,
+        access_mode: privateTeam || privateAccess ? "private_testing" : "shared_workspace",
+        ...(privateAccess ? { team_name: privateAccess.sponsor_org_name } : {}),
+        can_manage: canManage && !privateAccess,
         seats,
-        members: (rows ?? []).map((r) => {
+        members: [...(rows ?? []).map((r) => {
           const p = byId.get(r.user_id as string);
           return {
             user_id: r.user_id,
@@ -327,7 +338,10 @@ Deno.serve(async (req) => {
             email: p?.email ?? null,
             is_you: r.user_id === user.id,
           };
-        }),
+        }), ...privateMembers.filter((p) => !ids.includes(p.user_id)).map((p) => ({
+          user_id: p.user_id, role: p.role, name: p.name, email: p.email, is_you: p.user_id === user.id,
+          access_mode: "private_testing", benefits_active: p.benefits_active,
+        }))],
         invites: invites ?? [],
       });
     }
@@ -498,6 +512,17 @@ Deno.serve(async (req) => {
       const target = seg[1];
       if (target === user.id) {
         throw new HttpError(400, "You can't remove yourself from your own team.");
+      }
+      const privateMembers = await privateTestingMembers(admin, user.id, orgId);
+      if (privateMembers.some((member) => member.user_id === target)) {
+        const { data, error } = await admin.rpc("remove_private_internal_tester", {
+          p_actor: user.id, p_sponsor_org: orgId, p_beneficiary: target,
+        });
+        if (error) throwRpc(error.message);
+        if (data?.ok !== true || data?.removed !== true || data?.private_testing !== true) {
+          throw new HttpError(503, "Testing access removal could not be verified. Please retry.");
+        }
+        return json({ ok: true, private_testing: true });
       }
       const targetRole = await roleInOrg(admin, target, orgId);
       if (!targetRole) throw new HttpError(404, "That person isn't on this team", "not_found");

@@ -9,6 +9,11 @@ const invite = "d0100101-0000-4000-8000-000000000003";
 let handler: Handler;
 class Fixture {
   role = "owner";
+  masterTesting = false;
+  privateRoster: unknown[] = [];
+  testingContext: unknown = null;
+  failedRPC: string | null = null;
+  accepted: unknown = { org_id: org, org_name: "Fixture Team", role: "agent" };
   anonymous = false;
   failureTable: string | null = null;
   queueResults: unknown[] = [{ ok: true, queued: true, id: invite }];
@@ -29,7 +34,24 @@ class Fixture {
       if (table === "org_seats_used") return json(1);
       if (table === "org_seats_allowed") return json(2);
       const body = await req.json();
+      if (this.failedRPC === table) return json({message:"fixture unavailable"},503);
+      if (table === "org_has_internal_testing_grant") return json(this.masterTesting);
+      if (table === "private_internal_testing_host_mode") return json(this.masterTesting ? {configured:true,active:true,access_mode:"private_testing"} : null);
+      if (table === "private_internal_testing_context") {
+        assertEquals(body,{p_user:user,p_private_org:org}); return json(this.testingContext);
+      }
+      if (table === "private_internal_testing_members") {
+        assertEquals(body,{p_actor:user,p_sponsor_org:org}); return json(this.privateRoster);
+      }
       this.writes.push(table);
+      if (table === "accept_org_invite") {
+        assertEquals(body.p_user,user);assertMatch(body.p_token_hash,/^[a-f0-9]{64}$/);assertEquals(Object.keys(body).sort(),["p_token_hash","p_user"]);
+        return json(this.accepted);
+      }
+      if (table === "remove_private_internal_tester") {
+        assertEquals(body,{p_actor:user,p_sponsor_org:org,p_beneficiary:"d0100101-0000-4000-8000-000000000004"});
+        return json({ok:true,removed:true,private_testing:true});
+      }
       if (table === "create_org_invite") {
         assertEquals(body.p_user,user); assertEquals(body.p_org,org);
         assertMatch(body.p_token_hash,/^[a-f0-9]{64}$/);
@@ -117,4 +139,34 @@ Deno.test("ordinary team member cannot issue invites or see pending invite detai
 }));
 Deno.test("anonymous workspace owner cannot invite a team",async()=>fixture(async f=>{
   f.anonymous=true;const denied=await f.request();assertEquals(denied.status,403);assertEquals(f.writes,[]);
+}));
+
+const privatePerson={user_id:"d0100101-0000-4000-8000-000000000004",role:"agent",name:"Fixture tester",email:"tester@fixture.invalid",private_testing:true,benefits_active:true,joined_at:"2026-10-05T00:00:00Z"};
+Deno.test("private tester roster is included without content membership or listing queries",async()=>fixture(async f=>{
+ f.masterTesting=true;f.privateRoster=[privatePerson];const response=await f.request("",{},"GET");const body=await response.json();
+ assertEquals(response.status,200);assertEquals(body.access_mode,"private_testing");assertEquals(body.members.length,2);
+ assertEquals(body.members[1],{user_id:privatePerson.user_id,role:"agent",name:privatePerson.name,email:privatePerson.email,is_you:false,access_mode:"private_testing",benefits_active:true});assertEquals(f.writes,[]);
+}));
+Deno.test("private join selects the caller's existing workspace and accepts no beneficiary override",async()=>fixture(async f=>{
+ const privateOrg="d0100101-0000-4000-8000-000000000005";
+ f.accepted={org_id:privateOrg,org_name:"Fixture private workspace",role:"owner",private_testing:true,team_name:"Fixture testing team"};
+ const response=await f.request("accept",{code:"ABCD-EFGH-JKMN",beneficiary_user_id:privatePerson.user_id,private_org_id:org});const body=await response.json();
+ assertEquals(response.status,200);assertEquals(body,{ok:true,org_id:privateOrg,org_name:"Fixture private workspace",role:"owner",access_mode:"private_testing",team_name:"Fixture testing team"});assertEquals(f.writes,["accept_org_invite"]);
+}));
+Deno.test("private tester removal uses the sponsorship RPC without deleting membership or projects",async()=>fixture(async f=>{
+ f.privateRoster=[privatePerson];const response=await f.request("members/"+privatePerson.user_id,{},"DELETE");assertEquals(response.status,200);assertEquals(await response.json(),{ok:true,private_testing:true});assertEquals(f.writes,["remove_private_internal_tester"]);
+}));
+Deno.test("private member still cannot administer the sponsor's tester roster",async()=>fixture(async f=>{
+ f.role="agent";f.privateRoster=[privatePerson];const response=await f.request("members/"+privatePerson.user_id,{},"DELETE");assertEquals(response.status,403);assertEquals(f.writes,[]);
+}));
+for(const failedRPC of ["private_internal_testing_members","private_internal_testing_host_mode","private_internal_testing_context"])Deno.test(`private roster fails closed when ${failedRPC} cannot be verified`,async()=>fixture(async f=>{
+ f.failedRPC=failedRPC;const response=await f.request("",{},"GET");assertEquals(response.status,503);assert(!("members"in await response.json()));assertEquals(f.writes,[]);
+}));
+Deno.test("sponsored private workspace reports Team benefits without becoming a manager of the sponsor",async()=>fixture(async f=>{
+ f.testingContext={active:true,sponsor_org_id:"d0100101-0000-4000-8000-000000000009",sponsor_org_name:"Fixture testing team",private_org_id:org,beneficiary_user_id:user,plan:"team",source:"manual",unmetered_business_allowances:true};
+ const response=await f.request("",{},"GET");const body=await response.json();assertEquals(response.status,200);assertEquals(body.can_manage,false);assertEquals(body.access_mode,"private_testing");assertEquals(body.team_name,"Fixture testing team");assertEquals(body.org_id,org);assertEquals(body.members.length,1);
+}));
+
+Deno.test("ordinary anonymous owner can still read its own workspace without private-host authority",async()=>fixture(async f=>{
+ f.anonymous=true;f.failedRPC="private_internal_testing_host_mode";const response=await f.request("",{},"GET");const body=await response.json();assertEquals(response.status,200);assertEquals(body.access_mode,"shared_workspace");assertEquals(body.members.length,1);assertEquals(f.writes,[]);
 }));

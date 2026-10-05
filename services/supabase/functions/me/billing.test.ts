@@ -5,7 +5,7 @@ import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
-type Options={role?:string;plan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean};
+type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean};
 async function invoke(o:Options={}) {
  const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon"};
  const previous=new Map(Object.keys(values).map(key=>[key,Deno.env.get(key)]));for(const [key,value]of Object.entries(values))Deno.env.set(key,value);
@@ -21,13 +21,18 @@ async function invoke(o:Options={}) {
    if(url.pathname==="/auth/v1/user")return json({id:USER,aud:"authenticated",is_anonymous:o.anonymous??false});
    if(table==="active_org_for_user")return json(ORG);
    if(table==="workspace_directory")return json({active_org_id:o.selector??ORG,workspaces:[{id:o.selector??ORG,name:"Fixture Workspace",role:o.role??"owner"}]});
-   if(table==="org_entitlement")return json(o.degraded?null:{plan:o.plan??"free",renders_per_month:1,photo_edits_per_month:0,reels_per_month:0,aerials_per_month:0,topaz_per_month:0,seats:1,cogs_ceiling_cents:250,price_cents:0});
+   if(table==="org_entitlement")return json(o.degraded?null:{plan:o.plan??"free",renders_per_month:o.projection?2147483647:1,photo_edits_per_month:o.projection?2147483647:0,reels_per_month:o.projection?2147483647:0,aerials_per_month:o.projection?2147483647:0,topaz_per_month:o.projection?2147483647:0,seats:1,cogs_ceiling_cents:o.projection?2147483647:250,price_cents:0});
+   if(table==="org_has_internal_testing_grant")return json(o.master??false);
+   if(table==="private_internal_testing_context") {
+    assertEquals(await req.json(),{p_user:USER,p_private_org:o.selector??ORG});
+    return o.testingError?json({message:"fixture failed"},503):json(o.testingContext??null);
+   }
    if(table==="notification_preferences_for")return json({});
    if(table==="memberships") {
     if(url.searchParams.get("select")==="org_id")return row({org_id:OTHER});
     return o.membershipError?json({message:"fixture denied"},400):row({role:o.role??"owner"});
    }
-   if(table==="orgs")return row({id:o.selector??ORG,name:"Fixture Workspace",plan:o.plan??"free",plan_source:o.source??null});
+   if(table==="orgs")return row({id:o.selector??ORG,name:"Fixture Workspace",plan:o.rawPlan??o.plan??"free",plan_source:o.source??null});
    if(table==="apple_subscriptions")return o.subscriptionError?json({message:"fixture unavailable"},400):json([{original_transaction_id:"fixture-original-transaction"}]);
    if(table==="profiles")return row({id:USER,name:"Fixture Person"});
    if(req.method==="HEAD")return new Response(null,{headers:{"content-range":"*/0"}});
@@ -88,4 +93,30 @@ Deno.test("billing discloses current workspace Apple bindings only to authorized
  assert(owner.queries.filter(u=>u.pathname.endsWith("apple_subscriptions")).every(u=>u.searchParams.get("org_id")==="eq."+ORG));
  const member=await invoke({plan:"pro",source:"apple",role:"agent"});assertEquals(member.body.billing.original_transaction_ids,[]);assert(!member.queries.some(u=>u.pathname.endsWith("apple_subscriptions")));
  const failed=await invoke({plan:"pro",source:"apple",subscriptionError:true});assertEquals(failed.response.status,503);assert(!failed.body.billing);
+});
+
+const SPONSOR="d0100103-0000-4000-8000-000000000009";
+const privateContext={active:true,sponsor_org_id:SPONSOR,sponsor_org_name:"Fixture testing team",private_org_id:ORG,beneficiary_user_id:USER,plan:"team",source:"manual",unmetered_business_allowances:true};
+Deno.test("sponsored trial keeps its resource identity and raw source without a purchase prompt",async()=>{
+ const r=await invoke({plan:"team",rawPlan:"trial",source:"trial",projection:true,testingContext:privateContext});
+ assertEquals(r.response.status,200);assertEquals(r.body.org.id,ORG);assertEquals(r.body.org.name,"Fixture Workspace");
+ assertEquals(r.body.plan_raw,"trial");assertEquals(r.body.plan_source_raw,"trial");assertEquals(r.body.plan_source,"manual");
+ assertEquals(r.body.billing.can_manage_subscription,false);assertEquals(r.body.billing.org_id,ORG);assertEquals(r.body.billing.source,"manual");
+ assertEquals(r.body.testing_access,{active:true,team_name:"Fixture testing team"});
+ assert(!r.queries.some(u=>u.pathname.endsWith("apple_subscriptions")));
+ assert(r.queries.every(u=>u.pathname.startsWith("/auth/")||!u.searchParams.get("org_id")||u.searchParams.get("org_id")==="eq."+ORG));
+});
+Deno.test("master manual Team keeps its own subscription context with a current grant",async()=>{
+ const r=await invoke({plan:"team",source:"manual",projection:true,master:true});
+ assertEquals(r.response.status,200);assertEquals(r.body.plan_source,"manual");assertEquals(r.body.billing.can_manage_subscription,false);assert(!r.body.testing_access);
+});
+Deno.test("revoked or racing sponsorship never publishes a stale unlimited billing receipt",async()=>{
+ for(const o of [
+  {plan:"team",rawPlan:"trial",source:"trial",projection:true},
+  {plan:"team",source:"manual",projection:true},
+  {plan:"team",rawPlan:"trial",source:"trial",testingContext:privateContext},
+  {plan:"team",projection:true,testingError:true},
+  {plan:"team",projection:true,testingContext:{...privateContext,beneficiary_user_id:SPONSOR}},
+  {plan:"team",projection:true,testingContext:{...privateContext,private_org_id:SPONSOR}}
+ ]) {const r=await invoke(o);assertEquals(r.response.status,503);assert(!r.body.billing);}
 });
