@@ -49,8 +49,8 @@ try:
   failure=query(name+'-run',TEST.read_text(),3);assert 'PRIVACY FAIL: '+label in failure,(name,failure[-1200:])
   query(name+'-restore',original);assert positive(name+'-restored')==receipt['freshAssertions']
   controls.append({'name':name,'failedBoundary':label,'compiled':True,'restored':True})
- receipt.update(passed=True,controls=controls,finishedAt=datetime.now(timezone.utc).isoformat())
  assert hashes=={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in tracked},'Source changed during proof'
+ receipt.update(passed=True,controls=controls,finishedAt=datetime.now(timezone.utc).isoformat())
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')

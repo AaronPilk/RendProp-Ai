@@ -518,6 +518,7 @@ jobs:
             /tmp/rendprop-connected-browser-*/receipt.json
             /tmp/rendprop-connected-browser-*/*.png
             /tmp/rendprop-studio-recovery-*/receipt.json
+            ${{ runner.temp }}/recovery-*.log
             /tmp/rendprop-contact-navigation-*/receipt.json
             /tmp/rendprop-contact-navigation-*/*.png
             /tmp/rendprop-listing-facts-browser-*/receipt.json
@@ -902,6 +903,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 tools/audit/test_privacy_receipt_fail_closed.py
           python3 tools/audit/run_deletion_regression.py --provider-commit "$GITHUB_SHA"
           python3 tools/audit/run_adoption_regression.py
           python3 tools/audit/run_team_readiness.py
@@ -943,6 +945,8 @@ jobs:
           path: |
             /tmp/rendprop-*/receipt.json
             /tmp/rendprop-*/*.log
+            /tmp/rendprop-privacy-receipt-*/**/receipt.json
+            /tmp/rendprop-privacy-receipt-*/**/*.log
             /tmp/rendprop-photographer-client-*/*.json
             build/pr-*/receipt.json
             build/pr-*/server.log

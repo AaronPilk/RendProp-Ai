@@ -155,8 +155,9 @@ tester reports, keys, customer rows and images are not committed.
   adoption, subscription handling, lead privacy, photo reconciliation and Reel
   recovery, including separately compiled semantic controls.
 - Backend: 1,521 tests passed, 0 failed, 1 ignored. The ignored local-SQL
-  presenter-controller case belongs to its separate disposable Postgres runner;
-  it is not counted as passed. All 25 edge-function entrypoints typecheck.
+  presenter-controller case passed separately against disposable Postgres
+  (119 database checks plus the actual controller lifecycle). It remains ignored
+  in the unit-suite count. All 25 edge-function entrypoints typecheck.
 - Recipient verification: 58 fresh/replay SQL assertions and 7 compiled faults.
   Cleanup: 61 fresh/replay assertions and 9 faults. Upload admission: 19
   fresh/replay assertions and 4 faults. Photographer delivery: 61 assertions
@@ -180,14 +181,60 @@ tester reports, keys, customer rows and images are not committed.
 Both unsigned physical Release variants (ordinary App Store and internal lab)
 compile from the final frozen native source. Neither Mach-O binary contains the
 simulator quota fixture. These are builds, not signed archives or uploads.
-Full migration replay remains a checkpoint-bound gate: the database runner
-requires a clean commit and preserves the single documented Astra ceiling
-exception rather than weakening its assertion.
+Full database verification passed on clean source commit `77afb02`: all 103
+migrations apply, 84 replay at their supported historical points, and both
+270-invariant runs have 269 passes plus the same single documented Astra
+ceiling exception. There are no unexpected failures or stale exceptions.
+Actual publication and corrupted-Team negative controls fail as required;
+all owned clusters stop. The assertion and provider ceiling remain unchanged.
 
 Final combined regression and physical-build receipts are recorded separately
 under the private evidence directory. Earlier failures (disk exhaustion, an obsolete
 allowance fixture and an invalid nested-toolbar test selector) are retained;
 they are not counted as successful runs.
+
+The previous private-testing PR's CI failures were also investigated. Team
+readiness now requires all 21 distinct handler tests, with no ignored, filtered
+or missing result, rather than the stale 12-test summary. Its 34 fresh/replay SQL
+assertions, two real races and eight compiled inventory controls pass. The
+measurement harness keeps its runtime deadline and exact semantic rejections,
+but allows the compiler enough time for the hosted runner; baseline 140 assertions
+and the first affected `drop-wire` control pass. Compiler/runtime timeouts retain
+partial diagnostics and a failed receipt. Privacy proof receipts mark success
+only after final source checks; four actual-runner groups detect file drift and
+reordered-success mutations. No runtime or quota was weakened for these repairs.
+
+## Pricing gate: current allowances are not yet funded
+
+The [Topaz and margin policy](TOPAZ-AND-MARGIN-20261004.md),
+[pricing audit](../PRICING-AUDIT-20261003.md) and
+[allowance proposal](../PLAN-ALLOWANCES-20261004.md) remain applicable. The current
+retail source was rechecked; no prices or quantities changed in this audit.
+The owner confirmed Small Business enrollment, but the effective commission date
+is not verified. The conservative 30% case remains relevant until that is known.
+
+At an effective 15% fee, the following are the maximum **total monthly serving
+costs** allowed by the owner's target, rounded down to cents. The provider ceiling
+already exceeds that entire envelope, before storage, delivery and other costs.
+Annual proceeds are allocated across twelve service months.
+
+| Sold product | Customer price | Current provider ceiling/month | Maximum all serving costs/month at 15% |
+| --- | --- | --- | --- |
+| Starter monthly | $49/month | $12 | $10.41 |
+| Starter annual | $490/year | $12 | $8.67 |
+| Pro monthly | $99/month | $24 | $21.03 |
+| Pro annual | $990/year | $24 | $17.53 |
+| Team monthly | $249/month | $60 | $52.91 |
+
+The formula is `0.25 × recognized net receipts`; actual proceeds adjustments,
+refunds, offers and currency conversion can reduce funding. Feature counts are
+pooled and do not promise that every combination fits the current provider cap.
+Fixing reservation/refund authority does not fix collected-revenue funding.
+The 75% floor is still unenforced: it needs a shared pre-dispatch money gate,
+proceeds-based period accounting, measured recurring allocations and invoice
+reconciliation. The existing weighted-credit proposal is unapproved. These are
+source-model scenarios, not actual margin results or authorization to reduce
+existing customer commitments. Internal testing remains separately owner-funded.
 
 ## Deployment and remaining decisions
 
