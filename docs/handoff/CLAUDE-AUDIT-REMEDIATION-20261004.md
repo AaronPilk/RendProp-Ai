@@ -87,6 +87,7 @@ software behavior; they do not certify camera accuracy or AI video quality.
 | Final normal iPhone Release build | Unsigned `iphoneos` arm64 build succeeded with final recovery and late-reply guards; no upload/signing |
 | Web capability inventory and brand tokens | 17 checks passed with the dedicated measurements route mapped; missing-upload, low-contrast and disabled-validator controls each failed as required. Inventory coverage does not establish browser/device parity. |
 | Published-listing browser proof | 195 checks passed normally and with a deterministic 350 ms observer delay. Missing chapter seek, stale Explore reference and actual rewind each failed at their exact intended assertion; the extracted CI wrapper accepted all three controls. |
+| Studio encoding and remaining browser gates | 12 real MP4/AAC exports across six variants, seven summary checks and four preparation/cleanup scenarios passed. Production and deadline-only control receive identical held export-animation callbacks; exact cancellation handles, decoded progression, duration and audio remain checked. Cloud editor, conversation and finishing passed 16, 16 and 11 checks respectively. |
 
 The L test verifies 16 m² gross, a 1 m² opening and 15 m² net, a marked calculated
 closing wall, actual export/3D/reopen and linked deletion without resurrection.
@@ -109,6 +110,16 @@ CI includes the delayed positive and a missing-seek fault. No product code or
 timeout was changed for that correction. The final delivery receipt must bind
 the subsequent commit and complete CI result before this branch is called
 verified.
+
+That subsequent run at `a008d97` passed the browser and HD master checks but
+exposed an under-calibrated Studio negative control: 120 ms animation delivery
+can produce two valid blends during a 280 ms dissolve. The fixture now holds
+only the actual export helper's animation requests until its timer cancels
+them. The production and deadline-only variants receive the same condition;
+the former retains progressing decoded frames, while the latter fails that
+unchanged criterion. Exact held/cancelled handle IDs and zero callback delivery
+are verified. All pixel, audio and duration gates remain unchanged. Product
+code was not modified; full receipts remain on disk and CI output is compact.
 
 Source hashes and verification artifacts are indexed in
 [`CLAUDE-AUDIT-EVIDENCE-20261004.json`](CLAUDE-AUDIT-EVIDENCE-20261004.json).
@@ -141,9 +152,12 @@ rewritten and Claude's shared checkout was not edited.
 **Shared-team launch remains blocked by ordinary listing writes.** A stale phone
 choosing a main photo or saving coordinates can still issue a full-row update
 and overwrite newer, unedited Studio facts, sold/archive state and floor-plan
-attachments. This path was verified in the current source; no corresponding
-production or physical-phone mutation was performed. Measurement saves are
-protected, but this branch does not fix the ordinary path. The next delivery
+attachments. The actual Swift request serializer and entire listings handler
+reproduced both stale-write cases in a closed synthetic auth/PostgREST transport
+with 58 assertions. The AppModel setter calls were source-verified; production,
+physical-phone, RLS and database-trigger behavior were not simulated by this
+reproducer. Measurement protection remains independently verified by the real
+SQL tests. This branch does not fix the ordinary path. The next delivery
 needs explicit changed-field intent, atomic conflict protection, retained local
 conflicts and a safe rejection/upgrade boundary for older builds 42/43.
 Studio does not yet edit raw measurement geometry; exporting and attaching a
