@@ -169,9 +169,39 @@ final class BetaPolishUITests: XCTestCase {
         attach("profile-guide-large-text")
     }
 
-    private func launchProfile(largeText: Bool = false) {
+    func testProfileGuestArchiveRequiresReviewAndExplicitSave() {
+        launchProfile(archive: true)
+        XCTAssertEqual(app.staticTexts["profile.personalName"].label, "Synthetic Agent", "Guest archive cannot replace current identity on opening Profile")
+        let edit = app.buttons["Edit card"]
+        scrollTo(edit); edit.tap()
+        let review = app.buttons["profile.reviewGuestCard"]
+        scrollProfileFormTo(review); XCTAssertTrue(review.isHittable); review.tap()
+        let load = app.buttons["Review saved details"]
+        XCTAssertTrue(load.waitForExistence(timeout: 10)); load.tap()
+        let name = app.textFields["profile.name"]
+        let reviewed = NSPredicate { _, _ in name.exists && name.value as? String == "Saved guest agent" }
+        expectation(for: reviewed, evaluatedWith: app); waitForExpectations(timeout: 10)
+        attach("profile-guest-archive-editor-only")
+        app.navigationBars.buttons["Profile"].tap()
+        XCTAssertEqual(app.staticTexts["profile.personalName"].label, "Synthetic Agent", "Review without Save leaves existing personal identity unchanged")
+        scrollTo(edit); edit.tap()
+        scrollProfileFormTo(review); review.tap()
+        XCTAssertTrue(load.waitForExistence(timeout: 10)); load.tap()
+        expectation(for: reviewed, evaluatedWith: app); waitForExpectations(timeout: 10)
+        let save = app.buttons["profile.save"]
+        XCTAssertTrue(save.isHittable && save.isEnabled); save.tap()
+        let receipt = app.staticTexts["profile.saveReceipt"]
+        expectation(for: NSPredicate { _, _ in receipt.exists && receipt.label == "Saved to your personal card." }, evaluatedWith: app)
+        waitForExpectations(timeout: 10)
+        app.navigationBars.buttons["Profile"].tap()
+        XCTAssertEqual(app.staticTexts["profile.personalName"].label, "Saved guest agent", "Only deliberate Save applies the reviewed card")
+        attach("profile-guest-archive-explicit-save")
+    }
+
+    private func launchProfile(largeText: Bool = false, archive: Bool = false) {
         app.launchArguments = baseArguments + ["-ui.profileFeedbackFixture", "-auth.supabase.userID", "b3710000-0000-4000-8000-000000000001"]
         if largeText { app.launchArguments += ["-ui.profileFeedbackLargeText"] }
+        if archive { app.launchArguments += ["-ui.profileGuestArchiveFixture"] }
         app.launch()
         XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 25), app.debugDescription)
         XCTAssertFalse(element("profile.fixture.failure").exists)

@@ -8031,7 +8031,7 @@ private struct PendingReelRequest: Codable, Sendable {
     }
     static func load(_ context: Context) -> PendingReelRequest? {
         let target = file(context)
-        let data = FileManager.default.fileExists(atPath: target.path)
+        let data = AdoptionOwnedIdentity.pathIsOccupied(target)
             ? (try? Data(contentsOf: target)) : UserDefaults.standard.data(forKey: key(context))
         guard let data,
               let request = try? JSONDecoder().decode(Self.self, from: data), request.context == context,
@@ -8039,11 +8039,28 @@ private struct PendingReelRequest: Codable, Sendable {
         return request
     }
     static func exists(_ context: Context) -> Bool {
-        FileManager.default.fileExists(atPath: file(context).path) || UserDefaults.standard.data(forKey: key(context)) != nil
+        if AdoptionOwnedIdentity.pathIsOccupied(file(context)) || UserDefaults.standard.object(forKey: key(context)) != nil { return true }
+        guard context.workspace == nil, let owner = UUID(uuidString: context.owner) else { return false }
+        do {
+            return !(try AdoptionOwnedIdentity.unselectedReviewFiles(owner: owner, listingID: context.listingID,
+                documents: FileStore.documents, defaults: UserDefaults.standard)).isEmpty
+        } catch { return true }
+    }
+    static func hasUnreadableAdoptionMetadata(_ context: Context) -> Bool {
+        guard context.workspace == nil, let owner = UUID(uuidString: context.owner) else { return false }
+        do {
+            _ = try AdoptionOwnedIdentity.unselectedReviewFiles(owner: owner, listingID: context.listingID,
+                documents: FileStore.documents, defaults: UserDefaults.standard)
+            return false
+        } catch { return true }
     }
     static func forget(_ context: Context) {
         try? FileManager.default.removeItem(at: file(context))
         UserDefaults.standard.removeObject(forKey: key(context))
+        if context.workspace == nil, let owner = UUID(uuidString: context.owner) {
+            AdoptionOwnedIdentity.forgetUnselectedReviews(owner: owner, listingID: context.listingID,
+                documents: FileStore.documents, defaults: UserDefaults.standard)
+        }
     }
     func save() throws {
         let data = try JSONEncoder().encode(self)
@@ -10023,11 +10040,15 @@ struct ReelStudioView: View {
                 }
                 Button("Forget request…") { showDiscardPendingConfirm = true }.disabled(isWorking)
             }.frame(maxWidth: .infinity, alignment: .leading).card()
-        } else if unreadablePendingContext != nil {
+        } else if let context = unreadablePendingContext {
             VStack(alignment: .leading, spacing: 10) {
                 Text("An earlier video request cannot be read").font(.rpBody.weight(.semibold))
-                Text("Generating is paused because that request may already count a clip. Review your usage before deliberately forgetting it.").font(.rpCaption)
-                Button("Forget request…") { showDiscardPendingConfirm = true }.disabled(isWorking)
+                if PendingReelRequest.hasUnreadableAdoptionMetadata(context) {
+                    Text("Saved account-transfer records could not be read. Choose your workspace and review its saved request there, or get recovery help. Your saved records have been kept and no new clip will be submitted.").font(.rpCaption)
+                } else {
+                    Text("Generating is paused because that request may already count a clip. Review your usage before deliberately forgetting it.").font(.rpCaption)
+                    Button("Forget request…") { showDiscardPendingConfirm = true }.disabled(isWorking)
+                }
             }.frame(maxWidth: .infinity, alignment: .leading).card()
         }
     }

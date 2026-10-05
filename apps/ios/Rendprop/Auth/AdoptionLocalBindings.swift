@@ -23,6 +23,10 @@ struct AdoptionLocalBindings: Codable, Equatable {
     /// Optional for bindings written before the production companion shipped.
     var productionLocalIDs: [UUID]? = nil
     var productionTransferred: Bool? = nil
+    /// Profile text/portrait and paid-request safety markers transfer only once
+    /// after the same verified receipt. Optional for older phone snapshots.
+    var ownedIdentityTransferred: Bool? = nil
+    var personalCardDisposition: String? = nil
 
     enum Failure: Error { case invalid, conflict, tooLarge }
 
@@ -36,6 +40,7 @@ struct AdoptionLocalBindings: Codable, Equatable {
               !appliedToCurrentState || confirmedOrgID != nil,
               Set(entries.map(\.localID)).count == entries.count,
               Set(entries.map(\.serverID)).count == entries.count,
+              personalCardDisposition == nil || ["source_copied", "destination_preserved", "no_source_card"].contains(personalCardDisposition!),
               productionLocalIDs == nil || Set(productionLocalIDs!).count == productionLocalIDs!.count else { throw Failure.invalid }
         // Metadata only: cap optional sign-in's journal, never truncate a
         // library or block capture. A large library can keep using its source

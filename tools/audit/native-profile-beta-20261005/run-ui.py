@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Five real Release simulator UI cases; no purchase, camera or Photos access.
+"""Six real Release simulator UI cases; no purchase, camera or Photos access.
 Use --storekit only with an operational local StoreKitTest daemon. It fails
 closed when unavailable and never falls back to the real App Store.
 """
 import argparse, hashlib, json, pathlib, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
-CASES = ["testProfileBusinessCardAndExplicitPortfolioSelection", "testProfileLogoIsSeparateAndPhoneKeepsInternationalNumber", "testClientSaveExplainsChangedWorkspaceAndRemainsInvalidAfterABA", "testProfileGuideIsReachableAtLargeText", "testProfileExplicitSaveAboveKeyboardAndTeamKeepsPersonalCard"]
+CASES = ["testProfileBusinessCardAndExplicitPortfolioSelection", "testProfileLogoIsSeparateAndPhoneKeepsInternationalNumber", "testClientSaveExplainsChangedWorkspaceAndRemainsInvalidAfterABA", "testProfileGuideIsReachableAtLargeText", "testProfileExplicitSaveAboveKeyboardAndTeamKeepsPersonalCard", "testProfileGuestArchiveRequiresReviewAndExplicitSave"]
 
 def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 

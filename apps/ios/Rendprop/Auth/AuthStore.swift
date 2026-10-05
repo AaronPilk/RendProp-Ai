@@ -82,7 +82,7 @@ final class AuthStore: ObservableObject {
                 return (bytes, http)
             }, changed: { [weak self] message in self?.adoptionRecoveryMessage = message },
             prepareLocal: { [weak self] pending in self?.onPrepareAdoption?(pending) == true },
-            finishLocal: { [weak self] pending, orgID in self?.onConfirmAdoption?(pending, orgID) == true },
+            finishLocal: { [weak self] pending, orgID, cardData in self?.onConfirmAdoption?(pending, orgID, cardData) == true },
             discardLocal: { [weak self] operationID in self?.onDiscardAdoption?(operationID) })
     }()
 
@@ -90,7 +90,7 @@ final class AuthStore: ObservableObject {
     /// last used this device — the app clears per-account listing state.
     var onAccountChanged: (@MainActor (UUID) -> Void)?
     var onPrepareAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending) -> Bool)?
-    var onConfirmAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending, UUID) -> Bool)?
+    var onConfirmAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending, UUID, Data) -> Bool)?
     var onAdoptionStorageReady: (@MainActor () -> Bool)?
     /// Fired (main thread) after a pending handoff's Keychain record was
     /// discarded without a receipt (sign-out, clear/delete, or a stale record

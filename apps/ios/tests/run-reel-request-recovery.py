@@ -19,7 +19,9 @@ source_path = root / 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift'
 api_path = root / 'apps/ios/Rendprop/Networking/APIClient.swift'
 live_path = root / 'apps/ios/Rendprop/Networking/LiveAPIClient.swift'
 fixture_path = root / 'apps/ios/tests/ReelRequestRecoveryTests.swift'
-consumed = [source_path, api_path, live_path, fixture_path, Path(__file__).resolve()]
+adoption_path = root / 'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift'
+listing_path = root / 'apps/ios/Rendprop/Models/Listing.swift'
+consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, Path(__file__).resolve()]
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed}
 def block(s, anchor):
@@ -39,6 +41,15 @@ receipt = {'passed': False, 'start_source_sha256': hashes(), 'runs': [], 'limita
 server = None
 try:
     source, api, live, fixture = source_path.read_text(), api_path.read_text(), live_path.read_text(), fixture_path.read_text()
+    adoption = block(adoption_path.read_text(), 'enum AdoptionOwnedIdentity {')
+    review_helpers = 'enum AdoptionOwnedIdentity {\n' + '\n'.join(block(adoption, anchor) for anchor in [
+        'enum Failure: Error', 'struct Card: Codable, Equatable', 'struct PaidRequest: Codable, Equatable', 'struct Journal: Codable, Equatable',
+        'static func prefix(', 'static func requestKey(', 'static func requestFile(', 'private static func digest(',
+        'private static func absentFile(', 'static func pathIsOccupied(', 'static func unselectedReviewFiles(', 'static func forgetUnselectedReviews(']) + '\n}\n'
+    review_helpers = review_helpers.replace('defaults: UserDefaults', 'defaults: Foundation.UserDefaults')
+    space = listing_path.read_text()
+    cases = space[space.index('    case realEstate =',space.index('enum SpaceType:')):space.index('    var id:',space.index('enum SpaceType:'))]
+    review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
     actual = 'import Foundation\nimport CryptoKit\n' + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
     for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(']:
         actual += block(source, anchor).replace('private static', 'static', 1) + '\n'
@@ -47,6 +58,7 @@ try:
         let reelWorkspace = WorkspaceContext.selectedOrgID
         let reelConsentRevision = AIConsent.shared.revocationRevision
 ''' + block(source, '                let requireCurrent: @MainActor @Sendable () throws -> Void = {') + '\nreturn requireCurrent\n}\n}\n'
+    actual = actual.replace('import CryptoKit\n', 'import CryptoKit\n' + review_helpers, 1)
     actual += '''@MainActor final class VideoDispatchHarness {
         let base = URL(string: "https://closed.fixture.invalid/")!
         let session: URLSession
@@ -82,7 +94,7 @@ try:
         ('negative-dispatch-consent', actual.replace(block(actual, '            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consentRevision else {'), '// omitted dispatch permission fence'), 'token refresh revocation must reject'),
         ('negative-dispatch-workspace', actual.replace('guard WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }', '// omitted dispatch workspace fence'), 'token refresh workspace switch must reject'),
         ('negative-401-retry-fence', actual.replace('request.setValue("Bearer \\(fresh)", forHTTPHeaderField: "Authorization")\n                try beforeSend?()', 'request.setValue("Bearer \\(fresh)", forHTTPHeaderField: "Authorization")\n                // omitted retry dispatch fence'), '401 revocation must reject retry'),
-        ('negative-authoritative-marker-fallback', actual.replace('let data = FileManager.default.fileExists(atPath: target.path)\n            ? (try? Data(contentsOf: target)) : UserDefaults.standard.data(forKey: key(context))', 'let data = (try? Data(contentsOf: target)) ?? UserDefaults.standard.data(forKey: key(context))'), 'unreadable authoritative marker never falls back to stale legacy receipt'),
+        ('negative-authoritative-marker-fallback', actual.replace('let data = AdoptionOwnedIdentity.pathIsOccupied(target)\n            ? (try? Data(contentsOf: target)) : UserDefaults.standard.data(forKey: key(context))', 'let data = (try? Data(contentsOf: target)) ?? UserDefaults.standard.data(forKey: key(context))'), 'unreadable authoritative marker never falls back to stale legacy receipt'),
         ('negative-manifest-fallback-deletes-paid-clips', actual.replace('let data = FileManager.default.fileExists(atPath: target.path)\n                ? try Data(contentsOf: target) : UserDefaults.standard.data(forKey: key(id))', 'let data = (try? Data(contentsOf: target)) ?? UserDefaults.standard.data(forKey: key(id))').replace('guard let parked = try? readRecord(for: id), !parked.clipURLs.isEmpty else { return nil }', 'guard let parked = try? readRecord(for: id) else { return nil }; guard !parked.clipURLs.isEmpty else { clear(for: id); return nil }'), 'unreadable manifest preserves previously paid clip bytes'),
         ('negative-manifest-retention-overwrite', actual.replace('var relPaths = (try PendingReelClips.readRecord(for: listingID)?.clipURLs ?? [])', 'var relPaths = ((try? PendingReelClips.readRecord(for: listingID))?.clipURLs ?? [])').replace('_ = try Self.readRecord(for: listingID)', '// omitted authoritative write admission'), 'unreadable manifest retains the only new temporary bytes'),
         ('negative-manifest-park-overwrite', actual.replace('previous = try PendingReelClips.readRecord(for: listingID)', 'previous = try? PendingReelClips.readRecord(for: listingID)').replace('_ = try Self.readRecord(for: listingID)', '// omitted authoritative write admission'), 'parking preserves unreadable manifest and unretained temporary bytes'),

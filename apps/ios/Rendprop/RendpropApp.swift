@@ -177,7 +177,7 @@ final class AppModel: ObservableObject {
             self?.forgetServerIdentities(for: userID)
         }
         AuthStore.shared.onPrepareAdoption = { [weak self] in self?.prepareLocalAdoption($0) == true }
-        AuthStore.shared.onConfirmAdoption = { [weak self] in self?.confirmLocalAdoption($0, orgID: $1) == true }
+        AuthStore.shared.onConfirmAdoption = { [weak self] in self?.confirmLocalAdoption($0, orgID: $1, personalReceipt: $2) == true }
         AuthStore.shared.onAdoptionStorageReady = { [weak self] in
             self?.hasLoaded == true && self?.adoptionBindingsUnreadable == false
         }
@@ -282,13 +282,18 @@ final class AppModel: ObservableObject {
     /// Only the currently verified destination + exact operation can restore
     /// links. The restored IDs and confirmation marker share ONE atomic write;
     /// Keychain credentials are retained until this returns true.
-    func confirmLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending, orgID: UUID) -> Bool {
+    func confirmLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending, orgID: UUID, personalReceipt: Data? = nil) -> Bool {
         guard hasLoaded, !adoptionBindingsUnreadable, let journal = adoptionBindings,
               journal.matches(pending),
+              AuthStore.shared.isIdentified,
               AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == pending.destinationUserID else { return false }
+        let verifiedCard: PersonalCardReceipt?
+        do {
+            verifiedCard = try personalReceipt.map { try JSONDecoder().decode(PersonalCardReceipt.self, from: $0).checked(owner: pending.destinationUserID) }
+        } catch { return false }
         if journal.appliedToCurrentState, let confirmed = journal.confirmedOrgID {
             guard confirmed == orgID && identityOwnerUserID == pending.destinationUserID else { return false }
-            return restoreAdoptedProductionLibrary()
+            return restoreAdoptedProductionLibrary(personalReceipt: verifiedCard)
         }
         do {
             var restored = try journal.restoring(listings, pending: pending,
@@ -299,9 +304,15 @@ final class AppModel: ObservableObject {
             }
             let previousListings = listings, previousOwner = identityOwnerUserID
             var confirmed = journal; confirmed.confirmedOrgID = orgID; confirmed.appliedToCurrentState = true
+            confirmed.personalCardDisposition = pending.personalCardDisposition
             try AdoptionProductionLibrary.restore(confirmed, survivingIDs: Set(restored.filter { !$0.isSample }.map(\.id)),
                 documents: FileStore.documents)
             confirmed.productionTransferred = true
+            try AdoptionOwnedIdentity.restore(confirmed, activeOwner: pending.destinationUserID,
+                survivingIDs: Set(restored.filter { !$0.isSample }.map(\.id)), documents: FileStore.documents,
+                verifiedDestinationCard: verifiedCard?.publicCard, verifiedDestinationType: verifiedCard?.spaceType,
+                destinationCardWasVerified: verifiedCard != nil)
+            confirmed.ownedIdentityTransferred = true
             ProductionVideoLibrary.shared.reloadAdopted(owner: pending.destinationUserID.uuidString.lowercased(),
                 listingIDs: Set(confirmed.productionLocalIDs ?? confirmed.entries.map(\.localID)))
             for id in confirmed.productionLocalIDs ?? confirmed.entries.map(\.localID) { ProductionPlanSyncStore.shared.remove(id) }
@@ -318,15 +329,25 @@ final class AppModel: ObservableObject {
 
     /// Upgrade a previously confirmed receipt once. Old bindings can recover
     /// their known server-backed properties; new bindings also name offline drafts.
-    @discardableResult func restoreAdoptedProductionLibrary() -> Bool {
+    @discardableResult func restoreAdoptedProductionLibrary(personalReceipt: PersonalCardReceipt? = nil) -> Bool {
         guard var journal = adoptionBindings, journal.appliedToCurrentState,
               journal.confirmedOrgID != nil, identityOwnerUserID == journal.destinationUserID,
+              AuthStore.shared.isIdentified,
               AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == journal.destinationUserID else { return false }
-        if journal.productionTransferred == true { return true }
+        if journal.productionTransferred == true && journal.ownedIdentityTransferred == true { return true }
         do {
-            try AdoptionProductionLibrary.restore(journal, survivingIDs: Set(listings.filter { !$0.isSample }.map(\.id)),
-                documents: FileStore.documents)
-            journal.productionTransferred = true
+            let surviving = Set(listings.filter { !$0.isSample }.map(\.id))
+            if journal.productionTransferred != true {
+                try AdoptionProductionLibrary.restore(journal, survivingIDs: surviving, documents: FileStore.documents)
+                journal.productionTransferred = true
+            }
+            if journal.ownedIdentityTransferred != true {
+                try AdoptionOwnedIdentity.restore(journal, activeOwner: journal.destinationUserID,
+                    survivingIDs: surviving, documents: FileStore.documents,
+                    verifiedDestinationCard: personalReceipt?.publicCard, verifiedDestinationType: personalReceipt?.spaceType,
+                    destinationCardWasVerified: personalReceipt != nil)
+                journal.ownedIdentityTransferred = true
+            }
             let previous = adoptionBindings
             adoptionBindings = journal
             if persist() {

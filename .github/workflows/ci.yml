@@ -53,6 +53,8 @@ jobs:
         run: bash apps/ios/tests/run-production-writer.sh
       - name: Phone production work survives anonymous-account adoption
         run: bash apps/ios/tests/run-adoption-production.sh
+      - name: Guest personal cards and paid requests survive only verified adoption
+        run: python3 apps/ios/tests/run-adoption-owned-identity.py
       - name: Subscription offer disclosures and durable workspace intent
         run: bash apps/ios/tests/run-subscription-policy.sh
       - name: Photo lens, orientation, level and failed-save handling
@@ -304,6 +306,8 @@ jobs:
             ${{ runner.temp }}/rendprop-photo-export-renderer-*/*.log
             ${{ runner.temp }}/rendprop-reel-request-recovery-*/receipt.json
             ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.log
+            ${{ runner.temp }}/rendprop-adoption-owned-*/receipt.json
+            ${{ runner.temp }}/rendprop-adoption-owned-*/*.log
           retention-days: 7
           if-no-files-found: warn
 

@@ -17,8 +17,18 @@ job=block(api,'struct AIVideoJob: Codable, Sendable')
 failure=source[source.index('struct AIFailure: Identifiable'):source.index('/// Loud, unmissable failure card')]
 issue=source[source.index('struct ReelClipIssue: Identifiable'):source.index('struct ReelStudioView: View')]
 pending=source[source.index('private struct PendingReelClips: Codable'):source.index('// MARK: - Reel Studio (')].replace('private struct','struct')
+adoption=block((root/'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift').read_text(),'enum AdoptionOwnedIdentity {')
+helpers='enum AdoptionOwnedIdentity {\n'+'\n'.join(block(adoption,anchor) for anchor in [
+ 'enum Failure: Error', 'struct Card: Codable, Equatable','struct PaidRequest: Codable, Equatable','struct Journal: Codable, Equatable',
+ 'static func prefix(','static func requestKey(','static func requestFile(','private static func digest(',
+ 'private static func absentFile(','static func pathIsOccupied(','static func unselectedReviewFiles(','static func forgetUnselectedReviews('])+'\n}\n'
+helpers=helpers.replace('defaults: UserDefaults','defaults: Foundation.UserDefaults')
+space=(root/'apps/ios/Rendprop/Models/Listing.swift').read_text()
+cases=space[space.index('    case realEstate =',space.index('enum SpaceType:')):space.index('    var id:',space.index('enum SpaceType:'))]
+helpers+='enum SpaceType: String {\n'+cases+'}\n'
 loop=block(source,'                for (i, photo) in ordered.enumerated()')
 park=block(source,'    nonisolated private static func parkClips(').replace('private static','static',1)
+pending=helpers+'\n'+pending
 assert 'Self.parkClips(billedClips, for: listingID, tmpDir: tmpDir)' in source
 assert 'failure = ReelClipIssue.failure(for: error' in source
 assert 'Button("Finish reel from saved clips") { finishParkedReel() }' in source

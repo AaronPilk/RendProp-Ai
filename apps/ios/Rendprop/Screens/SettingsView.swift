@@ -2269,6 +2269,11 @@ struct AgentCardEditorView: View {
     @State private var loadingDetails = false
     @State private var detailsMessage: String?
     @State private var reloadDetailsConfirm = false
+    @State private var archivedReviews: [AdoptionOwnedIdentity.Review] = []
+    @State private var reviewToLoad: AdoptionOwnedIdentity.Review?
+    @State private var reviewConfirm = false
+    @State private var loadedArchiveReview: AdoptionOwnedIdentity.Review?
+    @State private var archivePortraitIsSelected = false
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var headshot: UIImage?
@@ -2318,6 +2323,7 @@ struct AgentCardEditorView: View {
                         if headshot != nil {
                             Button(role: .destructive) {
                                 AgentCard.removeHeadshot(); headshot = nil; pickerItem = nil
+                                archivePortraitIsSelected = false
                             } label: {
                                 Label("Remove", systemImage: "trash").font(.rpCaption)
                             }
@@ -2335,6 +2341,19 @@ struct AgentCardEditorView: View {
             }
 
             businessLogoSection
+
+            if !archivedReviews.isEmpty {
+                Section {
+                    ForEach(archivedReviews) { review in
+                        Button {
+                            reviewToLoad = review; reviewConfirm = true
+                        } label: {
+                            Label("Review saved card", systemImage: "person.crop.rectangle.badge.checkmark")
+                        }.accessibilityIdentifier("profile.reviewGuestCard")
+                    }
+                } header: { Text("Saved before sign-in") }
+                footer: { Text("Your earlier details and portrait are kept. Review them here; your current personal card stays in place until you tap Save.") }
+            }
 
             Section {
                 TextField(editingType.profileNameLabel, text: $name)
@@ -2414,7 +2433,10 @@ struct AgentCardEditorView: View {
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.agentCard)
         .onAppear {
-            if let owner = editingContext.owner.flatMap(UUID.init(uuidString:)) { personalBaseline = PersonalCardStore.receipt(owner: owner) }
+            if let owner = editingContext.owner.flatMap(UUID.init(uuidString:)) {
+                personalBaseline = PersonalCardStore.receipt(owner: owner)
+                archivedReviews = AdoptionOwnedIdentity.reviews(owner: owner, type: editingType.rawValue)
+            }
             Task { await loadDetails(replaceDraft: false) }
             headshot = UIImage(contentsOfFile: AgentCard.headshotURL(for: editingType).path)
             refreshLogoPreview()
@@ -2433,6 +2455,13 @@ struct AgentCardEditorView: View {
         } message: {
             Text("Your typed details stay in this editor. Reload updates the saved baseline; tap Save to explicitly apply your edits to that version.")
         }
+        .confirmationDialog("Load your saved card into this editor?", isPresented: $reviewConfirm, titleVisibility: .visible) {
+            Button("Review saved details") {
+                if let review = reviewToLoad { Task { await reviewSavedDetails(review) } }
+            }
+        } message: {
+            Text("This loads your earlier details and portrait for review. Nothing is published or replaced until you tap Save. Your other saved copies stay available.")
+        }
         .onChange(of: pickerItem) { newItem in
             guard let newItem else { return }
             let type = editingType, workspace = editingWorkspace
@@ -2443,6 +2472,7 @@ struct AgentCardEditorView: View {
                     guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
                           WorkspaceContext.storagePrefix == workspace, contextIsCurrent, pickerItem == newItem else { return }
                     AgentCard.saveHeadshot(img)
+                    archivePortraitIsSelected = false
                     await MainActor.run { headshot = UIImage(contentsOfFile: AgentCard.headshotURL(for: type).path) }
                 }
             }
@@ -2478,7 +2508,7 @@ struct AgentCardEditorView: View {
             if replaceDraft { try PersonalCardStore.reload(receipt, owner: owner) }
             else { try PersonalCardStore.accept(receipt, applyLocal: !detailsAreDirty) }
             personalBaseline = receipt
-            primaryTypeRaw = receipt.spaceType ?? primaryTypeRaw
+            primaryTypeRaw = receipt.spaceType ?? ""
             if !replaceDraft, detailFields == before, !detailsAreDirty, receipt.spaceType == editingType.rawValue,
                (try? PersonalCardStore.pending(owner: owner)) == nil,
                !UserDefaults.standard.bool(forKey: PersonalCardStore.prefix(owner) + "dirty." + editingType.rawValue) {
@@ -2488,6 +2518,41 @@ struct AgentCardEditorView: View {
             }
             if replaceDraft { detailsMessage = "Hosted baseline reloaded. Your edits are unchanged; tap Save to apply them." }
         } catch { detailsMessage = UserFacingError.message(error, fallback: "Couldn't load the hosted card. You can still save details on this phone.") }
+    }
+
+    @MainActor private func reviewSavedDetails(_ review: AdoptionOwnedIdentity.Review) async {
+        guard !loadingDetails, !savingDetails, contextIsCurrent,
+              let owner = editingContext.owner.flatMap(UUID.init(uuidString:)),
+              AdoptionOwnedIdentity.isCurrent(review, owner: owner, type: editingType.rawValue) else { return }
+        loadingDetails = true; defer { loadingDetails = false }
+        let before = detailFields, version = AgentCard.personalReadVersion
+        do {
+            let receipt = try await model.api.personalCard()
+            guard contextIsCurrent, detailFields == before, AgentCard.personalReadVersion == version,
+                  AdoptionOwnedIdentity.isCurrent(review, owner: owner, type: editingType.rawValue) else { throw PersonalCardError.changed }
+            _ = try receipt.checked(owner: owner)
+            let portrait = try AdoptionOwnedIdentity.reviewPortrait(review, documents: FileStore.documents)
+            personalBaseline = receipt
+            primaryTypeRaw = receipt.spaceType ?? ""
+            for field in AgentCard.fieldNames {
+                let value = review.fields[field] ?? ""
+                switch field {
+                case "name": name = value
+                case "brokerage": brokerage = value
+                case "phone": phone = value
+                case "email": email = value
+                case "website": website = value
+                case "instagram": instagram = value
+                case "linkedin": linkedin = value
+                case "tiktok": tiktok = value
+                default: break
+                }
+            }
+            archivePortraitIsSelected = false
+            if let portrait, let image = UIImage(data: portrait) { headshot = image; archivePortraitIsSelected = true }
+            loadedArchiveReview = review
+            detailsMessage = "Earlier details loaded for review. Tap Save to apply them; your current personal card is unchanged."
+        } catch { detailsMessage = UserFacingError.message(error, fallback: "Your saved card couldn't be loaded safely. Its original details are still kept.") }
     }
 
     @MainActor private func saveDetails(useOnHostedTours: Bool = false) async {
@@ -2506,10 +2571,14 @@ struct AgentCardEditorView: View {
                 }
             }
             try PersonalCardStore.saveLocal(fields, type: editingType, owner: owner)
+            if let review = loadedArchiveReview {
+                guard contextIsCurrent, AdoptionOwnedIdentity.isCurrent(review, owner: owner, type: editingType.rawValue) else { throw PersonalCardError.changed }
+                if archivePortraitIsSelected { try AdoptionOwnedIdentity.saveReviewedPortrait(review, documents: FileStore.documents) }
+            }
             name = fields["name"]!; brokerage = fields["brokerage"]!; phone = fields["phone"]!; email = fields["email"]!; website = fields["website"]!
             instagram = fields["instagram"]!; linkedin = fields["linkedin"]!; tiktok = fields["tiktok"]!; savedFields = fields
             detailsMessage = "Saved on this phone."
-            guard isPrimary || useOnHostedTours else { return }
+            guard isPrimary || useOnHostedTours else { try finishArchiveReview(owner: owner); return }
             guard let baseline = personalBaseline else { throw PersonalCardError.baseline }
             let draft = try PersonalCardStore.stage(fields, type: editingType, expected: baseline)
             let receipt = try await PersonalCardStore.commit(draft, isCurrent: {
@@ -2522,9 +2591,18 @@ struct AgentCardEditorView: View {
             name = merged.name; brokerage = merged.brokerage; phone = merged.phone; email = merged.email; website = merged.website
             instagram = merged.instagram; linkedin = merged.linkedin; tiktok = merged.tiktok; savedFields = merged.brandFields
             detailsMessage = "Saved to your personal card."
+            try finishArchiveReview(owner: owner)
         } catch {
             detailsMessage = UserFacingError.message(error, fallback: "Your edits are saved on this phone. If the hosted card changed, reload it before saving again.")
         }
+    }
+
+    @MainActor private func finishArchiveReview(owner: UUID) throws {
+        guard let review = loadedArchiveReview else { return }
+        guard contextIsCurrent, AdoptionOwnedIdentity.isCurrent(review, owner: owner, type: editingType.rawValue) else { throw PersonalCardError.changed }
+        try AdoptionOwnedIdentity.markReviewed(review, owner: owner, type: editingType.rawValue)
+        loadedArchiveReview = nil; archivePortraitIsSelected = false
+        archivedReviews = AdoptionOwnedIdentity.reviews(owner: owner, type: editingType.rawValue)
     }
 
     private var businessLogoSection: some View {
@@ -3310,6 +3388,20 @@ struct ProfileFeedbackFixtureHost: View {
             publicCard: ClientPublicCard(name: "Synthetic Client", phone: "+44 20 7946 0958"), recipientEmail: "route@example.invalid")
         contactListing = homes[0]
         model.listings = homes + [draft, sold, sample, foreign, unbound]
+        if ProcessInfo.processInfo.arguments.contains("-ui.profileGuestArchiveFixture") {
+            let guest = UUID(uuidString: "b3710000-0000-4000-8000-000000000099")!
+            let operation = UUID(uuidString: "b3710000-0000-4000-8000-000000000098")!
+            UserDefaults.standard.set("Saved guest agent", forKey: AdoptionOwnedIdentity.fieldKey(guest, type: "real_estate", field: "name"))
+            UserDefaults.standard.set("+44 20 7946 0958", forKey: AdoptionOwnedIdentity.fieldKey(guest, type: "real_estate", field: "phone"))
+            UserDefaults.standard.set(Data("synthetic reviewed guest draft".utf8), forKey: AdoptionOwnedIdentity.prefix(guest) + "pending")
+            let binding = AdoptionLocalBindings(version: 1, operationID: operation, sourceUserID: guest, destinationUserID: Self.owner,
+                entries: [], confirmedOrgID: Self.org, appliedToCurrentState: true, productionLocalIDs: [], personalCardDisposition: "destination_preserved")
+            do {
+                try clean.write(to: AdoptionOwnedIdentity.portrait(guest, type: "real_estate", documents: FileStore.documents), options: .atomic)
+                try AdoptionOwnedIdentity.restore(binding, activeOwner: Self.owner, survivingIDs: [], documents: FileStore.documents,
+                    verifiedDestinationCard: ["name": "Synthetic Agent"], verifiedDestinationType: "real_estate", destinationCardWasVerified: true)
+            } catch { failure = "Synthetic guest archive could not be prepared."; return }
+        }
         ready = true
     }
 

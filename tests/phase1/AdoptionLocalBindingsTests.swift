@@ -144,10 +144,17 @@ struct AdoptionLocalBindingsTests {
         check(busy.adoptionBindings?.entries[0].shareSlug == "updated-before-activation", "latest source link preserved")
         AuthStore.shared.userID = destination.uuidString; busy.forgetServerIdentities(for: destination)
         let path = FileStore.documents, snapshot = try Data(contentsOf: path.appendingPathComponent("rendprop-state.json"))
-        FileStore.documents = path.appendingPathComponent("does-not-exist")
+        // Keep the valid media parent so the new profile preflight reaches the
+        // actual PersistentStore failure. Occupy its exact JSON path with a
+        // directory; a missing parent would now fail at an earlier guard.
+        let stateFile = path.appendingPathComponent("rendprop-state.json")
+        let savedState = path.appendingPathComponent("synthetic-state-before-failure.json")
+        try FileManager.default.moveItem(at:stateFile,to:savedState)
+        try FileManager.default.createDirectory(at:stateFile,withIntermediateDirectories:false)
         check(!busy.confirmLocalAdoption(transfer, orgID: org), "real atomic file-write failure refuses completion")
         check(busy.adoptionBindings?.confirmedOrgID == nil && busy.listings[0].serverID == nil, "write failure rolls back in-memory marker and IDs")
-        FileStore.documents = path
+        try FileManager.default.removeItem(at:stateFile)
+        try FileManager.default.moveItem(at:savedState,to:stateFile)
         check(try Data(contentsOf: path.appendingPathComponent("rendprop-state.json")) == snapshot, "write failure leaves previous durable bytes unchanged")
         check(busy.confirmLocalAdoption(transfer, orgID: org), "same receipt can retry after write failure")
 

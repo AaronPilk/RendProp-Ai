@@ -9,7 +9,9 @@ complete read at **15:55:35 UTC / 11:55:35 EDT** found three additional submissi
 unchanged build-37 crash submission**. Both reads exhausted pagination and matched
 their reported totals. A third complete GET-only read at **16:41:09 UTC /
 12:41:09 EDT** returned the same records. A fourth read at **17:15:42 UTC /
-13:15:42 EDT** again found no added, removed or changed reports. Every comment
+13:15:42 EDT** again found no added, removed or changed reports. The final
+account-transition review read at **18:35:19 UTC / 14:35:19 EDT** also returned
+the same complete records and exact crash log. Every comment
 and all 53 images were reviewed, including
 the twelve submissions added since the October 4 review.
 The crash log was read separately. These are submitted feedback reports, not
@@ -100,6 +102,17 @@ Profile contact edits require the explicit **Save** action. A local draft surviv
 a rejected online save; closing the editor does not publish a new contact card.
 The public-card Save is independent of the selected workspace business-logo action.
 
+A further account-transition check reproduced a guest card disappearing after
+verified sign-in. Adoption now copies the reviewed cloud card only when the
+destination has never reviewed one; an explicit empty destination card also wins.
+The accepted receipt records that decision, and replay cannot replace later edits.
+The phone preserves local card drafts and portraits under that exact verified
+adoption, checks the current named-account card before activation, and keeps the
+guest originals. Existing destination identity is protected; archived drafts need
+explicit review and Save rather than a rebound guest PATCH. Pending paid reel
+markers also survive adoption as review-only blockers, including an unselected
+workspace, so changing accounts cannot silently authorize another paid request.
+
 Default shared-workspace inquiries continue to notify workspace owners/admins.
 The existing explicit photographer-client delivery overrides remain separate;
 editing a public card does not change private login or notification addresses.
@@ -113,7 +126,7 @@ separate SQL/controller coverage; an ignored test is not a live-integration proo
 The actual published-page browser gate passes **203 checks**, including mobile
 navigation at 200% text, nearby-text escaping, real 720p H.264/AAC playback,
 Explore/Watch switching and unload/retry. Source/executable Phase 1 passes
-**33 tests**, the actual listing form passes **29 assertions**, and subscription
+**34 tests**, the actual listing form passes **29 assertions**, and subscription
 policy passes **312 assertions**. These are different scopes, not a single
 end-to-end customer journey.
 
@@ -150,6 +163,15 @@ runs, with actual same-field/disjoint-field races. The full invariant set remain
 **269/270**, with the one explicitly recognized Astra answer-ceiling failure;
 this work does not claim that missing budget fence is repaired.
 
+The guest-card repro now returns the copied card both through the named account
+and its public listing identity. Fresh database coverage passes **27 new adoption,
+35 existing adoption and 34 personal-card assertions**, with **five exact fault
+controls and eight real transaction races**. It tests destination-card preservation,
+receipt-only replay, card-save and deletion races. The guarded migration changes
+only the reviewed-card copy and receipt disposition; existing identity checks,
+profile locks and function ACLs remain intact. These synthetic verified identities
+do not constitute a real anonymous-to-Apple sign-in test.
+
 Actual native Profile policy passes **117 assertions and 14 compiled fault
 controls**. The independently compiled erase/migrate proof passes **seven**
 checks, and the full matrix of nine successful personal-card/logo Save, Clear and
@@ -159,11 +181,23 @@ explicitly reloaded logo. Source-bound receipts retain the original failing
 reproducers. Personal cards remain account-owned through team switches; the
 explicit Save bar must remain reachable above the keyboard.
 
-All **five full-app Release simulator UI cases passed**, with zero failures or
+The final adoption/editor runtime passes **133 assertions and 16 compiled fault
+controls**. It executes the actual card Review and Save actions against a closed
+API and synthetic portrait bytes: Review leaves current account identity intact,
+Save uses the fresh named baseline, a newer chosen portrait wins, another hosted
+industry needs explicit selection, and a rejected Save keeps the archive/draft
+available. Guest pending PATCHes are never rebound. Damaged authoritative files,
+non-Data legacy markers and damaged adoption metadata block another paid request.
+Interrupted local installation skips the whole card if newer destination text or
+portrait exists; it cannot mix guest contact into that newer identity. Separate
+current-card recovery coverage passes **104 assertions**. Prepared image bytes
+and closed transports do not certify the actual Photos picker or Apple sign-in.
+
+All **six full-app Release simulator UI cases passed**, with zero failures or
 skips and unchanged full source hashes: card-only OS share, deliberate portfolio
 selection, separate logo/international phone, stale client Save, large-text guide,
-and keyboard-open personal-card Save followed by a team switch (sharing flows
-share one case). Both the **regular and TestFlight Lab unsigned physical iOS
+keyboard-open personal-card Save followed by a team switch, and guest-card
+Review-before-Save (sharing flows share one case). Both the **regular and TestFlight Lab unsigned physical iOS
 Release builds passed**, with unchanged source hashes. These are compile/UI
 proofs; there was no signing, archive upload or camera acceptance. The draft
 PR records the status of all twelve CI jobs against its exact commit; a failed
@@ -174,7 +208,7 @@ daemon refused configuration, and no real-purchase fallback ran.
 
 The nearby note adds only `nearbyAttractions` (maximum 500 characters) to the
 service-only facts RPC. It does not replace amenities, private measurements or
-the floor-plan attachment. The four new migrations must be applied in this order
+the floor-plan attachment. The five new migrations must be applied in this order
 before their corresponding function handlers:
 
 1. `20261005150445_scoped_business_logo.sql` — workspace-owned immutable logos,
@@ -193,6 +227,11 @@ before their corresponding function handlers:
    definitions fail closed. A deployment that already applied the older logo
    snapshot must pause/drain deletion admission until the repair commits,
    including requests through the existing handler.
+5. `20261005181812_preserve_personal_card_on_anonymous_adoption.sql` — preserve
+   reviewed guest contact only when the destination has no reviewed card and
+   record the immutable disposition on the accepted adoption receipt. Existing
+   destination contact and later edits win. Apply after the public-card schema
+   and before releasing native adoption recovery that reads `/me/card`.
 
 Deploy the updated `me` and `tours` handlers after the schemas, and coordinate
 `coach`, `ai-photo`, `ai-video` and the public Worker with their native callers.

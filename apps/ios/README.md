@@ -32,6 +32,7 @@ and saved scans remain viewable. Profile gains contact-only business-card sharin
 chosen portfolio listings and a distinct hosted business logo. Personal cards use
 account identity rather than the selected workspace's branding and have an explicit
 Save action. Identically named workspaces show distinct workspace IDs. Other changes include
+verified guest-card/draft recovery and retained paid-request blockers during sign-in,
 JPEG/Files download, clearer plan selection, scoped Coach recovery, reviewed nearby
 places and recovery of existing accepted reel jobs. The report distinguishes source
 checks from signed release, real camera/AR and paid AI output acceptance.

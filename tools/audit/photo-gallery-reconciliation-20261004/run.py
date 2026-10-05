@@ -69,7 +69,7 @@ log = result.stdout + result.stderr
 if expected:
     passed = result.returncode != 0 and expected in log and ('Precondition failed:' in log or 'Fatal error:' in log)
 else:
-    passed = result.returncode == 0 and 'Photo history/export geometry: 389 passed' in log
+    passed = result.returncode == 0 and 'Photo history/export geometry: 415 passed' in log
 receipt = {'passed': passed, 'fault': args.inject_fault, 'expected_runtime_assertion': expected,
            'compile_exit': compile_result.returncode, 'runtime_exit': result.returncode,
            'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
