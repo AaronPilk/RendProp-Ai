@@ -45,7 +45,10 @@ retained conflicts, creation-retry protection, account-bound exports/Apple
 codes, Studio draft recovery and ordered Apple subscription events. **These
 follow-up changes are not deployed or uploaded.** Its report records the
 required staged billing rollout and older-client upgrade boundary; build 44's
-historical delivery receipt remains unchanged.
+historical delivery receipt remains unchanged. All twelve
+[CI jobs](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37266689307) passed
+on exact source `e72503c`; the unsigned ARM64 iPhone Release build also passed.
+The final evidence-only documentation update changes no executable or test source.
 
 The [2 October audit follow-up](docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)
 checks Claude's older report against the delivered source and live database.

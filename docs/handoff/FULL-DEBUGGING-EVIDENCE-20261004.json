@@ -383,6 +383,27 @@
       "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/studio/ci-tail-20261005/receipt.json",
       "receiptSHA256": "80717d9449343c56fd65dbdd11d32faf821a0fc8ab153b075f2943c1fab6d3d6",
       "passed": true
+    },
+    {
+      "name": "Complete final CI backend receipts and source-binding summary",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-37266689307-receipts/summary.json",
+      "receiptSHA256": "07e7e51df913f1485759c6fe6e575b8ebbd71ded47d824cf7f3a7ecd435d97db",
+      "passed": true
+    },
+    {
+      "name": "Independent root check of final CI backend receipts and all current/historical source hashes",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-37266689307-root-verification.json",
+      "receiptSHA256": "e7ca3a139be18708163b7a943d1ca620e04c27cbf7590653bc753e963d72c5f9",
+      "passed": true
+    },
+    {
+      "name": "Final complete CI native measurement and App Store boundary receipts",
+      "assertions": null,
+      "receiptPath": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/ios/ci-37266689307/summary.json",
+      "receiptSHA256": "c9b36801be4990455097183ec622c4a2927984b8fe7a6cf6a1c0a9113e69a928",
+      "passed": true
     }
   ],
   "localGates": {
@@ -416,7 +437,7 @@
     "appStoreBoundaryFaultControls": 2
   },
   "completeCI": {
-    "state": "Final complete run pending; every remaining native/browser/media gate passed locally",
+    "state": "passed",
     "firstRunId": 37262547517,
     "firstRunSource": "3253bf8207e0d616dfeb81ad8743b4f9d2998cab",
     "secondRunId": 37262945554,
@@ -427,7 +448,82 @@
     "thirdRunResult": "Eleven jobs passed; measurement positive passed140, but direct replay assignment removal was repaired by independent facts acknowledgement; fault control corrected without runtime/assertion change",
     "fourthRunId": 37264850514,
     "fourthRunSource": "4fbb1e7520ac61ebda646b414d1c44f3efb85a07",
-    "fourthRunResult": "All21 measurement controls and exports passed; existing fixed250ms drain observation failed; deterministic completion observation corrected without runtime change"
+    "fourthRunResult": "All21 measurement controls and exports passed; existing fixed250ms drain observation failed; deterministic completion observation corrected without runtime change",
+    "runId": 37266689307,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37266689307",
+    "sourceCommit": "e72503c995509af140888db068f2374794b4acb7",
+    "testedMergeCommit": "5b8238802910d69155fe11c5aa0d793a73fd0824",
+    "jobsPassed": 12,
+    "jobs": [
+      {
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "conclusion": "success"
+      },
+      {
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Studio contracts, build and property workflows (offline)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Python workers (render, spatial, training adapter)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Secret scan",
+        "conclusion": "success"
+      },
+      {
+        "name": "iOS static gates",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (tour-host)",
+        "conclusion": "success"
+      },
+      {
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase edge functions (deno check + tests)",
+        "conclusion": "success"
+      }
+    ],
+    "edgeTests": {
+      "passed": 1395,
+      "failed": 0,
+      "ignored": 1,
+      "directUploadFixturePassed": 61,
+      "actualListingIntentGate": "passed",
+      "derivedFromCompletedJobLog": "/Users/pilksclaes/LocalRendpropAudits/full-debugging-20261004/backend/ci-37266689307-edge.log",
+      "jobLogSHA256": "30cfa39aabe626ffdf04257e86fda1fe601f0f47a56a0b0bfa8d9e8a5369898b",
+      "actualListingIntentAssertions": 66
+    },
+    "databaseReceiptCount": 23,
+    "databaseSourceHashMatches": 2062,
+    "databaseSourcePathCount": 296,
+    "databaseCurrentSourceHashEntries": 1975,
+    "databaseHistoricalControlHashMatches": 33,
+    "runtimeChangesAfterTestedSource": false,
+    "nativeMeasurementReceipts": 22,
+    "nativeMeasurementFaultControls": 21,
+    "nativeBoundaryPositiveCases": 5,
+    "nativeBoundaryFaultControls": 2
   },
   "liveTestFlight": "1.0.4 (44); historical receipt unchanged",
   "productionMutations": 0,
@@ -447,5 +543,6 @@
     "Measurement authenticated session-variable bypass must be permission-denied; accepted private plan remains unchanged",
     "Measurement replay control retains stale typed plan at final replay persistence across both valid adoption paths; exact original rejection retained; all21 compile and reject locally",
     "App Store isolation observes actual completion with bounded failure deadline; delayed400ms positive and compiled missing-end/completion faults preserve exact assertions; runtime20s drain unchanged"
-  ]
+  ],
+  "verifiedAt": "2026-10-05T05:42:34.647255+00:00"
 }
