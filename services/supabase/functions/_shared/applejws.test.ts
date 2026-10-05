@@ -26,6 +26,7 @@ import {
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { HttpError } from "./http.ts";
+import { computeEntitlement } from "../apple-subscriptions/logic.ts";
 import {
   APPLE_ROOT_CA_G3_DER,
   type AppleRenewalInfo,
@@ -957,4 +958,119 @@ Deno.test("S1: an x5c entry in base64URL rather than base64 is refused", async (
     x5c: [b64url(chain.leafDer), b64(chain.intermediateDer), b64(chain.rootDer)],
   });
   await expectUnauthorized(() => verifyAppleJWS(jws, { trustRoot: chain.rootDer }));
+});
+
+Deno.test("verified signed chronology reaches actual notification, restore and historical replay methods", async () => {
+  const chain = await buildChain();
+  const now = Date.now(), purchase = now - 1000_000, signed = now - 900_000, event = now - 800_000;
+  const user = "d0501001-0000-4000-8000-000000000001", org = "d0501001-0000-4000-8000-000000000002";
+  const signedTx = await signJws(chain, transactionPayload({ environment: "Production", purchaseDate: purchase, signedDate: signed, expiresDate: now + 86400_000, appAccountToken: user }));
+  const signedRenewal = await signJws(chain, { originalTransactionId: "2000000700000000", environment: "Production", signedDate: event, autoRenewStatus: 0 });
+  const me = await Deno.readTextFile(new URL("../me/index.ts", import.meta.url));
+  const apple = await Deno.readTextFile(new URL("../apple-subscriptions/index.ts", import.meta.url));
+  function actual(source: string, name: string): string {
+    const match = source.match(new RegExp(`^async function ${name}\\([\\s\\S]*?^}`, "m"));
+    assert(match, `actual ${name} source is required`); return match[0];
+  }
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  let pending = false, unlinked = false;
+  const storedExpiry = new Date(now - 60_000).toISOString();
+  const admin = {
+    rpc: (name: string, args: Record<string, unknown>) => {
+      calls.push({ name, args });
+      if (name === "effective_plan") return Promise.resolve({ data: "free", error: null });
+      assertEquals(name, "apply_apple_entitlement_v2");
+      return Promise.resolve({ data: { status: "refunded", expires_at: storedExpiry }, error: null });
+    },
+    from: (table: string) => {
+      let selection = "";
+      const query = {
+        select: (columns: string) => { selection = columns; return query; },
+        insert: () => Promise.resolve({ data: null, error: null }),
+        eq: () => query, order: () => query, limit: () => query,
+        update: () => query,
+        maybeSingle: () => Promise.resolve({ data: table === "memberships" ? { role: "owner" } :
+          table === "orgs" ? { plan: "free", plan_source: "apple", plan_expires_at: storedExpiry } :
+          selection === "org_id, environment" ? { org_id: unlinked ? null : org, environment: "Production" } :
+          { status: "refunded", auto_renew: false, product_id: "com.rendprop.app.team.monthly", expires_at: storedExpiry }, error: null }),
+        then: (resolve: (value: unknown) => unknown) => resolve({ data: table === "apple_notifications" && pending ? [{
+          notification_uuid: "chronology-pending", payload: {
+            transaction: decodeTransaction(transactionPayload({ purchaseDate: purchase, signedDate: signed })),
+            notification: { signedDate: event }, renewal: { signedDate: new Date(event).toISOString() },
+            entitlement: { original_transaction_id: "2000000700000000", transaction_id: "2000000700000001", product_id: "com.rendprop.app.pro.monthly", plan: "pro", environment: "Production", status: "active", expires_at: new Date(now + 86400_000).toISOString(), auto_renew: false, notification_type: "DID_RENEW" },
+          },
+        }] : [], error: null }),
+      };
+      return query;
+    },
+  };
+  const fixture = { verify: (jws: string) => verifyAppleJWS(jws, { trustRoot: chain.rootDer }), admin, user, org };
+  Object.assign(globalThis, { __appleChronologyFixture: fixture });
+  const program = `
+    import {assert,HttpError,json,readJsonLimited,throwRpc} from ${JSON.stringify(new URL("./http.ts", import.meta.url).href)};
+    import {decodeTransaction,decodeRenewalInfo,deriveEntitlement,productToPlan,type AppleTransaction,type AppleRenewalInfo} from ${JSON.stringify(new URL("./applejws.ts", import.meta.url).href)};
+    import {assertExpectedSubscriptionWorkspace,assertVerifiedPurchaseOwner} from ${JSON.stringify(new URL("../me/billing.ts", import.meta.url).href)};
+    import {computeEntitlement,resolveVerdict,lookupVerdict,summariseNotification,type NotificationFacts,type PendingEntitlement} from ${JSON.stringify(new URL("../apple-subscriptions/logic.ts", import.meta.url).href)};
+    const f=(globalThis as any).__appleChronologyFixture;
+    const verifyAppleJWS=f.verify,adminClient=()=>f.admin,orgForUser=async()=>f.org,preferredOrg=()=>undefined,durableRateLimit=async()=>true;
+    const APPLE_BUNDLE_ID="com.rendprop.app",ENTITLEMENT_MAX_PER_WINDOW=30,ENTITLEMENT_WINDOW_SECONDS=60,MAX_JWS_CHARS=64*1024,MAX_ENTITLEMENT_BODY_BYTES=256*1024,MAX_REPLAY=50;
+    const NOTIFY_MAX_PER_WINDOW=240,NOTIFY_WINDOW_SECONDS=60,MAX_NOTIFY_BODY_BYTES=128*1024,MAX_SIGNED_PAYLOAD_CHARS=64*1024;
+    const ENTITLEMENT_ROLES=new Set(["owner","admin"]);
+    ${actual(apple, "readFacts")}
+    ${actual(apple, "applyEntitlement")}
+    ${actual(apple, "handleNotify")}
+    ${actual(me, "handleEntitlement")}
+    ${actual(me, "replayPendingNotifications")}
+    export {readFacts,handleNotify,handleEntitlement,replayPendingNotifications};
+  `;
+  try {
+    const methods = await import("data:application/typescript," + encodeURIComponent(program));
+    const signedOuter = await signJws(chain, { notificationUUID: "chronology-event", notificationType: "DID_CHANGE_RENEWAL_STATUS", signedDate: event, data: { bundleId: "com.rendprop.app", environment: "Production", signedTransactionInfo: signedTx, signedRenewalInfo: signedRenewal } });
+    const outer = await verifyAppleJWS(signedOuter, { trustRoot: chain.rootDer });
+    const facts = await methods.readFacts(outer);
+    const entitlement = computeEntitlement(facts, "derive");
+    assertEquals(entitlement.transaction_purchased_at, new Date(purchase).toISOString());
+    assertEquals(entitlement.transaction_signed_at, new Date(signed).toISOString());
+    assertEquals(entitlement.event_signed_at, new Date(event).toISOString());
+    assertEquals(entitlement.renewal_signed_at, new Date(event).toISOString());
+    // An old native body has no chronology additions; the handler obtains all
+    // order evidence from Apple's verified transaction, never request fields.
+    const response = await methods.handleEntitlement(new Request("https://fixture.invalid/me/entitlement", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ signed_transaction: signedTx, signed_renewal_info: signedRenewal }) }), user);
+    const body = await response.json();
+    assertEquals(body.plan, "free"); assertEquals(body.status, "refunded");
+    assertEquals(body.product_id, "com.rendprop.app.team.monthly"); assertEquals(body.expires_at, storedExpiry);
+    const restore = calls.find(call => call.name === "apply_apple_entitlement_v2")!;
+    assertEquals(restore.args.p_transaction_purchased_at, new Date(purchase).toISOString());
+    assertEquals(restore.args.p_transaction_signed_at, new Date(signed).toISOString());
+    assertEquals(restore.args.p_event_signed_at, null);
+    pending = true; calls.length = 0;
+    assertEquals(await methods.replayPendingNotifications("2000000700000000", org), 1);
+    assertEquals(calls[0].args.p_transaction_purchased_at, new Date(purchase).toISOString());
+    assertEquals(calls[0].args.p_transaction_signed_at, new Date(signed).toISOString());
+    assertEquals(calls[0].args.p_event_signed_at, new Date(event).toISOString());
+    assertEquals(calls[0].args.p_renewal_signed_at, new Date(event).toISOString());
+    unlinked = true; calls.length = 0;
+    const notification = await methods.handleNotify(new Request("https://fixture.invalid/apple-subscriptions/notify", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ signedPayload: signedOuter }),
+    }));
+    assertEquals((await notification.json()).pending, true);
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0].name, "apply_apple_entitlement_v2");
+    assertEquals(calls[0].args.p_org, null);
+    assertEquals(calls[0].args.p_event_signed_at, new Date(event).toISOString());
+    // These two signatures are independent ordering evidence. An older outer
+    // refund reversal must not inherit the time of its re-signed transaction.
+    const freshSigned = now - 500_000, oldReversalEvent = now - 650_000;
+    const freshTx = await signJws(chain, transactionPayload({ environment: "Production", purchaseDate: purchase, signedDate: freshSigned, expiresDate: now + 86400_000, appAccountToken: user }));
+    const oldReversal = await signJws(chain, { notificationUUID: "chronology-old-reversal", notificationType: "REFUND_REVERSED", signedDate: oldReversalEvent, data: { bundleId: "com.rendprop.app", environment: "Production", signedTransactionInfo: freshTx } });
+    unlinked = false; calls.length = 0;
+    await methods.handleNotify(new Request("https://fixture.invalid/apple-subscriptions/notify", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ signedPayload: oldReversal }),
+    }));
+    assertEquals(calls[0].args.p_notification_type, "REFUND_REVERSED");
+    assertEquals(calls[0].args.p_transaction_signed_at, new Date(freshSigned).toISOString());
+    assertEquals(calls[0].args.p_event_signed_at, new Date(oldReversalEvent).toISOString());
+    const mismatched = await signJws(chain, { originalTransactionId: "different-subscription", signedDate: event });
+    await assertRejects(() => methods.readFacts({ ...outer, data: { ...(outer.data as object), signedRenewalInfo: mismatched } }), HttpError);
+  } finally { Reflect.deleteProperty(globalThis, "__appleChronologyFixture"); }
 });

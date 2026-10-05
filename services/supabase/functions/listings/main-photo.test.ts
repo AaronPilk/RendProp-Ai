@@ -61,9 +61,9 @@ Deno.test("actual cover PATCH resolves an uploaded property photo to its canonic
     assertEquals(r.body.main_photo_asset_id,undefined);
   }
 });
-Deno.test("actual cover PATCH omission preserves selection and explicit null clears it",async()=>{
-  const omitted=await invoke({address:"Changed"});assertEquals(omitted.status,200);assertEquals(omitted.body.main_photo_key,KEY);
-  assertEquals(omitted.updates,[{address:"Changed"}]);assertEquals(omitted.assetReads,0);
+Deno.test("legacy ordinary PATCH is fenced and explicit cover null still clears it",async()=>{
+  const omitted=await invoke({address:"Changed"});assertEquals(omitted.status,426);
+  assertEquals(omitted.updates,[]);assertEquals(omitted.assetReads,0);
   for(const field of ["main_photo_asset_id","main_photo_key"]){const r=await invoke({[field]:null});assertEquals(r.status,200);assertEquals(r.body.main_photo_key,null);assertEquals(r.assetReads,0);}
 });
 Deno.test("actual cover PATCH rejects URLs, malformed IDs, both selectors and forged paths without updating",async()=>{
@@ -89,7 +89,7 @@ Deno.test("actual creation cannot preselect an unuploaded or arbitrary property 
 Deno.test("actual gallery PATCH selects current uploaded versions and keeps its selected cover",async()=>{
   const r=await invoke({gallery_asset_ids:[ASSET.toUpperCase()],main_photo_asset_id:ASSET});assertEquals(r.status,200);
   assertEquals(r.updates,[{gallery_asset_ids:[ASSET],main_photo_key:KEY}]);
-  const omitted=await invoke({address:"Still selected"},{selection:[ASSET]});assertEquals(omitted.body.gallery_asset_ids,[ASSET]);assertEquals(omitted.assetReads,0);
+  const omitted=await invoke({main_photo_key:null},{selection:[ASSET]});assertEquals(omitted.status,200);assertEquals(omitted.body.gallery_asset_ids,[ASSET]);assertEquals(omitted.assetReads,0);
 });
 Deno.test("actual gallery replacement can clear old cover, hide all, or restore legacy selection",async()=>{
   const hidden=await invoke({gallery_asset_ids:[]});assertEquals(hidden.status,200);assertEquals(hidden.updates,[{gallery_asset_ids:[],main_photo_key:null}]);
@@ -114,7 +114,7 @@ Deno.test("actual cloud gallery addition uses verified caller and atomic append 
 });
 Deno.test("actual cloud addition rejects replacement/detail mixes, invalid input and unavailable authority",async()=>{
  for(const body of [{gallery_add_asset_ids:[ASSET],gallery_asset_ids:null},{gallery_add_asset_ids:[ASSET],address:"Cannot partially save"},{gallery_add_asset_ids:null},{gallery_add_asset_ids:[ASSET,ASSET]}]){
-  const r=await invoke(body);assertEquals(r.status,400);assertEquals(r.appends,[]);assertEquals(r.updates,[]);
+  const r=await invoke(body);assertEquals(r.status,"address" in body?426:400);assertEquals(r.appends,[]);assertEquals(r.updates,[]);
  }
  for(const [options,status]of [[{readOnly:true},403],[{workspace:OTHER},404],[{deleting:true},409],[{appendFailure:true},503]]as const){
   const r=await invoke({gallery_add_asset_ids:[ASSET]},options);assertEquals(r.status,status);assertEquals(r.updates,[]);

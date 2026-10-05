@@ -121,6 +121,9 @@ final class AuthStore: ObservableObject {
         /// finding 8 / TN3194). Not a session credential — see
         /// `submitAppleAuthorizationCode`.
         static let pendingAppleAuthCode = "auth.pendingAppleAuthCode"
+        // The old unscoped slot is retained, but never submitted for an account
+        // whose ownership it cannot establish.
+        static let pendingAppleAuthCodeOwnerPrefix = "auth.pendingAppleAuthCode.owner.v2."
         static let pendingAdoption = "auth.pendingAnonymousAdoption.v1"
     }
 
@@ -615,47 +618,112 @@ final class AuthStore: ObservableObject {
         return sub
     }
 
-    /// TN3194: POST the Apple authorizationCode to the backend, which exchanges
-    /// it for a refresh token stored for later revocation (account deletion).
-    /// Sign-in must never block on this, so failure is still silent to the
-    /// caller — but it is no longer LOST (audit finding 8): the code is
-    /// persisted to the Keychain before the request goes out and cleared only
-    /// once the server confirms receipt, so a crash mid-flight, a timeout, or
-    /// any other transient failure leaves it for
-    /// `retryPendingAppleAuthorizationCodeIfNeeded()` to try again exactly
-    /// once, at the next launch. `isRetry` marks that second attempt: it
-    /// clears the pending record regardless of outcome, because Apple's code
-    /// is single-use and short-lived — a third attempt on a later launch
-    /// would just keep re-submitting an already-expired code forever.
-    static func submitAppleAuthorizationCode(_ code: String, isRetry: Bool = false) async {
-        SecureStore.set(Keys.pendingAppleAuthCode, code)
-        guard Config.useLiveBackend,
-              let url = Config.apiBaseURL?.appendingPathComponent("me/apple-code"),
-              let token = await AuthStore.validAccessToken() else {
-            if isRetry { SecureStore.remove(Keys.pendingAppleAuthCode) }
-            return
+    /// A sign-in receipt owns the Apple code before the caller can suspend.
+    /// Token refresh preserves this identity; account/session/workspace changes
+    /// require a new receipt and cannot rebind the old code.
+    struct AppleSessionIdentity: Equatable {
+        let ownerID: String
+        let sessionRevision: UInt64
+
+        @MainActor var isCurrent: Bool {
+            !Task.isCancelled && AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
+                && AuthStore.shared.userID == ownerID
+                && AuthStore.shared.syncSessionRevision == sessionRevision
         }
+    }
+
+    private struct PendingAppleCode: Codable, Equatable {
+        let id: UUID
+        let ownerID: String
+        let code: String
+        let createdAt: Date
+        var attempts: Int
+
+        func isValid(for owner: String) -> Bool {
+            ownerID == owner && UUID(uuidString: ownerID) != nil
+                && !code.isEmpty && code.utf8.count <= 2048 && (0...2).contains(attempts)
+                && createdAt.timeIntervalSince1970.isFinite
+        }
+        var isFresh: Bool {
+            let age = Date().timeIntervalSince(createdAt)
+            return age >= -30 && age <= 300
+        }
+        var encoded: String? {
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            return (try? encoder.encode(self)).flatMap { String(data: $0, encoding: .utf8) }
+        }
+    }
+
+    /// Persist only a code delivered with this successful sign-in receipt.
+    /// Per-owner slots preserve another account's pending code. An unreadable or
+    /// malformed existing record is never treated as an empty slot.
+    @MainActor static func submitAppleAuthorizationCode(_ code: String, for identity: AppleSessionIdentity) async {
+        guard identity.isCurrent, UUID(uuidString: identity.ownerID) != nil,
+              !code.isEmpty, code.utf8.count <= 2048 else { return }
+        let key = Keys.pendingAppleAuthCodeOwnerPrefix + identity.ownerID.lowercased()
+        let existing: String?
+        do { existing = try SecureStore.getChecked(key) } catch { return }
+        if let existing {
+            guard let bytes = existing.data(using: .utf8),
+                  let previous = try? JSONDecoder().decode(PendingAppleCode.self, from: bytes),
+                  previous.isValid(for: identity.ownerID) else { return }
+            if previous.code == code {
+                if previous.attempts == 0 {
+                    await sendPendingAppleCode(previous, key: key, identity: identity, retry: false)
+                }
+                return // only the launch retry resends an attempted code
+            }
+        }
+        let pending = PendingAppleCode(id: UUID(), ownerID: identity.ownerID, code: code,
+                                       createdAt: Date(), attempts: 0)
+        guard let encoded = pending.encoded, SecureStore.set(key, encoded) else { return }
+        await sendPendingAppleCode(pending, key: key, identity: identity, retry: false)
+    }
+
+    /// A retry is spent only at the transport boundary and persisted first, so
+    /// process termination cannot create a third exchange of a single-use code.
+    @MainActor private static func sendPendingAppleCode(_ pending: PendingAppleCode, key: String,
+                                                       identity: AppleSessionIdentity, retry: Bool) async {
+        guard identity.isCurrent, pending.isValid(for: identity.ownerID), pending.isFresh,
+              pending.attempts == (retry ? 1 : 0), Config.useLiveBackend,
+              let url = Config.apiBaseURL?.appendingPathComponent("me/apple-code"),
+              let token = await AuthStore.validAccessToken() else { return }
+        guard identity.isCurrent, jwtSubject(token) == identity.ownerID, tokenIsIdentified(token),
+              let original = pending.encoded,
+              (try? SecureStore.getChecked(key)) == original else { return }
+        var sent = pending; sent.attempts += 1
+        guard let encoded = sent.encoded, SecureStore.set(key, encoded) else { return }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["authorization_code": code])
-        if let (_, resp) = try? await URLSession.shared.data(for: req),
-           let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
-            SecureStore.remove(Keys.pendingAppleAuthCode)   // confirmed — safe to forget
-        } else if isRetry {
-            SecureStore.remove(Keys.pendingAppleAuthCode)   // one retry spent either way
-        }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["authorization_code": sent.code])
+        guard identity.isCurrent, (try? SecureStore.getChecked(key)) == encoded else { return }
+        guard let (bytes, response) = try? await URLSession.shared.data(for: req),
+              identity.isCurrent, (try? SecureStore.getChecked(key)) == encoded,
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let receipt = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
+              receipt["stored"] as? Bool == true else { return }
+        SecureStore.remove(key) // only this exact owner's confirmed record
     }
 
-    /// Called once at app launch (see `RendpropApp`). Picks up a code left
-    /// behind by an interrupted `submitAppleAuthorizationCode` call and gives
-    /// it exactly one more attempt — see that function's doc comment for why
-    /// only one. A no-op when nothing is pending, which is the common case.
-    static func retryPendingAppleAuthorizationCodeIfNeeded() async {
-        guard let code = SecureStore.get(Keys.pendingAppleAuthCode) else { return }
-        await submitAppleAuthorizationCode(code, isRetry: true)
+    /// Retry only the current identified account's proven owner-bound record.
+    /// The legacy unscoped Keychain value is preserved and cannot be dispatched.
+    @MainActor static func retryPendingAppleAuthorizationCodeIfNeeded() async {
+        guard let owner = shared.userID, UUID(uuidString: owner) != nil else { return }
+        let identity = AppleSessionIdentity(ownerID: owner, sessionRevision: shared.syncSessionRevision)
+        guard identity.isCurrent else { return }
+        let key = Keys.pendingAppleAuthCodeOwnerPrefix + owner.lowercased()
+        guard let encoded = try? SecureStore.getChecked(key),
+              let bytes = encoded.data(using: .utf8),
+              let pending = try? JSONDecoder().decode(PendingAppleCode.self, from: bytes),
+              pending.isValid(for: owner) else { return }
+        guard pending.isFresh else {
+            if (try? SecureStore.getChecked(key)) == encoded { SecureStore.remove(key) }
+            return
+        }
+        await sendPendingAppleCode(pending, key: key, identity: identity, retry: pending.attempts > 0)
     }
 
     /// Exchange an Apple identity token for a Supabase session, then persist it.
@@ -663,7 +731,8 @@ final class AuthStore: ObservableObject {
     /// GoTrue re-hashes and compares it to the token's `nonce` claim. Throws
     /// `APIError.server` with GoTrue's own message on a rejected exchange.
     @MainActor
-    func exchangeAppleIdentityToken(idToken: String, nonce: String? = nil) async throws {
+    @discardableResult
+    func exchangeAppleIdentityToken(idToken: String, nonce: String? = nil) async throws -> AppleSessionIdentity {
         // A late anonymous/refresh response cannot replace the chosen identity.
         sessionEpoch &+= 1
         syncIdentityEpoch &+= 1
@@ -738,7 +807,12 @@ final class AuthStore: ObservableObject {
         applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate)
+        let acceptedEpoch = sessionEpoch
+        let acceptedOwner = Self.jwtSubject(session.accessToken)
         await retryPendingAdoptionIfNeeded()
+        guard !Task.isCancelled, sessionEpoch == acceptedEpoch,
+              isSignedIn, isIdentified, let acceptedOwner, userID == acceptedOwner else { throw CancellationError() }
+        return AppleSessionIdentity(ownerID: acceptedOwner, sessionRevision: syncSessionRevision)
     }
 
     // MARK: - Anonymous sessions (Guideline 5.1.1(v))

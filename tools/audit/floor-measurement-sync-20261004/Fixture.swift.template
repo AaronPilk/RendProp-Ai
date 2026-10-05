@@ -52,7 +52,15 @@ __LOCAL_STATUS__
     var measurementUpdate: (Listing) async throws -> Listing = { $0 }
     func updateMeasurements(_ listing: Listing) async throws -> Listing { measurementSnapshots.append(listing); return try await measurementUpdate(listing) }
     var update: (Listing) async throws -> Listing = { $0 }
-    func updateListing(_ listing: Listing) async throws -> Listing { snapshots.append(listing); return try await update(listing) }
+    func updateListing(_ listing: Listing) async throws -> Listing {
+        snapshots.append(listing)
+        var receipt = try await update(listing)
+        // Server DTO mapping records the accepted values as a fresh baseline;
+        // it never returns a phone's still-pending edit state as a receipt.
+        receipt.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(receipt), detailBaseline: ListingFactsSync.detailFacts(receipt))
+        receipt.needsServerSync = false
+        return receipt
+    }
     var cloudRead: () async throws -> [Listing] = { [] }
     var cloudReads = 0
     func cloudListings() async throws -> [Listing] { cloudReads += 1; return try await cloudRead() }
@@ -79,10 +87,13 @@ enum Config { static let useLiveBackend = true; static let enableAuth = true }
     func index(of id: UUID) -> Int? { listings.firstIndex(where: { $0.id == id }) }
     func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool { false }
     func ensureServerListing(_ draft: Listing) async throws -> UUID { throw FixtureError.failed }
+    func setLastError(_ message: String, for id: UUID) { if let i = index(of: id) { listings[i].lastError = message } }
 __MODIFY__
 __SAVE_MEASUREMENTS__
 __RELOAD_SHARED__
 __CONFIRM_LOCAL__
+__LOAD_FACTS_REVIEW__
+__RESOLVE_FACTS__
 __MARK_DIRTY__
 __SYNC_LISTING__
 }
@@ -125,6 +136,15 @@ __EDITOR_PERSIST__
                 await Task.yield()
             }
         }
+        func stagedOrdinaryEdit(_ listing: Listing) -> Listing {
+            var base = listing
+            base.needsServerSync = false
+            base.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(base), detailBaseline: ListingFactsSync.detailFacts(base))
+            var edited = base
+            edited.address += " reviewed edit"
+            ListingFactsSync.stage(from: base, in: &edited)
+            return edited
+        }
         // Frozen raw-details algorithm from the pre-measurements source.
         // This represents pending cloudCreateFingerprint snapshots already on
         // phones, independently of the current production implementation.
@@ -157,7 +177,7 @@ __EDITOR_PERSIST__
         try check(details[FloorMeasurementPlan.wireKey] == wire, "Typed plan overrides stale wire independently of generic details")
         try check(details["floorplan_url"] == local.details?["floorplan_url"] && details["year_built"] == "2001" && details["future_key_v4"] == "opaque", "Measurement save preserves floor-plan URL and unrelated details")
         try check(details[Listing.searchIndexingKey] == "false", "Measurement merge preserves explicit search preference")
-        try check(body["main_photo_key"] == nil && body["main_photo_asset_id"] == nil && body["gallery_asset_ids"] == nil, "Measurement PATCH never overwrites cloud photo or gallery selection")
+        try check(body["main_photo_key"] == nil && body["main_photo_asset_id"] == nil && body["gallery_asset_ids"] == nil, "Measurement facts CAS never overwrites cloud photo or gallery selection")
         try check(local.details?[FloorMeasurementPlan.wireKey] == newerWire, "Wire assembly leaves local raw details untouched")
         var formless = local; formless.details = nil
         try check((try client.body(formless, patch: false)["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == wire, "Typed plan is sent even when the generic form has no details")
@@ -168,12 +188,14 @@ __EDITOR_PERSIST__
         try check(mapped.floorMeasurements == plan && mapped.address == "Cloud facts" && mapped.serverOrgID == org, "Wire measurements hydrate alongside ordinary Listing facts")
         try check(mapped.details?["floorplan_url"] == details["floorplan_url"] && mapped.allowSearchIndexing == false, "Snake-case freeform URL and indexing keys survive readback")
         _ = try await client.createListing(local)
-        _ = try await client.updateListing(local)
+        _ = try await client.updateListing(stagedOrdinaryEdit(local))
         try check(client.requests.count == 2, "Actual create and update reach the isolated request boundary once")
         try check(client.requests[0].httpMethod == "POST" && client.requests[0].value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Actual create remains scoped to its original workspace")
-        try check(client.requests[1].url!.lastPathComponent.lowercased() == sid.uuidString.lowercased(), "Actual update uses the server listing identity")
+        try check(client.requests[1].httpMethod == "PUT" && client.requests[1].url!.lastPathComponent == "facts" && client.requests[1].url!.deletingLastPathComponent().lastPathComponent.lowercased() == sid.uuidString.lowercased(), "Actual facts update uses PUT and the bound server listing identity")
         let sent = try JSONSerialization.jsonObject(with: client.requests[1].httpBody!) as! [String: Any]
-        try check((sent["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == nil, "Generic PATCH omits private measurements")
+        let sentChanges = sent["changes"] as! [String: Any]
+        try check(Set(sent.keys) == Set(["expected", "changes", "details_expected", "details_changes"]) && Set(sentChanges.keys) == Set(["address"]), "Actual staged facts request sends only the edited ordinary field and its CAS base")
+        try check((sent["details_changes"] as? [String: Any])?[FloorMeasurementPlan.wireKey] == nil && (sent["details_expected"] as? [String: Any])?[FloorMeasurementPlan.wireKey] == nil, "Generic facts CAS omits private measurements")
         var empty = local; empty.floorMeasurements = FloorMeasurementPlan(rooms: [], updatedAt: fixedDate)
         let emptyBody = try client.body(empty, patch: false)["details"] as! [String: String]
         try check(FloorMeasurementPlan.decodeWireValue(emptyBody[FloorMeasurementPlan.wireKey])?.rooms.isEmpty == true, "An empty supported plan deliberately clears all rooms")
@@ -371,6 +393,7 @@ __EDITOR_PERSIST__
         office.details?["floorplan_url"] = "https://fixture.invalid/office-plan.pdf"
         office.measurementSync = FloorMeasurementSyncState(expected: wire)
         office.cloudCreateReplayed = true
+        office.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(office), detailBaseline: ListingFactsSync.detailFacts(office))
         let replayModel = SyncModel(prepared), replayGate = HeldBoundary()
         let replayCreate = Task { @MainActor in
             try await CloudDraftCreation.ensure(snapshot: prepared, identity: identity,
@@ -390,7 +413,7 @@ __EDITOR_PERSIST__
             return accepted
         }
         await replayModel.syncListing(localID)
-        try check(replayModel.api.measurementSnapshots.count == 1 && replayModel.api.snapshots.isEmpty && replayModel.listings[0].measurementSync?.pending == false, "A measurement-only lost-receipt replay never sends stale full-row PATCH")
+        try check(replayModel.api.measurementSnapshots.count == 1 && replayModel.api.snapshots.isEmpty && replayModel.listings[0].measurementSync?.pending == false, "A measurement-only lost-receipt replay never sends stale full-row facts CAS")
 
         // If the office changed geometry too, a recovered creation must keep
         // the old baseline and ask for a choice, not overwrite the office plan.
@@ -429,7 +452,7 @@ __EDITOR_PERSIST__
         try check(recoveredPrior.floorMeasurements == newer && recoveredPrior.measurementSync?.expected == wire && recoveredPrior.measurementSync?.pending == true && recoveredPrior.measurementSync?.factsReviewRequired == true && recoveredPrior.details?[FloorMeasurementPlan.wireKey] == newerWire, "Legacy pending geometry recovers exact CAS baseline before generic acknowledgement")
         let recoveredModel = SyncModel(recoveredPrior)
         await recoveredModel.syncListing(localID)
-        try check(recoveredModel.api.measurementSnapshots.count == 1 && recoveredModel.api.snapshots.isEmpty && recoveredModel.listings[0].measurementSync?.pending == false && recoveredModel.listings[0].measurementSync?.factsReviewRequired == true && recoveredModel.listings[0].needsServerSync == true, "Unproven legacy listing facts never reach generic PATCH")
+        try check(recoveredModel.api.measurementSnapshots.count == 1 && recoveredModel.api.snapshots.isEmpty && recoveredModel.listings[0].measurementSync?.pending == false && recoveredModel.listings[0].measurementSync?.factsReviewRequired == true && recoveredModel.listings[0].needsServerSync == true, "Unproven legacy listing facts never reach generic facts CAS")
         let recoveredMerge = try CloudListingMerge.merge(local: recoveredModel.listings, remote: [office], protected: [])[0]
         try check(recoveredMerge.floorMeasurements == newer && recoveredMerge.address == local.address && recoveredMerge.measurementSync?.factsReviewRequired == true, "Refresh retains recovered geometry and unreviewed local ordinary facts")
         let undecodedMerge = try CloudListingMerge.merge(local: [priorPending], remote: [office], protected: [])[0]
@@ -437,9 +460,10 @@ __EDITOR_PERSIST__
         WorkspaceContext.selectedOrgID = otherOrg
         try refuses({ try recoveredModel.confirmLocalListingDetails(localID) }, "Ordinary review confirmation is bound to the selected workspace")
         WorkspaceContext.selectedOrgID = org
+        recoveredModel.api.cloudRead = { [office] }
         try recoveredModel.confirmLocalListingDetails(localID)
         try await waitUntil { recoveredModel.api.snapshots.count == 1 && !recoveredModel.syncInFlight.contains(localID) }
-        try check(recoveredModel.listings[0].needsServerSync == false && recoveredModel.listings[0].measurementSync?.factsReviewRequired == false && recoveredModel.api.snapshots[0].address == local.address, "Only explicit keep-local confirmation permits the reviewed ordinary PATCH")
+        try check(recoveredModel.api.cloudReads == 1 && recoveredModel.listings[0].needsServerSync == false && recoveredModel.listings[0].measurementSync?.factsReviewRequired == false && recoveredModel.api.snapshots[0].address == local.address && recoveredModel.api.snapshots[0].factsSync?.fields["address"]?.expected == .text(office.address), "Only explicit keep-local confirmation permits the reviewed ordinary facts CAS")
 
         var recoveredConflict = recoveredPrior
         recoveredConflict.measurementSync?.conflict = true
@@ -449,7 +473,7 @@ __EDITOR_PERSIST__
         try check(sharedChoiceModel.listings[0].address == local.address && sharedChoiceModel.listings[0].needsServerSync == true && sharedChoiceModel.listings[0].measurementSync?.factsReviewRequired == true && sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire, "Loading only shared measurements does not approve unproven ordinary facts")
         try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
         try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire && sharedChoiceModel.listings[0].floorMeasurements == plan, "Sequential shared measurements then shared facts retain the original phone backup")
-        try check(sharedChoiceModel.listings[0].address == office.address && sharedChoiceModel.listings[0].sqft == office.sqft && sharedChoiceModel.listings[0].soldAt == office.soldAt && sharedChoiceModel.listings[0].details?["floorplan_url"] == office.details?["floorplan_url"] && sharedChoiceModel.listings[0].needsServerSync == false && sharedChoiceModel.listings[0].measurementSync?.factsReviewRequired != true && sharedChoiceModel.api.snapshots.isEmpty, "Explicit use-shared choice adopts office facts and retains local measurement backup without PATCH")
+        try check(sharedChoiceModel.listings[0].address == office.address && sharedChoiceModel.listings[0].sqft == office.sqft && sharedChoiceModel.listings[0].soldAt == office.soldAt && sharedChoiceModel.listings[0].details?["floorplan_url"] == office.details?["floorplan_url"] && sharedChoiceModel.listings[0].needsServerSync == false && sharedChoiceModel.listings[0].measurementSync?.factsReviewRequired != true && sharedChoiceModel.api.snapshots.isEmpty, "Explicit use-shared choice adopts office facts and retains local measurement backup without facts CAS")
         var formattedOffice = office
         let formattedWire = "\n" + wire + "\n"
         formattedOffice.details?[FloorMeasurementPlan.wireKey] = formattedWire
@@ -495,7 +519,7 @@ __EDITOR_PERSIST__
         FloorMeasurementSync.recoverLegacyPending(in: &ambiguousPrior)
         let ambiguousPriorModel = SyncModel(ambiguousPrior)
         await ambiguousPriorModel.syncListing(localID)
-        try check(ambiguousPriorModel.listings[0].floorMeasurements == newer && ambiguousPriorModel.listings[0].details?[FloorMeasurementPlan.wireKey] == "{unsupported" && ambiguousPriorModel.listings[0].measurementSync?.conflict == true && ambiguousPriorModel.api.measurementSnapshots.isEmpty && ambiguousPriorModel.api.snapshots.isEmpty, "Unreadable legacy baseline retains both representations and permits no guessed CAS or ordinary PATCH")
+        try check(ambiguousPriorModel.listings[0].floorMeasurements == newer && ambiguousPriorModel.listings[0].details?[FloorMeasurementPlan.wireKey] == "{unsupported" && ambiguousPriorModel.listings[0].measurementSync?.conflict == true && ambiguousPriorModel.api.measurementSnapshots.isEmpty && ambiguousPriorModel.api.snapshots.isEmpty, "Unreadable legacy baseline retains both representations and permits no guessed CAS or ordinary facts CAS")
 
         // A manual shared-version load replaces the queue while HTTP is held.
         // Neither a late success nor late conflict may revive the old queue.
@@ -535,25 +559,26 @@ __EDITOR_PERSIST__
         model.api.update = { snapshot in await updateGate.hold(); return snapshot }
         model.modify(localID) { $0.tagline = "First ordinary edit" }
         try await waitUntil { updateGate.arrivals == 1 }
-        try check(model.listings[0].needsServerSync == true && model.api.snapshots[0].tagline == "First ordinary edit" && model.api.measurementSnapshots.isEmpty, "Actual modify sends ordinary facts through generic PATCH independently of measurements")
+        try check(model.listings[0].needsServerSync == true && model.api.snapshots[0].tagline == "First ordinary edit" && model.api.measurementSnapshots.isEmpty, "Actual modify sends ordinary facts through generic facts CAS independently of measurements")
         model.modify(localID) { $0.tagline = "Second ordinary edit" }
         updateGate.release()
         try await waitUntil { updateGate.arrivals == 2 }
-        try check(model.api.snapshots.count == 2 && model.api.snapshots[1].tagline == "Second ordinary edit" && model.listings[0].needsServerSync == true, "Mid-PATCH ordinary edits require a second save before acknowledgement")
+        try check(model.api.snapshots.count == 2 && model.api.snapshots[1].tagline == "Second ordinary edit" && model.listings[0].needsServerSync == true, "Mid-facts CAS ordinary edits require a second save before acknowledgement")
         updateGate.release()
         try await waitUntil { !model.syncInFlight.contains(localID) }
         try check(model.listings[0].needsServerSync == false && model.listings[0].tagline == "Second ordinary edit" && model.listings[0].floorMeasurements == plan, "Only the acknowledged latest ordinary edit clears generic dirty state")
-        let failureModel = SyncModel(dirty), failureGate = HeldBoundary()
+        let ordinaryPending = stagedOrdinaryEdit(local)
+        let failureModel = SyncModel(ordinaryPending), failureGate = HeldBoundary()
         failureModel.api.update = { _ in await failureGate.hold(); throw FixtureError.failed }
         let failed = Task { await failureModel.syncListing(localID) }
         try await waitUntil { failureGate.arrivals == 1 }; failureGate.release(); await failed.value
-        try check(failureModel.listings[0].needsServerSync == true && failureModel.listings[0].floorMeasurements == plan, "Failed PATCH preserves dirty measurements for retry")
-        let cancelModel = SyncModel(dirty), cancelGate = HeldBoundary()
-        cancelModel.api.update = { _ in await cancelGate.hold(); try Task.checkCancellation(); return dirty }
+        try check(failureModel.listings[0].needsServerSync == true && failureModel.listings[0].floorMeasurements == plan, "Failed facts CAS preserves dirty measurements for retry")
+        let cancelModel = SyncModel(ordinaryPending), cancelGate = HeldBoundary()
+        cancelModel.api.update = { _ in await cancelGate.hold(); try Task.checkCancellation(); return ordinaryPending }
         let cancelled = Task { await cancelModel.syncListing(localID) }
         try await waitUntil { cancelGate.arrivals == 1 }; cancelled.cancel(); cancelGate.release(); await cancelled.value
-        try check(cancelModel.listings[0].needsServerSync == true && cancelModel.listings[0].floorMeasurements == plan, "Cancelled PATCH does not clear a manual plan's dirty state")
-        let switchModel = SyncModel(dirty), switchGate = HeldBoundary()
+        try check(cancelModel.listings[0].needsServerSync == true && cancelModel.listings[0].floorMeasurements == plan, "Cancelled facts CAS does not clear a manual plan's dirty state")
+        let switchModel = SyncModel(ordinaryPending), switchGate = HeldBoundary()
         switchModel.api.update = { snapshot in await switchGate.hold(); return snapshot }
         let switchedUpdate = Task { await switchModel.syncListing(localID) }
         try await waitUntil { switchGate.arrivals == 1 }
@@ -581,7 +606,7 @@ __EDITOR_PERSIST__
         for isPatch in [false, true] {
             let body = try client.body(outlineLocal, patch: isPatch)
             try check((body["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == (isPatch ? nil : outlineWire),
-                      "Outline-only plan survives create assembly and stays out of generic PATCH")
+                      "Outline-only plan survives create assembly and stays out of generic facts CAS")
             try check(body["sqft"] as? Int == local.sqft, "Measured outlines do not replace advertised listing area in a wire write")
             try check(body["main_photo_key"] == nil && body["gallery_asset_ids"] == nil,
                       "Outline-only writes do not clear separately owned listing media")
@@ -594,13 +619,13 @@ __EDITOR_PERSIST__
                   "Actual DTO mapping decodes an outline-only version-two plan under the existing wire key")
         let outlineRequestStart = client.requests.count
         _ = try await client.createListing(outlineLocal)
-        _ = try await client.updateListing(outlineLocal)
-        try check(client.requests.count == outlineRequestStart + 2, "Outline-only plans reach both actual create and PATCH request boundaries")
+        _ = try await client.updateListing(stagedOrdinaryEdit(outlineLocal))
+        try check(client.requests.count == outlineRequestStart + 2, "Outline-only plans reach both actual create and facts CAS request boundaries")
         let outlineSent = try JSONSerialization.jsonObject(with: client.requests.last!.httpBody!) as! [String: Any]
-        try check((outlineSent["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == nil,
-                  "The generic outline PATCH request cannot replace private measurements")
-        try check(client.requests.last!.url!.lastPathComponent.lowercased() == sid.uuidString.lowercased(),
-                  "Outline-only PATCH targets the bound server listing rather than an unbound local UUID")
+        try check((outlineSent["details_changes"] as? [String: Any])?[FloorMeasurementPlan.wireKey] == nil && (outlineSent["details_expected"] as? [String: Any])?[FloorMeasurementPlan.wireKey] == nil,
+                  "The generic outline facts CAS request cannot replace private measurements")
+        try check(client.requests.last!.httpMethod == "PUT" && client.requests.last!.url!.lastPathComponent == "facts" && client.requests.last!.url!.deletingLastPathComponent().lastPathComponent.lowercased() == sid.uuidString.lowercased(),
+                  "Outline-only facts CAS targets the bound server listing rather than an unbound local UUID")
         let outlineRestored = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(outlineLocal))
         try check(outlineRestored.floorMeasurements == outlinePlan && outlineRestored.sqft == local.sqft,
                   "Local snapshots preserve irregular outlines without changing advertised area")
@@ -734,7 +759,7 @@ __EDITOR_PERSIST__
         try outlineModel.saveMeasurements(outlineNewer, for: localID)
         try await waitUntil { outlineUpdateGate.arrivals == 1 }
         try check(outlineModel.listings[0].measurementSync?.pending == true && outlineModel.api.measurementSnapshots[0].floorMeasurements == outlineNewer && outlineModel.api.snapshots.isEmpty,
-                  "Actual saveMeasurements sends an outline-only edit through CAS without generic PATCH")
+                  "Actual saveMeasurements sends an outline-only edit through CAS without generic facts CAS")
         try outlineModel.saveMeasurements(clearedOutline.floorMeasurements!, for: localID)
         outlineUpdateGate.release()
         try await waitUntil { outlineUpdateGate.arrivals == 2 }
@@ -744,6 +769,6 @@ __EDITOR_PERSIST__
         try await waitUntil { !outlineModel.syncInFlight.contains(localID) }
         try check(outlineModel.listings[0].floorMeasurements?.isEmpty == true && outlineModel.listings[0].measurementSync?.pending == false && outlineModel.api.snapshots.isEmpty,
                   "Only acknowledgement of the latest outline clear removes its CAS queue")
-        print("PASS: \(checks) assertions; actual wire/create/PATCH/dirty-sync/replay/adoption sources plus frozen v1 reader; zero network or camera calls")
+        print("PASS: \(checks) assertions; actual wire/create/facts CAS/dirty-sync/replay/adoption sources plus frozen v1 reader; zero network or camera calls")
     }
 }

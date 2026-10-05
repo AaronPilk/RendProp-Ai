@@ -31,10 +31,16 @@ def main():
     # NewListingView and AddVideoSheet each own a receive method. Select the
     # creation view's source region before extracting its exact method body.
     receive = lifecycle.block(new[:new.index("// MARK: - Video source picker")], "    private func receive(_ asset: CaptureAsset)")
+    reuse = lifecycle.block(new, "    private func applyExistingEdits(")
+    unit_address = lifecycle.block(new, "enum ListingUnitAddress")
+    form = lifecycle.block(new, "struct ListingFormData: Equatable")
     if args.inject_fault:
-        assert photo.count("sync: true") == 2 and receive.count("sync: true") == 1
-        photo = photo.replace("sync: true", "sync: false")
-        receive = receive.replace("sync: true", "sync: false")
+        # The three real reuse branches now share one actual form-intent helper.
+        # Disable its dirty staging/dispatch to restore the original regression.
+        needle = "model.modify(existing.id, expectedFacts: existing)"
+        assert photo.count("applyExistingEdits(existing)") == 2 and receive.count("applyExistingEdits(existing)") == 1
+        assert reuse.count(needle) == 1
+        reuse = reuse.replace(needle, "model.modify(existing.id, sync: false, expectedFacts: existing)")
     modify = lifecycle.block(app, "    func modify(_ id: UUID,")
     dirty = lifecycle.block(app, "    func markDirty(_ id: UUID)")
     sources = [ROOT / ("apps/ios/Rendprop/" + name) for name in [
@@ -47,18 +53,17 @@ enum FileStore {
     static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/\(path)") }
     static func removeVideoAndPreview(_ url: URL) { preconditionFailure("This test must not remove a source") }
 }
-struct Coordinate { var latitude: Double; var longitude: Double }
+struct CLLocationCoordinate2D { var latitude: Double; var longitude: Double }
+typealias Coordinate = CLLocationCoordinate2D
 struct CaptureAsset { var localURL: URL; var motionSidecarURL: URL? }
-struct Form {
-    var address = ""
-    var isValid: Bool { !address.isEmpty }
-    func apply(to listing: inout Listing) { listing.address = address }
-    func makeListing(coordinate: Coordinate?) -> Listing {
-        var listing = Listing(address: address, beds: 0, baths: 0, sqft: 0, price: Money(cents: 0))
-        listing.latitude = coordinate?.latitude; listing.longitude = coordinate?.longitude
-        return listing
-    }
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var userID: String? = "11111111-1111-4111-8111-111111111111"
+    var syncSessionRevision: UInt64 = 1
 }
+__UNIT_ADDRESS__
+__FORM__
 enum Analytics { static func track(_ name: String, _ attributes: [String: String]) {} }
 enum Haptics { static func selection() {} }
 @MainActor final class Model {
@@ -71,11 +76,15 @@ __MODIFY__
 __DIRTY__
 }
 @MainActor final class Flow {
-    let model = Model(); var form = Form(); var addressFocused = false
+    let model = Model(); var form = ListingFormData(); var addressFocused = false
+    let formOwnerID = AuthStore.shared.userID
+    let formSessionRevision = AuthStore.shared.syncSessionRevision
+    let formWorkspaceID = WorkspaceContext.selectedOrgID
     var photosListing: Listing?; var createdListing: Listing?; var pendingCoord: Coordinate?
     var goToPhotos = false; var goToReview = false; var pendingAsset: CaptureAsset?
 __PHOTO__
 __RECEIVE__
+__REUSE__
     func photoTap() { startWithPhotos() }
     func videoReceived() { receive(CaptureAsset(localURL: URL(fileURLWithPath: "/isolated/new.mov"))) }
 }
@@ -88,10 +97,11 @@ __RECEIVE__
         for scenario in ["photos_reused", "video_draft_to_photos", "video_draft_reused"] {
             let flow = Flow()
             var original = Listing(address: "Original address", beds: 2, baths: 1, sqft: 900, price: Money(cents: 100))
-            original.serverID = UUID(); original.serverOrgID = UUID(); original.needsServerSync = false
+            original.serverID = UUID(); original.serverOrgID = WorkspaceContext.selectedOrgID; original.needsServerSync = false
             original.mainPhotoRelPath = "Photos/retained.jpg"
             flow.model.listings = [original]; flow.createdListing = original
             if scenario == "photos_reused" { flow.photosListing = original }
+            flow.form = ListingFormData(listing: original)
             flow.form.address = "Corrected address"
             flow.pendingCoord = Coordinate(latitude: 28.0, longitude: -82.0)
             if scenario == "video_draft_reused" { flow.videoReceived() } else { flow.photoTap() }
@@ -111,7 +121,7 @@ __RECEIVE__
     }
 }
 '''
-    for token, code in [("__MODIFY__", modify), ("__DIRTY__", dirty), ("__PHOTO__", photo), ("__RECEIVE__", receive)]:
+    for token, code in [("__MODIFY__", modify), ("__DIRTY__", dirty), ("__PHOTO__", photo), ("__RECEIVE__", receive), ("__REUSE__", reuse), ("__UNIT_ADDRESS__", unit_address), ("__FORM__", form)]:
         swift = swift.replace(token, code)
     checks = out / "Checks.swift"
     checks.write_text(swift)
@@ -121,6 +131,9 @@ __RECEIVE__
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=120)
         (out / f"{label}.log").write_text(result.stdout)
         receipt["commands"].append({"label": label, "exit_code": result.returncode})
+        if label == "run":
+            receipt["passed"] = result.returncode == 0
+            receipt["expectedDirtyAssertionRejected"] = args.inject_fault and result.returncode != 0 and "photos_reused: corrected facts must be queued for sync" in result.stdout
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
         print(label, result.returncode, result.stdout[-2000:] if result.returncode == 0 or label == "compile" else "Acceptance assertion rejected injected dirty-write regression")
         if result.returncode:

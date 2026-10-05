@@ -18,6 +18,7 @@ ENV['DENO_DIR']=json.loads(subprocess.check_output([BIN['deno'],'info','--no-con
 CONN=['-h',str(SOCK),'-p','55451','-U','postgres']
 PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
 paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/invariants.sql',SQL/'tests/subscription_confirmed_trial.sql',pathlib.Path(__file__).resolve(),*sorted((SQL/'functions/me').glob('*.ts')),*sorted((SQL/'functions/apple-subscriptions').glob('*.ts')),SQL/'functions/_shared/applejws.ts',SQL/'functions/_shared/applejws.test.ts',SQL/'functions/coach/knowledge.ts',SQL/'functions/coach/knowledge_test.ts']
+paths.append(SQL/'tests/invariant_astra_paid_gates.sql')
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
 receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'commands':[],'passed':False,'productionMutations':0,'purchases':0,'limits':['Synthetic auth schema and transactions; not App Store offer eligibility','No real purchase, restore or StoreKit sheet tested']}
 def run(name,args,stdin=None,expected=0):
@@ -53,12 +54,16 @@ try:
  inv=run('all-invariants',[*PSQL[:-1],'-f',SQL/'tests/invariants.sql'],expected=3)
  failures=[line for line in inv.splitlines()if re.search(r'\|\s*f\s*\|',line)]
  assert len(failures)==1 and 'each astra ceiling clears its route' in failures[0],failures
- assert '(266 rows)' in inv
+ rows=[line for line in inv.splitlines()if re.match(r'^\s*\d+\s*\|',line)and re.search(r'\|\s*[tf]\s*\|',line)]
+ kept_red="each astra ceiling clears its route's visible answer and stays under the code clamp"
+ assert failures[0].split('|',3)[1].strip()==kept_red,failures
+ passed_rows=sum(bool(re.search(r'\|\s*t\s*\|',line))for line in rows)
+ assert rows and passed_rows+len(failures)==len(rows),rows
  deno=[BIN['deno'],'test','--cached-only','--no-config','--no-lock','--node-modules-dir=none','--allow-read','--allow-env','--deny-net','--deny-write','--deny-run']
  result=run('apple-jws-notifications-billing',deno+[SQL/'functions/_shared/applejws.test.ts',SQL/'functions/apple-subscriptions/notify.test.ts',SQL/'functions/me/billing.test.ts',SQL/'functions/coach/knowledge_test.ts'])
  summary=re.findall(r'ok \| (\d+) passed \| 0 failed',result);assert len(summary)==1 and int(summary[0])>=50
  assert all(hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest for name,digest in hashes.items()),'Source changed during verification'
- receipt.update(passed=True,sqlAssertions=26,existingGrantSnapshotsUnchanged=True,signatureNotificationBillingTests=int(summary[0]),invariants={'passed':265,'expectedFailure':1,'total':266})
+ receipt.update(passed=True,sqlAssertions=26,existingGrantSnapshotsUnchanged=True,signatureNotificationBillingTests=int(summary[0]),invariants={'passed':passed_rows,'expectedFailure':1,'expectedFailureName':kept_red,'total':len(rows)})
 finally:
  if started and (DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')

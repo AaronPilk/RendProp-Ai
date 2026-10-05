@@ -3,18 +3,22 @@ import { canonicalPhotoKey, galleryCaption, handleListingActions, photoRow } fro
 const org = "10000000-0000-4000-8000-000000000001", listing = "20000000-0000-4000-8000-000000000002", id = "30000000-0000-4000-8000-000000000003", user = "40000000-0000-4000-8000-000000000004";
 const asset = { id, listing_id: listing, uploaded: true, bucket: "renders", kind: "photo", content_type: "image/jpeg", storage_key: `renders/${org}/${listing}/gallery-${id}.jpg` };
 type Result = { data: unknown; error?: unknown };
-function fixture(results: Array<{ table: string; result: Result }>) {
-  const calls: Array<{ table: string; op: string; args: unknown[] }> = [];
+function fixture(results: Array<{ table: string; result: Result; client?: "db" | "admin"; wait?: () => Promise<void> }>) {
+  const calls: Array<{ table: string; op: string; args: unknown[]; client: "db" | "admin" }> = [];
+  const client = (boundary: "db" | "admin") => ({ rpc(name: string, args: unknown) {
+    const item = results.shift(); assertEquals(item?.table, name); assertEquals(item?.client ?? "db", boundary);
+    calls.push({ table: name, op: "rpc", args: [args], client: boundary }); return Promise.resolve(item!.result);
+  }, from(table: string) {
+    const item = results.shift(); assertEquals(item?.table, table); assertEquals(item?.client ?? "db", boundary);
+    const query: Record<string, unknown> = {};
+    for (const op of ["select", "eq", "is", "limit", "update", "insert"]) query[op] = (...args: unknown[]) => { calls.push({ table, op, args, client: boundary }); return query; };
+    for (const op of ["maybeSingle", "single"]) query[op] = async () => { await item!.wait?.(); return item!.result; };
+    return query;
+  } });
   const context = {
     userId: user, orgId: org, publicURL: (key: string) => `https://media.rendprop.com/${key}`,
     authorizeListing: async (value: string) => { assertEquals(value, listing); },
-    db: { rpc(name: string, args: unknown) { const item = results.shift(); assertEquals(item?.table, name); calls.push({ table: name, op: "rpc", args: [args] }); return Promise.resolve(item!.result); }, from(table: string) {
-      const item = results.shift(); assertEquals(item?.table, table);
-      const query: Record<string, unknown> = {};
-      for (const op of ["select", "eq", "is", "limit", "update", "insert"]) query[op] = (...args: unknown[]) => { calls.push({ table, op, args }); return query; };
-      for (const op of ["maybeSingle", "single"]) query[op] = () => Promise.resolve(item!.result);
-      return query;
-    } },
+    db: client("db"), admin: client("admin"),
   };
   return { context, calls, remaining: () => results.length };
 }
@@ -100,23 +104,71 @@ Deno.test("floor-plan attachment preserves listing details and uses optimistic c
     { table: "memberships", result: { data: { role: "owner" } } },
     { table: "capture_assets", result: { data: asset } },
     { table: "listings", result: { data: { id: listing, details } } },
-    { table: "listings", result: { data: { id: listing } } },
+    { table: "studio_attach_floorplan", result: { data: { id: listing } }, client: "admin" },
   ]);
-  const response = await handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), f.context);
+  const response = await handleListingActions(request("floorplan", { listing_id: listing, asset_id: id, org_id: "invented", details: { description: "injected replacement" } }), f.context);
   assertEquals(response?.status, 200);
-  const update = f.calls.find((c) => c.op === "update")!.args[0] as { details: Record<string, unknown> };
-  assertEquals(update.details.features, details.features); assertEquals(update.details.description, details.description);
-  assertEquals(update.details.floorplan_asset_id, id);
-  assertEquals(f.calls.some((c) => c.op === "eq" && c.args[0] === "details" && c.args[1] === JSON.stringify(details)), true);
+  const rpc = f.calls.find(c => c.op === "rpc")!;
+  assertEquals(rpc.client, "admin");
+  assertEquals(rpc.args, [{ p_actor: user, p_org: org, p_listing: listing, p_asset: id,
+    p_expected: details, p_url: `https://media.rendprop.com/${asset.storage_key}` }]);
+  assertEquals(f.calls.some(c => c.op === "update"), false);
 });
 Deno.test("floor-plan concurrent phone edit produces conflict instead of success", async () => {
   const f = fixture([
     { table: "memberships", result: { data: { role: "owner" } } },
     { table: "capture_assets", result: { data: asset } },
     { table: "listings", result: { data: { id: listing, details: {} } } },
-    { table: "listings", result: { data: null } },
+    { table: "studio_attach_floorplan", result: { data: null, error: { code: "40001" } }, client: "admin" },
   ]);
   await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), f.context), Error, "changed on another device");
+});
+
+Deno.test("floor-plan attachment fails safely when its request service client is unavailable", async () => {
+  const f = fixture([
+    { table: "memberships", result: { data: { role: "owner" } } },
+    { table: "capture_assets", result: { data: asset } },
+  ]);
+  const { admin: _admin, ...withoutAdmin } = f.context;
+  await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), withoutAdmin), Error, "temporarily unavailable");
+  assertEquals(f.calls.some(c => c.op === "update"), false);
+});
+
+Deno.test("floor-plan authorization and asset checks precede every service mutation", async () => {
+  const denied = fixture([{ table: "memberships", result: { data: { role: "marketing" } } }]);
+  await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), denied.context), Error, "role does not permit");
+  assertEquals(denied.calls.some(c => c.client === "admin"), false);
+  const foreign = fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "capture_assets", result: { data: { ...asset, storage_key: `renders/${id}/${listing}/foreign.jpg` } } }]);
+  await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), foreign.context), Error, "does not belong");
+  assertEquals(foreign.calls.some(c => c.client === "admin"), false);
+});
+
+Deno.test("Studio binds both floor-plan clients to the verified request context", async () => {
+  const source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  assertEquals(source.includes("const db = userClient(req), admin = adminClient();"), true);
+  assertEquals(source.includes("const context: StudioContext = { userId: user.id, orgId: org, db, admin,"), true);
+  assertEquals(source.includes("handleListingActions(req, context)"), true);
+});
+
+for (const change of ["role revoked", "account deletion started"]) Deno.test(`floor-plan held listing read cannot save after ${change}`, async () => {
+  let release!: () => void, arrived!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const arrival = new Promise<void>(resolve => { arrived = resolve; });
+  const mutation = { table: "studio_attach_floorplan", result: { data: { id: listing } } as Result, client: "admin" as const };
+  const f = fixture([
+    { table: "memberships", result: { data: { role: "owner" } } },
+    { table: "capture_assets", result: { data: asset } },
+    { table: "listings", result: { data: { id: listing, details: {} } }, wait: async () => { arrived(); await held; } },
+    mutation,
+  ]);
+  const pending = handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), f.context);
+  await arrival;
+  // The real database fixture performs the corresponding role/deletion change
+  // before invoking this same service RPC. Its write-time refusal maps to403.
+  mutation.result = { data: null, error: { code: "42501" } }; release();
+  await assertRejects(() => pending, Error, "no longer permits");
+  assertEquals(f.calls.some(c => c.op === "update"), false);
+  assertEquals(f.calls.find(c => c.op === "rpc")?.table, "studio_attach_floorplan");
 });
 
 Deno.test("direct gallery and floor plan attachment reject an uploaded client headshot before property writes",async()=>{

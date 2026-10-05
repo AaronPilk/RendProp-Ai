@@ -286,14 +286,12 @@ async function handleNotify(req: Request): Promise<Response> {
         : (verdictKind === "ignore" ? "no_entitlement_change" : "no_transaction"),
     });
   }
-  if (pending) {
-    // Stored and waiting for POST /me/entitlement to link the workspace.
-    return json({ ok: true, applied: false, pending: true });
-  }
-
   let applied: boolean;
   try {
-    applied = await applyEntitlement(entitlement!, orgId!);
+    // Order the verified snapshot even before a workspace is linked. An older
+    // device receipt then binds this stored state atomically rather than briefly
+    // granting the old plan before pending refunds replay.
+    applied = await applyEntitlement(entitlement!, orgId);
   } catch (err) {
     // The ledger row would otherwise dedupe Apple's retry into a no-op and the
     // entitlement would never land. Best effort; a failure here just means the
@@ -301,6 +299,8 @@ async function handleNotify(req: Request): Promise<Response> {
     await admin.from("apple_notifications").delete().eq("notification_uuid", facts.uuid);
     throw err;
   }
+
+  if (pending) return json({ ok: true, applied: false, pending: true });
 
   // `applied: false` here is a deterministic refusal, not an outage — the row
   // stays, so Apple's retry is a `duplicate: true` no-op instead of a loop.
@@ -340,10 +340,15 @@ async function readFacts(outer: Record<string, unknown>): Promise<NotificationFa
   if (typeof d.signedTransactionInfo === "string" && d.signedTransactionInfo.length > 0) {
     transaction = decodeTransaction(await verifyAppleJWS(d.signedTransactionInfo));
     assert(transaction.bundleId === bundleId, 400, "nested transaction is for a different app");
+    assert(transaction.environment === environment, 400, "nested transaction is for a different environment");
   }
   let renewal: AppleRenewalInfo | null = null;
   if (typeof d.signedRenewalInfo === "string" && d.signedRenewalInfo.length > 0) {
     renewal = decodeRenewalInfo(await verifyAppleJWS(d.signedRenewalInfo));
+    assert(transaction !== null && renewal.originalTransactionId === transaction.originalTransactionId,
+      400, "nested renewal is for a different subscription");
+    assert(renewal.environment === null || renewal.environment === environment,
+      400, "nested renewal is for a different environment");
   }
 
   const rawSubtype = typeof outer.subtype === "string" ? outer.subtype.trim() : "";
@@ -353,6 +358,9 @@ async function readFacts(outer: Record<string, unknown>): Promise<NotificationFa
     subtype: rawSubtype.length > 0 ? rawSubtype.slice(0, 100) : null,
     environment,
     bundleId,
+    signedDate: typeof outer.signedDate === "number" && Number.isFinite(outer.signedDate) &&
+        outer.signedDate > 0 && outer.signedDate <= 8.64e15
+      ? new Date(outer.signedDate).toISOString() : null,
     transaction,
     renewal,
   };
@@ -366,8 +374,8 @@ async function readFacts(outer: Record<string, unknown>): Promise<NotificationFa
  * notification is already recorded, and answering 200 stops the storm. Only a
  * database that could not be reached throws, so the retry has something to do.
  */
-async function applyEntitlement(e: PendingEntitlement, orgId: string): Promise<boolean> {
-  const { error } = await adminClient().rpc("apply_apple_entitlement", {
+async function applyEntitlement(e: PendingEntitlement, orgId: string | null): Promise<boolean> {
+  const { error } = await adminClient().rpc("apply_apple_entitlement_v2", {
     p_org: orgId,
     p_user: null,
     p_original_transaction_id: e.original_transaction_id,
@@ -379,6 +387,10 @@ async function applyEntitlement(e: PendingEntitlement, orgId: string): Promise<b
     p_expires_at: e.expires_at,
     p_auto_renew: e.auto_renew,
     p_notification_type: e.notification_type,
+    p_transaction_purchased_at: e.transaction_purchased_at,
+    p_transaction_signed_at: e.transaction_signed_at,
+    p_event_signed_at: e.event_signed_at,
+    p_renewal_signed_at: e.renewal_signed_at,
   });
   if (!error) return true;
   if (/RP\d{3}:/.test(error.message)) {
@@ -388,4 +400,3 @@ async function applyEntitlement(e: PendingEntitlement, orgId: string): Promise<b
   }
   throw new HttpError(503, "Could not apply the entitlement — retry", "upstream");
 }
-

@@ -33,9 +33,11 @@ def block(source, marker):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit", "discard-outline-only", "outline-fingerprint", "legacy-v2-accept", "drop-local-raw-mirror", "omit-cas-base", "ignore-pending-measurements", "wrong-cas-workspace", "ignore-cas-conflict", "omit-facts-fingerprint", "ignore-facts-review", "skip-legacy-recovery", "ignore-cas-lineage", "overwrite-shared-backup", "compare-backup-wire-only", "retain-backup-after-new-edit"])
     args = parser.parse_args()
-    out = Path(tempfile.mkdtemp(prefix="rendprop-floor-measurement-sync-", dir="/tmp"))
+    out = args.output_dir or Path(tempfile.mkdtemp(prefix="rendprop-floor-measurement-sync-", dir="/tmp"))
+    out.mkdir(parents=True, exist_ok=True)
     source_bytes = {p: p.read_bytes() for p in [CLIENT, APP, SYNC, EDITOR]}
     client, app, sync = (source_bytes[p].decode() for p in [CLIENT, APP, SYNC])
     actual_sync = sync
@@ -82,6 +84,7 @@ def main():
     elif args.inject_fault == "rewrite-raw-keys":
         tolerant_map = '''    struct TolerantStringMap: Decodable {
         let value: [String: String]
+        let raw: [String: ListingFactValue]
         private struct AnyKey: CodingKey {
             var stringValue: String
             var intValue: Int? { nil }
@@ -89,6 +92,7 @@ def main():
             init?(intValue: Int) { return nil }
         }
         init(from decoder: Decoder) throws {
+            raw = try decoder.singleValueContainer().decode([String: ListingFactValue].self)
             var out: [String: String] = [:]
             let c = try decoder.container(keyedBy: AnyKey.self)
             for key in c.allKeys {
@@ -107,6 +111,8 @@ def main():
         "__SAVE_MEASUREMENTS__": block(app, "    func saveMeasurements(_ plan: FloorMeasurementPlan,"),
         "__RELOAD_SHARED__": block(app, "    func reloadSharedMeasurements(_ id: UUID,"),
         "__CONFIRM_LOCAL__": block(app, "    func confirmLocalListingDetails(_ id: UUID)"),
+        "__LOAD_FACTS_REVIEW__": block(app, "    func loadListingFactsReview(_ id: UUID)"),
+        "__RESOLVE_FACTS__": block(app, "    func resolveListingFacts(_ review: ListingFactsReview,"),
         "__LISTING_BODY__": block(client, "    private func listingBody(_ l: Listing,"),
         "__MAP_LISTING__": block(client, "    private func mapListing(_ dto: ListingDTO)"),
         "__LISTING_DTO__": block(client, "    private struct ListingDTO: Decodable"),
@@ -160,8 +166,8 @@ def main():
         assert replacements["__RELOAD_SHARED__"].count(before) == 1
         replacements["__RELOAD_SHARED__"] = replacements["__RELOAD_SHARED__"].replace(before, "localCopy == prior?.expected")
     # The Listing DTO still uses snake-case conversion. Its freeform dictionary
-    # must therefore preserve keys itself on both create and PATCH readback.
-    for marker in ["json: try listingBody(listing, forPatch: false)", "json: try listingBody(listing, forPatch: true)"]:
+    # must therefore preserve keys itself on create and facts-CAS readback.
+    for marker in ["json: try listingBody(listing, forPatch: false)", 'url(["listings", target.uuidString, "facts"])', "json: try ListingFactsSync.body(listing)"]:
         assert marker in client
     source = Path(__file__).with_name("Fixture.swift.template").read_text()
     for key, value in replacements.items():
@@ -191,6 +197,12 @@ def main():
     compiled_listing = out / "Listing.swift"
     compiled_listing.write_text(compiled_listing_text)
     models[0] = compiled_listing
+    # Compile a captured source snapshot even when another audit agent edits
+    # its owned file while swiftc is running. Runtime sources remain untouched.
+    for i, model in enumerate(models[1:], start=1):
+        copied_model = out / model.name
+        copied_model.write_bytes(source_bytes[model])
+        models[i] = copied_model
     receipt = {"networkCalls": 0, "cameraCalls": 0, "userFilesAccessed": 0, "productionMutations": 0,
                "injectedFault": args.inject_fault,
                "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(source_bytes[p]).hexdigest() for p in sources},
@@ -211,7 +223,7 @@ def main():
                 "drop-replay-adopt": "Unedited replay adopts the office measurement plan",
                 "rewrite-raw-keys": "Actual DTO decoder retains the exact measurements wire key",
                 "legacy-ignore-edit": "Legacy fingerprint cannot hide a new typed measurement edit",
-                "discard-outline-only": "Outline-only plan survives create assembly and stays out of generic PATCH",
+                "discard-outline-only": "Outline-only plan survives create assembly and stays out of generic facts CAS",
                 "outline-fingerprint": "Outline-only edits change the actual create fingerprint",
                 "legacy-v2-accept": "Frozen v1 reader refuses version-two outlines instead of interpreting them as an empty rectangle plan",
                 "drop-local-raw-mirror": "Actual measurement save mirrors typed geometry and exact raw wire atomically" , "omit-cas-base": "Actual measurement request contains only CAS base and value, never sqft/status/sold_at",
@@ -219,7 +231,7 @@ def main():
                 "wrong-cas-workspace": "Actual measurement endpoint is bound to server listing and captured workspace",
                 "ignore-cas-conflict": "Conflicting measurement write retains local plan and surfaces resolution state",
                 "omit-facts-fingerprint": "First create captures ordinary facts intent separately from measurements",
-                "ignore-facts-review": "Unproven legacy listing facts never reach generic PATCH",
+                "ignore-facts-review": "Unproven legacy listing facts never reach generic facts CAS",
                 "skip-legacy-recovery": "Legacy pending geometry recovers exact CAS baseline before generic acknowledgement",
                 "ignore-cas-lineage": "Late CAS success or conflict cannot revive a queue replaced by shared reload",
                 "overwrite-shared-backup": "Sequential shared measurements then shared facts retain the original phone backup",
