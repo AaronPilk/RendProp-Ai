@@ -40,7 +40,8 @@ receipt = {
     'start_source_sha256': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed},
     'simulator': None,
     'toolchain': None,
-    'compile_deadlines_seconds': {'cold_actual': 300, 'warm_controls': 60},
+    'compile_deadlines_seconds': {'cold_actual': 300, 'warm_controls': 180},
+    'execution_deadline_seconds': 180,
     'commands': [],
     'runs': [],
     'limitations': ['Actual UIKit renderer and filesystem delivery tested using synthetic images.', 'No vendor calls, camera, Apple account or Photos-library writes.', 'SwiftUI app context dependencies are fixture doubles; full app compilation is separate.', 'The level adjustment rotates and crops a JPEG copy; it cannot recover unseen room geometry.'],
@@ -114,11 +115,22 @@ try:
         binary = out / name
         # The first UIKit import builds the cold SDK module cache on hosted
         # runners. CI reached this compile after successful boot readiness but
-        # exhausted the old 60-second limit. Keep a bounded first compile and
-        # the existing warm deadlines; a timeout still fails the entire gate.
+        # exhausted the old 60-second limit. A warm control then required 49s
+        # on that runner. Keep bounded cold/warm deadlines with headroom;
+        # a timeout still fails the entire gate.
         compile_timeout = receipt['compile_deadlines_seconds']['cold_actual' if name == 'actual' else 'warm_controls']
         compile_result = command(f'{name}-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', f'{architecture}-apple-ios16.0-simulator', '-sdk', sdk, str(stubs), str(root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift'), str(path), str(fixture), '-o', str(binary)], compile_timeout)
-        result = command(name, ['xcrun', 'simctl', 'spawn', device['udid'], str(binary)], 30, check=False)
+        # A successful actual run does not bound later process startup or
+        # crash reporting on a cold hosted simulator. Await the real result;
+        # neither a timeout nor partial assertion text can satisfy a control.
+        try:
+            result = command(name, ['xcrun', 'simctl', 'spawn', device['udid'], str(binary)], receipt['execution_deadline_seconds'], check=False)
+        except subprocess.TimeoutExpired:
+            try:
+                command(f'{name}-timeout-state', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 30, check=False)
+            except Exception as diagnostic_error:
+                receipt['execution_timeout_diagnostic_failure'] = f'{type(diagnostic_error).__name__}: {diagnostic_error}'
+            raise
         log = result.stdout + result.stderr
         (out / f'{name}.log').write_text(log)
         binary.unlink()
