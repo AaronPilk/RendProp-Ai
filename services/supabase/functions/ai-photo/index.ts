@@ -90,6 +90,7 @@ import type { RouteStep } from "../_shared/router.ts";
 import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
+import { supportsStagingReference } from "../_shared/providers/gemini.ts";
 import {
   BUDGETS,
   ProviderError,
@@ -360,7 +361,8 @@ const CONDITION_LOCK =
 
 const LOCK =
   "Do not change the building's architecture, structure, dimensions, walls, or " +
-  "window/door placement. " + CONDITION_LOCK +
+  "window/door placement. Never add or remove a window, doorway, wall or opening. " +
+  "Keep fixed appliances, including refrigerators, ovens, sinks and their connections, in their exact original positions. " + CONDITION_LOCK +
   "Photorealistic, natural, consistent perspective and shadows.";
 
 // Staging instruction; generated results still require original-image review.
@@ -369,6 +371,9 @@ const STAGE_LOCK =
   "windows, doors, ceiling, flooring material, trim, built-ins, light fixtures, the view " +
   "through the windows, camera angle, and perspective. Only ADD furniture and decor; do not " +
   "remodel, repaint, resurface, or alter the structure or lighting direction in any way. " +
+  "Never invent a window or opening. Do not move, replace or remove refrigerators, ovens, sinks, " +
+  "cabinets, counters or other fixed appliances and built-ins. Keep doors, door swings, exits and " +
+  "walking routes unobstructed; never put furniture across an opening or into a wall. " +
   CONDITION_LOCK +
   "Photorealistic materials with shadows and reflections that match the room's existing light.";
 
@@ -439,7 +444,10 @@ function reStagePrompt(styleDesc: string): string {
   return (
     "Virtually stage this real-estate photo: furnish the room with " + styleDesc + ". " +
     "Use realistic scale and placement appropriate to the room type, resting naturally on the " +
-    "existing floor. If the room already has furniture, replace it cleanly with the new set. " +
+    "existing floor. The furnishings must fit the photographed room's actual purpose: a bedroom " +
+    "needs bedroom furniture, not a living-room sofa arrangement; a kitchen needs no invented " +
+    "appliances or replacement cabinetry. Use fewer pieces when access is tight. If the room " +
+    "already has movable furniture, replace only those movable pieces cleanly with the new set. " +
     STAGE_LOCK
   );
 }
@@ -496,8 +504,10 @@ interface Body {
   mime?: string;
   edit?: string;
   style?: string;
-  /** Free-text instruction for edit:"custom" (Mirino-style prompting). */
+  /** Custom instruction or a staging furnishing brief. */
   prompt?: string;
+  staging_reference_b64?: string;
+  staging_reference_mime?: string;
   space_type?: string;
   /** Compliance (W2-B3): the listing this photo belongs to. Without it the edit
    *  still runs, but it cannot be entered in the org's AI audit log. */
@@ -621,6 +631,20 @@ Deno.serve(async (req) => {
     }
 
     // Helper modes: text/vision analysis only — no image generation, no monthly charge.
+    const referenceB64 = body.staging_reference_b64;
+    const referenceMime = String(body.staging_reference_mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
+    if (referenceB64 !== undefined) {
+      assert(edit === "stage" && typeof referenceB64 === "string" && referenceB64.length > 0, 400,
+        "A furniture reference is supported only for staging.");
+      assert(referenceB64.length <= 6_000_000 && (body.image_b64?.length ?? 0) + referenceB64.length <= MAX_IMAGE_B64_CHARS,
+        413, "The staging images are too large — resize them before sending.", "payload_too_large");
+      assert(["image/jpeg", "image/png", "image/webp"].includes(referenceMime), 400,
+        "The furniture reference must be JPEG, PNG or WebP.");
+      // The route's per-output-image price does not cover input tokens. A
+      // second image cannot dispatch until an approved conservative cost
+      // preflight covers both inputs. Refuse before any quota is consumed.
+      throw new HttpError(503, "Same-room furniture references are coming soon. No edit was sent or charged. Stage without a reference for now.", "upstream");
+    }
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
       const helperCharge = await guardHelper(user, req);
@@ -661,6 +685,23 @@ Deno.serve(async (req) => {
       const styleDesc = (space === "real_estate" ? RE_STAGE_STYLES : STAGE_STYLES)[style];
       assert(styleDesc, 400, `style must be ${Object.keys(STAGE_STYLES).join("|")} (got ${style})`);
       prompt = space === "real_estate" ? reStagePrompt(styleDesc) : stagePrompt(profile, styleDesc);
+      if (body.prompt !== undefined) {
+        assert(typeof body.prompt === "string", 400, "The furnishing brief must be text.");
+        const brief = body.prompt.trim();
+        assert(brief.length <= MAX_CUSTOM_PROMPT, 400, `furnishing brief too long (max ${MAX_CUSTOM_PROMPT} chars)`);
+        if (brief) {
+          assertFairHousing(brief, "This furnishing brief", await gateSpace());
+          prompt += ` FURNISHING BRIEF (movable furniture only): ${brief}. The fixed-feature and access rules above override this brief. `;
+        }
+      }
+      if (referenceB64) {
+        prompt += " TWO INPUT IMAGES: the FIRST is the target room and is authoritative for architecture, " +
+          "appliances, openings, dimensions, perspective and camera angle. The SECOND is a reviewed view of " +
+          "the same room used only as a movable-furniture reference. Match the same furniture, materials, " +
+          "colors and positions relative to fixed room features where visible in this target angle. " +
+          "Do not replace the target with the reference view or copy its architecture. When correspondence " +
+          "is uncertain, make a smaller change and leave the target's fixed features and access clear. ";
+      }
     } else if (edit === "custom") {
       const userText = (body.prompt ?? "").trim();
       assert(userText.length > 0, 400, "edit:'custom' requires a non-empty `prompt`");
@@ -732,9 +773,19 @@ Deno.serve(async (req) => {
     // table. While the router is OFF it still wins for the legacy gemini step,
     // so the flag-off path stays exactly what THIS deploy runs today even if
     // the secret and the seeded legacy row ever disagree.
-    const chain = routerOn ? steps : steps.map((s) =>
+    let chain = routerOn ? steps : steps.map((s) =>
       s.provider === "gemini" && s.model === "gemini-2.5-flash-image" && MODEL !== s.model ? { ...s, model: MODEL } : s
     );
+    if (referenceB64) {
+      // Preserve route retirement, privacy, plan and operator eligibility. Never
+      // silently drop a reference or send it to a single-image adapter.
+      chain = chain.filter((step) => step.provider === "gemini" && supportsStagingReference(step.model));
+      if (chain.length === 0) {
+        await refundEditCharge(charge);
+        throw new HttpError(503, "Same-room furniture references are unavailable on the active photo route. No edit was sent. Try staging without a reference or wait until the route supports it.", "upstream");
+      }
+      genInput.extra = { ...genInput.extra, staging_reference_b64: referenceB64, staging_reference_mime: referenceMime };
+    }
 
     // The chain throwing means every step failed (or a validation/nsfw refusal
     // fired) — no image was produced, so hand the quota back (audit item 2 /
@@ -793,7 +844,9 @@ Deno.serve(async (req) => {
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, ...(style ? { style } : {}) },
+      meta: { edit, space_type: space, ...(style ? { style } : {}),
+        ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
+          cost_basis: "route_output_image_estimate_input_tokens_unmodeled" } : {}) },
     });
 
     // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
@@ -808,7 +861,7 @@ Deno.serve(async (req) => {
       style: style ?? null,
       // Free-text only, and only the user's own words (the canned guardrails
       // add nothing). Bounded and stripped by the RPC; never public.
-      promptSummary: edit === "custom" ? (body.prompt ?? "").trim().slice(0, 300) : null,
+      promptSummary: edit === "custom" || edit === "stage" ? (body.prompt ?? "").trim().slice(0, 300) || null : null,
       originalAssetId: body.original_asset_id ?? null,
     });
 

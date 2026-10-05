@@ -28,10 +28,12 @@ test('source bindings are fail-closed, synchronous and source-before-session / r
   assert.ok(clear.includes('forgetServerIdentities(for: userID)'));
   assert.ok(init.includes('onPrepareAdoption') && init.includes('onConfirmAdoption') && init.includes('onAdoptionStorageReady'));
   assert.ok(auth.includes('self?.onPrepareAdoption?(pending) == true'));
-  assert.ok(auth.includes('self?.onConfirmAdoption?(pending, orgID) == true'));
+  assert.ok(auth.includes('self?.onConfirmAdoption?(pending, orgID, cardData) == true'));
   assert.ok(auth.includes('guard onAdoptionStorageReady?() == true else { return }'));
   const core = readFileSync(root + 'apps/ios/Rendprop/Auth/AnonymousAdoptionRecovery.swift', 'utf8');
-  assert.ok(core.indexOf('guard finishLocal(value, receipt.org_id)') < core.indexOf('guard remove()'));
+  assert.ok(core.indexOf('finishLocal(verifiedValue, receipt.org_id, cardData)') < core.indexOf('guard remove()'));
+  assert.ok(core.indexOf('let (cardData, cardResponse) = try await send(cardRequest)') < core.indexOf('finishLocal(verifiedValue, receipt.org_id, cardData)'));
+  assert.ok(declaration('func confirmLocalAdoption(').includes('JSONDecoder().decode(PersonalCardReceipt.self, from: $0).checked(owner: pending.destinationUserID)'));
   const compliance = declaration('func serverListingIDForCompliance(');
   assert.ok(compliance.indexOf('pendingAdoptionBlocksServerListing') < compliance.indexOf('if let existing'));
   assert.ok(declaration('func syncListing(').includes('guard !pendingAdoptionBlocksServerListing(id)'));

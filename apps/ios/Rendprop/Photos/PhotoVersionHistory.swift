@@ -4,6 +4,16 @@ import Foundation
 /// version never deletes its source or the retained pre-enhancement capture.
 /// This is a local history, not a claim that a cloud provenance row was saved.
 enum PhotoVersionHistory {
+    /// A user's review of one displayed version, not an automated quality verdict.
+    struct StagingReview {
+        var comparedSource = false
+        var fixedFeaturesMatch = false
+        var accessIsClear = false
+        var furnitureMatchesOtherViews = false
+        var isComplete: Bool {
+            comparedSource && fixedFeaturesMatch && accessIsClear && furnitureMatchesOtherViews
+        }
+    }
     enum LibraryKind: String, CaseIterable, Identifiable, Sendable {
         case latest = "Latest", decluttered = "Decluttered", staged = "Staged"
         var id: String { rawValue }
@@ -27,6 +37,9 @@ enum PhotoVersionHistory {
         let serverListingID: String?
         let provenanceRecorded: Bool
         let createdAt: Date
+        var stagingReviewed: Bool? = nil
+        var stagingReferenceID: String? = nil
+        var stagingBrief: String? = nil
 
         var visibleLabel: String? {
             var parts: [String] = []
@@ -324,6 +337,7 @@ enum PhotoVersionHistory {
     static func saveEdit(jpeg: Data, id: String, parentID: String, sourceID: String,
                          edit: String, style: String?, disclosure: String?, provenanceID: String?,
                          provenanceRecorded: Bool, directory: URL, originalAssetID: String? = nil, serverListingID: String? = nil,
+                         stagingReferenceID: String? = nil, stagingBrief: String? = nil,
                          write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws -> Version {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
@@ -334,11 +348,15 @@ enum PhotoVersionHistory {
         let expectedSourceID = edit == "stage" ? (parent.stagingBaseID ?? parentID) : parentID
         guard sourceID == expectedSourceID else { throw Failure.changedVersion }
         try requireImage(source.imageFile, directory: directory)
+        if let stagingReferenceID {
+            guard edit == "stage", let reference = index.versions[stagingReferenceID],
+                  reference.effects.contains("stage"), reference.stagingReviewed == true else { throw Failure.reviewRequired }
+        }
         let imageName = "edit-\(id).jpg", imageURL = directory.appendingPathComponent("edit-\(id).jpg")
         guard !FileManager.default.fileExists(atPath: imageURL.path) else { throw Failure.duplicate }
         var effects = source.effects
         if !effects.contains(edit) { effects.append(edit) }
-        let version = Version(id: id, familyID: parent.familyID, imageFile: imageName,
+        var version = Version(id: id, familyID: parent.familyID, imageFile: imageName,
                               originalFile: parent.originalFile, originalVerified: parent.originalVerified,
                               parentID: parentID, sourceID: sourceID,
                               stagingBaseID: edit == "stage" ? sourceID : source.stagingBaseID,
@@ -346,6 +364,8 @@ enum PhotoVersionHistory {
                               disclosure: disclosure, provenanceID: provenanceID,
                               originalAssetID: originalAssetID, serverListingID: serverListingID,
                               provenanceRecorded: provenanceRecorded, createdAt: Date())
+        version.stagingReferenceID = stagingReferenceID
+        version.stagingBrief = stagingBrief
         do {
             try write(jpeg, imageURL)
             if index.listingSelections == nil { index.listingSelections = index.current }
@@ -371,6 +391,7 @@ enum PhotoVersionHistory {
         }
         try requireImage(version.imageFile, directory: directory)
         guard reviewed || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
+        if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
         index.current[version.familyID] = id
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.listingSelections?[version.familyID] = id
@@ -387,9 +408,22 @@ enum PhotoVersionHistory {
         }
         try requireImage(version.imageFile, directory: directory)
         guard reviewed || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
+        if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.listingSelections?[version.familyID] = id
         try save(index, directory: directory)
+    }
+
+    /// References are local to this listing directory and require an explicit
+    /// user review recorded on this phone. They never replace the target source.
+    static func stagingReference(id: String, directory: URL) throws -> Version {
+        lock.lock(); defer { lock.unlock() }
+        let index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id], version.effects.contains("stage"),
+              version.stagingReviewed == true, !index.hiddenFamilies.contains(version.familyID)
+        else { throw Failure.reviewRequired }
+        try requireImage(version.imageFile, directory: directory)
+        return version
     }
 
     /// Cloud originals remain explicitly unverified; staged imports start as

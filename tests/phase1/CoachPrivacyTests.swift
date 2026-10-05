@@ -6,7 +6,16 @@ import Combine
 typealias ObservableObject = Combine.ObservableObject
 typealias Published<Value> = Combine.Published<Value>
 enum ProjectFeature: Equatable { case tour, photos, reel, floorPlan, aerial }
+struct SyncState { var reviewRequired = false; var conflict = false; var factsReviewRequired: Bool? = nil }
 struct Listing {
+    enum Status { case draft, uploading, processing, ready }
+    var status: Status = .draft
+    var serverID: UUID? = nil
+    var cloudUnavailable: Bool? = nil
+    var factsSync: SyncState? = nil
+    var measurementSync: SyncState? = nil
+    var lastError: String? = nil
+    var needsAttention: Bool { !(lastError ?? "").isEmpty }
     let id: UUID
     var address: String
     var shareURL: String? = nil
@@ -190,6 +199,42 @@ enum FileStore {
             try await send("Next", through: unselectedCoach)
             try check(unselectedApp.api.requests.isEmpty, "missing workspace uses local help without any server call")
             try check(unselectedCoach.messages.last?.localOnly == true, "missing-workspace fallback remains local-only")
+
+            reset()
+            let many = model()
+            for n in 1...30 { many.listings.append(Listing(id: UUID(), address: "\(n) Synthetic Street", serverOrgID: orgA)) }
+            let selected = many.listings.last!.id
+            many.listings[many.listings.count - 1].serverID = UUID()
+            let focused = CoachModel(model: many, originScreen: "listing", listingID: selected)
+            try await send("Help with this project", through: focused)
+            let request = many.api.requests.last!
+            try check(request.context.listings.count == 25, "selected context remains bounded to twenty-five projects")
+            try check(request.context.listings.first?.id == selected.uuidString, "selected project is retained before the context cap")
+            try check(request.context.selectedListingID == selected.uuidString.lowercased(), "actual send carries the selected device route id")
+            try check(request.context.listings.first?.serverID == many.listings.last!.serverID?.uuidString.lowercased(), "cloud row id stays distinct from the local action id")
+            many.listings[many.listings.count - 1].lastError = "PRIVATE_PROVIDER_ERROR synthetic-secret/private prompt"
+            many.assets[selected] = Asset()
+            try await send("Why does this say Needs attention?", through: focused)
+            try check(many.api.requests.count == 1, "Needs attention recovery requires no provider request")
+            try check(focused.messages.last?.actions.first?.listingID == selected.uuidString, "recovery targets the selected project among many")
+            try check(focused.messages.last?.actions.first?.kind == .openTour, "render recovery opens a safe review action")
+            try check(!(focused.messages.last?.text.contains("PRIVATE_PROVIDER_ERROR") ?? true), "raw upstream errors never become recovery copy")
+            try check(focused.messages.last?.localOnly == true, "deterministic recovery never joins an online transcript")
+            many.listings[many.listings.count - 1].factsSync = SyncState(reviewRequired: true)
+            try await send("How do I continue?", through: focused)
+            try check(focused.messages.last?.actions.first?.kind == .openHome, "facts conflict opens review rather than retrying stale edits")
+            try check(many.api.requests.count == 1, "facts review is deterministic without paid work")
+            many.listings[many.listings.count - 1].factsSync = nil
+            many.listings[many.listings.count - 1].cloudUnavailable = true
+            try await send("Why is this stuck?", through: focused)
+            try check(focused.messages.last?.actions.first?.kind == .openHome, "lost cloud access cannot offer publication")
+            let foreignOnly = model()
+            foreignOnly.listings = [Listing(id: UUID(), address: "820 Other Account Street", serverOrgID: orgB)]
+            let fallback = CoachOffline.nextStep(model: foreignOnly, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: foreignOnly.listings[0].id)
+            try check(fallback.action?.kind == .openHome && fallback.action?.listingID == nil, "offline recovery cannot target a cached foreign project")
+            let offlineAccount = CoachOffline.answer(to: "What's my current account usage?", model: many, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: selected)
+            try check(offlineAccount.action?.kind == .openPlanUsage, "offline account question opens verified account screen")
+            try check(offlineAccount.text.contains("can't verify"), "offline account help does not invent live plan or usage")
 
             try check(CoachModel.redactedStreet("Unit B 1180 Crestline Ridge, Synthetic City") == "Crestline Ridge", "leading unit cannot preserve the house number")
             try check(CoachModel.redactedStreet("PO Box 421, Synthetic City") == nil, "postal boxes must use a generic label")

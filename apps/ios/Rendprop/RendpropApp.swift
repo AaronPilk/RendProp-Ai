@@ -177,7 +177,7 @@ final class AppModel: ObservableObject {
             self?.forgetServerIdentities(for: userID)
         }
         AuthStore.shared.onPrepareAdoption = { [weak self] in self?.prepareLocalAdoption($0) == true }
-        AuthStore.shared.onConfirmAdoption = { [weak self] in self?.confirmLocalAdoption($0, orgID: $1) == true }
+        AuthStore.shared.onConfirmAdoption = { [weak self] in self?.confirmLocalAdoption($0, orgID: $1, personalReceipt: $2) == true }
         AuthStore.shared.onAdoptionStorageReady = { [weak self] in
             self?.hasLoaded == true && self?.adoptionBindingsUnreadable == false
         }
@@ -282,13 +282,18 @@ final class AppModel: ObservableObject {
     /// Only the currently verified destination + exact operation can restore
     /// links. The restored IDs and confirmation marker share ONE atomic write;
     /// Keychain credentials are retained until this returns true.
-    func confirmLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending, orgID: UUID) -> Bool {
+    func confirmLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending, orgID: UUID, personalReceipt: Data? = nil) -> Bool {
         guard hasLoaded, !adoptionBindingsUnreadable, let journal = adoptionBindings,
               journal.matches(pending),
+              AuthStore.shared.isIdentified,
               AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == pending.destinationUserID else { return false }
+        let verifiedCard: PersonalCardReceipt?
+        do {
+            verifiedCard = try personalReceipt.map { try JSONDecoder().decode(PersonalCardReceipt.self, from: $0).checked(owner: pending.destinationUserID) }
+        } catch { return false }
         if journal.appliedToCurrentState, let confirmed = journal.confirmedOrgID {
             guard confirmed == orgID && identityOwnerUserID == pending.destinationUserID else { return false }
-            return restoreAdoptedProductionLibrary()
+            return restoreAdoptedProductionLibrary(personalReceipt: verifiedCard)
         }
         do {
             var restored = try journal.restoring(listings, pending: pending,
@@ -299,9 +304,15 @@ final class AppModel: ObservableObject {
             }
             let previousListings = listings, previousOwner = identityOwnerUserID
             var confirmed = journal; confirmed.confirmedOrgID = orgID; confirmed.appliedToCurrentState = true
+            confirmed.personalCardDisposition = pending.personalCardDisposition
             try AdoptionProductionLibrary.restore(confirmed, survivingIDs: Set(restored.filter { !$0.isSample }.map(\.id)),
                 documents: FileStore.documents)
             confirmed.productionTransferred = true
+            try AdoptionOwnedIdentity.restore(confirmed, activeOwner: pending.destinationUserID,
+                survivingIDs: Set(restored.filter { !$0.isSample }.map(\.id)), documents: FileStore.documents,
+                verifiedDestinationCard: verifiedCard?.publicCard, verifiedDestinationType: verifiedCard?.spaceType,
+                destinationCardWasVerified: verifiedCard != nil)
+            confirmed.ownedIdentityTransferred = true
             ProductionVideoLibrary.shared.reloadAdopted(owner: pending.destinationUserID.uuidString.lowercased(),
                 listingIDs: Set(confirmed.productionLocalIDs ?? confirmed.entries.map(\.localID)))
             for id in confirmed.productionLocalIDs ?? confirmed.entries.map(\.localID) { ProductionPlanSyncStore.shared.remove(id) }
@@ -318,15 +329,25 @@ final class AppModel: ObservableObject {
 
     /// Upgrade a previously confirmed receipt once. Old bindings can recover
     /// their known server-backed properties; new bindings also name offline drafts.
-    @discardableResult func restoreAdoptedProductionLibrary() -> Bool {
+    @discardableResult func restoreAdoptedProductionLibrary(personalReceipt: PersonalCardReceipt? = nil) -> Bool {
         guard var journal = adoptionBindings, journal.appliedToCurrentState,
               journal.confirmedOrgID != nil, identityOwnerUserID == journal.destinationUserID,
+              AuthStore.shared.isIdentified,
               AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == journal.destinationUserID else { return false }
-        if journal.productionTransferred == true { return true }
+        if journal.productionTransferred == true && journal.ownedIdentityTransferred == true { return true }
         do {
-            try AdoptionProductionLibrary.restore(journal, survivingIDs: Set(listings.filter { !$0.isSample }.map(\.id)),
-                documents: FileStore.documents)
-            journal.productionTransferred = true
+            let surviving = Set(listings.filter { !$0.isSample }.map(\.id))
+            if journal.productionTransferred != true {
+                try AdoptionProductionLibrary.restore(journal, survivingIDs: surviving, documents: FileStore.documents)
+                journal.productionTransferred = true
+            }
+            if journal.ownedIdentityTransferred != true {
+                try AdoptionOwnedIdentity.restore(journal, activeOwner: journal.destinationUserID,
+                    survivingIDs: surviving, documents: FileStore.documents,
+                    verifiedDestinationCard: personalReceipt?.publicCard, verifiedDestinationType: personalReceipt?.spaceType,
+                    destinationCardWasVerified: personalReceipt != nil)
+                journal.ownedIdentityTransferred = true
+            }
             let previous = adoptionBindings
             adoptionBindings = journal
             if persist() {
@@ -1002,9 +1023,10 @@ final class AppModel: ObservableObject {
                 await self.syncDirtyListings()
                 // Brand reads are independent of media and use the same account
                 // fence. A transient brand error must not roll back listing sync.
+                let personalReadVersion = AgentCard.personalReadVersion
                 if let brand = try? await cloud.cloudBrand(), !Task.isCancelled,
                    AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision {
-                    AgentCard.acceptCloud(brand)
+                    AgentCard.acceptCloud(brand, personalReadVersion: personalReadVersion)
                 }
             } catch is CancellationError {
                 return
@@ -2759,7 +2781,9 @@ private struct RendpropLaunchContent: View {
     var body: some View {
         Group {
 #if targetEnvironment(simulator)
-            if DetailMetadataRegressionHost.requestedCase != nil {
+            if ProfileFeedbackFixtureHost.isRequested {
+                ProfileFeedbackFixtureHost()
+            } else if DetailMetadataRegressionHost.requestedCase != nil {
                 DetailMetadataRegressionHost()
             } else {
                 normalContent
@@ -3190,7 +3214,7 @@ struct HomeDashboardView: View {
                     .modifier(Reveal(index: 1, on: revealed))
                 showroomSection
                     .modifier(Reveal(index: 2, on: revealed))
-                demoSection
+                appGuideSection
                     .modifier(Reveal(index: 3, on: revealed))
                 howItWorksSection
                     .modifier(Reveal(index: 4, on: revealed))
@@ -3610,14 +3634,29 @@ struct HomeDashboardView: View {
             // every frame and then fails at /start is a dead feature on Home.
             if model.isSpatialWalkthroughAvailable {
                 featureButton(.spatial)
+            } else {
+                comingSoonTile("3D walkthrough", "Room-by-room exploration", "rotate.3d")
             }
             featureButton(.photos)
             featureButton(.photoStudio)
             featureButton(.reel)
             featureButton(.floorPlan)
+            comingSoonTile("3D floor plan", "Scan and build a room model", "cube.transparent")
             featureButton(.aerial)
             agentCardTile
         }
+    }
+
+    private func comingSoonTile(_ title: String, _ description: String, _ icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: icon).font(.title2).foregroundStyle(Theme.accent)
+            Text(title).font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text("Coming soon").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+            Text(description).font(.caption).foregroundStyle(Theme.inkDim)
+        }
+        .padding(14).frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: Theme.radius))
+        .accessibilityElement(children: .combine)
     }
 
     /// One gated tile. Tapping never starts loose work — `open` picks the home
@@ -3714,6 +3753,22 @@ struct HomeDashboardView: View {
     }
 
     // MARK: Live demo — the real scroll-scrub player, right on Home
+
+    private var appGuideSection: some View {
+        NavigationLink { AppGuideView() } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "hand.tap.fill").font(.title2).foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Take an app walkthrough").font(.rpHeadline).foregroundStyle(Theme.ink)
+                    Text("Tap through each feature, from your first listing to sharing the finished work.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
+            }.padding(18).card()
+        }.buttonStyle(ScalePressStyle())
+            .accessibilityIdentifier("home.appGuide")
+    }
 
     @ViewBuilder private var demoSection: some View {
         if let demo = demoListing {
@@ -4325,7 +4380,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         case .photos:    return "Add photos"
         case .photoStudio: return "AI Photo Studio"
         case .reel:      return "Make a reel"
-        case .floorPlan: return "Floor plan & measurements"
+        case .floorPlan: return "Measurements"
         case .aerial:    return "Make an aerial shot"
         }
     }
@@ -4341,7 +4396,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
             ? "Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky"
             : "Declutter \u{00B7} furnish it \u{00B7} twilight \u{00B7} sky"
         case .reel:      return "Photos → one social video"
-        case .floorPlan: return "Measure, scan or upload"
+        case .floorPlan: return "Draw an outline or upload a plan"
         case .aerial:    return "A cinematic opening shot"
         }
     }
@@ -4355,7 +4410,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         case .photos:    return "photo.stack"
         case .photoStudio: return "wand.and.stars"
         case .reel:      return "film.stack"
-        case .floorPlan: return "cube.transparent"
+        case .floorPlan: return "ruler"
         case .aerial:    return "airplane.departure"
         }
     }

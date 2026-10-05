@@ -1,6 +1,174 @@
 import SwiftUI
 import UIKit
 
+/// An offline, interactive guide. Reading a step never starts capture, an AI
+/// job, a purchase, or a write to the user's workspace.
+struct AppGuideView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("What would you like to do?").font(.rpTitle).foregroundStyle(Theme.ink)
+                Text("Pick a feature and tap through its steps. Your listings stay as they are.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+                ForEach(AppGuideTopic.allCases) { topic in
+                    NavigationLink { AppGuideStepsView(topic: topic) } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: topic.icon).font(.title2).foregroundStyle(Theme.accent)
+                                .frame(width: 34)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(topic.title).font(.rpHeadline).foregroundStyle(Theme.ink)
+                                Text(topic.summary).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
+                        }.padding(16).card()
+                    }.buttonStyle(ScalePressStyle())
+                        .accessibilityIdentifier("guide.\(topic.rawValue)")
+                }
+            }.padding()
+        }.background(Theme.bg)
+            .navigationTitle("App walkthrough")
+            .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private enum AppGuideTopic: String, CaseIterable, Identifiable {
+    case listing, capture, photos, editing, reel, aerial, measurements, contact, sharing, leads, team, studio, plan, spatial
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .listing: return "Start a listing"
+        case .capture: return "Film a walkthrough"
+        case .photos: return "Add and choose photos"
+        case .editing: return "Declutter or stage photos"
+        case .reel: return "Make a social reel"
+        case .aerial: return "Create an aerial opening"
+        case .measurements: return "Measurements and floor plans"
+        case .contact: return "Your card and client details"
+        case .sharing: return "Publish and share"
+        case .leads: return "Follow up on inquiries"
+        case .team: return "Work with a team"
+        case .studio: return "Continue on desktop"
+        case .plan: return "Plans, credits and billing"
+        case .spatial: return "3D features"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .listing: return "plus.rectangle"
+        case .capture: return "video"
+        case .photos: return "photo.stack"
+        case .editing: return "wand.and.stars"
+        case .reel: return "film.stack"
+        case .aerial: return "airplane"
+        case .measurements: return "ruler"
+        case .contact: return "person.text.rectangle"
+        case .sharing: return "square.and.arrow.up"
+        case .leads: return "person.crop.circle.badge.checkmark"
+        case .team: return "person.2"
+        case .studio: return "desktopcomputer"
+        case .plan: return "creditcard"
+        case .spatial: return "rotate.3d"
+        }
+    }
+    var summary: String { steps[0].1 }
+    var steps: [(String, String)] {
+        switch self {
+        case .listing: return [
+            ("Add a listing", "Open Listings and tap Add. Give the property an address or name first."),
+            ("Check the details", "Use address suggestions or current location, then enter a unit number separately if needed. Review the property facts."),
+            ("Keep everything together", "Open this listing whenever you add photos, film, make a reel or edit its contact details. Each workspace keeps its own listings.")]
+        case .capture: return [
+            ("Choose your property", "Open the listing, then record a walkthrough or import a video you already have."),
+            ("Keep the camera steady", "For interiors, use 0.5× on a supported iPhone. Keep the phone level and walk at a steady pace. Avoid quick turns."),
+            ("Preview before sharing", "Review the footage and room tags. Motion smoothing can reduce shake; it cannot guarantee drone-like movement from every recording.")]
+        case .photos: return [
+            ("Open Photos", "Choose a listing and open Photos. Take a photo or import from Photos or Files."),
+            ("Choose your main photo", "Pick a clear exterior or another strong image as the main photo. This is the first image visitors see on the listing."),
+            ("Save the version you want", "Use the photo's download action to export a JPEG for MLS, or open AI Photo Studio for version history. Check your MLS's image requirements.")]
+        case .editing: return [
+            ("Choose the change", "Open AI Photo Studio. Choose Declutter, a staging style or another edit, then select the photos you want to change. Review the credit quote."),
+            ("Keep each version", "Original, decluttered and staged versions stay separate. You can leave the screen while an accepted job processes. Check its status when you return."),
+            ("Review and export", "Check walls, windows, appliances and access to doors. Select the version for your published gallery or download it. Files exports include disclosure captions; when saving to Photos, copy the caption separately. Follow your MLS's rules.")]
+        case .reel: return [
+            ("Pick your photos", "Open Make a reel for a listing. Choose the photos and the format for your social post."),
+            ("Choose movement and sound", "Set the clip style and voice options, then review the quote before creating. If processing stops, recover a confirmed saved request or finish a shorter reel from saved clips. Review an unconfirmed request before starting another generation."),
+            ("Watch the whole result", "Review transitions, property accuracy, captions and audio. Save the finished video before posting it to social media.")]
+        case .aerial: return [
+            ("Choose an exterior", "Open Make an aerial shot for the listing. Use a clear exterior photo with the property in view."),
+            ("Review the request", "Choose the motion and review the credit quote. Generated footage can contain errors in the building or surroundings."),
+            ("Check the result", "Watch the entire clip before including it in a reel or publishing it. Keep your original footage for comparison.")]
+        case .measurements: return [
+            ("Enter measurements", "Open Measurements for the listing. Add rooms or draw an outline by entering measured wall lengths."),
+            ("Review the worksheet", "Check closure, units, levels and area categories. Furnished rooms can still be measured manually. App calculations are not a certified survey or appraisal."),
+            ("Share a plan", "Export your measurements and worksheet, or upload a PDF or image from your measuring software. Automatic 3D scanning is marked Coming soon.")]
+        case .contact: return [
+            ("Set up your card", "Open Profile, edit your name, photo and contact details, then tap Save. Your personal card stays yours when you join a team. Set the workspace business logo separately. Use Send business card for your contact details alone, or Share my portfolio to choose the listings to include."),
+            ("Represent your client", "For a photographer's listing, open Listing contact and enter the client's name, photo and public contact details."),
+            ("Choose where leads go", "Enter the client's private lead email and choose whether to hide Rendprop branding. You retain a copy of inquiries in Leads.")]
+        case .sharing: return [
+            ("Review your listing", "Check the main photo, gallery versions, property details, contact card and disclosures before publishing."),
+            ("Choose the right link", "Share the branded link with clients or social followers. Use the unbranded link only where your MLS permits virtual-tour links."),
+            ("Explore or watch", "The public page opens with the main photo and details. Visitors choose the fly-through, then either scroll to explore or play the video.")]
+        case .leads: return [
+            ("Open Leads", "Inquiries from published listings appear in Leads. Open an inquiry to see its contact information."),
+            ("Contact the person", "Tap the phone number to call or the email address to compose an email. Check the listing so you follow up with the right client."),
+            ("Check delivery", "If a client misses an inquiry email, use the available resend action and check its delivery status. Saving a lead does not guarantee an email arrived in the inbox.")]
+        case .team: return [
+            ("Choose a workspace", "The workspace selector separates personal work from a shared team. Confirm the selected workspace before adding a listing."),
+            ("Invite or join", "Open Settings → Team to create an invitation or join using a real invitation code. A pending invitation uses a seat until accepted or revoked."),
+            ("Keep access clear", "Managers and editors only see work they are authorized to access. Switching workspaces does not move your saved work automatically.")]
+        case .studio: return [
+            ("Sign in on desktop", "Open studio.rendprop.com and sign in with the same account you use on your iPhone."),
+            ("Choose the same workspace", "Select the same workspace and listing. Uploaded media and synced changes are available there; local-only files need to upload first."),
+            ("Continue producing", "Use Studio to organize assets, create content and review work with your team. On the phone, use Retry Studio sync if a listing update is still waiting.")]
+        case .plan: return [
+            ("Check your allowance", "Open Settings → Plan & usage to see the account's plan, feature limits and credits."),
+            ("Review before purchasing", "Choose a plan and billing period. Apple's purchase sheet shows the actual price and any eligible free trial. A trial starts only after you confirm the subscription."),
+            ("Manage your subscription", "Use Manage subscription to change or cancel with Apple. Restore purchases after reinstalling or signing back in. Review each AI job's quote before spending credits.")]
+        case .spatial: return [
+            ("Coming soon", "3D walkthroughs and automatic 3D floor-plan capture are still being tested. They are not required to create photos, videos or a published listing."),
+            ("Separate phone testing", "The TestFlight Lab contains local capture experiments. Photos remain on the phone until you export them; a lab test does not publish a finished tour."),
+            ("Use measurements today", "You can enter room measurements, draw measured outlines and upload an existing floor plan while the 3D features are developed.")]
+        }
+    }
+}
+
+private struct AppGuideStepsView: View {
+    let topic: AppGuideTopic
+    @State private var step = 0
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                Image(systemName: topic.icon).font(.system(size: 44)).foregroundStyle(Theme.accent)
+                Text("Step \(step + 1) of \(topic.steps.count)").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                ProgressView(value: Double(step + 1), total: Double(topic.steps.count)).tint(Theme.accent)
+                Text(topic.steps[step].0).font(.rpTitle).foregroundStyle(Theme.ink)
+                Text(topic.steps[step].1).font(.rpBody).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 12) {
+                    Button("Back") { step = max(0, step - 1) }
+                        .disabled(step == 0)
+                    Spacer()
+                    if step + 1 < topic.steps.count {
+                        Button("Next step") { step += 1; Haptics.selection() }
+                            .buttonStyle(.borderedProminent).tint(Theme.accent)
+                    } else {
+                        Label("You're ready", systemImage: "checkmark.circle.fill").foregroundStyle(Theme.accent)
+                    }
+                }.padding(.top, 8)
+                if step + 1 == topic.steps.count && topic == .listing {
+                    NavigationLink("Add a listing") { NewListingView() }
+                        .buttonStyle(.borderedProminent).tint(Theme.accent)
+                }
+            }.padding(22)
+        }.background(Theme.bg)
+            .navigationTitle(topic.title).navigationBarTitleDisplayMode(.inline)
+            .accessibilityIdentifier("guide.steps.\(topic.rawValue)")
+    }
+}
+
 struct HomeListingsView: View {
     @EnvironmentObject var model: AppModel
     // LOAD-BEARING: observing this key is what makes `filtered`/`soldCount`
@@ -17,7 +185,7 @@ struct HomeListingsView: View {
     /// Only listings for the CURRENT business type (a gym never sees houses),
     /// active (not sold), plus search.
     private var filtered: [Listing] {
-        let active = model.listings.filter { $0.belongsToCurrentType && !$0.isSold && model.isInSelectedWorkspace($0) }
+        let active = model.listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isSold && model.isInSelectedWorkspace($0) }
         guard !search.isEmpty else { return active }
         return active.filter { $0.address.localizedCaseInsensitiveContains(search) }
     }
@@ -30,7 +198,7 @@ struct HomeListingsView: View {
     /// Archived count for THIS industry only — real-estate sold houses don't
     /// show up in the Food or Gym archive.
     private var soldCount: Int {
-        model.listings.filter { $0.belongsToCurrentType && $0.isSold && model.isInSelectedWorkspace($0) }.count
+        model.listings.filter { !$0.isSample && $0.belongsToCurrentType && $0.isSold && model.isInSelectedWorkspace($0) }.count
     }
 
     private var noun: String { SpaceType.current.spaceNoun }
@@ -205,7 +373,7 @@ struct HomeListingsView: View {
                 .frame(width: 68, height: 68)
                 .background(Color.white.opacity(0.16),
                             in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            Text("Your first tour is\n10 minutes away")
+            Text("Your first listing\nstarts here")
                 .font(.system(size: 24, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.white)
                 .multilineTextAlignment(.center)
@@ -225,10 +393,14 @@ struct HomeListingsView: View {
                 .font(.rpCaption)
                 .foregroundStyle(Color.white.opacity(0.9))
                 .multilineTextAlignment(.center)
-            Text("The \(noun)s below are samples — scroll one to see the result.")
-                .font(.rpCaption)
-                .foregroundStyle(Color.white.opacity(0.8))
-                .multilineTextAlignment(.center)
+            NavigationLink { AppGuideView() } label: {
+                Label("Show me how", systemImage: "hand.tap")
+                    .font(.rpBody.weight(.semibold))
+                    .padding(12)
+                    .background(Color.white.opacity(0.18), in: Capsule())
+                    .foregroundStyle(Color.white)
+            }
+            .accessibilityIdentifier("listings.appGuide")
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24).padding(.horizontal, 20)

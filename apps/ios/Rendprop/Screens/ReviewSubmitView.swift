@@ -102,7 +102,7 @@ struct ReviewSubmitView: View {
         .navigationTitle("Review & Submit")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showRoomTagger) {
-            RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags)
+            RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags, listingID: listing.id)
         }
         .sheet(isPresented: $showReflectionRemoval) {
             if let reflection {
@@ -508,6 +508,7 @@ struct RoomTaggerView: View {
     @Binding var tags: [RoomTag]
     /// nil = no "Suggest room names" anywhere on this screen.
     let suggest: RoomTagSuggestSource?
+    let listingID: UUID?
     @Environment(\.dismiss) private var dismiss
 
     @State private var player: AVPlayer
@@ -529,10 +530,11 @@ struct RoomTaggerView: View {
     @State private var suggestNote: String?
     @State private var didAutoRun = false
 
-    init(videoURL: URL, tags: Binding<[RoomTag]>, suggest: RoomTagSuggestSource? = nil) {
+    init(videoURL: URL, tags: Binding<[RoomTag]>, suggest: RoomTagSuggestSource? = nil, listingID: UUID? = nil) {
         self.videoURL = videoURL
         self._tags = tags
         self.suggest = suggest
+        self.listingID = listingID
         _player = State(initialValue: AVPlayer(url: videoURL))
     }
 
@@ -566,7 +568,7 @@ struct RoomTaggerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bg, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
-            .askAI(.roomTagger)
+            .askAI(.roomTagger, listingID: listingID)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     // Discard BEFORE `dismiss()`, not only in `onDisappear`:

@@ -45,12 +45,25 @@ import { bucketForKey } from "../studio/handler.ts";
 import { propertyGalleryKey, publicMainPhoto } from "../_shared/property-cover.ts";
 import { publicProvenanceDisclosure } from "../_shared/provenance.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
-import { buildAgentCard } from "../_shared/agentcard.ts";
+import { buildPersonalListingCard } from "../_shared/agentcard.ts";
 import { resolveContactPhoto } from "../listings/client-contact.ts";
 import { buildCta } from "./cta.ts";
 import { bindSpatialChapters, type SpatialChapter } from "../spatial/chapters.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
+
+// deno-lint-ignore no-explicit-any
+async function listingAgentIdentity(admin: any, listing: string): Promise<Record<string,unknown>> {
+  const {data,error}=await admin.rpc("public_listing_agent_identity",{p_listing:listing});
+  if (error || !data || typeof data!=="object" || Array.isArray(data) ||
+      typeof data.legacy_owned_single_member!=="boolean" ||
+      !(data.personal_card===null || (typeof data.personal_card==="object" && !Array.isArray(data.personal_card))) ||
+      !(data.profile_name===null || typeof data.profile_name==="string")) {
+    if (error?.message?.startsWith("RP404:")) throw new HttpError(404,"Tour not found or not published");
+    throw new HttpError(503,"The listing agent could not be verified. Please refresh.");
+  }
+  return data;
+}
 
 /** Branded link — agent card, CTA, lead form. The agent's own channels. */
 const brandedUrl = (slug: string) => `${TOUR_BASE}/f/${slug}`;
@@ -376,12 +389,6 @@ Deno.serve(async (req) => {
 
     const visibleRefs: MediaSourceRefs & { keys: string[]; assets: string[] } = { renders: [render.id], assets: [], keys: [] };
     await assertMediaVisible(admin, listing.id, visibleRefs);
-    const [{ data: org }, { data: agentProfile }] = await Promise.all([
-      admin.from("orgs").select("handle, space_type, brand_kit").eq("id", listing.org_id).maybeSingle(),
-      listing.agent_id
-        ? admin.from("profiles").select("name").eq("id", listing.agent_id).maybeSingle()
-        : Promise.resolve({ data: null }),
-    ]);
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
     const selectedPhotos=listing.gallery_asset_ids??null;
@@ -425,17 +432,19 @@ Deno.serve(async (req) => {
       if (!spatialError && scenes) chapters = bindSpatialChapters(chapters, scenes);
     }
 
-    // 4. Assemble the safe agent card from the org's brand kit (allow-listed
-    //    fields; name never falls back to the org name — see _shared/agentcard.ts).
+    // 4. Explicit client delivery stays first. Otherwise resolve only the
+    // listing's current member's reviewed personal identity under DB locks.
     const { data: clientRow, error: clientError }=await admin.from("listing_client_contacts")
       .select("listing_id,org_id,enabled,public_card,hide_rendprop_branding,photo_asset_id,revision").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
     if(clientError)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
     const clientMode=clientRow?.enabled===true;
     const client=clientMode?await resolveContactPhoto(admin,clientRow,visibleRefs):null;
-    const agent_card = clientMode ? {...(client?.public_card??{}),handle:null} : buildAgentCard(org?.brand_kit, {
-      profileName: agentProfile?.name,
-      orgHandle: org?.handle ?? null,
-    });
+    const identity = clientMode ? null : await listingAgentIdentity(admin,listing.id);
+    const portrait=identity?.legacy_portrait as {asset_id?:unknown;storage_key?:unknown;url?:unknown}|null;
+    const portraitURL=portrait && typeof portrait.asset_id==="string" && typeof portrait.storage_key==="string" && typeof portrait.url==="string" &&
+      portrait.url===publicR2Url(portrait.storage_key) ? portrait.url : undefined;
+    if (portraitURL) {visibleRefs.assets.push(portrait!.asset_id as string);visibleRefs.keys.push(portrait!.storage_key as string);}
+    const agent_card = clientMode ? {...(client?.public_card??{}),handle:null} : buildPersonalListingCard(identity!,portraitURL);
 
     // Scrub fidelity: the scroll-scrub player seeks frame-accurately, which only
     // works on the all-intra mp4 served over HTTP byte-range. Cloudflare Stream
@@ -463,6 +472,8 @@ Deno.serve(async (req) => {
       .select("revision,enabled").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
     if(currentClientError || (currentClient?.revision??null)!==(clientRow?.revision??null) || (currentClient?.enabled??false)!==clientMode)
       throw new HttpError(503,"The listing contact changed. Please refresh.");
+    if (!clientMode && JSON.stringify(await listingAgentIdentity(admin,listing.id))!==JSON.stringify(identity))
+      throw new HttpError(503,"The listing agent changed. Please refresh.");
     return json({
       slug: render.slug,
       share_url: brandedUrl(render.slug as string),

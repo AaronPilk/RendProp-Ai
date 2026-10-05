@@ -91,6 +91,24 @@ export async function inspectStudioChunk(key:string):Promise<{bytes:number;sha25
   return {bytes:Number(response.headers.get("content-length")),sha256:response.headers.get("x-amz-meta-sha256")??""};
 }
 
+/** One service-journaled logo dispatch, with immutable destination and bounded
+ * raster bytes. No reusable URL, redirect, SDK retry or overwrite of a prior logo. */
+export async function writeBrandLogo(key: string, bytes: Uint8Array<ArrayBuffer>, type: string, sha256: string): Promise<void> {
+  if (!/^renders\/[a-f0-9-]{36}\/brand\/[a-f0-9-]{36}\.(?:jpg|png)$/.test(key) || bytes.length < 1 || bytes.length > 524288 || !["image/jpeg", "image/png"].includes(type) || !/^[a-f0-9]{64}$/.test(sha256)) throw new HttpError(400, "Invalid logo upload.");
+  const response = await uploadDispatch(`${endpoint()}/${R2_BUCKET_RENDERS}/${encodeKey(key)}`, {
+    method: "PUT", headers: { "content-type": type, "content-length": String(bytes.length), "if-none-match": "*", "x-amz-meta-sha256": sha256 }, body: bytes, aws: { allHeaders: true },
+  }, 15_000);
+  void response.body?.cancel().catch(() => {});
+  if (!response.ok) throw new HttpError(503, "Logo upload could not be confirmed. Reload your brand card before retrying.", "upstream");
+}
+export async function inspectBrandLogo(key: string): Promise<{ bytes: number; type: string; sha256: string; etag: string } | null> {
+  if (!/^renders\/[a-f0-9-]{36}\/brand\/[a-f0-9-]{36}\.(?:jpg|png)$/.test(key)) throw new HttpError(400, "Invalid logo key.");
+  const response = await uploadDispatch(`${endpoint()}/${R2_BUCKET_RENDERS}/${encodeKey(key)}`, { method: "HEAD" }, 10_000);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new HttpError(503, "Logo upload could not be checked. Reload your brand card before retrying.", "upstream");
+  return { bytes: Number(response.headers.get("content-length")), type: response.headers.get("content-type") ?? "", sha256: response.headers.get("x-amz-meta-sha256") ?? "", etag: response.headers.get("etag") ?? "" };
+}
+
 export interface PresignArgs {
   bucket: string;
   key: string;

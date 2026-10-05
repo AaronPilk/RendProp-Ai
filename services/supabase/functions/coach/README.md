@@ -18,6 +18,10 @@ Presenter generation.
 - `prompt.ts` — pure. Space-type vocabulary (mirrors `Listing.SpaceType`),
   the system instruction (persona + onboarding step ladder + customer-service
   rules + hard rules), and the user-turn builder.
+- `context.ts` — selected-workspace authority and bounded account context:
+  membership, plan/access, renewal state, usage and project/enquiry counts.
+  Cloud rows must belong to that workspace. Native local route ids remain
+  separate from server ids, and local drafts stay explicit device hints.
 - `knowledge.ts` — pure. Every customer-service fact the model may state,
   each tagged with the doc it came from. No prices — ever.
 - `actions.ts` — pure. The closed action enum, the model's JSON output
@@ -72,6 +76,12 @@ the workspace/identity at chat creation, checks them across asynchronous hops, a
 excludes local fallback bubbles from later online history. Cached full addresses
 and remembered street-line variants are redacted again at the request boundary.
 All 14 native screens are accepted; unknown text cannot enter ledger metadata.
+The selected project is included before the 25-project context bound. Native
+Needs attention help uses deterministic review actions before calling a provider:
+access/details conflicts open Home for review; uploads/renders/publishing open
+the affected tour. Raw job errors never enter context. Local recovery replies
+are excluded from later online history. If an account read is unavailable,
+Coach says it cannot verify that value and points to Plan & usage.
 Migration 0023 seeds no `note='legacy'`
 row, so a disabled AI router normally resolves this task to an empty chain.
 When the resolved chain is empty, `index.ts`'s `chooseChain()` supplies a
@@ -82,8 +92,10 @@ the fallback is not an availability guarantee.
 
 ## What this function deliberately does NOT do
 
-- No photo or video ever reaches it — `context.listings[]` is booleans and
-  counts the client already has, never fetched from the DB here.
+- No photo or video ever reaches it — `context.listings[]` carries bounded
+  counts/device hints. Server context includes only authorized closed states
+  and limited account/usage fields; no lead contents, addresses, receipt ids,
+  provider keys or raw errors are loaded.
 - No marketing copy, listing description or ad text — that stays behind the
   fair-housing-gated tools; the coach only points at them.
 - No price, ever — `knowledge.ts` carries counts only; a slip past the

@@ -1,6 +1,6 @@
 # Photo gallery reconciliation and publication review — 2026-10-04
 
-This suite compiles the real `PhotoVersionHistory.swift`, `PhotoCaptureStorage.swift` and `PhotoVersionHistoryTests.swift` with Foundation. It uses synthetic non-empty byte files, not camera capture, paid AI, customer photos or a cloud mutation.
+This suite compiles the real `PhotoVersionHistory.swift`, `PhotoCaptureStorage.swift` and `PhotoVersionHistoryTests.swift` with Foundation and requires its exact 415-assertion success result. It uses synthetic non-empty byte files, not camera capture, paid AI, customer photos or a cloud mutation.
 
 ```sh
 python3 tools/audit/photo-gallery-reconciliation-20261004/run.py

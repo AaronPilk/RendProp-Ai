@@ -1,4 +1,5 @@
 import XCTest
+import StoreKitTest
 
 /// Actual SwiftUI text entry/navigation on dedicated synthetic simulator data.
 /// No camera/photo picker, GPS permission, upload, email, AI call or purchase.
@@ -20,6 +21,220 @@ final class BetaPolishUITests: XCTestCase {
         let tree = XCTAttachment(string: app.debugDescription)
         tree.name = "beta-polish-accessibility"; tree.lifetime = .keepAlways; add(tree)
         app.terminate()
+    }
+
+    func testProfileBusinessCardAndExplicitPortfolioSelection() {
+        launchProfile()
+        let card = app.buttons["profile.sendBusinessCard"]
+        scrollTo(card); XCTAssertTrue(card.isEnabled); card.tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.otherElements["LP.CaptionBar.TopCaption"].label.hasPrefix("rendprop-business-card-"))
+        XCTAssertTrue(app.otherElements["LP.CaptionBar.BottomCaption"].label.contains("Contact Card"))
+        attach("profile-business-card-only")
+        closeProfileShare()
+        let portfolio = app.buttons["profile.sharePortfolio"]
+        scrollTo(portfolio); XCTAssertTrue(portfolio.label.contains("3")); portfolio.tap()
+        let share = app.buttons["profile.portfolio.shareSelection"]
+        XCTAssertTrue(share.waitForExistence(timeout: 10)); XCTAssertFalse(share.isEnabled)
+        let houses = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "profile.portfolio.listing."))
+        XCTAssertEqual(houses.count, 3, "Only published, active houses in the selected workspace are offered")
+        for excluded in ["Unpublished control", "Sold control", "Other workspace control", "Sample control", "Unbound workspace control"] {
+            XCTAssertFalse(app.staticTexts[excluded].exists, app.debugDescription)
+        }
+        houses.element(boundBy: 0).tap(); houses.element(boundBy: 2).tap()
+        XCTAssertEqual(share.label, "Share (2)"); XCTAssertTrue(share.isEnabled)
+        attach("profile-explicit-two-houses")
+        share.tap()
+        XCTAssertTrue(app.otherElements["ActivityListView"].waitForExistence(timeout: 15), "The chosen portfolio must reach the actual OS share sheet: \(app.debugDescription)")
+        XCTAssertTrue(app.otherElements["LP.CaptionBar.TopCaption"].label.hasPrefix("rendprop-portfolio-"))
+        attach("profile-selected-portfolio-share")
+        closeProfileShare()
+        scrollTo(portfolio); portfolio.tap()
+        XCTAssertTrue(share.waitForExistence(timeout: 10)); XCTAssertFalse(share.isEnabled, "Reopening the selector does not silently select houses")
+        app.navigationBars["Share portfolio"].buttons["Cancel"].tap()
+    }
+
+    func testProfileLogoIsSeparateAndPhoneKeepsInternationalNumber() {
+        launchProfile()
+        XCTAssertTrue(element("profile.businessLogo").exists)
+        let edit = app.buttons["Edit card"]
+        scrollTo(edit); edit.tap()
+        let retry = app.buttons["profile.logo.retry"]
+        scrollProfileFormTo(retry); retry.tap() // Closed MockAPIClient only.
+        let finished = NSPredicate { _, _ in !retry.exists }
+        expectation(for: finished, evaluatedWith: app); waitForExpectations(timeout: 10)
+        let phone = app.textFields["profile.phone"]
+        scrollProfileFormTo(phone)
+        XCTAssertEqual(phone.value as? String, "555-123-4567")
+        // A center tap can place the caret inside the formatted number. Use
+        // the text's trailing edge before replacing every existing character.
+        phone.coordinate(withNormalizedOffset: CGVector(dx: 0.999, dy: 0.5)).tap()
+        replace(phone, with: "+44 20 7946 0958")
+        XCTAssertEqual(phone.value as? String, "+44 20 7946 0958", "International digits are never truncated or regrouped as a US number")
+        app.swipeDown() // Dismiss keyboard interactively; do not invoke Photos.
+        let remove = app.buttons["profile.logo.remove"]
+        scrollProfileFormTo(remove); remove.tap()
+        let absent = NSPredicate { _, _ in !remove.exists }
+        expectation(for: absent, evaluatedWith: app); waitForExpectations(timeout: 10)
+        XCTAssertFalse(app.staticTexts["profile.logo.error"].exists, app.debugDescription)
+        XCTAssertTrue(app.textFields.matching(NSPredicate(format: "value == %@", "Synthetic Agent")).firstMatch.exists,
+                      "Removing the business logo preserves the person's card identity")
+        attach("profile-logo-removed-phone-preserved")
+    }
+
+    func testProfileExplicitSaveAboveKeyboardAndTeamKeepsPersonalCard() {
+        launchProfile()
+        let edit = app.buttons["Edit card"]
+        scrollTo(edit); edit.tap()
+        let name = app.textFields["profile.name"]
+        scrollProfileFormTo(name)
+        name.coordinate(withNormalizedOffset: CGVector(dx: 0.999, dy: 0.5)).tap()
+        replace(name, with: "My own saved card")
+        let phone = app.textFields["profile.phone"]
+        scrollProfileFormTo(phone)
+        phone.coordinate(withNormalizedOffset: CGVector(dx: 0.999, dy: 0.5)).tap()
+        replace(phone, with: "+44 20 7946 0958")
+        XCTAssertTrue(app.keyboards.firstMatch.exists)
+        let save = app.buttons["profile.save"]
+        XCTAssertTrue(save.isHittable && save.isEnabled, "Explicit Save remains above the phone keyboard")
+        attach("profile-save-above-phone-keyboard")
+        save.tap()
+        let receipt = app.staticTexts["profile.saveReceipt"]
+        let saved = NSPredicate { _, _ in receipt.exists && receipt.label == "Saved to your personal card." }
+        expectation(for: saved, evaluatedWith: app); waitForExpectations(timeout: 10)
+        app.navigationBars.buttons["Profile"].tap()
+        XCTAssertEqual(app.staticTexts["profile.personalName"].label, "My own saved card")
+        app.buttons["profile.fixture.switchWorkspace"].tap()
+        XCTAssertEqual(app.staticTexts["profile.personalName"].label, "My own saved card", "Inviter brand cannot replace the person's account card")
+        XCTAssertFalse(app.staticTexts["Inviting agent"].exists)
+        scrollTo(edit); edit.tap()
+        XCTAssertEqual(app.textFields["profile.name"].value as? String, "My own saved card")
+        scrollProfileFormTo(phone)
+        XCTAssertEqual(phone.value as? String, "+44 20 7946 0958", "Explicit Save persists the international number across a team switch")
+        app.swipeDown()
+        let choose = app.buttons["profile.logo.choose"]
+        scrollProfileFormTo(choose)
+        XCTAssertFalse(choose.isEnabled, "A team member's personal Save does not grant agency-logo write access")
+        attach("profile-own-card-after-team-switch")
+    }
+
+    func testClientSaveExplainsChangedWorkspaceAndRemainsInvalidAfterABA() {
+        launchProfile()
+        app.tabBars.buttons["Client"].tap()
+        let save = app.buttons["clientContact.save"]
+        XCTAssertTrue(save.waitForExistence(timeout: 10)); XCTAssertTrue(save.isEnabled)
+        app.buttons["profile.fixture.switchWorkspace"].tap()
+        XCTAssertTrue(app.staticTexts["clientContact.staleContext"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertTrue(app.buttons["Close editor"].isHittable, "Stale editor keeps a reachable explanation and exit")
+        app.buttons["profile.fixture.switchWorkspace"].tap()
+        XCTAssertFalse(save.isEnabled, "Returning to the same workspace cannot revive an old editor epoch")
+        attach("client-contact-stale-workspace-explanation")
+    }
+
+    @available(iOS 17.0, *)
+    func testCompactPaywallUsesLocalStoreKitAndGuideIsReachableAtLargeText() throws {
+        let config = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "Rendprop", withExtension: "storekit"))
+        let store = try SKTestSession(contentsOf: config)
+        store.resetToDefaultState(); store.clearTransactions(); store.disableDialogs = true
+        defer { store.clearTransactions() }
+        guard store.disableDialogs else { throw NSError(domain: "ProfileLocalStoreKitUnavailable", code: 1) }
+        store.storefront = "USA"; store.locale = Locale(identifier: "en_US")
+        launchProfile()
+        app.tabBars.buttons["Plans"].tap()
+        let pro = app.buttons["paywall.plan.pro"]
+        XCTAssertTrue(pro.waitForExistence(timeout: 25), "All choices require actual local StoreKit products: \(app.debugDescription)")
+        XCTAssertTrue(app.buttons["paywall.plan.starter"].exists && app.buttons["paywall.plan.team"].exists)
+        XCTAssertTrue(app.buttons["Start 7-day free trial"].exists, "The original eligible offer remains explicit")
+        XCTAssertTrue(element("paywall.selectedDetails").exists)
+        attach("paywall-compact-pro-local-products")
+        app.buttons["paywall.plan.starter"].tap()
+        XCTAssertTrue(app.staticTexts["paywall.selection"].label.contains("Starter"))
+        app.segmentedControls["paywall.period"].buttons["Yearly"].tap()
+        XCTAssertTrue(app.staticTexts["paywall.selection"].label.contains("Yearly"))
+        XCTAssertTrue(store.allTransactions().isEmpty, "Opening and choosing plans never purchases or starts a trial")
+        attach("paywall-compact-yearly-no-purchase")
+    }
+
+    func testProfileGuideIsReachableAtLargeText() {
+        launchProfile(largeText: true)
+        app.tabBars.buttons["Guide"].tap()
+        XCTAssertTrue(app.navigationBars["App walkthrough"].waitForExistence(timeout: 10))
+        let contact = app.buttons["guide.contact"]
+        // At accessibility sizes a whole guide card is taller than the
+        // viewport. A visible hittable portion is sufficient to open it.
+        for _ in 0..<18 { if contact.exists && contact.isHittable { break }; app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(contact.isHittable, app.debugDescription); contact.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Send business card")).firstMatch.waitForExistence(timeout: 10))
+        attach("profile-guide-large-text")
+    }
+
+    func testProfileGuestArchiveRequiresReviewAndExplicitSave() {
+        launchProfile(archive: true)
+        XCTAssertEqual(app.staticTexts["profile.personalName"].label, "Synthetic Agent", "Guest archive cannot replace current identity on opening Profile")
+        let edit = app.buttons["Edit card"]
+        scrollTo(edit); edit.tap()
+        let review = app.buttons["profile.reviewGuestCard"]
+        scrollProfileFormTo(review); XCTAssertTrue(review.isHittable); review.tap()
+        let load = app.buttons["Review saved details"]
+        XCTAssertTrue(load.waitForExistence(timeout: 10)); load.tap()
+        let name = app.textFields["profile.name"]
+        let reviewed = NSPredicate { _, _ in name.exists && name.value as? String == "Saved guest agent" }
+        expectation(for: reviewed, evaluatedWith: app); waitForExpectations(timeout: 10)
+        attach("profile-guest-archive-editor-only")
+        app.navigationBars.buttons["Profile"].tap()
+        XCTAssertEqual(app.staticTexts["profile.personalName"].label, "Synthetic Agent", "Review without Save leaves existing personal identity unchanged")
+        scrollTo(edit); edit.tap()
+        scrollProfileFormTo(review); review.tap()
+        XCTAssertTrue(load.waitForExistence(timeout: 10)); load.tap()
+        expectation(for: reviewed, evaluatedWith: app); waitForExpectations(timeout: 10)
+        let save = app.buttons["profile.save"]
+        XCTAssertTrue(save.isHittable && save.isEnabled); save.tap()
+        let receipt = app.staticTexts["profile.saveReceipt"]
+        expectation(for: NSPredicate { _, _ in receipt.exists && receipt.label == "Saved to your personal card." }, evaluatedWith: app)
+        waitForExpectations(timeout: 10)
+        app.navigationBars.buttons["Profile"].tap()
+        XCTAssertEqual(app.staticTexts["profile.personalName"].label, "Saved guest agent", "Only deliberate Save applies the reviewed card")
+        attach("profile-guest-archive-explicit-save")
+    }
+
+    private func launchProfile(largeText: Bool = false, archive: Bool = false) {
+        app.launchArguments = baseArguments + ["-ui.profileFeedbackFixture", "-auth.supabase.userID", "b3710000-0000-4000-8000-000000000001"]
+        if largeText { app.launchArguments += ["-ui.profileFeedbackLargeText"] }
+        if archive { app.launchArguments += ["-ui.profileGuestArchiveFixture"] }
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 25), app.debugDescription)
+        XCTAssertFalse(element("profile.fixture.failure").exists)
+    }
+
+    private func closeProfileShare() {
+        let close = app.buttons["header.closeButton"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription); close.tap()
+        XCTAssertTrue(app.navigationBars["Profile"].waitForExistence(timeout: 10), app.debugDescription)
+    }
+
+    private func scrollProfileFormTo(_ control: XCUIElement) {
+        let form = app.collectionViews.firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 5), app.debugDescription)
+        for _ in 0..<20 {
+            if control.exists && control.isHittable { return }
+            // The collection's accessibility frame can extend behind the
+            // keyboard. Keep the gesture inside its actually visible content.
+            let keyboardTop = app.keyboards.firstMatch.exists ? app.keyboards.firstMatch.frame.minY - 60 : form.frame.maxY
+            let visibleBottom = min(form.frame.maxY, keyboardTop, app.buttons["profile.save"].frame.minY)
+            let top = max(form.frame.minY, app.navigationBars.firstMatch.frame.maxY) + 24
+            let bottom = max(top + 40, visibleBottom - 24)
+            // Short moves keep a virtualized field from passing through the
+            // visible area between snapshots. Reverse if it is above us.
+            let step = min(120, (bottom - top) / 3)
+            let movingDown = control.exists && control.frame.midY < top
+            let startY = movingDown ? top : bottom
+            let endY = movingDown ? top + step : bottom - step
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: form.frame.midX, dy: startY))
+            let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: form.frame.midX, dy: endY))
+            start.press(forDuration: 0.05, thenDragTo: end)
+        }
+        XCTFail("Profile form control is unreachable: \(control.debugDescription)\n\(app.debugDescription)")
     }
 
     func testClientCardHasLabelsPrivateRoutingAndSaveAboveKeyboard() {

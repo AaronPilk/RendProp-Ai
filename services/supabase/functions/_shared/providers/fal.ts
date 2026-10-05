@@ -190,7 +190,7 @@ export function falResponseUrl(statusUrl: string): string {
 }
 
 function classifyFal(status: number, body: unknown): ErrorClass {
-  const text = snippet(body, 400).toLowerCase();
+  const text = snippet(body, 400).toLowerCase().replace(/[_-]/g, " ");
   if (/nsfw|safety|content policy/.test(text)) return "nsfw";
   if (status === 422) return "validation";
   return classifyStatus(status);
@@ -201,7 +201,9 @@ export function falCompletedFailure(data: Record<string, unknown>): Extract<JobS
   const hasError = data.error != null && data.error !== false && data.error !== "";
   const hasType = typeof data.error_type === "string" && data.error_type.trim().length > 0;
   if (!hasError && !hasType) return null;
-  const errorClass = classifyFal(500, data.error ?? data.error_type);
+  // An opaque message cannot mask the provider's explicit safety type.
+  // Only the derived class and generic sentence leave this helper.
+  const errorClass = classifyFal(500, `${snippet(data.error_type, 120)} ${snippet(data.error, 280)}`);
   return {
     status: "failed", error_class: errorClass,
     message: errorClass === "nsfw" ? "The service refused this content under its safety policy." :
@@ -335,6 +337,9 @@ export const falAdapter: ProviderAdapter = {
       } catch (error) {
         if (!(error instanceof ProviderError) || !error.status) throw error;
         console.error("fal completed result failed", { provider_status: error.status, error_class: error.error_class });
+        // The generation already completed. A temporary result GET failure is
+        // recoverable by polling this receipt; it must not invite another POST.
+        if (error.status === 408 || error.status === 429 || error.status >= 500) throw error;
         return { status: "failed", error_class: error.error_class, message: "The video service could not return this generation." };
       }
       const resultFailed = falCompletedFailure(result);
@@ -359,6 +364,8 @@ export const falAdapter: ProviderAdapter = {
       };
     }
 
+    const terminalFailure = falCompletedFailure(st);
+    if (terminalFailure) return terminalFailure;
     return {
       status: "failed",
       error_class: "upstream",

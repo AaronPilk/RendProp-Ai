@@ -41,9 +41,9 @@
 //     precious monthly quotas elsewhere in this codebase are).
 //
 //  3. TEXT ONLY, NEVER LOGGED. No photo or video is ever part of a coach
-//     request — `context.listings[]` carries only counts and booleans the app
-//     already has from AppModel (never queried from the DB here; see
-//     prompt.ts). Message content is never in a log line, in either
+//     request — `context.listings[]` carries bounded device hints; context.ts
+//     verifies cloud ids and loads only selected-workspace counts, closed states
+//     and limited account/usage fields. Message content is never in a log line, in either
 //     direction — only ids, counts, provider/model names and error classes.
 
 import { handleOptions } from "../_shared/cors.ts";
@@ -52,7 +52,7 @@ import {
   HttpError,
   json,
   pathSegments,
-  readJson,
+  readJsonLimited,
   respondError,
 } from "../_shared/http.ts";
 import {
@@ -61,9 +61,10 @@ import {
   getUser,
   orgForUser,
   preferredOrg,
+  userClient,
 } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
-import { entitlementFor } from "../_shared/entitlements.ts";
+import { entitlementFor, type Entitlement } from "../_shared/entitlements.ts";
 import { recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute } from "../_shared/router.ts";
@@ -81,6 +82,7 @@ import {
   systemInstruction,
 } from "./prompt.ts";
 import { parseCoachOutput } from "./actions.ts";
+import { coachContext } from "./context.ts";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -173,29 +175,25 @@ async function chooseChain(plan: string): Promise<RouteStep[]> {
   } catch (e) {
     console.error(
       "coach: resolveRoute threw; using the two-step fallback:",
-      e instanceof Error ? e.message : String(e),
+      e instanceof Error ? e.name : "unknown",
     );
   }
   return [ANTHROPIC_FALLBACK, OPENAI_FALLBACK];
 }
 
-async function routingPlan(orgId: string): Promise<string> {
+async function trustedEntitlement(orgId: string): Promise<Entitlement | null> {
   try {
-    const ent = await entitlementFor(orgId);
-    return ent.degraded ? "free" : cleanPlan(ent.plan);
+    return await entitlementFor(orgId);
   } catch {
-    return "free";
+    return null;
   }
 }
 
 // ── Body validation — every field is untrusted, nothing is a UUID here ──────
 //
-// Unlike every other AI route in this codebase, coach never looks anything up
-// in the database by id: `context.listings[]` is the CLIENT's own report of
-// its own AppModel state (CoachModel.swift), used only to word the reply and
-// to validate which `listing_id` an action may name. A stale or wrong id here
-// costs nothing but a slightly wrong suggestion — it can never leak another
-// org's data, because nothing is ever fetched with it.
+// Client context is untrusted. context.ts verifies cloud row ids under the
+// selected org and excludes unavailable/foreign rows. Device route ids remain
+// distinct from server ids; local drafts are explicitly labelled device hints.
 
 interface CoachMessageIn {
   role?: unknown;
@@ -204,6 +202,8 @@ interface CoachMessageIn {
 
 interface CoachListingIn {
   id?: unknown;
+  server_id?: unknown;
+  local_draft?: unknown;
   title?: unknown;
   has_video?: unknown;
   room_tags?: unknown;
@@ -212,6 +212,7 @@ interface CoachListingIn {
   photos?: unknown;
   edits?: unknown;
   reels?: unknown;
+  attention?: unknown;
 }
 
 interface CoachBody {
@@ -221,6 +222,7 @@ interface CoachBody {
     listings?: CoachListingIn[];
     plan?: unknown;
     screen?: unknown;
+    selected_listing_id?: unknown;
   };
 }
 
@@ -254,11 +256,13 @@ function cleanListings(raw: unknown): CoachListingCtx[] {
     if (out.length >= MAX_LISTINGS) break;
     if (!item || typeof item !== "object") continue;
     const o = item as CoachListingIn;
-    const id = typeof o.id === "string" ? o.id.trim().slice(0, 128) : "";
-    if (!id || seen.has(id)) continue;
+    const id = typeof o.id === "string" ? o.id.trim().toLowerCase() : "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || seen.has(id)) continue;
     seen.add(id);
     out.push({
       id,
+      serverID: typeof o.server_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.server_id.trim()) ? o.server_id.trim().toLowerCase() : null,
+      localDraft: o.local_draft === true && o.server_id == null,
       title: typeof o.title === "string"
         ? o.title.trim().slice(0, MAX_TITLE_CHARS)
         : "",
@@ -269,6 +273,7 @@ function cleanListings(raw: unknown): CoachListingCtx[] {
       photos: nonNegInt(o.photos),
       edits: nonNegInt(o.edits),
       reels: nonNegInt(o.reels),
+      attention: ["cloud_access", "facts_review", "upload", "render", "publish", "unknown"].includes(String(o.attention)) ? String(o.attention) : null,
     });
   }
   return out;
@@ -298,7 +303,7 @@ Deno.serve(async (req) => {
     // app's own CoachModel answers from CoachOffline instead (never dead).
     const user = await getUser(req);
 
-    const body = await readJson<CoachBody>(req);
+    const body = await readJsonLimited<CoachBody>(req, 65_536);
     const messages = cleanMessages(body.messages);
     assert(
       messages.length > 0 && messages[messages.length - 1].role === "user",
@@ -325,10 +330,13 @@ Deno.serve(async (req) => {
     );
     const orgId = await orgForUser(user.id, requestedOrg);
     await assertPaidAiIdentity(user, orgId);
-    const plan = await routingPlan(orgId);
+    const entitlement = await trustedEntitlement(orgId);
+    const plan = !entitlement || entitlement.degraded ? "free" : cleanPlan(entitlement.plan);
     const space = spaceTypeOf(body.space_type);
+    const selected = typeof body.context?.selected_listing_id === "string" ? body.context.selected_listing_id.trim().toLowerCase() : null;
+    const verified = await coachContext(userClient(req), adminClient(), user.id, orgId, entitlement, cleanListings(body.context?.listings), selected);
     const context: CoachContext = {
-      listings: cleanListings(body.context?.listings),
+      ...verified,
       plan,
       screen: cleanScreen(body.context?.screen),
     };
@@ -441,7 +449,7 @@ Deno.serve(async (req) => {
     } catch (e) {
       console.error(
         "coach: ledger write failed (reply already computed):",
-        e instanceof Error ? e.message : String(e),
+        e instanceof Error ? e.name : "unknown",
       );
     }
 
@@ -452,6 +460,9 @@ Deno.serve(async (req) => {
       model: attempt.step.model,
     });
   } catch (err) {
+    if (!(err instanceof HttpError) || err.status >= 500) {
+      return respondError(new HttpError(503, "Online Coach is temporarily unavailable. Your saved work is unchanged; use the app's local help or try again later.", "upstream"));
+    }
     return respondError(err);
   }
 });

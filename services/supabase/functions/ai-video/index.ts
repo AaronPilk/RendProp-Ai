@@ -213,7 +213,8 @@ import { APP_AI_UNIT_CENTS, recordAppAiCost, recordRoutedAiCost } from "../_shar
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute, routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
-import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
+import type { JobState } from "../_shared/providers/types.ts";
+import { asHttpError, type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { BUDGETS, fetchBounded, ProviderError } from "../_shared/providers/common.ts";
 import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
@@ -1724,6 +1725,10 @@ Deno.serve(async (req) => {
         const result = await rRes.json().catch(() => ({} as Record<string, unknown>));
         if (!rRes.ok) {
           console.error("ai-video fal completed result failed", { provider_status: rRes.status, error_class: "upstream" });
+          if (rRes.status === 408 || rRes.status === 429 || rRes.status >= 500) {
+            throw new HttpError(502, "The clip finished, but its file could not be retrieved yet. Retry the saved request shortly.", "upstream",
+              { provider: "fal", provider_status: rRes.status, error_class: "upstream", failure_phase: "result", retry_existing_job: true });
+          }
           return json({ status: "failed", error: "The video service could not return this generation.", error_class: "upstream", provider_status: rRes.status });
         }
         const resultFailure = falCompletedFailure(result);
@@ -1746,8 +1751,12 @@ Deno.serve(async (req) => {
 
       // FAILED / ERROR / anything unexpected. Log the provider's reason so
       // failures are diagnosable from the function logs (audit follow-up).
-      console.error("ai-video fal generation failed", { error_class: "upstream" });
-      return json({ status: "failed", error: "The video service could not complete this generation.", error_class: "upstream", provider: "fal" });
+      const terminalFailure = falCompletedFailure(st);
+      const errorClass = terminalFailure?.error_class ?? "upstream";
+      console.error("ai-video fal generation failed", { provider_status: stRes.status,
+        fal_status: status === "FAILED" || status === "ERROR" ? status : "unexpected", error_class: errorClass });
+      return json({ status: "failed", error: terminalFailure?.message ?? "The video service could not complete this generation.",
+        error_class: errorClass, provider: "fal", provider_status: stRes.status, failure_phase: "generation" });
     }
 
     throw new HttpError(405, `Method ${req.method} not allowed on this path`);
@@ -1782,7 +1791,14 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
     submitted_at: job.t,
   };
 
-  const state = await adapter.poll(ref);
+  let state: JobState;
+  try { state = await adapter.poll(ref); }
+  catch (error) {
+    const failure = asHttpError(error);
+    console.error("ai-video routed status read failed", { provider: job.p, model: job.m,
+      provider_status: failure.details?.provider_status ?? null, error_class: failure.details?.error_class ?? "upstream" });
+    throw failure;
+  }
   if (state.status !== "done") {
     if (state.status === "failed") {
       console.error(`ai-video routed job failed (${job.p}/${job.m}):`, state.message);
@@ -1799,7 +1815,7 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
     assetKey = stored.key;
     videoUrl = persistedUrl(stored.key);
   } catch (e) {
-    console.error(`ai-video: persisting ${job.p} result to R2 failed:`, e instanceof Error ? e.message : e);
+    console.error("ai-video result persistence failed", { provider: job.p, model: job.m, error_class: "upstream" });
   }
 
   if (!videoUrl) {
@@ -1808,11 +1824,8 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
     // signature, which must never leave this function.
     const looksSigned = /[?&](x-amz-|token=|signature=|sig=|expires=)/i.test(state.result_url);
     if (looksSigned) {
-      return json({
-        status: "failed",
-        error: "The clip was generated but could not be stored — try again.",
-        error_class: "upstream",
-      });
+      throw new HttpError(503, "The clip was generated but could not be stored yet. Retry the saved request shortly.", "upstream",
+        { provider: job.p, error_class: "upstream", failure_phase: "persistence", retry_existing_job: true });
     }
     videoUrl = state.result_url;
   }

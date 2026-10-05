@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261001145730_workspace_selection.sql'
+UPLOAD_SUPPORT=['transport.ts','gateway_contract.ts','content_type.ts']
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-workspace-selection-',dir='/tmp'));SOCK,DATA=OUT/'socket',OUT/'cluster';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','NO_COLOR':'1','DENO_NO_PROMPT':'1'}
 BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb','deno']};assert all(BIN.values())
 ENV['DENO_DIR']=json.loads(subprocess.check_output([BIN['deno'],'info','--no-config','--json'],text=True))['denoDir']
 CONN=['-h',str(SOCK),'-p','55453','-U','postgres'];PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
-paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/workspace_selection.sql',pathlib.Path(__file__).resolve(),*sorted((SQL/'functions/me').glob('*.ts')),*sorted((SQL/'functions/listings').glob('*.ts')),*sorted((SQL/'functions/_shared').glob('*.ts')),SQL/'functions/studio/handler.ts']
+paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/workspace_selection.sql',pathlib.Path(__file__).resolve(),*sorted((SQL/'functions/me').glob('*.ts')),*sorted((SQL/'functions/listings').glob('*.ts')),*sorted((SQL/'functions/_shared').glob('*.ts')),SQL/'functions/studio/handler.ts',*[SQL/'functions/uploads'/name for name in UPLOAD_SUPPORT]]
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
 receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'commands':[],'passed':False,'productionMutations':0,'limits':['Synthetic auth schema and transport; no real phone or cross-device interaction']}
 def run(name,args,stdin=None,expected=0):
@@ -76,6 +77,11 @@ try:
  # validator is shared with Studio. Preserve that unchanged dependency so
  # the negative control reaches its assertion, not a missing-module error.
  (mutant/'studio').mkdir();shutil.copy2(SQL/'functions/studio/handler.ts',mutant/'studio/handler.ts')
+ # /me imports the logo handler, which uses the real upload transport helper.
+ # Its local dependencies must also be present while Deno checks the mutant.
+ # Copy them unchanged so a missing module cannot masquerade as guard detection.
+ (mutant/'uploads').mkdir()
+ for name in UPLOAD_SUPPORT:shutil.copy2(SQL/'functions/uploads'/name,mutant/'uploads'/name)
  path=mutant/'listings/index.ts';text=path.read_text();anchor='const org_id = explicitOrg ?? await orgForUser(user.id, preferredOrg(req));';assert text.count(anchor)==1
  path.write_text(text.replace(anchor,'const org_id = await orgForUser(user.id);'))
  output=run('request-drift-control',deno+['--filter','bound listing create and retry',mutant/'me/workspaces.test.ts'],expected=1);assert re.search(r'0 passed \| 1 failed',output)and 'AssertionError'in output
@@ -83,5 +89,9 @@ try:
  receipt.update(passed=True,sqlAssertions=28,handlerTests=28,realConnectionRaces=2,missingMembershipDetected=True,requestDriftDetected=True)
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
+ receipt['sourceHashesAfter']={name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in hashes}
+ receipt['sourceBindingsMatch']=receipt['sourceHashesAfter']==hashes
+ receipt['passed']=receipt['passed'] and receipt['sourceBindingsMatch']
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+assert receipt['passed'] and receipt['sourceBindingsMatch'],'Verification failed or source changed during verification'
 print('PASS: explicit workspaces, membership boundaries and delayed request binding',flush=True)

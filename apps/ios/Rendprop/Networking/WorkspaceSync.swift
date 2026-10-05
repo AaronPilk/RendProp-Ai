@@ -13,11 +13,52 @@ protocol WorkspaceSyncAPI {
     func saveCloudNativeReel(_ draft: NativeReelDraft, listingID: UUID, orgID: UUID, revision: Int) async throws -> CloudNativeReelDocument
 }
 
+/// Only explicitly reviewed public contact fields; never login email or workspace brand.
+struct PersonalCardReceipt: Codable, Equatable, Sendable {
+    let ok: Bool
+    let userID: UUID
+    let spaceType: String?
+    let publicCard: [String: String]?
+    enum CodingKeys: String, CodingKey { case ok; case userID = "user_id", spaceType = "space_type", publicCard = "public_card" }
+    init(ok: Bool, userID: UUID, spaceType: String?, publicCard: [String: String]?) {
+        self.ok = ok; self.userID = userID; self.spaceType = spaceType; self.publicCard = publicCard
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // An old GET /me response must not masquerade as an empty card receipt.
+        guard c.contains(.spaceType), c.contains(.publicCard) else { throw CloudSyncError.invalidResponse }
+        ok = try c.decode(Bool.self, forKey: .ok); userID = try c.decode(UUID.self, forKey: .userID)
+        spaceType = try c.decodeIfPresent(String.self, forKey: .spaceType)
+        publicCard = try c.decodeIfPresent([String: String].self, forKey: .publicCard)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(ok, forKey: .ok); try c.encode(userID, forKey: .userID)
+        try c.encode(spaceType, forKey: .spaceType); try c.encode(publicCard, forKey: .publicCard)
+    }
+    func checked(owner: UUID) throws -> Self {
+        let limits = ["name":120,"title":120,"brokerage":160,"phone":80,"email":254,"website":2048,"instagram":500,"linkedin":500,"tiktok":500]
+        guard ok, userID == owner, spaceType == nil || SpaceType(rawValue: spaceType!) != nil,
+              publicCard?.allSatisfy({ key, value in
+                  guard let limit = limits[key], value.count <= limit else { return false }
+                  return !value.unicodeScalars.contains { $0.value < 32 || $0.value == 127 }
+              }) ?? true else { throw CloudSyncError.invalidResponse }
+        return self
+    }
+    func expectedWire(keys: [String]) -> [String: Any] {
+        Dictionary(uniqueKeysWithValues: keys.map { key in
+            let value = key == "space_type" ? spaceType : publicCard?[key]
+            return (key, value.map { ["present": true, "value": $0] as [String: Any] } ?? ["present": false])
+        })
+    }
+}
+
 struct CloudBrand {
     let userID: UUID
     let orgID: UUID
     let spaceType: String
     let fields: [String: String]
+    var personalCard: PersonalCardReceipt? = nil
 }
 
 /// One details envelope is used for both writes and draft replay detection.

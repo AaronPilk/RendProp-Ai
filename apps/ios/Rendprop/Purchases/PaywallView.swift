@@ -108,6 +108,7 @@ struct PaywallView: View {
         } else {
             periodPicker
             planCards
+            SelectedPlanDetails(plan: selectedPlan, period: planOffer(for: selectedPlan).period)
         }
         messageBlock
     }
@@ -155,6 +156,7 @@ struct PaywallView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityLabel(Text("How often you're charged"))
+            .accessibilityIdentifier("paywall.period")
 
             HStack(spacing: 6) {
                 Image(systemName: "gift.fill")
@@ -194,6 +196,8 @@ struct PaywallView: View {
         .disabled(offer.product == nil)
         .opacity(offer.product == nil ? 0.45 : 1)
         .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("paywall.plan.\(plan.rawValue)")
+        .accessibilityAddTraits(selectedPlan == plan ? [.isSelected] : [])
     }
 
     /// What one card offers while the picker is on `period`.
@@ -272,6 +276,7 @@ struct PaywallView: View {
                 Text("Selected: \(selectedPlan.displayName) · \(offer.period.pickerLabel)")
                     .font(.rpCaption.weight(.semibold))
                     .foregroundStyle(Theme.ink)
+                    .accessibilityIdentifier("paywall.selection")
                 buyButton(product)
                 // `offer.period`, not the picker: the button buys what the card
                 // shows, so the billing sentence has to match the card too.
@@ -393,22 +398,9 @@ private struct PlanCardBody: View {
     let isCurrent: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             titleRow
             priceRow
-            Text(period.billingNote)
-                .font(.rpCaption)
-                .foregroundStyle(Theme.inkDim)
-            Divider().opacity(0.4)
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(plan.benefits, id: \.self) { line in
-                    benefitRow(line)
-                }
-            }
-            Text(plan.tagline)
-                .font(.rpCaption)
-                .foregroundStyle(Theme.inkDim)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(Theme.spacing)
@@ -423,8 +415,9 @@ private struct PlanCardBody: View {
     private var priceRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(priceText)
-                .font(.rpTitle)
+                .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
             if let note {
                 Text(note)
                     .font(.rpKicker)
@@ -463,16 +456,31 @@ private struct PlanCardBody: View {
             .background(tint.opacity(0.12), in: Capsule())
     }
 
-    private func benefitRow(_ line: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: "checkmark")
-                .font(.rpCaption.weight(.bold))
-                .foregroundStyle(Theme.accent)
-            Text(line)
-                .font(.rpCaption)
-                .foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
+}
+
+/// The selected plan's full allowance list stays visible without repeating it
+/// inside every choice. Price and actual billing period remain on each row.
+private struct SelectedPlanDetails: View {
+    let plan: RendpropPlan
+    let period: BillingPeriod
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Included with \(plan.displayName)").font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text(plan.tagline).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            ForEach(plan.benefits, id: \.self) { line in
+                Label(line, systemImage: "checkmark")
+                    .font(.rpCaption).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            DisclosureGroup("How video allowances work") {
+                Text(PlanAllowances.videoAllowanceExplanation)
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true).padding(.top, 8)
+            }.font(.rpCaption).foregroundStyle(Theme.accent)
+                .accessibilityIdentifier("paywall.videoAllowances")
+            Text(period.billingNote).font(.rpCaption).foregroundStyle(Theme.inkDim)
         }
+        .frame(maxWidth: .infinity, alignment: .leading).card()
+        .accessibilityIdentifier("paywall.selectedDetails")
     }
 }

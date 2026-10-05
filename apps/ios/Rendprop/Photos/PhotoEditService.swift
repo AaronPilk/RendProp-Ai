@@ -34,10 +34,23 @@ final class PhotoEditService {
         guard consentIsCurrent else { throw CancellationError() }
     }
 
-    func edit(_ p: EnhancedPhoto, edit: String, style: String?, prompt: String?, batch: Bool) async throws {
+    func edit(_ p: EnhancedPhoto, edit: String, style: String?, prompt: String?, batch: Bool,
+              stagingReferenceID: String? = nil) async throws {
         try requireUnsentWork()
         let api = model.api
         let directory = EnhancedPhoto.directory(for: listing.id)
+        guard p.enhancedURL.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL else {
+            throw PhotoVersionHistory.Failure.changedVersion
+        }
+        var referenceBase64: String?
+        if let stagingReferenceID {
+            guard edit == "stage" else { throw PhotoVersionHistory.Failure.reviewRequired }
+            let reference = try PhotoVersionHistory.stagingReference(id: stagingReferenceID, directory: directory)
+            referenceBase64 = await AIImagePrep.jpegBase64(at: directory.appendingPathComponent(reference.imageFile),
+                                                         maxDimension: 1024, quality: 0.85)
+            guard referenceBase64 != nil else { throw PhotoVersionHistory.Failure.missingImage }
+            try requireUnsentWork()
+        }
         let prior = p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent
         let parent = try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
                                                            priorFile: prior, directory: directory)
@@ -62,12 +75,17 @@ final class PhotoEditService {
         }
         var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
         request.style = style; request.prompt = prompt; request.spaceType = space.rawValue
+        request.stagingReferenceBase64 = referenceBase64
+        request.stagingReferenceMime = referenceBase64 == nil ? nil : "image/jpeg"
         request.listingServerID = serverID
         request.label = PhotoStudioView.provenanceLabel(edit: edit, style: style, space: space)
         request.originalAssetID = originalAssetID; request.idempotencyKey = UUID().uuidString
         // Preparation can suspend. Recheck the original grant at the actual
         // provider boundary; revoke followed by grant cannot revive this batch.
         try requireUnsentWork()
+        if let stagingReferenceID {
+            _ = try PhotoVersionHistory.stagingReference(id: stagingReferenceID, directory: directory)
+        }
         let result = try await api.aiPhotoEdit(request)
         // This request was already sent. Keep its returned edit under the same
         // account/workspace; consent revocation fences the next unsent photo.
@@ -84,7 +102,8 @@ final class PhotoEditService {
         let version = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: parent.id,
             sourceID: sourceVersion.id, edit: edit, style: style, disclosure: result.disclosure,
             provenanceID: result.provenanceID, provenanceRecorded: result.provenanceRecorded,
-            directory: directory, originalAssetID: originalAssetID, serverListingID: serverID?.uuidString)
+            directory: directory, originalAssetID: originalAssetID, serverListingID: serverID?.uuidString,
+            stagingReferenceID: stagingReferenceID, stagingBrief: edit == "stage" ? prompt : nil)
         let output = directory.appendingPathComponent(version.imageFile)
         if wasMain && !version.effects.contains("stage")
             && model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath == FileStore.relativePath(for: p.enhancedURL) {
@@ -100,7 +119,8 @@ final class PhotoEditService {
         }
     }
 
-    func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?) -> Bool {
+    func start(title: String, photos: [EnhancedPhoto], edit: String, style: String?, prompt: String?,
+               stagingReferenceID: String? = nil) -> Bool {
         guard consentIsCurrent else { return false }
         var background: UIBackgroundTaskIdentifier = .invalid
         let queue = PhotoWorkQueue.shared
@@ -111,7 +131,8 @@ final class PhotoEditService {
                 return failure.isQuota || failure.isUnauthorized
             }, process: { id in
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
-                try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1)
+                try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,
+                                    stagingReferenceID: stagingReferenceID)
             }, completion: { result in
                 if background != .invalid { UIApplication.shared.endBackgroundTask(background); background = .invalid }
                 IdleTimer.release()

@@ -67,6 +67,7 @@ final class CoachModel: ObservableObject {
     /// A closed screen hint — never load-bearing; see
     /// `CoachRequest.Context.screen`.
     private let originScreen: String?
+    private let selectedListingID: UUID?
     private let ownerAtOpen: String?
     private let revisionAtOpen: UInt64
     private let workspaceAtOpen: UUID?
@@ -75,11 +76,12 @@ final class CoachModel: ObservableObject {
     /// private in-memory map is used only to remove automatic address content.
     private var addressRedactions: [String: String] = [:]
 
-    init(model: AppModel, originScreen: String? = nil, starters: [String]? = nil) {
+    init(model: AppModel, originScreen: String? = nil, starters: [String]? = nil, listingID: UUID? = nil) {
         self.starterChips = (starters?.isEmpty == false ? starters! : Self.defaultStarters)
         self.model = model
         self.space = SpaceType.current
         self.originScreen = originScreen
+        self.selectedListingID = listingID
         self.ownerAtOpen = AuthStore.shared.userID
         self.revisionAtOpen = AuthStore.shared.syncSessionRevision
         self.workspaceAtOpen = WorkspaceContext.selectedOrgID
@@ -112,6 +114,12 @@ final class CoachModel: ObservableObject {
 
     private func reply(to text: String) async {
         guard currentContext else { invalidateContext(); return }
+        if let help = CoachOffline.recovery(to: text, model: model, space: space, orgID: workspaceAtOpen,
+                                            liveBackend: liveBackend, selectedListingID: selectedListingID) {
+            messages.append(CoachMessage(role: .assistant, text: help.text, localOnly: true,
+                                         actions: help.action.map { [$0] } ?? []))
+            return
+        }
         // 5.1.2(i): what the person types goes to Anthropic or OpenAI on the
         // server, so the same consent every other AI tool asks for is asked
         // here — once per device, through AIConsentGate on CoachView. Declining
@@ -120,7 +128,7 @@ final class CoachModel: ObservableObject {
         let consent = await AIConsent.shared.ensureGranted()
         guard currentContext else { invalidateContext(); return }
         guard consent else {
-            let (offlineText, offlineAction) = CoachOffline.answer(to: text, model: model, space: space)
+            let (offlineText, offlineAction) = offlineAnswer(to: text)
             messages.append(CoachMessage(
                 role: .assistant,
                 text: offlineText,
@@ -137,9 +145,10 @@ final class CoachModel: ObservableObject {
                 messages: history(),
                 spaceType: space.rawValue,
                 context: CoachRequest.Context(
-                    listings: Self.contextListings(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend),
+                    listings: Self.contextListings(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend, selectedListingID: selectedListingID),
                     plan: PurchaseManager.shared.activePlan ?? "free",
-                    screen: originScreen
+                    screen: originScreen,
+                    selectedListingID: Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend).contains(where: { $0.id == selectedListingID }) ? selectedListingID?.uuidString.lowercased() : nil
                 ),
                 orgID: workspaceAtOpen
             )
@@ -149,16 +158,16 @@ final class CoachModel: ObservableObject {
             let reply = response.reply.trimmingCharacters(in: .whitespacesAndNewlines)
             messages.append(CoachMessage(
                 role: .assistant,
-                text: reply.isEmpty ? CoachOffline.nextStep(model: model, space: space).text : reply,
+                text: reply.isEmpty ? offlineAnswer(to: text).text : reply,
                 localOnly: reply.isEmpty,
-                actions: response.actions,
+                actions: reply.isEmpty ? offlineAnswer(to: text).action.map { [$0] } ?? [] : response.actions,
                 suggestedReplies: response.suggestedReplies
             ))
         } catch {
             guard currentContext else { invalidateContext(); return }
             // Signed out, offline, rate-limited, or the server had a bad day
             // — all land here. The chat still answers; see CoachOffline.
-            let (offlineText, offlineAction) = CoachOffline.answer(to: text, model: model, space: space)
+            let (offlineText, offlineAction) = offlineAnswer(to: text)
             messages.append(CoachMessage(
                 role: .assistant,
                 text: offlineText,
@@ -166,6 +175,11 @@ final class CoachModel: ObservableObject {
                 actions: offlineAction.map { [$0] } ?? []
             ))
         }
+    }
+
+    private func offlineAnswer(to text: String) -> (text: String, action: CoachResponse.Action?) {
+        CoachOffline.answer(to: text, model: model, space: space, orgID: workspaceAtOpen,
+                            liveBackend: liveBackend, selectedListingID: selectedListingID)
     }
 
     /// Oldest-first, newest-last — matches the server's own expectation
@@ -274,8 +288,10 @@ final class CoachModel: ObservableObject {
         contextListings(from: model, orgID: WorkspaceContext.selectedOrgID, liveBackend: Config.useLiveBackend)
     }
 
-    static func contextListings(from model: AppModel, orgID: UUID?, liveBackend: Bool) -> [CoachRequest.ListingContext] {
-        let listings = Array(contextProjects(from: model, orgID: orgID, liveBackend: liveBackend).prefix(25))
+    static func contextListings(from model: AppModel, orgID: UUID?, liveBackend: Bool, selectedListingID: UUID? = nil) -> [CoachRequest.ListingContext] {
+        let projects = contextProjects(from: model, orgID: orgID, liveBackend: liveBackend)
+        let selected = projects.filter { $0.id == selectedListingID }
+        let listings = Array((selected + projects.filter { $0.id != selectedListingID }).prefix(25))
         let labels = Self.redactedLabels(for: listings)
         return listings.enumerated().map { idx, listing in
             CoachRequest.ListingContext(
@@ -287,9 +303,22 @@ final class CoachModel: ObservableObject {
                 published: !(listing.shareURL ?? "").isEmpty,
                 photos: photoCounts(for: listing.id).photos,
                 edits: photoCounts(for: listing.id).edits,
-                reels: reelCount(for: listing.id)
+                reels: reelCount(for: listing.id),
+                attention: attention(for: listing, model: model),
+                serverID: listing.serverID?.uuidString.lowercased(),
+                localDraft: listing.serverID == nil && listing.cloudDraftOrgID == orgID && listing.cloudUnavailable != true
             )
         }
+    }
+
+    static func attention(for listing: Listing, model: AppModel) -> String? {
+        if listing.cloudUnavailable == true { return "cloud_access" }
+        if listing.factsSync?.reviewRequired == true || listing.factsSync?.conflict == true || listing.measurementSync?.factsReviewRequired == true { return "facts_review" }
+        guard listing.needsAttention else { return nil }
+        if listing.status == .uploading { return "upload" }
+        if model.tours[listing.id] != nil { return "publish" }
+        if model.assets[listing.id] != nil { return "render" }
+        return "unknown"
     }
 
     /// The label a listing travels to the LLM under — the STREET, never the
@@ -426,16 +455,17 @@ enum CoachOffline {
             "upright at chest height, keep it level, and turn the lights on first. One continuous " +
             "take, ending on your best shot."),
         Topic(keywords: ["floor plan", "lidar", "roomplan", "measurements"], reply:
-            "Open a listing's Floor plan card → Measurements. Draw an outline by entering each wall's " +
+            "Open a listing's Measurements card. Draw an outline by entering each wall's " +
             "length and direction, or enter rectangular room dimensions. Review the area worksheet " +
             "and export an image or PDF. Garage, porch and unfinished areas stay separate. " +
             "Choose a finished outline when adding an open-below deduction. " +
             "Calculated closing walls need checking, and these totals do not set advertised living area. " +
             "Use tape or laser measurements, or the ruler button for an approximate phone distance. " +
-            "LiDAR phones can also scan rooms; any phone can upload a plan you already have."),
-        // Two different things, two names: the server's free week (no card, no
-        // account) and Apple's introductory offer on a paid plan (the only
-        // "free trial" in the app — see OnboardingView).
+            "Any phone can upload a plan you already have. Automatic 3D floor plans and 3D " +
+            "walkthroughs are Coming soon. The separate TestFlight Lab keeps local capture " +
+            "tests available. Plan your video is no longer an ordinary listing detail entry; " +
+            "agency and Studio capture planning remain in their own workflows."),
+        // The introductory trial starts only after Apple's purchase confirmation.
         Topic(keywords: ["trial", "free week", "first week"], reply:
             "Open Settings → Plan & usage → View plans. Eligible subscriptions offer 7 days free, " +
             "but the trial starts only after you confirm the subscription with Apple. Apple shows " +
@@ -454,24 +484,76 @@ enum CoachOffline {
 
     /// Never returns an empty string — callers always get something to show,
     /// never a blank bubble.
-    static func answer(to userText: String, model: AppModel, space: SpaceType) -> (text: String, action: CoachResponse.Action?) {
+    static func answer(to userText: String, model: AppModel, space: SpaceType, orgID: UUID? = nil,
+                       liveBackend: Bool = false, selectedListingID: UUID? = nil) -> (text: String, action: CoachResponse.Action?) {
         let haystack = userText.lowercased()
-        if let hit = topics.first(where: { topic in topic.keywords.contains(where: haystack.contains) }) {
-            return (hit.reply + offlineNote,
-                    CoachResponse.Action(type: CoachActionType.openSupport.rawValue,
-                                         label: CoachActionType.openSupport.defaultLabel, listingID: nil))
+        if let help = recovery(to: userText, model: model, space: space, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID) {
+            return help
         }
-        let step = nextStep(model: model, space: space)
+        if let hit = topics.first(where: { topic in topic.keywords.contains(where: haystack.contains) }) {
+            let kind: CoachActionType = hit.keywords.contains("cancel") || hit.keywords.contains("trial") ? .openPlanUsage : .openSupport
+            return (hit.reply + offlineNote,
+                    CoachResponse.Action(type: kind.rawValue,
+                                         label: kind.defaultLabel, listingID: nil))
+        }
+        if ["account", "my plan", "usage", "allowance", "renewal"].contains(where: haystack.contains) {
+            return ("I can't verify your current plan, renewal or usage offline. Open Plan & usage for the selected workspace's latest account details." + offlineNote,
+                    CoachResponse.Action(type: CoachActionType.openPlanUsage.rawValue,
+                                         label: CoachActionType.openPlanUsage.defaultLabel, listingID: nil))
+        }
+        let step = nextStep(model: model, space: space, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID)
         return (step.text + offlineNote, step.action)
+    }
+
+    /// Local recovery never sends the raw lastError to a model and never
+    /// executes a paid retry. It opens the project for the user's review.
+    static func recovery(to text: String, model: AppModel, space: SpaceType, orgID: UUID?,
+                         liveBackend: Bool, selectedListingID: UUID?) -> (text: String, action: CoachResponse.Action?)? {
+        let query = text.lowercased()
+        guard ["needs attention", "stuck", "failed", "error", "what next", "continue", "retry", "wrong", "can't publish", "cannot publish"].contains(where: query.contains),
+              let selectedListingID,
+              let listing = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend).first(where: { $0.id == selectedListingID }),
+              let reason = CoachModel.attention(for: listing, model: model) else { return nil }
+        let kind: CoachActionType
+        let reply: String
+        switch reason {
+        case "cloud_access":
+            kind = .openHome
+            reply = "Your local files are still on this phone. Open Home and confirm the workspace and listing access before trying to sync or publish."
+        case "facts_review":
+            kind = .openHome
+            reply = "Your edits are saved on this phone. Open the listing's details and Measurements to review the shared version before syncing. A retry cannot choose which teammate's changes to keep."
+        case "upload":
+            kind = .openTour
+            reply = "Open this project's tour and check the upload. Reconnect before retrying; keep the saved video on this phone until it completes."
+        case "render":
+            kind = .openTour
+            reply = "Open this project's tour to review the saved video and try building it again. Needs attention means the previous attempt did not finish; it does not mean your source video was deleted."
+        case "publish":
+            kind = .openTour
+            reply = "Your saved tour is on this phone. Open it to review the publish status, then retry sharing when connected. Normal upload and feature limits still apply."
+        default:
+            kind = .openTour
+            reply = "Open this project's tour to review the saved work and its next available action. If it still cannot continue, contact support."
+        }
+        return (reply, CoachResponse.Action(type: kind.rawValue, label: kind.defaultLabel,
+                                            listingID: kind.needsListing ? listing.id.uuidString : nil))
     }
 
     /// The same step ladder as coach/prompt.ts's `systemInstruction`, run
     /// locally over state the phone already has — no network needed. Only
     /// ever names a listing when exactly one real project exists; with two
     /// or more, offline mode points at Home rather than guessing which one.
-    static func nextStep(model: AppModel, space: SpaceType) -> (text: String, action: CoachResponse.Action?) {
+    static func nextStep(model: AppModel, space: SpaceType, orgID: UUID? = nil, liveBackend: Bool = false,
+                         selectedListingID: UUID? = nil) -> (text: String, action: CoachResponse.Action?) {
         let noun = space.spaceNoun
-        let projects = model.realProjects
+        let scoped = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend)
+        let projects = selectedListingID.map { selected in scoped.filter { $0.id == selected } } ?? scoped
+        if selectedListingID != nil && projects.isEmpty {
+            return ("This project is unavailable in the selected workspace. Open Home to check its access.",
+                    CoachResponse.Action(type: CoachActionType.openHome.rawValue,
+                                         label: CoachActionType.openHome.defaultLabel, listingID: nil))
+        }
         guard projects.count == 1, let listing = projects.first else {
             if projects.isEmpty {
                 return ("Let's start your first \(noun).",

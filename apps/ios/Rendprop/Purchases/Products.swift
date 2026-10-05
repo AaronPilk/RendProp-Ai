@@ -114,7 +114,7 @@ struct PlanAllowances: Hashable, Sendable {
     let photoEdits: Int
     let reels: Int
     let aerials: Int
-    /// Topaz "drone-glide" upscales. 0 means the tier is not included.
+    /// Optional video-quality upscales. 0 means the tier is not included.
     let topaz: Int
     let seats: Int
 
@@ -123,20 +123,22 @@ struct PlanAllowances: Hashable, Sendable {
 
     var benefitLines: [String] {
         var lines: [String] = [
-            "\(renders) tour \(renders == 1 ? "render" : "renders") a month",
+            "\(renders) cloud tour \(renders == 1 ? "render" : "renders") a month",
             "\(photoEdits) AI photo edits",
             "\(reels) reel \(reels == 1 ? "clip" : "clips")",
             "\(aerials) aerial \(aerials == 1 ? "intro" : "intros")",
         ]
         if topaz > 0 {
-            // Team: "2 drone-glide upscales · 2 seats"
-            lines.append("\(topaz) drone-glide \(topaz == 1 ? "upscale" : "upscales") · \(seatsPhrase)")
+            // Quality upgrades have a separate expensive AI allowance.
+            lines.append("\(topaz) video quality \(topaz == 1 ? "upgrade" : "upgrades") · \(seatsPhrase)")
         } else {
             // Starter / Pro: "1 seat · unlimited tours to share"
             lines.append("\(seatsPhrase) · unlimited tours to share")
         }
         return lines
     }
+
+    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Reel clips and aerial intros each have their own allowance."
 }
 
 /// How often the subscription bills.

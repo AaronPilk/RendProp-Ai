@@ -474,7 +474,14 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
               let org = r["org"] as? [String: Any], let orgRaw = org["id"] as? String, let orgID = UUID(uuidString: orgRaw),
               let type = org["space_type"] as? String else { throw CloudSyncError.invalidResponse }
         let fields = (org["brand_kit"] as? [String: Any] ?? [:]).compactMapValues { $0 as? String }
-        return CloudBrand(userID: userID, orgID: orgID, spaceType: type, fields: fields)
+        var personal: PersonalCardReceipt?
+        if user.keys.contains("public_card"), user.keys.contains("public_card_space_type") {
+            let bytes = try JSONSerialization.data(withJSONObject: ["ok": true, "user_id": userRaw,
+                "space_type": user["public_card_space_type"] ?? NSNull(), "public_card": user["public_card"] ?? NSNull()])
+            let receipt: PersonalCardReceipt = try decodeExact(bytes)
+            personal = try receipt.checked(owner: userID)
+        }
+        return CloudBrand(userID: userID, orgID: orgID, spaceType: type, fields: fields, personalCard: personal)
     }
     func cloudCreative(listingID: UUID, orgID: UUID) async throws -> CloudCreative {
         var resultRequest = makeRequest(url: url(["studio", "creative-results"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased())]))
@@ -800,7 +807,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         }
         if let prompt = request.prompt {
             let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }   // custom only, server cap 600
+            if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }
+        }
+        if request.edit == "stage", let reference = request.stagingReferenceBase64 {
+            body["staging_reference_b64"] = reference
+            body["staging_reference_mime"] = request.stagingReferenceMime ?? "image/jpeg"
         }
         // Industry-aware prompts server-side (a restaurant is not staged like a
         // living room) — contract §B4. The LISTING's type when the caller has
@@ -1303,12 +1314,26 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     /// Shared submit → decode for the three generate routes (202 responses).
-    private func submitAIVideo(path: String, body: [String: Any],
+    @MainActor private func submitAIVideo(path: String, body: [String: Any],
                                fallbackKind: String, idempotencyKey: String?) async throws -> AIVideoJob {
+        let consentRevision = AIConsent.shared.revocationRevision
+        let workspace = WorkspaceContext.selectedOrgID
+        guard AIConsent.shared.isGranted else {
+            throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+        }
         var request = makeRequest(url: url(["ai-video", path]),
                                                  method: "POST", json: body,
                                                  idempotency: Self.aiIdempotency(idempotencyKey))
-        let data = path == "declutter" ? try await executeReflection(request) : try await execute(request, session: aiSession)
+        if let workspace { request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+#if SPATIAL_CAPTURE_LAB
+        if path == "declutter" { request.setValue("bria-video-v1", forHTTPHeaderField: "x-rendprop-ai-consent") }
+#endif
+        let data = try await execute(request, session: aiSession, beforeSend: {
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consentRevision else {
+                throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+            }
+            guard WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+        })
         let dto: AIVideoJobDTO = try decode(data)
         guard let requestId = dto.requestId, !requestId.isEmpty,
               let statusUrl = dto.statusUrl, !statusUrl.isEmpty,
@@ -1549,11 +1574,15 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                     "photos": l.photos,
                     "edits": l.edits,
                     "reels": l.reels,
+                    "attention": l.attention ?? "",
+                    "server_id": l.serverID.map { $0 as Any } ?? NSNull(),
+                    "local_draft": l.localDraft,
                 ]
             },
             "plan": request.context.plan,
         ]
         if let screen = request.context.screen { context["screen"] = screen }
+        if let selected = request.context.selectedListingID { context["selected_listing_id"] = selected }
 
         let body: [String: Any] = [
             "messages": request.messages.map { ["role": $0.role, "content": $0.content] },
@@ -1633,6 +1662,81 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         var request = makeRequest(url: url(["me", "brand"]), method: "PATCH", json: fields)
         request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         _ = try await execute(request)
+    }
+
+    @MainActor func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard !image.isEmpty, image.count <= 512 * 1024, ["image/png", "image/jpeg"].contains(contentType) else { throw CloudSyncError.invalidResponse }
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let body: [String: Any] = ["image_base64": image.base64EncodedString(), "content_type": contentType,
+            "expected_logo_url": expectedLogoURL as Any? ?? NSNull(), "client_operation_id": operationID.uuidString.lowercased()]
+        var request = makeRequest(url: url(["me", "brand", "logo"]), method: "POST", json: body)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let receipt: BusinessLogoReceipt = try decodeExact(data)
+        guard receipt.ok, receipt.orgID == orgID, let value = receipt.businessLogoURL,
+              let logo = URL(string: value), logo.scheme == "https", logo.host != nil,
+              logo.user == nil, logo.password == nil else { throw CloudSyncError.invalidResponse }
+        return receipt
+    }
+
+    @MainActor func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        // Old /me handlers interpret every DELETE subpath as account deletion.
+        // A dedicated POST fails closed during a mixed-version rollout.
+        var request = makeRequest(url: url(["me", "brand", "logo", "clear"]), method: "POST",
+            json: ["expected_logo_url": expectedLogoURL as Any? ?? NSNull()])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let receipt: BusinessLogoReceipt = try decodeExact(data)
+        guard receipt.ok, receipt.orgID == orgID, receipt.businessLogoURL == nil else { throw CloudSyncError.invalidResponse }
+        return receipt
+    }
+
+    @MainActor func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let brand = try await cloudBrand()
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID, brand.orgID == orgID else { throw CloudSyncError.identityChanged }
+        let value = brand.fields["business_logo_url"]
+        if let value {
+            guard let logo = URL(string: value), logo.scheme == "https", logo.host != nil,
+                  logo.user == nil, logo.password == nil else { throw CloudSyncError.invalidResponse }
+        }
+        return .init(ok: true, orgID: orgID, businessLogoURL: value)
+    }
+
+    @MainActor func personalCard() async throws -> PersonalCardReceipt {
+        guard let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        let revision = AuthStore.shared.syncSessionRevision
+        let data = try await execute(makeRequest(url: url(["me", "card"])))
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        let receipt: PersonalCardReceipt = try decodeExact(data)
+        return try receipt.checked(owner: owner)
+    }
+
+    @MainActor func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt {
+        guard let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)), expected.userID == owner,
+              SpaceType(rawValue: spaceType) != nil,
+              Set(fields.keys).isSubset(of: Set(AgentCard.fieldNames)) else { throw CloudSyncError.identityChanged }
+        _ = try expected.checked(owner: owner)
+        let revision = AuthStore.shared.syncSessionRevision
+        var changes = fields.mapValues { $0.isEmpty ? NSNull() as Any : $0 as Any }
+        changes["space_type"] = spaceType
+        let request = makeRequest(url: url(["me", "card"]), method: "PATCH",
+            json: ["changes": changes, "expected": expected.expectedWire(keys: Array(changes.keys))])
+        let data = try await execute(request)
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        let receipt: PersonalCardReceipt = try decodeExact(data)
+        return try receipt.checked(owner: owner)
     }
 
     @MainActor func me() async throws -> UsageSummary {

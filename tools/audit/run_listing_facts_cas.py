@@ -15,8 +15,9 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 SQL = ROOT / 'services/supabase'
-MIGRATION = SQL / 'migrations/20261005024702_listing_facts_intent_cas.sql'
+MIGRATION = SQL / 'migrations/20261005150951_nearby_places_reviewed_facts.sql'
 FIXTURE = SQL / 'tests/listing_facts_cas.sql'
+NEARBY_FIXTURE = SQL / 'tests/nearby_places_facts.sql'
 TOOLS = {name: shutil.which(name) or str(Path('/opt/homebrew/opt/postgresql@17/bin') / name)
          for name in ('initdb', 'pg_ctl', 'psql', 'createdb')}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), 'Use existing PostgreSQL binaries'
@@ -25,7 +26,7 @@ DATA, SOCK = OUT / 'data', OUT / 'socket'
 SOCK.mkdir()
 ENV = {'PATH': '/opt/homebrew/bin:/usr/bin:/bin', 'LC_ALL': 'C', 'PGOPTIONS': '-c statement_timeout=30000 -c lock_timeout=15000'}
 PORT = '55483'
-SOURCES = [*sorted((SQL / 'migrations').glob('*.sql')), SQL / 'tests/ci-bootstrap.sql', FIXTURE, Path(__file__).resolve()]
+SOURCES = [*sorted((SQL / 'migrations').glob('*.sql')), SQL / 'tests/ci-bootstrap.sql', FIXTURE, NEARBY_FIXTURE, Path(__file__).resolve()]
 receipt = {'kind': 'owned disposable local PostgreSQL; no hosted DB/providers', 'output': str(OUT), 'commands': [],
            'sourceHashes': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
 
@@ -56,8 +57,10 @@ try:
     for m in sorted((SQL / 'migrations').glob('*.sql')):
         run('apply-' + m.stem, [*psql, '-q', '-1', '-f', m])
     receipt['fresh'] = json.loads(run('fresh', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    receipt['nearbyFresh'] = json.loads(run('nearby-fresh', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
     run('replay', [*psql, '-q', '-1', '-f', MIGRATION])
     receipt['replay'] = json.loads(run('replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    receipt['nearbyReplay'] = json.loads(run('nearby-replay', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
 
     # Two real concurrent SQL clients, not a sequential RPC stub.
     actor, other, org, listing = [str(uuid.uuid4()) for _ in range(4)]
