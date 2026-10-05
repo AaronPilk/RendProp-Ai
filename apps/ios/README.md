@@ -7,7 +7,7 @@ workflows, and connects a named account's workspace with
 backend; this is no longer an offline-only prototype.
 
 The [Measurements addition](../../docs/floor-plan-measurements.md) is implemented
-on `feat/measurement-outlines-worksheet-20261004`: named room dimensions in
+in the signed **1.0.4 (44)** source `9d27fb5`: named room dimensions in
 feet/inches or metres, irregular wall outlines, categorized area worksheets,
 image and all-floors PDF export, 3D shapes and optional ARKit estimates.
 Calculated closing walls stay labeled; linked open-below deductions subtract
@@ -16,11 +16,34 @@ The [4 October audit fixes](../../docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004
 add an independent compare-and-set save, preserved conflicting local copies,
 safe create retries, legacy snapshot recovery, photo gallery reconciliation and
 export source/date records, US Letter PDFs and explicit phone-ruler limitations.
-These changes require backend delivery and a signed
-app build. They are **not included in the released
-builds below**. Physical AR accuracy and Files/Photos delivery need owner checks.
+Both matching migrations and tours v49/listings v41/ai-video v51 are deployed.
+Coach v22/admin v30 remain for older-client compatibility; the new native Coach
+privacy and scope changes are included. Build 44 is available to the existing
+internal Rendprop team. Physical AR accuracy, camera quality and phone Files/Photos delivery
+need owner checks.
 
 ## Release status
+
+Internal **TestFlight 1.0.4 (44): AVAILABLE**, verified **5 October 2026 at
+01:32:22 UTC** (4 October locally) for the existing Rendprop team. Apple reports
+VALID / INTERNAL_ONLY / IN_BETA_TESTING, with the build included in that group.
+The signed archive uses source `9d27fb5`, with all twelve
+jobs passing in [CI run 37248967678](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37248967678).
+Its independent archive check binds 226 source inputs, 142 tracked Swift inputs,
+one generated Swift input and matching archive/DerivedData dSYM bytes and UUID.
+The [build-44 receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) records
+one successful internal upload and Apple build ID
+`2cab4332-f370-408a-92bf-7608d5d7915e`. The actual uploaded IPA is retained;
+English testing notes were verified at **01:34:36 UTC on 5 October 2026**. This is an internal lab build, including Measurements, spatial
+capture and the retained Bria beta workflow.
+
+**The ordinary full-row listing bug remains in 44.** A stale main-photo or
+coordinate save can overwrite newer Studio facts, sold/archive state and plan
+attachments. Measurements use an independent CAS and retain conflicting local
+geometry; that protection does not repair ordinary writes. Shared-team launch
+needs explicit changed-field intent, atomic conflict handling and an older-client
+upgrade boundary. Paid FAL output, camera/AR quality, two-device sync and actual
+phone Files/Photos delivery remain acceptance checks.
 
 Internal **TestFlight 1.0.3 (43): recorded AVAILABLE**, verified **3 October 2026 at
 00:55:46 UTC** (2 October locally). Apple reports VALID / INTERNAL_ONLY /
@@ -35,25 +58,26 @@ viewed-version downloads and separate listing selection. Photo history remains
 local to the iPhone. Reel generation now stops on the first failure and retains
 completed clips for finishing without regeneration; the underlying fal 502 cause
 remains unproven. All 27 available beta attachments were reviewed with zero new
-crash reports surfaced. The dependent **ai-video v47** backend is deployed; all 30
+crash reports surfaced. At that historical delivery, **ai-video v47** was deployed; all 30
 files, schema bodies, grants and private beta configuration were verified.
 Six Debug UI cases and one focused Release/arm64 simulator case passed across
 preserved runs using production native code identical to the archive, synthetic
 photos and MockAPIClient. Camera/media quality, real provider output and Files/Photos delivery
 remain phone checks. The submitted build-42 snapshot remains unchanged.
 
-Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
-and Apple reported **Waiting for Review** at the receipt's readback. Release is automatic after approval.
-The [receipt](../../docs/releases/APPSTORE-42-20261002.json) and
-[handoff](../../docs/handoff/APPSTORE-42-20261002.md) bind runtime `204594a`, all
-twelve passing CI jobs and the actual uploaded Apple Distribution package.
-The regular scheme hides spatial capture and prevents new spatial admission
+Regular **App Store 1.0.3 (42)** is now reported **READY_FOR_SALE** by Apple GET
+preflight at **01:18:40 UTC on 5 October 2026** (4 October locally), still bound
+to the original build-42 ID. The
+[receipt](../../docs/releases/APPSTORE-42-20261002.json) and
+[handoff](../../docs/handoff/APPSTORE-42-20261002.md) preserve the original
+2 October submission and Waiting for Review snapshot; the
+[build-44 receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) records this
+newer readback. Public runtime `204594a` passed all twelve CI jobs and uses the
+regular scheme, which hides spatial capture and blocks new spatial admission
 and inherited upload recovery. AI photo batches stop unsent requests after
 consent revocation. Physical builds ignore simulator UI-test switches.
-For spatial testing, choose **TestFlight → Previous Builds → 1.0.3 (43)**;
-build 42 excludes those experimental entry points. Submission does not certify
-physical camera quality or mean Apple has approved the update.
-The 4 October source audit did not re-query or change Apple release state.
+Build 42 excludes the internal experimental entry points. Apple release state
+does not certify physical camera or media quality.
 
 The [beta feedback release](../../docs/handoff/BETA-POLISH-20261002.md) is available
 as internal **TestFlight 1.0.3 (41)**, verified **2 October 2026 at 17:23:58 UTC**
@@ -248,7 +272,8 @@ Money is represented as integer cents.
 
 ## Tests and phone acceptance
 
-- [Delivered build 43 tests and phone checklist](../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md#verification-and-evidence-boundaries)
+- [Build-44 audit verification and remaining limits](../../docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md#verification)
+- [Historical build-43 tests and phone checklist](../../docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md#verification-and-evidence-boundaries)
   links the new actual-source consent, photo-history, reflection and reel failure
   checks. The new Release saved-photo UI case uses MockAPIClient and synthetic
   photos; provider output, Files/Photos delivery and physical capture need phone

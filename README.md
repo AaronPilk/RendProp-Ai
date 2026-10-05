@@ -5,22 +5,39 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
-The [4 October audit remediation](docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md)
-addresses rejected-video budget holds, legacy photo publication, private
-measurement keys, concurrent room saves, Coach workspace/privacy checks and
-measurement export provenance. It is on isolated branch
-`fix/claude-audit-20261004` and requires backend migration/function delivery and
-a new signed app build. This source status does not change the release receipts
-below. FAL generation access and the earlier rejection cause remain unverified;
-an authenticated catalog response does not certify video generation.
+Internal **TestFlight 1.0.4 (44) is AVAILABLE**, verified **5 October 2026 at
+01:32:22 UTC** (4 October locally) for the existing Rendprop team, from source
+`9d27fb5`. Apple reports VALID / INTERNAL_ONLY / IN_BETA_TESTING.
+All twelve jobs in [CI run 37248967678](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37248967678)
+passed on that exact source, and the signed archive has an independent source
+and dSYM binding. The [build-44 receipt](docs/releases/TESTFLIGHT-44-20261004.json)
+binds the signed archive, retained uploaded IPA, one internal upload, exact Apple
+readback and verified English testing notes.
 
-The [floor plan measurements update](docs/floor-plan-measurements.md) adds room
-dimensions, irregular wall outlines, categorized area worksheets, 2D/3D layouts,
-image/PDF export and an optional ARKit distance estimator. Calculated closing
-walls are marked, and linked open-below deductions are subtracted once. Existing
-LiDAR scans and blueprint upload remain available.
-This isolated feature branch is **not shipped in TestFlight 43 or App Store 42**;
-physical measurement accuracy and owner-device acceptance remain pending.
+The [4 October audit remediation](docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md)
+adds rejected-video hold release, legacy gallery reconciliation, private
+measurement saves and export provenance. Both matching database migrations
+are applied; **tours v49, listings v41 and ai-video v51** are ACTIVE with JWT
+verification and matching returned runtime source files. **Coach v22 and admin
+v30 remain deployed**; their new backend contracts are deferred for compatibility
+with older clients. The new native Coach privacy and scope changes are in the
+signed source. FAL generation access and the earlier rejection cause remain
+unverified; real generation still needs a controlled paid canary and output review.
+
+The [floor plan measurements update](docs/floor-plan-measurements.md) is included
+in the signed build-44 source: room dimensions, irregular wall outlines,
+categorized worksheets, 2D/3D layouts, image/PDF export and an optional ARKit
+distance estimator. Calculated closing walls are marked, linked open-below
+deductions are subtracted once, and Letter PDFs identify sources and the 3D
+phone-ruler limitation. Existing LiDAR scans and blueprint upload remain available.
+Physical measurement accuracy, camera quality and owner-device acceptance remain pending.
+
+**Shared-team launch remains blocked by ordinary listing writes.** A stale phone
+saving a main-photo choice or coordinates can replace newer Studio facts,
+sold/archive state and floor-plan attachments through a full-row update.
+Build 44 retains this ordinary-write bug; the independent measurements CAS
+protects its own private plan. Team rollout needs changed-field intent, atomic
+conflict protection and a safe compatibility boundary for older clients.
 
 The [2 October audit follow-up](docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)
 checks Claude's older report against the delivered source and live database.
@@ -47,19 +64,18 @@ possible paid outputs stranded at unknown hosts. Normal fal processing and the
 existing AI clip allowance/budget contract remain. Local tests do not certify
 camera or generated-media quality.
 
-Regular **App Store 1.0.3 (42)** was submitted **2 October 2026 at 20:17:03 UTC**
-and was **Waiting for Review** at the recorded readback, with automatic release after approval. All twelve
-CI jobs passed on uploaded runtime `204594a`. Spatial capture remains confined
-to internal **TestFlight 43**; select **Previous Builds → 1.0.3 (43)** to keep
-testing it. The [App Store receipt](docs/releases/APPSTORE-42-20261002.json) and
-[release handoff](docs/handoff/APPSTORE-42-20261002.md) record the exact binary,
-Apple state and verification limits. Studio now waits for original media to be
-saved before accepting newly imported media; this fix is deployed and all 31 live assets
-match the release. Direct Bria was not enabled in build 42; its delivery snapshot
-is separate from the delivered internal build 43. The public build-42 binding and
-Waiting for Review state were read back after the internal upload.
-These receipts record those verification times; the 4 October source audit did
-not re-query or change Apple release state.
+Regular **App Store 1.0.3 (42)** is now reported **READY_FOR_SALE**, verified by
+Apple GET preflight on **5 October 2026 at 01:18:40 UTC** (4 October locally).
+Apple still binds that public version to the original build-42 ID. The
+[App Store receipt](docs/releases/APPSTORE-42-20261002.json) and
+[release handoff](docs/handoff/APPSTORE-42-20261002.md) preserve the original
+2 October submission and its historical Waiting for Review state; the
+[build-44 receipt](docs/releases/TESTFLIGHT-44-20261004.json) records the newer GET.
+All twelve CI jobs passed on public runtime `204594a`. Spatial capture remains
+confined to the internal lab scheme; public build 42 excludes those entry points
+and direct Bria. Studio's original-media persistence fix is deployed with all
+31 live assets matched at that release. This App Store state does not establish
+physical-camera, purchase/restore or phone-to-Studio acceptance.
 
 Internal **TestFlight 1.0.3 (41)** is available to the existing Rendprop team,
 verified **2 October 2026 at 17:23:58 UTC**. The
@@ -88,7 +104,7 @@ an Agent / Photographer onboarding choice, a separate client contact and photo
 per listing, private lead email routing, retained inquiry history and confirmed
 resends. Client pages can hide service promotions while retaining the contact
 form and privacy disclosure. This workflow is deployed to Studio, public pages
-and the backend, released in build 39 and retained in current build 43. All 12
+and the backend, released in build 39 and retained in the signed build-44 source. All 12
 workflow exact-source CI jobs passed; see the
 [release handoff](docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for live
 readbacks and the controlled phone/inbox acceptance still required.
@@ -101,7 +117,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
 [App Store submission receipt](docs/releases/APPSTORE-42-20261002.json) ·
-[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-43-20261002.json) ·
+[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-44-20261004.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -132,7 +148,7 @@ publish a **new sharing link** for higher quality; old links keep their earlier
 video. Both exact runtime sources passed all 12 CI jobs; final live page checks
 passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain.
 
-## Production status — 2 October 2026
+## Production status — 4 October 2026
 
 | Area | Current state |
 | --- | --- |
@@ -143,8 +159,8 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Regular **1.0.3 (42)** submitted and **Waiting for Review**; public release follows Apple approval. Internal **43** is available for spatial and Bria beta tests. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
-| Internal beta | **1.0.3 (43)** delivered; current backend **ai-video v49** retains direct Bria for one trusted tester with fresh consent, AI clip limits and budgets. The [audit rollout](docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md) adds stricter AI access and ordinary-video cost reservations. Saved-photo libraries/downloads and reel failure recovery are delivered. Real provider quality and phone acceptance remain; see the [beta handoff](docs/handoff/BRIA-PHOTO-VERSIONS-BETA-20261002.md). |
+| iOS | Public **1.0.3 (42)** reports **READY_FOR_SALE** at the 5 October UTC GET. Internal **1.0.4 (44)** is **AVAILABLE** to the existing Rendprop team. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
+| Internal beta | **1.0.4 (44)** is available with Measurements and audit fixes. Both new migrations and **tours v49 / listings v41 / ai-video v51** are deployed. Coach v22/admin v30 remain for compatibility. The ordinary full-row listing bug still blocks shared-team launch; real provider quality and phone acceptance remain. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

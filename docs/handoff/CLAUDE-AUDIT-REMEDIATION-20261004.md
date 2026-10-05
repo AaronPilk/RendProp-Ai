@@ -3,9 +3,20 @@
 Source fixes on isolated branch `fix/claude-audit-20261004`, based on
 `576d532be2daa94dc2c8446fc66611fb4b2952be` and stacked on the irregular-outline
 feature. The supplied audit was read in full and checked against actual source,
-read-only production data and the owner's FAL dashboard. No production schema,
-function, subscription configuration, camera, paid generation, Apple submission
-or shared branch was changed by this work. These fixes need delivery.
+read-only production data and the owner's FAL dashboard.
+
+The owner authorized internal TestFlight delivery of `9d27fb5`. Both new
+migrations are applied and **tours v49, listings v41 and ai-video v51** are ACTIVE
+with JWT verification. Coach v22/admin v30 remain deployed for older-client
+compatibility; their new backend contracts are deferred. The signed
+**1.0.4 (44)** archive passed independent source/dSYM binding, and all twelve
+jobs in [CI run 37248967678](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37248967678)
+passed on that exact source. **1.0.4 (44) is AVAILABLE** to the existing internal
+Rendprop team, verified **5 October 2026 at 01:32:22 UTC** (4 October locally).
+The [delivery receipt](../releases/TESTFLIGHT-44-20261004.json) binds one upload
+and exact Apple build `2cab4332-f370-408a-92bf-7608d5d7915e`. The uploaded IPA
+is retained by hash; English testing notes were verified at **01:34:36 UTC**.
+No paid generation or physical-camera acceptance was performed.
 
 ## Confirmed issues and final behavior
 
@@ -16,7 +27,7 @@ or shared branch was changed by this work. These fixes need delivery.
 | P0-3: older clients rename/private plans vanish or leak | Unambiguous snake/camel aliases are recovered. A database trigger protects private keys from ordinary updates. Public filtering covers snake/camel/future variants in branded, unbranded and embedded responses. Conflicting/unknown values remain private and uneditable. |
 | P0-4: first history operation excludes older gallery photos | Existing photo siblings are reconciled before first capture, edit, removal or publication. Untouched legacy siblings stay selected; a corrupt index or missing selected bytes cannot silently clear the server gallery. Legacy filenames do not certify source authenticity. |
 | Cover/review/badges | Cover comes from the approved selection; staging requires explicit review at both selection entry points. A compare presentation carries photo and cover intent together. File-grid badges describe the family's selected earlier version even when its latest version differs. Missing one file does not blank all badges. |
-| Coach address and workspace leak | Offline replies omit full addresses; transmitted history excludes local fallback messages and redacts retained legacy addresses. Requests capture owner/session/workspace and send the exact org header. Backend schema accepts the 14 actual native screens and preserves their scope. |
+| Coach address and workspace leak | Native replies/history omit or redact addresses and capture owner/session/workspace with the exact org header. The source backend accepts the 14 actual native screens and preserves their scope. That backend rollout is deferred; live Coach v22/admin v30 retain their older contracts. |
 | Failed FAL status looks processing/502 | Both polling paths recognize completed-with-error and failed result retrieval as terminal failure. Logs retain bounded provider status/class without raw bodies, prompts, keys or signed URLs. Catalog authentication explicitly leaves generation unverified. |
 | Export sources/freshness/layout | Images/PDFs include per-area entered/phone source, UTC plan date, calculated-edge labels and schematic/not-to-scale/not-survey text. Phone-source floors explicitly describe the straight 3D ruler and matching endpoint height for horizontal lengths. PDFs use US Letter landscape with one centered transform. All rooms get a dimension/source record, including when outlines define area. Sharing rechecks immutable geometry, provenance, address, binding, session, conflict and older-facts review. Worksheet rows paginate and separate wrapped names from source labels. |
 | Remaining UI/source issues | Photo badges are named SwiftUI components; real-estate UI walks target Listings. Decimal feet are explained. The legacy convex-hull total is labeled Scan hull estimate with its limitation on the export. |
@@ -107,9 +118,8 @@ browser check now records the exact seek event, actual decoded frame and pixels
 from observers registered before the production click handler. It retains the
 seek precision, frame bounds, pixel threshold and bounded stall rejection;
 CI includes the delayed positive and a missing-seek fault. No product code or
-timeout was changed for that correction. The final delivery receipt must bind
-the subsequent commit and complete CI result before this branch is called
-verified.
+timeout was changed for that correction. The final source `9d27fb5` passed all
+twelve CI jobs in run 37248967678; the build-44 receipt binds that completed run.
 
 That subsequent run at `a008d97` passed the browser and HD master checks but
 exposed an under-calibrated Studio negative control: 120 ms animation delivery
@@ -128,21 +138,42 @@ The provider detail is in
 
 ## Delivery and remaining limits
 
-Apply these new migrations before replacing their matching functions:
+The matching migrations were applied before their function replacements:
 
-- `20261004215403_app_video_rejected_submission_release.sql` → `ai-video`.
-- `20261004220253_listing_measurement_compare_and_set.sql` → `listings`.
+- `20261004215403_app_video_rejected_submission_release.sql` → live migration
+  `20261005011911_app_video_rejected_submission_release` → **ai-video v51**.
+- `20261004220253_listing_measurement_compare_and_set.sql` → live migration
+  `20261005011920_listing_measurement_compare_and_set` → **listings v41**.
 
-Deploy the corresponding `tours`, `coach` and `admin` source changes and deliver
-a new signed iPhone build before claiming the fixes are available to users.
-The new Coach contract requires a captured `X-Org-Id`; older native clients
-without that header receive a 409 and use their local fallback. Coordinate
-that function rollout with the updated binary; do not present it as a
-transparent server-only upgrade for old clients.
-Read back deployed hashes, grants and schema; exercise same-account phone/Studio
-and two-writer conflict resolution against the deployed version. Read-only
-production preflight found no measurement-namespace rows and no oversized
-details rows; it was not a migration application.
+**tours v49** is also deployed. Returned runtime source copies match the submitted
+source: listings 12/12 and ai-video 33/33; tours returned 13 matching files from
+14 submitted, omitting the type-only `spatial/contract.ts`. Eight SQL function
+bodies match the applied source, service-only RPC grants are verified, the
+private-key trigger is enabled, the release constraint is validated and private
+reservation RLS has no client policies. Anonymous GET probes to all three
+functions returned 401. `app_video_held_cents` intentionally retains
+authenticated execution with its verified membership/service-role guard.
+Advisors report 0 ERROR, 26 WARN records (48 findings) and one INFO record
+covering 44 deny-all tables; no same-turn baseline establishes a warning delta.
+These are metadata/source readbacks, not authenticated customer-write or
+paid-provider canaries. The earlier read-only preflight found
+no measurement-namespace rows and no oversized details rows.
+
+**Coach v22 and admin v30 remain deployed.** Their source remediations are
+intentionally deferred for compatibility. The new Coach contract requires a
+captured `X-Org-Id`; older native clients without it receive a 409 and use local
+fallback. Establish a reviewed rollout/upgrade boundary before replacing those
+functions. The signed build-44 native source includes its privacy/session/org
+capture changes, but does not establish the new backend contract in production.
+
+The signed **1.0.4 (44)** archive binds exact source `9d27fb5` and CI run
+37248967678. One internal upload succeeded; Apple GET confirms VALID /
+INTERNAL_ONLY / IN_BETA_TESTING and inclusion in the existing Rendprop team at
+01:32:22 UTC on 5 October 2026. Same-account phone/Studio and deployed two-writer conflict
+resolution still need controlled acceptance. The public **App Store 1.0.3 (42)**
+was reported `READY_FOR_SALE` by Apple GET at **01:18:40 UTC on 5 October 2026**,
+with its original build ID unchanged. The original receipt remains a historical
+submission snapshot.
 
 This branch contains live Topaz guard `0b4a87b`. Any later function deployment
 must preserve its actual-output probe and 16¢/second worst-case hold. Do not
@@ -157,9 +188,10 @@ reproduced both stale-write cases in a closed synthetic auth/PostgREST transport
 with 58 assertions. The AppModel setter calls were source-verified; production,
 physical-phone, RLS and database-trigger behavior were not simulated by this
 reproducer. Measurement protection remains independently verified by the real
-SQL tests. This branch does not fix the ordinary path. The next delivery
+SQL tests. Build 44 retains this ordinary path bug. The next delivery
 needs explicit changed-field intent, atomic conflict protection, retained local
-conflicts and a safe rejection/upgrade boundary for older builds 42/43.
+conflicts and a safe rejection/upgrade boundary for older builds 42/43, while
+protecting current build-44 users.
 Studio does not yet edit raw measurement geometry; exporting and attaching a
 plan image remain separate workflows. Imported edited cloud photos need a
 verified server provenance binding before edited bytes can be republished.
@@ -176,4 +208,5 @@ margin policy were not changed or re-certified by this audit.
 The dormant Python render worker remains dormant. Its activation/cost path was
 not rebuilt. The phone ruler remains a straight 3D point-to-point estimate;
 exports now state that source and limitation. Spatial flags, GPU runs, camera
-capture and Apple submission were left untouched.
+capture were left untouched. Delivery is internal TestFlight only; the public
+App Store build-42 binary and subscription configuration were not changed.

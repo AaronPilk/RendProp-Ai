@@ -14,33 +14,42 @@ need Xcode and XcodeGen. The Python utility uses the standard library only.
 
 ## Release target caution
 
-Reviewed against repository source on 2 October 2026. `asc.py` still declares
+Reviewed against repository source on 4 October 2026. `asc.py` still declares
 `VERSION_STRING = "1.0"` and has **no `--version` option**. It can fall back to
 another editable version; `--build` selects a build, not an App Store version.
 Its broad apply bridge can change prices, territories, subscription screenshots
 and review state. Do not run it for maintenance of the shipped app.
 
-Internal TestFlight **1.0.3 (41)** is available to the existing group; see the
-[delivery receipt](../../docs/releases/TESTFLIGHT-41-20261002.json). It is an
-internal-only spatial lab build and cannot be submitted to the App Store.
-The owner authorized a regular **1.0.3 (42)** App Store submission. It was
-submitted on **2 October 2026 at 20:17:03 UTC** and Apple reports **Waiting for
-Review**, with automatic release after approval. The
-[delivery receipt](../../docs/releases/APPSTORE-42-20261002.json) binds the exact
-uploaded source, distribution package, metadata and submitted item. It uses the
-regular `Rendprop` scheme and
-[exportOptions-appstore.plist](exportOptions-appstore.plist), which explicitly
-sets `testFlightInternalTestingOnly = false` and preserves build number 42.
-The internal lab scheme/options remain separate. Continue spatial testing with
-**TestFlight → Previous Builds → 1.0.3 (41)**. Do not repeat the upload or review
-submission based on older preparation notes.
+Internal TestFlight **1.0.4 (44) is AVAILABLE** to the existing Rendprop team,
+verified **5 October 2026 at 01:32:22 UTC** (4 October locally). The
+[delivery receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) binds clean
+source `9d27fb5`, one successful upload, the retained actual IPA, exact Apple
+build/readback and verified English testing notes.
+All twelve jobs in [CI run 37248967678](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37248967678)
+passed on the exact archive source. The `RendpropSpatialTestFlight` archive uses
+explicit `MARKETING_VERSION=1.0.4` and `CURRENT_PROJECT_VERSION=44` overrides;
+its export policy is internal-only and preserves that version/build. The signed
+archive's source and dSYM binding passed independent local verification.
 
-This release uses privately reviewed, exact-version helpers with clean-source,
+Regular **App Store 1.0.3 (42)** now reports **READY_FOR_SALE** in Apple GET
+preflight at **01:18:40 UTC on 5 October 2026** (4 October locally), with its
+original build ID unchanged. The
+[public receipt](../../docs/releases/APPSTORE-42-20261002.json) preserves the
+2 October upload/submission and historical Waiting for Review snapshot; the
+[build-44 receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) records the
+new GET. Its regular `Rendprop` scheme and
+[exportOptions-appstore.plist](exportOptions-appstore.plist) explicitly set
+`testFlightInternalTestingOnly = false` and preserve build number 42.
+The lab scheme/options remain separate from public release tooling.
+
+This delivery uses privately reviewed exact-version helpers with clean-source,
 archive/dSYM binding, all twelve CI jobs, one-attempt journals and exact Apple
-build/version readback. It does not rerun launch pricing/subscription setup.
-Five sold subscriptions were read back as approved; Team Yearly remains
-withdrawn and is not part of this App Review. The legacy examples below document
-the historical launch sequence, not the current release procedure.
+build/version readback. Five sold subscriptions were previously read back as
+approved; Team Yearly remains withdrawn. The legacy examples below document
+the historical launch sequence. Build 44 adds no public App Store submission
+and does not certify camera, paid provider output or shared-team safety.
+The ordinary listing full-row overwrite bug remains; see the
+[audit limits](../../docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md#delivery-and-remaining-limits).
 
 Offline inspection that does not load credentials or call Apple:
 
