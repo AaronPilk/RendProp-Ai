@@ -284,6 +284,8 @@ jobs:
             /tmp/rendprop-measurement-export-*/receipt.json
             /tmp/rendprop-measurement-export-*/*.log
             /tmp/rendprop-measurement-export-controls*/*.log
+            /tmp/rendprop-app-store-boundaries-*/receipt.json
+            /tmp/rendprop-app-store-boundaries-*/*.log
             /tmp/rendprop-photo-reconciliation-*/receipt.json
             /tmp/rendprop-photo-reconciliation-*/*.log
           retention-days: 7

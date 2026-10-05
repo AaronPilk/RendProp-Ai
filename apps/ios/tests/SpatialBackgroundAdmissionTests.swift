@@ -15,8 +15,19 @@ final class BoundaryTransfer {
 }
 final class BoundarySession {
     let tasks: [BoundaryTransfer]
-    init(_ tasks: [BoundaryTransfer]) { self.tasks = tasks }
-    func getAllTasks(_ completion: @escaping ([BoundaryTransfer]) -> Void) { completion(tasks) }
+    private let repeatedCallbackDelay: UInt64
+    private var callbackCalls = 0
+    init(_ tasks: [BoundaryTransfer], repeatedCallbackDelay: UInt64) {
+        self.tasks = tasks; self.repeatedCallbackDelay = repeatedCallbackDelay
+    }
+    func getAllTasks(_ completion: @escaping ([BoundaryTransfer]) -> Void) {
+        callbackCalls += 1
+        guard callbackCalls > 1, repeatedCallbackDelay > 0 else { completion(tasks); return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: repeatedCallbackDelay)
+            completion(tasks)
+        }
+    }
 }
 struct UIBackgroundTaskIdentifier: Equatable {
     let raw: Int
@@ -50,8 +61,9 @@ struct BoundaryRecord {
     var journalFlushes = 0
     var pumpCalls = 0
     var generationCalls = 0
-    init(tasks: [BoundaryTransfer], id: UUID) {
-        session = BoundarySession(tasks); records = [BoundaryRecord(id: id)]
+    init(tasks: [BoundaryTransfer], id: UUID, repeatedCallbackDelay: UInt64) {
+        session = BoundarySession(tasks, repeatedCallbackDelay: repeatedCallbackDelay)
+        records = [BoundaryRecord(id: id)]
     }
     func owns(_ record: BoundaryRecord) -> Bool { true }
     func pruneFinishedRecords() {}
