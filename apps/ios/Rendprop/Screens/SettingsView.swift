@@ -642,7 +642,7 @@ struct SettingsView: View {
         }
         return auth.isIdentified
             ? "Signed in with Apple. Publishing, leads and AI tools use this account."
-            : "Everything works without signing in — your homes, tours, leads and plan live in a workspace held for this iPhone. Sign in with Apple to carry them to a new phone, and to get them back if you delete the app."
+            : "Capture on this iPhone without signing in. Cloud uploads require a named account or an eligible Apple subscription. Sign in with Apple to sync across devices and recover your workspace if you delete the app."
     }
 
     // MARK: - Notifications (1.0.2)
@@ -1333,6 +1333,13 @@ struct LeadsView: View {
     @State private var hasLoaded = false
     @State private var errorMessage: String?
     @State private var showSignIn = false
+    @State private var pendingDeletion: Lead?
+    @State private var deletionContext: DeletionContext?
+    @State private var deletingIDs = Set<UUID>()
+    private struct DeletionContext: Equatable { let owner: String?; let revision: UInt64; let org: UUID? }
+    private var currentDeletionContext: DeletionContext {
+        .init(owner: auth.userID, revision: auth.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+    }
 
     private var needsSignIn: Bool { Config.enableAuth && !auth.isSignedIn }
 
@@ -1373,6 +1380,20 @@ struct LeadsView: View {
         .task { await load() }
         .onChange(of: scenePhase) { phase in if phase == .active { Task { await load() } } }
         .refreshable { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            leads = []; pendingDeletion = nil; deletionContext = nil; Task { await load() }
+        }
+        .confirmationDialog("Delete this saved lead?", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
+            Button("Delete lead", role: .destructive) {
+                if let lead = pendingDeletion, let expected = deletionContext {
+                    Task { await deleteSavedLead(lead, expected: expected) }
+                }
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil; deletionContext = nil }
+        } message: {
+            Text("This removes the saved inquiry from this workspace.")
+        }
         .onChange(of: auth.isSignedIn) { _ in leads = []; Task { await load() } }
         .onChange(of: auth.userID) { _ in leads = []; errorMessage = nil; Task { await load() } }
         .sheet(isPresented: $showSignIn) {
@@ -1464,6 +1485,11 @@ struct LeadsView: View {
                 Section(day.title) {
                     ForEach(day.leads) { lead in
                         LeadRow(lead: lead, showListing: listing == nil)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    pendingDeletion = lead; deletionContext = currentDeletionContext
+                                } label: { Label("Delete", systemImage: "trash") }
+                            }.disabled(deletingIDs.contains(lead.id))
                     }
                 }
             }
@@ -1491,9 +1517,28 @@ struct LeadsView: View {
         return day.formatted(date: .abbreviated, time: .omitted)
     }
 
+    @MainActor private func deleteSavedLead(_ lead: Lead, expected: DeletionContext) async {
+        guard !deletingIDs.contains(lead.id), currentDeletionContext == expected,
+              let org = expected.org, leads.contains(where: { $0.id == lead.id }) else { return }
+        deletingIDs.insert(lead.id); defer { deletingIDs.remove(lead.id) }
+        do {
+            let receipt = try await model.api.deleteLead(leadID: lead.id, orgID: org)
+            _ = try receipt.checked(leadID: lead.id)
+            guard currentDeletionContext == expected else { return }
+            leads.removeAll { $0.id == lead.id }
+            errorMessage = receipt.cleanupPending ? "Lead deleted. Related saved copies are being cleared." : nil
+        } catch {
+            guard currentDeletionContext == expected else { return }
+            errorMessage = UserFacingError.message(error, fallback: "Couldn't confirm deletion. The saved lead is still shown; refresh or try again.")
+        }
+    }
+
     @MainActor
     private func load() async {
         if needsSignIn { hasLoaded = true; return }
+        if Config.useLiveBackend, WorkspaceContext.selectedOrgID == nil {
+            leads = []; errorMessage = "Choose a workspace before opening its leads."; hasLoaded = true; return
+        }
         if let listing, listing.isSample || listing.serverID == nil { hasLoaded = true; return }
         isLoading = true
         defer { isLoading = false }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { StudioServices } from "../../data/services";
 import { uploadListingAsset } from "./uploads";
-import { clientContactPayload, clientForm, decodeClientContact, type ClientContact, type ClientForm } from "./client-contact";
+import { clientContactPayload, clientForm, clientRecipientVerified, decodeClientContact, type ClientContact, type ClientForm } from "./client-contact";
 
 export type ContactNavigationGuard = { canLeave: () => boolean };
 type ContactDraft = { form: ClientForm; baseline: ClientForm; saved: ClientContact | null };
@@ -67,8 +67,19 @@ export default function ClientContactEditor({ services, userId, orgId, listingId
       const contact = decodeClientContact(await services.api(path, { method: "PUT", orgId, body, signal: controller.signal }), listingId);
       if (controller.signal.aborted) return;
       if (!contact || contact.revision <= (saved?.revision ?? 0) || contact.enabled !== body.enabled || contact.recipient_email !== body.recipient_email || contact.hide_rendprop_branding !== body.hide_rendprop_branding || (contact.photo_asset_id ?? null) !== body.photo_asset_id || Object.entries(body.public_card).some(([key, value]) => contact.public_card[key as keyof typeof contact.public_card] !== value)) throw new Error("The saved contact could not be confirmed. Refresh and review it before publishing.");
-      const value = clientForm(contact); baseline.current = value; current.current = value; setSaved(contact); setForm(value); forget(); setConflict(false); setNotice(contact.enabled ? `Client contact saved. New inquiries will be emailed to ${contact.recipient_email} and kept in your lead inbox.` : "This listing uses your account’s contact card."); onChanged();
+      const value = clientForm(contact); baseline.current = value; current.current = value; setSaved(contact); setForm(value); forget(); setConflict(false); setNotice(contact.enabled ? clientRecipientVerified(contact) ? `Client contact saved. New inquiries will be emailed to ${contact.recipient_email} and kept in your lead inbox.` : "Client contact saved. Verify their lead email to activate forwarding. Inquiries stay in your lead inbox." : "This listing uses your account’s contact card."); onChanged();
     } catch (error) { if (!controller.signal.aborted) { setError(failure(error)); if (/changed|conflict|revision/i.test(failure(error))) setConflict(true); } }
+    finally { saving.current = false; if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
+  };
+  const verifyRecipient = async () => {
+    if (active.current || !canWrite || !saved?.enabled || dirty || conflict) return;
+    const controller = new AbortController(); active.current = controller; saving.current = true; setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await services.api("/functions/v1/leads/client-recipient-verification", { method: "POST", orgId, body: { listing_id: listingId }, signal: controller.signal }) as { ok?: unknown; state?: unknown };
+      if (controller.signal.aborted) return;
+      if (!result || result.ok !== true || !["queued", "verified"].includes(String(result.state))) throw new Error("The verification email could not be confirmed. Please retry.");
+      setNotice(result.state === "verified" ? "This lead email is already verified. Refresh its status below." : `Verification email requested for ${saved.recipient_email}. Ask your client to open it and confirm. Inquiries stay in your inbox while you wait.`);
+    } catch (error) { if (!controller.signal.aborted) setError(failure(error)); }
     finally { saving.current = false; if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
   };
   const uploadPhoto = async (file: File) => {
@@ -105,6 +116,12 @@ export default function ClientContactEditor({ services, userId, orgId, listingId
         <aside className="lw-contact-preview" aria-label="Client contact preview">{form.avatar_url && <img src={form.avatar_url} alt={form.public_card.name || "Client photo"} referrerPolicy="no-referrer" />}<strong>{form.public_card.name || "Your client’s name"}</strong><span>{[form.public_card.title, form.public_card.brokerage].filter(Boolean).join(" · ")}</span><span>{form.public_card.phone}</span><span>{form.public_card.email}</span>{form.photo_asset_id && !form.avatar_url && <small>New photo will appear after you save.</small>}<p>New inquiries → <strong>{recipient || "Add a lead delivery email"}</strong></p></aside>
       </>}
     </fieldset>
+    {form.enabled && <aside className="lw-notice" aria-label="Lead forwarding status">
+      <strong>{!dirty && saved?.enabled && clientRecipientVerified(saved) ? "Lead email verified" : "Verify your client’s lead email"}</strong>
+      <p>{!dirty && saved?.enabled && clientRecipientVerified(saved) ? `Inquiries are forwarded to ${saved.recipient_email} and stay in your lead inbox.` : "Your client confirms their email once. They do not need an account. You can save the contact and publish while inquiries stay in your inbox."}</p>
+      {dirty ? <p>Save these contact changes first.</p> : saved?.enabled && !clientRecipientVerified(saved) && <button type="button" disabled={!canWrite || busy || loading || conflict} onClick={() => void verifyRecipient()}>Send verification email</button>}
+      {!dirty && saved?.enabled && <button type="button" disabled={busy || loading} onClick={() => void load()}>Refresh email status</button>}
+    </aside>}
     {notice && <p role="status" className="lw-notice">{notice}</p>}
     <div className="lw-actions"><button type="button" className="primary" disabled={!canWrite || !loaded || !dirty || loading || busy || conflict} onClick={() => void save()}>{busy ? "Saving…" : "Save listing contact"}</button>{dirty && <p className="lw-help">Save this contact before publishing.</p>}</div>
   </section>;

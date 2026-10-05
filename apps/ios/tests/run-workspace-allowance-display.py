@@ -108,6 +108,7 @@ struct WorkspaceStore { var selected: UUID? { WorkspaceContext.selectedOrgID } }
 struct Listing {
     let id: UUID; var address: String = "Synthetic house"; var isSample = false
     var belongsToCurrentType = true; var isSold = false
+    var isInactive: Bool { isSold }
     var serverOrgID: UUID? = nil; var cloudDraftOrgID: UUID? = nil; var cloudUnavailable = false
 }
 final class InventoryPolicyFixture {

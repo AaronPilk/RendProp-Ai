@@ -4,6 +4,16 @@ do $$begin if current_database()<>'rendprop_audit'or inet_server_addr()is not nu
 create temp table client_checks(name text primary key,passed boolean not null);
 create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'CLIENT FAIL: %',label;end if;insert into client_checks values(label,true);end$$;
 create function pg_temp.denied(command text,prefix text,label text)returns void language plpgsql as $$declare message text;begin begin execute command;exception when others then message:=sqlerrm;end;perform pg_temp.ok(message like prefix||'%',label);end$$;
+-- Test setup uses the actual confirmation RPCs; it never marks a typed
+-- recipient verified by direct DML. Only fixture timestamps advance to avoid
+-- making a real recipient click multiple emails inside one minute.
+create function pg_temp.verify_contact(actor uuid,org uuid,listing uuid)returns void language plpgsql security definer set search_path='' as $$
+declare nonce text:=replace(gen_random_uuid()::text,'-','')||replace(gen_random_uuid()::text,'-','');begin
+ if current_database()<>'rendprop_audit'or inet_server_addr()is not null then raise exception 'Fixture only';end if;
+ update public.client_recipient_verifications set created_at=created_at-interval '2 minutes',expires_at=expires_at-interval '2 minutes'where listing_id=listing;
+ perform public.client_recipient_verification_request(actor,org,listing,nonce);
+ if not public.client_recipient_verification_consume(nonce)then raise exception 'Fixture recipient confirmation failed';end if;
+end$$;
 create temp table fixture(actor uuid,org uuid,other_actor uuid,other_org uuid,marketing uuid,agent uuid,listing uuid,other_listing uuid,photo uuid,wrong_photo uuid,job uuid,render uuid,lead uuid);
 do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();m uuid:=gen_random_uuid();ag uuid:=gen_random_uuid();o uuid;other uuid;l uuid:=gen_random_uuid();ol uuid:=gen_random_uuid();p uuid:=gen_random_uuid();wp uuid:=gen_random_uuid();j uuid:=gen_random_uuid();r uuid:=gen_random_uuid();begin
  insert into auth.users(id,email,is_anonymous)values(a,'photographer@fixture.invalid',false),(b,'other@fixture.invalid',false),(m,'marketing@fixture.invalid',false),(ag,'agent@fixture.invalid',false);
@@ -68,6 +78,9 @@ do $$declare f record;c jsonb;r jsonb;begin select * into f from fixture;
  perform pg_temp.denied(format('select set_real_estate_role(%L,%L)',f.actor,'admin'),'RP400:','unknown product role cannot become permission role');
 end$$;
 reset role;
+set local role service_role;
+select pg_temp.verify_contact(actor,org,listing)from fixture;
+reset role;
 -- A lead recorded before assignment stays unsent, then exposes a manual send.
 do $$declare f record;old_lead uuid:=gen_random_uuid();c jsonb;s jsonb;begin
  select * into f from fixture;
@@ -108,6 +121,7 @@ do $$declare f record;c jsonb;d record;o record;payload jsonb;replay jsonb;begin
  perform pg_temp.denied(format('select client_lead_resend(%L,%L,%L,%L,%L)',f.actor,f.org,f.lead,gen_random_uuid(),'wrong@fixture.invalid'),'RP409:','wrong confirmation email cannot redirect inquiry');
  perform pg_temp.denied(format('select client_lead_resend(%L,%L,%L,%L,%L)',f.actor,f.org,f.lead,gen_random_uuid(),'private@fixture.invalid'),'RP429:','resend cooldown prevents double tap');
  c:=listing_client_contact_put(f.agent,f.org,f.listing,1,true,'{"name":"New Client"}','new@fixture.invalid',true,f.photo);
+ perform pg_temp.verify_contact(f.agent,f.org,f.listing);
  payload:=client_delivery_summary(f.lead);
  perform pg_temp.ok(payload->>'recipient_email'='private@fixture.invalid'and payload->>'current_recipient_email'='new@fixture.invalid','last sent recipient stays historical and confirmation sees new recipient');
 end$$;
@@ -161,6 +175,7 @@ do $$declare f record;lid uuid:=gen_random_uuid();leadid uuid:=gen_random_uuid()
  insert into renders(id,job_id,listing_id,slug,duration_s,published_at)values(rid,jid,lid,'deletion-authority-fixture',5,now());
  set local role service_role;
  perform listing_client_contact_put(f.other_actor,f.other_org,lid,0,true,'{"name":"Deletion Client"}','deletion@fixture.invalid',true,null);
+ perform pg_temp.verify_contact(f.other_actor,f.other_org,lid);
  reset role;
  insert into leads(id,org_id,listing_id,render_id,name)values(leadid,f.other_org,lid,rid,'Deletion Buyer');
  select * into d from client_lead_deliveries where lead_id=leadid;
@@ -187,6 +202,7 @@ do $$declare a uuid:=gen_random_uuid();o uuid;lid uuid:=gen_random_uuid();rid uu
  for i in 1..21 loop leadid:=gen_random_uuid();leadids:=array_append(leadids,leadid);insert into leads(id,org_id,listing_id,render_id,name)values(leadid,o,lid,rid,'Older inquiry '||i);end loop;
  set local role service_role;
  perform listing_client_contact_put(a,o,lid,0,true,'{"name":"Rate Client"}','rate@fixture.invalid',true,null);
+ perform pg_temp.verify_contact(a,o,lid);
  for i in 1..20 loop perform client_lead_resend(a,o,leadids[i],gen_random_uuid(),'rate@fixture.invalid');end loop;
  perform pg_temp.ok((select count(*)=20 from client_lead_deliveries where org_id=o and requested_by=a),'bounded manual forwarding permits twenty distinct inquiries');
  perform pg_temp.denied(format('select client_lead_resend(%L,%L,%L,%L,%L)',a,o,leadids[21],gen_random_uuid(),'rate@fixture.invalid'),'RP429:','manual forwarding rate caps different inquiries in same window');

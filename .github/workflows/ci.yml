@@ -59,6 +59,10 @@ jobs:
         run: bash apps/ios/tests/run-subscription-policy.sh
       - name: Private testing allowance labels preserve ordinary plan displays
         run: python3 apps/ios/tests/run-workspace-allowance-display.py --out "$RUNNER_TEMP/rendprop-testing-allowance"
+      - name: Native UX preserves drafts, deferred links, consent and archive baselines
+        run: python3 apps/ios/tests/run-native-ux-audit.py --evidence-dir "$RUNNER_TEMP/rendprop-native-ux-audit"
+      - name: Native client verification and lead deletion require scoped receipts
+        run: python3 apps/ios/tests/run-native-lead-privacy.py --evidence-dir "$RUNNER_TEMP/rendprop-native-lead-privacy"
       - name: Photo lens, orientation, level and failed-save handling
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
@@ -312,6 +316,10 @@ jobs:
             ${{ runner.temp }}/rendprop-adoption-owned-*/*.log
             ${{ runner.temp }}/rendprop-testing-allowance/receipt.json
             ${{ runner.temp }}/rendprop-testing-allowance/**/*.log
+            ${{ runner.temp }}/rendprop-native-ux-audit/receipt.json
+            ${{ runner.temp }}/rendprop-native-ux-audit/*.log
+            ${{ runner.temp }}/rendprop-native-lead-privacy/receipt.json
+            ${{ runner.temp }}/rendprop-native-lead-privacy/*.log
           retention-days: 7
           if-no-files-found: warn
 
@@ -403,6 +411,35 @@ jobs:
           node tests/creative-browser.mjs
           node tests/photo-delivery-browser.mjs
           node tests/photographer-browser.mjs
+          node tests/recovery-browser.mjs
+          node --test ../../tools/deploy/check-migration-ledger.test.mjs
+      - name: Recovery retains drafts and suppresses private caught errors
+        run: |
+          for control in clear-draft-on-reload unsafe-react-logging; do
+            evidence_dir="/tmp/rendprop-studio-recovery-$control"
+            mkdir -p "$evidence_dir"
+            rm -f "$evidence_dir/receipt.json"
+            set +e
+            RENDPROP_RECOVERY_EVIDENCE="$evidence_dir" node tests/recovery-browser.mjs --fault="$control" > "$RUNNER_TEMP/recovery-$control.log" 2>&1
+            control_status=$?
+            set -e
+            test "$control_status" -ne 0
+            node --input-type=module - "$evidence_dir/receipt.json" "$control" <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const receipt=JSON.parse(readFileSync(process.argv[2],'utf8'));
+          const control=process.argv[3];
+          const expected={
+            'clear-draft-on-reload':'An edited draft must survive explicit Reload without reseeding',
+            'unsafe-react-logging':'Caught React errors must not expose private signed URLs in the browser console',
+          };
+          assert.equal(receipt.passed,false);
+          assert.equal(receipt.fault,control);
+          assert.equal(receipt.sourceBoundAtEnd,true);
+          if(control==='unsafe-react-logging') assert.equal(receipt.unsafeControlCompiled,true);
+          assert.ok(receipt.failure.includes(expected[control]));
+          NODE
+          done
       - name: Contact navigation and account isolation controls
         run: |
           for control in missing-guard missing-account-scope; do
@@ -480,6 +517,7 @@ jobs:
             /tmp/rendprop-listing-kit-*/*.png
             /tmp/rendprop-connected-browser-*/receipt.json
             /tmp/rendprop-connected-browser-*/*.png
+            /tmp/rendprop-studio-recovery-*/receipt.json
             /tmp/rendprop-contact-navigation-*/receipt.json
             /tmp/rendprop-contact-navigation-*/*.png
             /tmp/rendprop-listing-facts-browser-*/receipt.json
@@ -597,18 +635,11 @@ jobs:
           done
           exit $fail
 
-      # 743 hermetic unit tests across all 33 *.test.ts / *_test.ts files
-      # (731 before the deletion escalation/503 tests; the SUMMARY line the
-      # step prints is the count that actually ran): router policy, provider
-      # redaction/circuit-breaker, fair-housing + chapter postprocessing,
-      # Apple JWS/notification verdicts, coach output sanitization, event
-      # scrubbing/whitelisting, admin probe/funnel SQL shaping, upload
-      # transport/publication, spatial routes and the account-deletion
-      # handler. No Supabase project, no live provider keys, no DB, no network
-      # beyond Deno's own fetch-and-cache of the std@0.224.0 / jsr:@std/assert
-      # imports and the npm:@supabase/supabase-js package the shared client
-      # needs — verified with a throwaway DENO_DIR (forcing that fetch from a
-      # cold cache) and still every test passed / 0 failed.
+      # Hermetic edge-function tests. The SUMMARY line records the actual
+      # inventory (1,521 passed in the October 5 local audit); do not treat
+      # fixture-only checks as production/provider or camera acceptance.
+      # A real local-SQL presenter controller case runs in its dedicated
+      # disposable Postgres job instead of this unit-suite environment.
       # --node-modules-dir=auto (a flag, not a committed deno.json) lays out
       # node_modules for the `npm:` specifiers.
       - name: Run edge function tests
@@ -895,6 +926,11 @@ jobs:
           python3 services/supabase/tests/presenter_execution.py --controller
           python3 services/supabase/tests/prompt_library.py
           python3 tools/audit/run_studio_private_media.py
+          python3 tools/audit/run_photo_authority.py
+          python3 tools/audit/run_backend_billing_authority.py
+          python3 tools/audit/run_verified_recipients.py
+          python3 tools/audit/run_privacy_cleanup_inventory.py
+          python3 tools/audit/run_upload_privacy_admission.py
       # A real red invariant suite still runs positive/negative publication
       # fixtures before exiting nonzero. Preserve its evidence, not a green
       # override. Preflight can fail before the runner creates any evidence.

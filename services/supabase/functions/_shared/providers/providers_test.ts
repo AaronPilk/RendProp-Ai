@@ -14,7 +14,7 @@ import { imageSizeFor, mapWhisperWords } from "./openai.ts";
 import { assertNotCoveredModel, outputConfigFor } from "./anthropic.ts";
 import { geminiAdapter, geminiImagePayload, supportsStagingReference } from "./gemini.ts";
 import { runChain } from "./chain.ts";
-import { extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
+import { assertJobTokenSigningReady, extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
 import { ProviderError, snippet } from "./common.ts";
 import { MAX_PARAM_OUTPUT_TOKENS } from "./params.ts";
 import { HttpError } from "../http.ts";
@@ -913,4 +913,29 @@ Deno.test("0030's position shift is guarded and cannot run twice", async () => {
 
   // And the column itself is additive: null default, added if-not-exists.
   assertStringIncludes(sql, "add column if not exists params jsonb");
+});
+
+Deno.test("signed paid status carries admitted listing scope, preserves old tokens and rejects retargeting", async () => {
+  const { encodeJobToken, decodeJobToken } = await import("./jobtoken.ts");
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "synthetic-test-only-signing-placeholder");
+  const owner={orgId:"synthetic-org",userId:"synthetic-user",listingId:"fa300505-0000-4000-8000-000000000011"};
+  const raw=await encodeJobToken({p:"fal",m:"fixture",i:"provider-id",t:"now",k:"video.reel_clip"},owner);
+  assertEquals((await verifyJobToken(raw,owner))?.l,owner.listingId);
+  const old=await encodeJobToken({p:"fal",m:"fixture",i:"provider-old",t:"now",k:"video.reel_clip"},{orgId:owner.orgId,userId:owner.userId});
+  assertEquals((await verifyJobToken(old,owner))?.l,undefined);
+  const [payload,signature]=raw.split(".");
+  const text=JSON.parse(atob(payload.replace(/-/g,"+").replace(/_/g,"/")));
+  text.l="fa300505-0000-4000-8000-000000000099";
+  const changed=btoa(JSON.stringify(text)).replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_");
+  assertEquals(await decodeJobToken(changed+"."+signature),null);
+});
+
+Deno.test("actual receipt signer preflight rejects missing configuration even after a cached key",async()=>{
+ const prior=Deno.env.get("JOB_TOKEN_SIGNING_SECRET");
+ try{
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET","synthetic-receipt-readiness-test-secret");
+  await assertJobTokenSigningReady();
+  Deno.env.delete("JOB_TOKEN_SIGNING_SECRET");
+  await assertRejects(()=>assertJobTokenSigningReady(),Error,"JOB_TOKEN_SIGNING_SECRET");
+ }finally{prior===undefined?Deno.env.delete("JOB_TOKEN_SIGNING_SECRET"):Deno.env.set("JOB_TOKEN_SIGNING_SECRET",prior);}
 });

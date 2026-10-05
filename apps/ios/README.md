@@ -22,6 +22,17 @@ privacy and scope changes are included. Build 44 is available to the existing
 internal Rendprop team. Physical AR accuracy, camera quality and phone Files/Photos delivery
 need owner checks.
 
+## Current audit source — 5 October 2026
+
+The [full-system audit follow-up](../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+contains isolated fixes after build 44, including modal Upgrade presentation,
+form and deep-link recovery, gallery consent, archived listing restoration,
+client email verification and the Sandbox receipt fence. Both unsigned physical
+Release variants compile; three actual mocked Release UIKit cases pass. These
+checks do not verify camera capture, a purchase, real inbox delivery or production
+sync. The current audit changes have not been uploaded to TestFlight or the App
+Store. The installed release checkpoints below remain historical delivery facts.
+
 ## Release status
 
 The [October 5 complete feedback follow-up](../../docs/handoff/BETA-FEEDBACK-20261005.md)

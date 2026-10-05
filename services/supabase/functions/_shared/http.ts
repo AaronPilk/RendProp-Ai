@@ -18,6 +18,7 @@ export type ErrorCode =
   | "not_found"
   | "conflict"
   | "plan_required"
+  | "sandbox_testing_required"
   | "quota_exceeded"
   | "rate_limited"
   | "payload_too_large"
@@ -225,7 +226,9 @@ export function round4(n: number): number {
 export function throwRpc(message: string | undefined): never {
   const msg = message ?? "request failed";
   const m = /RP(\d{3}):\s*([\s\S]*)/.exec(msg);
-  if (!m) throw new HttpError(400, msg);
+  // Only deliberate RP errors are safe customer copy. Database exceptions
+  // can contain table names, constraints and the caller's private data.
+  if (!m) throw new HttpError(503, "This action is temporarily unavailable. Please try again.");
   const status = Number(m[1]);
   const text = m[2].trim() || msg;
   let code: ErrorCode | undefined;

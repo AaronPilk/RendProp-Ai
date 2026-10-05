@@ -5,11 +5,11 @@ export async function prepareClientMessage(
   admin: any,
   row: OutboxRow,
 ): Promise<EmailMessage | null> {
-  if (row.category !== "client_lead_received" || !row.client_delivery_id) {
-    return null;
-  }
-  const { data, error } = await admin.rpc("client_lead_prepare", {
-    p_delivery: row.client_delivery_id,
+  const verification = row.category === "client_recipient_verification";
+  const id = verification ? row.client_verification_id : row.client_delivery_id;
+  if (!["client_lead_received", "client_recipient_verification"].includes(row.category) || !id) return null;
+  const { data, error } = await admin.rpc(verification ? "client_recipient_verification_prepare" : "client_lead_prepare", {
+    ...(verification ? { p_verification: id } : { p_delivery: id }),
     p_outbox: row.id,
     p_from: Deno.env.get("NOTIFY_FROM_EMAIL") ?? "",
   });
@@ -21,7 +21,7 @@ export async function prepareClientMessage(
     !data || typeof data.to !== "string" || data.to !== row.to_email ||
     typeof data.from !== "string" || typeof data.subject !== "string" ||
     typeof data.text !== "string" ||
-    data.idempotency_key !== `client-lead/${row.client_delivery_id}`
+    data.idempotency_key !== `${verification ? "client-verification" : "client-lead"}/${id}`
   ) throw new Error("Client delivery payload could not be verified.");
   return {
     to: data.to,

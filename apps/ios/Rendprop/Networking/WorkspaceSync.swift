@@ -164,7 +164,7 @@ enum ListingWireDetails {
             latest.address = created.address; latest.beds = created.beds; latest.baths = created.baths
             latest.sqft = created.sqft; latest.price = created.price; latest.tagline = created.tagline
             latest.details = created.details; latest.zillowURL = created.zillowURL; latest.soldAt = created.soldAt
-            latest.status = created.status
+            latest.status = created.status; latest.cloudArchived = created.cloudArchived
             latest.floorMeasurements = created.floorMeasurements
             latest.measurementSync = created.measurementSync
             latest.latitude = created.latitude; latest.longitude = created.longitude
@@ -248,7 +248,7 @@ enum ListingWireDetails {
                     case "lat": latest.latitude = phone.latitude
                     case "lng": latest.longitude = phone.longitude
                     case "sold_at": latest.soldAt = phone.soldAt
-                    case "status": latest.status = phone.status
+                    case "status": latest.status = phone.status; latest.cloudArchived = phone.cloudArchived
                     default: break
                     }
                 }
@@ -449,7 +449,7 @@ enum CloudListingMerge {
                 merged.soldAt = fresh.soldAt; merged.zillowURL = fresh.zillowURL
                 merged.latitude = fresh.latitude; merged.longitude = fresh.longitude
                 merged.allowSearchIndexing = fresh.allowSearchIndexing
-                merged.status = fresh.status
+                merged.status = fresh.status; merged.cloudArchived = fresh.cloudArchived
                 merged.factsSync = fresh.factsSync
                 merged.shareSlug = fresh.shareSlug; merged.shareURL = fresh.shareURL
                 merged.unbrandedShareURL = fresh.unbrandedShareURL; merged.publishedRenderID = fresh.publishedRenderID

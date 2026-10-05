@@ -14,6 +14,15 @@ and dSYM binding. The [build-44 receipt](docs/releases/TESTFLIGHT-44-20261004.js
 binds the signed archive, retained uploaded IPA, one internal upload, exact Apple
 readback and verified English testing notes.
 
+The [5 October full-system audit follow-up](docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+adds server-authoritative photo edits, Sandbox billing isolation, immutable video
+quota receipts, verified lead forwarding and cleanup, native modal/form recovery,
+and Studio failed-module recovery. This is **isolated source work, not a new
+TestFlight build or production rollout**. Private media revocation, App Review
+Sandbox authority, full serving-cost allocation and reviewed legal publication
+remain launch gates. The existing owner/family private testing grants remain
+active; retail plans and shared-content access are unchanged.
+
 The [4 October audit remediation](docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md)
 adds rejected-video hold release, legacy gallery reconciliation, private
 measurement saves and export provenance. Both matching database migrations

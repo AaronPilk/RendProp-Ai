@@ -235,3 +235,12 @@ prefix means crawl blocking is not proven; noindex remains enabled.
 - [`src/data/`](src/data/): wire contracts and bounded authenticated reads.
 - [Studio API](../../services/supabase/functions/studio/README.md): authenticated
   media, documents, creation and review handlers.
+# Current source audit — 5 October 2026
+
+The [full-system follow-up](../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+adds client-recipient verification and failed-module recovery. The current source
+returns real 404 for missing assets and permits the exact existing R2 host in
+CSP. These changes are **not deployed**; production connection, forwarding and
+private-media delivery remain separate acceptance gates. `node
+tests/recovery-browser.mjs` tests the real production React boundary/lazy chunk
+with a closed-network synthetic workspace.

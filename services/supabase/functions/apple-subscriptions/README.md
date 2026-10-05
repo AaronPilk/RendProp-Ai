@@ -2,14 +2,20 @@
 
 Apple tells this endpoint when a subscription starts, renews, lapses, is
 refunded or is revoked. It verifies Apple's signature itself, then applies the
-result through `apply_apple_entitlement()`, introduced by migration
-`0019_subscriptions.sql` and hardened by `0021_launch_hardening.sql`.
+result through the service-only `apply_apple_entitlement_v2()` chronology writer.
+The original `apply_apple_entitlement()` compatibility writer remains subject to
+the same retail environment fence.
 
 This README was reconciled with the committed handler on 24 September 2026.
 It documents deployment and owner-run purchase checks; it is not a fresh
 notification-delivery or App Store Connect receipt. The
 [24 September Studio release](../../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 did not redeploy this function or perform a phone purchase.
+
+The [5 October full-system audit](../../../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+records the **source-only** Sandbox authority fence described below. Synthetic
+local verification is not evidence that this migration or the coordinated
+handlers/native copy are deployed. The 24 September record remains historical.
 
 | Route | Auth | Answers |
 |---|---|---|
@@ -58,6 +64,13 @@ existing migration ledger before applying files; do not replay historical
 migrations blindly. `/health` only checks that `apple_subscriptions` is
 readable, not that every RPC, grant or later migration is correct.
 
+The current source additionally requires the reviewed subscription chronology
+and cutover migrations. Do not activate
+`20261005220709_apple_sandbox_authority_fence.sql` without coordinated `me`,
+webhook and native handling, explicit testing access and the finite App Review
+gate below. The fence refuses an unknown existing writer body rather than
+overwriting it. Preserve `me` JWT verification and the webhook's signature auth.
+
 ## 2. Secrets
 
 One name, and it is not a secret in the security sense — the bundle id ships in
@@ -93,9 +106,10 @@ https://<project-ref>.supabase.co/functions/v1/apple-subscriptions/notify
 ```
 
 There are two fields — **Production Server URL** and **Sandbox Server URL**.
-Paste the same URL into both: the handler accepts `Sandbox` and `Production`,
-stores which one each subscription belongs to, and refuses to let one move the
-other.
+Paste the same URL into both. The source verifies both signed environments;
+Production uses the retail subscription ledger, while the 5 October fence routes
+Sandbox to a separate test-only receipt ledger. The historical deployment does
+not establish that this new separation is live.
 
 Before pasting, confirm the endpoint is live and the schema landed:
 
@@ -147,10 +161,18 @@ range — use it after fixing an outage to backfill.
    [sandbox account settings](https://developer.apple.com/help/app-store-connect/test-in-app-purchases/manage-sandbox-apple-account-settings/).
    TestFlight has its own [purchase-testing guidance](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testing-subscriptions-and-in-app-purchases-in-testflight/).
 4. The app calls `POST /me/entitlement` with the JWS StoreKit handed it; Apple
-   posts `SUBSCRIBED` here at roughly the same moment. Either order works — see
-   *pending notifications* below.
+   may also post `SUBSCRIBED`. Under the source-only fence, this purchase confirms
+   an existing explicit test grant; it cannot activate a retail plan. Production
+   notification ordering is described under *pending notifications* below.
 
-Watch it land:
+After the coordinated fence rollout, inspect authorized test receipts separately:
+
+```sql
+select original_transaction_id, product_id, status, signed_at, updated_at
+  from apple_sandbox_receipts order by updated_at desc limit 10;
+```
+
+Verify that the workspace's retail subscription and plan did not change:
 
 ```sql
 select original_transaction_id, plan, status, environment, expires_at, auto_renew
@@ -165,16 +187,34 @@ observe renewal-status change and eventual expiry. Cancelling renewal does not
 immediately end the already-paid period; verify the signed dates and resulting
 notification types instead of expecting an instant lapse.
 
-### Sandbox cannot touch production
+### Sandbox authority fence — source only
 
-A subscription is stored with the environment it was first seen in. A `Sandbox`
-notification for a row recorded as `Production` (or the reverse) is stored and
-answered `{"ignored":"environment_mismatch"}` — never applied. A tester cannot
-change what a paying customer gets.
+`record_apple_sandbox_receipt` verifies current named-account and workspace
+owner/admin authority, and requires an existing service-owned internal/private
+testing grant. It stores the original transaction's immutable actor/workspace
+binding in `apple_sandbox_receipts`; signed chronology prevents an older receipt
+from overwriting a newer one. Sandbox never changes the retail plan, source,
+expiry, cancellation, contract or `apple_subscriptions` binding. The selected
+Sandbox product never chooses the grant's allowance. Production retains its
+verified chronology and sticky retail environment binding.
+
+Without explicit test access, `POST /me/entitlement` returns 403 with
+`sandbox_testing_required`. The coordinated native source keeps that transaction
+pending and offers Restore after access is authorized. Do not finish a transaction
+whose server synchronization has not been confirmed. A Sandbox webhook cannot
+create test access or a retail subscription.
+
+Both TestFlight and App Review purchases use Sandbox. **Rollout is gated:** a
+finite App Review grant needs feature, seat and serving-budget limits measured
+over the entire grant lifetime. Rolling allowance windows alone do not supply
+that limit. No new App Review grant or lifetime meter is implemented by this
+fence; the existing explicit internal grants do not establish reviewer readiness.
+Resolve this gate before activating the fence for review or testers without an
+authorized grant.
 
 ### Pending notifications
 
-If Apple's notification arrives before the app has ever called
+For Production, if Apple's notification arrives before the app has ever called
 `POST /me/entitlement`, there is no workspace to credit yet. The row is stored
 with `pending = true` and the computed entitlement attached; the next
 `POST /me/entitlement` for that `originalTransactionId` replays it in receipt
@@ -189,6 +229,10 @@ A row that stays `pending` for a long time means a purchase Apple knows about
 that no signed-in device has ever claimed.
 
 ## 6. What each notification type does
+
+The retail effects below describe verified Production subscriptions. Under the
+source-only fence, Sandbox events update only an already bound authorized test
+receipt and do not change the separate grant.
 
 | Type | Effect |
 |---|---|
@@ -216,6 +260,7 @@ Two things a lapse will **not** do:
 | `configured:false` on `/health` | `APPLE_BUNDLE_ID` unset, or migration 0019 not applied (`schema_ready` distinguishes them) |
 | plan does not change but the row is stored | inspect `payload->>'verdict'`, subscription dates, `orgs.plan_source`, and other active subscriptions. The handler exposes `environment_mismatch`, `unmapped_product`, `no_entitlement_change`, `no_transaction` or `refused`; it does not forward every RPC reason to the HTTP response. |
 | everything answers `duplicate: true` | the UUID is already stored; inspect its recorded verdict and the recovery limits below before assuming entitlement application succeeded |
+| `POST /me/entitlement` returns `sandbox_testing_required` after the source fence rollout | the current account/workspace lacks explicit authorized testing access; retain the transaction and restore after authorization rather than granting retail access from its Sandbox product |
 
 ## 8. Limits, refusal and recovery
 
@@ -254,3 +299,15 @@ notification decisions; `applejws.test.ts` checks signature/parsing behavior.
 Neither proves the deployed database, gateway setting, Apple delivery or a
 real StoreKit purchase. Schema binding and concurrency need the disposable
 Postgres checks described in the broader Supabase test setup.
+
+Current source-only authority, chronology and confirmed-trial proofs run against
+disposable synthetic databases:
+
+```bash
+python3 tools/audit/run_backend_billing_authority.py
+python3 tools/audit/run_subscription_chronology.py
+python3 tools/audit/run_subscription_trial_regression.py
+```
+
+These checks do not create live testing grants, change App Store Connect, or
+establish a real-device purchase or App Review acceptance.

@@ -19,7 +19,7 @@ function provider(name, inputs) {
   expect(matches.length === 1, `${name}: exactly one provider row`);
   for (const input of inputs) expect(matches.length === 1 && matches[0].includes(input), `${name}: ${input}`);
 }
-expect(t.includes("guest session") && t.includes("Apple is optional"), "Terms disclose guest sessions and optional Apple sign-in");
+expect(t.includes("guest session") && t.includes("capture and work locally") && t.includes("cloud uploads require a named account or an eligible, verified Apple subscription"), "Terms distinguish local guest capture from cloud-upload authority");
 expect(p.includes("Account and session details") && p.includes("guest session"), "Privacy covers guest identifiers");
 expect(p.includes("scripts or transcript excerpts") && p.includes("personal information"), "AI inventory covers text and potentially identifying content");
 provider("Google Gemini", ["Selected photos or video", "text inputs"]);
@@ -29,21 +29,26 @@ provider("OpenAI", ["chat history", "photo editing", "generated-clip frames"]);
 provider("ElevenLabs", ["voiceover script", "address", "selected voice"]);
 provider("Apple", ["Speech recognition", "Recorded voiceover audio", "falls back to the server"]);
 provider("Supabase", ["Inputs sent through Rendprop's API", "media and text"]);
-provider("GoHighLevel (LeadConnector)", ["workspace and listing tags", "listing address"]);
-expect(p.includes("When CRM sync is configured"), "CRM delivery is conditional");
-expect(p.includes("message or preferred date remains"), "CRM subset distinguished from stored lead details");
+provider("GoHighLevel (LeadConnector)", ["legacy CRM", "automatic export of new inquiries is disabled"]);
+provider("Resend", ["email-address verification", "verified listing contacts"]);
+provider("RentCast", ["property-record lookups", "listing address"]);
+provider("Bria", ["video masking", "Selected video clips"]);
+provider("cdnjs and jsDelivr", ["viewer’s IP".replace("’", "'"), "player software"]);
+expect(p.includes("Automatic CRM export is disabled"), "No silent export to a global agency CRM");
+expect(p.includes("verified email address") && p.includes("does not subscribe the buyer"), "Inquiry routing and marketing consent are distinct");
 expect(!p.includes("Those same details") && !p.includes("other than the CRM"), "No inaccurate universal CRM recipient claim");
 expect(p.includes("fallback or quality checks"), "Multiple-provider execution is disclosed");
 expect(t.includes("workspaces shared with other members can remain"), "Terms distinguish shared workspace data");
 expect(t.includes("whether further cleanup is pending"), "Terms distinguish request and cleanup completion");
 expect(!t.includes("normally within hours") && !t.includes("everything in it"), "No unsupported immediate/universal deletion promise");
-expect(p.includes("Account deletion and completion of associated cleanup are separate statuses"), "Privacy distinguishes cleanup completion");
+expect(p.includes("Account deletion and associated cleanup are separate statuses"), "Privacy distinguishes cleanup completion");
 expect(!p.includes("account removes your data"), "Summary does not erase deletion qualifications");
 for (const [label, html] of [["Privacy", privacy], ["Terms", terms]]) {
   expect(html.includes("#7c3aed") && html.includes("#9b6dff"), `${label}: existing light/dark brand accents`);
   expect(html.includes('<html lang="en">') && html.includes('name="viewport"'), `${label}: language and mobile viewport`);
   expect(html.includes('href="/support"') && html.includes('mailto:aaron@pilk.ai'), `${label}: support and contact preserved`);
-  expect(html.includes("Effective September 5, 2026"), `${label}: effective date not silently revised`);
+  expect(html.includes("Effective October 5, 2026"), `${label}: proposed notice revision date`);
+  expect(html.includes("RendProp LLC") && html.includes("855 Central Avenue, Saint Petersburg, FL 33701"), `${label}: owner-supplied legal entity and mailing address`);
   expect(!/<script\b/i.test(html), `${label}: no third-party scripts or telemetry added`);
 }
 expect(t.includes("without your written consent") && p.includes("without your written consent"), "Written-consent commitment retained");
@@ -59,10 +64,10 @@ for (const filename of ["index.html", "pricing.html", "llms.txt"]) {
     catch { expect(false, `${filename}: valid structured data`); }
   }
 }
-expect(p.includes("deleted 180 days") && p.includes("short, fixed schedule"), "Retention claims unchanged and still require operational approval");
+expect(p.includes("180 days") && p.includes("applicable retention settings") && !p.includes("short, fixed schedule"), "No invented universal backup/log retention period");
 expect(privacy.includes('aria-label="Service providers and data processing"'), "Responsive table keeps a descriptive name");
-expect((privacy.match(/role="row"/g) || []).length === 10, "All header/provider rows retain explicit roles");
-expect((privacy.match(/role="cell"/g) || []).length === 27, "All provider cells retain explicit roles");
+expect((privacy.match(/role="row"/g) || []).length === 14, "All header/provider rows retain explicit roles");
+expect((privacy.match(/role="cell"/g) || []).length === 39, "All provider cells retain explicit roles");
 expect((privacy.match(/scope="col"/g) || []).length === 3, "All table headers retain column scope");
 if (failures.length) {
   console.error(failures.map((failure) => `FAIL: ${failure}`).join("\n"));

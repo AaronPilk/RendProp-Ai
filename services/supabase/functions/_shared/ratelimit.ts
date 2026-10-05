@@ -110,3 +110,21 @@ export async function refundRateLimit(
     return false;
   }
 }
+
+export interface RateChargeReceipt { key: string; windowSeconds: number; windowStart: string; }
+/** Paid video uses the exact SQL window that charged this request. */
+export async function chargeRateReceipt(key: string, max: number, windowSeconds: number): Promise<{ accepted: boolean; receipt: RateChargeReceipt }> {
+  try {
+    const { data, error } = await adminClient().rpc("bump_rate_receipt", { p_key: key, p_max: max, p_window_seconds: windowSeconds, p_cost: 1 });
+    if (error || typeof data?.accepted !== "boolean" || typeof data?.window_start !== "string" || !Number.isFinite(Date.parse(data.window_start))) throw new Error("Unconfirmed quota receipt");
+    return { accepted: data.accepted, receipt: { key, windowSeconds, windowStart: data.window_start } };
+  } catch {
+    throw new HttpError(503, "Processing limits could not be confirmed. Please retry shortly.", "upstream");
+  }
+}
+export async function refundRateReceipt(receipt: RateChargeReceipt): Promise<boolean> {
+  try {
+    const { data, error } = await adminClient().rpc("refund_rate_receipt", { p_key: receipt.key, p_window_seconds: receipt.windowSeconds, p_window_start: receipt.windowStart, p_cost: 1 });
+    return !error && data === true;
+  } catch { return false; }
+}

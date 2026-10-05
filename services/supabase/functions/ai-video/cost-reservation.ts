@@ -20,6 +20,8 @@ interface ReservationOptions extends RoutedUsage {
   steps: RouteStep[];
   /** Hashed in memory; media, prompts and URLs are never stored in the journal. */
   input: unknown;
+  allowance: { monthlyWindowStart: string; burstWindowStart: string };
+  listingId?: string | null;
   unitCentsOverride?: (step: RouteStep) => number | undefined;
   minHoldCents?: number;
   meta?: Record<string, unknown>;
@@ -55,7 +57,10 @@ export async function submitReservedVideo<T extends { id: string }>(
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
   let reservation;
   try {
-    reservation = await deps.rpc("app_video_cost_reserve", {
+    reservation = await deps.rpc("app_video_cost_reserve_v2", {
+      p_monthly_window_start: options.allowance.monthlyWindowStart,
+      p_burst_window_start: options.allowance.burstWindowStart,
+      p_listing: options.listingId ?? null,
       p_actor: options.actorId,
       p_org: options.orgId,
       p_key: options.key,

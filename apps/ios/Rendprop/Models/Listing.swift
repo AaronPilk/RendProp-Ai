@@ -22,6 +22,8 @@ struct Listing: Identifiable, Codable, Hashable {
     var createdAt = Date()
     /// Optional so listings saved before these fields existed still decode.
     var soldAt: Date? = nil
+    /// Studio can archive a listing without marking it sold. Preserve both states.
+    var cloudArchived: Bool? = nil
     var zillowURL: String? = nil
     /// The enhanced photo (path relative to Documents) shown as the card's hero
     /// and in the public app link.
@@ -226,6 +228,10 @@ struct Listing: Identifiable, Codable, Hashable {
     }
 
     var isSold: Bool { soldAt != nil }
+    var isArchived: Bool {
+        cloudArchived ?? (factsSync?.baseline["status"] == .text("archived") && factsSync?.fields["status"]?.value != .text("ready"))
+    }
+    var isInactive: Bool { isSold || isArchived }
     var hasCoordinate: Bool { latitude != nil && longitude != nil }
 
     var zillowURLValue: URL? {
@@ -323,7 +329,7 @@ struct Listing: Identifiable, Codable, Hashable {
 extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
-             createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
+             createdAt, soldAt, cloudArchived, zillowURL, mainPhotoRelPath, latitude, longitude,
              tagline, details, floorMeasurements, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, factsSync, measurementSync, publishedRenderID,
@@ -347,6 +353,7 @@ extension Listing {
         spaceTypeRaw     = try c.decodeIfPresent(String.self, forKey: .spaceTypeRaw)
         createdAt        = try c.decodeIfPresent(Date.self,   forKey: .createdAt) ?? Date()
         soldAt           = try c.decodeIfPresent(Date.self,   forKey: .soldAt)
+        cloudArchived    = try c.decodeIfPresent(Bool.self, forKey: .cloudArchived)
         zillowURL        = try c.decodeIfPresent(String.self, forKey: .zillowURL)
         mainPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .mainPhotoRelPath)
         latitude         = try c.decodeIfPresent(Double.self, forKey: .latitude)
@@ -1731,7 +1738,7 @@ enum ListingFactsSync {
         }
         // Clearing a sold marker deliberately restores a Studio-archived home.
         // Other local render/status changes never become ordinary edit intent.
-        if previous.soldAt != nil, current.soldAt == nil,
+        if previous.isInactive, !current.isInactive,
            previous.factsSync?.baseline["status"] == .text("archived") {
             state.fields["status"] = ListingFactEdit(expected: .text("archived"), value: .text("ready"))
         }
@@ -1830,7 +1837,7 @@ enum FloorMeasurementSync {
         let local = FloorMeasurementPlan.wireValue(in: current.details)
         current.address = receipt.address; current.beds = receipt.beds; current.baths = receipt.baths
         current.sqft = receipt.sqft; current.price = receipt.price; current.tagline = receipt.tagline
-        current.soldAt = receipt.soldAt; current.status = receipt.status
+        current.soldAt = receipt.soldAt; current.status = receipt.status; current.cloudArchived = receipt.cloudArchived
         current.zillowURL = receipt.zillowURL; current.latitude = receipt.latitude; current.longitude = receipt.longitude
         current.spaceTypeRaw = receipt.spaceTypeRaw; current.allowSearchIndexing = receipt.allowSearchIndexing
         current.factsSync = receipt.factsSync

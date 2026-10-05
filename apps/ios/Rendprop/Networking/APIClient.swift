@@ -682,6 +682,26 @@ struct AIShotListRequest: Sendable, Hashable {
 }
 
 /// A prospect who submitted the hosted tour's lead form (`GET /leads`).
+struct LeadDeletionReceipt: Decodable, Equatable {
+    let ok: Bool
+    let leadID: UUID
+    let deleted: Bool
+    let cleanupPending: Bool
+    enum CodingKeys: String, CodingKey { case ok, leadID = "lead_id", deleted, cleanupPending = "cleanup_pending" }
+    func checked(leadID expected: UUID) throws -> Self {
+        guard ok, deleted, leadID == expected else { throw ClientContactError.invalidResponse }
+        return self
+    }
+}
+struct ClientRecipientVerificationReceipt: Decodable {
+    let ok: Bool
+    let state: String
+    func checked() throws -> Self {
+        guard ok, ["queued", "verified"].contains(state) else { throw ClientContactError.invalidResponse }
+        return self
+    }
+}
+
 struct Lead: Identifiable, Codable, Hashable {
     var id: UUID
     var listingID: UUID? = nil
@@ -913,6 +933,8 @@ protocol APIClient: Sendable {
     func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact?
     func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact
     func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt
 
     /// POST /ai-photo — single-image AI edit. `request.edit` = "twilight" |
     /// "sky" | "lawn" | "declutter" | "stage" | "custom"; `style` applies to
@@ -1866,5 +1888,16 @@ enum AdminText {
         let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "—" }
         return pretty(trimmed)
+    }
+}
+
+
+extension APIClient {
+    /// Offline and older injected clients cannot claim a server action succeeded.
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to request client email verification.")
+    }
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to delete this saved lead.")
     }
 }

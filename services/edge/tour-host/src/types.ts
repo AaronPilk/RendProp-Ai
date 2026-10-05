@@ -6,7 +6,8 @@
 // `GET /portfolio/:handle` (services/supabase/functions/portfolio/index.ts),
 // read defensively since brand_kit-derived fields are freeform.
 
-export interface Env {
+/// <reference path="../worker-configuration.d.ts" />
+export interface Env extends Partial<Pick<TourHostBindings, "ASSETS">> {
   /** Base URL of the Supabase Edge Functions, e.g. https://<ref>.supabase.co/functions/v1 */
   SUPABASE_FUNCTIONS_URL: string;
   /** Supabase anon key — public by design (RLS enforces access). Used as the

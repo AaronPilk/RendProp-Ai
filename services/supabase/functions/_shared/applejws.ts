@@ -547,7 +547,7 @@ export interface AppleTransaction {
   originalTransactionId: string;
   productId: string;
   bundleId: string;
-  /** "Sandbox" | "Production" — stored, never used to decide trust. */
+  /** Verified environment; Sandbox is isolated from retail billing authority. */
   environment: string;
   purchaseDate: string | null;
   /** null for a non-subscription purchase; callers treat that as a 400. */
@@ -572,12 +572,14 @@ export function decodeTransaction(payload: Record<string, unknown>): AppleTransa
   if (!transactionId || !originalTransactionId || !productId || !bundleId) {
     reject("transaction is missing its identity fields");
   }
+  const environment = str(payload.environment);
+  if (environment !== "Sandbox" && environment !== "Production") reject("transaction has no recognized App Store environment");
   return {
     transactionId: transactionId!,
     originalTransactionId: originalTransactionId!,
     productId: productId!,
     bundleId: bundleId!,
-    environment: str(payload.environment) ?? "Production",
+    environment,
     purchaseDate: msToIso(payload.purchaseDate),
     expiresDate: msToIso(payload.expiresDate),
     revocationDate: msToIso(payload.revocationDate),

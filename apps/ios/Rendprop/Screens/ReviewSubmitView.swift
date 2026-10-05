@@ -132,6 +132,7 @@ struct ReviewSubmitView: View {
             reflection = ReflectionRemoval.controller(listingID: listing.id, asset: asset)
         }
         .aiConsentGate()
+        .paywallHost(managesLifecycle: false)
     }
 
     // MARK: - Sections
@@ -273,7 +274,11 @@ struct ReviewSubmitView: View {
         let selected = tier == t
         return Button {
             if locked {
-                guard entitlements == nil, entitlementTask == nil else { return }
+                if entitlements != nil {
+                    PaywallRouter.shared.present(reason: .featureLocked(t.displayName))
+                    return
+                }
+                guard entitlementTask == nil else { return }
                 // Remember the selected tier while connection/plan lookup
                 // is pending. Never ask for an identity to resolve an outage.
                 entitlementTask = Task { @MainActor in
@@ -337,7 +342,6 @@ struct ReviewSubmitView: View {
             .opacity(locked ? 0.55 : 1)
         }
         .buttonStyle(.plain)
-        .disabled(locked && entitlements != nil)
         .accessibilityLabel(Text(locked ? "\(t.displayName). Team plan." : t.displayName))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }

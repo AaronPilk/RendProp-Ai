@@ -22,7 +22,7 @@ function withoutImports(source: string): string {
 // Production route bodies, price arithmetic, response envelope and reservation
 // helper run unchanged. Only Auth/DB, route resolution and provider boundaries
 // are isolated doubles. No environment, network, writes or provider requests.
-async function fixture(reserveLate = false, priceRequestedTier = false, dropRejectionEvidence = false) {
+async function fixture(reserveLate = false, priceRequestedTier = false, dropRejectionEvidence = false, dropSigningReadiness = false) {
   const source = await Deno.readTextFile(
     new URL("./index.ts", import.meta.url),
   );
@@ -82,6 +82,10 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     "export const handler = async (req: Request) => {",
   );
   let routes = source.slice(drone, end);
+  if(dropSigningReadiness){
+    const check="      await assertVideoReceiptSigningReady();\n";
+    assertEquals(routes.split(check).length,4);routes=routes.split(check).join("");
+  }
   if (priceRequestedTier) {
     const original = "        outputWidth,\n        outputHeight,";
     assert(routes.includes(original), "Actual-output mutation anchor changed");
@@ -137,24 +141,26 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     ${functionBody(source, "durationNeeds")}
     ${functionBody(source, "legacyVideoStep")}
     async ${functionBody(source, "submitEnvelope")}
+    async ${functionBody(source, "assertVideoReceiptSigningReady")}
+    const assertJobTokenSigningReady=async()=>{if(state.options.signerMissing)throw Error("No signer");};
     ${source.slice(promptStart, promptEnd)}
     ${functionBody(source, "cleanPrompt")}
-    const guardGenerate=async(_user:any,req:Request,feature:any,cents:any,sourceOrgId?:string)=>{requiredIdempotencyKey(req);state.charges.push({feature,cents});state.sourceOrgId=sourceOrgId;return {orgId:sourceOrgId??"org-synthetic",plan:"team",monthlyKey:"monthly-synthetic",burstKey:"burst-synthetic"};};
+    const guardGenerate=async(_user:any,req:Request,feature:any,cents:any,sourceOrgId?:string)=>{requiredIdempotencyKey(req);state.charges.push({feature,cents});state.sourceOrgId=sourceOrgId;return {orgId:sourceOrgId??"org-synthetic",plan:"team",monthlyKey:"monthly-synthetic",burstKey:"burst-synthetic",monthlyReceipt:{windowStart:"2026-10-05T00:00:00Z"},burstReceipt:{windowStart:"2026-10-05T01:00:00Z"}};};
     const refundGenerateCharge=async(..._a:any[])=>{state.refunds++;};
     const routerEnabled=async()=>state.options.routerOn??false;
     const resolveChain=async(task:any,_context:any,legacy:any)=>[state.options.badRoute?{...legacy,model:"unknown-tariff-model"}:state.options.routerOn?{...legacy,route_id:"live-shaped-route",model:task.startsWith("video.upscale_")?"topaz/upscale/video":legacy.model,unit_cents:task==="video.upscale_1080p60"?4:8}:legacy,{...legacy,route_id:"eligible-second",provider:"other",model:"second-model"}];
     const runChain=async(_task:any,steps:any[],callback:any)=>{state.steps.push(steps);return {step:steps[0],value:await callback(steps[0])};};
     class ProviderError extends Error {status?:number;error_class?:string;}
-    const echo={request_id:"accepted-provider-id",status_url:"https://queue.fal.run/model/requests/accepted-provider-id/status",response_url:"https://queue.fal.run/model/requests/accepted-provider-id"};
+    const echo={request_id:"accepted-provider-id",status_url:"https://fixture.invalid/ai-video/status?job=opaque-fixture",response_url:"https://queue.fal.run/model/requests/accepted-provider-id"};
     const falSubmitEcho=(_id:string)=>echo;
-    const routerStatusUrl=async(..._a:any[])=>"https://fixture.invalid/ai-video/status?job=opaque-fixture";
+    const routerStatusUrl=async(..._a:any[])=>{if(state.options.signerMissing)throw Error("No signer");return "https://fixture.invalid/ai-video/status?job=opaque-fixture";};
     const recordProvenance=async(..._a:any[])=>({id:"provenance-synthetic",recorded:true,disclosure:"AI edited video"});
     const recordRoutedAiCost=async(..._a:any[])=>{state.oldLedger++;throw Error("Legacy ledger double booking reached");};
     const recordAppAiCost=recordRoutedAiCost;
     const adapterFor=(provider:string)=>({submit:async(step:any,input:any)=>{state.events.push("POST");state.posts.push({provider,step,input});if(state.options.submitReject)throw new HttpError(502,"The media service could not accept this request.","upstream",{provider_status:state.options.submitReject,error_class:"upstream",dispatch_rejected:true});if(state.options.submitThrow)throw Error("private-provider-body-marker");return {id:state.options.badReceipt?"":"accepted-provider-id",provider};}});
     const adminClient=()=>({rpc:async(name:string,args:any)=>{
-      state.events.push(name==="app_video_cost_reserve"?"reserve":name==="app_video_cost_release_rejected"?"release":"settle");state.rpcs.push({name,args});
-      if(name==="app_video_cost_reserve"){
+      state.events.push(name==="app_video_cost_reserve_v2"?"reserve":name==="app_video_cost_release_rejected"?"release":"settle");state.rpcs.push({name,args});
+      if(name==="app_video_cost_reserve_v2"){
         if(state.admitted.has(args.p_key))return {data:null,error:{message:"RP409: This video request was already admitted"}};
         if(state.options.reserveError)return {data:null,error:{message:"RP402: Workspace processing budget reached"}};
         state.admitted.add(args.p_key);state.holds.set(args.p_key,args);
@@ -213,11 +219,11 @@ async function successfulSequence(
   assertEquals(body.request_id, "accepted-provider-id");
   assertEquals(
     body.status_url,
-    "https://queue.fal.run/model/requests/accepted-provider-id/status",
+    "https://fixture.invalid/ai-video/status?job=opaque-fixture",
   );
   assertEquals(
     body.response_url,
-    "https://queue.fal.run/model/requests/accepted-provider-id",
+    "https://fixture.invalid/ai-video/status?job=opaque-fixture",
   );
   return body;
 }
@@ -436,6 +442,8 @@ Deno.test("actual paid guard binds a resolved asset workspace when a multi-org c
     const orgMonthSpendCents=async(..._a:any[])=>0;
     const assertMonthlyHeadroom=(..._a:any[])=>{};
     const durableRateLimit=async(key:string,..._a:any[])=>{state.meters.push(key);return true;};
+    const chargeRateReceipt=async(key:string,..._a:any[])=>{state.meters.push(key);return {accepted:true,receipt:{key,windowStart:"2026-10-05T00:00:00Z"}};};
+    const refundRateReceipt=async()=>true;
     const GEN_MAX_PER_WINDOW=8,GEN_WINDOW_SECONDS=60,MONTH_SECONDS=2592000;
     export async ${functionBody(source, "guardGenerate")}
   `));
@@ -481,6 +489,28 @@ Deno.test("existing signed status-envelope shape survives the reserved dispatch 
     "https://fixture.invalid/ai-video/status?job=opaque-fixture",
   );
   assertEquals(body.response_url, body.status_url);
+});
+
+async function assertSignerBeforeAdmission(f:any,route:"drone"|"aerial"|"reel-clip"){
+  f.reset({signerMissing:true});
+  const before=console.error;console.error=()=>{};
+  try{
+    assertEquals((await f.handler(req(route))).status,503,"missing signer must refuse before any quota or provider admission");
+    assertEquals(f.state.charges,[],"missing signer must refuse before any quota or provider admission");
+    assertEquals(f.state.posts,[],"missing signer must refuse before any quota or provider admission");
+    assertEquals(f.state.events,[],"missing signer must refuse before any quota or provider admission");
+  }finally{console.error=before;}
+}
+Deno.test("all actual video handlers preflight receipt signing before quota and priced POST",async()=>{
+  const f=await fixture();for(const route of ["drone","aerial","reel-clip"]as const)await assertSignerBeforeAdmission(f,route);
+});
+Deno.test("compiled omitted signer preflight reproduces accepted paid work with no returned receipt",async()=>{
+  const mutant=await fixture(false,false,false,true);
+  for(const route of ["drone","aerial","reel-clip"]as const){
+    await assertRejects(()=>assertSignerBeforeAdmission(mutant,route),Error,"missing signer must refuse before any quota or provider admission");
+    assertEquals(mutant.state.posts.length,1);
+    assertEquals(mutant.state.events,["reserve","POST","settle"]);
+  }
 });
 
 Deno.test("moving the actual reservation after POST is caught by the same route contract", async () => {

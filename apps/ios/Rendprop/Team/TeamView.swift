@@ -567,6 +567,7 @@ struct JoinTeamView: View {
 
     @MainActor
     private func join() async {
+        await model.load()
         let originalActor = auth.userID
         if WorkspaceContext.selectedOrgID == nil { await WorkspaceStore.shared.refresh() }
         guard auth.userID == originalActor, !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else {

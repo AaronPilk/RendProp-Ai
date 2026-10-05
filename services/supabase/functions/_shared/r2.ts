@@ -395,13 +395,49 @@ export async function headObject(bucket: string, key: string): Promise<HeadResul
   };
 }
 
-/** Delete one object. Returns true if gone (204 or already absent). */
+/** Delete one object. S3 returns success even when the key is already absent.
+ * A 404 can be a missing bucket, so it never confirms this target was erased. */
 export async function deleteObject(bucket: string, key: string): Promise<boolean> {
   const url = `${endpoint()}/${bucket}/${encodeKey(key)}`;
-  const resp = await client().fetch(url, { method: "DELETE" });
-  // R2/S3 returns 204 on delete; 404 means it was never there / already gone.
-  if (resp.ok || resp.status === 404) return true;
+  const resp = await uploadDispatch(url, { method: "DELETE" }, 10_000);
+  // R2/S3 returns204 for an absent key too. Missing-bucket404 stays queued.
+  if (resp.ok) { await resp.body?.cancel().catch(() => {}); return true; }
+  await resp.body?.cancel().catch(() => {});
   throw new Error(`R2 DELETE ${bucket}/${key} -> ${resp.status}`);
+}
+
+export interface OwnedCleanupPrefix { bucket: string; prefix: string; org_id: string; removed_count: number }
+export function validateOwnedCleanupPrefix(target: OwnedCleanupPrefix): void {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (Object.keys(target).some(key => !["bucket", "prefix", "org_id", "removed_count"].includes(key)) || !uuid.test(target.org_id) ||
+    !((target.bucket === R2_BUCKET_RENDERS && target.prefix === `ai-router/${target.org_id}/`) ||
+      (target.bucket === R2_BUCKET_UPLOADS && target.prefix === `presenter-private/${target.org_id}/`)) ||
+    !Number.isSafeInteger(target.removed_count) || target.removed_count < 0) throw new HttpError(502, "Owned storage cleanup scope could not be verified.");
+}
+
+/** Frozen solely-owned account namespaces only. Delete the first small page,
+ * then recheck it; deleting while using continuation markers can skip keys. */
+export async function deleteOwnedPrefixPage(target: OwnedCleanupPrefix): Promise<{ complete: boolean; deleted: number }> {
+  validateOwnedCleanupPrefix(target);
+  const list = async (limit: number): Promise<string[]> => {
+    const url = new URL(`${endpoint()}/${target.bucket}`);
+    url.searchParams.set("list-type", "2"); url.searchParams.set("prefix", target.prefix); url.searchParams.set("max-keys", String(limit));
+    const text = await boundedXML(url, 10_000);
+    if (text === null || (!/<ListBucketResult(?:\s|>)/.test(text) || !/<\/ListBucketResult>\s*$/.test(text))) throw new HttpError(503, "Owned storage inventory could not be confirmed.");
+    const truncated = firstTag(text, "IsTruncated");
+    if (!["true", "false"].includes(truncated ?? "")) throw new HttpError(503, "Owned storage inventory is incomplete.");
+    const keys = Array.from(text.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g), entry => xmlValue(firstTag(entry[1], "Key") ?? ""));
+    const countText = firstTag(text, "KeyCount"), count = Number(countText);
+    if (countText === null || !/^\d+$/.test(countText) || !Number.isSafeInteger(count) || count !== keys.length || keys.length > limit ||
+      keys.some(key => !key.startsWith(target.prefix) || key.length <= target.prefix.length || key.length > 4096 || /[\u0000-\u001f]/.test(key) || /(^|\/)\.{1,2}(\/|$)/.test(key)) ||
+      new Set(keys).size !== keys.length || (!keys.length && truncated === "true")) throw new HttpError(503, "Owned storage inventory scope is invalid.");
+    return keys;
+  };
+  const keys = await list(32);
+  if (!keys.length) return { complete: true, deleted: 0 };
+  const result = await deleteObjects(keys.map(key => ({ bucket: target.bucket, key })), 4, 32);
+  if (result.errors.length || result.deleted !== keys.length) throw new HttpError(503, "Owned storage cleanup still has unconfirmed objects.");
+  return { complete: (await list(1)).length === 0, deleted: result.deleted };
 }
 
 /**

@@ -134,8 +134,9 @@ async function handleDrain(limit: number): Promise<Response> {
   // user_id is nullable since 0053 (an invitee has no account), and a row that
   // carries its own to_email needs no lookup at all — so both are filtered out
   // before the profile query rather than being sent as nulls.
+  const explicitRecipient = (row: OutboxRow) => ["team_invite", "client_lead_received", "client_recipient_verification"].includes(row.category);
   const mailUsers = [...new Set(
-    rows.filter((r) => r.channel === "email" && !r.to_email && r.user_id).map((r) => r.user_id as string),
+    rows.filter((r) => r.channel === "email" && !explicitRecipient(r) && r.user_id).map((r) => r.user_id as string),
   )];
 
   const devicesByUser = new Map<string, DeviceRow[]>();
@@ -154,9 +155,12 @@ async function handleDrain(limit: number): Promise<Response> {
   }
 
   const emailByUser = new Map<string, string>();
+  let emailLookupFailed = false;
   if (mailUsers.length > 0 && email.configured()) {
-    const { data, error } = await admin.from("profiles").select("id, email").in("id", mailUsers);
-    if (error) console.error("profile lookup failed:", error.message);
+    // Editable profile contact details never select a private notification
+    // destination. Only the current verified, named Auth identity can do that.
+    const { data, error } = await admin.rpc("notification_verified_recipients", { p_users: mailUsers });
+    if (error) { emailLookupFailed = true; console.error("verified notification recipient lookup failed"); }
     for (const p of (data ?? []) as Array<{ id: string; email: string | null }>) {
       const address = (p.email ?? "").trim();
       if (address) emailByUser.set(p.id, address);
@@ -171,7 +175,12 @@ async function handleDrain(limit: number): Promise<Response> {
 
   for (const row of rows) {
     try {
-      const clientMessage=row.category==="client_lead_received" && email.configured() ? await prepareClientMessage(admin,row) : undefined;
+      if (row.channel === "email" && ["first_tour_nudge", "free_week_ending"].includes(row.category)) {
+        await mark(row.id, "skipped", "Promotional lifecycle email is disabled until explicit email opt-in and unsubscribe are supported.", null);
+        skipped++; continue;
+      }
+      if (row.channel === "email" && !explicitRecipient(row) && emailLookupFailed) throw new Error("Verified notification recipient lookup is temporarily unavailable.");
+      const clientMessage=["client_lead_received", "client_recipient_verification"].includes(row.category) && email.configured() ? await prepareClientMessage(admin,row) : undefined;
       // null means SQL already canceled/expired this claim. Do not revive it.
       if(clientMessage===null){skipped++;continue;}
       const outcome = row.channel === "push"
@@ -179,8 +188,8 @@ async function handleDrain(limit: number): Promise<Response> {
         // to_email wins. An invitee has no profile to look an address up
         // from — that is precisely what is being invited — so the row carries
         // the destination itself (migration 0053). Ordinary rows leave it null
-        // and fall through to the profile lookup exactly as before.
-        : await deliverEmail(row, row.to_email ?? (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE,fetch,clientMessage);
+        // and fall through to the verified Auth lookup.
+        : await deliverEmail(row, explicitRecipient(row) ? row.to_email ?? null : (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE,fetch,clientMessage);
       disabledTokens.push(...outcome.deadTokens);
 
       await mark(row.id, outcome.state, outcome.reason, outcome.providerId);

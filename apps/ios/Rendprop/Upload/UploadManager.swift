@@ -384,7 +384,9 @@ final class UploadManager: NSObject, ObservableObject {
         let relPath = FileStore.relativePath(for: fileURL)
         // The SAME file parked for Wi-Fi earlier: adopt it (the user approved
         // cellular, or asked again before Wi-Fi came back).
-        if let s = state, s.status == .queued, s.filePath == relPath {
+        if let s = state, s.status == .queued, s.filePath == relPath,
+           s.listingID == listingID, s.role == role,
+           listingLocalID == nil || s.listingLocalID == nil || s.listingLocalID == listingLocalID {
             guard cellularApproved else { throw UploadError.cellularConfirmationRequired }
             return try await awaitEngine { self.confirmCellularAndStart() }
         }

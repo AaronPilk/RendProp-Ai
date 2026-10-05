@@ -788,7 +788,7 @@ function renderLeadForm(tour: Tour, turnstileSiteKey = "", opts: LeadFormOpts = 
       ${turnstile}
       <div id="leadmsg" class="formmsg" role="alert" aria-live="polite"></div>
       <button class="cta" type="submit">${escapeHtml(copy.button)}</button>
-      <p class="privacy">By sending, you agree that your details are shared with the ${isRealEstate(tour) ? "agent" : "business"}${tour.client_mode === true ? " and the photographer or video producer managing this listing" : ""} and stored by Rendprop and its CRM provider. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
+      <p class="privacy">By sending, you ask the ${isRealEstate(tour) ? "agent" : "business"}${tour.client_mode === true ? " and the photographer or video producer managing this listing" : ""} to respond to your inquiry. Rendprop stores the inquiry and sends it to the verified listing contact. This does not subscribe you to marketing calls or messages. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
     </form>
     ${renderSecondary(cta.secondary)}
     <div id="leadok">
@@ -2182,8 +2182,8 @@ function promoPrefs(tour: Tour): PromoPrefs {
   const hideVendor = hidesVendorBranding(tour);
   return {
     // Opting in is explicit; supplying your OWN lender is opting in.
-    financing: (!hideVendor || ownLender) && (prefFlag(tour, "show_financing", "showFinancing") ?? ownLender),
-    partners: !hideVendor && (prefFlag(tour, "show_partners", "showPartners") ?? true),
+    financing: isRealEstate(tour) && ownLender && (prefFlag(tour, "show_financing", "showFinancing") ?? true),
+    partners: isRealEstate(tour) && !hideVendor && prefFlag(tour, "show_partners", "showPartners") === true,
     lenderName: ownLender ? lenderName : PROMO.mortgage.name,
     lenderUrl: ownLender ? lenderUrl : PROMO.mortgage.url,
     ownLender,
@@ -2334,16 +2334,6 @@ function neighborhoodBlurb(tour: Tour): string {
   if (typeof n === "string") return n;
   if (n && typeof n === "object") return first((n as Record<string, unknown>).blurb, (n as Record<string, unknown>).description, (n as Record<string, unknown>).text);
   return "";
-}
-
-/** Rough monthly P&I for the financing block (illustrative only). */
-function monthlyEstimate(priceCents: number | null | undefined): number | null {
-  if (!pos(priceCents)) return null;
-  const price = Number(priceCents) / 100;
-  const down = 0.2, r = 0.065 / 12, n = 360;
-  const loan = price * (1 - down);
-  const m = (loan * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
-  return Number.isFinite(m) ? Math.round(m) : null;
 }
 
 function sec(id: string, eyebrow: string, title: string, inner: string): string {
@@ -2651,25 +2641,15 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
       `${nb ? `<div class="lp-prose"><p>${escapeHtml(nb)}</p></div>` : ""}${c}`));
   }
 
-  // Financing. Real estate only, and pointless once the home has sold. NEVER on
-  // `/u/`: it is advertising with an external link, which the unbranded rules
-  // ban outright. The monthly estimate is neutral and always renders; the
-  // LENDER CTA is opt-in (F-H-17) — see promoPrefs().
-  const est = isRE && !sold && !unbranded ? monthlyEstimate(l.price_cents) : null;
-  if (est) {
-    const pp = promoPrefs(tour);
-    const lender = pp.financing
-      ? `<p class="lp-tag">${escapeHtml(pp.ownLender ? `Financing with ${pp.lenderName}.` : `${PROMO.mortgage.name} — ${PROMO.mortgage.tagline}`)}</p>
-      <a class="lp-btn" href="${escapeAttr(pp.lenderUrl)}" target="_blank" rel="noopener nofollow">Get pre-approved</a>
-      <p class="lp-fine">${escapeHtml(pp.ownLender
-        ? "Lender chosen by the listing owner."
-        : "Lender promotion from Rendprop, the software behind this page — not a recommendation by the agent or their brokerage.")}</p>`
-      : "";
+  // An explicit owner-supplied lender link only. Rendprop is not quoting loan
+  // rates or inventing a payment from a fixed APR/down-payment assumption.
+  const pp = promoPrefs(tour);
+  if (isRE && !sold && !unbranded && pp.financing) {
     out.push(`<section class="lp-sec" id="financing"><div class="lp-wrap lp-fin">
       <div class="lp-eyebrow">Financing</div>
-      <h2 class="lp-h">Estimated from ${escapeHtml(usd(est))}/mo</h2>
-      ${lender}
-      <p class="lp-fine">Illustrative only — 30-yr fixed at 6.5% with 20% down; taxes and insurance excluded. Not a commitment to lend.</p>
+      <h2 class="lp-h">${escapeHtml(pp.lenderName)}</h2>
+      <a class="lp-btn" href="${escapeAttr(pp.lenderUrl)}" target="_blank" rel="noopener nofollow">Contact lender</a>
+      <p class="lp-fine">Lender chosen by the listing owner. Ask the lender about rates, terms and eligibility.</p>
     </div></section>`);
   }
 
@@ -2698,7 +2678,7 @@ function renderFooter(prefs: PromoPrefs, hideVendor = false): string {
     : "";
   return `<footer class="lp-foot"><div class="lp-wrap">
     ${strip}
-    ${hideVendor ? "" : `<div class="lp-madeby"><a href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>`}
+    ${hideVendor ? "" : `<div class="lp-madeby"><a href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · RendProp LLC</div>`}
     <div class="lp-legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></div>
   </div></footer>`;
 }

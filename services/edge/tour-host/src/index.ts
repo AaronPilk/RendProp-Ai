@@ -21,11 +21,9 @@
 // (POST /beacon/:slug) — both deployed with --no-verify-jwt.
 //
 // Routing (wrangler.toml): the Worker owns the whole apex, `rendprop.com/*`.
-// Requests that exactly match a file under ./public (the marketing site,
-// /assets/*, robots.txt, llms.txt) are answered by Static Assets before this
-// script runs; everything else lands in fetch() below. That precedence is why
-// public/sitemap.xml had to be deleted when /sitemap.xml became a route: a
-// file under ./public wins, and the handler would never have been reached.
+// The Worker runs first so HTTPS/apex canonicalization applies to static files
+// too. Dynamic routes run before the ASSETS binding; other known static files
+// retain their normal delivery headers, ranges and MIME types.
 //
 // Every response is branded: malformed paths (`/f/%`) 404, and any exception
 // the handler throws is caught and answered with errorPage() + no-store — a
@@ -42,6 +40,7 @@ import { renderPortfolioPage } from "./portfolio";
 import { sitemapXml } from "./sitemap";
 import { fetchUpstreamJSON } from "./upstream";
 import { spatialData, spatialModule, spatialPage } from "./spatial";
+import { handleRecipientConfirmation } from "./recipient-confirmation";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
@@ -367,7 +366,7 @@ async function handleTour(
 }
 
 async function handlePortfolio(handle: string, req: Request, url: URL, env: Env): Promise<Response> {
-  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
 
   // The canonical and the structured data are absolute-URL affordances, so the
   // renderer needs the handle this page was served at and the request origin.
@@ -378,7 +377,7 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env)
   // lookup so it never depends on an upstream that cannot know about it.
   if (isDemoHandle(handle)) {
     const resp = htmlResponse(renderPortfolioPage(buildDemoPortfolio(), renderOpts), 200, {
-      "Cache-Control": "public, max-age=300",
+      "Cache-Control": "public, max-age=300", "X-Robots-Tag": "noindex, nofollow",
     });
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
@@ -388,13 +387,13 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env)
 
   const upstream = await fetchUpstreamJSON(`/portfolio/${encodeURIComponent(handle)}`, env);
   if (upstream.kind === "not-found") {
-    return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
+    return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
   }
-  const upstreamError = (status: 502 | 503) => htmlResponse(errorPage("page"), status, { "Cache-Control": "no-store" });
+  const upstreamError = (status: 502 | 503) => htmlResponse(errorPage("page"), status, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
   if (upstream.kind === "error") return upstreamError(upstream.status);
   if (!isPortfolio(upstream.value)) return upstreamError(502);
   try {
-    const resp = htmlResponse(renderPortfolioPage(upstream.value, renderOpts), 200, { "Cache-Control": "no-store" });
+    const resp = htmlResponse(renderPortfolioPage(upstream.value, renderOpts), 200, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   } catch {
     return upstreamError(502);
@@ -431,11 +430,16 @@ function sitemapResponse(url: URL): Response {
 }
 
 async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  const url = new URL(req.url);
+  if (url.pathname === "/verify-client-email") {
+    const canonical = canonicalRedirect(url);
+    if (canonical) return canonical;
+    return handleRecipientConfirmation(req, env);
+  }
   if (req.method !== "GET" && req.method !== "HEAD") {
     return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
   }
 
-  const url = new URL(req.url);
   // BEFORE the canonical redirect: Apple does not follow redirects when it
   // fetches the association file, and it fetches one per host, so www must
   // answer for itself.
@@ -541,8 +545,14 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return Response.redirect(`${url.origin}/`, 302);
   }
 
-  // Root: normally served by the static assets (public/index.html) before the
-  // Worker ever runs. This branch is a safety net in case assets are missing.
+  // Static files pass through the same canonical-origin checks as tours.
+  // The binding preserves asset MIME types, ranges, ETags and _headers.
+  if (env.ASSETS) {
+    const asset = await env.ASSETS.fetch(req);
+    if (asset.status !== 404) return asset;
+  }
+
+  // Safety net for local tests or a deployment without the asset binding.
   if (path === "/") {
     const resp = htmlResponse(landingPage(), 200, {
       "Cache-Control": "public, max-age=300",
@@ -556,7 +566,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await route(req, env, ctx);
+      return withSafetyHeaders(await route(req, env, ctx), req);
     } catch (err) {
       // Last line of defence: never let an exception escape as an unbranded
       // Cloudflare error page. no-store so a transient bug isn't cached.
@@ -572,10 +582,21 @@ export default {
       const resp = unbranded
         ? htmlResponse(unbrandedFallback("error"), 500, { ...UNBRANDED_HEADERS, "Cache-Control": "no-store" }, { unbranded: true })
         : htmlResponse(errorPage(kind), 500, { "Cache-Control": "no-store" });
-      return req.method === "HEAD" ? new Response(null, resp) : resp;
+      return withSafetyHeaders(req.method === "HEAD" ? new Response(null, resp) : resp, req);
     }
   },
 } satisfies ExportedHandler<Env>;
+
+function withSafetyHeaders(response: Response, req: Request): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  // MLS embeds are an intentional public, unbranded delivery surface.
+  if (!/^\/u(?:\/|$)/.test(new URL(req.url).pathname) && !headers.has("X-Frame-Options")) headers.set("X-Frame-Options", "SAMEORIGIN");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
 /** Minimal branded landing for the apex domain until the marketing site ships. */
 function landingPage(): string {

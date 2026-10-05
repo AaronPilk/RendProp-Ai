@@ -357,6 +357,89 @@ final class BetaPolishUITests: XCTestCase {
         app.navigationBars["Edit home"].buttons["Cancel"].tap()
     }
 
+    func testOrdinaryGalleryWithoutAIConsentShowsPhotosAndDeclinedEditKeepsThem() {
+        var arguments = baseArguments
+        let consent = arguments.firstIndex(of: "-ai.thirdPartyProcessing.consent.v3")!
+        arguments[consent + 1] = "NO"
+        app.launchArguments = arguments + ["-ui.detailMetadataFixture", "rich"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 30), app.debugDescription)
+        openDetail("detail.photos", title: "Photos")
+        let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
+        let ready = NSPredicate { _, _ in cards.count == 3 }
+        expectation(for: ready, evaluatedWith: app); waitForExpectations(timeout: 10)
+        XCTAssertFalse(element("aiConsent.root").exists, "Viewing ordinary photos does not require third-party AI consent")
+        XCTAssertTrue(app.buttons["Add photos"].exists)
+        attach("ordinary-photos-without-ai-consent")
+        let edit = app.buttons.matching(NSPredicate(format: "label == %@", "Change this photo with AI")).firstMatch
+        scrollTo(edit); edit.tap()
+        let declutter = app.buttons["Declutter"].firstMatch
+        XCTAssertTrue(declutter.waitForExistence(timeout: 5), app.debugDescription); declutter.tap()
+        XCTAssertTrue(element("aiConsent.root").waitForExistence(timeout: 10), "The actual AI action asks before processing")
+        let decline = app.buttons["aiConsent.decline"]
+        scrollTo(decline); decline.tap()
+        let ended = NSPredicate { _, _ in !self.element("aiConsent.root").exists }
+        expectation(for: ended, evaluatedWith: app); waitForExpectations(timeout: 5)
+        XCTAssertTrue(app.navigationBars["Photos"].exists)
+        XCTAssertEqual(cards.count, 3, "Declining an AI edit keeps every seeded photo in the ordinary library")
+        attach("declined-ai-edit-keeps-gallery")
+    }
+
+    func testEmptyReelAddPhotosReturnsToSameSetupWithoutGenerating() {
+        app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "empty"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Detail fixture empty"].waitForExistence(timeout: 30), app.debugDescription)
+        openDetail("detail.reelStudio", title: "Reel Studio")
+        let add = app.buttons["reel.addPhotos"]
+        scrollTo(add); XCTAssertTrue(add.isEnabled)
+        let wide = app.segmentedControls.buttons["Wide · 16:9"]
+        scrollTo(wide); wide.tap(); XCTAssertTrue(wide.isSelected)
+        scrollTo(add); add.tap()
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.version.")).firstMatch.exists,
+                       "The explicit empty source is preserved; no fixture imports a photo or opens the system picker")
+        attach("empty-reel-add-photos-library")
+        let done = app.navigationBars["Photos"].buttons["Done"]
+        XCTAssertTrue(done.isHittable); done.tap()
+        XCTAssertTrue(app.navigationBars["Reel Studio"].waitForExistence(timeout: 10), app.debugDescription)
+        scrollTo(wide); XCTAssertTrue(wide.isSelected, "Returning from Photos preserves the user's reel setup")
+        scrollTo(add); XCTAssertTrue(add.isEnabled)
+        XCTAssertTrue(app.staticTexts["Add photos to this listing, then return to pick them for your reel."].exists)
+        XCTAssertFalse(app.staticTexts["Your reel is ready"].exists, "The recovery path never automatically generates a video")
+        attach("empty-reel-same-setup-after-photos")
+    }
+
+    func testPhotoQuotaInsideReelModalPresentsAndDismissesLocalPaywall() {
+        app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "empty", "-ui.photoQuotaFixture"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Detail fixture empty"].waitForExistence(timeout: 30), app.debugDescription)
+        openDetail("detail.reelStudio", title: "Reel Studio")
+        let add = app.buttons["reel.addPhotos"]
+        scrollTo(add); add.tap()
+        let upgrade = app.alerts.buttons["Upgrade plan"]
+        XCTAssertTrue(upgrade.waitForExistence(timeout: 10), "The actual PhotoStudio quota alert must appear inside its Photos sheet")
+        attach("photo-quota-inside-reel-modal")
+        upgrade.tap()
+        XCTAssertTrue(element("paywall.root").waitForExistence(timeout: 15), "The visible feature modal must own the upgrade presentation")
+        XCTAssertTrue(app.staticTexts["You've used all your photo edits this month. Pick a plan to keep going."].exists)
+        attach("quota-local-paywall-presented")
+        // No product selection, subscription confirmation or purchase. This
+        // case accepts the useful missing-products UI as well as local products.
+        // Nested sheets retain their underlying toolbar elements in the
+        // accessibility tree. Select the visible paywall control explicitly.
+        let closeButtons = app.buttons.matching(identifier: "Close").allElementsBoundByIndex.filter { $0.isHittable }
+        XCTAssertEqual(closeButtons.count, 1, app.debugDescription)
+        guard let close = closeButtons.first else { return }
+        close.tap()
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
+        let hidden = NSPredicate { _, _ in !self.element("paywall.root").exists }
+        expectation(for: hidden, evaluatedWith: app); waitForExpectations(timeout: 5)
+        app.navigationBars["Photos"].buttons["Done"].tap()
+        XCTAssertTrue(app.navigationBars["Reel Studio"].waitForExistence(timeout: 10), app.debugDescription)
+        scrollTo(add); XCTAssertTrue(add.isEnabled, "Closing the paywall preserves the original reel setup")
+        attach("quota-paywall-dismissed-to-same-reel")
+    }
+
     func testPhotoWorkContinuesAfterLeavingStudioAndReviewShowsNewVersions() {
         app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "rich", "-ui.photoWorkFixture"]
         app.launch()

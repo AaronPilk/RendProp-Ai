@@ -170,19 +170,19 @@ struct OnboardingView: View {
             .padding(.top, 14)
             .padding(.bottom, 12)
 
-            PrimaryButton(title: spaceTypeRaw == SpaceType.realEstate.rawValue ? "Continue" : "See plans", systemImage: "arrow.right") {
-                if spaceTypeRaw == SpaceType.realEstate.rawValue { withAnimation { choosingRole = true } }
-                else { finish(showPlans: true) }
-            }
-            .accessibilityIdentifier("onboarding.choosePlan")
-            .padding(.horizontal, 24)
-            .padding(.bottom, 8)
-            Button("Explore the app first") {
+            PrimaryButton(title: spaceTypeRaw == SpaceType.realEstate.rawValue ? "Continue" : "Explore the app", systemImage: "arrow.right") {
                 if spaceTypeRaw == SpaceType.realEstate.rawValue { withAnimation { choosingRole = true } }
                 else { finish(showPlans: false) }
             }
-                .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
-                .accessibilityIdentifier("onboarding.explore")
+            .accessibilityIdentifier("onboarding.explore")
+            .padding(.horizontal, 24)
+            .padding(.bottom, 8)
+            Button("See plans") {
+                if spaceTypeRaw == SpaceType.realEstate.rawValue { withAnimation { choosingRole = true } }
+                else { finish(showPlans: true) }
+            }
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                .accessibilityIdentifier("onboarding.choosePlan")
                 .padding(.bottom, 24)
         }
     }
@@ -193,11 +193,11 @@ struct OnboardingView: View {
             Text("We'll tailor your real estate workflow.").font(.rpBody).foregroundStyle(Theme.inkDim)
             RealEstateRoleChoice(selected: $selectedRole)
             Spacer()
-            PrimaryButton(title: "See plans", systemImage: "arrow.right") { finish(showPlans: true) }
-                .accessibilityIdentifier("onboarding.role.choosePlan")
-            Button("Explore the app first") { finish(showPlans: false) }
-                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+            PrimaryButton(title: "Explore the app", systemImage: "arrow.right") { finish(showPlans: false) }
                 .accessibilityIdentifier("onboarding.role.explore")
+            Button("See plans") { finish(showPlans: true) }
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                .accessibilityIdentifier("onboarding.role.choosePlan")
             Button("Back") { choosingRole = false }.font(.rpCaption).foregroundStyle(Theme.inkDim)
         }.padding(24)
     }

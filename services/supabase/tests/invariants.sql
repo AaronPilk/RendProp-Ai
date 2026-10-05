@@ -1761,6 +1761,7 @@ do $ap$
 declare
   oA uuid; oB uuid; oM uuid; oX uuid;
   r jsonb; msg text; ok boolean;
+  previous_role text := current_setting('role',true);
 begin
   insert into orgs (name, plan, plan_source) values ('_inv apple A','trial','trial') returning id into oA;
   insert into orgs (name, plan, plan_source) values ('_inv apple B','trial','trial') returning id into oB;
@@ -1836,12 +1837,20 @@ begin
   r := apply_apple_entitlement_v2(oB, null, '_inv-OT-4', 'T1',
         'com.rendprop.app.team.annual', 'team', 'Production', 'active',
         now() + interval '365 days', true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
-  r := apply_apple_entitlement_v2(oB, null, '_inv-OT-4', 'T2',
-        'com.rendprop.app.team.annual', 'team', 'Sandbox', 'active',
-        now() + interval '400 days', true, null, now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
+  ok := false;
+  begin
+    -- Exercise the actual service writer. A denial caused only by this
+    -- auditor's postgres role would never reach the Sandbox authority fence.
+    perform set_config('role','service_role',true);
+    r := apply_apple_entitlement_v2(oB, null, '_inv-OT-4', 'T2',
+          'com.rendprop.app.team.annual', 'team', 'Sandbox', 'active',
+          now() + interval '400 days', true, null, now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
+  exception when others then msg := SQLERRM; ok := msg like 'RP403:%';
+  end;
+  perform set_config('role',previous_role,true);
   insert into _inv(name, pass, note)
     values ('a Sandbox write cannot move a Production subscription',
-            r->>'reason' = 'environment_mismatch', r::text);
+            ok, coalesce(msg,'NO ERROR RAISED'));
   insert into _inv(name, pass, note)
     select 'and the stored environment is untouched', environment = 'Production', environment
       from apple_subscriptions where original_transaction_id = '_inv-OT-4';
@@ -2751,10 +2760,10 @@ begin
                                  where user_id in (uNO, uNA, uNM, uCL));
   delete from auth.users where id in (uNO, uNA, uNM, uCL);
 
-  insert into auth.users (id, email, raw_user_meta_data) values
-    (uNO, 'inv-notify-owner@example.com',     '{"full_name":"Ned Owner"}'),
-    (uNA, 'inv-notify-admin@example.com',     '{"full_name":"Ana Admin"}'),
-    (uNM, 'inv-notify-marketing@example.com', '{"full_name":"Mo Marketing"}');
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+    (uNO, 'inv-notify-owner@example.com',     now(), '{"full_name":"Ned Owner"}'),
+    (uNA, 'inv-notify-admin@example.com',     now(), '{"full_name":"Ana Admin"}'),
+    (uNM, 'inv-notify-marketing@example.com', now(), '{"full_name":"Mo Marketing"}');
   select org_id into oNO from memberships where user_id = uNO;
   insert into memberships (user_id, org_id, role) values (uNA, oNO, 'admin'), (uNM, oNO, 'marketing');
 
@@ -2787,7 +2796,7 @@ begin
             -- Callable RPCs and trigger functions have different privilege models.
             -- Redaction is deliberately SECURITY INVOKER; it can only be fired
             -- through its terminal-state outbox trigger, never called as an RPC.
-            (select count(*)=11 and bool_and(p.prosecdef
+            (select count(*)=12 and bool_and(p.prosecdef
                     and not has_function_privilege('authenticated',p.oid,'EXECUTE')
                     and not has_function_privilege('anon',p.oid,'EXECUTE')
                     and has_function_privilege('service_role',p.oid,'EXECUTE'))
@@ -3061,13 +3070,13 @@ begin
   r := notification_tick();
   select count(*) into n from notification_outbox
    where category = 'free_week_ending' and org_id = oNO;
-  ok := (r->>'free_week_ending')::int >= 1;
+  ok := (r->>'free_week_ending')::int = 0;
   r := notification_tick();
   select count(*) into n2 from notification_outbox
    where category = 'free_week_ending' and org_id = oNO;
   insert into _inv(name, pass, note)
-    values ('the trial-ending tick queues one message per owner/admin and a second run queues none',
-            ok and n = 2 and n2 = 2 and (r->>'free_week_ending')::int = 0,
+    values ('the trial-ending tick cannot queue promotional email without the consent workflow',
+            ok and n = 0 and n2 = 0 and (r->>'free_week_ending')::int = 0,
             format('first run queued %s rows, second run added %s (tick said %s)',
                    n, n2 - n, r->>'free_week_ending'));
 
@@ -3089,14 +3098,14 @@ begin
   select count(*) into n2 from notification_outbox where org_id = oNO
      and category in ('allowance_low','first_tour_nudge','upload_stuck');
   insert into _inv(name, pass, note)
-    values ('allowance_low, first_tour_nudge and upload_stuck each queue once and are not re-sent on the next tick',
-            -- 5: allowance_low and first_tour_nudge go to both the owner and the
-            -- admin; upload_stuck goes only to the person who started the upload.
-            n = 5 and n2 = n
+    values ('transactional allowance and upload notices queue once while promotional nudges remain blocked',
+            -- 3: allowance_low goes to the owner and admin; upload_stuck goes
+            -- only to its actor. The promotional email nudge stays disabled.
+            n = 3 and n2 = n
               and exists (select 1 from notification_outbox where org_id = oNO and category = 'allowance_low'
                            and payload -> 'data' ->> 'feature' = 'photo_edits'
                            and (payload -> 'data' ->> 'used')::int = (payload -> 'data' ->> 'cap')::int)
-              and exists (select 1 from notification_outbox where org_id = oNO and category = 'first_tour_nudge')
+              and not exists (select 1 from notification_outbox where org_id = oNO and category = 'first_tour_nudge')
               and exists (select 1 from notification_outbox where org_id = oNO and category = 'upload_stuck'),
             format('%s rows after the first tick, %s after the second', n, n2));
 

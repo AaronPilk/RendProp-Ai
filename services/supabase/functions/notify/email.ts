@@ -54,8 +54,11 @@ export interface EmailProvider {
 // to the project takes effect on the next drain, not the next cold start.
 const env = (name: string): string | undefined => {
   const v = Deno.env.get(name);
-  return v && v.trim() ? v : undefined;
+  return v && v.trim() ? v.trim() : undefined;
 };
+
+export const BUSINESS_EMAIL_FOOTER = "RendProp LLC\n855 Central Avenue\nSaint Petersburg, FL 33701\nQuestions or email preferences: aaron@pilk.ai";
+export const EMAIL_REPLY_TO = "aaron@pilk.ai";
 
 const RESEND_VARS = ["RESEND_API_KEY", "NOTIFY_FROM_EMAIL"] as const;
 
@@ -67,6 +70,8 @@ async function sendViaResend(
   try {
     res = await fetchImpl("https://api.resend.com/emails", {
       method: "POST",
+      signal: AbortSignal.timeout(15_000),
+      redirect: "error",
       headers: {
         Authorization: `Bearer ${env("RESEND_API_KEY")}`,
         "Content-Type": "application/json",
@@ -76,7 +81,8 @@ async function sendViaResend(
         from: message.from ?? env("NOTIFY_FROM_EMAIL"),
         to: [message.to],
         subject: message.subject,
-        text: message.text,
+        text: `${message.text}\n\n${BUSINESS_EMAIL_FOOTER}`,
+        reply_to: EMAIL_REPLY_TO,
       }),
     });
   } catch (e) {

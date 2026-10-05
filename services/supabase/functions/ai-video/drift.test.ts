@@ -29,6 +29,7 @@ import {
   assert,
   assertEquals,
   assertNotEquals,
+  assertRejects,
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {
@@ -669,17 +670,53 @@ Deno.test("wiring: the retry grant is durable and keyed on the SOURCE photo", ()
   assertStringIncludes(DRIFT_ROUTE, "if (claimed >= 1)");
 });
 
-Deno.test("wiring: the refund is bounded, idempotent and never the vendor spend", () => {
-  assertStringIncludes(INDEX_SRC, "async function refundRejectedClipAllowance(");
-  assertStringIncludes(INDEX_SRC, "`aidriftref:${orgId}:${requestId}`");
-  assertStringIncludes(INDEX_SRC, "`aidriftrefmo:${orgId}`");
-  assertStringIncludes(INDEX_SRC, "DRIFT_MAX_REFUNDS_PER_MONTH");
-  // Only a real, model-delivered failure refunds anything: a `hold` must not
-  // turn a provider outage into free clips.
-  assertStringIncludes(
-    DRIFT_ROUTE,
-    'decision.action === "retry" || decision.action === "refuse"',
-  );
+async function actualRefundModule(refundHeldClip=false) {
+  const method=INDEX_SRC.match(/^async function refundRejectedClipAllowance\([\s\S]*?^}/m);
+  const conditional=DRIFT_ROUTE.match(/const charge = decision\.action[\s\S]*?;/);
+  assert(method&&conditional,"Actual refund helper and route admission must exist");
+  let admission=conditional[0];
+  if(refundHeldClip){
+    const predicate='decision.action === "retry" || decision.action === "refuse"';
+    assert(admission.includes(predicate));admission=admission.replace(predicate,"true");
+  }
+  return await import("data:application/typescript,"+encodeURIComponent(`
+    // ${crypto.randomUUID()}
+    type GenKind="reel"|"aerial"|"drone";
+    export const state:any={calls:[],error:null,data:{refunded:true,reason:"Original allowance restored"}};
+    const adminClient=()=>({rpc:async(name:string,args:any)=>{state.calls.push({name,args});if(name!=="app_video_refund_drift")throw Error("Unexpected spend writer");return {data:state.data,error:state.error};}});
+    ${method[0]}
+    export async function run(action:string,kind:GenKind="reel"){
+      const decision={action},orgId="trusted-org",requestId="owned-request",user={id:"trusted-actor"};
+      ${admission}
+      return charge;
+    }
+  `));
+}
+Deno.test("actual drift refund binds owned actor and request to the original-window SQL receipt",async()=>{
+  const m=await actualRefundModule();
+  assertEquals(await m.run("retry"),{refunded:true,reason:"Original allowance restored"});
+  assertEquals(m.state.calls,[{name:"app_video_refund_drift",args:{p_actor:"trusted-actor",p_org:"trusted-org",p_request:"owned-request",p_feature:"reel"}}]);
+  m.state.calls=[];await m.run("refuse","drone");
+  assertEquals(m.state.calls[0].args.p_feature,"drone_render");
+});
+async function assertHeldClipNotRefunded(mutant=false){
+  const m=await actualRefundModule(mutant);
+  for(const action of["hold","accept"]){
+    assertEquals((await m.run(action)).refunded,false,"Held or approved clips must not refund allowance");
+    assertEquals(m.state.calls,[],"Held or approved clips must not refund allowance");
+  }
+}
+Deno.test("actual drift decision never refunds a held or approved clip",async()=>{await assertHeldClipNotRefunded();});
+Deno.test("compiled unconditional drift refund fails the same held-clip boundary",async()=>{
+  await assertRejects(()=>assertHeldClipNotRefunded(true),Error,"Held or approved clips must not refund allowance");
+});
+Deno.test("actual drift refund fails closed on unconfirmed SQL acknowledgment without leaking private errors",async()=>{
+  const m=await actualRefundModule();m.state.error={message:"private-database-marker"};
+  const answer=await m.run("retry");
+  assertEquals(answer,{refunded:false,reason:"The clip refund could not be confirmed"});
+  assert(!JSON.stringify(answer).includes("private-database-marker"));
+  m.state.error=null;m.state.data={refunded:"not-confirmed",reason:"private-database-marker"};
+  assertEquals(await m.run("retry"),answer);
 });
 
 Deno.test("wiring: every judge call writes its own ledger row, feature 'qc'", () => {

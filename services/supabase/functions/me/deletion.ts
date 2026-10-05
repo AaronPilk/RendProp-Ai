@@ -2,7 +2,7 @@
 // snapshot. A transient failure must retain work, never invent an empty one.
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { HttpError, json, throwRpc } from "../_shared/http.ts";
-import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
+import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS, validateOwnedCleanupPrefix, type OwnedCleanupPrefix } from "../_shared/r2.ts";
 import { payloadEmpty, type DeletionPayload } from "./logic.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,8 +40,11 @@ function lease(raw: unknown, user?: string, request?: string): Lease {
     p.r2.every(x => object(x) && [R2_BUCKET_UPLOADS, R2_BUCKET_RENDERS].includes(x.bucket as string) &&
       typeof x.key === "string" && x.key.length > 0 && x.key.length <= 4096) &&
     Array.isArray(p.stream_uids) && p.stream_uids.every(x => typeof x === "string" && x.length > 0 && x.length <= 512) &&
-    Array.isArray(p.ghl_targets) && p.ghl_targets.every(x => object(x) && id(x.org_id) && solo.includes(x.org_id) &&
-      typeof x.email === "string" && x.email.length > 0 && x.email.length <= 512) &&
+    Array.isArray(p.ghl_targets) && p.ghl_targets.every(x => object(x) && Object.keys(x).every(k => ["email", "phone", "org_id"].includes(k)) && id(x.org_id) && solo.includes(x.org_id) &&
+      (x.email === undefined || (typeof x.email === "string" && x.email.length > 0 && x.email.length <= 512)) &&
+      (x.phone === undefined || (typeof x.phone === "string" && x.phone.length > 0 && x.phone.length <= 40)) &&
+      ((typeof x.email === "string" && x.email.length > 0 && x.email.length <= 512) ||
+       (typeof x.phone === "string" && x.phone.length > 0 && x.phone.length <= 40))) &&
     (p.apple_refresh_token === null || (typeof p.apple_refresh_token === "string" && p.apple_refresh_token.length <= 16384)));
   requireReceipt(Array.isArray(p.provider_leases) && p.provider_leases.length<=30000 &&
     p.provider_leases.every(x=>object(x)&&id(x.job_id)&&id(x.lease_token)) &&
@@ -51,6 +54,9 @@ function lease(raw: unknown, user?: string, request?: string): Lease {
     p.unresolved_uploads.every(x=>keyTarget(x)&&id(x.operation_id)) &&
     Array.isArray(p.unresolved_render_jobs) && p.unresolved_render_jobs.length<=50000 && p.unresolved_render_jobs.every(id) &&
     (p.storage_not_before===null || (typeof p.storage_not_before==="string"&&Number.isFinite(Date.parse(p.storage_not_before)))));
+  requireReceipt(p.r2_prefixes === undefined || (Array.isArray(p.r2_prefixes) && p.r2_prefixes.length <= solo.length * 2 &&
+    p.r2_prefixes.every(x => object(x) && solo.includes(x.org_id as string))));
+  for (const target of (p.r2_prefixes ?? []) as OwnedCleanupPrefix[]) validateOwnedCleanupPrefix(target);
   for (const key of ["analytics_user_id", "profile_id", "auth_user_id"]) {
     requireReceipt(p[key] === null || p[key] === raw.source_user_id);
   }
@@ -58,7 +64,7 @@ function lease(raw: unknown, user?: string, request?: string): Lease {
   // arbitrary db.ids payload or tolerate unknown cleanup categories silently.
   requireReceipt(Object.keys(p).every(k => ["r2", "stream_uids", "ghl_targets", "apple_refresh_token",
     "analytics_user_id", "profile_id", "auth_user_id", "provider_leases", "multipart_uploads",
-    "unresolved_uploads", "storage_not_before", "unresolved_render_jobs"].includes(k)));
+    "unresolved_uploads", "storage_not_before", "unresolved_render_jobs", "r2_prefixes"].includes(k)));
   return { request: raw.request_id, user: raw.source_user_id, token: raw.lease_token,
     payload: p as unknown as DeletionPayload, solo: scope.solo_orgs, shared: scope.shared_orgs,
     manual: raw.manual_review_required };

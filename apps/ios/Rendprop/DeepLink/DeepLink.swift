@@ -137,3 +137,32 @@ enum DeepLink: Equatable, Identifiable {
         s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
     }
 }
+
+
+/// Incoming links wait for the current capture, edit, purchase or share screen.
+/// Exact repeats coalesce; a bounded burst is reported instead of silently lost.
+enum NativeIncomingRoute: Equatable {
+    case link(DeepLink)
+    case leads
+    case pushPermission
+    case invalidLink
+}
+struct NativeIncomingQueue: Equatable {
+    private(set) var routes: [NativeIncomingRoute] = []
+    private(set) var overflowed = false
+    static let limit = 32
+
+    @discardableResult mutating func enqueue(_ route: NativeIncomingRoute) -> Bool {
+        if routes.contains(route) { return true }
+        guard routes.count < Self.limit else { overflowed = true; return false }
+        routes.append(route)
+        return true
+    }
+    mutating func takeNext(canPresent: Bool) -> NativeIncomingRoute? {
+        guard canPresent else { return nil }
+        if !routes.isEmpty { return routes.removeFirst() }
+        if overflowed { overflowed = false; return .invalidLink }
+        return nil
+    }
+    var hasPending: Bool { !routes.isEmpty || overflowed }
+}

@@ -14,6 +14,7 @@ const options = {
   feature: "drone_render" as const, steps: [step], seconds: 300,
   input: { task: "video.upscale_4k", video_url: "https://private-media.invalid/customer-video", extra: { target_fps: 60 } },
   meta: { tier: "4k60" },
+  allowance: { monthlyWindowStart: "2026-10-05T00:00:00Z", burstWindowStart: "2026-10-05T01:00:00Z" },
 };
 
 function fixture(patch: { reserve?: unknown; reserveError?: string; submitError?: boolean; settleError?: boolean; settleThrow?: boolean; wrongReceipt?: boolean } = {}) {
@@ -22,7 +23,7 @@ function fixture(patch: { reserve?: unknown; reserveError?: string; submitError?
   const deps = {
     rpc: (name: string, args: Record<string, unknown>) => {
       calls.push({ name, args });
-      if (name === "app_video_cost_reserve") return Promise.resolve({
+      if (name === "app_video_cost_reserve_v2") return Promise.resolve({
         data: "reserve" in patch ? patch.reserve : { reserved: true },
         error: patch.reserveError ? { message: patch.reserveError } : null,
       });
@@ -31,7 +32,7 @@ function fixture(patch: { reserve?: unknown; reserveError?: string; submitError?
       return Promise.resolve({ data: { settled: true }, error: patch.settleError ? { message: "unavailable" } : null });
     },
     submit: (selected: RouteStep) => {
-      assertEquals(calls.at(-1)?.name, "app_video_cost_reserve");
+      assertEquals(calls.at(-1)?.name, "app_video_cost_reserve_v2");
       submissions++;
       if (patch.submitError) throw new Error("synthetic lost acceptance");
       return Promise.resolve({ step: selected, value: { id: patch.wrongReceipt ? "" : "provider-receipt" }, latency_ms: 3 });
@@ -44,7 +45,7 @@ Deno.test("video price is durably reserved before one POST and settled once, wit
   const f = fixture();
   const result = await submitReservedVideo(options, f.deps);
   assertEquals(f.submissions(), 1);
-  assertEquals(f.calls.map((c) => c.name), ["app_video_cost_reserve", "app_video_cost_settle"]);
+  assertEquals(f.calls.map((c) => c.name), ["app_video_cost_reserve_v2", "app_video_cost_settle"]);
   assertEquals(f.calls[0].args.p_hold_cents, 4800);
   assertEquals(f.calls[0].args.p_units, 300);
   assertEquals(f.calls[0].args.p_unit_cost_cents, 16);
@@ -80,7 +81,7 @@ Deno.test("lost POST acceptance retains hold and never falls over to the second 
   const f = fixture({ submitError: true });
   await assertRejects(() => submitReservedVideo({ ...options, steps: [step, { ...step, provider: "kie" }] }, f.deps), VideoDispatchUnconfirmed);
   assertEquals(f.submissions(), 1);
-  assertEquals(f.calls.map((c) => c.name), ["app_video_cost_reserve"]);
+  assertEquals(f.calls.map((c) => c.name), ["app_video_cost_reserve_v2"]);
 });
 
 Deno.test("unusable provider receipt cannot settle or release its hold", async () => {

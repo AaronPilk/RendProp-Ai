@@ -20,7 +20,7 @@ finally { Object.defineProperty(Deno, "serve", descriptor); }
 const { handleCreative } = await import("../studio/creative.ts");
 const { adminClient } = await import("./supabase.ts");
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
-type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean };
+type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean; noDiscovery?:boolean; withdrawDiscovery?:boolean; clientFailure?:boolean; discovery?:unknown };
 async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "history" | "portfolio", opts: Options = {}) {
   const previous = globalThis.fetch; let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0; const seen: Record<string, unknown>[] = [];
   globalThis.fetch = async (input, init) => {
@@ -46,10 +46,11 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
     if (url.pathname === "/rest/v1/rpc/assert_studio_edit_quality") return response(null);
     const table = url.pathname.split("/").pop();
     if (table === "renders") { const row = { id: renderId, job_id: jobId, listing_id: listing, slug: "fixture-tour", video_key: key, poster_key: `${prefix}/poster.jpg`, published_at: "2026-09-24T00:00:00Z", duration_s: 5 }; return response(handler === "portfolio" ? [row] : row); }
-    if (table === "listings") {listingReads++; const row = { id: listing, org_id: org, agent_id: user, deleted_at: null, details: {}, address: "Synthetic listing",main_photo_key:opts.mainPhotoKey??null,gallery_asset_ids:opts.changeSelection&&listingReads>1?[]:opts.selection??null }; return response(handler === "portfolio" ? [row] : row); }
+    if (table === "listings") {listingReads++; const row = { id: listing, org_id: org, agent_id: user, deleted_at: null, details: {allow_indexing: opts.noDiscovery || opts.withdrawDiscovery && profileRead ? false : "discovery" in opts ? opts.discovery : true}, address: "Synthetic listing",main_photo_key:opts.mainPhotoKey??null,gallery_asset_ids:opts.changeSelection&&listingReads>1?[]:opts.selection??null }; return response(handler === "portfolio" && !url.searchParams.has("id") ? [row] : row); }
     if (table === "orgs") return response({ id: org, handle: "fixture", brand_kit: {} });
     if (table === "listing_client_contacts") {
       contactReads++;
+      if(opts.clientFailure) return new Response(JSON.stringify({message:"private client lookup outage"}),{status:503,headers:{"content-type":"application/json"}});
       assert(!String(url.searchParams.get("select")).includes("recipient_email"), "private lead email must never be requested by public tour");
       return response(!opts.clientContact?null:{listing_id:listing,org_id:org,enabled:true,public_card:{name:"Client Realtor",title:"Listing Agent",email:"published@fixture.invalid"},hide_rendprop_branding:true,photo_asset_id:contactId,revision:opts.changeContact&&contactReads>1?2:1});
     }
@@ -209,4 +210,17 @@ Deno.test("actual tour empty gallery selection hides property photos and saved c
 Deno.test("actual tour discards a retired version if gallery selection changes during assembly",async()=>{
  const r=await invoke("tour",{selection:[galleryId],mainPhotoKey:galleryKey,changeSelection:true});assertEquals(r.status,503);
  assert(!JSON.stringify(r.body).includes("media-fixture.invalid"));
+});
+
+Deno.test("actual portfolio excludes private-link-only and client-delivery listings",async()=>{
+ for(const opts of[{noDiscovery:true},{clientContact:true}]){const r=await invoke("portfolio",opts);assertEquals(r.status,200);assertEquals(r.body.tours,[]);assertEquals(r.checks,0);}
+});
+Deno.test("actual portfolio rechecks withdrawn discovery and fails closed on client lookup outage",async()=>{
+ const withdrawn=await invoke("portfolio",{withdrawDiscovery:true});assertEquals(withdrawn.status,200);assertEquals(withdrawn.body.tours,[]);assertEquals(withdrawn.checks,1);
+ const outage=await invoke("portfolio",{clientFailure:true});assertEquals(outage.status,503);assert(!JSON.stringify(outage.body).includes("fixture-tour"));assert(!JSON.stringify(outage.body).includes("private client lookup outage"));
+});
+
+Deno.test("actual portfolio preserves native string opt-in but refuses truthy non-consent",async()=>{
+ const native=await invoke("portfolio",{discovery:"true"});assertEquals(native.status,200);assertEquals(native.body.tours.length,1);
+ for(const discovery of["false","anything",{},null]){const denied=await invoke("portfolio",{discovery});assertEquals(denied.status,200);assertEquals(denied.body.tours,[]);}
 });

@@ -107,6 +107,7 @@ import type { GenerateInput } from "../_shared/providers/types.ts";
 // handler, its router glue or its Supabase clients into this function's bundle.
 // See ai-copy/prompt.ts's header and improvePrompt() below.
 import { MAX_PROMPT_INPUT, MAX_PROMPT_OUTPUT, editPromptInstruction } from "../ai-copy/prompt.ts";
+import { persistPhotoOutput } from "../_shared/photo-output-intent.ts";
 
 // Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
@@ -815,7 +816,11 @@ Deno.serve(async (req) => {
         let assetKey: string | null = null;
         if (routerOn) {
           try {
-            const stored = await adapter.persist(local, routedR2Key(orgId, task, local.mime));
+            const key = routedR2Key(orgId, task, local.mime);
+            const bytes = Math.floor(b64.length * 3 / 4) - (b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0);
+            const stored = await persistPhotoOutput(adminClient(), {
+              userId: user.id, orgId, listingId: body.listing_id, key, bytes,
+            }, () => adapter.persist(local, key));
             assetKey = stored.key;
           } catch (e) {
             console.error("ai-photo: persist to R2 failed (edit still returned):", e instanceof Error ? e.message : e);

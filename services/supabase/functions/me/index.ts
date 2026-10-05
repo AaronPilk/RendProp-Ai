@@ -96,11 +96,14 @@ import {
   throwRpc,
 } from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
+import { cleanupLegacyGhlTarget } from "../_shared/legacy-ghl-cleanup.ts";
+import { sweepPrivacyCleanup } from "../_shared/privacy-cleanup.ts";
 import { masterTestingAccess, privateTestingContext } from "../_shared/internal-testing.ts";
 import { isSpaceType, SPACE_TYPES } from "../_shared/spacetypes.ts";
 import {
   abortMultipartUpload,
   deleteObjects,
+  deleteOwnedPrefixPage,
   publicR2Url,
   inspectBrandLogo,
   writeBrandLogo,
@@ -130,7 +133,6 @@ import {
   userClient,
 } from "../_shared/supabase.ts";
 import {
-  decideGhlTagAction,
   type DeletionPayload,
   type GhlCleanupTarget,
 } from "./logic.ts";
@@ -151,6 +153,11 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg[0] === "sweep-deletions") {
       if (!isServiceRole(req)) throw new HttpError(403, "Service role required");
       return await sweepDeletions();
+    }
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "sweep-privacy") {
+      if (!isServiceRole(req)) throw new HttpError(403, "Service role required");
+      const receipt = await sweepPrivacyCleanup(adminClient());
+      return json(receipt, receipt.failed ? 503 : 200);
     }
 
     const user = await getUser(req);
@@ -1037,11 +1044,10 @@ async function handleAppleCode(req: Request, userId: string): Promise<Response> 
 //                    below. Soft on purpose: the shipped build sets no token,
 //                    so an absent one is accepted. (S1 review; migration 0021
 //                    adds the column that records it.)
-//   environment      Sandbox and Production are both accepted (App Review and
-//                    every TestFlight tester buys in Sandbox) but they may not
-//                    mix: a transaction from the other environment than the one
-//                    on file is a 409, the same rule /apple-subscriptions has
-//                    always applied to notifications.
+//   environment      Production receipts alone may update retail billing.
+//                    TestFlight and App Review use Sandbox: their receipts may
+//                    be acknowledged only against separately authorized test
+//                    access, in an isolated ledger with no retail plan write.
 //   expiresDate      a purchase with no expiry is not a subscription: 400.
 //   role             only the workspace owner or an admin may attach a
 //                    subscription, so an `agent` seat in someone else's org
@@ -1177,6 +1183,23 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     );
   }
 
+  if (tx.environment === "Sandbox") {
+    const { data, error } = await admin.rpc("record_apple_sandbox_receipt", {
+      p_org: orgId, p_actor: userId, p_original: tx.originalTransactionId,
+      p_transaction: tx.transactionId, p_product: tx.productId,
+      p_status: deriveEntitlement(tx, renewal).status, p_signed_at: tx.signedDate,
+    });
+    if (error) {
+      if (/RP403:/.test(error.message)) throw new HttpError(403,
+        "This TestFlight/App Review purchase is test-only. This workspace needs authorized test access before activation. Your purchase is kept; restore after access is enabled.", "sandbox_testing_required");
+      if (/RP(?:400|409):/.test(error.message)) throwRpc(error.message);
+      throw new HttpError(503, "Test purchase could not be confirmed. Please retry.", "upstream");
+    }
+    assert(data?.ok === true && data.test_only === true && data.environment === "Sandbox" && data.org_id === orgId,
+      503, "Authorized test access could not be confirmed. Please retry.");
+    return json(data, 200, { "cache-control": "no-store" });
+  }
+
   // One subscription, one workspace. This is the friendly pre-check; the RPC
   // enforces the same rule inside its row lock (migration 0021), so two
   // requests racing to claim the same transaction cannot both win.
@@ -1191,9 +1214,8 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     throw new HttpError(409, "This subscription is already used by another account", "conflict");
   }
 
-  // Sandbox and Production are both accepted — App Review and every TestFlight
-  // tester buys in Sandbox, so refusing it would fail review — but they may
-  // never mix. /apple-subscriptions has always refused a notification whose
+  // Production retail bindings remain environment-sticky. Sandbox receipts
+  // already returned through the separate explicitly authorized test path. /apple-subscriptions has always refused a notification whose
   // environment disagrees with the stored row; this is the same rule on the
   // device path, which did not have it. (0021 enforces it in the RPC too, for
   // both callers at once; this is the version that produces a sentence.)
@@ -1382,70 +1404,12 @@ const INLINE_CRM_CAP = 50;
  * the contact is ever re-tagged for this tenant a later pass will finish it,
  * while nothing here ever deletes on a guess.
  */
-async function cleanupGhlContactForTenant(
-  email: string,
-  orgId: string,
-): Promise<{ removed: number; untagged: number; leftover: number }> {
-  const key = Deno.env.get("GHL_API_KEY");
-  const locationId = Deno.env.get("GHL_LOCATION_ID");
-  if (!key || !locationId) throw new Error("GHL not configured");
-  const headers = {
-    Authorization: `Bearer ${key}`,
-    Version: "2021-07-28",
-    Accept: "application/json",
-  };
-  const searchUrl = new URL("https://services.leadconnectorhq.com/contacts/");
-  searchUrl.searchParams.set("locationId", locationId);
-  searchUrl.searchParams.set("query", email);
-  const res = await fetch(searchUrl, { headers });
-  if (!res.ok) throw new Error(`GHL search ${res.status}`);
-  const data = await res.json().catch(() => ({}));
-  const contacts = (data?.contacts ?? []) as Array<{ id?: string; email?: string }>;
-
-  let removed = 0;
-  let untagged = 0;
-  let leftover = 0;
-
-  for (const c of contacts) {
-    if (!c.id || (c.email ?? "").toLowerCase() !== email.toLowerCase()) continue;
-
-    // Re-fetch the full record: the search result is not a contract that it
-    // carries tags, and a tag we cannot positively read is not a tag we act on.
-    const getRes = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}`, { headers });
-    if (!getRes.ok) throw new Error(`GHL contact fetch ${c.id} -> ${getRes.status}`);
-    const full = await getRes.json().catch(() => null) as { contact?: { tags?: unknown } } | null;
-    const decision = decideGhlTagAction(full?.contact?.tags, orgId);
-
-    if (decision.action === "leftover") {
-      leftover++;
-      continue;
-    }
-    if (decision.action === "untag") {
-      const untagRes = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}/tags`, {
-        method: "DELETE",
-        headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: [decision.tag] }),
-      });
-      if (!untagRes.ok) throw new Error(`GHL untag ${c.id} -> ${untagRes.status}`);
-      untagged++;
-      continue;
-    }
-    // decision.action === "delete": only this tenant's org tag is present.
-    const del = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}`, {
-      method: "DELETE",
-      headers,
-    });
-    if (del.ok || del.status === 404) removed++;
-    else throw new Error(`GHL delete ${c.id} -> ${del.status}`);
-  }
-  return { removed, untagged, leftover };
-}
-
 /** Attempt the external cleanup in a payload. Returns what REMAINS + notes. */
 async function processPayload(payload: DeletionPayload): Promise<{ remaining: DeletionPayload; notes: string[] }> {
   const notes: string[] = [];
   const remaining: DeletionPayload = {
     r2: [],
+    ...(payload.r2_prefixes === undefined ? {} : { r2_prefixes: [] }),
     stream_uids: [],
     ghl_targets: [],
     apple_refresh_token: payload.apple_refresh_token ?? null,
@@ -1476,6 +1440,14 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
   const storageDrained=!payload.storage_not_before || Date.parse(payload.storage_not_before)<=Date.now();
   if(storageDrained) remaining.storage_not_before=null;
   else notes.push("storage: waiting for previously issued writes to expire; queued");
+  for (const [i, target] of (payload.r2_prefixes ?? []).entries()) {
+    if (!storageDrained || remaining.provider_leases!.length || remaining.unresolved_uploads!.length ||
+      remaining.unresolved_render_jobs!.length || i >= 2) { remaining.r2_prefixes!.push(target); continue; }
+    try {
+      const result = await deleteOwnedPrefixPage(target);
+      if (!result.complete) remaining.r2_prefixes!.push({ ...target, removed_count: target.removed_count + result.deleted });
+    } catch { remaining.r2_prefixes!.push(target); notes.push("storage: owned output cleanup remains unconfirmed; queued"); }
+  }
   for(const [i,target] of (payload.multipart_uploads??[]).entries()) {
     if(!storageDrained || i>=16) {remaining.multipart_uploads!.push(target);continue;}
     try { await abortMultipartUpload({bucket:target.bucket,key:target.key,uploadId:target.upload_id}); }
@@ -1514,7 +1486,7 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
       for (let i = 0; i < streamTodo.length; i++) {
         if (i >= INLINE_STREAM_CAP) { remaining.stream_uids.push(streamTodo[i]); continue; }
         try {
-          await deleteStreamVideo(streamTodo[i]);
+          if (await deleteStreamVideo(streamTodo[i]) !== true) throw new Error("Video deletion acknowledgment missing");
         } catch (e) {
           notes.push(`stream ${streamTodo[i]}: ${e instanceof Error ? e.message : String(e)}`);
           remaining.stream_uids.push(streamTodo[i]);
@@ -1537,16 +1509,16 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
         if (i >= INLINE_CRM_CAP) { remaining.ghl_targets.push(crmTodo[i]); continue; }
         const target = crmTodo[i];
         try {
-          const outcome = await cleanupGhlContactForTenant(target.email, target.org_id);
+          const outcome = await cleanupLegacyGhlTarget(target);
           if (outcome.leftover > 0) {
             // Never guessed at — this tenant's own tag could not be confirmed
             // on the match, so nothing was touched. Stays queued (same as a
             // retryable failure) rather than being dropped or force-deleted.
-            notes.push(`crm ${target.email}: ${outcome.leftover} contact(s) left for manual review — tenant tag unconfirmed`);
+            notes.push(`crm: ${outcome.leftover} legacy contact(s) need manual review — tenant tag unconfirmed`);
             remaining.ghl_targets.push(target);
           }
         } catch (e) {
-          notes.push(`crm ${target.email}: ${e instanceof Error ? e.message : String(e)}`);
+          notes.push("crm: legacy cleanup was not acknowledged — queued");
           remaining.ghl_targets.push(target);
         }
       }

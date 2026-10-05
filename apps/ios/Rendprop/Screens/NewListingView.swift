@@ -673,9 +673,23 @@ struct NewListingView: View {
     @State private var formOwnerID = AuthStore.shared.userID
     @State private var formSessionRevision = AuthStore.shared.syncSessionRevision
     @State private var formWorkspaceID = WorkspaceContext.selectedOrgID
+    @ObservedObject private var formAuth = AuthStore.shared
+    @ObservedObject private var formWorkspace = WorkspaceStore.shared
 
     var body: some View {
         ScrollView {
+            if !formContextIsCurrent {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Your account or workspace changed. These details are still here; choose where to start the new draft.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    Button("Use these details in this workspace") {
+                        guard createdListing == nil, photosListing == nil, pendingAsset == nil,
+                              !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else { return }
+                        bindFormContext()
+                    }.buttonStyle(.bordered)
+                        .disabled(createdListing != nil || photosListing != nil || pendingAsset != nil)
+                }.padding().card().padding(.horizontal)
+            }
             ListingFieldsForm(form: $form,
                               locationAction: { useCurrentLocation() },
                               locating: locating,
@@ -686,6 +700,9 @@ struct NewListingView: View {
         }
         .background(Theme.bg)
         .scrollDismissesKeyboard(.interactively)
+        .onChange(of: formAuth.userID) { _ in bindInitialFormContext() }
+        .onChange(of: formWorkspace.selected?.id) { _ in bindInitialFormContext() }
+        .onAppear { bindInitialFormContext() }
         .navigationTitle(SpaceType.current.newItemTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $goToReview) {
@@ -701,6 +718,24 @@ struct NewListingView: View {
                 FlythroughDetailView(listing: listing, openPhotosOnAppear: true)
             }
         }
+    }
+
+    private var formContextIsCurrent: Bool {
+        formOwnerID == AuthStore.shared.userID && formSessionRevision == AuthStore.shared.syncSessionRevision
+            && formWorkspaceID == WorkspaceContext.selectedOrgID
+            && (!Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil)
+    }
+    private func bindFormContext() {
+        formOwnerID = AuthStore.shared.userID
+        formSessionRevision = AuthStore.shared.syncSessionRevision
+        formWorkspaceID = WorkspaceContext.selectedOrgID
+    }
+    private func bindInitialFormContext() {
+        guard createdListing == nil, photosListing == nil, pendingAsset == nil else { return }
+        // The first anonymous connection and first workspace fetch are launch
+        // readiness, not permission to move an established account's draft.
+        if formOwnerID == nil, !AuthStore.shared.isIdentified { bindFormContext() }
+        else if formOwnerID == AuthStore.shared.userID, formWorkspaceID == nil { bindFormContext() }
     }
 
     // Step 2 — video (two big buttons, shared with AddVideoFlowView)
@@ -726,7 +761,7 @@ struct NewListingView: View {
                     .accessibilityIdentifier("newListing.addressFirst")
             }
 
-            VideoSourcePicker(enabled: form.isValid,
+            VideoSourcePicker(enabled: form.isValid && formContextIsCurrent,
                               onBlocked: { addressFocused = true },
                               onPhotosFirst: { startWithPhotos() }) { asset in
                 receive(asset)
@@ -774,7 +809,7 @@ struct NewListingView: View {
     /// its photo library. No video is attached and none is required; the
     /// listing screen keeps offering one until there is.
     private func startWithPhotos() {
-        guard form.isValid else { addressFocused = true; return }
+        guard form.isValid, formContextIsCurrent else { addressFocused = true; return }
         // Re-tapping must not mint a second listing for the same address, and
         // must not resurrect one the user has since deleted.
         if let existing = photosListing,
@@ -810,7 +845,7 @@ struct NewListingView: View {
     /// A usable video exists → NOW create the listing (once) with everything
     /// typed so far, incl. the location fix, and go to Review.
     private func receive(_ asset: CaptureAsset) {
-        guard form.isValid else { return }
+        guard form.isValid, formContextIsCurrent else { return }
         let listing: Listing
         // Re-point an existing listing at a new video ONLY while it is still an
         // unfinished draft from this screen. Once it has a rendered tour, doing

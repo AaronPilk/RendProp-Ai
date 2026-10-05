@@ -220,13 +220,14 @@ async function handleNotify(req: Request): Promise<Response> {
   let storedEnvironment: string | null = null;
   if (originalTransactionId) {
     const { data, error } = await admin
-      .from("apple_subscriptions")
-      .select("org_id, environment")
+      .from(facts.environment === "Sandbox" ? "apple_sandbox_receipts" : "apple_subscriptions")
+      .select(facts.environment === "Sandbox" ? "org_id" : "org_id, environment")
       .eq("original_transaction_id", originalTransactionId)
       .maybeSingle();
     if (error) throw new HttpError(503, "Subscription lookup failed — retry", "upstream");
-    orgId = (data?.org_id as string | null) ?? null;
-    storedEnvironment = (data?.environment as string | null) ?? null;
+    const binding = data as unknown as { org_id?: string | null; environment?: string | null } | null;
+    orgId = binding?.org_id ?? null;
+    storedEnvironment = binding?.environment ?? null;
   }
 
   // Header note 4: sandbox must never move a production subscription.
@@ -244,7 +245,7 @@ async function handleNotify(req: Request): Promise<Response> {
 
   const entitlementRelevant = verdictKind !== "ignore" && facts.transaction !== null &&
     !environmentMismatch && !unknownProduct;
-  const pending = entitlementRelevant && orgId === null;
+  const pending = entitlementRelevant && orgId === null && facts.environment === "Production";
   const entitlement = entitlementRelevant ? computeEntitlement(facts, verdictKind) : null;
 
   // Header note 2: the ledger row goes in FIRST, so a retry is a no-op.

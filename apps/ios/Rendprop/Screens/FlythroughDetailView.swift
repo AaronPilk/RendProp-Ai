@@ -475,6 +475,7 @@ struct FlythroughDetailView: View {
     @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
+    @ObservedObject private var publishUploads = UploadManager.shared
     /// "List this tour on Google". Seeded in `onAppear` from this listing's own
     /// answer, or from the workspace default when it has never been asked.
     @State private var listOnGoogle = false
@@ -1126,6 +1127,16 @@ struct FlythroughDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    private var publishCellularParked: Bool {
+        guard publishUploads.pendingCellularConfirmation,
+              let upload = publishUploads.state, upload.status == .queued,
+              upload.role == "render", upload.listingID == currentListing.serverID,
+              upload.listingLocalID == nil || upload.listingLocalID == listing.id,
+              let tour, upload.filePath == FileStore.relativePath(for: tour.url),
+              model.isInSelectedWorkspace(currentListing), currentListing.cloudUnavailable != true else { return false }
+        return true
+    }
+
     private var hasPublishProblem: Bool {
         publishFailure != nil || !(currentListing.lastError ?? "").isEmpty
     }
@@ -1149,6 +1160,13 @@ struct FlythroughDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.vertical, 4)
+            } else if publishCellularParked {
+                Text("Your video is saved. Publishing will continue on Wi-Fi, or you can approve this upload on cellular.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button { publishNow(cellularApproved: true) } label: {
+                    nextStepLabel("Upload now on cellular", "antenna.radiowaves.left.and.right")
+                }.buttonStyle(ScalePressStyle())
+                    .accessibilityIdentifier("phase1.publishCellular")
             } else {
                 Button { publishNow() } label: {
                     nextStepLabel(hasPublishProblem ? "Retry publish" : "Publish tour", "icloud.and.arrow.up")
@@ -1772,14 +1790,14 @@ struct FlythroughDetailView: View {
             // setSold/setZillow mark the listing dirty and sync it to the server
             // themselves (decision A6) — nothing else to call here.
             Button {
-                model.setSold(!currentListing.isSold, for: listing.id)
+                model.setSold(!currentListing.isInactive, for: listing.id)
                 playerRefresh = UUID()
                 Haptics.success()
             } label: {
-                Label(currentListing.isSold ? "Mark as active" : "Mark as \(space.archiveVerb)",
-                      systemImage: currentListing.isSold ? "arrow.uturn.backward" : "checkmark.seal.fill")
+                Label(currentListing.isInactive ? "Mark as active" : "Mark as \(space.archiveVerb)",
+                      systemImage: currentListing.isInactive ? "arrow.uturn.backward" : "checkmark.seal.fill")
                     .font(.rpBody.weight(.semibold))
-                    .foregroundStyle(currentListing.isSold ? Theme.inkDim : Theme.accent)
+                    .foregroundStyle(currentListing.isInactive ? Theme.inkDim : Theme.accent)
             }
 
             // Zillow is a real-estate concept — a gym or bar never sees it.
@@ -2013,12 +2031,17 @@ struct FlythroughDetailView: View {
 
     /// Publish the EXISTING local render (no re-render). Retain this tap while
     /// the anonymous connection is recovered; registration is never required.
-    private func publishNow() {
-        guard !isPublishing, tour != nil, !currentListing.isSample else { return }
-        connection.run { publishWithSession() }
+    private func publishNow(cellularApproved: Bool = false) {
+        guard !isPublishing, tour != nil, !currentListing.isSample,
+              model.isInSelectedWorkspace(currentListing), currentListing.cloudUnavailable != true else { return }
+        let context = NativeMediaExportContext()
+        connection.run {
+            guard context.isCurrent, !cellularApproved || publishCellularParked else { return }
+            publishWithSession(cellularApproved: cellularApproved)
+        }
     }
 
-    private func publishWithSession() {
+    private func publishWithSession(cellularApproved: Bool = false) {
         guard !isPublishing, tour != nil, !currentListing.isSample else { return }
         // The toggle above the button is the answer whether or not it was
         // touched: it is drawn at the workspace's own default, so publishing
@@ -2031,7 +2054,7 @@ struct FlythroughDetailView: View {
         let id = listing.id
         Task {
             do {
-                _ = try await model.publishExisting(listingID: id)
+                _ = try await model.publishExisting(listingID: id, cellularApproved: cellularApproved)
                 await MainActor.run {
                     isPublishing = false
                     playerRefresh = UUID()
@@ -4697,7 +4720,7 @@ struct PhotoStudioView: View {
         // not been dropped.
     }
 
-    var body: some View {
+    private var photoActionDialogs: some View {
         studioSheets
         // The wand's visible menu — same edits as the long-press path, one tap.
         .confirmationDialog("Change this photo", isPresented: $showWandDialog,
@@ -4720,6 +4743,10 @@ struct PhotoStudioView: View {
         } message: { _ in
             Text("Each edit is saved separately. Find decluttered and staged photos in Photos. Choose a staged preview for the listing only after reviewing it.")
         }
+    }
+
+    private var removalDialogs: some View {
+        photoActionDialogs
         // Removal hides the family; source bytes remain available to earlier
         // versions and existing reels. Imported galleries preserve cloud photos.
         .confirmationDialog("Remove this photo from the gallery?", isPresented: $showPhotoDeleteConfirm,
@@ -4746,6 +4773,10 @@ struct PhotoStudioView: View {
         } message: { _ in
             Text("Removes the motion clip from this phone. Anything you already saved to Photos or shared stays where it is.")
         }
+    }
+
+    private var editFeedbackDialogs: some View {
+        removalDialogs
         .confirmationDialog("Pick a style", isPresented: $showStageDialog,
                             titleVisibility: .visible, presenting: stagePhoto) { p in
             Button("Modern") { aiEdit(p, "stage", style: "modern") }
@@ -4779,16 +4810,28 @@ struct PhotoStudioView: View {
         } message: { f in
             Text(f.fullMessage)
         }
-        // Guideline 5.1.2(i): every edit on this screen ships the photo to a
-        // third-party model (Gemini for stills, Seedance for photo→clip), so
-        // the disclosure has to be agreed BEFORE the screen can be used. Asked
-        // once per device; declining backs out of the studio.
+    }
+
+    var body: some View {
+        editFeedbackDialogs
+        // Third-party processing consent is asked at AI entry or immediately
+        // before an edit; viewing, importing and exporting ordinary photos
+        // remains available without opting into AI processing.
         .aiConsentGate()
+        .paywallHost(managesLifecycle: false)
         .onDisappear {
             if !isPresentingOverlay { connection.cancel() }
         }
         .task {
-            if await AIConsent.shared.ensureGranted() == false { dismiss() }
+            if entry == .studio, await AIConsent.shared.ensureGranted() == false { dismiss() }
+#if targetEnvironment(simulator)
+            // Exact offline fixture only: exercise the existing quota alert and
+            // its modal paywall host without dispatching an AI job or purchase.
+            if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.photoQuotaFixture"),
+               listing.address == "Detail fixture empty", model.api is MockAPIClient {
+                aiFailure = AIFailure(APIError.server(status: 402, code: "quota_exceeded", message: "Synthetic photo allowance is used up."))
+            }
+#endif
         }
     }
 
@@ -4959,8 +5002,19 @@ struct PhotoStudioView: View {
 
     // MARK: - AI calls (await an anonymous or identified workspace session)
 
+    private func runPhotoAI(_ action: @escaping () -> Void) {
+        let context = NativeMediaExportContext()
+        Task { @MainActor in
+            guard await AIConsent.shared.ensureGranted(), context.isCurrent else { return }
+            connection.run {
+                guard context.isCurrent, AIConsent.shared.isGranted else { return }
+                action()
+            }
+        }
+    }
+
     private func openCustomEdit(_ p: EnhancedPhoto, batchTargets: [EnhancedPhoto] = []) {
-        connection.run {
+        runPhotoAI {
             // Park the batch only after connection succeeds. Cancelling the
             // wait cannot leak these targets into the next single-photo edit.
             customBatchTargets = batchTargets
@@ -4983,12 +5037,12 @@ struct PhotoStudioView: View {
                         style: String? = nil, prompt: String? = nil) {
         guard !isProcessing else { return }
         if edit == "stage" {
-            connection.run {
+            runPhotoAI {
                 openStagingSetup(PendingBatchEdit(edit: edit, style: style, title: "Staging", multiple: false), targets: [p])
             }
             return
         }
-        connection.run { aiEditWithSession(p, edit, style: style, prompt: prompt) }
+        runPhotoAI { aiEditWithSession(p, edit, style: style, prompt: prompt) }
     }
 
     private func aiEditWithSession(_ p: EnhancedPhoto, _ edit: String,
@@ -5000,7 +5054,7 @@ struct PhotoStudioView: View {
 
     private func startPhotoWork(_ pending: PendingBatchEdit, targets: [EnhancedPhoto], prompt: String?,
                                 stagingReferenceID: String? = nil) {
-        guard !isProcessing else { return }
+        guard !isProcessing, AIConsent.shared.isGranted else { return }
         let service = PhotoEditService(model: model, listing: listing, space: space)
         if service.start(title: pending.title, photos: targets, edit: pending.edit,
                          style: pending.style, prompt: prompt, stagingReferenceID: stagingReferenceID) {
@@ -5054,7 +5108,7 @@ struct PhotoStudioView: View {
     /// tapping one runs the normal aiEdit path.
     private func suggestEdits(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        connection.run { suggestEditsWithSession(p) }
+        runPhotoAI { suggestEditsWithSession(p) }
     }
 
     private func suggestEditsWithSession(_ p: EnhancedPhoto) {
@@ -5090,7 +5144,7 @@ struct PhotoStudioView: View {
     /// fal result URLs expire, so the download happens immediately on completion.
     private func animate(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        connection.run { animateWithSession(p) }
+        runPhotoAI { animateWithSession(p) }
     }
 
     private func animateWithSession(_ p: EnhancedPhoto) {
@@ -5868,7 +5922,7 @@ struct PhotoStudioView: View {
     private func runBatch(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
                           prompt: String? = nil) {
         guard !isProcessing else { return }
-        connection.run { runBatchWithSession(pending, targets: targets, prompt: prompt) }
+        runPhotoAI { runBatchWithSession(pending, targets: targets, prompt: prompt) }
     }
 
     private func runBatchWithSession(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
@@ -7226,6 +7280,7 @@ struct AerialIntroSheet: View {
         // and the city/state region go to Google's video models. Agreed once
         // per device before this sheet is usable; declining closes it.
         .aiConsentGate()
+        .paywallHost(managesLifecycle: false)
         .task {
             if await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
@@ -8124,6 +8179,9 @@ struct ReelStudioView: View {
     @Environment(\.dismiss) private var dismiss
     let listing: Listing
     let photos: [EnhancedPhoto]
+    @State private var refreshedPhotos: [EnhancedPhoto]?
+    @State private var showReelPhotos = false
+    private var reelPhotos: [EnhancedPhoto] { refreshedPhotos ?? photos }
     /// Finished clips to put in front of the photo clips (the aerial intro).
     var extraClipURLs: [URL] = []
 
@@ -8405,7 +8463,18 @@ struct ReelStudioView: View {
         // Guideline 5.1.2(i) — each selected photo is animated by a
         // third-party video model. Agreed once per device; declining closes
         // the studio.
+        .sheet(isPresented: $showReelPhotos, onDismiss: {
+            refreshedPhotos = EnhancedPhoto.loadAll(listingID: listing.id)
+            let available = Set(reelPhotos.map(\.id))
+            selected.removeAll { !available.contains($0) }
+        }) {
+            NavigationStack {
+                PhotoStudioView(listing: listing, entry: .photos)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showReelPhotos = false } } }
+            }.environmentObject(model)
+        }
         .aiConsentGate()
+        .paywallHost(managesLifecycle: false)
         .task {
             if await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
@@ -8482,8 +8551,8 @@ struct ReelStudioView: View {
             if save {
                 guard let ownerID = actor.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
                 let selectedIDs = selected
-                guard Set(photos.map(\.id)).count == photos.count else { throw CloudSyncError.invalidResponse }
-                let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
+                guard Set(reelPhotos.map(\.id)).count == reelPhotos.count else { throw CloudSyncError.invalidResponse }
+                let byID = Dictionary(uniqueKeysWithValues: reelPhotos.map { ($0.id, $0) })
                 var sharedPhotos: [NativeReelDraft.Photo] = []
                 for (index, localID) in selectedIDs.enumerated() {
                     guard let photo = byID[localID] else { throw CloudSyncError.invalidResponse }
@@ -8519,7 +8588,7 @@ struct ReelStudioView: View {
                 reelTransition = ReelComposer.Transition(rawValue: draft.transition) ?? .cut
                 motionPrompt = draft.motionPrompt; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
                 wordCaptionsOn = draft.wordCaptions
-                let available = Set(photos.map(\.id))
+                let available = Set(reelPhotos.map(\.id))
                 selected = draft.photos.compactMap { photo in
                     if available.contains(photo.localId) { return photo.localId }
                     if let sid = photo.sourcePhotoId { return available.first(where: { $0.lowercased() == "cloud-\(sid.uuidString.lowercased())" }) }
@@ -8618,14 +8687,19 @@ struct ReelStudioView: View {
     }
 
     @ViewBuilder private var photoPickerGrid: some View {
-        if photos.isEmpty {
-            Text("No photos yet — add some in \(photosScreenName) first.")
+        if reelPhotos.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+            Text("Add photos to this listing, then return to pick them for your reel.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
+            Button("Add photos") { showReelPhotos = true }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("reel.addPhotos")
+            }
         } else {
             LazyVGrid(columns: selectColumns, spacing: 8) {
-                ForEach(photos) { p in selectThumb(p) }
+                ForEach(reelPhotos) { p in selectThumb(p) }
             }
         }
     }
@@ -10208,7 +10282,7 @@ struct ReelStudioView: View {
     private func generateWithSession() {
         guard phase == .setup, canGenerate else { return }
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
-        let chosen = selected.compactMap { id in photos.first(where: { $0.id == id }) }
+        let chosen = selected.compactMap { id in reelPhotos.first(where: { $0.id == id }) }
         let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }
         guard chosen.count + extras.count >= 2 else { return }
         let api = model.api                       // snapshot on the main actor
@@ -11017,7 +11091,7 @@ struct FloorPlanView: View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
                 measurementsSection
-                if RoomCaptureSession.isSupported && planExists {
+                if RoomCaptureSession.isSupported {
                     VStack(spacing: 10) {
                         Image(systemName: planExists ? "cube.fill" : "cube.transparent")
                             .font(.system(size: 44, weight: .light))
@@ -11052,8 +11126,7 @@ struct FloorPlanView: View {
                         }
                         // Destructive: a successful re-scan overwrites the saved
                         // USDZ + geometry, so confirm first (F-A-17).
-                        Text("New 3D scans are coming soon. Your saved plan remains available.")
-                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        secondaryButton("Scan again", "arrow.triangle.2.circlepath") { showRescanConfirm = true }
                         ShareLink(item: usdzURL) {
                             Label("Share the 3D model", systemImage: "square.and.arrow.up")
                                 .font(.rpBody.weight(.semibold))
@@ -11085,7 +11158,7 @@ struct FloorPlanView: View {
                         Text(uploadedURL != nil ? "Floor plan ready" : "Upload a floor plan")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
-                        Text("Enter measurements above or upload a PDF or image from your measuring software. Automatic 3D floor-plan scanning is coming soon.")
+                        Text("Enter measurements above or upload a PDF or image from your measuring software. Automatic 3D scanning requires an iPhone or iPad with LiDAR.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     }

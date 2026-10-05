@@ -188,7 +188,7 @@ struct HomeListingsView: View {
     /// Only listings for the CURRENT business type (a gym never sees houses),
     /// active (not sold), plus search.
     private var filtered: [Listing] {
-        let active = model.listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isSold && model.isInSelectedWorkspace($0) }
+        let active = model.listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isInactive && model.isInSelectedWorkspace($0) }
         guard !search.isEmpty else { return active }
         return active.filter { $0.address.localizedCaseInsensitiveContains(search) }
     }
@@ -201,7 +201,7 @@ struct HomeListingsView: View {
     /// Archived count for THIS industry only — real-estate sold houses don't
     /// show up in the Food or Gym archive.
     private var soldCount: Int {
-        model.listings.filter { !$0.isSample && $0.belongsToCurrentType && $0.isSold && model.isInSelectedWorkspace($0) }.count
+        model.listings.filter { !$0.isSample && $0.belongsToCurrentType && $0.isInactive && model.isInSelectedWorkspace($0) }.count
     }
 
     private var noun: String { SpaceType.current.spaceNoun }
@@ -465,7 +465,7 @@ struct HomeListingsView: View {
                 .font(.title2)
                 .foregroundStyle(Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text(SpaceType.current.archiveNoun).font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text(SpaceType.current == .realEstate ? "Sold & archived" : SpaceType.current.archiveNoun).font(.rpHeadline).foregroundStyle(Theme.ink)
                 Text("\(soldCount) \(noun)\(soldCount == 1 ? "" : "s")")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
             }
@@ -486,7 +486,7 @@ struct SoldListingsView: View {
     @State private var pendingDelete: Listing?
 
     private var sold: [Listing] {
-        model.listings.filter { $0.belongsToCurrentType && $0.isSold && model.isInSelectedWorkspace($0) }
+        model.listings.filter { $0.belongsToCurrentType && $0.isInactive && model.isInSelectedWorkspace($0) }
             .sorted { ($0.soldAt ?? .distantPast) > ($1.soldAt ?? .distantPast) }
     }
 
@@ -520,6 +520,9 @@ struct SoldListingsView: View {
                         }
                         .contextMenu {
                             if !listing.isSample {
+                                Button { model.setSold(false, for: listing.id) } label: {
+                                    Label("Mark as active", systemImage: "arrow.uturn.backward")
+                                }
                                 Button(role: .destructive) { pendingDelete = listing } label: {
                                     Label("Delete \(noun)", systemImage: "trash")
                                 }
@@ -531,7 +534,7 @@ struct SoldListingsView: View {
                 .scrollContentBackground(.hidden)
             }
         }
-        .navigationTitle(SpaceType.current.archiveNoun)
+        .navigationTitle(SpaceType.current == .realEstate ? "Sold & archived" : SpaceType.current.archiveNoun)
         .navigationBarTitleDisplayMode(.inline)
         .background(Theme.bg)
         .confirmationDialog("Delete \(pendingDelete?.address ?? "this \(noun)")?",

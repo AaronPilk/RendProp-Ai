@@ -36,6 +36,17 @@ function publicPosterKey(key: unknown, orgId: string, listingId: string): string
   return bucketForKey(key, { orgId, listingId }) === "renders" ? key as string : null;
 }
 
+/** A private sharing link is not permission to add an address to discovery.
+ * Until hosted portfolios have their own reviewed selection, admit only the
+ * listing's explicit discovery opt-in and never client-delivery listings. */
+function allowsDiscovery(details: unknown): boolean {
+  if (!details || typeof details !== "object" || Array.isArray(details)) return false;
+  const value = (details as Record<string, unknown>).allow_indexing;
+  // Native listing details are String-valued; preserve that deliberate opt-in
+  // while rejecting false, absent and merely truthy strings/objects.
+  return value === true || value === "true";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
@@ -54,7 +65,7 @@ Deno.serve(async (req) => {
       .eq("handle", handle)
       .is("deleted_at", null)
       .maybeSingle();
-    if (oErr) throw new HttpError(500, `Org lookup failed: ${oErr.message}`);
+    if (oErr) throw new HttpError(503, "Portfolio is temporarily unavailable.");
     if (!org) throw new HttpError(404, "Portfolio not found");
 
     // 2. Active (non-archived, non-sold, non-deleted) listings for this org.
@@ -65,7 +76,7 @@ Deno.serve(async (req) => {
       .is("deleted_at", null)
       .is("sold_at", null)
       .neq("status", "archived");
-    if (lErr) throw new HttpError(500, `Listings lookup failed: ${lErr.message}`);
+    if (lErr) throw new HttpError(503, "Portfolio is temporarily unavailable.");
 
     const listingIds = (listings ?? []).map((l) => l.id as string);
     let renders: Array<Record<string, unknown>> = [];
@@ -77,7 +88,7 @@ Deno.serve(async (req) => {
         .in("listing_id", listingIds)
         .not("published_at", "is", null)
         .order("published_at", { ascending: false });
-      if (rErr) throw new HttpError(500, `Renders lookup failed: ${rErr.message}`);
+      if (rErr) throw new HttpError(503, "Portfolio is temporarily unavailable.");
       renders = rRows ?? [];
     }
 
@@ -99,6 +110,17 @@ Deno.serve(async (req) => {
     });
     const visibleCandidates: typeof candidates = [];
     const isVisible = async (card: typeof candidates[number]): Promise<boolean> => {
+      // Re-read both discovery intent and client mode after every asynchronous
+      // assembly boundary. Service-role reads otherwise bypass the privacy UI.
+      const { data: current, error: currentError } = await admin.from("listings")
+        .select("id, details, status, sold_at, deleted_at")
+        .eq("id", card.lid).eq("org_id", org.id).maybeSingle();
+      if (currentError) throw new HttpError(503, "Portfolio is temporarily unavailable.");
+      if (!current || current.deleted_at || current.sold_at || current.status === "archived" || !allowsDiscovery(current.details)) return false;
+      const { data: client, error: clientError } = await admin.from("listing_client_contacts")
+        .select("enabled").eq("listing_id", card.lid).eq("org_id", org.id).maybeSingle();
+      if (clientError) throw new HttpError(503, "Portfolio is temporarily unavailable.");
+      if (client?.enabled === true) return false;
       const id = card.render.id as string;
       const access = await mediaVisibility(admin, card.lid, { renders: [id], keys: card.posterKey ? [card.posterKey] : [] });
       return access.renders[id] === true && (!card.posterKey || access.keys[card.posterKey] === true);

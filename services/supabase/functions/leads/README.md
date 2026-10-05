@@ -5,19 +5,22 @@ org read/manage its own leads (JWT + RLS).
 
 | Route | Auth | Answers |
 |---|---|---|
-| `POST /leads` | **public** | `{slug, name?, phone?, email?, extra?, _hp?, turnstile_token?}` → `201 {ok, id}` · `403` bot check failed · `429` rate limited |
+| `POST /leads` | **public** | `{slug, name?, phone?, email?, extra?, _hp?, turnstile_token?}` → `201 {ok: true}` · `403` bot check failed · `429` rate limited |
 | `GET /leads?listing_id=&since=&status=&limit=` | active selected-workspace member (JWT) | `{leads: [...]}`, RLS-scoped to the caller's workspace |
 | `PATCH /leads/:id {status}` | workspace owner/admin/agent (JWT) | `{ok, lead}` — `status` one of `new\|contacted\|won\|lost` |
-| `POST /leads/:id/send-to-client` | verified workspace owner/admin/agent | `{request_id: UUID, expected_recipient_email}` → `{ok, delivery}`; destination comes from the saved listing client. |
+| `POST /leads/:id/send-to-client` | workspace owner/admin/agent + saved recipient verification | `{request_id: UUID, expected_recipient_email}` → `{ok, delivery}`; destination comes from the saved listing client. |
+
+| `DELETE /leads/:id` | named selected-workspace owner/admin/agent | `{ok, lead_id, deleted, cleanup_pending}`; removes pending buyer snapshots and journals legacy CRM cleanup when needed. |
+| `POST /leads/client-recipient-verification` | named selected-workspace owner/admin/agent | `{listing_id}` → `{ok, state: "queued" | "verified"}`; no typed destination override. |
+| `POST /leads/verify-client-recipient` | public possession of confirmation nonce | `{token: 64 lowercase hex characters}` → `{ok: true}`; generic invalid/expired response, no buyer data. |
 
 Per-listing client routing retains inquiries in the photographer's account and
-queues an external email through the existing service-only notification sender.
+queues an external email through the existing service-only notification sender only after the saved recipient confirms their email. Saving a contact or publishing the listing does not require that confirmation; inquiries remain in the account inbox while forwarding is inactive.
 `GET /leads` includes private `client_delivery` status and the current recipient
 for explicit resend confirmation. Provider acceptance is labelled **Email sent**;
 it does not certify inbox delivery. See
 [photographer client delivery](../../../../docs/studio/photographer-client-delivery.md)
-for revision, privacy, retry and recipient-change behavior. This feature is
-deployed as **leads v36 / notify v11** with its reviewed migration applied.
+for revision, privacy, retry and recipient-change behavior. The historical production baseline was **leads v36 / notify v11**; the October 5 verification, deletion and notification privacy changes are source fixes awaiting coordinated deployment.
 [The release handoff](../../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
 records source/readback verification; actual client inbox placement remains a
 controlled owner acceptance check.
@@ -75,14 +78,24 @@ this form.
 
 | Env var | Required? | Effect |
 |---|---|---|
-| `GHL_API_KEY`, `GHL_LOCATION_ID` | no | When both are set, a captured lead is upserted to GoHighLevel (tagged `rendprop_slug:<slug>` and, when known, `rendprop_org:<id>` / `rendprop_listing:<id>`). Never blocks lead capture — a GHL failure is logged and `synced_crm` stays `false`. |
+| `GHL_API_KEY`, `GHL_LOCATION_ID` | legacy cleanup only | Public capture never upserts buyer contacts into a global CRM location. These credentials are used only by service-side cleanup of historical contacts, with exact buyer identity and tenant-tag checks. |
 
 ## Deploy
 
-Deployed `--no-verify-jwt` (the public `POST` has no user token; `GET`/`PATCH`
+Deployed `--no-verify-jwt` (public capture/nonce confirmation have no user token; all workspace routes
 validate the JWT themselves via `getUser(req)`):
 
 Use a targeted deployment with `verify_jwt=false` preserved for this function.
 See [the functions deployment guide](../README.md); the historical broad deploy
 script is not an appropriate way to update one handler and can overwrite
 unrelated authentication settings.
+
+## October 5 privacy rollout
+
+Apply the verified-recipient and cleanup inventory migrations before deploying the matching Leads, Notify and Me handlers. Deploy the public confirmation page and fragment script before enabling queued verification email delivery. Verify Vault-backed maintenance scheduling and inspect a read-only cleanup inventory before any production sweep. The technical monthly upload ceiling does not establish a storage retention margin budget. Existing direct public media URLs require a separate revocation rollout.
+
+Confirmation links carry the nonce in a URL fragment. Opening the page does not consume it; the recipient explicitly confirms by POST. The database stores its hash, binds it to the saved listing/contact revision, and expires it after 24 hours. Terminal verification outbox rows scrub the fragment token. Retention removes expired token records after seven days and terminal message snapshots after 30 days without deleting the photographer's lead inbox.
+
+Ordinary account email notifications use the confirmed, named Supabase Auth email. Editable profile/public contact addresses never select their destination. Promotional `first_tour_nudge` and `free_week_ending` emails stay disabled until explicit email opt-in and unsubscribe are supported; transactional notices retain their preferences. Service email uses RendProp LLC's supplied postal address and Reply-To.
+
+The offline `run_verified_recipients.py`, `run_privacy_cleanup_inventory.py` and `run_upload_privacy_admission.py` runners test the final migration chain on owned disposable databases with compiled failing controls. Handler tests prohibit unmodeled network requests. They do not send real customer emails or delete real media.

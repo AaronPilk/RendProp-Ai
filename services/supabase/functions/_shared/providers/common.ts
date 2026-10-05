@@ -444,9 +444,11 @@ export async function persistResult(
   provider: string,
   state: DoneState,
   r2Key: string,
+  beforeWrite?: (intent: { key: string; bytes: number }) => Promise<void>,
 ): Promise<{ key: string; bytes: number }> {
   const inlineData = decodeDataUrl(state.result_url);
   if (inlineData) {
+    await beforeWrite?.({ key: r2Key, bytes: inlineData.bytes.byteLength });
     return await putBytes(R2_BUCKET_RENDERS, r2Key, inlineData.bytes, inlineData.mime || state.mime);
   }
   const res = await fetchBounded(provider, state.result_url, { method: "GET" }, BUDGETS.transferMs);
@@ -467,6 +469,7 @@ export async function persistResult(
     throw new ProviderError(provider, "upstream", `${provider} result exceeds the ${Math.round(MAX_PERSIST_BYTES / 1e6)} MB edge limit`);
   }
   const mime = res.headers.get("content-type")?.split(";")[0].trim() || state.mime;
+  await beforeWrite?.({ key: r2Key, bytes: buf.byteLength });
   return await putBytes(R2_BUCKET_RENDERS, r2Key, buf, mime);
 }
 

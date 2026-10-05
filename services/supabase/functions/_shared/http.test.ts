@@ -12,8 +12,18 @@
 // help when one request is enough. `readJsonLimited` is what stops that, so it
 // gets tests.
 
-import { assertEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { HttpError, readJsonLimited } from "./http.ts";
+import { assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { HttpError, readJsonLimited, throwRpc } from "./http.ts";
+
+Deno.test("unexpected SQL errors are unavailable responses, with no private SQL or row data", () => {
+  const secret = 'duplicate key on private_buyers: buyer@fixture.invalid';
+  const error = assertThrows(() => throwRpc(secret), HttpError);
+  assertEquals(error.status, 503);
+  assertEquals(error.message, "This action is temporarily unavailable. Please try again.");
+  const quota = assertThrows(() => throwRpc("RP402: photo limit reached"), HttpError);
+  assertEquals(quota.status, 402); assertEquals(quota.code, "quota_exceeded");
+  assertEquals(quota.message, "photo limit reached");
+});
 
 function post(body: BodyInit, headers: Record<string, string> = {}): Request {
   return new Request("https://example.test/x", { method: "POST", body, headers });

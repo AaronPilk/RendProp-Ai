@@ -1638,6 +1638,20 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         return try envelope.contact.checked(listingID: listingID)
     }
 
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt {
+        var request = makeRequest(url: url(["leads", "client-recipient-verification"]), method: "POST",
+            json: ["listing_id": listingID.uuidString.lowercased()])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let receipt: ClientRecipientVerificationReceipt = try decodeExact(try await execute(request))
+        return try receipt.checked()
+    }
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt {
+        var request = makeRequest(url: url(["leads", leadID.uuidString.lowercased()]), method: "DELETE")
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let receipt: LeadDeletionReceipt = try decodeExact(try await execute(request))
+        return try receipt.checked(leadID: leadID)
+    }
+
     func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery {
         guard ClientContactPolicy.isEmail(recipient) else { throw ClientContactError.invalidEmail }
         var request = makeRequest(url: url(["leads", leadID.uuidString.lowercased(), "send-to-client"]),
@@ -2049,6 +2063,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             tagline: dto.tagline,
             details: dto.details?.value
         )
+        l.cloudArchived = dto.status == "archived"
         l.serverID = serverID
         l.serverOrgID = dto.orgId.flatMap(UUID.init(uuidString:))
         l.cloudCreateReplayed = dto.createReplayed

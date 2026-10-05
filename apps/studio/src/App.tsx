@@ -1,7 +1,6 @@
 import {
   useCallback,
   lazy,
-  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -16,6 +15,7 @@ import type { EditDraft } from "./editor/model";
 import type { AgentPlanHandoff, ShotPlanHandoff, CreativeEntryRequest, CreativeTool } from "./features/creative/model";
 import Planner from "./Planner";
 import { AppearanceSelector } from "./Appearance";
+import { SafeLoad } from "./StudioBoundary";
 import Dashboard, { FeatureGate } from "./features/home/Dashboard";
 import { homeWords, type FeatureId } from "./features/home/features";
 import type { BusinessSectionRequest } from "./features/business/BusinessWorkspace";
@@ -39,9 +39,9 @@ const CloudPlanner = lazy(() => import("./features/sync/CloudPlanner"));
 const EditorImpl = lazy(() => import("./features/projects/Projects"));
 function VideoEditor(props: VideoEditorProps & {services?: ReturnType<typeof createStudioServices>; workspace?: Workspace | null; storageScope: string}) {
   return (
-    <Suspense fallback={<p role="status">Loading the video editor…</p>}>
+    <SafeLoad resetKey={props.storageScope} fallback={<p role="status">Loading the video editor…</p>}>
       <EditorImpl {...props} />
-    </Suspense>
+    </SafeLoad>
   );
 }
 const pages: { id: Page; label: string; icon: IconName }[] = [
@@ -990,23 +990,23 @@ export default function App({ servicesFactory }: {
               </p>
             </div>
           </div>}
-          {workspace && services && workspace.org.spaceType === "real_estate" && !workspace.user.realEstateRole && <Suspense fallback={<p role="status">Loading your work preference…</p>}><RealEstateRolePicker key={editScope} workspace={workspace} services={services} onboarding onSaved={() => setRefresh(v => v + 1)} /></Suspense>}
+          {workspace && services && workspace.org.spaceType === "real_estate" && !workspace.user.realEstateRole && <SafeLoad resetKey={editScope} fallback={<p role="status">Loading your work preference…</p>}><RealEstateRolePicker key={editScope} workspace={workspace} services={services} onboarding onSaved={() => setRefresh(v => v + 1)} /></SafeLoad>}
           {page === "overview" && <Dashboard workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
           {entry?.gate && workspace && <FeatureGate feature={entry.gate} listings={listings} spaceType={workspace.org.spaceType} onChoose={id=>openFeature(entry.gate!,id)} onCancel={()=>setFeatureEntry(undefined)} onCreate={createProperty}/>}
-          {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening your properties…</p>}>
+          {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening your properties…</p>}>
             <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onContactGuardChange={contactGuardChanged} />
-          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
-          {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening creative tools…</p>}>
+          </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
+          {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening creative tools…</p>}>
             <CreativeWorkspace entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={id => selectListing(id, true)} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} onPresenterPendingChange={presenterPendingChanged} />
-          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
+          </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "editor" || editorOpened) && (
             <section
               hidden={page !== "editor"}
               aria-label="Video editing workspace"
             >
-              {workspace && services ? <Suspense fallback={<p role="status">Opening your saved edit…</p>}>
+              {workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening your saved edit…</p>}>
                 <CloudEditor entryRequest={entry?.reel} onOpenCreative={openCreative} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing} onSwitchBlockChange={savedBlockChanged} localCreationHasWork={!!draft?.clips.length} renderLocalCreation={(active, observeBlock) => workspaceDraftReady ? <VideoEditor services={services} workspace={workspace} storageScope={key} {...localAssistant} key={`${editScope}:${restoreAttempt}`} active={active} initialMode="conversation" conversationStorageKey={`${key}:conversation`} initialDraft={draft} onDraftChange={saveDraft} onSourcesChange={localSourcesChanged} onSwitchBlockChange={reason => {localBlockChanged(reason); observeBlock(reason);}} importRequest={importRequest?.listingId ? undefined : importRequest} /> : <p role="status">Opening your video projects…</p>} />
-              </Suspense> : workspaceDraftReady ? (
+              </SafeLoad> : workspaceDraftReady ? (
                 <VideoEditor
                   services={services??undefined} workspace={workspace} storageScope={key}
                   key={`${editScope}:${restoreAttempt}`}
@@ -1210,7 +1210,7 @@ export default function App({ servicesFactory }: {
               </section>
             )}
           {(page === "planner" || plannerOpened) && <section hidden={page !== "planner"} aria-label="Content planning workspace">
-            {workspace && services ? <Suspense fallback={<p role="status">Opening saved plans…</p>}><CloudPlanner key={editScope} services={services} workspace={workspace} onNotice={setNotice}/></Suspense> : workspaceDraftReady ? (
+            {workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening saved plans…</p>}><CloudPlanner key={editScope} services={services} workspace={workspace} onNotice={setNotice}/></SafeLoad> : workspaceDraftReady ? (
               <Planner
                 key={restoreScope}
                 items={plans}
@@ -1222,7 +1222,7 @@ export default function App({ servicesFactory }: {
             ) : (
               <p role="status">Opening this workspace’s content plan…</p>
             )}</section>}
-          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><Suspense fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></Suspense></section>}
+          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><SafeLoad resetKey={editScope} fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></SafeLoad></section>}
           {page === "workspace" && (
             <div className="settings-grid">
               <section className="panel">
