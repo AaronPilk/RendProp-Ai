@@ -843,15 +843,15 @@ final class StoreShots: XCTestCase {
         return waitForAny(ids: ids, labels: labels, timeout: shortTimeout)
     }
 
-    /// The Homes tab lists BOTH the user's homes and the seeded samples; the
+    /// The Listings tab lists BOTH the user's homes and the seeded samples; the
     /// Home dashboard lists only real ones. This opens the first row on the
-    /// Homes tab, which on a fresh simulator is a sample.
+    /// Listings tab, which on a fresh simulator is a sample.
     ///
     /// The tab button is tapped directly rather than through `openTab`: every
     /// label this screen shows is also on the Home dashboard, so there is no
     /// text that could confirm the switch actually happened.
     private func openFirstSampleHome() -> Bool {
-        let tab = app.tabBars.buttons["Homes"]
+        let tab = app.tabBars.buttons["Listings"]
         guard tab.waitForExistence(timeout: shortTimeout) else { return false }
         tab.tap()
         settle(1.5)

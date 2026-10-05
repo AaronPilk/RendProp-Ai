@@ -18,6 +18,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / "services/supabase"
 MIGRATION = SQL / "migrations/20261003020955_app_video_cost_reservations.sql"
+RELEASE = SQL / "migrations/20261004215403_app_video_rejected_submission_release.sql"
 TOOLS = {name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
          for name in ("initdb", "pg_ctl", "psql", "createdb")}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), "Use existing PostgreSQL binaries"
@@ -30,7 +31,7 @@ ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",
        "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000"}
 PORT = "55476"
 SOURCES = [*sorted((SQL / "migrations").glob("*.sql")), SQL / "tests/ci-bootstrap.sql",
-           SQL / "tests/video_erase.sql", SQL / "tests/video_erase_direct_bria.sql", Path(__file__).resolve()]
+           SQL / "tests/video_erase.sql", SQL / "tests/video_erase_direct_bria.sql", SQL / "tests/app_video_rejections.sql", Path(__file__).resolve()]
 receipt = {"kind": "owned disposable local PostgreSQL; no providers or hosted calls", "output": str(OUT),
            "commands": [], "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
 
@@ -281,8 +282,11 @@ try:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     for name in ("video_erase", "video_erase_direct_bria"):
         receipt[name + "-preserved"] = run(name + "-preserved", [*psql, "-f", SQL / f"tests/{name}.sql"]).strip()
+    receipt["rejections-fresh"] = run("rejections-fresh", [*psql, "-Atq", "-f", SQL / "tests/app_video_rejections.sql"]).strip()
     receipt["ordinary-fresh"] = run("ordinary-fresh", [*psql, "-Atq"], FIXTURE).strip()
     run("replay-app-video", [*psql, "-q", "-1", "-f", MIGRATION])
+    run("replay-app-video-release", [*psql, "-q", "-1", "-f", RELEASE])
+    receipt["rejections-replay"] = run("rejections-replay", [*psql, "-Atq", "-f", SQL / "tests/app_video_rejections.sql"]).strip()
     receipt["ordinary-replay"] = run("ordinary-replay", [*psql, "-Atq"], FIXTURE).strip()
 
     u, outsider, o, foreign, k1, k2 = [str(uuid.uuid4()) for _ in range(6)]

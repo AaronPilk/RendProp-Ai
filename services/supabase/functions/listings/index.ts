@@ -143,6 +143,29 @@ Deno.serve(async (req) => {
     const explicitOrg = requested === undefined ? undefined :
       (await workspaceDirectory(adminClient(), user.id, requested)).active_org_id;
 
+    if (seg.length === 2 && seg[1] === "measurements") {
+      assert(req.method === "PUT", 405, "Use PUT for measurements.");
+      assert(explicitOrg, 409, "Choose a workspace before saving measurements.");
+      assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), 400, "Choose a valid listing.");
+      await assertNotDeleting(user.id);
+      const body = await readJsonLimited<Record<string, unknown>>(req, 45000);
+      assert(Object.keys(body).every(k => ["expected", "value"].includes(k)) && Object.hasOwn(body,"expected"),
+        400, "Send only the cached measurement value and the new plan.");
+      assert(body.expected === null || (typeof body.expected === "string" && new TextEncoder().encode(body.expected).length <= 10000), 400, "Invalid cached plan.");
+      assert(typeof body.value === "string" && new TextEncoder().encode(body.value).length <= 10000,
+        400, "Measurements are too large.");
+      const {data,error} = await adminClient().rpc("save_listing_measurements", {
+        p_actor:user.id,p_org:explicitOrg,p_listing:id,p_expected:body.expected,p_value:body.value,
+      });
+      if(error) {
+        if(error.code==="40001") throw new HttpError(409,"Measurements changed elsewhere. Your local copy is safe. Reload the shared version before saving again.");
+        if(error.code==="42501") throw new HttpError(403,"Your role does not permit editing measurements.");
+        if(error.code==="P0002") throw new HttpError(404,"Listing not found in this workspace.");
+        throw new HttpError(400,"The measurement plan could not be saved.");
+      }
+      return json(data);
+    }
+
     if (seg.length === 2 && seg[1] === "client-contact") {
       assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), 400, "Choose a valid listing.");
       const org = explicitOrg ?? await orgForUser(user.id, preferredOrg(req));

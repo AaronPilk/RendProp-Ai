@@ -22,7 +22,7 @@ function withoutImports(source: string): string {
 // Production route bodies, price arithmetic, response envelope and reservation
 // helper run unchanged. Only Auth/DB, route resolution and provider boundaries
 // are isolated doubles. No environment, network, writes or provider requests.
-async function fixture(reserveLate = false, priceRequestedTier = false) {
+async function fixture(reserveLate = false, priceRequestedTier = false, dropRejectionEvidence = false) {
   const source = await Deno.readTextFile(
     new URL("./index.ts", import.meta.url),
   );
@@ -33,6 +33,11 @@ async function fixture(reserveLate = false, priceRequestedTier = false) {
   let helper = withoutImports(
     await Deno.readTextFile(new URL("./cost-reservation.ts", import.meta.url)),
   );
+  if (dropRejectionEvidence) {
+    const original = "const rejected = details?.dispatch_rejected === true";
+    assert(helper.includes(original), "Actual rejection classification anchor changed");
+    helper = helper.replace(original, "const rejected = false && details?.dispatch_rejected === true");
+  }
   if (reserveLate) {
     const start = helper.indexOf("  let reservation;");
     const end = helper.indexOf("  let attempt: ChainResult<T>;", start);
@@ -146,15 +151,16 @@ async function fixture(reserveLate = false, priceRequestedTier = false) {
     const recordProvenance=async(..._a:any[])=>({id:"provenance-synthetic",recorded:true,disclosure:"AI edited video"});
     const recordRoutedAiCost=async(..._a:any[])=>{state.oldLedger++;throw Error("Legacy ledger double booking reached");};
     const recordAppAiCost=recordRoutedAiCost;
-    const adapterFor=(provider:string)=>({submit:async(step:any,input:any)=>{state.events.push("POST");state.posts.push({provider,step,input});if(state.options.submitThrow)throw Error("private-provider-body-marker");return {id:state.options.badReceipt?"":"accepted-provider-id",provider};}});
+    const adapterFor=(provider:string)=>({submit:async(step:any,input:any)=>{state.events.push("POST");state.posts.push({provider,step,input});if(state.options.submitReject)throw new HttpError(502,"The media service could not accept this request.","upstream",{provider_status:state.options.submitReject,error_class:"upstream",dispatch_rejected:true});if(state.options.submitThrow)throw Error("private-provider-body-marker");return {id:state.options.badReceipt?"":"accepted-provider-id",provider};}});
     const adminClient=()=>({rpc:async(name:string,args:any)=>{
-      state.events.push(name==="app_video_cost_reserve"?"reserve":"settle");state.rpcs.push({name,args});
+      state.events.push(name==="app_video_cost_reserve"?"reserve":name==="app_video_cost_release_rejected"?"release":"settle");state.rpcs.push({name,args});
       if(name==="app_video_cost_reserve"){
         if(state.admitted.has(args.p_key))return {data:null,error:{message:"RP409: This video request was already admitted"}};
         if(state.options.reserveError)return {data:null,error:{message:"RP402: Workspace processing budget reached"}};
         state.admitted.add(args.p_key);state.holds.set(args.p_key,args);
         return {data:state.options.reserveReply??{reserved:true},error:null};
       }
+      if(name==="app_video_cost_release_rejected"){if(state.options.releaseError)return {data:null,error:{message:"private-release-error-marker"}};state.holds.delete(args.p_key);return {data:{released:true},error:null};}
       if(name!=="app_video_cost_settle")throw Error("Unexpected RPC");
       if(state.options.settleThrow)throw Error("private-database-body-marker");
       if(state.options.settleError)return {data:null,error:{message:"private-database-body-marker"}};
@@ -482,4 +488,47 @@ Deno.test("moving the actual reservation after POST is caught by the same route 
   mutant.reset();
   await assertRejects(() => successfulSequence(mutant, "drone"));
   assertEquals(mutant.state.events, ["POST", "reserve", "settle"]);
+});
+
+for (const route of ["drone", "aerial", "reel-clip"] as const) {
+  Deno.test(`${route} actual handler refunds allowance only after definitive rejection hold release commits`, async () => {
+    const f = await fixture();
+    f.reset({ submitReject: 403 });
+    const response = await f.handler(req(route));
+    assertEquals(response.status, 502);
+    assertEquals(f.state.events, ["reserve", "POST", "release"]);
+    assertEquals(f.state.posts.length, 1);
+    assertEquals(f.state.holds.size, 0);
+    assertEquals(f.state.refunds, 1);
+    assertEquals(f.state.ledger.length, 0);
+    assertEquals((await response.json()).provider_status, 403);
+  });
+  Deno.test(`${route} actual handler retains allowance and hold when rejection release fails`, async () => {
+    const f = await fixture();
+    f.reset({ submitReject: 403, releaseError: true });
+    const response = await f.handler(req(route));
+    assertEquals(response.status, 502);
+    assertEquals(f.state.events, ["reserve", "POST", "release"]);
+    assertEquals(f.state.holds.size, 1);
+    assertEquals(f.state.refunds, 0);
+    assertEquals(f.state.ledger.length, 0);
+    assert(!(await response.text()).includes("private-release-error-marker"));
+  });
+}
+
+Deno.test("dropping actual rejection evidence is caught by the same release/refund contract", async () => {
+  const f = await fixture(false, false, true);
+  f.reset({ submitReject: 403 });
+  const response = await f.handler(req("reel-clip"));
+  assertEquals(response.status, 502);
+  let caught = false;
+  try {
+    assertEquals(f.state.events, ["reserve", "POST", "release"], "Definitive rejection must release before refund");
+    assertEquals(f.state.holds.size, 0);
+    assertEquals(f.state.refunds, 1);
+  } catch (error) {
+    assert(error instanceof Error && error.message.includes("Definitive rejection must release before refund"));
+    caught = true;
+  }
+  assert(caught, "Control must fail the production release/refund invariant");
 });

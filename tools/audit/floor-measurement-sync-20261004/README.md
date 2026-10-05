@@ -1,78 +1,98 @@
-# Floor measurements wire and sync proof
+# Floor measurements wire, CAS and recovery proof
 
 Run from the repository root on macOS with the installed Swift toolchain:
 
 ```sh
 python3 tools/audit/floor-measurement-sync-20261004/run.py
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault drop-wire
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault drop-fingerprint
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault ignore-dirty
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault drop-replay-adopt
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault rewrite-raw-keys
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault legacy-ignore-edit
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault discard-outline-only
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault outline-fingerprint
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault legacy-v2-accept
-python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault drop-local-raw-mirror
+for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt \
+  rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint \
+  legacy-v2-accept drop-local-raw-mirror omit-cas-base ignore-pending-measurements \
+  wrong-cas-workspace ignore-cas-conflict omit-facts-fingerprint \
+  ignore-facts-review skip-legacy-recovery ignore-cas-lineage \
+  overwrite-shared-backup compare-backup-wire-only retain-backup-after-new-edit; do
+  python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault"
+done
 ```
 
-The runner compiles actual Listing/measurement models and WorkspaceSync.swift,
-plus extracted actual LiveAPIClient create/PATCH/body/decoder/mapping methods
-and AppModel modify/markDirty/syncListing methods, the actual editor save method,
-plus the complete anonymous
-adoption journal. Fixtures replace only active Auth, HTTP execution/request
-construction and file-path resolution. Held asynchronous
-boundaries exercise edits during create and PATCH, failed/cancelled writes and
-account changes. Each run saves source hashes, compile/run logs and a receipt
-under its printed owned `/tmp/rendprop-floor-measurement-sync-*` directory.
+The positive run compiles actual Listing/measurement models, WorkspaceSync and
+the anonymous-adoption journal. It also compiles extracted actual LiveAPIClient
+create/PATCH/CAS/body/decoder/mapping methods, AppModel ordinary modification,
+measurement save/sync/shared reload/review confirmation, and the editor save
+method. Fixtures replace HTTP, active Auth/workspace metadata and file-path
+resolution. Other WorkspaceSyncAPI operations deliberately throw: only the
+tested cloud listing read is available.
 
-The ten copied-source negative controls must compile, then fail their named
-assertion. They do not edit runtime source. These tests use no real networking,
-credentials, photos, camera sessions, customer rows or cloud writes.
+Every run records exact source/harness hashes, actual and copied Listing hashes,
+extracted body hashes, compile/run logs and a receipt in its printed owned
+`/tmp/rendprop-floor-measurement-sync-*` directory. Controls mutate copied source
+only, must compile, and must fail their named assertion. The original runtime
+files are never edited. There are no live network requests, credentials, real
+photos, camera sessions, customer rows or cloud writes.
 
-The bounded `LegacyModels.swift.template` is mechanically extracted from commit
-`c2824e5`'s complete version-one measurement declarations, stored Listing fields,
-tolerant Listing decoder, and details write helper.
-The runner renames their namespaces so the actual prior decoder compiles beside
-the current implementation. It must accept a supported rectangle plan, refuse
-outline-only version two, and preserve its raw wire on an unrelated facts write.
-The `legacy-v2-accept` control removes that version fence and must fail this check.
-The actual editor mirrors the complete encoded wire into `Listing.details` in
-the same `model.modify` closure as the typed plan. The frozen older snapshot
-decoder rejects typed v2 but retains its raw representation; after the old
-snapshot re-encodes, the current app recovers the exact outline. Typed-only
-unsaved historical snapshots with stale raw details do not gain this guarantee.
-The `drop-local-raw-mirror` control removes the save mirror and must fail.
+## Exercised behavior
 
-Wire semantics:
+- Valid typed plans mirror their exact encoded string into the private
+  `floor_measurements_v1` key. Both rectangle v1 and irregular-outline v2 use
+  this key. Outline-only v2 is meaningful; an empty supported plan deliberately
+  clears geometry. Model and full details envelope size checks happen before
+  HTTP. Measured areas do not overwrite advertised listing `sqft`.
+- Generic listing PATCH omits every private measurements key. Measurement saves
+  instead send only exact cached `expected` and new `value` to the bound
+  server/workspace CAS endpoint. Mid-request geometry edits advance only the
+  acknowledged base and retain the newer pending plan; deleting the final
+  outline requires its own acknowledged CAS write.
+- Ordinary tagline edits use the generic dirty queue independently. Held
+  requests exercise newer ordinary edits, failures, cancellation and account
+  revision changes without falsely acknowledging the latest local state.
+- New creation captures a persistent ordinary-facts fingerprint separately from
+  its combined payload fingerprint. Lost create receipts plus geometry-only
+  edits adopt office facts/attachments and use CAS, with no stale full-row PATCH.
+  If the office changed geometry too, the phone copy is retained in conflict.
+  Retrying creation cannot replace the original intent fingerprints.
+- Older combined hashes cannot establish ordinary edit intent. Existing pending
+  typed/raw drift is recovered on snapshot decode, sync and merge into CAS using
+  the exact cached raw baseline. Ordinary local fields remain behind an explicit
+  review fence. Confirming this iPhone's details permits their generic PATCH;
+  explicitly loading shared listing details adopts remote facts while retaining
+  the measurement backup. Loading only shared measurements does not approve
+  ordinary facts. An unreadable old baseline is preserved without a guessed CAS.
+- Actual shared reload rejects a local mutation made while its read was held.
+  It retains the old measurement copy, adopts the exact shared base, and supports
+  restoring the local copy through actual measurement save. Sequential shared
+  measurements and shared listing-detail choices preserve the original phone
+  backup without resetting fixture state. Repeated shared absence and equivalent
+  JSON formatting also preserve it; a genuinely new pending plan or intentional
+  empty plan becomes the new backup. Three copied-source controls remove backup
+  preservation, substitute encoded-string comparison, or prohibit backup renewal
+  and must fail the corresponding sequence assertions. Late CAS success or
+  HTTP 409 after a shared load cannot revive or mark conflict on the replaced
+  queue, and cannot submit a second measurement write or generic PATCH.
+- Dynamic dictionary keys retain exact spelling through snake-case DTO decoding.
+  Unsupported/future raw plans remain opaque instead of becoming an empty plan.
+  Dirty/pending and protected geometry survive refresh; clean acknowledged
+  geometry accepts authoritative remote absence. Bound identity and workspace
+  changes prevent foreign receipt adoption or submission.
+- Anonymous adoption preserves local geometry/raw wire while rebinding the same
+  listing. A foreign account cannot restore its journal.
 
-- A valid typed plan is encoded under `details.floor_measurements_v1`, independently
-  of the generic details form. Its 10,000-byte model cap and the complete
-  16,000-byte UTF-8 JSON details envelope are checked before HTTP execution.
-  The key remains the same for both version-one rectangle plans and version-two
-  outline plans. Version two can contain outlines with no rooms: it is not empty.
-- A nil typed plan preserves raw wire strings, including invalid/future versions.
-  Explicit clearing removes the raw key and typed field together, or writes an
-  empty supported plan. Removing the last room or outline uses the latter;
-  the harness proves a last-outline clear during an in-flight PATCH requires a
-  second write and cannot be acknowledged by the older receipt.
-- Dynamic details keys retain exact spelling through the snake-case DTO decoder.
-  A malformed/future plan becomes a nil typed plan without hiding other facts.
-- Dirty and protected local plans survive remote snapshots. Clean acknowledged
-  listings accept authoritative remote absence/deletion; there is no indefinite
-  local resurrection. Create replay uses the same merged details fingerprint and
-  adopts remote measurements only within the existing identity/workspace guard.
-  Pending fingerprints from older app snapshots remain compatible only while
-  the typed plan contributes no independent edit beyond its raw details value.
-- The actual anonymous-account journal preserves edited irregular outlines and
-  their raw wire while rebinding the same listing and marking it dirty. A foreign
-  account cannot apply that journal. Outline-only measurements do not replace
-  the listing's independently entered advertised `sqft` in create, PATCH, local
-  snapshots or anonymous adoption.
-- Measurement bodies omit photo/gallery fields and preserve known `floorplan_url`
-  and other string details. Existing server PATCH replaces the entire details
-  bag without a revision/CAS check. A stale clean snapshot or an unseen concurrent
-  office edit can conflict with local facts, including a floor-plan URL. This
-  feature does not change that existing protocol or claim conflict-free sync.
+## Prior-version compatibility
 
-This is offline source-level proof, not a physical-device or live-server test.
+`LegacyModels.swift.template` is mechanically extracted from commit `c2824e5`'s
+complete version-one measurement declarations, stored Listing fields, tolerant
+Listing decoder and details write helper. Namespaces are renamed to compile
+beside current source. The frozen reader must accept a supported rectangle plan,
+refuse typed outline-only v2, and preserve its exact raw representation on an
+ordinary write. The current decoder recovers that representation after an old
+snapshot round trip. Controls remove the version fence or atomic raw mirror and
+must fail. Unmirrored historical typed edits use explicit legacy CAS/review
+recovery; they are not treated as already uploaded.
+
+Generic ordinary-facts PATCH still replaces its ordinary details bag; this
+feature does not add per-field conflict resolution for all listing edits. The
+measurement-only contract prevents geometry edits from implicitly invoking that
+full-row write, and the older ambiguous-intent path requires an explicit choice.
+
+This is offline source proof, not a physical-device or live-server test. The
+separate `tools/audit/run_listing_measurement_cas.py` runner verifies the actual
+database CAS, permissions, alias preservation and overlapping actors in owned
+disposable PostgreSQL.

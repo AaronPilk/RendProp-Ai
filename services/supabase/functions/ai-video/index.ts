@@ -214,10 +214,10 @@ import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute, routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
-import { ProviderError } from "../_shared/providers/common.ts";
+import { BUDGETS, fetchBounded, ProviderError } from "../_shared/providers/common.ts";
 import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
-import { falSubmitEcho } from "../_shared/providers/fal.ts";
+import { falCompletedFailure, falSubmitEcho } from "../_shared/providers/fal.ts";
 import { persistResult, persistedUrl, routedR2Key, putBytes } from "../_shared/providers/common.ts";
 import { R2_BUCKET_RENDERS } from "../_shared/r2.ts";
 import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
@@ -419,7 +419,8 @@ async function guardGenerate(
  * Hand back everything a submission that never reached the provider charged
  * (audit item 2 / F-E-16, mirrors ai-chapters/index.ts refundCharge exactly).
  *
- * Call ONLY for a failure before provider dispatch. A thrown POST can have
+ * Call only before dispatch or after a definitive non-allocation whose priced
+ * hold release was confirmed. A thrown POST can have
  * been accepted remotely, so VideoDispatchUnconfirmed keeps BOTH its priced
  * hold and allowance. Once a receipt returns the expense is committed;
  * a later async failure never automatically refunds its original allowance.
@@ -1371,7 +1372,8 @@ Deno.serve(async (req) => {
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
       };
-      // A priced hold precedes one POST; a thrown submit is unconfirmed.
+      // A priced hold precedes one POST. Definitive refusal releases it;
+      // transport ambiguity retains it without another provider attempt.
       let attempt: ChainResult<JobRef>;
       try {
         attempt = await submitReservedVideo({
@@ -1695,10 +1697,11 @@ Deno.serve(async (req) => {
 
       const su = new URL(statusUrl);
       su.searchParams.set("logs", "1");
-      const stRes = await fetch(su.toString(), { headers: falHeaders() });
+      const stRes = await fetchBounded("fal", su.toString(), { headers: falHeaders() }, BUDGETS.pollMs);
       const st = await stRes.json().catch(() => ({} as Record<string, unknown>));
       if (!stRes.ok) {
-        throw new HttpError(502, `fal status ${stRes.status}: ${JSON.stringify(st).slice(0, 300)}`, "upstream");
+        console.error("ai-video fal status read failed", { provider_status: stRes.status, error_class: "upstream" });
+        throw new HttpError(502, "The video status could not be checked. Please try again shortly.", "upstream", { provider_status: stRes.status, error_class: "upstream" });
       }
 
       const status = String(st.status ?? "");
@@ -1712,14 +1715,22 @@ Deno.serve(async (req) => {
       }
 
       if (status === "COMPLETED") {
-        const rRes = await fetch(responseUrl, { headers: falHeaders() });
+        const terminalFailure = falCompletedFailure(st);
+        if (terminalFailure) {
+          console.error("ai-video fal generation failed", { provider_status: stRes.status, error_class: terminalFailure.error_class });
+          return json({ status: "failed", error: terminalFailure.message, error_class: terminalFailure.error_class, provider: "fal" });
+        }
+        const rRes = await fetchBounded("fal", responseUrl, { headers: falHeaders() }, BUDGETS.pollMs);
         const result = await rRes.json().catch(() => ({} as Record<string, unknown>));
         if (!rRes.ok) {
-          throw new HttpError(502, `fal result ${rRes.status}: ${JSON.stringify(result).slice(0, 300)}`, "upstream");
+          console.error("ai-video fal completed result failed", { provider_status: rRes.status, error_class: "upstream" });
+          return json({ status: "failed", error: "The video service could not return this generation.", error_class: "upstream", provider_status: rRes.status });
         }
+        const resultFailure = falCompletedFailure(result);
+        if (resultFailure) return json({ status: "failed", error: resultFailure.message, error_class: resultFailure.error_class, provider: "fal" });
         const videoUrl = extractVideoUrl(result);
         if (!videoUrl) {
-          throw new HttpError(502, `fal result had no video url: ${JSON.stringify(result).slice(0, 300)}`, "upstream");
+          return json({ status: "failed", error: "The service completed without a usable video file.", error_class: "upstream", provider: "fal" });
         }
         // ADDITIVE (quality gate). A completed clip is not an APPROVED clip.
         // This route is stateless — it holds no verdict and cannot fetch one
@@ -1735,9 +1746,8 @@ Deno.serve(async (req) => {
 
       // FAILED / ERROR / anything unexpected. Log the provider's reason so
       // failures are diagnosable from the function logs (audit follow-up).
-      const failMsg = await failureError(st, responseUrl);
-      console.error("ai-video job failed:", failMsg);
-      return json({ status: "failed", error: failMsg });
+      console.error("ai-video fal generation failed", { error_class: "upstream" });
+      return json({ status: "failed", error: "The video service could not complete this generation.", error_class: "upstream", provider: "fal" });
     }
 
     throw new HttpError(405, `Method ${req.method} not allowed on this path`);
@@ -2270,26 +2280,6 @@ function logsTail(st: Record<string, unknown>): string[] {
     .slice(-5)
     .map((l) => String((l as Record<string, unknown>)?.message ?? ""))
     .filter((m) => m.length > 0);
-}
-
-/** Best-effort human-readable error for a FAILED fal job. */
-async function failureError(st: Record<string, unknown>, responseUrl: string): Promise<string> {
-  try {
-    const res = await fetch(responseUrl, { headers: falHeaders() });
-    const body = await res.json().catch(() => null);
-    if (body && typeof body === "object") {
-      // deno-lint-ignore no-explicit-any
-      const detail = (body as any).detail ?? (body as any).error ?? (body as any).message;
-      if (detail) {
-        return (typeof detail === "string" ? detail : JSON.stringify(detail)).slice(0, 500);
-      }
-    }
-  } catch {
-    // fall through to logs
-  }
-  const tail = logsTail(st);
-  if (tail.length > 0) return tail.join(" | ").slice(0, 500);
-  return `fal reported status ${String(st.status ?? "FAILED")}`;
 }
 
 // ── asset resolution ──────────────────────────────────────────────────────────

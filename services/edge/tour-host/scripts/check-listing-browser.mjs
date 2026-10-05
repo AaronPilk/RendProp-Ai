@@ -18,7 +18,11 @@ mkdirSync(evidence, { recursive: true });
 const playwrightPath = arg("--playwright") || resolve(ROOT, "../../../apps/studio/node_modules/@playwright/test/index.mjs");
 const { chromium } = await import(pathToFileURL(playwrightPath).href);
 const fault = arg("--fault") || null;
-assert.ok(!fault || ["eager-media", "retain-media", "queued-close", "poster-cover", "explore-no-seek", "stale-explore-reference", "explore-rewind"].includes(fault), "Unknown negative control");
+// Reproduce a delayed test observer after a real chapter click without delaying
+// the page, decoder or product handler. This is fixture-only instrumentation.
+const chapterObservationDelay = Number(arg("--chapter-observation-delay-ms") || 0);
+assert.ok(Number.isInteger(chapterObservationDelay) && chapterObservationDelay >= 0 && chapterObservationDelay <= 1000, "Chapter observation delay must be an integer from 0 to 1000ms");
+assert.ok(!fault || ["eager-media", "retain-media", "queued-close", "poster-cover", "explore-no-seek", "stale-explore-reference", "explore-rewind", "chapter-no-seek"].includes(fault), "Unknown negative control");
 const sourceHash = createHash("sha256").update(readFileSync(join(ROOT, "src/player.ts"))).digest("hex");
 const sourceHashes = Object.fromEntries(readdirSync(join(ROOT, "src")).filter((name) => name.endsWith(".ts")).map((name) => ["src/" + name, createHash("sha256").update(readFileSync(join(ROOT, "src", name))).digest("hex")]));
 sourceHashes["scripts/check-listing-browser.mjs"] = createHash("sha256").update(readFileSync(join(ROOT, "scripts/check-listing-browser.mjs"))).digest("hex");
@@ -148,6 +152,11 @@ try {
         const boundary = 'if (active) syncPosition(pendingSeek===null?video.currentTime:pendingSeek);';
         assert.ok(html.includes(boundary), "Explore rewind control must alter the actual mode handoff");
         html = html.replace(boundary, 'video.currentTime=0; ' + boundary);
+      }
+      if (fault === "chapter-no-seek") {
+        const boundary = 'openVideo(button,isFinite(time)?time:0);';
+        assert.ok(html.includes(boundary), "Chapter control must mutate the actual production click handler");
+        html = html.replace(boundary, '/* fault: chapter never seeks */');
       }
       return send(200, html, { "Content-Type": "text/html; charset=utf-8" });
     }
@@ -298,26 +307,59 @@ try {
   check((await snapshot()).paused, "Native keyboard pause control works");
   await page.evaluate(() => { const v = document.querySelector("#flythrough-video"); v.pause(); v.currentTime = 1; });
   await page.waitForFunction(() => Math.abs(document.querySelector("#flythrough-video").currentTime - 1) < .08 && !document.querySelector("#flythrough-video").seeking);
-  await page.locator('#flythrough-modal [data-video-seek="4"]').click();
-  // Watch mode resumes playback after the chapter seek. Retain the real clock
-  // sample from the successful wait, rather than measuring it again later.
-  const chapterHandle = await page.waitForFunction(() => {
+  // Watch mode resumes playback after a chapter click. Register observers at
+  // the real click boundary before the production handler runs: post-click
+  // polling can miss a correct seek's 150ms window while playback advances.
+  // Neither the observer nor an optional test-side delay pauses/retimes media.
+  await page.evaluate(() => {
     const v = document.querySelector("#flythrough-video");
-    return Math.abs(v.currentTime - 4) < .15 && !v.seeking
-      ? { time: v.currentTime, seeking: v.seeking, currentSrc: v.currentSrc } : false;
+    const button = document.querySelector('#flythrough-modal [data-video-seek="4"]');
+    const observed = window.__chapterObservation = { complete: false, error: null, seek: null, presented: null, pixels: null };
+    button.addEventListener('click', () => {
+      let frameID = null;
+      const finish = (error = null) => {
+        observed.error = error; observed.complete = true; clearTimeout(timer);
+        v.removeEventListener('seeked', seeked);
+        if (frameID !== null) v.cancelVideoFrameCallback(frameID);
+      };
+      const maybeFinish = () => { if (observed.seek && observed.presented) finish(); };
+      const seeked = () => {
+        observed.seek = { time: v.currentTime, seeking: v.seeking, currentSrc: v.currentSrc };
+        maybeFinish();
+      };
+      // Finish with explicit diagnostics before the unchanged 5s outer wait.
+      const timer = setTimeout(() => finish('No chapter seek and decoded frame within 4000ms'), 4000);
+      v.addEventListener('seeked', seeked, { once: true });
+      const nextFrame = () => {
+        frameID = v.requestVideoFrameCallback((_, metadata) => {
+          frameID = null;
+          // Match the former post-seek callback: wait for an advancing Watch
+          // frame after seek completion, keeping the original <5s bound.
+          if (observed.seek && !v.seeking && v.readyState >= 2 && metadata.mediaTime > 4 && metadata.mediaTime < 5) {
+            observed.presented = { mediaTime: metadata.mediaTime, width: metadata.width, height: metadata.height };
+            // Read pixels in that same presented-frame callback, rather than
+            // from another remote evaluation after the decoder has advanced.
+            const canvas = document.createElement('canvas'); canvas.width = 32; canvas.height = 18;
+            const context = canvas.getContext('2d'); context.drawImage(v, 0, 0, 32, 18);
+            observed.pixels = Array.from(context.getImageData(0, 0, 32, 18).data);
+            maybeFinish();
+          } else { nextFrame(); }
+        });
+      };
+      nextFrame();
+    }, { capture: true, once: true });
   });
-  const chapterSeek = await chapterHandle.jsonValue(); await chapterHandle.dispose();
+  await page.locator('#flythrough-modal [data-video-seek="4"]').click();
+  if (chapterObservationDelay) await page.waitForTimeout(chapterObservationDelay);
+  await page.waitForFunction(() => window.__chapterObservation?.complete);
+  const chapterObservation = await page.evaluate(() => window.__chapterObservation);
+  writeFileSync(join(evidence, 'chapter-observation.json'), JSON.stringify({ ...chapterObservation, observationDelayMs: chapterObservationDelay }, null, 2) + '\n');
+  check(!chapterObservation.error && chapterObservation.seek && Math.abs(chapterObservation.seek.time - 4) < .15 && !chapterObservation.seek.seeking, "Room chapter seeks the actual media timeline");
+  const chapterSeek = chapterObservation.seek;
   writeFileSync(join(evidence, 'chapter-seek.json'), JSON.stringify(chapterSeek, null, 2) + '\n');
-  check(Math.abs(chapterSeek.time - 4) < .15 && !chapterSeek.seeking, "Room chapter seeks the actual media timeline");
-  // `currentTime` and `seeking=false` describe the media timeline, not the
-  // compositor. Wait for a presented decoded frame before reading its pixels.
-  const presented = await page.evaluate(() => new Promise((resolveFrame, reject) => {
-    const v = document.querySelector("#flythrough-video");
-    const timer = setTimeout(() => reject(new Error("No decoded frame was presented after the chapter seek")), 2500);
-    v.requestVideoFrameCallback((_, metadata) => { clearTimeout(timer); resolveFrame({ mediaTime: metadata.mediaTime, width: metadata.width, height: metadata.height }); });
-  }));
+  const presented = chapterObservation.presented;
   check(presented.mediaTime >= 3.9 && presented.mediaTime < 5 && presented.width === 1280 && presented.height === 720, "Browser presents an actual decoded frame at the selected chapter");
-  const frame = await page.evaluate(() => { const v = document.querySelector("#flythrough-video"), c = document.createElement("canvas"); c.width = 32; c.height = 18; const ctx = c.getContext("2d"); ctx.drawImage(v, 0, 0, 32, 18); return Array.from(ctx.getImageData(0, 0, 32, 18).data); });
+  const frame = chapterObservation.pixels;
   writeFileSync(join(evidence, "decoded-frame.json"), JSON.stringify({ presented, channelValues: new Set(frame.filter((_, i) => i % 4 !== 3)).size, pixels: frame }, null, 2) + "\n");
   check(new Set(frame.filter((_, i) => i % 4 !== 3)).size > 80, "Seeking yields a real nonempty decoded test-pattern frame");
   const beforeExplore = await snapshot();
@@ -492,13 +534,13 @@ try {
   check(await entry.count() === 0 || await entry.isDisabled(), "No-media listing does not present a working watch action");
   check(pageErrors.length === 0, "No uncaught JavaScript errors: " + pageErrors.join("; "));
   check(externalRequests.length === 0, "All actual browser requests stayed on isolated loopback");
-  const receipt = { passed: true, assertions: checks.length, sourcePlayerSha256: sourceHash, sourceHashes, fault, browser: await browser.version(), fixture: { name: "SYNTHETIC-NOT-A-LISTING.mp4", bytes: movie.length, sha256: movieHash, width: 1280, height: 720, seconds: 8, codecs: "H.264/AAC" }, spatial: spatialManifest ? { synthetic: true, actualEngineAndDraw: true, modelBytes: spatialManifest.bytes, sha256: spatialManifest.sha256, count: 2048 } : { synthetic: true, actualModuleFailureReturn: true, actualEngineAndDraw: false }, checks, navigationMeasurements, requests, mediaState, pageErrors, externalRequests, limitation: "Synthetic real Chromium media and renderer. No iPhone/Safari camera, customer listing, production upload resolution, real reconstructed room or HLS proof." };
+  const receipt = { passed: true, assertions: checks.length, sourcePlayerSha256: sourceHash, sourceHashes, fault, chapterObservationDelayMs: chapterObservationDelay, browser: await browser.version(), fixture: { name: "SYNTHETIC-NOT-A-LISTING.mp4", bytes: movie.length, sha256: movieHash, width: 1280, height: 720, seconds: 8, codecs: "H.264/AAC" }, spatial: spatialManifest ? { synthetic: true, actualEngineAndDraw: true, modelBytes: spatialManifest.bytes, sha256: spatialManifest.sha256, count: 2048 } : { synthetic: true, actualModuleFailureReturn: true, actualEngineAndDraw: false }, checks, navigationMeasurements, requests, mediaState, pageErrors, externalRequests, limitation: "Synthetic real Chromium media and renderer. No iPhone/Safari camera, customer listing, production upload resolution, real reconstructed room or HLS proof." };
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   console.log(`Listing browser: ${checks.length} assertions passed; real rendered page/720p H.264-AAC/ranges/transfer cancellation. Receipt: ${join(evidence, "receipt.json")}`);
 } catch (error) {
   const failureState = await browserPage?.evaluate(() => { const v = document.querySelector("#flythrough-video"); return v ? { time: v.currentTime, duration: v.duration, controls: v.controls, muted: v.muted, src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null; }).catch(() => null);
   await browserPage?.screenshot({ path: join(evidence, "failure.png") }).catch(() => {});
-  writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: false, sourcePlayerSha256: sourceHash, sourceHashes, fault, error: error.message, checks, navigationMeasurements, requests, mediaState, pageErrors, failureState }, null, 2) + "\n");
+  writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: false, sourcePlayerSha256: sourceHash, sourceHashes, fault, chapterObservationDelayMs: chapterObservationDelay, error: error.message, checks, navigationMeasurements, requests, mediaState, pageErrors, failureState }, null, 2) + "\n");
   throw error;
 } finally {
   await browser?.close();

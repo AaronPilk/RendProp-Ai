@@ -73,6 +73,12 @@ jobs:
         run: bash apps/ios/tests/run-photo-work-queue.sh
       - name: Photo edit lifecycle and background resource cleanup
         run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
+      - name: Legacy photo galleries, cover review and per-family selection
+        run: |
+          python3 tools/audit/photo-gallery-reconciliation-20261004/run.py
+          for fault in drop-legacy-reconciliation bypass-stage-review latest-as-cover blank-family-badges; do
+            python3 tools/audit/photo-gallery-reconciliation-20261004/run.py --inject-fault "$fault"
+          done
       - name: Listing unit fields and real estate metadata survive editing
         run: bash apps/ios/tests/run-listing-unit-form.sh
       - name: Owner cohort metrics preserve numeric wire keys
@@ -86,7 +92,7 @@ jobs:
             python3 tools/audit/floor-measurement-outline-editor-20261004/run.py --inject-fault "$fault"
           done
           python3 tools/audit/floor-measurement-sync-20261004/run.py
-          for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint legacy-v2-accept drop-local-raw-mirror; do
+          for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint legacy-v2-accept drop-local-raw-mirror omit-cas-base ignore-pending-measurements wrong-cas-workspace ignore-cas-conflict omit-facts-fingerprint ignore-facts-review skip-legacy-recovery ignore-cas-lineage overwrite-shared-backup compare-backup-wire-only retain-backup-after-new-edit; do
             python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault"
           done
       - name: Measured-plan Photos export fences permission and context changes
@@ -95,6 +101,7 @@ jobs:
           for fault in drop-context-check ignore-cancellation drop-completion-check; do
             python3 tools/audit/floor-measurement-export-20261004/run.py --inject-fault "$fault"
           done
+          bash tools/audit/measurement-export-20261004/run-controls.sh
       - name: Photographer preference, client drafts and confirmed contact transactions
         run: bash apps/ios/tests/run-client-contact.sh
       - name: App Store capture isolation and physical UI-test switch boundaries
@@ -137,14 +144,15 @@ jobs:
         run: |
           npm ci --ignore-scripts --prefix services/edge/tour-host
           node services/edge/tour-host/scripts/check-listing-browser.mjs
-      - name: Explore handoff rejects stale timing and actual rewind
+          node services/edge/tour-host/scripts/check-listing-browser.mjs --chapter-observation-delay-ms=350 --evidence="$RUNNER_TEMP/rendprop-listing-browser-delayed-chapter"
+      - name: Chapter seek and Explore handoff reject missing seek, stale timing and rewind
         timeout-minutes: 5
         env:
           STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
           TMPDIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          for control in stale-explore-reference explore-rewind; do
+          for control in chapter-no-seek stale-explore-reference explore-rewind; do
             evidence_dir="$RUNNER_TEMP/rendprop-listing-browser-$control"
             set +e
             node services/edge/tour-host/scripts/check-listing-browser.mjs --fault="$control" --evidence="$evidence_dir"
@@ -155,21 +163,31 @@ jobs:
           import assert from 'node:assert/strict';
           import { readFileSync } from 'node:fs';
           const read = name => JSON.parse(readFileSync(process.env.LISTING_EVIDENCE + '/' + name));
-          const receipt = read('receipt.json'), handoff = read('explore-handoff.json');
+          const receipt = read('receipt.json');
           assert.equal(receipt.fault, process.env.LISTING_CONTROL);
           assert.equal(receipt.passed, false);
-          assert.equal(receipt.error, 'Returning to Explore pauses at the current playback position without losing the tour');
-          assert.ok(receipt.checks.includes('Seeking yields a real nonempty decoded test-pattern frame'));
           assert.deepEqual(receipt.pageErrors, []);
-          assert.ok(handoff.afterExplore.paused && !handoff.afterExplore.controls && handoff.afterExplore.muted);
-          assert.equal(handoff.afterExplore.currentSrc, handoff.handoff.currentSrc);
-          if (receipt.fault === 'stale-explore-reference') {
-            assert.ok(handoff.staleDelta > .2);
-            assert.ok(Math.abs(handoff.handoffDelta) < handoff.toleranceSeconds);
+          if (receipt.fault === 'chapter-no-seek') {
+            const chapter = read('chapter-observation.json');
+            assert.equal(receipt.error, 'Room chapter seeks the actual media timeline');
+            assert.ok(receipt.checks.includes('Native keyboard pause control works'));
+            assert.equal(chapter.error, 'No chapter seek and decoded frame within 4000ms');
+            assert.equal(chapter.seek, null);
+            assert.equal(chapter.presented, null);
           } else {
-            assert.ok(Math.abs(handoff.handoffDelta) > 1);
+            const handoff = read('explore-handoff.json');
+            assert.equal(receipt.error, 'Returning to Explore pauses at the current playback position without losing the tour');
+            assert.ok(receipt.checks.includes('Seeking yields a real nonempty decoded test-pattern frame'));
+            assert.ok(handoff.afterExplore.paused && !handoff.afterExplore.controls && handoff.afterExplore.muted);
+            assert.equal(handoff.afterExplore.currentSrc, handoff.handoff.currentSrc);
+            if (receipt.fault === 'stale-explore-reference') {
+              assert.ok(handoff.staleDelta > .2);
+              assert.ok(Math.abs(handoff.handoffDelta) < handoff.toleranceSeconds);
+            } else {
+              assert.ok(Math.abs(handoff.handoffDelta) > 1);
+            }
           }
-          console.log('Explore negative control rejected at the intended playback assertion:', receipt.fault);
+          console.log('Browser negative control rejected at its intended assertion:', receipt.fault);
           JS
           done
       - name: Actual native and worker HD master encoding
@@ -210,6 +228,8 @@ jobs:
             ${{ runner.temp }}/rendprop-listing-browser-*/receipt.json
             ${{ runner.temp }}/rendprop-listing-browser-*/explore-handoff.json
             ${{ runner.temp }}/rendprop-listing-browser-*/chapter-seek.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-observation.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/decoded-frame.json
             ${{ runner.temp }}/rendprop-listing-browser-*/*.png
             ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4
             ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json
@@ -225,6 +245,11 @@ jobs:
             /tmp/rendprop-outline-editor-*/*.log
             /tmp/rendprop-floor-measurement-sync-*/receipt.json
             /tmp/rendprop-floor-measurement-sync-*/*.log
+            /tmp/rendprop-measurement-export-*/receipt.json
+            /tmp/rendprop-measurement-export-*/*.log
+            /tmp/rendprop-measurement-export-controls*/*.log
+            /tmp/rendprop-photo-reconciliation-*/receipt.json
+            /tmp/rendprop-photo-reconciliation-*/*.log
           retention-days: 7
           if-no-files-found: warn
 
@@ -723,6 +748,7 @@ jobs:
           python3 tools/audit/run_subscription_trial_regression.py
           python3 tools/audit/run_workspace_selection.py
           python3 tools/audit/run_listing_gallery_selection.py
+          python3 tools/audit/run_listing_measurement_cas.py
           python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py

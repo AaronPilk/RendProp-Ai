@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve, extname } from "node:path";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 
@@ -12,7 +13,8 @@ const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
-const receipt = { proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", ...["export", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const receipt = { sourceHashes, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -35,11 +37,18 @@ const fixture=window.fixture={ready:false,error:null,result:null,trace:[],export
   }};
 const nativeRAF=window.requestAnimationFrame.bind(window),nativeCancel=window.cancelAnimationFrame.bind(window),frameHandles=new Map();let frameID=0;
 window.requestAnimationFrame=callback=>{
-  if(!fixture.exporting||!(fixture.delayAllFrames||(fixture.delayPhotoFrames&&fixture.frameClipIsPhoto)))return nativeRAF(callback);
+  if(!fixture.exporting||!(fixture.delayPhotoFrames&&fixture.frameClipIsPhoto))return nativeRAF(callback);
   const id=++frameID+1000000,handles={};frameHandles.set(id,handles);
   handles.frame=nativeRAF(time=>{handles.timer=setTimeout(()=>{frameHandles.delete(id);callback(time);},120);});return id;
 };
-window.cancelAnimationFrame=id=>{const handles=frameHandles.get(id);if(handles){nativeCancel(handles.frame);clearTimeout(handles.timer);frameHandles.delete(id);}else nativeCancel(id);};
+window.cancelAnimationFrame=id=>{const handles=frameHandles.get(id);if(handles){if(handles.frame!==undefined)nativeCancel(handles.frame);clearTimeout(handles.timer);frameHandles.delete(id);if(handles.held)log("export.frame.cancelled",{id,index:handles.index});}else nativeCancel(id);};
+// Model a throttled export animation scheduler without retiming media, decoder
+// events or the timer path. Both paired variants receive the identical fault.
+fixture.requestExportFrame=callback=>{
+  if(!fixture.holdExportFrames)return window.requestAnimationFrame(time=>{log("export.frame.delivered",{index:fixture.frameClipIndex,time});callback(time);});
+  const id=++frameID+1000000,handles={held:true,index:fixture.frameClipIndex};frameHandles.set(id,handles);
+  log("export.frame.held",{id,index:handles.index});return id;
+};
 const NativeRecorder=MediaRecorder;
 function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...extra});}
 window.MediaRecorder=class extends NativeRecorder {
@@ -98,7 +107,10 @@ document.querySelector("#run").onclick=async()=>{
     if (!id.endsWith("/src/editor/export.ts")) return;
     const seam = "const start = performance.now();";
     assert(code.includes(seam));
-    return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index});');
+    const schedule = "const frame = requestAnimationFrame(done);";
+    assert(code.includes(schedule), "Cadence fault must intercept only the actual export-frame animation branch");
+    return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index});')
+      .replace(schedule, "const frame = (window as any).fixture.requestExportFrame(done);");
   } };
   const oldFrameClockPlugin = { name: "negative-control-animation-only-clock", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;
@@ -176,7 +188,7 @@ document.querySelector("#run").onclick=async()=>{
     await page.locator("#sources").setInputFiles([{ name: "opening.png", mimeType: "image/png", buffer: Buffer.from(png[0], "base64") }, { name: "original.mp4", mimeType: "video/mp4", buffer: await readFile(source) }, { name: "closing.png", mimeType: "image/png", buffer: Buffer.from(png[1], "base64") }]);
     await page.locator("#voice").setInputFiles(narration); await expect.poll(() => page.evaluate(() => window.fixture.ready)).toBe(true);
     for (const narrated of [true, false]) {
-      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.delayAllFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
+      await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
       await expect.poll(() => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending")), { timeout: 20000 }).toBe("done");
       const download = page.waitForEvent("download"); await page.locator("#download").click(); const output = join(artifacts, `${variant}-${narrated ? "narrated" : "original"}.mp4`); await (await download).saveAs(output);
       const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", output], { encoding: "utf8" }));
@@ -201,6 +213,14 @@ document.querySelector("#run").onclick=async()=>{
       assert(probe.streams.some(stream => stream.codec_name === "h264")); assert(probe.streams.some(stream => stream.codec_name === "aac"));
       assert.equal(trace.filter(event => event.event === "resume.return").length, 2);
       assert(trace.filter(event => event.event === "resume.return").every(event => event.state === "recording"));
+      if (["cadence-baseline", "late-frames"].includes(variant)) {
+        const held = trace.filter(event => event.event === "export.frame.held");
+        const cancelled = trace.filter(event => event.event === "export.frame.cancelled");
+        assert(held.some(event => event.index === 1), "Paired cadence fault must intercept the actual dissolving video segment");
+        assert.equal(cancelled.length, held.length, "Every held export animation request must be cancelled by the actual timer path");
+        assert(held.every(event => cancelled.some(value => value.id === event.id)), "Timer wakeups must cancel the exact held animation handles");
+        assert.equal(trace.filter(event => event.event === "export.frame.delivered").length, 0, "Paired cadence fault must deliver no export animation callbacks");
+      }
       if (variant === "baseline") {
         assert(duration > 3.4, `Negative control must reproduce drift with the old await: ${duration}`);
         const resumed = trace.filter(event => event.event === "resume.return");
@@ -225,7 +245,7 @@ document.querySelector("#run").onclick=async()=>{
       } else if (variant === "cadence-baseline") {
         assert(Math.abs(duration - 3) < .4, "Deadline-only control still corrects total segment duration");
         const blends = pixels.dissolve.samples.filter(({rgb}) => rgb[0] > 20 && rgb[0] < 100 && rgb[2] > 170 && rgb[2] < 245);
-        assert(!blends.some((sample, index) => blends.slice(index + 1).some(later => sample.rgb[0] - later.rgb[0] >= 8 && later.rgb[2] - sample.rgb[2] >= 8)), "Deadline-only cadence control must miss the unchanged progressing-dissolve criterion under late animation callbacks");
+        assert(!blends.some((sample, index) => blends.slice(index + 1).some(later => sample.rgb[0] - later.rgb[0] >= 8 && later.rgb[2] - sample.rgb[2] >= 8)), "Deadline-only cadence control must miss the unchanged progressing-dissolve criterion when export animation callbacks are held");
       } else {
         const start = trace.find(event => event.event === "start.call");
         const ready = trace.filter(event => event.event === "decode.ready");
@@ -286,7 +306,7 @@ document.querySelector("#run").onclick=async()=>{
     }
     await context.close();
   }
-  receipt.checks.push("Late animation callbacks retain the same MP4 timing, held-frame transitions and opening speech; the animation-only clock misses whip timing and the deadline-only control misses progressing dissolve frames");
+  receipt.checks.push("Held export animation callbacks retain the same MP4 timing, held-frame transitions and opening speech; the animation-only clock misses whip timing and the deadline-only control misses progressing dissolve frames");
   receipt.checks.push("Late decoder readiness, cancellation during initial preparation, stale revision during lookahead and decoder failure reject without a blob, source handles or live tracks");
   receipt.checks.push("Negative control reproduces >400 ms accumulated timing error by delaying only two resume notifications; source playback and decoding are unchanged");
   receipt.checks.push("Sequential-decoder negative control violates readiness before handoff; fixed export prepares the second source before start and third during the second segment despite identical 600 ms decoder delays");
@@ -295,4 +315,15 @@ document.querySelector("#run").onclick=async()=>{
   receipt.checks.push("AAC retains 660 Hz narration, leading photo silence, the distinctive 990 Hz opening sound in adjacent bounded samples after resume, and continuous 440 Hz original audio; the old-await control misses that opening window");
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); throw error; }
-finally { await persist(); await browser?.close(); await new Promise(done => server ? server.close(done) : done()); console.log(JSON.stringify({ artifacts, ...receipt }, null, 2)); }
+finally {
+  await persist(); await browser?.close(); await new Promise(done => server ? server.close(done) : done());
+  // Persist every decoded frame, pixel and trace in the receipt; keep CI output
+  // compact enough that an intended-control failure remains visible.
+  console.log(JSON.stringify({ artifacts, receipt: join(artifacts, "receipt.json"), status: receipt.status,
+    checks: receipt.checks.length, preparationFailures: receipt.preparationFailures.length,
+    runs: receipt.runs.map(({variant,narrated,duration,trace}) => ({variant,narrated,duration,
+      heldFrames: trace.filter(value => value.event === "export.frame.held").length,
+      cancelledFrames: trace.filter(value => value.event === "export.frame.cancelled").length,
+      deliveredFrames: trace.filter(value => value.event === "export.frame.delivered").length})),
+    failure: receipt.failure?.split("\n")[0], errors: receipt.errors, externalRequests: receipt.externalRequests }, null, 2));
+}

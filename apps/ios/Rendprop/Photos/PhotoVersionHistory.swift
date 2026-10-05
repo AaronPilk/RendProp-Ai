@@ -78,6 +78,16 @@ enum PhotoVersionHistory {
             default: return "AI edit"
             }
         }
+
+        /// An old import may lack an orig-* file, but its retained pre-edit
+        /// version is still a useful, explicitly unverified review source.
+        func reviewSourceFile(in index: Index) -> String {
+            if let originalFile { return originalFile }
+            if let stagingBaseID, let base = index.versions[stagingBaseID] { return base.imageFile }
+            if let sourceID, let source = index.versions[sourceID] { return source.imageFile }
+            if let parentID, let parent = index.versions[parentID] { return parent.imageFile }
+            return imageFile
+        }
     }
 
     struct Index: Codable, Sendable {
@@ -119,16 +129,35 @@ enum PhotoVersionHistory {
             guard let version = versions[id], !hiddenFamilies.contains(version.familyID) else { return false }
             return (listingSelections ?? current)[version.familyID] == id
         }
+
+        /// A Latest tile may have a decluttered predecessor on the listing.
+        /// Resolve that family's choice from metadata, even when a different
+        /// family's selected image is missing and publication must stop.
+        func publicationChoice(for id: String) -> Version? {
+            guard let version = versions[id], !hiddenFamilies.contains(version.familyID),
+                  let selected = (listingSelections ?? current)[version.familyID] else { return nil }
+            return versions[selected]
+        }
+        func publicationLabel(for id: String) -> String? {
+            guard let chosen = publicationChoice(for: id) else { return nil }
+            if chosen.id == id { return "Selected for listing" }
+            if chosen.effects.contains("stage") { return "Staged version on listing" }
+            if chosen.effects.contains("declutter") { return "Decluttered version on listing" }
+            if !chosen.effects.isEmpty { return "Edited version on listing" }
+            return "Earlier version on listing"
+        }
     }
 
     enum Failure: LocalizedError {
-        case invalidHistory, missingImage, duplicate, changedVersion
+        case invalidHistory, missingImage, duplicate, changedVersion, reviewRequired, coverNotSelected
         var errorDescription: String? {
             switch self {
             case .invalidHistory: return "This photo's saved history couldn't be read. Its files are still safe. Reopen Photos or contact support before editing it."
             case .missingImage: return "A source photo is missing from this phone. Import it again before editing."
             case .duplicate: return "That photo version is already saved. Reopen Photos to see it."
             case .changedVersion: return "This photo changed while the edit was running. Reopen Photos before editing again."
+            case .reviewRequired: return "Review this staged photo against its original before using it on the listing or as its cover."
+            case .coverNotSelected: return "The cover isn't among the photos selected for this listing. Open Photos and choose a cover from a reviewed version. Your published gallery has been kept."
             }
         }
     }
@@ -138,7 +167,7 @@ enum PhotoVersionHistory {
     private static func safeName(_ value: String) -> Bool {
         !value.isEmpty && value != "." && value != ".." && !value.contains("/") && !value.contains("\\")
     }
-    private static func loadUnlocked(directory: URL) throws -> Index {
+    private static func readIndex(directory: URL) throws -> Index {
         let url = directory.appendingPathComponent(filename)
         guard FileManager.default.fileExists(atPath: url.path) else { return Index() }
         do {
@@ -153,6 +182,35 @@ enum PhotoVersionHistory {
             return index
         } catch { throw Failure.invalidHistory }
     }
+    /// Adopt every legacy sibling together before the first indexed change.
+    /// Known hidden/superseded files are never inferred as new families. Merely
+    /// having an orig-* filename does not verify an unaltered source.
+    private static func loadUnlocked(directory: URL) throws -> Index {
+        var index = try readIndex(directory: directory)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return index }
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .creationDateKey])
+        let knownFiles = Set(index.versions.values.map(\.imageFile))
+        let names = Set(files.map(\.lastPathComponent))
+        for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            let name = file.lastPathComponent
+            guard name.hasPrefix("enh-"), !knownFiles.contains(name),
+                  ["jpg", "jpeg", "png", "heic", "webp"].contains(file.pathExtension.lowercased()) else { continue }
+            let values = try file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .creationDateKey])
+            guard values.isRegularFile == true, (values.fileSize ?? 0) > 0 else { continue }
+            let id = String(file.deletingPathExtension().lastPathComponent.dropFirst(4))
+            guard safeName(id), index.versions[id] == nil else { throw Failure.invalidHistory }
+            let preferred = "orig-\(id).jpg"
+            let prior = names.contains(preferred) ? preferred : names.sorted().first { $0.hasPrefix("orig-\(id).") }
+            let version = Version(id: id, familyID: id, imageFile: name, originalFile: prior,
+                originalVerified: false, parentID: nil, sourceID: nil, stagingBaseID: nil,
+                edit: "legacy", style: nil, effects: [], sourceHistoryKnown: false,
+                disclosure: nil, provenanceID: nil, originalAssetID: nil, serverListingID: nil,
+                provenanceRecorded: false, createdAt: values.creationDate ?? .distantPast)
+            index.versions[id] = version; index.current[id] = id
+            index.listingSelections?[id] = id
+        }
+        return index
+    }
     static func load(directory: URL) throws -> Index {
         lock.lock(); defer { lock.unlock() }
         return try loadUnlocked(directory: directory)
@@ -161,7 +219,7 @@ enum PhotoVersionHistory {
     /// is corrupt or a selected file is missing. nil means legacy/no index.
     static func publicationVersions(directory: URL) throws -> [Version]? {
         lock.lock(); defer { lock.unlock() }
-        guard FileManager.default.fileExists(atPath: directory.appendingPathComponent(filename).path) else { return nil }
+        guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
         let index = try loadUnlocked(directory: directory)
         return try (index.listingSelections ?? index.current).compactMap { family, id in
             guard !index.hiddenFamilies.contains(family) else { return nil }
@@ -169,6 +227,24 @@ enum PhotoVersionHistory {
             try requireImage(version.imageFile, directory: directory)
             return version
         }
+    }
+
+    /// Cover fallback must use a real selected image, not the latest staged
+    /// workspace. One unavailable family doesn't hide all other candidates.
+    static func availableCoverVersion(directory: URL) throws -> Version? {
+        let index = try load(directory: directory)
+        return (index.listingSelections ?? index.current).compactMap { family, id -> Version? in
+            guard !index.hiddenFamilies.contains(family), let version = index.versions[id],
+                  (try? requireImage(version.imageFile, directory: directory)) != nil else { return nil }
+            return version
+        }.sorted { $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.id > $1.id }.first
+    }
+
+    static func familyContains(id: String, imageFile: String?, directory: URL) throws -> Bool {
+        guard let imageFile else { return false }
+        let index = try load(directory: directory)
+        guard let version = index.versions[id] else { return false }
+        return index.versions.values.contains { $0.familyID == version.familyID && $0.imageFile == imageFile }
     }
     private static func save(_ index: Index, directory: URL,
                              write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws {
@@ -287,13 +363,14 @@ enum PhotoVersionHistory {
 
     /// Select a saved version without generating again or discarding later edits.
     /// Only a complete retained image can become the listing's current version.
-    static func select(id: String, directory: URL) throws {
+    static func select(id: String, directory: URL, reviewed: Bool = false) throws {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
         guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID) else {
             throw Failure.changedVersion
         }
         try requireImage(version.imageFile, directory: directory)
+        guard reviewed || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
         index.current[version.familyID] = id
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.listingSelections?[version.familyID] = id
@@ -302,15 +379,50 @@ enum PhotoVersionHistory {
 
     /// Choosing the public photo doesn't replace the editing workspace's latest
     /// version. Browsing/exporting a saved edit never calls this operation.
-    static func selectForPublication(id: String, directory: URL) throws {
+    static func selectForPublication(id: String, directory: URL, reviewed: Bool = false) throws {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
         guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID) else {
             throw Failure.changedVersion
         }
         try requireImage(version.imageFile, directory: directory)
+        guard reviewed || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.listingSelections?[version.familyID] = id
+        try save(index, directory: directory)
+    }
+
+    /// Cloud originals remain explicitly unverified; staged imports start as
+    /// previews with their retained source selected until reviewed on this phone.
+    static func registerImport(id: String, imageFile: String, originalFile: String,
+                               staged: Bool, altered: Bool, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        // Read first, before legacy adoption can misclassify the imported output.
+        var index = try readIndex(directory: directory)
+        if let existing = index.versions[id] {
+            guard !index.hiddenFamilies.contains(existing.familyID) else { throw Failure.changedVersion }
+            guard existing.imageFile == imageFile else { throw Failure.duplicate }
+            return
+        }
+        guard safeName(id) else { throw Failure.invalidHistory }
+        try requireImage(imageFile, directory: directory); try requireImage(originalFile, directory: directory)
+        let baseID = id + "-source"
+        guard index.versions[baseID] == nil else { throw Failure.duplicate }
+        let source = Version(id: baseID, familyID: id, imageFile: originalFile, originalFile: originalFile,
+            originalVerified: false, parentID: nil, sourceID: nil, stagingBaseID: nil,
+            edit: "legacy", style: nil, effects: [], sourceHistoryKnown: false, disclosure: nil,
+            provenanceID: nil, originalAssetID: nil, serverListingID: nil, provenanceRecorded: false, createdAt: Date())
+        let effects = staged ? ["stage"] : altered ? ["cloud-edit"] : []
+        let output = Version(id: id, familyID: id, imageFile: imageFile, originalFile: originalFile,
+            originalVerified: false, parentID: baseID, sourceID: baseID, stagingBaseID: staged ? baseID : nil,
+            edit: staged ? "stage" : altered ? "cloud-edit" : "legacy", style: nil, effects: effects,
+            sourceHistoryKnown: false, disclosure: nil, provenanceID: nil, originalAssetID: nil,
+            serverListingID: nil, provenanceRecorded: false, createdAt: Date())
+        if index.listingSelections == nil { index.listingSelections = index.current }
+        index.versions[baseID] = source; index.versions[id] = output; index.current[id] = id
+        index.listingSelections?[id] = staged || altered ? baseID : id
+        // Save the new metadata before adopting other legacy families; reads
+        // reconcile them as a set and the next change makes that set durable.
         try save(index, directory: directory)
     }
 

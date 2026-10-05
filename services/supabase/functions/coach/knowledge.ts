@@ -46,7 +46,8 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Signing in — what needs an account",
-    source: "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
+    source:
+      "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
     fact:
       "No account is required to record, edit, build or publish a tour, or to use the AI Photo " +
       "Studio, reels, aerial intros and floor plans. The app connects through an anonymous " +
@@ -67,7 +68,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "How AI-generated content is disclosed",
     source: "description.txt + support.html + UPLOAD-CONTRACT.md",
     fact:
-      "Every AI photo edit is labelled \"Virtually staged\" on the published tour, and the " +
+      'Every AI photo edit is labelled "Virtually staged" on the published tour, and the ' +
       "untouched original is published right beside it so anyone can compare. The AI aerial " +
       "intro is always disclosed as AI-generated, never presented as real drone footage. A " +
       "listing's Compliance section lists every AI asset with its disclosure and can export the " +
@@ -78,8 +79,8 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     source: "description.txt + features.html",
     fact:
       "One tap each for: a blue sky, a twilight sky, a green lawn, a tidied (decluttered) room, " +
-      "or added furniture (virtual staging). A free-text \"custom\" edit is also available, and " +
-      "an \"improve my prompt\" button sharpens rough wording first. Every edit is a COPY — the " +
+      'or added furniture (virtual staging). A free-text "custom" edit is also available, and ' +
+      'an "improve my prompt" button sharpens rough wording first. Every edit is a COPY — the ' +
       "untouched original photo is always kept and published alongside it, never replaced.",
   },
   {
@@ -102,12 +103,15 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Floor plans — what they do",
-    source: "description.txt + features.html + support.html",
+    source:
+      "FloorMeasurementsView.swift + floor-plan-measurements handoff + support.html",
     fact:
-      "Scan a room in 3D with RoomPlan by walking it with the phone — this needs an iPhone with " +
-      "a LiDAR sensor. Any other iPhone can instead upload a floor plan the agent already has " +
-      "(PDF or image) and skip the scan entirely. Either way the output is clean and labelled: " +
-      "rooms, dimensions and furniture footprints, no clutter.",
+      "Open a listing's Floor plan card → Measurements. Draw a floor outline by entering each " +
+      "wall's length and direction, or enter rectangular room dimensions. Review the area " +
+      "worksheet and export an image or PDF. Garage, porch and unfinished areas stay separate; " +
+      "open-below areas are deducted only from their chosen finished outline. Calculated closing " +
+      "walls and phone estimates need checking. These totals do not set advertised living area. " +
+      "LiDAR phones can also scan rooms with RoomPlan; any phone can upload an existing PDF or image.",
   },
   {
     topic: "Filming tips for a good walkthrough",
@@ -124,7 +128,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     source: "description.txt + INDUSTRY-LOGIC.md + features.html",
     fact:
       "Rendprop ships modes for real estate, event venues, restaurants and bars, retail stores, " +
-      "and gyms and studios (plus a general \"other business\" mode). Switching the business " +
+      'and gyms and studios (plus a general "other business" mode). Switching the business ' +
       "type — from the menu at the top-left of Home — re-themes the whole app: the fields to " +
       "fill in, the words on screen, the area tags in the room tagger, and the sample tour.",
   },
@@ -141,7 +145,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     source: "support.html + description.txt",
     fact:
       "Subscriptions are sold and billed by Apple, so they are managed through Apple: in the " +
-      "app, Settings → Plan & usage → \"Manage subscription\" opens the same sheet as the " +
+      'app, Settings → Plan & usage → "Manage subscription" opens the same sheet as the ' +
       "device's own Settings → your name → Subscriptions → Rendprop. Cancelling stops the NEXT " +
       "renewal — the plan keeps working until the end of the period already paid for. Deleting " +
       "the app does NOT cancel a subscription. Refunds are handled by Apple at " +
@@ -162,7 +166,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "Deleting an account",
     source: "SettingsView.swift deleteAccount + me/index.ts handleDelete",
     fact:
-      "In the app: Settings → \"Your data\" → \"Delete account\". Guests using an anonymous " +
+      'In the app: Settings → "Your data" → "Delete account". Guests using an anonymous ' +
       "session also have a server account: this is not a local-only wipe. Account deletion " +
       "requests removal of that account and its solo-workspace data; the phone clears its " +
       "local data after server confirmation. Shared-team data is not all deleted with your " +
@@ -196,10 +200,10 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Contacting support",
-    source: "support.html + SettingsView's own \"Contact support\" row",
+    source: 'support.html + SettingsView\'s own "Contact support" row',
     fact:
       "A person answers support email directly — there is no ticket bot. It is the same address " +
-      "as the app's own Settings → \"Contact support\" row. Billing and refunds go through Apple " +
+      'as the app\'s own Settings → "Contact support" row. Billing and refunds go through Apple ' +
       "at reportaproblem.apple.com; everything else about the app or a plan goes to support.",
   },
 ];
@@ -221,7 +225,14 @@ export const PLAN_ALLOWANCES: Array<{
 }> = [
   { plan: "Starter", renders: 4, photoEdits: 100, reels: 6, aerials: 2 },
   { plan: "Pro", renders: 10, photoEdits: 200, reels: 12, aerials: 4 },
-  { plan: "Team", renders: 25, photoEdits: 400, reels: 25, aerials: 8, seats: 2 },
+  {
+    plan: "Team",
+    renders: 25,
+    photoEdits: 400,
+    reels: 25,
+    aerials: 8,
+    seats: 2,
+  },
 ];
 
 /** One line per plan, e.g. "Pro — 10 tour renders, 200 AI photo edits, 12 reels, 4 aerial intros a month." */
@@ -243,8 +254,9 @@ export function knowledgeBlock(): string {
     facts,
     "",
     "• Plan allowances (NEVER state a price — every price comes from the App Store, never from " +
-      "you): " + allowances + " An eligible 7-day introductory trial starts only after the " +
-      "user selects a subscription and confirms Apple's purchase sheet, never on signup. For " +
-      "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
+    "you): " + allowances +
+    " An eligible 7-day introductory trial starts only after the " +
+    "user selects a subscription and confirms Apple's purchase sheet, never on signup. For " +
+    "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
   ].join("\n");
 }

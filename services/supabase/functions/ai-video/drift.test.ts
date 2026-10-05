@@ -708,7 +708,10 @@ Deno.test("wiring: /ai-video/status stays backward compatible", () => {
     "the legacy fal path and the routed path — a routed job is not the unguarded one",
   );
   // The processing and failed shapes are untouched.
-  assertStringIncludes(INDEX_SRC, 'return json({ status: "failed", error: failMsg });');
+  assertStringIncludes(
+    INDEX_SRC,
+    'return json({ status: "failed", error: "The video service could not complete this generation.",',
+  );
 });
 
 Deno.test("wiring: the grounded aerial no longer builds a rise_reveal prompt", () => {

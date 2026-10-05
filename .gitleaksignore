@@ -13,3 +13,19 @@ b886a3484c83815ce01105b6ff96b5d5c38b9754:services/supabase/functions/ai-video/co
 # older-reader model fixture. Exact findings only; neither line is a credential.
 f8a6074dbc5ae0965fdb1e0722c4f948778d37a6:apps/ios/tests/FloorMeasurementsTests.swift:generic-api-key:621
 f8a6074dbc5ae0965fdb1e0722c4f948778d37a6:tools/audit/floor-measurement-sync-20261004/LegacyModels.swift.template:generic-api-key:127
+# Exact historical evidence false positives in 3653bb3: the four SHA-256
+# digests were recomputed from their source files and matched. Current evidence
+# uses separate path/sha256 fields, preserving every digest without the API-name
+# heuristic. These entries apply only to the original commit, file, rule and line.
+3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/CLAUDE-AUDIT-EVIDENCE-20261004.json:generic-api-key:12
+3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/CLAUDE-AUDIT-EVIDENCE-20261004.json:generic-api-key:15
+3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/CLAUDE-AUDIT-EVIDENCE-20261004.json:generic-api-key:16
+3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/CLAUDE-AUDIT-EVIDENCE-20261004.json:generic-api-key:28
+# Exact historical evidence false positives: four UUID values recorded under
+# the PostgreSQL reservation RPC's "key" field. The offline test harness creates
+# them with uuid.uuid4(); every value matched its saved synthetic PG receipt.
+# Current evidence keeps the exact UUID in a field/uuid requestIdentifier object.
+3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/PROVIDER-DISPATCH-EVIDENCE-20261004.json:generic-api-key:117
+3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/PROVIDER-DISPATCH-EVIDENCE-20261004.json:generic-api-key:123
+3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/PROVIDER-DISPATCH-EVIDENCE-20261004.json:generic-api-key:127
+3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/PROVIDER-DISPATCH-EVIDENCE-20261004.json:generic-api-key:145

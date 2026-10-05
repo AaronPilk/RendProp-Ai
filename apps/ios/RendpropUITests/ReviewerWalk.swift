@@ -661,16 +661,15 @@ final class ReviewerWalk: XCTestCase {
     }
 
     /// The second tab. Its title is the current business type's plural
-    /// (`SpaceType.spaceNounCap + "s"`), which is "Homes" on the real-estate
-    /// default this walk accepts — but every other type is tried so a run that
-    /// picked something else still works.
+    /// (`SpaceType.spaceNounCap + "s"`), except real estate uses "Listings".
+    /// Every other type is tried so a run that picked something else still works.
     ///
     /// Tapped directly rather than through `openTab`: every label this screen
     /// shows also exists on the Home dashboard, so no text could confirm the
     /// switch really happened.
     @discardableResult
     private func openSpacesTab() -> Bool {
-        for title in ["Homes", "Venues", "Places", "Stores", "Studios", "Spaces"] {
+        for title in ["Listings", "Venues", "Places", "Stores", "Studios", "Spaces"] {
             let tab = app.tabBars.buttons[title]
             if tab.waitForExistence(timeout: 1.0) {
                 tab.tap()

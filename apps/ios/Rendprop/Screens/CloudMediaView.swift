@@ -197,16 +197,26 @@ struct CloudMediaView: View {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let name = "cloud-\(photo.id.uuidString)"
                 let originalDest = directory.appendingPathComponent("orig-\(name).\(original.ext)")
-                let enhancedDest = directory.appendingPathComponent("enh-\(name).\(enhanced.ext)")
+                // An interrupted metadata commit must not expose staged bytes
+                // through the legacy enh-* scanner as an ordinary photo.
+                let enhancedDest = directory.appendingPathComponent("cloud-photo-\(name).\(enhanced.ext)")
                 if !FileManager.default.fileExists(atPath: originalDest.path) { try FileManager.default.copyItem(at: original.url, to: originalDest) }
                 if !FileManager.default.fileExists(atPath: enhancedDest.path) { try FileManager.default.copyItem(at: enhanced.url, to: enhancedDest) }
+                try PhotoVersionHistory.registerImport(id: name, imageFile: enhancedDest.lastPathComponent,
+                    originalFile: originalDest.lastPathComponent, staged: photo.is_staged,
+                    altered: photo.is_altered != false, directory: directory)
                 guard let ownerID = actor.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
                 // Bind the response's genuine ID to the imported bytes, never to
                 // a filename that happens to contain a UUID.
                 try await CloudPhotoReferences.shared.save(sourceID: photo.id, fileURL: enhanced.url,
                     ownerID: ownerID, orgID: org, listingID: sid)
                 guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified else { throw CloudSyncError.identityChanged }
-                if current.mainPhotoURL == nil { model.modify(localID, sync: false) { $0.mainPhotoRelPath = FileStore.relativePath(for: enhancedDest) } }
+                if current.mainPhotoURL == nil,
+                   let cover = try PhotoVersionHistory.availableCoverVersion(directory: directory) {
+                    model.modify(localID, sync: false) {
+                        $0.mainPhotoRelPath = FileStore.relativePath(for: directory.appendingPathComponent(cover.imageFile))
+                    }
+                }
                 imported.insert(photo.id); notice = "Photo and its original are available in this listing's Photo Studio."
             } catch is CancellationError { return }
             catch { if auth.userID == actor { self.error = error is CloudSyncError ? error.localizedDescription : "The photo couldn't be saved. Refresh its private link and try again." } }

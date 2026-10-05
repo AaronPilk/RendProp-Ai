@@ -68,7 +68,7 @@ function publicListingDetails(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).filter(([key]) =>
-      !key.toLowerCase().startsWith("floor_measurements_")
+      !key.toLowerCase().replaceAll("_", "").startsWith("floormeasurements")
     ),
   );
 }

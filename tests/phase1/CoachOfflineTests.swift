@@ -7,13 +7,24 @@ import Combine
 typealias ObservableObject = Combine.ObservableObject
 typealias Published<Value> = Combine.Published<Value>
 enum ProjectFeature: Equatable { case tour, photos, reel, floorPlan, aerial }
-struct Listing { let id: UUID; let address: String; var shareURL: String? = nil }
+struct Listing {
+    let id: UUID; let address: String; var shareURL: String? = nil
+    var serverOrgID: UUID? = nil; var cloudDraftOrgID: UUID? = nil
+}
 struct Asset { var roomTags: [String] = [] }
 enum SpaceType: String {
     case realEstate = "real_estate"
     static var current: Self { .realEstate }
     var spaceNoun: String { "home" }
 }
+enum Config { static let useLiveBackend = false }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var userID: String? = nil
+    var syncSessionRevision: UInt64 = 0
+}
+enum WorkspaceContext { static let selectedOrgID: UUID? = nil }
+enum CloudSyncError: Error { case identityChanged }
 @MainActor final class AppModel {
     var listings: [Listing] = []
     var realProjects: [Listing] { listings }

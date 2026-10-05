@@ -36,7 +36,7 @@ enum ListingWireDetails {
     static func merged(_ listing: Listing) throws -> [String: String] {
         var details = listing.details ?? [:]
         if let plan = listing.floorMeasurements {
-            details[FloorMeasurementPlan.wireKey] = try plan.encodedWireValue()
+            details = FloorMeasurementPlan.replacingWire(in: details, with: try plan.encodedWireValue())
         }
         if let allow = listing.allowSearchIndexing {
             details[Listing.searchIndexingKey] = allow ? "true" : "false"
@@ -56,6 +56,18 @@ enum ListingWireDetails {
     struct Identity: Equatable { let userID: String?; let revision: UInt64 }
     static func fingerprint(_ listing: Listing) throws -> String {
         try fingerprintFacts(listing, details: ListingWireDetails.merged(listing))
+    }
+    static func factsFingerprint(_ listing: Listing) throws -> String {
+        try fingerprintFacts(listing, details: ListingWireDetails.merged(listing).filter {
+            !FloorMeasurementPlan.isPrivateKey($0.key)
+        })
+    }
+    static func prepare(_ listing: inout Listing) throws {
+        // Capture both from the same first request. A retry cannot reconstruct
+        // the original ordinary facts from today's potentially edited draft.
+        guard listing.cloudCreateFingerprint == nil else { return }
+        listing.cloudCreateFingerprint = try fingerprint(listing)
+        listing.cloudCreateFactsFingerprint = try factsFingerprint(listing)
     }
     private static func fingerprintFacts(_ listing: Listing, details: [String: String]) throws -> String {
         let facts: [String: Any] = ["address": listing.address, "space": listing.spaceType.rawValue,
@@ -92,28 +104,48 @@ enum ListingWireDetails {
             throw CancellationError()
         }
         if let existing = latest.serverID { return existing }
-        // Preserve every current field and device file. Even a replay may have
-        // older facts, so a PATCH of the newest local truth follows binding.
+        let unchanged = try snapshot.cloudCreateFingerprint.map { try matchesFingerprint(latest, original: $0) } ?? false
+        let factsUnchanged = try snapshot.cloudCreateFactsFingerprint.map { try factsFingerprint(latest) == $0 } ?? false
+        if !unchanged, latest.measurementSync == nil, let plan = latest.floorMeasurements {
+            try FloorMeasurementSync.stage(plan, in: &latest)
+        }
+        // Preserve device files and bind once. Measurement edits use their own
+        // CAS queue; they must never cause a stale ordinary-facts PATCH.
         latest.serverID = created.serverID ?? created.id
         latest.serverOrgID = created.serverOrgID
         latest.cloudSyncOwnerID = identity.userID.flatMap(UUID.init(uuidString:))
         latest.cloudDetachedServerID = nil
         latest.cloudUnavailable = false
-        if created.cloudCreateReplayed == true, let original = snapshot.cloudCreateFingerprint, try matchesFingerprint(latest, original: original) {
+        if created.cloudCreateReplayed == true, unchanged {
             // A receipt was lost and the office has since edited the row.
             // With no newer phone edit, adopt those facts instead of PATCHing
             // the old create payload back over the office's work.
             latest.address = created.address; latest.beds = created.beds; latest.baths = created.baths
             latest.sqft = created.sqft; latest.price = created.price; latest.tagline = created.tagline
             latest.details = created.details; latest.zillowURL = created.zillowURL; latest.soldAt = created.soldAt
+            latest.status = created.status
             latest.floorMeasurements = created.floorMeasurements
+            latest.measurementSync = created.measurementSync
             latest.latitude = created.latitude; latest.longitude = created.longitude
             latest.spaceTypeRaw = created.spaceTypeRaw; latest.allowSearchIndexing = created.allowSearchIndexing
             latest.needsServerSync = false
+        } else if factsUnchanged {
+            latest.needsServerSync = false
+            FloorMeasurementSync.adoptFacts(from: created, current: &latest)
         } else {
             latest.needsServerSync = true
+            if created.cloudCreateReplayed == true, snapshot.cloudCreateFactsFingerprint == nil,
+               latest.measurementSync?.pending == true {
+                // An old combined hash cannot distinguish a geometry edit from
+                // ordinary edits. Keep both locally until the person chooses.
+                latest.measurementSync?.factsReviewRequired = true
+            }
         }
-        latest.cloudCreateFingerprint = nil; latest.cloudCreateReplayed = nil
+        if latest.measurementSync?.pending == true {
+            // Creation included the snapshot plan; acknowledge only that exact value.
+            FloorMeasurementSync.acknowledge(submitted: snapshot, receipt: created, current: &latest)
+        }
+        latest.cloudCreateFingerprint = nil; latest.cloudCreateFactsFingerprint = nil; latest.cloudCreateReplayed = nil
         save(latest)
         return latest.serverID!
     }
@@ -242,7 +274,8 @@ enum CloudListingMerge {
         let remoteByID = Dictionary(uniqueKeysWithValues: remote.map { ($0.serverID!, $0) })
         var seen = Set<UUID>()
         var result: [Listing] = []
-        for existing in local {
+        for var existing in local {
+            FloorMeasurementSync.recoverLegacyPending(in: &existing)
             let detached = ownerID != nil && existing.cloudSyncOwnerID == ownerID ? existing.cloudDetachedServerID : nil
             guard !existing.isSample, let sid = existing.serverID ?? detached else { result.append(existing); continue }
             guard seen.insert(sid).inserted else { throw CloudSyncError.invalidResponse }
@@ -270,7 +303,18 @@ enum CloudListingMerge {
                 merged.address = fresh.address; merged.beds = fresh.beds; merged.baths = fresh.baths
                 merged.sqft = fresh.sqft; merged.price = fresh.price; merged.tagline = fresh.tagline
                 merged.details = fresh.details; merged.spaceTypeRaw = fresh.spaceTypeRaw
-                merged.floorMeasurements = fresh.floorMeasurements
+                if existing.measurementSync?.pending == true {
+                    // Adopt unrelated remote facts while retaining the unsynced plan and its CAS base.
+                    if let raw = FloorMeasurementPlan.wireValue(in: existing.details) {
+                        merged.details = FloorMeasurementPlan.replacingWire(in: merged.details, with: raw)
+                    }
+                } else {
+                    merged.floorMeasurements = fresh.floorMeasurements
+                    var state = fresh.measurementSync ?? FloorMeasurementSyncState(
+                        expected: FloorMeasurementPlan.wireValue(in: fresh.details))
+                    state.savedLocalCopy = existing.measurementSync?.savedLocalCopy
+                    merged.measurementSync = state
+                }
                 merged.soldAt = fresh.soldAt; merged.zillowURL = fresh.zillowURL
                 merged.latitude = fresh.latitude; merged.longitude = fresh.longitude
                 merged.allowSearchIndexing = fresh.allowSearchIndexing

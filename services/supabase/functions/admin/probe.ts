@@ -334,7 +334,7 @@ export const PROBES: Probe[] = [
   {
     key: "fal",
     env_names: ["FAL_KEY"],
-    how: "GET api.fal.ai/v1/models?limit=1 — model index, no generation. Public without a key, but a key that IS sent gets validated (bad key ⇒ 401), and this probe always sends one",
+    how: "GET api.fal.ai/v1/models?limit=1 — validates the key only. Balance, account lock and generation access remain unverified; no generation is submitted",
     doc: "https://fal.ai/docs/platform-apis/v1/models",
     async run(signal) {
       const { status, json } = await getJson(
@@ -345,8 +345,12 @@ export const PROBES: Probe[] = [
       if (status === 200) {
         const models = field(json, "models");
         return {
-          ok: true,
-          detail: Array.isArray(models) ? { models_visible: models.length } : null,
+          // A valid key can belong to a locked/exhausted account. A $0 catalog
+          // read cannot prove this account can generate; never display green.
+          ok: null,
+          message: "Key authenticated; check fal Billing for balance and account lock status.",
+          detail: { key_authenticated: 1, generation_verified: 0,
+            ...(Array.isArray(models) ? { models_visible: models.length } : {}) },
         };
       }
       return httpFailure(status, field(json, "error.message") ?? field(json, "detail"));

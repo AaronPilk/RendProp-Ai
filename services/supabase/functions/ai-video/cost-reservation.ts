@@ -92,8 +92,35 @@ export async function submitReservedVideo<T extends { id: string }>(
         attempt.step.provider !== step.provider || attempt.step.model !== step.model) {
       throw new Error("Unconfirmed provider receipt");
     }
-  } catch {
-    // No release/allowance refund: a thrown POST does not prove non-allocation.
+  } catch (error) {
+    const details = error instanceof HttpError ? error.details : undefined;
+    const status = details?.provider_status;
+    const errorClass = details?.error_class;
+    const rejected = details?.dispatch_rejected === true && typeof status === "number" &&
+      [0, 400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(status);
+    console.error("app video submission failed", {
+      provider: step.provider, model: step.model,
+      provider_status: typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,
+      error_class: typeof errorClass === "string" && ["upstream", "validation", "nsfw", "rate_limit", "timeout", "other"].includes(errorClass) ? errorClass : "other",
+      dispatch_outcome: rejected ? "rejected" : "unconfirmed",
+      rejection_phase: rejected && status === 0 ? "before_dispatch" : rejected ? "provider_answer" : null,
+    });
+    if (rejected) {
+      // A definitive refusal did not create a billable job. Release must commit
+      // before the route refunds the allowance. Failed release stays fenced.
+      let releaseConfirmed = false;
+      try {
+        const released = await deps.rpc("app_video_cost_release_rejected", {
+          p_actor: options.actorId, p_org: options.orgId, p_key: options.key,
+          p_provider_status: status, p_error_class: errorClass,
+        });
+        releaseConfirmed = !released.error && !!released.data && typeof released.data === "object" &&
+          (released.data as { released?: unknown }).released === true;
+      } catch { /* Retain the hold when the release could not be confirmed. */ }
+      if (releaseConfirmed) throw error;
+      console.error("app video rejected submission release unavailable; priced hold retained");
+    }
+    // Transport errors, 5xx and malformed acceptance never authorize release.
     throw new VideoDispatchUnconfirmed();
   }
   try {

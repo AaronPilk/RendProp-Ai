@@ -47,8 +47,21 @@
 //     direction — only ids, counts, provider/model names and error classes.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, assertPaidAiIdentity, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
+import {
+  assert,
+  HttpError,
+  json,
+  pathSegments,
+  readJson,
+  respondError,
+} from "../_shared/http.ts";
+import {
+  adminClient,
+  assertPaidAiIdentity,
+  getUser,
+  orgForUser,
+  preferredOrg,
+} from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import { recordRoutedAiCost } from "../_shared/ledger.ts";
@@ -59,7 +72,14 @@ import { ProviderError } from "../_shared/providers/common.ts";
 import { anthropicMessages } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
 
-import { type CoachContext, type CoachListingCtx, buildUserTurn, spaceTypeOf, systemInstruction } from "./prompt.ts";
+import {
+  buildUserTurn,
+  type CoachContext,
+  type CoachListingCtx,
+  screenOf,
+  spaceTypeOf,
+  systemInstruction,
+} from "./prompt.ts";
 import { parseCoachOutput } from "./actions.ts";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
@@ -83,7 +103,15 @@ const MAX_MESSAGE_CHARS = 1200;
 
 const MAX_LISTINGS = 25;
 const MAX_TITLE_CHARS = 120;
-const KNOWN_PLANS = ["free", "trial", "starter", "solo", "pro", "team", "brokerage"] as const;
+const KNOWN_PLANS = [
+  "free",
+  "trial",
+  "starter",
+  "solo",
+  "pro",
+  "team",
+  "brokerage",
+] as const;
 
 // Where the coach was opened from. A CLOSED SET, like KNOWN_PLANS and the
 // action enum — not a length-capped free string. `screen` is a hint to the
@@ -93,7 +121,8 @@ const KNOWN_PLANS = ["free", "trial", "starter", "solo", "pro", "team", "brokera
 // which is exactly what the events vocabulary + scrubber exist to prevent for
 // analytics. Anything unrecognised becomes null. Add a value here when the app
 // adds an entry point (apps/ios/Rendprop/Coach/CoachView.swift call sites).
-const KNOWN_SCREENS = ["home", "settings"] as const;
+// The complete native AskAIScreen vocabulary is kept in prompt.ts and tested
+// against the Swift enum. It remains a closed set, never arbitrary ledger text.
 
 // ── The two-step fallback (see header, point 1) — MUST match migration
 // 0023_coach_routes.sql's seeded rows exactly, so the flag-off path and the
@@ -136,10 +165,16 @@ const OPENAI_FALLBACK: RouteStep = {
  */
 async function chooseChain(plan: string): Promise<RouteStep[]> {
   try {
-    const steps = await resolveRoute("coach.chat", { plan, needs: ["text", "chat"] });
+    const steps = await resolveRoute("coach.chat", {
+      plan,
+      needs: ["text", "chat"],
+    });
     if (steps.length > 0) return steps; // used AS RETURNED — never re-filtered
   } catch (e) {
-    console.error("coach: resolveRoute threw; using the two-step fallback:", e instanceof Error ? e.message : String(e));
+    console.error(
+      "coach: resolveRoute threw; using the two-step fallback:",
+      e instanceof Error ? e.message : String(e),
+    );
   }
   return [ANTHROPIC_FALLBACK, OPENAI_FALLBACK];
 }
@@ -224,7 +259,9 @@ function cleanListings(raw: unknown): CoachListingCtx[] {
     seen.add(id);
     out.push({
       id,
-      title: typeof o.title === "string" ? o.title.trim().slice(0, MAX_TITLE_CHARS) : "",
+      title: typeof o.title === "string"
+        ? o.title.trim().slice(0, MAX_TITLE_CHARS)
+        : "",
       hasVideo: o.has_video === true,
       roomTags: nonNegInt(o.room_tags),
       hasTour: o.has_tour === true,
@@ -243,8 +280,7 @@ function cleanPlan(raw: unknown): string {
 }
 
 function cleanScreen(raw: unknown): string | null {
-  const s = String(raw ?? "").trim().toLowerCase();
-  return (KNOWN_SCREENS as readonly string[]).includes(s) ? s : null;
+  return screenOf(raw);
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────────
@@ -272,7 +308,22 @@ Deno.serve(async (req) => {
 
     // Resolve membership before any paid work. Client plan hints cannot select
     // a premium route, and a missing workspace cannot produce unaccounted spend.
-    const orgId = await orgForUser(user.id, preferredOrg(req));
+    const requestedOrg = preferredOrg(req)?.trim().toLowerCase();
+    assert(
+      requestedOrg,
+      409,
+      "Choose a workspace before using online Coach.",
+      "conflict",
+    );
+    assert(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+        requestedOrg,
+      ),
+      400,
+      "Invalid workspace identity.",
+      "validation",
+    );
+    const orgId = await orgForUser(user.id, requestedOrg);
     await assertPaidAiIdentity(user, orgId);
     const plan = await routingPlan(orgId);
     const space = spaceTypeOf(body.space_type);
@@ -285,14 +336,44 @@ Deno.serve(async (req) => {
 
     // Rate limits, PER USER, charged before the provider call (same order as
     // every other durable limiter in this codebase) — see header, point 2.
-    if (!(await durableRateLimit(`coachburst:${user.id}`, BURST_MAX_PER_WINDOW, BURST_WINDOW_SECONDS))) {
-      throw new HttpError(429, "That's a lot of messages at once — try again in a few minutes.", "rate_limited");
+    if (
+      !(await durableRateLimit(
+        `coachburst:${user.id}`,
+        BURST_MAX_PER_WINDOW,
+        BURST_WINDOW_SECONDS,
+      ))
+    ) {
+      throw new HttpError(
+        429,
+        "That's a lot of messages at once — try again in a few minutes.",
+        "rate_limited",
+      );
     }
-    if (!(await durableRateLimit(`coachday:${user.id}`, DAY_MAX_PER_WINDOW, DAY_WINDOW_SECONDS))) {
-      throw new HttpError(429, "You've reached today's message limit for the coach — try again tomorrow.", "rate_limited");
+    if (
+      !(await durableRateLimit(
+        `coachday:${user.id}`,
+        DAY_MAX_PER_WINDOW,
+        DAY_WINDOW_SECONDS,
+      ))
+    ) {
+      throw new HttpError(
+        429,
+        "You've reached today's message limit for the coach — try again tomorrow.",
+        "rate_limited",
+      );
     }
-    if (!(await durableRateLimit(`coachorgday:${orgId}`, ORG_DAY_MAX_PER_WINDOW, DAY_WINDOW_SECONDS))) {
-      throw new HttpError(429, "Your workspace has reached today's coach message limit — try again tomorrow.", "rate_limited");
+    if (
+      !(await durableRateLimit(
+        `coachorgday:${orgId}`,
+        ORG_DAY_MAX_PER_WINDOW,
+        DAY_WINDOW_SECONDS,
+      ))
+    ) {
+      throw new HttpError(
+        429,
+        "Your workspace has reached today's coach message limit — try again tomorrow.",
+        "rate_limited",
+      );
     }
 
     const system = systemInstruction(space);
@@ -320,14 +401,24 @@ Deno.serve(async (req) => {
         // because "valid JSON" is not the same thing as "safe to execute".
         return await openaiChat(
           step,
-          [{ role: "user", content: [{ type: "input_text", text: `${system}\n\n---\n\n${userTurn}` }] }],
+          [{
+            role: "user",
+            content: [{
+              type: "input_text",
+              text: `${system}\n\n---\n\n${userTurn}`,
+            }],
+          }],
           { maxOutputTokens: MAX_TOKENS, json: true },
         );
       }
       // A future admin-added row this deploy doesn't know how to speak. "other"
       // (not "validation") so runChain() tries the NEXT step instead of
       // hard-failing the whole request over one unrecognised row.
-      throw new ProviderError(step.provider, "other", `coach.chat: no adapter for provider "${step.provider}" in this deploy`);
+      throw new ProviderError(
+        step.provider,
+        "other",
+        `coach.chat: no adapter for provider "${step.provider}" in this deploy`,
+      );
     });
 
     const output = parseCoachOutput(attempt.value, validListingIds);
@@ -348,7 +439,10 @@ Deno.serve(async (req) => {
         },
       });
     } catch (e) {
-      console.error("coach: ledger write failed (reply already computed):", e instanceof Error ? e.message : String(e));
+      console.error(
+        "coach: ledger write failed (reply already computed):",
+        e instanceof Error ? e.message : String(e),
+      );
     }
 
     return json({

@@ -33,7 +33,7 @@ def block(source, marker):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit", "discard-outline-only", "outline-fingerprint", "legacy-v2-accept", "drop-local-raw-mirror"])
+    parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit", "discard-outline-only", "outline-fingerprint", "legacy-v2-accept", "drop-local-raw-mirror", "omit-cas-base", "ignore-pending-measurements", "wrong-cas-workspace", "ignore-cas-conflict", "omit-facts-fingerprint", "ignore-facts-review", "skip-legacy-recovery", "ignore-cas-lineage", "overwrite-shared-backup", "compare-backup-wire-only", "retain-backup-after-new-edit"])
     args = parser.parse_args()
     out = Path(tempfile.mkdtemp(prefix="rendprop-floor-measurement-sync-", dir="/tmp"))
     source_bytes = {p: p.read_bytes() for p in [CLIENT, APP, SYNC, EDITOR]}
@@ -41,7 +41,7 @@ def main():
     actual_sync = sync
     tolerant_map = block(client, "    struct TolerantStringMap: Decodable")
     if args.inject_fault == "drop-wire":
-        before = "details[FloorMeasurementPlan.wireKey] = try plan.encodedWireValue()"
+        before = "details = FloorMeasurementPlan.replacingWire(in: details, with: try plan.encodedWireValue())"
         assert sync.count(before) == 1
         sync = sync.replace(before, "_ = plan")
     elif args.inject_fault == "drop-fingerprint":
@@ -71,6 +71,14 @@ def main():
         sync = sync.replace(before, """var rectanglesOnly = listing
         if rectanglesOnly.floorMeasurements?.rooms.isEmpty == true { rectanglesOnly.floorMeasurements = nil }
         return try fingerprintFacts(rectanglesOnly, details: ListingWireDetails.merged(rectanglesOnly))""")
+    elif args.inject_fault == "ignore-pending-measurements":
+        before = "if existing.measurementSync?.pending == true {"
+        assert sync.count(before) == 1
+        sync = sync.replace(before, "if false {")
+    elif args.inject_fault == "omit-facts-fingerprint":
+        before = "listing.cloudCreateFactsFingerprint = try factsFingerprint(listing)"
+        assert sync.count(before) == 1
+        sync = sync.replace(before, "listing.cloudCreateFactsFingerprint = nil")
     elif args.inject_fault == "rewrite-raw-keys":
         tolerant_map = '''    struct TolerantStringMap: Decodable {
         let value: [String: String]
@@ -95,6 +103,10 @@ def main():
     replacements = {
         "__CREATE__": block(client, "    func createListing(_ listing: Listing)"),
         "__UPDATE__": block(client, "    func updateListing(_ listing: Listing)"),
+        "__UPDATE_MEASUREMENTS__": block(client, "    func updateMeasurements(_ listing: Listing)"),
+        "__SAVE_MEASUREMENTS__": block(app, "    func saveMeasurements(_ plan: FloorMeasurementPlan,"),
+        "__RELOAD_SHARED__": block(app, "    func reloadSharedMeasurements(_ id: UUID,"),
+        "__CONFIRM_LOCAL__": block(app, "    func confirmLocalListingDetails(_ id: UUID)"),
         "__LISTING_BODY__": block(client, "    private func listingBody(_ l: Listing,"),
         "__MAP_LISTING__": block(client, "    private func mapListing(_ dto: ListingDTO)"),
         "__LISTING_DTO__": block(client, "    private struct ListingDTO: Decodable"),
@@ -110,9 +122,43 @@ def main():
         "__EDITOR_PERSIST__": block(source_bytes[EDITOR].decode(), "    private func persist(_ candidate: FloorMeasurementPlan)"),
     }
     if args.inject_fault == "drop-local-raw-mirror":
-        before = "details[FloorMeasurementPlan.wireKey] = wire"
-        assert replacements["__EDITOR_PERSIST__"].count(before) == 1
-        replacements["__EDITOR_PERSIST__"] = replacements["__EDITOR_PERSIST__"].replace(before, "_ = wire // injected missing raw snapshot mirror")
+        before = "try FloorMeasurementSync.stage(plan, in: &changed)"
+        assert replacements["__SAVE_MEASUREMENTS__"].count(before) == 1
+        replacements["__SAVE_MEASUREMENTS__"] = replacements["__SAVE_MEASUREMENTS__"].replace(before, before + "\n        changed.details?.removeValue(forKey: FloorMeasurementPlan.wireKey)")
+    if args.inject_fault == "omit-cas-base":
+        before = '"expected": state.expected as Any? ?? NSNull()'
+        assert replacements["__UPDATE_MEASUREMENTS__"].count(before) == 1
+        replacements["__UPDATE_MEASUREMENTS__"] = replacements["__UPDATE_MEASUREMENTS__"].replace(before, '"expected": NSNull()')
+    elif args.inject_fault == "wrong-cas-workspace":
+        before = 'org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id"'
+        assert replacements["__UPDATE_MEASUREMENTS__"].count(before) == 1
+        replacements["__UPDATE_MEASUREMENTS__"] = replacements["__UPDATE_MEASUREMENTS__"].replace(before, '"44444444-4444-4444-8444-444444444444", forHTTPHeaderField: "X-Org-Id"')
+    elif args.inject_fault == "ignore-cas-conflict":
+        before = "listings[i].measurementSync?.conflict = true"
+        assert replacements["__SYNC_LISTING__"].count(before) == 1
+        replacements["__SYNC_LISTING__"] = replacements["__SYNC_LISTING__"].replace(before, "listings[i].measurementSync?.conflict = false")
+    elif args.inject_fault == "ignore-facts-review":
+        before = "snapshot.measurementSync?.factsReviewRequired != true else {"
+        assert replacements["__SYNC_LISTING__"].count(before) == 1
+        replacements["__SYNC_LISTING__"] = replacements["__SYNC_LISTING__"].replace(before, "true else {")
+    elif args.inject_fault == "ignore-cas-lineage":
+        before = """guard current.measurementSync?.pending == true,
+                              current.measurementSync?.conflict != true,
+                              current.measurementSync?.expected == snapshot.measurementSync?.expected,
+                              FloorMeasurementPlan.wireValue(in: receipt.details) == FloorMeasurementPlan.wireValue(in: snapshot.details) else { return }"""
+        assert replacements["__SYNC_LISTING__"].count(before) == 1
+        replacements["__SYNC_LISTING__"] = replacements["__SYNC_LISTING__"].replace(before, "// injected missing current-queue lineage guard")
+    elif args.inject_fault in ["overwrite-shared-backup", "retain-backup-after-new-edit"]:
+        before = """state.savedLocalCopy = stillUsingSharedPlan
+            ? prior?.savedLocalCopy ?? localCopy
+            : localCopy ?? prior?.savedLocalCopy"""
+        assert replacements["__RELOAD_SHARED__"].count(before) == 1
+        after = "state.savedLocalCopy = localCopy" if args.inject_fault == "overwrite-shared-backup" else "state.savedLocalCopy = prior?.savedLocalCopy ?? localCopy"
+        replacements["__RELOAD_SHARED__"] = replacements["__RELOAD_SHARED__"].replace(before, after)
+    elif args.inject_fault == "compare-backup-wire-only":
+        before = "current.floorMeasurements == FloorMeasurementPlan.decodeWireValue(prior?.expected)"
+        assert replacements["__RELOAD_SHARED__"].count(before) == 1
+        replacements["__RELOAD_SHARED__"] = replacements["__RELOAD_SHARED__"].replace(before, "localCopy == prior?.expected")
     # The Listing DTO still uses snake-case conversion. Its freeform dictionary
     # must therefore preserve keys itself on both create and PATCH readback.
     for marker in ["json: try listingBody(listing, forPatch: false)", "json: try listingBody(listing, forPatch: true)"]:
@@ -137,6 +183,14 @@ def main():
     compiled_legacy.write_text(legacy)
     sources = [CLIENT, APP, SYNC, EDITOR] + models
     source_bytes.update({p: p.read_bytes() for p in models})
+    listing_model = models[0]
+    compiled_listing_text = source_bytes[listing_model].decode()
+    if args.inject_fault == "skip-legacy-recovery":
+        recovery = block(compiled_listing_text, "    static func recoverLegacyPending(in listing: inout Listing)")
+        compiled_listing_text = compiled_listing_text.replace(recovery, "    static func recoverLegacyPending(in listing: inout Listing) { return }")
+    compiled_listing = out / "Listing.swift"
+    compiled_listing.write_text(compiled_listing_text)
+    models[0] = compiled_listing
     receipt = {"networkCalls": 0, "cameraCalls": 0, "userFilesAccessed": 0, "productionMutations": 0,
                "injectedFault": args.inject_fault,
                "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(source_bytes[p]).hexdigest() for p in sources},
@@ -147,7 +201,9 @@ def main():
                "actualSyncSha256": hashlib.sha256(actual_sync.encode()).hexdigest(),
                "compiledSyncSha256": hashlib.sha256(sync.encode()).hexdigest(),
                "legacyReaderTemplateSha256": hashlib.sha256(legacy_bytes).hexdigest(),
-               "compiledLegacyReaderSha256": hashlib.sha256(legacy.encode()).hexdigest(), "commands": []}
+               "compiledLegacyReaderSha256": hashlib.sha256(legacy.encode()).hexdigest(),
+               "actualListingSha256": hashlib.sha256(source_bytes[listing_model]).hexdigest(),
+               "compiledListingSha256": hashlib.sha256(compiled_listing_text.encode()).hexdigest(), "commands": []}
     compile_command = ["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library", *map(str, models), str(compiled_sync), str(compiled_legacy), str(checks), "-o", str(out / "checks")]
     expected = {"drop-wire": "Typed plan overrides stale wire independently of generic details",
                 "drop-fingerprint": "Measurement-only edits change the create fingerprint",
@@ -155,10 +211,20 @@ def main():
                 "drop-replay-adopt": "Unedited replay adopts the office measurement plan",
                 "rewrite-raw-keys": "Actual DTO decoder retains the exact measurements wire key",
                 "legacy-ignore-edit": "Legacy fingerprint cannot hide a new typed measurement edit",
-                "discard-outline-only": "Outline-only plan survives actual create and PATCH body assembly",
+                "discard-outline-only": "Outline-only plan survives create assembly and stays out of generic PATCH",
                 "outline-fingerprint": "Outline-only edits change the actual create fingerprint",
                 "legacy-v2-accept": "Frozen v1 reader refuses version-two outlines instead of interpreting them as an empty rectangle plan",
-                "drop-local-raw-mirror": "Actual editor saves the exact encoded outline wire and typed plan atomically in the same Listing"}.get(args.inject_fault)
+                "drop-local-raw-mirror": "Actual measurement save mirrors typed geometry and exact raw wire atomically" , "omit-cas-base": "Actual measurement request contains only CAS base and value, never sqft/status/sold_at",
+                "ignore-pending-measurements": "Offline measurement refresh retains CAS state while adopting other shared facts",
+                "wrong-cas-workspace": "Actual measurement endpoint is bound to server listing and captured workspace",
+                "ignore-cas-conflict": "Conflicting measurement write retains local plan and surfaces resolution state",
+                "omit-facts-fingerprint": "First create captures ordinary facts intent separately from measurements",
+                "ignore-facts-review": "Unproven legacy listing facts never reach generic PATCH",
+                "skip-legacy-recovery": "Legacy pending geometry recovers exact CAS baseline before generic acknowledgement",
+                "ignore-cas-lineage": "Late CAS success or conflict cannot revive a queue replaced by shared reload",
+                "overwrite-shared-backup": "Sequential shared measurements then shared facts retain the original phone backup",
+                "compare-backup-wire-only": "Semantically identical shared JSON formatting does not replace the saved phone plan",
+                "retain-backup-after-new-edit": "New pending local geometry replaces the old backup when loading shared measurements"}.get(args.inject_fault)
     for label, command in [("compile", compile_command), ("run", [str(out / "checks")])]:
         result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)
         log = out / (label + ".log")
