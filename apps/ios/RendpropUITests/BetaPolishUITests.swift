@@ -192,10 +192,16 @@ final class BetaPolishUITests: XCTestCase {
             // keyboard. Keep the gesture inside its actually visible content.
             let keyboardTop = app.keyboards.firstMatch.exists ? app.keyboards.firstMatch.frame.minY - 60 : form.frame.maxY
             let visibleBottom = min(form.frame.maxY, keyboardTop, app.buttons["profile.save"].frame.minY)
-            let top = form.frame.minY + 24
+            let top = max(form.frame.minY, app.navigationBars.firstMatch.frame.maxY) + 24
             let bottom = max(top + 40, visibleBottom - 24)
-            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: form.frame.midX, dy: bottom))
-            let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: form.frame.midX, dy: top))
+            // Short moves keep a virtualized field from passing through the
+            // visible area between snapshots. Reverse if it is above us.
+            let step = min(120, (bottom - top) / 3)
+            let movingDown = control.exists && control.frame.midY < top
+            let startY = movingDown ? top : bottom
+            let endY = movingDown ? top + step : bottom - step
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: form.frame.midX, dy: startY))
+            let end = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: form.frame.midX, dy: endY))
             start.press(forDuration: 0.05, thenDragTo: end)
         }
         XCTFail("Profile form control is unreachable: \(control.debugDescription)\n\(app.debugDescription)")

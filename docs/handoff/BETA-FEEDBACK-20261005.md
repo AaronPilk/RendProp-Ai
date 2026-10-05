@@ -142,11 +142,15 @@ explicitly reloaded logo. Source-bound receipts retain the original failing
 reproducers. Personal cards remain account-owned through team switches; the
 explicit Save bar must remain reachable above the keyboard.
 
-The branch's draft PR records final results for the five full-app Release
-simulator UI cases, unsigned generic physical Release compiles of both the
-regular and Lab targets, and all twelve CI jobs on the exact commit. The runner
-requires five passes and zero skips. Receipts distinguish canceled/intermediate
-builds from verified bytes; a successful compile is not phone-camera acceptance.
+All **five full-app Release simulator UI cases passed**, with zero failures or
+skips and unchanged full source hashes: card-only OS share, deliberate portfolio
+selection, separate logo/international phone, stale client Save, large-text guide,
+and keyboard-open personal-card Save followed by a team switch (sharing flows
+share one case). Both the **regular and TestFlight Lab unsigned physical iOS
+Release builds passed**, with unchanged source hashes. These are compile/UI
+proofs; there was no signing, archive upload or camera acceptance. The draft
+PR records all twelve CI jobs against the final exact commit. Receipts distinguish
+canceled/intermediate builds from verified final bytes.
 Actual StoreKit product/purchase UI remains unverified: the local StoreKitTest
 daemon refused configuration, and no real-purchase fallback ran.
 
