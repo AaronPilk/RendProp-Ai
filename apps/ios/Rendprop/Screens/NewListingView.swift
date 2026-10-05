@@ -62,7 +62,10 @@ struct ListingFormData: Equatable {
         beds = listing.beds
         baths = listing.baths
         sqft = listing.sqft > 0 ? String(listing.sqft) : ""
-        priceDollars = listing.price.cents > 0 ? String(listing.price.cents / 100) : ""
+        if listing.price.cents > 0 {
+            priceDollars = String(listing.price.cents / 100)
+            if listing.price.cents % 100 != 0 { priceDollars += String(format: ".%02d", listing.price.cents % 100) }
+        } else { priceDollars = "" }
         tagline = listing.tagline ?? ""
         details = listing.details ?? [:]
         spaceType = listing.spaceType
@@ -97,6 +100,40 @@ struct ListingFormData: Equatable {
         guard !digits.isEmpty, digits.count <= 9 else { return 0 }
         return Int(digits) ?? 0
     }
+    private var priceValue: Money {
+        let raw = priceDollars.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard raw.range(of: "^[0-9]{1,14}(\\.[0-9]{0,2})?$", options: .regularExpression) != nil,
+              let amount = Decimal(string: raw, locale: Locale(identifier: "en_US")) else { return Money(cents: 0) }
+        let cents = NSDecimalNumber(decimal: amount * 100)
+        guard cents.compare(NSDecimalNumber(value: Int.max)) != .orderedDescending else { return Money(cents: 0) }
+        return Money(cents: cents.intValue)
+    }
+
+    /// A saved sheet compares with what the person opened, then applies only
+    /// those inputs to the current listing. A foreground refresh can update
+    /// every untouched fact without turning the old form into new edit intent.
+    func applyEdits(from original: ListingFormData, to l: inout Listing) {
+        if address != original.address || unit != original.unit { l.address = formattedAddress }
+        if isRealEstate {
+            if beds != original.beds { l.beds = beds }
+            if baths != original.baths { l.baths = baths }
+            if sqft != original.sqft { l.sqft = sqftValue }
+            if priceDollars != original.priceDollars { l.price = priceValue }
+        } else {
+            if tagline != original.tagline { l.tagline = trimmedTagline }
+            for key in spaceType.detailFields.map(\.key) where details[key] != original.details[key] {
+                let value = details[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if value.isEmpty { l.details?.removeValue(forKey: key) }
+                else { if l.details == nil { l.details = [:] }; l.details?[key] = value }
+            }
+        }
+        if clientContact != original.clientContact {
+            var contact = clientContact
+            contact?.listingID = l.serverID ?? l.id
+            l.clientContact = contact
+            l.clientContactDirty = true
+        }
+    }
 
     /// Write the form into a listing (edit path). Beds/baths/sqft/price are
     /// real-estate concepts — never store the steppers on a venue/gym listing.
@@ -105,7 +142,7 @@ struct ListingFormData: Equatable {
         l.beds = isRealEstate ? beds : 0
         l.baths = isRealEstate ? baths : 0
         l.sqft = isRealEstate ? sqftValue : 0
-        l.price = .dollars(isRealEstate ? (Money.parseDollars(priceDollars) ?? 0) : 0)
+        l.price = isRealEstate ? priceValue : Money(cents: 0)
         l.tagline = isRealEstate ? nil : trimmedTagline
         // Keep lookup/publish metadata such as yearBuilt when editing a home;
         // only empty values are removed, just as for business listings.
@@ -624,6 +661,9 @@ struct NewListingView: View {
     /// the next screen is its photo library rather than Review & Submit.
     @State private var photosListing: Listing?
     @State private var goToPhotos = false
+    @State private var formOwnerID = AuthStore.shared.userID
+    @State private var formSessionRevision = AuthStore.shared.syncSessionRevision
+    @State private var formWorkspaceID = WorkspaceContext.selectedOrgID
 
     var body: some View {
         ScrollView {
@@ -732,13 +772,7 @@ struct NewListingView: View {
            model.listings.contains(where: { $0.id == existing.id }) {
             // The draft may already be in Studio. Keep corrections queued until
             // the cloud confirms them so a foreground refresh cannot erase them.
-            model.modify(existing.id, sync: true) {
-                form.apply(to: &$0)
-                if let coordinate = pendingCoord {
-                    $0.latitude = coordinate.latitude
-                    $0.longitude = coordinate.longitude
-                }
-            }
+            guard applyExistingEdits(existing) else { return }
             photosListing = model.listings.first(where: { $0.id == existing.id }) ?? existing
             createdListing = photosListing
             goToPhotos = true
@@ -748,21 +782,15 @@ struct NewListingView: View {
         // Review, now wants photos instead) — reuse it rather than duplicate it.
         if let existing = createdListing,
            model.listings.contains(where: { $0.id == existing.id }) {
-            model.modify(existing.id, sync: true) {
-                form.apply(to: &$0)
-                if let coordinate = pendingCoord {
-                    $0.latitude = coordinate.latitude
-                    $0.longitude = coordinate.longitude
-                }
-            }
+            guard applyExistingEdits(existing) else { return }
             photosListing = model.listings.first(where: { $0.id == existing.id }) ?? existing
             goToPhotos = true
             return
         }
         let listing = form.makeListing(coordinate: pendingCoord)
         model.add(listing)
-        createdListing = listing
-        photosListing = listing
+        createdListing = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        photosListing = createdListing
         // Use the shared contract event. The old undeclared event name
         // crashed this entry path in Debug builds.
         Analytics.track("home_created", ["space_type": SpaceType.current.rawValue, "source": "photos"])
@@ -786,15 +814,7 @@ struct NewListingView: View {
            model.tours[existing.id] == nil {
             // Came back from Review and picked a different video: keep the
             // listing, refresh its fields, drop the previous file.
-            model.modify(existing.id, sync: true) {
-                form.apply(to: &$0)
-                // A location fix taken AFTER the listing was created used to be
-                // dropped here (audit F-B-06).
-                if let coordinate = pendingCoord {
-                    $0.latitude = coordinate.latitude
-                    $0.longitude = coordinate.longitude
-                }
-            }
+            guard applyExistingEdits(existing) else { return }
             if let old = model.assets[existing.id], old.localURL != asset.localURL {
                 FileStore.removeVideoAndPreview(old.localURL)
                 if let sidecar = old.motionSidecarURL { try? FileManager.default.removeItem(at: sidecar) }
@@ -805,9 +825,28 @@ struct NewListingView: View {
             model.add(listing)
         }
         model.assets[listing.id] = asset
-        createdListing = listing
+        createdListing = model.listings.first(where: { $0.id == listing.id }) ?? listing
         pendingAsset = asset
         goToReview = true
+    }
+
+    private func applyExistingEdits(_ existing: Listing) -> Bool {
+        guard formOwnerID == AuthStore.shared.userID,
+              formSessionRevision == AuthStore.shared.syncSessionRevision,
+              formWorkspaceID == WorkspaceContext.selectedOrgID,
+              let current = model.listings.first(where: { $0.id == existing.id }),
+              current.serverOrgID == nil || current.serverOrgID == formWorkspaceID else { return false }
+        let originalForm = ListingFormData(listing: existing)
+        model.modify(existing.id, expectedFacts: existing) {
+            form.applyEdits(from: originalForm, to: &$0)
+            // Only a location fix newly chosen on this screen is edit intent.
+            if let coordinate = pendingCoord,
+               coordinate.latitude != existing.latitude || coordinate.longitude != existing.longitude {
+                $0.latitude = coordinate.latitude
+                $0.longitude = coordinate.longitude
+            }
+        }
+        return true
     }
 }
 
@@ -1036,12 +1075,20 @@ struct ListingEditSheet: View {
     let listing: Listing
     @State private var form: ListingFormData
     private let original: ListingFormData
+    private let originalListing: Listing
+    private let ownerID: String?
+    private let sessionRevision: UInt64
+    private let workspaceID: UUID?
 
     init(listing: Listing) {
         self.listing = listing
         let data = ListingFormData(listing: listing)
         self._form = State(initialValue: data)
         self.original = data
+        self.originalListing = listing
+        self.ownerID = AuthStore.shared.userID
+        self.sessionRevision = AuthStore.shared.syncSessionRevision
+        self.workspaceID = WorkspaceContext.selectedOrgID
     }
 
     private var canSave: Bool { form.isValid && form != original }
@@ -1073,11 +1120,13 @@ struct ListingEditSheet: View {
     }
 
     private func save() {
-        guard canSave, !listing.isSample else { return }
+        guard canSave, !listing.isSample,
+              ownerID == AuthStore.shared.userID,
+              sessionRevision == AuthStore.shared.syncSessionRevision,
+              workspaceID == WorkspaceContext.selectedOrgID,
+              listing.serverOrgID == nil || listing.serverOrgID == workspaceID else { return }
         let id = listing.id
-        model.modify(id, sync: false) { form.apply(to: &$0) }
-        model.markDirty(id)
-        Task { await model.syncListing(id) }
+        model.modify(id, expectedFacts: originalListing) { form.applyEdits(from: original, to: &$0) }
         Haptics.success()
         dismiss()
     }

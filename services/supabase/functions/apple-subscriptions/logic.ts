@@ -25,6 +25,8 @@ export interface NotificationFacts {
   subtype: string | null;
   environment: string;
   bundleId: string;
+  /** Verified outer notification snapshot time; never receipt time. */
+  signedDate: string | null;
   transaction: AppleTransaction | null;
   renewal: AppleRenewalInfo | null;
 }
@@ -115,6 +117,10 @@ export interface PendingEntitlement {
   expires_at: string | null;
   auto_renew: boolean | null;
   notification_type: string;
+  transaction_purchased_at: string | null;
+  transaction_signed_at: string | null;
+  event_signed_at: string | null;
+  renewal_signed_at: string | null;
 }
 
 export function computeEntitlement(
@@ -154,6 +160,10 @@ export function computeEntitlement(
     expires_at: expiresAt,
     auto_renew: derived.autoRenew,
     notification_type: facts.subtype ? `${facts.type}/${facts.subtype}` : facts.type,
+    transaction_purchased_at: tx.purchaseDate,
+    transaction_signed_at: tx.signedDate,
+    event_signed_at: facts.signedDate,
+    renewal_signed_at: facts.renewal?.signedDate ?? null,
   };
 }
 

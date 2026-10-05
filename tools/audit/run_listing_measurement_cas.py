@@ -98,7 +98,7 @@ jsonb_build_object('floor_measurements_v1',{quote(old)},'floor_plan_asset_id','s
         auth = f"set role {role}; set request.jwt.claim.sub='{actor}'; set request.jwt.claim.role='{role}';\n"
         run('rpc-denied-' + role, [*psql, '-Atq'], auth + f"select save_listing_measurements('{actor}','{org}','{listing}',{quote(old)},{quote(left)});", refuses='permission denied')
     auth = f"set role authenticated; set request.jwt.claim.sub='{actor}'; set request.jwt.claim.role='authenticated'; set rendprop.measurement_cas='allowed';\n"
-    run('client-guc-cannot-bypass', [*psql, '-Atq'], auth + f"update listings set details=jsonb_build_object('floorMeasurementsV1',{quote(old)}) where id='{listing}';")
+    run('client-guc-cannot-bypass', [*psql, '-Atq'], auth + f"update listings set details=jsonb_build_object('floorMeasurementsV1',{quote(old)}) where id='{listing}';", refuses='permission denied')
     protected = run('guc-final', [*psql, '-Atq'], f"select details->>'floor_measurements_v1' from listings where id='{listing}';").strip()
     assert protected == winning['value'], protected
     # Remove the exact production precondition. The same concurrent invariant

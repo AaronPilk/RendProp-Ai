@@ -57,8 +57,37 @@ export function listingPayload(values: FormData, existing?: Listing): Record<str
   if (!address) throw new Error("Give this property an address or name.");
   const price = number("price");
   const baths = number("baths");
-  if (baths !== null && baths > 99) throw new Error("Bathrooms must be 99 or fewer.");
+  if (baths !== null && (baths > 99 || Math.abs(baths * 10 - Math.round(baths * 10)) > 1e-8)) throw new Error("Bathrooms must be 99 or fewer, in tenths.");
   return { address, tagline: text("tagline"), space_type: text("space_type"), beds: number("beds", true), baths, sqft: number("sqft", true), price_cents: price === null ? null : Math.round(price * 100), ...(existing ? {} : { status: "draft", source: "manual" }) };
+}
+export type ListingFactsBody = { expected: Record<string, unknown>; changes: Record<string, unknown>; details_expected: Record<string, unknown>; details_changes: Record<string, unknown> };
+export function listingFactValues(listing: Listing): Record<string, unknown> {
+  // Keep the wire values as read, including null, zero and empty strings. Only
+  // user input is normalized; expected values must match the shared record.
+  return { address: listing.address, tagline: listing.tagline, space_type: listing.spaceType, beds: listing.beds, baths: listing.baths, sqft: listing.sqft, price_cents: listing.priceCents, status: listing.status, sold_at: listing.soldAt ?? null };
+}
+export function listingFactsBody(listing: Listing, changes: Record<string, unknown>): ListingFactsBody {
+  const baseline = listingFactValues(listing), expected: Record<string, unknown> = {};
+  for (const key of Object.keys(changes)) {
+    if (!(key in baseline)) throw new Error("This property field cannot be saved here.");
+    expected[key] = baseline[key];
+  }
+  return { expected, changes, details_expected: {}, details_changes: {} };
+}
+export function listingFormValues(listing: Listing): Record<string, string | number> {
+  return { address: listing.address ?? "", tagline: listing.tagline ?? "", space_type: listing.spaceType, price: listing.priceCents == null ? "" : listing.priceCents / 100, beds: listing.beds ?? "", baths: listing.baths ?? "", sqft: listing.sqft ?? "" };
+}
+export function listingFactsPayload(values: FormData, listing: Listing): ListingFactsBody {
+  const original: Record<string, unknown> = { ...listingFactValues(listing), address: listing.address?.trim() || null, tagline: listing.tagline?.trim() || null };
+  const desired = listingPayload(values, listing);
+  const changes = Object.fromEntries(Object.entries(desired).filter(([key, value]) => value !== original[key]));
+  return listingFactsBody(listing, changes);
+}
+export function listingFactsConfirmed(saved: Listing, body: ListingFactsBody): boolean {
+  const actual = listingFactValues(saved);
+  return Object.entries(body.changes).every(([key, value]) => key === "sold_at" && value !== null && actual[key] !== null
+    ? Date.parse(String(actual[key])) === Date.parse(String(value))
+    : actual[key] === value);
 }
 export function parseChapterText(text: string, durationSeconds?: number | null): Chapter[] {
   const lines = text.split("\n").filter((line) => line.trim());

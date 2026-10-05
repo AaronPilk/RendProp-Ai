@@ -91,6 +91,9 @@ struct Listing: Identifiable, Codable, Hashable {
     /// True when a local edit (sold, Zillow, details, photo) hasn't been PATCHed to
     /// the server yet. Only meaningful once `serverID` is set.
     var needsServerSync: Bool? = nil
+    /// Only explicitly edited facts may leave this phone; old ambiguous dirty
+    /// snapshots remain local until their shared details are reviewed.
+    var factsSync: ListingFactsSyncState? = nil
     /// Measurement-only CAS state persists across offline edits and relaunches.
     var measurementSync: FloorMeasurementSyncState? = nil
     /// Server `renders.id` of the published tour (from /renders/publish-app).
@@ -323,7 +326,7 @@ extension Listing {
              createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
              tagline, details, floorMeasurements, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
-             lastError, needsServerSync, measurementSync, publishedRenderID,
+             lastError, needsServerSync, factsSync, measurementSync, publishedRenderID,
              unbrandedShareURL, stateCode, allowSearchIndexing,
              clientContact, clientContactDirty, clientContactLoaded, clientPhotoRelPath, clientPhotoDirty
     }
@@ -386,6 +389,7 @@ extension Listing {
         aerialGeneratedAt = try c.decodeIfPresent(Date.self,  forKey: .aerialGeneratedAt)
         lastError        = try c.decodeIfPresent(String.self, forKey: .lastError)
         needsServerSync  = try c.decodeIfPresent(Bool.self,   forKey: .needsServerSync)
+        factsSync = try c.decodeIfPresent(ListingFactsSyncState.self, forKey: .factsSync)
         measurementSync = try c.decodeIfPresent(FloorMeasurementSyncState.self, forKey: .measurementSync)
         publishedRenderID = try c.decodeIfPresent(UUID.self,  forKey: .publishedRenderID)
         unbrandedShareURL = try c.decodeIfPresent(String.self, forKey: .unbrandedShareURL)
@@ -1618,6 +1622,177 @@ enum FloorMeasurementInput {
     }
 }
 
+/// A scalar fact preserves SQL null separately from zero/empty text. Values are
+/// encoded as JSON scalars, rather than strings that the server must guess at.
+indirect enum ListingFactValue: Codable, Hashable {
+    case null, text(String), number(Double), boolean(Bool)
+    case object([String: ListingFactValue]), array([ListingFactValue])
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let s = try? c.decode(String.self) { self = .text(s) }
+        else if let b = try? c.decode(Bool.self) { self = .boolean(b) }
+        else if let n = try? c.decode(Double.self) { self = .number(n) }
+        else if let o = try? c.decode([String: ListingFactValue].self) { self = .object(o) }
+        else { self = .array(try c.decode([ListingFactValue].self)) }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case .null: try c.encodeNil()
+        case .text(let s): try c.encode(s)
+        case .number(let n): try c.encode(n)
+        case .boolean(let b): try c.encode(b)
+        case .object(let o): try c.encode(o)
+        case .array(let a): try c.encode(a)
+        }
+    }
+    var json: Any {
+        switch self {
+        case .null: return NSNull(); case .text(let s): return s; case .number(let n): return n
+        case .boolean(let b): return b; case .object(let o): return o.mapValues(\.json); case .array(let a): return a.map(\.json)
+        }
+    }
+}
+struct ListingFactEdit: Codable, Hashable {
+    var expected: ListingFactValue
+    var value: ListingFactValue
+    /// Detail-key absence differs from an existing JSON null.
+    var expectedPresent: Bool? = nil
+}
+struct ListingFactsSyncState: Codable, Hashable {
+    var baseline: [String: ListingFactValue] = [:]
+    var detailBaseline: [String: ListingFactValue] = [:]
+    var fields: [String: ListingFactEdit] = [:]
+    var details: [String: ListingFactEdit] = [:]
+    var conflict = false
+    var reviewRequired = false
+    var hasChanges: Bool { !fields.isEmpty || !details.isEmpty }
+}
+struct ListingFactsReview {
+    let local: Listing
+    let shared: Listing
+    let ownerID: String?
+    let sessionRevision: UInt64
+}
+enum ListingFactsSyncError: LocalizedError {
+    case reviewRequired, conflict
+    var errorDescription: String? {
+        switch self {
+        case .reviewRequired: return "Your older listing edits are saved on this iPhone. Review the shared details before syncing them."
+        case .conflict: return "Listing details changed elsewhere. Your edits are safe on this iPhone. Review both versions before saving."
+        }
+    }
+}
+enum ListingFactsSync {
+    static var editableDetailKeys: Set<String> {
+        Set(SpaceType.allCases.flatMap { $0.detailFields.map(\.key) }).union([Listing.searchIndexingKey])
+    }
+    static func values(_ l: Listing) -> [String: ListingFactValue] {
+        func text(_ s: String?) -> ListingFactValue {
+            let s = s?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return s.isEmpty ? .null : .text(s)
+        }
+        func positive(_ n: Double) -> ListingFactValue { n > 0 ? .number(n) : .null }
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let lat = l.latitude.flatMap { $0.isFinite ? ListingFactValue.number(($0 * 1000).rounded() / 1000) : nil } ?? .null
+        let lng = l.longitude.flatMap { $0.isFinite ? ListingFactValue.number(($0 * 1000).rounded() / 1000) : nil } ?? .null
+        let rawURL = l.zillowURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let zillow = rawURL.isEmpty ? nil : (rawURL.lowercased().hasPrefix("https://") || rawURL.lowercased().hasPrefix("http://") ? rawURL : "https://" + rawURL)
+        return ["space_type": .text(l.spaceType.rawValue), "address": .text(l.address),
+                "beds": positive(Double(l.beds)), "baths": positive((l.baths * 10).rounded() / 10), "sqft": positive(Double(l.sqft)),
+                "price_cents": positive(Double(l.price.cents)), "tagline": text(l.tagline),
+                "zillow_url": text(zillow), "lat": lat, "lng": lng,
+                "sold_at": l.soldAt.map { .text(f.string(from: $0)) } ?? .null]
+    }
+    static func detailValues(_ l: Listing) -> [String: String] {
+        var d = (l.details ?? [:]).filter { editableDetailKeys.contains($0.key) }
+        if let allow = l.allowSearchIndexing { d[Listing.searchIndexingKey] = allow ? "true" : "false" }
+        return d
+    }
+    static func detailFacts(_ l: Listing) -> [String: ListingFactValue] {
+        detailValues(l).mapValues(ListingFactValue.text)
+    }
+    static func stage(from previous: Listing, in current: inout Listing, expectedBase: Listing? = nil) {
+        var state = previous.factsSync ?? ListingFactsSyncState()
+        // A flag from an older binary cannot identify which values were edited.
+        if previous.serverID != nil && previous.needsServerSync == true && previous.factsSync == nil {
+            state.reviewRequired = true
+        }
+        let old = values(previous), new = values(current)
+        var keys = Set(old.keys).filter { old[$0] != new[$0] }
+        if keys.contains("lat") || keys.contains("lng") { keys.formUnion(["lat", "lng"]) }
+        for key in keys {
+            let expected: ListingFactValue
+            if let base = expectedBase {
+                expected = base.factsSync?.fields[key]?.expected ?? base.factsSync?.baseline[key] ?? values(base)[key] ?? .null
+            } else { expected = state.fields[key]?.expected ?? state.baseline[key] ?? old[key] ?? .null }
+            state.fields[key] = ListingFactEdit(expected: expected, value: new[key] ?? .null)
+        }
+        // Clearing a sold marker deliberately restores a Studio-archived home.
+        // Other local render/status changes never become ordinary edit intent.
+        if previous.soldAt != nil, current.soldAt == nil,
+           previous.factsSync?.baseline["status"] == .text("archived") {
+            state.fields["status"] = ListingFactEdit(expected: .text("archived"), value: .text("ready"))
+        }
+        let oldDetails = detailValues(previous), newDetails = detailValues(current)
+        for key in Set(oldDetails.keys).union(newDetails.keys) where oldDetails[key] != newDetails[key] {
+            let baseline = state.baseline.isEmpty ? oldDetails[key].map(ListingFactValue.text) : state.detailBaseline[key]
+            let prior = state.details[key]
+            let cached = expectedBase.map { $0.factsSync?.detailBaseline ?? detailFacts($0) }
+            let expected = expectedBase?.factsSync?.details[key]?.expected ?? (cached != nil ? cached?[key] ?? .null : prior?.expected ?? baseline ?? .null)
+            let present = expectedBase?.factsSync?.details[key]?.expectedPresent ?? (cached != nil ? cached?[key] != nil : prior?.expectedPresent ?? (baseline != nil))
+            state.details[key] = ListingFactEdit(expected: expected, value: newDetails[key].map(ListingFactValue.text) ?? .null,
+                                               expectedPresent: present)
+        }
+        current.factsSync = state
+        current.needsServerSync = state.hasChanges || state.reviewRequired || (current.serverID == nil && current.needsServerSync == true)
+    }
+    static func body(_ l: Listing) throws -> [String: Any] {
+        guard let state = l.factsSync, !state.reviewRequired else { throw ListingFactsSyncError.reviewRequired }
+        guard !state.conflict else { throw ListingFactsSyncError.conflict }
+        guard state.hasChanges else { throw ListingFactsSyncError.reviewRequired }
+        return ["expected": state.fields.mapValues { $0.expected.json }, "changes": state.fields.mapValues { $0.value.json },
+                "details_expected": state.details.mapValues { ["present": $0.expectedPresent ?? ($0.expected != .null), "value": $0.expected.json] },
+                "details_changes": state.details.mapValues { $0.value.json }]
+    }
+    static func acknowledge(submitted: Listing, receipt: Listing, current: inout Listing) {
+        guard var state = current.factsSync else { return }
+        let received = receipt.factsSync?.baseline ?? values(receipt)
+        let receivedDetails = receipt.factsSync?.detailBaseline ?? detailFacts(receipt)
+        for (key,sent) in submitted.factsSync?.fields ?? [:] {
+            guard received[key] == sent.value else { continue }
+            if state.fields[key]?.value == sent.value { state.fields.removeValue(forKey: key) }
+            else { state.fields[key]?.expected = sent.value }
+        }
+        for (key,sent) in submitted.factsSync?.details ?? [:] {
+            guard (receivedDetails[key] ?? .null) == sent.value,
+                  sent.value != .null || receivedDetails[key] == nil else { continue }
+            if state.details[key]?.value == sent.value { state.details.removeValue(forKey: key) }
+            else { state.details[key]?.expected = sent.value; state.details[key]?.expectedPresent = receivedDetails[key] != nil }
+        }
+        // Location is one edit. A mid-request change to either endpoint must
+        // retain the pair, using the acknowledged coordinates as its base.
+        if state.fields["lat"] != nil || state.fields["lng"] != nil {
+            let local = values(current)
+            for key in ["lat", "lng"] where state.fields[key] == nil {
+                state.fields[key] = ListingFactEdit(expected: received[key] ?? .null, value: local[key] ?? .null)
+            }
+        }
+        state.baseline = received; state.detailBaseline = receivedDetails
+        current.factsSync = state
+        current.needsServerSync = state.hasChanges || state.reviewRequired
+        // Keep pending geometry and filenames while adopting untouched office facts.
+        if current.needsServerSync != true { FloorMeasurementSync.adoptFacts(from: receipt, current: &current) }
+    }
+    static func hasSameLineage(_ snapshot: Listing, _ current: Listing) -> Bool {
+        guard let submitted = snapshot.factsSync, let state = current.factsSync,
+              !state.reviewRequired, !state.conflict else { return false }
+        return submitted.fields.allSatisfy { state.fields[$0.key]?.expected == $0.value.expected } &&
+            submitted.details.allSatisfy { state.details[$0.key]?.expected == $0.value.expected }
+    }
+}
+
 struct FloorMeasurementSyncState: Codable, Hashable {
     var expected: String? = nil
     var pending = false
@@ -1658,6 +1833,7 @@ enum FloorMeasurementSync {
         current.soldAt = receipt.soldAt; current.status = receipt.status
         current.zillowURL = receipt.zillowURL; current.latitude = receipt.latitude; current.longitude = receipt.longitude
         current.spaceTypeRaw = receipt.spaceTypeRaw; current.allowSearchIndexing = receipt.allowSearchIndexing
+        current.factsSync = receipt.factsSync
         current.details = receipt.details
         if current.measurementSync?.pending == true, let local {
             current.details = FloorMeasurementPlan.replacingWire(in: current.details, with: local)

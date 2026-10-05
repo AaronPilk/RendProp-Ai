@@ -29,3 +29,8 @@ f8a6074dbc5ae0965fdb1e0722c4f948778d37a6:tools/audit/floor-measurement-sync-2026
 3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/PROVIDER-DISPATCH-EVIDENCE-20261004.json:generic-api-key:123
 3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/PROVIDER-DISPATCH-EVIDENCE-20261004.json:generic-api-key:127
 3653bb32a6a2a42ada41fa779c46fef75ac116c0:docs/handoff/PROVIDER-DISPATCH-EVIDENCE-20261004.json:generic-api-key:145
+# Exact historical evidence false positives: AuthStore.swift and
+# LiveAPIClient.swift SHA-256 digests were recomputed and matched their source.
+# Current evidence separates path/sha256 fields; retain full secret scanning.
+3253bf8207e0d616dfeb81ad8743b4f9d2998cab:docs/handoff/FULL-DEBUGGING-EVIDENCE-20261004.json:generic-api-key:8
+3253bf8207e0d616dfeb81ad8743b4f9d2998cab:docs/handoff/FULL-DEBUGGING-EVIDENCE-20261004.json:generic-api-key:11

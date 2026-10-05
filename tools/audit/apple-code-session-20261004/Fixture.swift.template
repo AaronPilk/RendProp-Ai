@@ -1,0 +1,196 @@
+import Foundation
+// Inert storage, transport and scheduling. All session/code implementations below
+// are extracted unchanged from AuthStore; no host Keychain/defaults/network.
+final class UserDefaults {
+    static let standard = UserDefaults()
+    var values: [String: Any] = [:]
+    func string(forKey key: String) -> String? { values[key] as? String }
+    func set(_ value: Any?, forKey key: String) { values[key] = value }
+    func removeObject(forKey key: String) { values[key] = nil }
+}
+enum Config {
+    static let enableAuth = true, useLiveBackend = true
+    static let supabaseURL: URL? = URL(string: "https://synthetic.invalid")
+    static let apiBaseURL: URL? = URL(string: "https://synthetic.invalid/functions/v1")
+    static let supabaseAnonKey = "synthetic-no-key"
+}
+enum APIError: Error { case notConfigured, badResponse(Int), decoding, server(status: Int, code: String, message: String) }
+enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malformed, storage } }
+@MainActor final class AdoptionBoundary {
+    func prepare(sourceAccess: String, sourceRefresh: String?, destinationAccess: String) throws {}
+    func discard() -> Bool { true }
+}
+@MainActor final class URLSession {
+    static let shared = URLSession()
+    var requests: [URLRequest] = []
+    var holdNext = false
+    var continuation: CheckedContinuation<Void, Never>?
+    var bytes = Data("{\"ok\":true,\"stored\":true}".utf8)
+    var status = 200
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        precondition(request.url?.host == "synthetic.invalid")
+        requests.append(request)
+        let reply = (bytes, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        if holdNext { holdNext = false; await withCheckedContinuation { continuation = $0 } }
+        return reply
+    }
+    func release() { let held = continuation; continuation = nil; held?.resume() }
+    func reset() { precondition(continuation == nil); requests = []; holdNext = false; status = 200; bytes = Data("{\"ok\":true,\"stored\":true}".utf8) }
+}
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var isSignedIn = false, isIdentified = false
+    var userID: String?
+    var displayName = "", userName = "", orgName = ""
+    var sessionEpoch: UInt64 = 0, syncIdentityEpoch: UInt64 = 0
+    var syncSessionRevision: UInt64 { syncIdentityEpoch }
+    var onAccountChanged: ((UUID) -> Void)?
+    var anonymousBootstrap: Task<Void, Never>?, refreshInFlight: Task<Bool, Never>?, autoRefreshTask: Task<Void, Never>?
+    struct Connection { func cancelAll() {} }; let connection = Connection()
+    var adoptionRecovery: AdoptionBoundary? = AdoptionBoundary()
+    var onAdoption: (() -> Void)?
+    static var onToken: (() -> Void)?
+    enum Keys {
+        static let userID = "id", userName = "name", orgName = "org", accessToken = "access", refreshToken = "refresh"
+        static let pendingAppleAuthCode = "legacy"
+        static let pendingAppleAuthCodeOwnerPrefix = "owned:"
+    }
+    enum SecureStore {
+        static var values: [String: String] = [:]
+        static var readFailure = false, writeFailure = false
+        static func get(_ key: String) -> String? { values[key] }
+        static func getChecked(_ key: String) throws -> String? {
+            if readFailure { throw AnonymousAdoptionRecovery.RecoveryError.storage }; return values[key]
+        }
+        @discardableResult static func set(_ key: String, _ value: String) -> Bool {
+            guard !writeFailure else { return false }; values[key] = value; return true
+        }
+        @discardableResult static func remove(_ key: String) -> Bool { values[key] = nil; return true }
+    }
+    static func storedAccessToken() -> String? { SecureStore.values[Keys.accessToken] }
+    static func storedRefreshToken() -> String? { SecureStore.values[Keys.refreshToken] }
+    static func persistTokens(access: String, refresh: String?, expiresAt: Date?) { SecureStore.values[Keys.accessToken] = access; SecureStore.values[Keys.refreshToken] = refresh }
+    func scheduleAutoRefresh() {}
+    func retryPendingAdoptionIfNeeded() async { onAdoption?() }
+    static func authError(status: Int, data: Data) -> APIError { .badResponse(status) }
+    static func validAccessToken() async -> String? { onToken?(); return storedAccessToken() }
+__METHODS__
+    func signIn(_ owner: String) -> AppleSessionIdentity {
+        applySession(accessToken: Checks.jwt(owner), refreshToken: "synthetic-refresh", expiresAt: Date().addingTimeInterval(3600))
+        return AppleSessionIdentity(ownerID: owner, sessionRevision: syncSessionRevision)
+    }
+}
+@main @MainActor enum Checks {
+    static let a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    static let auth = AuthStore.shared, wire = URLSession.shared
+    static var assertions = 0
+    static func check(_ value: Bool, _ message: String) { assertions += 1; guard value else { print("FAIL: " + message); exit(1) } }
+    static func until(_ message: String, _ predicate: () -> Bool) async {
+        for _ in 0..<100_000 { if predicate() { return }; await Task.yield() }
+        print("FAIL: held boundary timeout: " + message); exit(1)
+    }
+    static func jwt(_ owner: String) -> String {
+        let bytes = try! JSONSerialization.data(withJSONObject: ["sub": owner, "is_anonymous": false], options: [.sortedKeys])
+        return "synthetic." + bytes.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") + ".signature"
+    }
+    static func reset() {
+        wire.reset(); AuthStore.SecureStore.values = [:]; AuthStore.SecureStore.readFailure = false; AuthStore.SecureStore.writeFailure = false
+        UserDefaults.standard.values = [:]; AuthStore.onToken = nil; auth.onAdoption = nil
+        auth.isSignedIn = false; auth.isIdentified = false; auth.userID = nil; auth.sessionEpoch = 0; auth.syncIdentityEpoch = 0
+    }
+    static func pending(_ owner: String) -> String? { AuthStore.SecureStore.values["owned:" + owner] }
+    static func body(_ request: URLRequest) -> [String: String] { try! JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String] }
+    static func exchangeReply(_ owner: String) {
+        wire.bytes = try! JSONSerialization.data(withJSONObject: ["access_token": jwt(owner), "refresh_token": "synthetic-refresh", "expires_in": 3600])
+    }
+    static func main() async throws {
+        reset(); let first = auth.signIn(a)
+        AuthStore.SecureStore.values["legacy"] = "synthetic-unscoped-A"
+        await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        check(wire.requests.isEmpty && AuthStore.SecureStore.values["legacy"] == "synthetic-unscoped-A", "legacy unscoped code is preserved without transport")
+        await AuthStore.submitAppleAuthorizationCode("synthetic-code-A", for: first)
+        check(wire.requests.count == 1 && body(wire.requests[0])["authorization_code"] == "synthetic-code-A", "confirmed sign-in posts its exact code once")
+        check(wire.requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer " + jwt(a) && pending(a) == nil, "confirmed owned receipt clears exact record")
+        check(AuthStore.SecureStore.values["legacy"] != nil, "new successful exchange preserves legacy slot")
+
+        reset(); let switched = auth.signIn(a)
+        AuthStore.onToken = { _ = auth.signIn(b) }
+        await AuthStore.submitAppleAuthorizationCode("synthetic-code-A", for: switched)
+        check(wire.requests.isEmpty, "token-await account switch dispatches no former code")
+        let retainedA = pending(a)
+        check(retainedA != nil, "undispatched owner A code remains recoverable")
+        AuthStore.onToken = nil
+        await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        check(wire.requests.isEmpty && pending(a) == retainedA, "owner B cannot retry A code")
+        _ = auth.signIn(a); await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        check(wire.requests.count == 1 && pending(a) == nil, "owner A retries its unsent record under new proven A session")
+
+        reset(); let heldA = auth.signIn(a); wire.holdNext = true
+        let requestA = Task { await AuthStore.submitAppleAuthorizationCode("synthetic-code-A", for: heldA) }
+        await until("held A code") { wire.continuation != nil }
+        let codeA = pending(a); let ownerB = auth.signIn(b); wire.status = 500
+        await AuthStore.submitAppleAuthorizationCode("synthetic-code-B", for: ownerB)
+        let codeB = pending(b); check(codeB != nil, "failed B code retains owner-bound receipt")
+        wire.release(); await requestA.value
+        check(pending(a) == codeA && pending(b) == codeB, "late A success cannot erase any replacement owner's record")
+        wire.status = 200; await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        check(wire.requests.count == 3 && body(wire.requests[2])["authorization_code"] == "synthetic-code-B" && pending(b) == nil, "retry B sends only B code and confirms B record")
+
+        reset(); let same = auth.signIn(a); wire.holdNext = true
+        let old = Task { await AuthStore.submitAppleAuthorizationCode("older-A", for: same) }
+        await until("held older same-owner") { wire.continuation != nil }; wire.status = 500
+        await AuthStore.submitAppleAuthorizationCode("newer-A", for: same)
+        let newer = pending(a); wire.release(); await old.value
+        check(pending(a) == newer && newer != nil, "late older success preserves newer same-owner pending record")
+        wire.status = 200; await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        check(body(wire.requests.last!)["authorization_code"] == "newer-A" && pending(a) == nil, "same-owner retry keeps newer exact code")
+
+        reset(); let failed = auth.signIn(a); wire.status = 500
+        await AuthStore.submitAppleAuthorizationCode("failed-A", for: failed)
+        await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        check(wire.requests.count == 2 && pending(a) != nil, "one persisted retry prevents third exchange after failure")
+        var expired = try JSONSerialization.jsonObject(with: Data(pending(a)!.utf8)) as! [String: Any]
+        expired["createdAt"] = Date().addingTimeInterval(-600).timeIntervalSinceReferenceDate
+        AuthStore.SecureStore.values["owned:" + a] = String(data: try JSONSerialization.data(withJSONObject: expired), encoding: .utf8)
+        await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        check(pending(a) == nil && wire.requests.count == 2, "only explicitly owner-bound expired record can be removed")
+
+        reset(); let notStored = auth.signIn(a); wire.bytes = Data("{\"ok\":true,\"stored\":false}".utf8)
+        await AuthStore.submitAppleAuthorizationCode("not-stored-A", for: notStored)
+        check(pending(a) != nil, "HTTP success without stored acknowledgement retains pending record")
+        wire.bytes = Data("{\"ok\":true,\"stored\":true}".utf8); await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
+        check(pending(a) == nil && wire.requests.count == 2, "confirmed one retry can finish an unacknowledged receipt")
+
+        for mode in ["malformed", "read", "write", "cancel", "wrong-token"] {
+            reset(); let identity = auth.signIn(a)
+            if mode == "malformed" { AuthStore.SecureStore.values["owned:" + a] = "unreadable-owner-envelope" }
+            if mode == "read" { AuthStore.SecureStore.readFailure = true }
+            if mode == "write" { AuthStore.SecureStore.writeFailure = true }
+            if mode == "wrong-token" { AuthStore.SecureStore.values["access"] = jwt(b) }
+            if mode == "cancel" {
+                let task = Task { await AuthStore.submitAppleAuthorizationCode("blocked-A", for: identity) }
+                task.cancel(); await task.value
+            } else { await AuthStore.submitAppleAuthorizationCode("blocked-A", for: identity) }
+            check(wire.requests.isEmpty, "invalid storage/cancellation/token cannot dispatch code")
+        }
+        reset(); exchangeReply(a)
+        let identity = try await auth.exchangeAppleIdentityToken(idToken: "synthetic-identity-A")
+        check(identity.ownerID == a && identity.isCurrent, "successful exchange returns exact current sign-in receipt")
+        check(pending(a) == nil && wire.requests.count == 1, "exchange alone never queues Apple authorization code")
+        reset(); exchangeReply(a); auth.onAdoption = { _ = auth.signIn(b) }
+        var denied = false
+        do { _ = try await auth.exchangeAppleIdentityToken(idToken: "synthetic-identity-A") } catch { denied = true }
+        check(denied && auth.userID == b && pending(a) == nil && pending(b) == nil, "exchange cannot return a sign-in receipt after replacement identity")
+        reset(); exchangeReply(a); wire.holdNext = true
+        let cancelled = Task { try await auth.exchangeAppleIdentityToken(idToken: "synthetic-cancelled-A") }
+        await until("cancelled exchange") { wire.continuation != nil }; cancelled.cancel(); wire.release()
+        var cancelledRejected = false
+        do { _ = try await cancelled.value } catch { cancelledRejected = true }
+        check(cancelledRejected && pending(a) == nil && AuthStore.SecureStore.values.isEmpty, "cancelled sign-in never creates a code or session receipt")
+        reset(); wire.status = 400
+        do { _ = try await auth.exchangeAppleIdentityToken(idToken: "synthetic-failed-A") } catch {}
+        check(pending(a) == nil && AuthStore.SecureStore.values.isEmpty, "failed sign-in never creates a code or session receipt")
+        print("PASS: \(assertions) actual Apple-code owner/session/retry assertions")
+    }
+}

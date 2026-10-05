@@ -128,6 +128,7 @@ enum ListingWireDetails {
             latest.measurementSync = created.measurementSync
             latest.latitude = created.latitude; latest.longitude = created.longitude
             latest.spaceTypeRaw = created.spaceTypeRaw; latest.allowSearchIndexing = created.allowSearchIndexing
+            latest.factsSync = created.factsSync
             latest.needsServerSync = false
         } else if factsUnchanged {
             latest.needsServerSync = false
@@ -146,6 +147,95 @@ enum ListingWireDetails {
             FloorMeasurementSync.acknowledge(submitted: snapshot, receipt: created, current: &latest)
         }
         latest.cloudCreateFingerprint = nil; latest.cloudCreateFactsFingerprint = nil; latest.cloudCreateReplayed = nil
+        if created.cloudCreateReplayed == true, !factsUnchanged, var intent = latest.factsSync, intent.hasChanges {
+            // A replay returns today's row, not the first create's receipt.
+            // Retire pre-create intent against the exact first payload only
+            // while its persisted fingerprint still proves that snapshot.
+            if let original = snapshot.cloudCreateFactsFingerprint,
+               try factsFingerprint(snapshot) == original {
+                var first = ListingFactsSync.values(snapshot)
+                // Match the POST body, including its unrounded baths, raw URL
+                // text and the requirement to send coordinates as one pair.
+                first["baths"] = snapshot.baths > 0 ? .number(snapshot.baths) : .null
+                let firstURL = snapshot.zillowURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                first["zillow_url"] = firstURL.isEmpty ? .null : .text(firstURL)
+                first["status"] = .text("draft") // POST omits status; a fresh row starts as draft.
+                if snapshot.latitude?.isFinite != true || snapshot.longitude?.isFinite != true {
+                    first["lat"] = .null; first["lng"] = .null
+                }
+                let firstDetails = try ListingWireDetails.merged(snapshot)
+                let phone = latest
+                let locationKeys = ["lat", "lng"]
+                let newerLocation = locationKeys.contains { key in
+                    intent.fields[key].map { $0.value != (first[key] ?? .null) } ?? false
+                }
+                for key in Array(intent.fields.keys) {
+                    guard let sent = intent.fields[key] else { continue }
+                    if sent.value == (first[key] ?? .null), !(newerLocation && locationKeys.contains(key)) {
+                        intent.fields.removeValue(forKey: key)
+                    } else { intent.fields[key]?.expected = first[key] ?? .null }
+                }
+                if newerLocation {
+                    let phoneValues = ListingFactsSync.values(phone)
+                    for key in locationKeys {
+                        intent.fields[key] = ListingFactEdit(expected: first[key] ?? .null,
+                            value: intent.fields[key]?.value ?? phoneValues[key] ?? .null)
+                    }
+                }
+                for key in Array(intent.details.keys) {
+                    let value = firstDetails[key].map(ListingFactValue.text) ?? .null
+                    if intent.details[key]?.value == value { intent.details.removeValue(forKey: key) }
+                    else {
+                        intent.details[key]?.expected = value
+                        intent.details[key]?.expectedPresent = firstDetails[key] != nil
+                    }
+                }
+                // Adopt office facts where the first create consumed the phone
+                // edit, then restore only newer pending phone facts and details.
+                latest.needsServerSync = false
+                FloorMeasurementSync.adoptFacts(from: created, current: &latest)
+                for key in intent.fields.keys {
+                    switch key {
+                    case "address": latest.address = phone.address
+                    case "space_type": latest.spaceTypeRaw = phone.spaceTypeRaw
+                    case "beds": latest.beds = phone.beds
+                    case "baths": latest.baths = phone.baths
+                    case "sqft": latest.sqft = phone.sqft
+                    case "price_cents": latest.price = phone.price
+                    case "tagline": latest.tagline = phone.tagline
+                    case "zillow_url": latest.zillowURL = phone.zillowURL
+                    case "lat": latest.latitude = phone.latitude
+                    case "lng": latest.longitude = phone.longitude
+                    case "sold_at": latest.soldAt = phone.soldAt
+                    case "status": latest.status = phone.status
+                    default: break
+                    }
+                }
+                let phoneDetails = ListingFactsSync.detailValues(phone)
+                for key in intent.details.keys {
+                    if let value = phoneDetails[key] { latest.details = (latest.details ?? [:]).merging([key: value]) { _, phone in phone } }
+                    else { latest.details?.removeValue(forKey: key) }
+                    if key == Listing.searchIndexingKey { latest.allowSearchIndexing = phone.allowSearchIndexing }
+                }
+                if phone.measurementSync?.pending == true {
+                    latest.floorMeasurements = phone.floorMeasurements
+                    latest.measurementSync = phone.measurementSync
+                    var details = (latest.details ?? [:]).filter { !FloorMeasurementPlan.isPrivateKey($0.key) }
+                    for (key, value) in phone.details ?? [:] where FloorMeasurementPlan.isPrivateKey(key) { details[key] = value }
+                    latest.details = details.isEmpty ? nil : details
+                } else {
+                    latest.measurementSync = created.measurementSync
+                }
+                latest.needsServerSync = intent.hasChanges || intent.reviewRequired
+            } else { intent.reviewRequired = true }
+            latest.factsSync = intent
+        }
+        if latest.factsSync == nil {
+            latest.factsSync = created.factsSync
+            if latest.needsServerSync == true { latest.factsSync?.reviewRequired = true }
+        } else {
+            ListingFactsSync.acknowledge(submitted: snapshot, receipt: created, current: &latest)
+        }
         save(latest)
         return latest.serverID!
     }
@@ -319,6 +409,7 @@ enum CloudListingMerge {
                 merged.latitude = fresh.latitude; merged.longitude = fresh.longitude
                 merged.allowSearchIndexing = fresh.allowSearchIndexing
                 merged.status = fresh.status
+                merged.factsSync = fresh.factsSync
                 merged.shareSlug = fresh.shareSlug; merged.shareURL = fresh.shareURL
                 merged.unbrandedShareURL = fresh.unbrandedShareURL; merged.publishedRenderID = fresh.publishedRenderID
             }

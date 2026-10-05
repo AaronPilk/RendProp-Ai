@@ -6,7 +6,8 @@ type Row = Record<string, unknown>;
 export interface ListingActionContext {
   userId: string;
   orgId: string;
-  // Request-owned Supabase clients. No service-client mutations are needed here.
+  // Request-owned clients. Dedicated floor-plan attachment needs the service
+  // client after actor and asset checks; ordinary details remain client-fenced.
   // deno-lint-ignore no-explicit-any
   db: any;
   // deno-lint-ignore no-explicit-any
@@ -126,6 +127,7 @@ export async function handleListingActions(req: Request, context: ListingActionC
       400, "Upload the floor plan as JPG, PNG, or WebP.");
     const url = (context.publicURL ?? publicR2Url)(key);
     assert(url && new URL(url).protocol === "https:", 503, "Published media is temporarily unavailable.");
+    assert(context.admin, 503, "Floor plan saving is temporarily unavailable.");
     const { data: listing, error: listingError } = await context.db.from("listings").select("id,details")
       .eq("id", listingId).eq("org_id", context.orgId).is("deleted_at", null).maybeSingle();
     if (listingError) throw new HttpError(503, "Property could not be checked.");
@@ -133,12 +135,20 @@ export async function handleListingActions(req: Request, context: ListingActionC
     const old = listing.details;
     const details = { ...(old && typeof old === "object" && !Array.isArray(old) ? old : {}), floorplan_url: url, floorplan_asset_id: asset.id };
     assert(JSON.stringify(details).length <= 16000, 400, "This property has too much detail to attach a floor plan.");
-    // Compare the document read above so a simultaneous phone save cannot be silently overwritten.
-    let update = context.db.from("listings").update({ details }).eq("id", listingId).eq("org_id", context.orgId).is("deleted_at", null);
-    update = old === null ? update.is("details", null) : update.eq("details", JSON.stringify(old));
-    const { data, error } = await update.select("id,details").maybeSingle();
-    if (error) throw new HttpError(503, "Floor plan could not be saved.");
-    assert(data, 409, "This property changed on another device. Refresh and attach the floor plan again.");
+    // Recheck current actor/asset authority and compare the exact details in
+    // one transaction. The RPC merges only the two attachment keys.
+    const { data, error } = await context.admin.rpc("studio_attach_floorplan", {
+      p_actor: context.userId, p_org: context.orgId, p_listing: listingId,
+      p_asset: asset.id, p_expected: old, p_url: url,
+    });
+    if (error) {
+      if (error.code === "42501") throw new HttpError(403, "Your account no longer permits attaching a floor plan.");
+      if (error.code === "P0002") throw new HttpError(404, "Property not found in this workspace.");
+      if (error.code === "40001") throw new HttpError(409, "This property changed on another device. Refresh and attach the floor plan again.");
+      if (error.code === "22023") throw new HttpError(400, "Choose an uploaded floor plan from this property.");
+      throw new HttpError(503, "Floor plan could not be saved.");
+    }
+    assert(data?.id === listingId, 503, "The saved floor plan could not be confirmed. Please retry.");
     return json({ ok: true, listing_id: listingId, asset_id: asset.id, floorplan_url: url }, 200, { "cache-control": "no-store" });
   }
   const caption = typeof body.caption === "string" ? body.caption.trim().slice(0, 500) : "";

@@ -39,6 +39,17 @@ Build 44 retains this ordinary-write bug; the independent measurements CAS
 protects its own private plan. Team rollout needs changed-field intent, atomic
 conflict protection and a safe compatibility boundary for older clients.
 
+The [full debugging follow-up](docs/handoff/FULL-DEBUGGING-20261004.md) implements
+those safeguards on isolated source branch `fix/full-debugging-20261004`, with
+retained conflicts, creation-retry protection, account-bound exports/Apple
+codes, Studio draft recovery and ordered Apple subscription events. **These
+follow-up changes are not deployed or uploaded.** Its report records the
+required staged billing rollout and older-client upgrade boundary; build 44's
+historical delivery receipt remains unchanged. All twelve
+[CI jobs](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37266689307) passed
+on exact source `e72503c`; the unsigned ARM64 iPhone Release build also passed.
+The final evidence-only documentation update changes no executable or test source.
+
 The [2 October audit follow-up](docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)
 checks Claude's older report against the delivered source and live database.
 It records stricter AI admission, compatible guest subscription access,

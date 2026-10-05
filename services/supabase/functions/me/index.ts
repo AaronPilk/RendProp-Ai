@@ -101,6 +101,7 @@ import { deleteStreamVideo, streamConfigured } from "../_shared/stream.ts";
 import { appleConfigured, exchangeAppleCode, revokeAppleToken } from "../_shared/apple.ts";
 import {
   type AppleRenewalInfo,
+  type AppleTransaction,
   decodeRenewalInfo,
   decodeTransaction,
   deriveEntitlement,
@@ -1131,9 +1132,10 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     assert(signedRenewal.length <= MAX_JWS_CHARS, 400, "signed_renewal_info is too large");
     const candidate = decodeRenewalInfo(await verifyAppleJWS(signedRenewal));
     if (
-      candidate.originalTransactionId === null ||
       candidate.originalTransactionId === tx.originalTransactionId
     ) {
+      assert(candidate.environment === null || candidate.environment === tx.environment,
+        400, "That renewal belongs to a different App Store environment");
       renewal = candidate;
     }
   }
@@ -1185,7 +1187,7 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
 
   const derived = deriveEntitlement(tx, renewal);
 
-  const { error: rpcErr } = await admin.rpc("apply_apple_entitlement", {
+  const { data: applied, error: rpcErr } = await admin.rpc("apply_apple_entitlement_v2", {
     p_org: orgId,
     p_user: userId,
     p_original_transaction_id: tx.originalTransactionId,
@@ -1197,6 +1199,10 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     p_expires_at: derived.expiresAt,
     p_auto_renew: derived.autoRenew,
     p_notification_type: null,
+    p_transaction_purchased_at: tx.purchaseDate,
+    p_transaction_signed_at: tx.signedDate,
+    p_event_signed_at: null,
+    p_renewal_signed_at: renewal?.signedDate ?? null,
   });
   if (rpcErr) {
     // RPnnn is the RPC refusing the input (a bug on our side — the only one it
@@ -1226,21 +1232,26 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
   // Answer with what the server now ENFORCES, read back after every write —
   // effective_plan() is the same function the charge paths call, so the app can
   // never be told it has a plan the next AI request will refuse.
-  const [{ data: effective }, { data: org }] = await Promise.all([
+  const [{ data: effective, error: effectiveError }, { data: org, error: orgError }, { data: subscription, error: subscriptionError }] = await Promise.all([
     admin.rpc("effective_plan", { p_org: orgId }),
-    admin.from("orgs").select("plan, plan_source, plan_expires_at").eq("id", orgId).maybeSingle(),
+    admin.from("orgs").select("plan, plan_source, plan_expires_at, apple_product_id").eq("id", orgId).maybeSingle(),
+    admin.from("apple_subscriptions").select("status, auto_renew, product_id, expires_at")
+      .eq("original_transaction_id", tx.originalTransactionId).eq("org_id", orgId).maybeSingle(),
   ]);
+  if (effectiveError || orgError || subscriptionError || !org || !subscription) {
+    throw new HttpError(503, "Subscription state could not be confirmed. Please retry.", "upstream");
+  }
 
   return json({
     plan: String(effective ?? org?.plan ?? "free"),
     source: (org?.plan_source as string | null) ?? "apple",
-    expires_at: derived.expiresAt,
-    product_id: tx.productId,
+    expires_at: org.plan_expires_at ?? subscription.expires_at ?? applied?.expires_at ?? null,
+    product_id: subscription.product_id,
     original_transaction_id: tx.originalTransactionId,
     environment: tx.environment,
     // Additive extras the app may ignore.
-    status: derived.status,
-    auto_renew: derived.autoRenew,
+    status: subscription.status,
+    auto_renew: subscription.auto_renew,
     replayed_notifications: replayed,
   });
 }
@@ -1251,8 +1262,8 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
  * apple-subscriptions/index.ts stores the exact RPC arguments it computed on
  * each `pending` row (`payload.entitlement`), so a replay re-applies the SAME
  * decision rather than re-deriving it here from a second copy of the rules. In
- * receipt order, because apply_apple_entitlement() resolves out-of-order
- * signals by comparing expiries.
+ * receipt order. apply_apple_entitlement_v2() orders the independently verified
+ * purchase, transaction and outer-notification dates before applying a change.
  *
  * Best effort: a failure here must not turn a successful purchase into an error
  * the customer sees. The rows stay `pending` and the next sync retries them.
@@ -1281,7 +1292,9 @@ async function replayPendingNotifications(
         .update({ pending: false, org_id: orgId }).eq("notification_uuid", uuid);
       continue;
     }
-    const { error: rpcErr } = await admin.rpc("apply_apple_entitlement", {
+    const payload = row.payload as { transaction?: AppleTransaction; renewal?: AppleRenewalInfo; notification?: { signedDate?: number } };
+    const outerSigned = payload?.notification?.signedDate;
+    const { error: rpcErr } = await admin.rpc("apply_apple_entitlement_v2", {
       p_org: orgId,
       p_user: null,
       p_original_transaction_id: e.original_transaction_id,
@@ -1293,6 +1306,12 @@ async function replayPendingNotifications(
       p_expires_at: (e.expires_at as string | null) ?? null,
       p_auto_renew: typeof e.auto_renew === "boolean" ? e.auto_renew : null,
       p_notification_type: (e.notification_type as string | null) ?? null,
+      // Historical pending notifications already stored the decoded verified
+      // transaction and outer signed date, before these explicit fields existed.
+      p_transaction_purchased_at: e.transaction_purchased_at ?? payload?.transaction?.purchaseDate ?? null,
+      p_transaction_signed_at: e.transaction_signed_at ?? payload?.transaction?.signedDate ?? null,
+      p_event_signed_at: e.event_signed_at ?? (typeof outerSigned === "number" && Number.isFinite(outerSigned) && outerSigned > 0 && outerSigned <= 8.64e15 ? new Date(outerSigned).toISOString() : null),
+      p_renewal_signed_at: e.renewal_signed_at ?? payload?.renewal?.signedDate ?? null,
     });
     if (rpcErr) {
       console.error("pending notification replay failed:", rpcErr.message);

@@ -16,18 +16,35 @@ done
 
 The positive run compiles actual Listing/measurement models, WorkspaceSync and
 the anonymous-adoption journal. It also compiles extracted actual LiveAPIClient
-create/PATCH/CAS/body/decoder/mapping methods, AppModel ordinary modification,
-measurement save/sync/shared reload/review confirmation, and the editor save
-method. Fixtures replace HTTP, active Auth/workspace metadata and file-path
+create/facts-CAS/measurement-CAS/body/decoder/mapping methods, AppModel ordinary
+modification, measurement save/sync/shared reload, facts review load and
+resolution, async legacy review confirmation, and the editor save method.
+Fixtures replace HTTP, active Auth/workspace metadata and file-path
 resolution. Other WorkspaceSyncAPI operations deliberately throw: only the
 tested cloud listing read is available.
 
+The sync API double records dispatch and returns a mapped accepted baseline.
+This independently tests AppModel admission and acknowledgement even when the
+wire serializer also rejects unsafe intent. Direct wire examples separately
+stage an ordinary edit and exercise the actual `PUT /listings/:id/facts` body.
+
 Every run records exact source/harness hashes, actual and copied Listing hashes,
 extracted body hashes, compile/run logs and a receipt in its printed owned
-`/tmp/rendprop-floor-measurement-sync-*` directory. Controls mutate copied source
+`/tmp/rendprop-floor-measurement-sync-*` directory, or the explicit
+`--output-dir` evidence directory. Controls mutate copied source
 only, must compile, and must fail their named assertion. The original runtime
 files are never edited. There are no live network requests, credentials, real
 photos, camera sessions, customer rows or cloud writes.
+Production and harness hashes must still match after compilation and execution;
+source changes during a run fail the gate.
+
+The `drop-replay-adopt` altered-source control retains the pre-create typed plan
+at final persistence of an unchanged replay. Its assertion remains "Unedited
+replay adopts the office measurement plan". Deleting only the first direct
+assignment no longer creates that defect: ordinary facts acknowledgement has an
+independent `FloorMeasurementSync.adoptFacts` path that restores the correct plan.
+The final-persistence mutation exercises the observable stale-plan defect across
+both valid adoption paths rather than weakening or disabling its assertion.
 
 ## Exercised behavior
 
@@ -36,23 +53,24 @@ photos, camera sessions, customer rows or cloud writes.
   this key. Outline-only v2 is meaningful; an empty supported plan deliberately
   clears geometry. Model and full details envelope size checks happen before
   HTTP. Measured areas do not overwrite advertised listing `sqft`.
-- Generic listing PATCH omits every private measurements key. Measurement saves
+- Ordinary facts CAS omits every private measurements key. Measurement saves
   instead send only exact cached `expected` and new `value` to the bound
   server/workspace CAS endpoint. Mid-request geometry edits advance only the
   acknowledged base and retain the newer pending plan; deleting the final
   outline requires its own acknowledged CAS write.
-- Ordinary tagline edits use the generic dirty queue independently. Held
+- Ordinary tagline edits use the ordinary facts queue independently. Held
   requests exercise newer ordinary edits, failures, cancellation and account
   revision changes without falsely acknowledging the latest local state.
 - New creation captures a persistent ordinary-facts fingerprint separately from
   its combined payload fingerprint. Lost create receipts plus geometry-only
-  edits adopt office facts/attachments and use CAS, with no stale full-row PATCH.
+  edits adopt office facts/attachments and use CAS, with no stale full-row write.
   If the office changed geometry too, the phone copy is retained in conflict.
   Retrying creation cannot replace the original intent fingerprints.
 - Older combined hashes cannot establish ordinary edit intent. Existing pending
   typed/raw drift is recovered on snapshot decode, sync and merge into CAS using
   the exact cached raw baseline. Ordinary local fields remain behind an explicit
-  review fence. Confirming this iPhone's details permits their generic PATCH;
+  review fence. Confirming this iPhone's details first loads and reviews the
+  shared facts, then stages explicit differences against that fetched baseline;
   explicitly loading shared listing details adopts remote facts while retaining
   the measurement backup. Loading only shared measurements does not approve
   ordinary facts. An unreadable old baseline is preserved without a guessed CAS.
@@ -66,7 +84,7 @@ photos, camera sessions, customer rows or cloud writes.
   preservation, substitute encoded-string comparison, or prohibit backup renewal
   and must fail the corresponding sequence assertions. Late CAS success or
   HTTP 409 after a shared load cannot revive or mark conflict on the replaced
-  queue, and cannot submit a second measurement write or generic PATCH.
+  queue, and cannot submit a second measurement write or ordinary facts write.
 - Dynamic dictionary keys retain exact spelling through snake-case DTO decoding.
   Unsupported/future raw plans remain opaque instead of becoming an empty plan.
   Dirty/pending and protected geometry survive refresh; clean acknowledged
@@ -87,10 +105,11 @@ snapshot round trip. Controls remove the version fence or atomic raw mirror and
 must fail. Unmirrored historical typed edits use explicit legacy CAS/review
 recovery; they are not treated as already uploaded.
 
-Generic ordinary-facts PATCH still replaces its ordinary details bag; this
-feature does not add per-field conflict resolution for all listing edits. The
-measurement-only contract prevents geometry edits from implicitly invoking that
-full-row write, and the older ambiguous-intent path requires an explicit choice.
+Ordinary writes now use `PUT /listings/:id/facts`, carrying only explicitly
+staged field and detail differences plus their expected shared values. Successful
+fixture receipts record the accepted baseline just as the production DTO mapping
+does. Measurement-only changes stay on the separate geometry CAS endpoint; old
+ambiguous ordinary intent requires a fetched review and explicit choice.
 
 This is offline source proof, not a physical-device or live-server test. The
 separate `tools/audit/run_listing_measurement_cas.py` runner verifies the actual

@@ -689,13 +689,14 @@ struct SignInView: View {
             errorMessage = nil
             Task {
                 do {
-                    try await AuthStore.shared.exchangeAppleIdentityToken(idToken: idToken, nonce: nonce)
+                    let identity = try await AuthStore.shared.exchangeAppleIdentityToken(idToken: idToken, nonce: nonce)
                     // Best-effort, after the session exists (the POST needs the
                     // fresh JWT). Never blocks or fails sign-in.
                     if let authCode {
-                        await AuthStore.submitAppleAuthorizationCode(authCode)
+                        await AuthStore.submitAppleAuthorizationCode(authCode, for: identity)
                     }
                     await MainActor.run {
+                        guard identity.isCurrent else { isExchanging = false; return }
                         if let displayName {
                             AuthStore.shared.userName = displayName
                             UserDefaults.standard.set(displayName, forKey: "auth.userName")

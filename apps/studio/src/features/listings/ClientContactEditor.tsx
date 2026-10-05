@@ -1,16 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { StudioServices } from "../../data/services";
 import { uploadListingAsset } from "./uploads";
 import { clientContactPayload, clientForm, decodeClientContact, type ClientContact, type ClientForm } from "./client-contact";
 
-type Props = { services: StudioServices; orgId: string; listingId: string; canWrite: boolean; onBlocked: (blocked: boolean) => void; onChanged: () => void };
+export type ContactNavigationGuard = { canLeave: () => boolean };
+type ContactDraft = { form: ClientForm; baseline: ClientForm; saved: ClientContact | null };
+// A forced identity change cannot ask before unmounting. Keep open-tab drafts
+// isolated by service instance, account, workspace and property for recovery.
+const pendingContacts = new WeakMap<StudioServices, Map<string, ContactDraft>>();
+type Props = { services: StudioServices; userId: string; orgId: string; listingId: string; canWrite: boolean; onBlocked: (blocked: boolean) => void; onChanged: () => void; onNavigationGuard?: (guard: ContactNavigationGuard | null) => void };
 const failure = (error: unknown) => error instanceof Error ? error.message : "The listing contact could not be saved. Please try again.";
-export default function ClientContactEditor({ services, orgId, listingId, canWrite, onBlocked, onChanged }: Props) {
-  const [saved, setSaved] = useState<ClientContact | null>(null), [form, setForm] = useState<ClientForm>(clientForm(null));
+export default function ClientContactEditor({ services, userId, orgId, listingId, canWrite, onBlocked, onChanged, onNavigationGuard }: Props) {
+  const draftKey = `${userId}:${orgId}:${listingId}`;
+  const cached = useRef(pendingContacts.get(services)?.get(draftKey)).current;
+  const [saved, setSaved] = useState<ClientContact | null>(cached?.saved ?? null), [form, setForm] = useState<ClientForm>(() => cached ? structuredClone(cached.form) : clientForm(null));
   const [loaded, setLoaded] = useState(false), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [conflict, setConflict] = useState(false), [notice, setNotice] = useState("");
-  const current = useRef(form), baseline = useRef(form), active = useRef<AbortController | null>(null), input = useRef<HTMLInputElement>(null);
+  const current = useRef(form), baseline = useRef(cached ? structuredClone(cached.baseline) : form), active = useRef<AbortController | null>(null), input = useRef<HTMLInputElement>(null), saving = useRef(false), savedValue = useRef(saved);
   current.current = form;
+  savedValue.current = saved;
+  const forget = () => pendingContacts.get(services)?.delete(draftKey);
+  useLayoutEffect(() => {
+    onNavigationGuard?.({ canLeave: () => {
+      if (saving.current) { setNotice("Wait for the listing contact save or photo upload to finish before switching."); return false; }
+      if (JSON.stringify(current.current) === JSON.stringify(baseline.current)) return true;
+      if (!window.confirm("Discard unsaved listing contact changes?")) return false;
+      pendingContacts.get(services)?.delete(draftKey);
+      current.current = baseline.current; setForm(baseline.current); setNotice("");
+      return true;
+    } });
+    return () => onNavigationGuard?.(null);
+  }, [services, draftKey, onNavigationGuard]);
   const dirty = JSON.stringify(form) !== JSON.stringify(baseline.current);
   const path = `/functions/v1/listings/${listingId}/client-contact`;
   useEffect(() => { onBlocked(!loaded || loading || busy || dirty || conflict || !!error); }, [loaded, loading, busy, dirty, conflict, error, onBlocked]);
@@ -23,7 +43,7 @@ export default function ClientContactEditor({ services, orgId, listingId, canWri
       const hasEdits = JSON.stringify(current.current) !== JSON.stringify(baseline.current);
       if (hasEdits && !discard) {
         if (contact?.revision !== saved?.revision) setConflict(true);
-      } else { const value = clientForm(contact); baseline.current = value; current.current = value; setForm(value); setSaved(contact); setConflict(false); setNotice(""); }
+      } else { const value = clientForm(contact); baseline.current = value; current.current = value; setForm(value); setSaved(contact); forget(); setConflict(false); setNotice(""); }
       setLoaded(true);
     } catch (error) { if (!controller.signal.aborted) setError(failure(error)); }
     finally { if (active.current === controller) active.current = null; if (!controller.signal.aborted) setLoading(false); }
@@ -31,27 +51,34 @@ export default function ClientContactEditor({ services, orgId, listingId, canWri
   useEffect(() => { void load(); return () => { active.current?.abort(); active.current = null; }; }, [services, path, orgId, listingId]);
   useEffect(() => { const refresh = () => { if (document.visibilityState === "visible") void load(); }; window.addEventListener("focus", refresh); return () => window.removeEventListener("focus", refresh); }, [load]);
   useEffect(() => { if (!dirty) return; const protect = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", protect); return () => window.removeEventListener("beforeunload", protect); }, [dirty]);
-  const update = (next: Partial<ClientForm>) => { onBlocked(true); setForm(value => ({ ...value, ...next })); setNotice(""); };
+  const update = (next: Partial<ClientForm>) => {
+    const value = { ...current.current, ...next }; current.current = value;
+    let drafts = pendingContacts.get(services);
+    if (!drafts) { drafts = new Map(); pendingContacts.set(services, drafts); }
+    if (JSON.stringify(value) === JSON.stringify(baseline.current)) drafts.delete(draftKey);
+    else drafts.set(draftKey, { form: structuredClone(value), baseline: structuredClone(baseline.current), saved: structuredClone(savedValue.current) });
+    onBlocked(true); setForm(value); setNotice("");
+  };
   const save = async () => {
     if (active.current || !canWrite || !loaded || conflict) return;
-    const controller = new AbortController(); active.current = controller; setBusy(true); setError(""); setNotice("");
+    const controller = new AbortController(); active.current = controller; saving.current = true; setBusy(true); setError(""); setNotice("");
     try {
       const body = clientContactPayload(form, saved?.revision ?? 0);
       const contact = decodeClientContact(await services.api(path, { method: "PUT", orgId, body, signal: controller.signal }), listingId);
       if (controller.signal.aborted) return;
       if (!contact || contact.revision <= (saved?.revision ?? 0) || contact.enabled !== body.enabled || contact.recipient_email !== body.recipient_email || contact.hide_rendprop_branding !== body.hide_rendprop_branding || (contact.photo_asset_id ?? null) !== body.photo_asset_id || Object.entries(body.public_card).some(([key, value]) => contact.public_card[key as keyof typeof contact.public_card] !== value)) throw new Error("The saved contact could not be confirmed. Refresh and review it before publishing.");
-      const value = clientForm(contact); baseline.current = value; current.current = value; setSaved(contact); setForm(value); setConflict(false); setNotice(contact.enabled ? `Client contact saved. New inquiries will be emailed to ${contact.recipient_email} and kept in your lead inbox.` : "This listing uses your account’s contact card."); onChanged();
+      const value = clientForm(contact); baseline.current = value; current.current = value; setSaved(contact); setForm(value); forget(); setConflict(false); setNotice(contact.enabled ? `Client contact saved. New inquiries will be emailed to ${contact.recipient_email} and kept in your lead inbox.` : "This listing uses your account’s contact card."); onChanged();
     } catch (error) { if (!controller.signal.aborted) { setError(failure(error)); if (/changed|conflict|revision/i.test(failure(error))) setConflict(true); } }
-    finally { if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
+    finally { saving.current = false; if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
   };
   const uploadPhoto = async (file: File) => {
     if (active.current || !canWrite) return;
-    const controller = new AbortController(); active.current = controller; setBusy(true); setError(""); setNotice("");
+    const controller = new AbortController(); active.current = controller; saving.current = true; setBusy(true); setError(""); setNotice("");
     try {
       const asset = await uploadListingAsset(services, { orgId, listingId, file, role: "contact_photo", signal: controller.signal });
       if (!controller.signal.aborted) { update({ photo_asset_id: asset.assetId, avatar_url: null }); setNotice("Photo uploaded. Save the client contact to put it on the listing."); }
     } catch (error) { if (!controller.signal.aborted) setError(failure(error)); }
-    finally { if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
+    finally { saving.current = false; if (active.current === controller) active.current = null; if (!controller.signal.aborted) setBusy(false); }
   };
   const fields: { key: keyof ClientForm["public_card"]; label: string; type?: string }[] = [
     { key: "name", label: "Client name or business name" }, { key: "brokerage", label: "Brokerage or business" }, { key: "title", label: "Professional title" },

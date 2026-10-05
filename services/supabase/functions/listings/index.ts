@@ -22,9 +22,9 @@ import { createListingRow } from "./create.ts";
 import { clientContact, saveClientContact } from "./client-contact.ts";
 import { appendPublishedPhotos, publishedPhotoPatch } from "../_shared/property-cover.ts";
 
-// Columns a client is allowed to set/patch. agent_id/org_id/id/created_at are
-// server-controlled and never taken from the body. Must stay in sync with the
-// column-level UPDATE grant (migrations 0008/0008b) — tests/invariants.sql checks.
+// Creation fields; ordinary updates use explicit per-field intent at PUT /:id/facts.
+// The legacy PATCH route accepts only the dedicated photo/gallery operations.
+// Ownership columns are server controlled.
 const WRITABLE = [
   "space_type",
   "address",
@@ -143,6 +143,33 @@ Deno.serve(async (req) => {
     const explicitOrg = requested === undefined ? undefined :
       (await workspaceDirectory(adminClient(), user.id, requested)).active_org_id;
 
+    if (seg.length === 2 && seg[1] === "facts") {
+      assert(req.method === "PUT", 405, "Use PUT for listing details.");
+      assert(explicitOrg, 409, "Choose a workspace before saving listing details.");
+      assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), 400, "Choose a valid listing.");
+      await assertNotDeleting(user.id);
+      const body = await readJsonLimited<Record<string, unknown>>(req, 45000);
+      const names = ["expected", "changes", "details_expected", "details_changes"];
+      assert(Object.keys(body).length === names.length && names.every(k => Object.hasOwn(body,k)), 400,
+        "Send explicit edits with their cached values.");
+      for (const name of names) assert(body[name] !== null && typeof body[name] === "object" && !Array.isArray(body[name]), 400,
+        "Invalid listing edit.");
+      const changes = body.changes as Record<string, unknown>;
+      validate(changes);
+      const { data, error } = await adminClient().rpc("save_listing_facts", {
+        p_actor: user.id, p_org: explicitOrg, p_listing: id,
+        p_expected: body.expected, p_changes: changes,
+        p_details_expected: body.details_expected, p_details_changes: body.details_changes,
+      });
+      if (error) {
+        if (error.code === "40001") throw new HttpError(409, "Listing details changed elsewhere. Your edits have been kept. Review both versions before saving.");
+        if (error.code === "42501") throw new HttpError(403, "Your role does not permit editing listings.");
+        if (error.code === "P0002") throw new HttpError(404, "Listing not found in this workspace.");
+        throw new HttpError(400, "These listing edits could not be saved.");
+      }
+      return json(data);
+    }
+
     if (seg.length === 2 && seg[1] === "measurements") {
       assert(req.method === "PUT", 405, "Use PUT for measurements.");
       assert(explicitOrg, 409, "Choose a workspace before saving measurements.");
@@ -213,6 +240,8 @@ Deno.serve(async (req) => {
     if (req.method === "PATCH" && id) {
       const body = await readJson<Record<string, unknown>>(req);
       const patch = pick(body);
+      assert(Object.keys(patch).every(k => ["main_photo_key", "gallery_asset_ids"].includes(k)), 426,
+        "Update Rendprop to sync listing details safely. Your local edits are saved on your phone.");
       assert(Object.keys(patch).length > 0 || Object.hasOwn(body,"main_photo_asset_id") || Object.hasOwn(body,"gallery_add_asset_ids"), 400,
         `No writable fields in body (accepted: ${WRITABLE.join(", ")}, main_photo_asset_id, gallery_add_asset_ids)`);
 

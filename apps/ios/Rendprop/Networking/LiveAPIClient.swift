@@ -548,13 +548,19 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     func updateListing(_ listing: Listing) async throws -> Listing {
-        // PATCH the SERVER row (serverID), never the local UUID — the local id
-        // is unknown to the backend once the listing has been created there.
-        let target = listing.serverID ?? listing.id
-        let data = try await execute(makeRequest(url: url(["listings", target.uuidString]),
-                                                 method: "PATCH",
-                                                 json: try listingBody(listing, forPatch: true)))
-        return mapListing(try decode(data))
+        _ = try ListingWireDetails.merged(listing)
+        guard let target = listing.serverID, let org = listing.serverOrgID,
+              org == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(["listings", target.uuidString, "facts"]),
+                                  method: "PUT", json: try ListingFactsSync.body(listing))
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+        })
+        let dto: ListingDTO = try decode(data)
+        guard dto.id.flatMap(UUID.init(uuidString:)) == target,
+              dto.orgId.flatMap(UUID.init(uuidString:)) == org else { throw CloudSyncError.invalidResponse }
+        return mapListing(dto)
     }
 
     func updateMeasurements(_ listing: Listing) async throws -> Listing {
@@ -570,7 +576,10 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let data = try await execute(request, beforeSend: {
             guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
         })
-        return mapListing(try decode(data))
+        let dto: ListingDTO = try decode(data)
+        guard dto.id.flatMap(UUID.init(uuidString:)) == target,
+              dto.orgId.flatMap(UUID.init(uuidString:)) == org else { throw CloudSyncError.invalidResponse }
+        return mapListing(dto)
     }
 
     func deleteListing(serverID: UUID) async throws {
@@ -1943,6 +1952,16 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         if let raw = l.details?[Listing.searchIndexingKey]?.lowercased() {
             l.allowSearchIndexing = ["true", "1", "yes"].contains(raw)
         }
+        func text(_ value: String?) -> ListingFactValue { value.map(ListingFactValue.text) ?? .null }
+        func number(_ value: Double?) -> ListingFactValue { value.map(ListingFactValue.number) ?? .null }
+        var state = ListingFactsSyncState()
+        state.baseline = ["space_type": text(dto.spaceType), "address": text(dto.address),
+            "beds": number(dto.beds.map(Double.init)), "baths": number(dto.baths),
+            "sqft": number(dto.sqft.map(Double.init)), "price_cents": number(dto.priceCents.map(Double.init)),
+            "tagline": text(dto.tagline), "zillow_url": text(dto.zillowUrl), "lat": number(dto.lat), "lng": number(dto.lng),
+            "sold_at": text(dto.soldAt), "status": text(dto.status)]
+        state.detailBaseline = (dto.details?.raw ?? [:]).filter { ListingFactsSync.editableDetailKeys.contains($0.key) }
+        l.factsSync = state
         return l
     }
 
@@ -1971,6 +1990,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// can't fail the entire /listings array decode.
     struct TolerantStringMap: Decodable {
         let value: [String: String]
+        let raw: [String: ListingFactValue]
 
         private struct Scalar: Decodable {
             let value: String?
@@ -1989,6 +2009,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             // details are stored keys, not DTO field names: rewriting them
             // loses floor_measurements_v1, floorplan_url and future raw keys.
             let c = try decoder.singleValueContainer()
+            raw = try c.decode([String: ListingFactValue].self)
             value = try c.decode([String: Scalar].self).compactMapValues(\.value)
         }
     }

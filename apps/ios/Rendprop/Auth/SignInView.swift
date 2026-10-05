@@ -8,7 +8,7 @@
 //     is kept; its SHA256 goes on the Apple request.
 //   • `AuthStore.shared.exchangeAppleIdentityToken(idToken:nonce:)` — throws
 //     `APIError.server` with GoTrue's own message on a rejected exchange.
-//   • `AuthStore.submitAppleAuthorizationCode(_:)` — TN3194, best-effort.
+//   • `AuthStore.submitAppleAuthorizationCode(_:for:)` — TN3194, best-effort.
 //   • `AuthStore.shared.setDisplayName(_:)` (or assigning `userName`) — Apple
 //     returns `fullName` ONLY on the first authorization; the sheet must format
 //     it with `PersonNameComponentsFormatter` and hand it over right away.

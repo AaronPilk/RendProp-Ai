@@ -73,6 +73,38 @@ jobs:
         run: bash apps/ios/tests/run-photo-work-queue.sh
       - name: Photo edit lifecycle and background resource cleanup
         run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
+      - name: Owner-bound Apple sign-in code and export admission
+        run: |
+          python3 tools/audit/apple-code-session-20261004/run.py
+          for fault in drop-dispatch-fences drop-receipt-fences legacy-rebind drop-exchange-fence; do
+            python3 tools/audit/apple-code-session-20261004/run.py --inject-fault "$fault"
+          done
+          python3 tools/audit/native-media-export-20261004/run.py
+          for fault in drop-permission-context drop-listing-binding drop-csv-context drop-completion-context; do
+            python3 tools/audit/native-media-export-20261004/run.py --inject-fault "$fault"
+          done
+      - name: Ordinary listing intent and shared-version review
+        run: |
+          python3 tools/audit/listing-facts-sync-20261004/run.py
+          for fault in broad-wire wrong-workspace late-conflict drop-receipt-scope; do
+            python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault "$fault"
+          done
+          python3 tools/audit/listing-facts-review-20261004/run.py
+          for fault in drop-review-context expose-private-details; do
+            python3 tools/audit/listing-facts-review-20261004/run.py --inject-fault "$fault"
+          done
+      - name: Create receipts retire consumed intent and preserve newer edits
+        run: |
+          python3 tools/audit/listing-create-intent-20261004/run.py
+          for fault in revive-replay-intent drop-replay-base retain-consumed-address; do
+            python3 tools/audit/listing-create-intent-20261004/run.py --expect-regression --inject-fault "$fault"
+          done
+      - name: Native forms retain opened intent, exact cents and workspace binding
+        run: |
+          python3 tools/audit/listing-form-intent-20261004/run.py
+          for fault in broad-form fresh-baseline price-rounding; do
+            python3 tools/audit/listing-form-intent-20261004/run.py --inject-fault "$fault"
+          done
       - name: Legacy photo galleries, cover review and per-family selection
         run: |
           python3 tools/audit/photo-gallery-reconciliation-20261004/run.py
@@ -245,9 +277,15 @@ jobs:
             /tmp/rendprop-outline-editor-*/*.log
             /tmp/rendprop-floor-measurement-sync-*/receipt.json
             /tmp/rendprop-floor-measurement-sync-*/*.log
+            /tmp/rendprop-listing-create-intent-*/receipt.json
+            /tmp/rendprop-listing-create-intent-*/*.log
+            /tmp/rendprop-listing-form-intent-*/receipt.json
+            /tmp/rendprop-listing-form-intent-*/*.log
             /tmp/rendprop-measurement-export-*/receipt.json
             /tmp/rendprop-measurement-export-*/*.log
             /tmp/rendprop-measurement-export-controls*/*.log
+            /tmp/rendprop-app-store-boundaries-*/receipt.json
+            /tmp/rendprop-app-store-boundaries-*/*.log
             /tmp/rendprop-photo-reconciliation-*/receipt.json
             /tmp/rendprop-photo-reconciliation-*/*.log
           retention-days: 7
@@ -329,6 +367,8 @@ jobs:
           node tests/listing-finish-browser.mjs
           node tests/listing-kit-browser.mjs
           node tests/browser-connected.mjs
+          node tests/contact-navigation-browser.mjs
+          node tests/listing-facts-browser.mjs
           node tests/creation-shell-browser.mjs
           node tests/browser-connected-control.mjs
           node tests/auth-browser.mjs
@@ -339,6 +379,65 @@ jobs:
           node tests/creative-browser.mjs
           node tests/photo-delivery-browser.mjs
           node tests/photographer-browser.mjs
+      - name: Contact navigation and account isolation controls
+        run: |
+          for control in missing-guard missing-account-scope; do
+            evidence_log="$RUNNER_TEMP/rendprop-contact-$control.log"
+            set +e
+            node tests/contact-navigation-browser.mjs --fault="$control" > "$evidence_log" 2>&1
+            control_status=$?
+            set -e
+            if [ "$control_status" -eq 0 ]; then
+              cat "$evidence_log"
+              exit 1
+            fi
+            node --input-type=module - "$evidence_log" "$control" <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const receipt=JSON.parse(readFileSync(process.argv[2],'utf8'));
+          const control=process.argv[3];
+          const expected={
+            'missing-guard':'Canceling property change must retain client A',
+            'missing-account-scope':'The other account must see only the saved shared contact',
+          };
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,control);
+          assert.ok(receipt.failure.includes(expected[control]));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          console.log(`Contact control ${control} caught at its intended assertion.`);
+          NODE
+          done
+      - name: Explicit listing facts controls
+        run: |
+          for control in broad-changes normalized-baseline missing-draft; do
+            evidence_log="$RUNNER_TEMP/rendprop-facts-$control.log"
+            set +e
+            node tests/listing-facts-browser.mjs --fault="$control" > "$evidence_log" 2>&1
+            control_status=$?
+            set -e
+            if [ "$control_status" -eq 0 ]; then
+              cat "$evidence_log"
+              exit 1
+            fi
+            node --input-type=module - "$evidence_log" "$control" <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const receipt=JSON.parse(readFileSync(process.argv[2],'utf8'));
+          const control=process.argv[3];
+          const expected={
+            'broad-changes':'Only changed form fields may enter the facts contract',
+            'normalized-baseline':'Expected empty text must remain the raw server value',
+            'missing-draft':'Property switch must recover unsaved fact fields',
+          };
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,control);
+          assert.ok(receipt.failure.includes(expected[control]));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          console.log(`Listing facts control ${control} caught at its intended assertion.`);
+          NODE
+          done
       - name: Retain browser failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -357,6 +456,10 @@ jobs:
             /tmp/rendprop-listing-kit-*/*.png
             /tmp/rendprop-connected-browser-*/receipt.json
             /tmp/rendprop-connected-browser-*/*.png
+            /tmp/rendprop-contact-navigation-*/receipt.json
+            /tmp/rendprop-contact-navigation-*/*.png
+            /tmp/rendprop-listing-facts-browser-*/receipt.json
+            /tmp/rendprop-listing-facts-browser-*/*.png
             /tmp/rendprop-creation-shell-*/receipt.json
             /tmp/rendprop-creation-shell-*/*.png
             /tmp/rendprop-presenter-*/*.json
@@ -502,6 +605,8 @@ jobs:
       - name: Run the tools/audit upload fixtures directly
         working-directory: services/supabase/functions
         run: deno test --allow-all --node-modules-dir=auto ../../../tools/audit/uploads_*_test.ts
+      - name: Actual listing intent handler against closed transport
+        run: deno run --cached-only --allow-env --allow-read tools/audit/listing-facts-handler-20261004.ts
 
   db-migrations:
     name: Supabase migrations (fresh replay + invariants)
@@ -746,9 +851,11 @@ jobs:
           python3 tools/audit/run_adoption_regression.py
           python3 tools/audit/run_team_readiness.py
           python3 tools/audit/run_subscription_trial_regression.py
+          python3 tools/audit/run_subscription_chronology.py
           python3 tools/audit/run_workspace_selection.py
           python3 tools/audit/run_listing_gallery_selection.py
           python3 tools/audit/run_listing_measurement_cas.py
+          python3 tools/audit/run_listing_facts_cas.py
           python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py

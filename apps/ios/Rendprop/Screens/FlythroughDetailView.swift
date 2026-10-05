@@ -458,6 +458,7 @@ struct FlythroughDetailView: View {
     /// screen; the tile goes there.
     @State private var showReelStudio = false
     @State private var showEdit = false
+    @State private var showListingFactsReview = false
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
     /// Which of the two links a QR sheet is being shown for (nil = none).
@@ -472,6 +473,7 @@ struct FlythroughDetailView: View {
 
     // MARK: Compliance (W2-C2) — the org's AI provenance rows for THIS listing
     @State private var provenance: [ProvenanceRecord] = []
+    @State private var provenanceCanExport: (() -> Bool)?
     @State private var isLoadingProvenance = false
     @State private var provenanceError: String?
     @State private var isExportingAudit = false
@@ -688,6 +690,9 @@ struct FlythroughDetailView: View {
                             .padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: Theme.radius))
                     }.foregroundStyle(Theme.accent).accessibilityIdentifier("listing.editDetails")
                 }
+                if !currentListing.isSample && listingFactsNeedReview {
+                    ListingFactsReviewCard { showListingFactsReview = true }
+                }
                 complianceSection
                 toolboxSection
                 filesSection
@@ -800,6 +805,9 @@ struct FlythroughDetailView: View {
         .sheet(isPresented: $showEdit) {
             ListingEditSheet(listing: currentListing)
                 .environmentObject(model)
+        }
+        .sheet(isPresented: $showListingFactsReview) {
+            ListingFactsReviewSheet(listingID: listing.id)
         }
         .sheet(item: $qrTarget) { target in
             QRShareSheet(url: target.url, title: currentListing.address,
@@ -1488,8 +1496,10 @@ struct FlythroughDetailView: View {
     /// different `PhotosLibrarySaver` calls — `saveImageFile` writes the exact
     /// bytes rather than re-encoding, which matters when the "photo" is a
     /// compliance original a broker may ask for (W2-C2).
-    private func saveFileToPhotos(_ item: ListingMediaItem) {
+    @MainActor private func saveFileToPhotos(_ item: ListingMediaItem) {
         guard !isSavingFile else { return }
+        let canExport = mediaExportAdmission(for: currentListing)
+        guard canExport() else { return }
         isSavingFile = true
         filesNote = nil
         let url = item.url
@@ -1497,28 +1507,25 @@ struct FlythroughDetailView: View {
         let what = item.title
         let id = item.id
         let kind = item.kind.rawValue
-        Task {
+        Task { @MainActor in
+            defer { isSavingFile = false }
             do {
                 if isVideo {
-                    try await PhotosLibrarySaver.saveVideo(at: url)
+                    try await PhotosLibrarySaver.saveVideo(at: url, while: canExport)
                 } else {
-                    try await PhotosLibrarySaver.saveImageFile(at: url)
+                    try await PhotosLibrarySaver.saveImageFile(at: url, while: canExport)
                 }
-                await MainActor.run {
-                    isSavingFile = false
-                    savedFiles.insert(id)
-                    filesNoteOK = true
-                    filesNote = "\(what) is now in your Photos app."
-                    Haptics.success()
-                    Analytics.track("file_saved", ["kind": kind, "ok": "true"])
-                }
+                guard canExport() else { return }
+                savedFiles.insert(id)
+                filesNoteOK = true
+                filesNote = "\(what) is now in your Photos app."
+                Haptics.success()
+                Analytics.track("file_saved", ["kind": kind, "ok": "true"])
             } catch {
-                await MainActor.run {
-                    isSavingFile = false
-                    filesNoteOK = false
-                    filesNote = error.localizedDescription
-                    Analytics.track("file_saved", ["kind": kind, "ok": "false"])
-                }
+                guard canExport() else { return }
+                filesNoteOK = false
+                filesNote = error.localizedDescription
+                Analytics.track("file_saved", ["kind": kind, "ok": "false"])
             }
         }
     }
@@ -2023,19 +2030,40 @@ struct FlythroughDetailView: View {
         }
     }
 
+    private var listingFactsNeedReview: Bool {
+        let value = currentListing
+        return value.factsSync?.conflict == true || value.factsSync?.reviewRequired == true
+            || (value.serverID != nil && value.needsServerSync == true && value.factsSync == nil)
+    }
+
+    @MainActor private func mediaExportAdmission(for snapshot: Listing) -> () -> Bool {
+        let context = NativeMediaExportContext()
+        return {
+            guard context.isCurrent,
+                  let current = self.model.listings.first(where: { $0.id == snapshot.id }),
+                  current.cloudUnavailable != true else { return false }
+            return current.serverID == snapshot.serverID && current.serverOrgID == snapshot.serverOrgID
+        }
+    }
+
     /// Load this listing's provenance rows (GET /me/compliance?listing_id=).
     /// Silent when the account has no access or the route is missing — the card
     /// stays hidden rather than shouting at an agent who did nothing wrong.
-    private func loadCompliance() async {
+    @MainActor private func loadCompliance() async {
         let l = currentListing
         guard !l.isSample, let serverID = l.serverID else { return }
         guard !Config.enableAuth || auth.isSignedIn else { return }
         guard !isLoadingProvenance else { return }
+        let canExport = mediaExportAdmission(for: l)
+        guard canExport() else { return }
         isLoadingProvenance = true
         provenanceError = nil
         defer { isLoadingProvenance = false }
         do {
-            provenance = try await model.api.provenance(listingServerID: serverID)
+            let rows = try await model.api.provenance(listingServerID: serverID)
+            guard canExport() else { return }
+            provenance = rows
+            provenanceCanExport = canExport
         } catch is CancellationError {
             // The screen was left mid-load (a push cancels `.task`) — say nothing;
             // coming back re-runs it.
@@ -2052,20 +2080,32 @@ struct FlythroughDetailView: View {
     /// Save every unaltered original this listing has on file into Photos —
     /// what a broker or a compliance officer asks for when they want the
     /// "before" images out of the app.
-    private func saveOriginalsToPhotos() {
+    @MainActor private func saveOriginalsToPhotos() {
         guard !isSavingOriginals else { return }
+        guard let canExport = provenanceCanExport, canExport() else {
+            complianceNote = "Your account, workspace or listing changed. Reopen the listing to download originals."
+            return
+        }
         let urls = provenance.compactMap { $0.originalURL }
         guard !urls.isEmpty else { return }
         isSavingOriginals = true
         complianceNote = nil
         Haptics.selection()
-        Task {
+        Task { @MainActor in
+            defer { isSavingOriginals = false }
             var saved = 0
             var failure: String?
             for remote in urls {
                 var staged: URL?
                 do {
+                    try Task.checkCancellation()
+                    guard canExport() else { return }
                     let (tmp, response) = try await URLSession.shared.download(from: remote)
+                    // This operation owns only its returned temporary download.
+                    // A rejected late reply cannot reach Photos or another URL.
+                    defer { try? FileManager.default.removeItem(at: tmp) }
+                    try Task.checkCancellation()
+                    guard canExport() else { return }
                     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                         try? FileManager.default.removeItem(at: tmp)
                         throw AIImagePrep.error("The original couldn't be downloaded (HTTP \(http.statusCode)).")
@@ -2078,7 +2118,11 @@ struct FlythroughDetailView: View {
                     try? FileManager.default.removeItem(at: dest)
                     try FileManager.default.moveItem(at: tmp, to: dest)
                     staged = dest
-                    try await PhotosLibrarySaver.saveImageFile(at: dest)
+                    try await PhotosLibrarySaver.saveImageFile(at: dest, while: canExport)
+                    guard canExport() else {
+                        try? FileManager.default.removeItem(at: dest)
+                        return
+                    }
                     saved += 1
                 } catch {
                     if failure == nil { failure = AIFailure(error).message }
@@ -2088,47 +2132,54 @@ struct FlythroughDetailView: View {
             let total = urls.count
             let done = saved
             let why = failure
-            await MainActor.run {
-                isSavingOriginals = false
-                let plural: String = done == 1 ? "" : "s"
-                if done == total {
-                    complianceNote = "Saved \(done) original\(plural) to Photos."
-                    Haptics.success()
-                } else if done > 0 {
-                    complianceNote = "Saved \(done) of \(total) originals to Photos. \(why ?? "")"
-                } else {
-                    complianceNote = why ?? "Couldn't save the originals."
-                }
+            guard canExport() else { return }
+            let plural: String = done == 1 ? "" : "s"
+            if done == total {
+                complianceNote = "Saved \(done) original\(plural) to Photos."
+                Haptics.success()
+            } else if done > 0 {
+                complianceNote = "Saved \(done) of \(total) originals to Photos. \(why ?? "")"
+            } else {
+                complianceNote = why ?? "Couldn't save the originals."
             }
         }
     }
 
     /// Fetch the broker-exportable CSV for this listing and hand it to the share
     /// sheet, so "email my broker the audit" is one tap and a real attachment.
-    private func exportAudit() {
+    @MainActor private func exportAudit() {
         guard !isExportingAudit, let serverID = currentListing.serverID else { return }
+        let canExport = mediaExportAdmission(for: currentListing)
+        guard canExport() else { return }
         isExportingAudit = true
         complianceNote = nil
         Haptics.selection()
         let api = model.api               // snapshot on the main actor
         let address = currentListing.address
-        Task {
+        Task { @MainActor in
+            var ownedDirectory: URL?
+            var handedOff = false
+            defer {
+                isExportingAudit = false
+                if !handedOff, let ownedDirectory { try? FileManager.default.removeItem(at: ownedDirectory) }
+            }
             do {
                 let csv = try await api.complianceCSV(listingServerID: serverID)
+                try Task.checkCancellation()
+                guard canExport() else { return }
                 let name = Self.auditFilename(for: address)
-                let dest = FileManager.default.temporaryDirectory.appendingPathComponent(name)
-                try? FileManager.default.removeItem(at: dest)
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-audit-\(UUID().uuidString)", isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                ownedDirectory = directory
+                let dest = directory.appendingPathComponent(name)
                 try csv.write(to: dest, options: .atomic)
-                await MainActor.run {
-                    isExportingAudit = false
-                    auditExport = AuditExport(url: dest)
-                    Haptics.success()
-                }
+                guard canExport() else { return }
+                auditExport = AuditExport(url: dest)
+                handedOff = true
+                Haptics.success()
             } catch {
-                await MainActor.run {
-                    isExportingAudit = false
-                    complianceNote = "Couldn't build the audit export — \(AIFailure(error).message)"
-                }
+                guard canExport() else { return }
+                complianceNote = "Couldn't build the audit export — \(AIFailure(error).message)"
             }
         }
     }
@@ -2659,6 +2710,181 @@ private struct DetailPhotoThumb: View {
     }
 }
 
+private struct ListingFactsReviewCard: View {
+    let review: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Listing details need review", systemImage: "arrow.triangle.2.circlepath")
+                .font(.rpHeadline)
+            Text("Your edits are saved on this iPhone. Compare them with the shared listing before syncing.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button("Review shared listing details", action: review)
+                .font(.rpBody.weight(.semibold))
+                .accessibilityIdentifier("listing.factsReview")
+        }.frame(maxWidth: .infinity, alignment: .leading).padding()
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius))
+    }
+}
+
+/// Phone-editable facts only. Private measurement state and server-managed
+/// attachments cannot become part of an ordinary replacement approval.
+private enum ListingFactsReviewRows {
+    struct Row: Identifiable {
+        let id: String
+        let title: String
+        let local: String
+        let shared: String
+    }
+
+    static func make(_ review: ListingFactsReview) -> [Row] {
+        let a = review.local, b = review.shared
+        func text(_ value: String?) -> String {
+            let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return cleaned.isEmpty ? "Not set" : cleaned
+        }
+        func location(_ listing: Listing) -> String {
+            guard let lat = listing.latitude, let lon = listing.longitude,
+                  lat.isFinite, lon.isFinite else { return "Not set" }
+            return String(format: "%.3f, %.3f", lat, lon)
+        }
+        func sold(_ listing: Listing) -> String {
+            guard let date = listing.soldAt else { return "Active" }
+            return "Sold · " + ISO8601DateFormatter().string(from: date).prefix(10)
+        }
+        var rows: [Row] = [
+            .init(id: "address", title: "Address", local: a.address, shared: b.address),
+            .init(id: "beds", title: "Beds", local: a.beds > 0 ? String(a.beds) : "Not set", shared: b.beds > 0 ? String(b.beds) : "Not set"),
+            .init(id: "baths", title: "Baths", local: a.baths > 0 ? String(a.baths) : "Not set", shared: b.baths > 0 ? String(b.baths) : "Not set"),
+            .init(id: "sqft", title: "Square feet", local: a.sqft > 0 ? String(a.sqft) : "Not set", shared: b.sqft > 0 ? String(b.sqft) : "Not set"),
+            .init(id: "price", title: "Price", local: a.price.cents > 0 ? a.price.formatted : "Not set", shared: b.price.cents > 0 ? b.price.formatted : "Not set"),
+            .init(id: "tagline", title: "Description", local: text(a.tagline), shared: text(b.tagline)),
+            .init(id: "location", title: "Location", local: location(a), shared: location(b)),
+            .init(id: "sold", title: "Listing status", local: sold(a), shared: sold(b)),
+            .init(id: "zillow", title: "Zillow link", local: text(a.zillowURL), shared: text(b.zillowURL)),
+        ]
+        let localDetails = ListingFactsSync.detailValues(a), sharedDetails = ListingFactsSync.detailValues(b)
+        let labels = Dictionary(SpaceType.allCases.flatMap { $0.detailFields }.map { ($0.key, $0.label) }, uniquingKeysWith: { first, _ in first })
+        for key in Set(localDetails.keys).union(sharedDetails.keys).sorted() {
+            let title = key == Listing.searchIndexingKey ? "List on Google" : labels[key] ?? key
+            rows.append(.init(id: "detail:" + key, title: title,
+                              local: text(localDetails[key]), shared: text(sharedDetails[key])))
+        }
+        return rows
+    }
+}
+
+private struct ListingFactsComparisonRow: View {
+    let row: ListingFactsReviewRows.Row
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(row.title).font(.rpBody.weight(.semibold))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("On this iPhone").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Text(row.local).font(.rpBody).textSelection(.enabled)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Shared details").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Text(row.shared).font(.rpBody).textSelection(.enabled)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ListingFactsReviewSheet: View {
+    let listingID: UUID
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var review: ListingFactsReview?
+    @State private var loading = false
+    @State private var error: String?
+
+    private var reviewIsCurrent: Bool {
+        guard let review else { return false }
+        return auth.isIdentified && auth.userID == review.ownerID
+            && auth.syncSessionRevision == review.sessionRevision
+            && WorkspaceContext.selectedOrgID == review.local.serverOrgID
+            && model.listings.first(where: { $0.id == listingID }) == review.local
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Compare the details saved on this iPhone with the current shared listing.")
+                    if let review {
+                        Text(review.local.factsSync?.hasChanges == true && review.local.factsSync?.reviewRequired != true
+                             ? "Keep my edits retries only the fields you changed."
+                             : "Keep my edits approves the iPhone details shown below for syncing.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
+                    if loading { ProgressView("Loading shared details…") }
+                    if let error { Text(error).font(.rpCaption).foregroundStyle(.red) }
+                    if review != nil && !reviewIsCurrent && error == nil {
+                        Text("The listing, account or workspace changed. Reload the comparison before choosing.")
+                            .font(.rpCaption).foregroundStyle(.orange)
+                    }
+                    Button("Reload comparison") { Task { await load() } }
+                        .disabled(loading).accessibilityIdentifier("listing.factsReview.reload")
+                }
+                if let review {
+                    Section("Listing details") {
+                        ForEach(ListingFactsReviewRows.make(review)) { row in
+                            ListingFactsComparisonRow(row: row)
+                        }
+                    }
+                    Section {
+                        Button("Use shared details") { resolve(keepLocal: false) }
+                            .accessibilityIdentifier("listing.factsReview.useShared")
+                        Button("Keep my edits") { resolve(keepLocal: true) }
+                            .accessibilityIdentifier("listing.factsReview.keepLocal")
+                    }.disabled(loading || !reviewIsCurrent || error != nil)
+                }
+            }
+            .navigationTitle("Review listing details").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .task { await load() }
+            .onChange(of: auth.userID) { _ in review = nil; error = "Your account changed. Reopen the listing to review its details." }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+                review = nil; error = "Your workspace changed. Reopen the listing to review its details."
+            }
+        }
+    }
+
+    @MainActor private func load() async {
+        guard !loading else { return }
+        loading = true; error = nil; review = nil
+        defer { loading = false }
+        do { review = try await model.loadListingFactsReview(listingID) }
+        catch { self.error = error.localizedDescription }
+    }
+
+    @MainActor private func resolve(keepLocal: Bool) {
+        guard let review, reviewIsCurrent else { return }
+        do {
+            try model.resolveListingFacts(review, keepLocal: keepLocal)
+            dismiss()
+        } catch { self.error = error.localizedDescription }
+    }
+}
+
+/// Captures an export's session without treating ordinary JWT rotation as an
+/// account change. Admission is checked before Photos begins its transaction;
+/// iOS may finish a transaction that has already begun.
+@MainActor private struct NativeMediaExportContext {
+    private let owner = AuthStore.shared.userID
+    private let revision = AuthStore.shared.syncSessionRevision
+    private let workspace = WorkspaceContext.selectedOrgID
+
+    var isCurrent: Bool {
+        !Task.isCancelled && AuthStore.shared.userID == owner
+            && AuthStore.shared.syncSessionRevision == revision
+            && WorkspaceContext.selectedOrgID == workspace
+    }
+}
+
 /// Photos-library saves with a REAL completion (F-A-16). Both calls throw on a
 /// denied permission or a failed write, so a caller flips "Saved to Photos"
 /// only when the asset actually landed.
@@ -2669,11 +2895,14 @@ private enum PhotosLibrarySaver {
         }
     }
     struct ContextChanged: LocalizedError {
-        var errorDescription: String? { "Your account or workspace changed. Reopen the plan before exporting." }
+        var errorDescription: String? { "Your account, workspace or listing changed. Reopen it before exporting." }
     }
 
-    static func saveVideo(at url: URL) async throws {
+    @MainActor static func saveVideo(at url: URL, while canSave: @escaping @MainActor () -> Bool = { true }) async throws {
+        let context = NativeMediaExportContext()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
         try await ensureAddAccess()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
         try await PHPhotoLibrary.shared().performChanges {
             _ = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
         }
@@ -2691,8 +2920,11 @@ private enum PhotosLibrarySaver {
     /// originals (W2-C2): a re-encoded "original" is not the original, and a
     /// broker who asks for the unaltered image is entitled to the exact bytes
     /// the public "View original" link serves.
-    static func saveImageFile(at url: URL) async throws {
+    @MainActor static func saveImageFile(at url: URL, while canSave: @escaping @MainActor () -> Bool = { true }) async throws {
+        let context = NativeMediaExportContext()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
         try await ensureAddAccess()
+        guard context.isCurrent, canSave() else { throw ContextChanged() }
         try await PHPhotoLibrary.shared().performChanges {
             _ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
         }

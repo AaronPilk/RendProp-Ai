@@ -1,0 +1,236 @@
+import Foundation
+import CryptoKit
+
+// No native IO, credentials, transport or customer files exist here.
+enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/fixture/" + path) } }
+enum FixtureError: Error { case lostReceipt, timeout }
+__WIRE__
+__CREATE__
+__ERROR__
+
+@MainActor final class HeldCreate {
+    var arrivals = 0
+    private var continuation: CheckedContinuation<Void, Never>?
+    func hold() async { arrivals += 1; await withCheckedContinuation { continuation = $0 } }
+    func release() { let c = continuation; continuation = nil; c?.resume() }
+}
+
+struct Probe: Encodable {
+    let scenario: String
+    let replay: Bool
+    let needsServerSync: Bool
+    let visibleTagline: String?
+    let visibleSpecial: String?
+    let fieldsExpected: [String: ListingFactValue]
+    let fieldsValues: [String: ListingFactValue]
+    let detailsExpected: [String: ListingFactValue]
+    let detailsValues: [String: ListingFactValue]
+    let intentMatchesVisibleFacts: Bool
+    let filesPreserved: Bool
+    let wouldPassOfficeCAS: Bool
+    let violations: [String]
+}
+
+@main struct CreateIntentChecks {
+    @MainActor static func main() async {
+        do { try await run() }
+        catch { print("UNEXPECTED \(error)"); exit(2) }
+    }
+    @MainActor static func run() async throws {
+        let localID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let serverID = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let orgID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let owner = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        let identity = CloudDraftCreation.Identity(userID: owner.uuidString, revision: 1)
+        var base = Listing(id: localID, address: "Original draft", beds: 2, baths: 1, sqft: 900, price: Money(cents: 25000000))
+        base.tagline = "Original tagline"; base.details = ["weeklySpecial": "Original special"]
+        base.cloudDraftOrgID = orgID
+        base.mainPhotoRelPath = "Photos/synthetic-local-main.jpg"
+        base.exteriorPhotoRelPath = "Photos/synthetic-local-exterior.jpg"
+        var failures = [String](), checks = 0
+        func check(_ condition: Bool, _ message: String, into violations: inout [String]) {
+            checks += 1
+            if !condition { violations.append(message); failures.append(message) }
+        }
+        func receipt(_ draft: Listing, replay: Bool) -> Listing {
+            var result = draft
+            result.id = serverID; result.serverID = serverID; result.serverOrgID = orgID
+            result.mainPhotoRelPath = nil; result.exteriorPhotoRelPath = nil
+            if replay {
+                result.tagline = "Office newer tagline"; result.details?["weeklySpecial"] = "Office newer special"
+                result.address = "Office corrected address"; result.beds = 4
+            }
+            result.cloudCreateReplayed = replay
+            result.cloudCreateFingerprint = nil; result.cloudCreateFactsFingerprint = nil
+            result.needsServerSync = false
+            result.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(result), detailBaseline: ListingFactsSync.detailFacts(result))
+            return result
+        }
+        func wait(_ condition: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while !condition() { if Date() > deadline { throw FixtureError.timeout }; await Task.yield() }
+        }
+        // Three requested cases, with fresh/replay variants for the in-flight edits.
+        for (scenario, initialIntent, midflight, replay) in [
+            ("staged-before-create-lost-receipt-replay", true, false, true),
+            ("no-initial-intent-midflight-fresh", false, true, false),
+            ("no-initial-intent-midflight-replay", false, true, true),
+            ("staged-before-create-midflight-fresh", true, true, false),
+            ("staged-before-create-midflight-replay", true, true, true),
+            ("staged-before-create-midflight-replay-office-old-value", true, true, true),
+            ("staged-before-create-changed-retry-requires-review", true, false, true),
+            ("staged-before-create-midflight-replay-coordinate-pair", true, true, true),
+            ("staged-before-create-midflight-replay-pending-geometry", true, true, true),
+            ("staged-before-create-midflight-replay-unarchive", true, true, true)
+        ] {
+            let coordinates = scenario.hasSuffix("coordinate-pair")
+            let geometry = scenario.hasSuffix("pending-geometry")
+            let unarchive = scenario.hasSuffix("unarchive")
+            var snapshot = base
+            let initialPlan = FloorMeasurementPlan(unit: .meters,
+                rooms: [FloorMeasurementRoom(name: "Synthetic room", widthMeters: 3, lengthMeters: 4)],
+                updatedAt: Date(timeIntervalSince1970: 1700000000))
+            var phonePlan = initialPlan; phonePlan.rooms[0].widthMeters = 5
+            let initialWire = try initialPlan.encodedWireValue()
+            let phoneWire = try phonePlan.encodedWireValue()
+            let futureKey = "floor_measurements_future", futureWire = "{\"version\":8,\"future\":true}"
+            if coordinates { snapshot.latitude = 3; snapshot.longitude = 4 }
+            if geometry {
+                snapshot.floorMeasurements = initialPlan
+                snapshot.details?[FloorMeasurementPlan.wireKey] = initialWire
+                snapshot.details?[futureKey] = futureWire
+                snapshot.measurementSync = FloorMeasurementSyncState(expected: initialWire)
+            }
+            if initialIntent {
+                snapshot.tagline = "Create payload tagline"; snapshot.details?["weeklySpecial"] = "Create special"
+                snapshot.address = "Create payload address"
+                ListingFactsSync.stage(from: base, in: &snapshot)
+            }
+            if unarchive {
+                snapshot.soldAt = Date(timeIntervalSince1970: 1700000000); snapshot.status = .ready
+                snapshot.factsSync?.baseline["status"] = .text("archived")
+            }
+            try CloudDraftCreation.prepare(&snapshot)
+            var current: Listing? = snapshot
+            let originalSnapshot = snapshot
+            var saveCount = 0, deleteCount = 0, requestCount = 0
+            var violations = [String]()
+            if replay {
+                // Simulate an accepted first POST whose response is lost.
+                // No server mutation happens in this fixture.
+                do {
+                    _ = try await CloudDraftCreation.ensure(snapshot: snapshot, identity: identity,
+                        create: { submitted in requestCount += 1; _ = receipt(submitted, replay: false); throw FixtureError.lostReceipt },
+                        current: { current }, activeIdentity: { identity }, save: { current = $0; saveCount += 1 }, deleteRemoved: { _ in deleteCount += 1 })
+                    throw FixtureError.timeout
+                } catch FixtureError.lostReceipt {}
+                check(current == snapshot && saveCount == 0, "lost receipt preserves unbound phone snapshot and original intent", into: &violations)
+            }
+            let changedRetry = scenario.hasSuffix("requires-review")
+            if changedRetry {
+                let before = current!
+                current?.tagline = "Newer phone tagline"; current?.details?["weeklySpecial"] = "Newer phone special"
+                ListingFactsSync.stage(from: before, in: &current!)
+                snapshot = current!
+                try CloudDraftCreation.prepare(&snapshot)
+                check(snapshot.cloudCreateFactsFingerprint == originalSnapshot.cloudCreateFactsFingerprint, "changed retry retains the first payload fingerprint", into: &violations)
+                current = snapshot
+            }
+            let gate = HeldCreate()
+            var accepted = receipt(originalSnapshot, replay: replay)
+            let officeOldValue = scenario.hasSuffix("office-old-value")
+            if officeOldValue {
+                accepted.tagline = base.tagline; accepted.details?["weeklySpecial"] = base.details?["weeklySpecial"]
+                accepted.beds = base.beds
+                accepted.address = base.address
+                accepted.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(accepted), detailBaseline: ListingFactsSync.detailFacts(accepted))
+            }
+            if coordinates { accepted.latitude = 9; accepted.longitude = 10 }
+            if geometry {
+                var officePlan = initialPlan; officePlan.rooms[0].widthMeters = 7
+                accepted.floorMeasurements = officePlan
+                let officeWire = try officePlan.encodedWireValue()
+                accepted.details?[FloorMeasurementPlan.wireKey] = officeWire
+                accepted.details?[futureKey] = "office opaque geometry"
+                accepted.measurementSync = FloorMeasurementSyncState(expected: officeWire)
+            }
+            if unarchive { accepted.status = .expired }
+            if coordinates || geometry || unarchive {
+                accepted.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(accepted), detailBaseline: ListingFactsSync.detailFacts(accepted))
+                if unarchive { accepted.factsSync?.baseline["status"] = .text("expired") }
+            }
+            let pending = Task { @MainActor in
+                try await CloudDraftCreation.ensure(snapshot: snapshot, identity: identity,
+                    create: { _ in requestCount += 1; await gate.hold(); return accepted },
+                    current: { current }, activeIdentity: { identity }, save: { current = $0; saveCount += 1 }, deleteRemoved: { _ in deleteCount += 1 })
+            }
+            try await wait { gate.arrivals == 1 }
+            if midflight {
+                let before = current!
+                current?.tagline = "Newer phone tagline"; current?.details?["weeklySpecial"] = "Newer phone special"
+                current?.beds = 3
+                if coordinates { current?.latitude = 5 }
+                if unarchive { current?.soldAt = nil }
+                ListingFactsSync.stage(from: before, in: &current!)
+                if geometry {
+                    try FloorMeasurementSync.stage(phonePlan, in: &current!)
+                    current?.measurementSync?.savedLocalCopy = initialWire
+                }
+            }
+            gate.release(); _ = try await pending.value
+            let result = current!, state = result.factsSync
+            let fields = state?.fields ?? [:], details = state?.details ?? [:]
+            var display = ListingFactsSync.values(result)
+            display["status"] = .text(result.status.rawValue)
+            let detailDisplay = ListingFactsSync.detailFacts(result)
+            let matches = fields.allSatisfy { display[$0.key] == $0.value.value } &&
+                details.allSatisfy { (detailDisplay[$0.key] ?? .null) == $0.value.value }
+            let files = result.mainPhotoRelPath == base.mainPhotoRelPath && result.exteriorPhotoRelPath == base.exteriorPhotoRelPath
+            var sharedFields = ListingFactsSync.values(accepted)
+            sharedFields["status"] = .text(accepted.status.rawValue)
+            let sharedDetails = ListingFactsSync.detailFacts(accepted)
+            let wouldPassCAS = !fields.isEmpty && fields.allSatisfy { sharedFields[$0.key] == $0.value.expected } &&
+                details.allSatisfy { (sharedDetails[$0.key] ?? .null) == $0.value.expected && ($0.value.expectedPresent ?? false) == (sharedDetails[$0.key] != nil) }
+            check(result.id == localID && result.serverID == serverID && result.serverOrgID == orgID && saveCount == 1 && deleteCount == 0, "create binds exactly once without replacing local identity", into: &violations)
+            check(files, "create/replay preserves local photo source references", into: &violations)
+            check(requestCount == (replay ? 2 : 1), "replay uses original accepted payload after lost receipt", into: &violations)
+            if changedRetry {
+                check(result.tagline == "Newer phone tagline" && result.details?["weeklySpecial"] == "Newer phone special" && result.needsServerSync == true && state?.reviewRequired == true, "changed retry snapshot preserves phone intent and requires explicit review", into: &violations)
+                do { _ = try ListingFactsSync.body(result); check(false, "unproven changed retry cannot produce an ordinary write body", into: &violations) }
+                catch is ListingFactsSyncError { check(true, "unproven changed retry cannot produce an ordinary write body", into: &violations) }
+                check(matches, "queued intent must match the facts displayed to the owner", into: &violations)
+            } else if !midflight {
+                check(result.tagline == accepted.tagline && result.details?["weeklySpecial"] == accepted.details?["weeklySpecial"], "unchanged replay adopts newer office facts", into: &violations)
+                check(result.needsServerSync != true && state?.hasChanges != true, "unchanged replay must clear create-time intent instead of reviving it", into: &violations)
+                check(matches, "queued intent must match the facts displayed to the owner", into: &violations)
+            } else {
+                check(result.tagline == "Newer phone tagline" && result.details?["weeklySpecial"] == "Newer phone special" && result.beds == 3 && result.needsServerSync == true, "newer in-flight ordinary edits remain visible and queued", into: &violations)
+                check(matches, "queued intent must match the facts displayed to the owner", into: &violations)
+                check(fields["tagline"]?.expected == ListingFactsSync.values(snapshot)["tagline"] && details["weeklySpecial"]?.expected == ListingFactsSync.detailFacts(snapshot)["weeklySpecial"], "in-flight edits use the originally created values as CAS base", into: &violations)
+                if initialIntent {
+                    check(fields["address"] == nil && result.address == accepted.address, "create-time untouched intent retires and adopts office facts during a newer edit", into: &violations)
+                }
+                if officeOldValue { check(!wouldPassCAS, "replay office edits must conflict against originally created values", into: &violations) }
+                if coordinates {
+                    check(result.latitude == 5 && result.longitude == 4 && fields["lat"]?.expected == .number(3) && fields["lng"]?.expected == .number(4) && fields["lat"]?.value == .number(5) && fields["lng"]?.value == .number(4), "a newer location retains both phone endpoints and the first POST pair", into: &violations)
+                }
+                if geometry {
+                    check(result.floorMeasurements == phonePlan && result.details?[FloorMeasurementPlan.wireKey] == phoneWire && result.details?[futureKey] == futureWire && result.measurementSync?.pending == true && result.measurementSync?.expected == initialWire && result.measurementSync?.savedLocalCopy == initialWire, "office facts adoption preserves pending typed/raw geometry, opaque private values and saved backup", into: &violations)
+                }
+                if unarchive {
+                    check(result.status == .ready && result.soldAt == nil && fields["status"]?.value == .text("ready") && fields["status"]?.expected == .text("draft") && fields["sold_at"]?.value == .null, "a pending unarchive restores phone status and sold marker against the first POST state", into: &violations)
+                }
+            }
+            let probe = Probe(scenario: scenario, replay: replay, needsServerSync: result.needsServerSync == true,
+                visibleTagline: result.tagline, visibleSpecial: result.details?["weeklySpecial"],
+                fieldsExpected: fields.mapValues(\.expected), fieldsValues: fields.mapValues(\.value),
+                detailsExpected: details.mapValues(\.expected), detailsValues: details.mapValues(\.value),
+                intentMatchesVisibleFacts: matches, filesPreserved: files, wouldPassOfficeCAS: wouldPassCAS, violations: violations)
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            print("SCENARIO " + String(decoding: try encoder.encode(probe), as: UTF8.self))
+        }
+        print("\(checks) assertions across ten create/replay scenarios; zero network, camera, source-file IO or runtime edits")
+        if !failures.isEmpty { failures.forEach { print("FAIL: \($0)") }; exit(1) }
+        print("PASS: create-time intent retires and newer phone intent survives")
+    }
+}
