@@ -82,6 +82,10 @@ jobs:
         run: bash apps/ios/tests/run-subscription-policy.sh
       - name: Private testing allowance labels preserve ordinary plan displays
         run: python3 apps/ios/tests/run-workspace-allowance-display.py --out "$RUNNER_TEMP/rendprop-testing-allowance"
+      - name: Verified trial counters and disabled offers preserve billing dates
+        run: python3 apps/ios/tests/run-native-trial.py --out "$RUNNER_TEMP/rendprop-native-trial"
+      - name: Atomic pre-StoreKit trial buyer reservation and compiled controls
+        run: python3 apps/ios/tests/run-native-trial-hold.py --out "$RUNNER_TEMP/rendprop-native-trial-hold"
       - name: Native UX preserves drafts, deferred links, consent and archive baselines
         run: python3 apps/ios/tests/run-native-ux-audit.py --evidence-dir "$RUNNER_TEMP/rendprop-native-ux-audit"
       - name: Native client verification and lead deletion require scoped receipts
@@ -773,8 +777,17 @@ jobs:
       - name: Inclusive serving funds, Apple trial pool and finite reviewer authority
         run: |
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/bounded_subscription_trial.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006164721_funded_serving_and_app_review_authority.sql
+          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006202500_bounded_subscription_trial.sql
+          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006212900_subscription_trial_purchase_reservations.sql
+          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006213000_subscription_trial_video_duration.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/bounded_subscription_trial.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
 
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
@@ -951,6 +964,9 @@ jobs:
           python3 tools/audit/run_internal_testing_grants.py
           python3 tools/audit/run_private_internal_testing.py
           python3 services/supabase/tests/funded_serving_pg.py
+          python3 services/supabase/tests/subscription_trial_video_duration_pg.py
+          python3 services/supabase/tests/subscription_trial_purchase_reservations_pg.py
+          python3 services/supabase/tests/bounded_subscription_trial_pg.py
           python3 tools/audit/run_listing_gallery_selection.py
           python3 tools/audit/run_listing_measurement_cas.py
           python3 tools/audit/run_listing_facts_cas.py

@@ -7,7 +7,7 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
-## Current candidate source — 6 October 2026
+## Current rollout and separate trial candidate — 6 October 2026
 
 The [launch-readiness handoff](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
 records the current candidate: account-owned JSON export, deliberate member
@@ -15,13 +15,19 @@ portfolios, protected media admission, funded provider attempts, finite App Revi
 authority and prospective hosting retention. No retail, trial or review funding
 allocation is seeded. The [5 October audit](../../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
 retains the preceding source dispositions for photo mutation, billing chronology,
-verified recipients, cleanup journals and bounded uploads. These changes are not
-a production deployment or proof of realized margins or phone/provider acceptance.
+verified recipients, cleanup journals and bounded uploads. The
+[actual rollout checkpoint](../../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+records the delivered core stack, additive terminal conflict repair and final
+photo-permission contraction. Twelve exact-source CI jobs, 39 owned API requests
+and the final 77-RPC catalog readback passed. The limited subscription trial is
+separate disabled candidate source, with no real funding seeded; these checks
+do not prove realized margins or phone/provider acceptance.
 Prior-stack schema dependencies, timestamp aliases, Apple bridge ordering, photo
 expand/function/contract ordering and legacy media delivery require a coordinated
 rollout. Never infer deployment from a passing local suite or apply all migrations
 with a bulk push. The delivery snapshots below describe earlier releases; the
-6 October handoff is the authority for current candidate gates.
+6 October rollout checkpoint and trial handoff distinguish delivered work from
+remaining candidate gates.
 
 ## Delivered direct Bria internal beta
 

@@ -14,6 +14,9 @@ function fixture() {
     notification_devices: [{ id: "device", user_id: actor, environment: "production", device_token: "DO_NOT_EXPORT" }],
     apple_subscriptions: [{ original_transaction_id: "synthetic-own", user_id: actor, org_id: org, status: "active", signed_payload: "DO_NOT_EXPORT" }, { original_transaction_id: "synthetic-other", user_id: other, org_id: org, status: "active" }],
     serving_operation_results: [{org_id:org,actor_id:actor,request_key:"synthetic-key",result:{copy:"Authored generated copy",media:"urn:rendprop:r2:renders:private/key",poster:"https://rendprop.com/media/slug/r2/private%2Fkey"}},{org_id:org,actor_id:other,request_key:"other-key",result:{copy:"DO_NOT_EXPORT"}}],
+    subscription_trial_purchase_reservations: [{id:"own-hold",actor_id:actor,org_id:org,product_id:"com.rendprop.app.starter.monthly",held_at:"2026-10-06T00:00:00Z"},{id:"foreign-hold",actor_id:other,org_id:org}],
+    subscription_trial_grants: [{id:"own-trial",actor_id:actor,org_id:org,photo_cap:5},{id:"foreign-trial",actor_id:other,org_id:org,photo_cap:5}],
+    subscription_trial_actions: [{grant_id:"own-trial",kind:"upload",identity:"own-attempt",actor_id:actor,org_id:org,listing_id:"deleted-listing",asset_id:"deleted-asset",held_bytes:20},{grant_id:"foreign-trial",kind:"photo",identity:"DO_NOT_EXPORT",actor_id:other,org_id:org}],
   };
   const calls: { table: string; filters: [string, string[]][]; fields: string; start: number; end: number }[] = [];
   let namedCalls = 0; const unavailable = new Set<string>();
@@ -40,6 +43,9 @@ Deno.test("account export includes own data across current membership and names 
   assertEquals(value.data.studio_documents[0].payload.script, "Authored words"); assertEquals(value.data.leads[0].extra.party_size, 3); assert(body.includes("private media link omitted"));
   assert(!body.includes("DO_NOT_EXPORT")); assert(!body.includes("other-member@example.invalid")); assert(!body.includes("X-Amz-Signature")); assert(!body.includes("device_token"));
   assertEquals(value.data.serving_operation_results.length,1);assertEquals(value.data.serving_operation_results[0].result.copy,"Authored generated copy");assert(!body.includes("urn:rendprop:r2:"));assert(!body.includes("/media/slug/r2/"));
+  assertEquals(value.data.subscription_trial_purchase_reservations.length,1);assertEquals(value.data.subscription_trial_grants.length,1);assertEquals(value.data.subscription_trial_actions.length,1);
+  assertEquals(value.data.subscription_trial_actions[0].held_bytes,20);assert(!("listing_id"in value.data.subscription_trial_actions[0]));assert(!("asset_id"in value.data.subscription_trial_actions[0]));
+  for(const name of ["subscription_trial_grants","subscription_trial_actions","subscription_trial_purchase_reservations"])assert(f.calls.filter(c=>c.table===name).every(c=>c.filters.some(([key,values])=>key==="actor_id"&&values[0]===actor)));
   assert(value.manifest.omissions.some((x: Row) => x.collection === "binary_media")); assert(value.manifest.omissions.some((x: Row) => x.collection === "workspace_cost_and_usage_ledger")); assertEquals(f.namedCalls, 3);
   for (const call of f.calls.filter((c) => c.table === "studio_documents")) assert(call.filters.some(([column, values]) => column === "user_id" && values[0] === actor));
 });

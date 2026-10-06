@@ -37,7 +37,7 @@ try:
   source=EXPORT.read_text()
   columns=re.findall(r'(?:own|child)\("([a-z_]+)", "([a-z0-9_,]+)"',source)
   columns+=re.findall(r'name: "([a-z_]+)", fields: "([a-z0-9_,]+)"',source)
-  assert len(columns)==27 and {'profiles','memberships','orgs','listings','capture_chapters','studio_documents','apple_subscriptions','serving_operation_results'}.issubset({name for name,_ in columns}),('Unknown export query inventory',columns)
+  assert len(columns)==30 and {'profiles','memberships','orgs','listings','capture_chapters','studio_documents','apple_subscriptions','serving_operation_results','subscription_trial_grants','subscription_trial_actions','subscription_trial_purchase_reservations'}.issubset({name for name,_ in columns}),('Unknown export query inventory',columns)
   statements='set role service_role;'+''.join(f'select {fields} from public.{name} limit 0;' for name,fields in columns)
   query('account-export-schema-'+phase,statements)
   receipt.setdefault('accountExportSchema',[]).append({'phase':phase,'actualSourceSelects':len(columns),'passed':True})
@@ -57,6 +57,7 @@ try:
  actor='ca100603-0000-4000-8000-000000000001'
  query('race-seed',f"insert into auth.users(id,email,is_anonymous)values('{actor}','portfolio-race@fixture.invalid',false);")
  org=query('race-org',f"select org_id from memberships where user_id='{actor}';").strip()
+ query('race-hosting-authority',f"update orgs set plan='pro',plan_source='manual',plan_expires_at=null where id='{org}';")
  lid='ca100604-0000-4000-8000-000000000001'
  query('race-listing-seed',f"insert into listings(id,org_id,agent_id,address,details)values('{lid}','{org}','{actor}','Synthetic race listing','{{\"allow_indexing\":true}}');insert into render_jobs(id,listing_id,status)values('{lid}','{lid}','completed');insert into renders(job_id,listing_id,slug,duration_s,published_at)values('{lid}','{lid}','fixture-portfolio-race',10,now());")
  receipt['races']=[]

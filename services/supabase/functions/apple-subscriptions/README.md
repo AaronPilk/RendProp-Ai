@@ -1,5 +1,14 @@
 # apple-subscriptions — App Store Server Notifications V2
 
+**6 October delivery:** the coordinated 25-function backend deployment includes
+this webhook and `me`, from reviewed `5eeb783`, with signature authentication
+and `me` JWT verification preserved. See
+[the actual rollout](../../../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md).
+The older source-only labels below belong to the earlier review checkpoint.
+No retail, trial or App Review funds were seeded. The newer atomic limited-trial
+reservation/converter candidate is separate, disabled and not deployed. Neither
+deployment nor local tests establish an actual Apple purchase/restore/renewal.
+
 Apple tells this endpoint when a subscription starts, renews, lapses, is
 refunded or is revoked. It verifies Apple's signature itself, then applies the
 result through the service-only `apply_apple_entitlement_v2()` chronology writer.

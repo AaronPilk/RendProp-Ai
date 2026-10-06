@@ -15,7 +15,7 @@ import StoreKit
 enum PaywallReason: Equatable, Sendable {
     /// The user asked for it (Settings → Upgrade plan).
     case upgrade
-    /// A 402 from the server: this month's allowance for `feature` is used up.
+    /// A 402 from the server: this feature's included allowance is used up.
     /// `feature` is one of the `plan_entitlements` keys — renders, photo_edits,
     /// reels, aerials, drone, seats — or a plain noun the caller passes.
     case quota(feature: String)
@@ -46,7 +46,7 @@ enum PaywallReason: Equatable, Sendable {
             // would promise a reset that never comes (Team/TeamView.swift).
             return "Every seat on your plan is taken. Pick a plan with more seats."
         case .quota(let feature):
-            return "You've used all your \(PaywallReason.featureNoun(feature)) this month. Pick a plan to keep going."
+            return "You've used your included \(PaywallReason.featureNoun(feature)). Your saved work remains available. Review your plan and usage below."
         case .trialEnded:
             return "Your trial access has ended. Choose a subscription and confirm it with Apple to continue."
         case .featureLocked(let name):
@@ -64,7 +64,7 @@ enum PaywallReason: Equatable, Sendable {
         case "aerials", "aerial":         return "aerial intros"
         case "drone", "topaz":            return "drone-glide upscales"
         case "seats", "seat":             return "seats"
-        case "":                          return "monthly allowance"
+        case "":                          return "allowance"
         default:                          return raw.replacingOccurrences(of: "_", with: " ")
         }
     }

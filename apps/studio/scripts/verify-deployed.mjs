@@ -9,6 +9,15 @@ const origin='https://studio.rendprop.com';
 const root=path.resolve(import.meta.dirname,'../dist');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const files=['index.html','robots.txt','rendprop-mark.svg',...(await readdir(path.join(root,'assets'))).map(name=>`assets/${name}`)];
+assert.equal(files.length,31,'Expected exact entry, robots, mark and 28 build assets');
+let requests=0;
+const deadline=Date.now()+120_000;
+async function request(pathname){
+  assert.ok(Date.now()<deadline,'Whole readback deadline');
+  assert.ok(++requests<=35,'Exact readback request budget');
+  assert.ok(pathname.startsWith('/')&&!pathname.startsWith('//'),'Same-origin paths only');
+  return fetch(origin+pathname,{redirect:'manual',cache:'no-store',signal:AbortSignal.timeout(Math.min(15_000,deadline-Date.now()))});
+}
 const results=[];
 const warnings=[];
 // The zone already prepends its managed crawler policy to robots.txt. Pin the
@@ -18,7 +27,7 @@ const warnings=[];
 const managedRobotsPrefixSha='842b34303164ead41bccb7c05d1707422e98d108753b397b6dcc19683eb02101';
 for(const file of files){
   const pathname=file==='index.html'?'/':`/${file}`;
-  const response=await fetch(origin+pathname,{redirect:'error',cache:'no-store',signal:AbortSignal.timeout(15_000)});
+  const response=await request(pathname);
   assert.equal(response.status,200,`${pathname} must serve successfully`);
   assert.match(response.headers.get('x-robots-tag')??'',/noindex/);
   assert.match(response.headers.get('cache-control')??'',/no-store/);
@@ -41,7 +50,24 @@ for(const file of files){
   }
   results.push({path:pathname,bytes:served.length,sha256:sha(served),status:response.status,transformation});
 }
-const fallback=await fetch(origin+'/workspace',{redirect:'error',signal:AbortSignal.timeout(15_000)});
-assert.equal(fallback.status,200);
-assert.equal(sha(Buffer.from(await fallback.arrayBuffer())),sha(await readFile(path.join(root,'index.html'))),'SPA deep route must serve this same entry');
-console.log(JSON.stringify({gate:'studio-deployed-application-bytes',origin,readAt:new Date().toISOString(),status:'passed',files:results,spaFallback:true,accountLoginVerified:false,robotsCrawlBlockingVerified:false,warnings},null,2));
+// Only this configured OAuth route is canonicalized. Never follow arbitrary
+// redirects or treat missing routes/assets as the application entry.
+const query='?rendprop_route_probe=1';
+const callback=await request('/auth/callback'+query);
+assert.equal(callback.status,307,'Configured callback must use the exact canonical redirect');
+assert.equal(callback.headers.get('location'),'/'+query,'Callback must preserve the same-origin root and exact query');
+assert.equal((await callback.arrayBuffer()).byteLength,0,'Canonical redirect must have no application body');
+const entry=await request('/'+query);
+assert.equal(entry.status,200,'Canonical callback destination must serve successfully');
+assert.equal(sha(Buffer.from(await entry.arrayBuffer())),sha(await readFile(path.join(root,'index.html'))),'Callback destination must serve the same entry');
+assert.match(entry.headers.get('cache-control')??'',/no-store/);
+assert.match(entry.headers.get('x-robots-tag')??'',/noindex/);
+const missing=[];
+for(const pathname of ['/workspace','/assets/__rendprop_verify_missing__.js']){
+  const response=await request(pathname);
+  assert.equal(response.status,404,`${pathname} must retain the configured missing-route policy`);
+  missing.push({path:pathname,status:response.status});
+}
+assert.equal(requests,35);
+assert.ok(Date.now()<deadline,'Readback must finish before the whole deadline');
+console.log(JSON.stringify({gate:'studio-deployed-application-bytes-exact-routing',origin,readAt:new Date().toISOString(),status:'passed',files:results,spaFallback:false,oauthCallbackConfiguredRewrite:true,oauthCallbackCanonicalRedirect307:true,oauthCallbackQueryPreserved:true,unknownRoutes404:true,missing,GETRequests:requests,accountLoginVerified:false,robotsCrawlBlockingVerified:false,warnings},null,2));

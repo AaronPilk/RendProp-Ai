@@ -1,13 +1,22 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
+**6 October delivery:** Worker `3de4f42e-4b18-4722-8e18-15f3fb1ecad2` serves
+100% traffic, and its downloaded module matches the reviewed `5eeb783` bundle.
+See [the actual rollout record](../../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md).
+The protected media baseline passed 110 read-only GET/HEADs over two phases.
+Cache-rule acceptance, public-reader flag rollout and denial of the old public
+R2 domain remain incomplete. The newer limited-trial legal copy in this candidate
+has not been deployed. Earlier Worker versions below are dated history.
+
 The [6 October launch candidate](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
 records the current source contracts and staged rollout gates. The new member
-portfolio and protected media routes below are candidate behavior; this document
-is not a deployment or public-domain cutover receipt. Earlier delivery snapshots
-retain their dated evidence.
+portfolio renderer and media proxy code are deployed; enabling protected reader
+URLs and completing public-domain cutover remain separate. This README is not a
+cutover receipt. Earlier delivery snapshots retain their dated evidence.
 
 The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
-is live at **100%** on Worker `0d5db590-c2c8-4482-9f3f-77bcf893fcd6`, deployed
+was deployed at **100%** on Worker `0d5db590-c2c8-4482-9f3f-77bcf893fcd6`,
+subsequently replaced by the 6 October version. It was deployed
 at **17:15:45 UTC** from runtime `3615a23`. Selected main photos lead the listing;
 compact navigation opens an isolated **Explore** scroll viewer, with **Play video**
 for ordinary playback. Closing unloads the decoder and returns to the listing.

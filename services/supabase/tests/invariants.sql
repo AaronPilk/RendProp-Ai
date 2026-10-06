@@ -19,6 +19,17 @@
 
 create temp table _inv(seq serial, name text, pass boolean, note text);
 
+-- Publication fixtures explicitly represent a finite, previously sponsored
+-- trial. This does not activate or advertise a trial for a new free account.
+create function pg_temp.inv_hosting_authority(p_org uuid,p_actor uuid)returns void
+language plpgsql as $$declare f uuid;begin
+ insert into serving_funding(org_id,source,collection_ref,actor_id,net_receipts_cents,sponsored_cents,starts_at,ends_at,retention_ends_at,service_months,recurring_reserve_cents,reserve_components,evidence_sha256,created_at)
+ values(p_org,'trial','_inv-hosting-'||p_org,p_actor,0,500,now()-interval '1 day',now()+interval '7 days',now()+interval '97 days',1,7,
+ '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',repeat('a',64),(select created_at-interval '1 day'from subscription_trial_config where singleton))returning id into f;
+ insert into serving_funding_slices(funding_id,slice_index,org_id,starts_at,ends_at,total_budget_cents,recurring_reserve_cents)values(f,0,p_org,now()-interval '1 day',now()+interval '7 days',500,7);
+end$$;
+
+
 -- ── P0-3 / P0-7: privileged surface ──────────────────────────────────────────
 
 insert into _inv(name, pass, note)
@@ -597,6 +608,7 @@ begin
 
   -- Preserve the legacy allowance fixture independently of today's signup policy.
   update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=v_org;
+  perform pg_temp.inv_hosting_authority(v_org,u);
 
   -- App publishes do not consume the grandfathered trial cloud-render quota.
   v_job  := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000001', 'app');
@@ -732,6 +744,7 @@ begin
     values (u3, 'inv-fixture3@example.com', '{"full_name":"Lease Fixture"}');
   select m.org_id into v_org from memberships m where m.user_id = u3;
   update orgs set plan = 'team', trial_ends_at = null where id = v_org;
+  update orgs set plan_source='manual'where id=v_org;
   perform set_config('request.jwt.claims', json_build_object('sub', u3, 'role', 'authenticated')::text, true);
 
   insert into listings (org_id, agent_id, address) values (v_org, u3, '2 Lease Way') returning id into v_listing;
@@ -1031,6 +1044,9 @@ begin
   select mm.org_id into vA from memberships mm where mm.user_id = uA;
   select mm.org_id into vB from memberships mm where mm.user_id = uB;
   select mm.org_id into vC from memberships mm where mm.user_id = uC;
+  -- Pre-existing hosted metadata seeded by the database owner, with explicit
+  -- manual authority rather than a tenant publication identity.
+  update orgs set plan='pro',plan_source='manual'where id in(vA,vC);
 
   insert into listings (org_id, agent_id, address) values (vA, uA, '1 Admin Way')  returning id into lA;
   insert into listings (org_id, agent_id, address) values (vC, uC, '1 Tenant Way') returning id into lC;
@@ -2075,6 +2091,7 @@ begin
   select m.org_id into v_org from memberships m where m.user_id = u4;
   -- This tests a grandfathered industry trial, not a new signup grant.
   update orgs set space_type = 'fitness', plan='trial', plan_source='trial', trial_ends_at=now()+interval '7 days' where id = v_org;
+  perform pg_temp.inv_hosting_authority(v_org,u4);
   perform set_config('request.jwt.claims', json_build_object('sub', u4, 'role', 'authenticated')::text, true);
 
   insert into listings (org_id, agent_id, address) values (v_org, u4, '1 Gym Way') returning id into v_listing;
@@ -2252,6 +2269,7 @@ begin
   select m.org_id into oA      from memberships m where m.user_id = u5;
   select m.org_id into oB      from memberships m where m.user_id = u6;
   select m.org_id into oOrphan from memberships m where m.user_id = u7;
+  perform pg_temp.inv_hosting_authority(oA,u5);
 
   -- (a) a REAL publish stamps the activation fact, and a second one cannot move it.
   perform set_config('request.jwt.claims', json_build_object('sub', u5, 'role', 'authenticated')::text, true);
@@ -2488,7 +2506,9 @@ begin
   select org_id into oAdmOwn from memberships where user_id = uAdm;
   select org_id into oOut    from memberships where user_id = uOut;
   select org_id into oSeat   from memberships where user_id = uSeat;
-  update orgs set plan = 'team', plan_source = 'apple' where id in (oBrk, oOut, oSeat);
+  -- Brokerage metadata/seat behavior uses explicit manual authority; this
+  -- fixture does not claim that a raw Apple plan has verified funding.
+  update orgs set plan = 'team', plan_source = 'manual' where id in (oBrk, oOut, oSeat);
 
   insert into memberships (user_id, org_id, role) values (uAdm, oBrk, 'admin'), (uAg, oBrk, 'agent');
 
@@ -2765,6 +2785,7 @@ begin
     (uNA, 'inv-notify-admin@example.com',     now(), '{"full_name":"Ana Admin"}'),
     (uNM, 'inv-notify-marketing@example.com', now(), '{"full_name":"Mo Marketing"}');
   select org_id into oNO from memberships where user_id = uNO;
+  perform pg_temp.inv_hosting_authority(oNO,uNO);
   insert into memberships (user_id, org_id, role) values (uNA, oNO, 'admin'), (uNM, oNO, 'marketing');
 
   -- ── (a) posture ───────────────────────────────────────────────────────────
@@ -3133,6 +3154,10 @@ begin
   delete from orgs where id in (oNO, oCL);
   delete from auth.users where id in (uNO, uNA, uNM, uCL);
 end $notif$;
+
+-- Remove only these fixture sponsor records; no lifecycle reset is tested here.
+delete from serving_funding_slices where funding_id in(select id from serving_funding where collection_ref like '\_inv-hosting-%');
+delete from serving_funding where collection_ref like '\_inv-hosting-%';
 
 drop table if exists _inv_tasks;
 

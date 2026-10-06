@@ -1,5 +1,13 @@
 # Launch candidate — 6 October 2026
 
+**Later delivered checkpoint:** internal 1.0.4 (45) is available. The core stack,
+additive terminal conflict repair, Studio assets and final photo-permission
+contraction are now delivered as recorded in the
+[actual rollout handoff](CAS-AND-STUDIO-ROLLOUT-20261006.md). Protected media,
+financial acceptance and the [separate limited trial](../studio/subscription-trial.md)
+remain gates. The preflight and deployment sequence below are preserved as their
+dated source checkpoint, not a request to repeat completed deployment steps.
+
 Source is isolated on `fix/full-system-audit-20261005`; Claude's shared checkout
 is untouched. This handoff supersedes earlier source dispositions only where
 the new evidence below says so. It is not a delivery receipt. At the latest

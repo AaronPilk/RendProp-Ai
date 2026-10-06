@@ -58,6 +58,12 @@ struct PaywallView: View {
             // `source` and `plan` on paywall_viewed, and drops anything else.
             PaywallEvents.track("paywall_viewed", ["source": reason.analyticsValue])
         }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            Task { await purchases.refreshBillingContext() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropPlanChanged)) { _ in
+            Task { await purchases.refreshBillingContext() }
+        }
     }
 
     // MARK: Header
@@ -74,7 +80,7 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Choose a plan, then confirm with Apple. A free trial starts only after that confirmation, if you’re eligible.")
+                Text("Choose a plan. Check trial availability before reviewing any reserved trial terms, or confirm a paid subscription with Apple.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             }
@@ -88,6 +94,10 @@ struct PaywallView: View {
                 Label(context.name, systemImage: "person.2.fill").font(.rpHeadline)
                 Text(context.canManageSubscription ? "New subscriptions apply to this workspace. Apple manages payment and cancellation. An existing Apple subscription stays with the workspace that owns it." : context.unavailableMessage)
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                if context.showsServicePending {
+                    Text(ServingActivationSummary.pendingTitle).font(.rpHeadline)
+                    Text(ServingActivationSummary.pendingExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
             }.frame(maxWidth: .infinity, alignment: .leading).card()
         } else if let error = purchases.billingError {
             VStack(alignment: .leading, spacing: 8) {
@@ -108,9 +118,47 @@ struct PaywallView: View {
         } else {
             periodPicker
             planCards
-            SelectedPlanDetails(plan: selectedPlan, period: planOffer(for: selectedPlan).period)
+            trialDetails
+            if purchases.billingContext?.servingActivation?.available != false {
+                SelectedPlanDetails(plan: selectedPlan, period: planOffer(for: selectedPlan).period,
+                                    afterTrial: purchases.billingContext?.trialUsage != nil || selectedHasIntroOffer)
+            }
         }
         messageBlock
+    }
+
+    private var selectedHasIntroOffer: Bool {
+        planOffer(for: selectedPlan).product.map { purchases.showsIntroOffer(for: $0) } ?? false
+    }
+
+    @ViewBuilder private var trialDetails: some View {
+        if let trial = purchases.billingContext?.trialUsage {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(trial.statusLabel).font(.rpHeadline).foregroundStyle(Theme.ink)
+                ForEach(trial.rows, id: \.title) { row in
+                    LabeledContent(row.title, value: row.value).font(.rpCaption)
+                }
+                if let end = trial.endDate {
+                    Text("Trial access ends \(end.formatted(date: .abbreviated, time: .shortened)).")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                Text(TrialUsageSummary.explanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+                .accessibilityIdentifier("paywall.recordedTrial")
+        } else if selectedHasIntroOffer, let product = planOffer(for: selectedPlan).product,
+                  let offer = purchases.heldTrialOffer(for: product),
+                  offer.enabled, !offer.benefitLines.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Trial includes").font(.rpHeadline).foregroundStyle(Theme.ink)
+                ForEach(offer.benefitLines, id: \.self) { line in
+                    Label(line, systemImage: "checkmark").font(.rpCaption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Up to 7 days, or until the included usage is used. Each allowance is separate and does not reset. Usage does not bring forward Apple's charge date. Your saved work remains available under your workspace's access and retention terms.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+                .accessibilityIdentifier("paywall.trialIncludes")
+        }
     }
 
     private var loadingCard: some View {
@@ -278,6 +326,16 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("paywall.selection")
                 buyButton(product)
+                if purchases.activeProductID != product.id,
+                   purchases.trialEligibility(for: product) != false,
+                   !purchases.canStartNewPurchase(for: product) {
+                    Text(purchases.canCheckTrialAvailability(for: product)
+                         ? "Check availability to reserve this plan's trial terms before Apple's confirmation. Checking does not start Apple billing."
+                         : TrialPurchaseAdmission.unavailableMessage)
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("paywall.trialUnavailable")
+                }
                 // `offer.period`, not the picker: the button buys what the card
                 // shows, so the billing sentence has to match the card too.
                 Text(disclosure(for: product, period: offer.period))
@@ -311,10 +369,20 @@ struct PaywallView: View {
     private func buyButton(_ product: Product) -> some View {
         PrimaryButton(title: buyTitle(for: product),
                       isDisabled: purchases.isPurchasing || purchases.isRestoring ||
-                        (purchases.activeProductID != product.id && Config.useLiveBackend && purchases.billingContext?.canManageSubscription != true)) {
+                        (purchases.activeProductID != product.id && Config.useLiveBackend &&
+                            (purchases.billingContext?.canManageSubscription != true ||
+                             (!purchases.canStartNewPurchase(for: product) && !purchases.canCheckTrialAvailability(for: product))))) {
+            let continuingHeldTrial = purchases.showsIntroOffer(for: product)
+            let checkingAvailability = !purchases.canStartNewPurchase(for: product) && purchases.canCheckTrialAvailability(for: product)
+            let expectedOrgID = purchases.billingContext?.orgID
             Task {
                 if purchases.activeProductID == product.id { await purchases.manageSubscriptions() }
-                else { await purchases.purchase(product, expectedOrgID: purchases.billingContext?.orgID) }
+                else if checkingAvailability {
+                    await purchases.checkTrialAvailability(product, expectedOrgID: expectedOrgID)
+                } else {
+                    await purchases.purchase(product, expectedOrgID: expectedOrgID,
+                                             continuingHeldTrial: continuingHeldTrial)
+                }
             }
         }
         .overlay(alignment: .trailing) {
@@ -347,12 +415,19 @@ struct PaywallView: View {
     /// product actually carries an introductory offer. Otherwise "Subscribe".
     private func buyTitle(for product: Product) -> String {
         if purchases.activeProductID == product.id { return "Manage current subscription" }
+        if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
+            return purchases.canCheckTrialAvailability(for: product) ? "Check trial availability" : "Trial unavailable"
+        }
+        if purchases.showsIntroOffer(for: product) { return "Continue with Apple" }
         if purchases.activePlan != nil { return "Confirm plan change with Apple" }
-        return purchases.showsIntroOffer(for: product) ? "Start 7-day free trial" : "Subscribe with Apple"
+        return "Subscribe with Apple"
     }
 
     private func disclosure(for product: Product, period: BillingPeriod) -> String {
         if purchases.activeProductID == product.id { return "This is the subscription on this Apple ID. Apple shows its renewal date and cancellation options; its original workspace keeps the plan." }
+        if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
+            return "Trial availability depends on a funded reservation and Apple's current eligibility. Checking does not start Apple billing. Review the reserved terms and Apple's confirmation before continuing."
+        }
         return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.showsIntroOffer(for: product),
             price: product.displayPrice, period: period.priceSuffix)
     }
@@ -463,9 +538,10 @@ private struct PlanCardBody: View {
 private struct SelectedPlanDetails: View {
     let plan: RendpropPlan
     let period: BillingPeriod
+    var afterTrial: Bool = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Included with \(plan.displayName)").font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text(afterTrial ? "After the trial · \(plan.displayName)" : "Included with \(plan.displayName)").font(.rpHeadline).foregroundStyle(Theme.ink)
             Text(plan.tagline).font(.rpCaption).foregroundStyle(Theme.inkDim)
             ForEach(plan.benefits, id: \.self) { line in
                 Label(line, systemImage: "checkmark")

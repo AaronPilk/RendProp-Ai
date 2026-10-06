@@ -11,8 +11,11 @@ personal contact cards with explicit Save, separate workspace branding,
 deliberately selected per-member hosted listings, industry-specific detail forms,
 experimental prompt labels and clearer disabled controls. It pairs private media
 imports with the new server photo authority and funded AI admission. These
-changes require the coordinated schema/API/web rollout; historical deployment
-versions below do not certify the candidate. The
+core changes are now delivered in the
+[6 October rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md), with
+35 actual served-asset requests and matching live API source. Protected media
+cutover and the separate limited trial remain pending. Historical deployment
+versions below describe their dated releases. The
 [beta handoff](../../docs/handoff/LAUNCH-BETA-20261006.md) records actual browser
 and regression evidence, plus live/device acceptance still required.
 
@@ -22,14 +25,31 @@ failed attempts need a reviewed funded allowance, rather than a feature count
 alone; no trial sponsorship has been activated. Higgsfield generation remains
 disabled as requested by the owner.
 
+The [limited trial candidate](../../docs/studio/subscription-trial.md) adds a
+trial card in **Business → Account & plan** for the same named trial owner using
+iPhone and Studio. It displays the server's
+remaining walkthrough, photo edit and publication allowances, with no monthly
+reset or early Apple charge. Missing trial data keeps the existing plan view;
+disabled offer data does not advertise new quantities. This candidate is not
+deployed and does not activate a trial funding pool.
+
+The workspace-bound service activation receipt keeps Apple's recorded plan
+separate from usable creation allowances. An unavailable active subscription
+shows **Service activation pending**, preserves subscription management,
+restoration and saved-work guidance, and suppresses paid caps. Historical
+expired/free states and terminal trial counters keep their own labels. A recorded
+active trial without current service keeps its used/cap history visible while
+new creation is unavailable. Contradictory or foreign-workspace activation data
+fails closed until a fresh read succeeds.
+
 [Photographer client delivery](../../docs/studio/photographer-client-delivery.md)
 adds **My homes → Create & publish / Details → Listing contact**. Choose **My
 client**, upload a separate contact photo and review the private inquiry email
 before saving and publishing. **Business → Leads** keeps the inquiry and its email
 status, with recipient confirmation before resend. The real estate work
 preference is changeable in **Business → Account & plan**. Conflicting or unsaved
-contacts block publication. This release is live on Worker
-`1cc57a97-e685-4c7c-aae1-641901a0087d`: all **31 served application files** match
+contacts block publication. At this dated release, Worker
+`1cc57a97-e685-4c7c-aae1-641901a0087d` was deployed: all **31 served application files** matched
 the connected release build, with 28 bundles totaling **330,202 B gzip** against
 350,000 B. All 12 exact-source CI jobs pass. See the
 [release handoff](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for
@@ -224,8 +244,13 @@ npx wrangler deploy
 node scripts/verify-deployed.mjs
 ```
 
-The verifier compares the custom domain against the exact local build, checks
-headers and SPA fallback, and handles the known managed robots prefix explicitly.
+The verifier compares the custom domain against the exact local build and checks
+response headers. The current 28-asset build has 31 exact files. Its configured
+OAuth callback has only the known 307 canonical redirect to the same-origin root
+with the query preserved; one separate GET must return the identical entry.
+`/workspace` and a missing JavaScript asset must return 404. The complete check
+uses 35 GETs and never follows arbitrary redirects or accepts blanket SPA
+fallback. It handles the known managed robots prefix explicitly.
 The 27 September release matched all **30 files** with no verifier warnings. Its
 connected gzip sizes were **135,649 B initial / 216,383 B Create / 318,219 B total**,
 within separate budgets of 160,000 / 260,000 / 350,000 bytes. The editing-copy
@@ -253,12 +278,14 @@ prefix means crawl blocking is not proven; noindex remains enabled.
 - [`src/data/`](src/data/): wire contracts and bounded authenticated reads.
 - [Studio API](../../services/supabase/functions/studio/README.md): authenticated
   media, documents, creation and review handlers.
-# Current source audit — 5 October 2026
+# Source audit checkpoint — 5 October 2026
 
 The [full-system follow-up](../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
-adds client-recipient verification and failed-module recovery. The current source
+added client-recipient verification and failed-module recovery. Its source
 returns real 404 for missing assets and permits the exact existing R2 host in
-CSP. These changes are **not deployed**; production connection, forwarding and
-private-media delivery remain separate acceptance gates. `node
+CSP. The [6 October rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+subsequently deployed that source and verified served assets and missing-path
+404 responses. Real client inbox acceptance and the protected-media cutover
+remain open. `node
 tests/recovery-browser.mjs` tests the real production React boundary/lazy chunk
 with a closed-network synthetic workspace.

@@ -30,6 +30,7 @@ struct EntitlementSync: Codable, Hashable, Sendable {
     let originalTransactionId: String?
     /// "Sandbox" | "Production" — as Apple spells it.
     let environment: String?
+    let servingActivation: ServingActivationSummary?
 
     enum CodingKeys: String, CodingKey {
         case plan
@@ -38,6 +39,7 @@ struct EntitlementSync: Codable, Hashable, Sendable {
         case productId = "product_id"
         case originalTransactionId = "original_transaction_id"
         case environment
+        case servingActivation = "serving_activation"
     }
 
     /// Tolerant decoding: `expires_at` arrives as an ISO-8601 string (with or
@@ -50,18 +52,23 @@ struct EntitlementSync: Codable, Hashable, Sendable {
         productId = try? c.decodeIfPresent(String.self, forKey: .productId)
         originalTransactionId = try? c.decodeIfPresent(String.self, forKey: .originalTransactionId)
         environment = try? c.decodeIfPresent(String.self, forKey: .environment)
+        servingActivation = try c.decodeIfPresent(ServingActivationSummary.self, forKey: .servingActivation)
+        if let activation = servingActivation, activation.checked(org: activation.orgId) == nil {
+            throw SubscriptionBillingContext.TrialPresentationError.invalidResponse
+        }
         let raw = try? c.decodeIfPresent(String.self, forKey: .expiresAt)
         expiresAt = EntitlementSync.parseDate(raw)
     }
 
     init(plan: String, source: String?, expiresAt: Date?, productId: String?,
-         originalTransactionId: String?, environment: String?) {
+         originalTransactionId: String?, environment: String?, servingActivation: ServingActivationSummary? = nil) {
         self.plan = plan
         self.source = source
         self.expiresAt = expiresAt
         self.productId = productId
         self.originalTransactionId = originalTransactionId
         self.environment = environment
+        self.servingActivation = servingActivation
     }
 
     func encode(to encoder: Encoder) throws {
@@ -71,6 +78,7 @@ struct EntitlementSync: Codable, Hashable, Sendable {
         try c.encodeIfPresent(productId, forKey: .productId)
         try c.encodeIfPresent(originalTransactionId, forKey: .originalTransactionId)
         try c.encodeIfPresent(environment, forKey: .environment)
+        try c.encodeIfPresent(servingActivation, forKey: .servingActivation)
         if let expiresAt {
             try c.encode(EntitlementSync.isoFormatter.string(from: expiresAt), forKey: .expiresAt)
         }
@@ -98,6 +106,7 @@ struct EntitlementSync: Codable, Hashable, Sendable {
 /// this protocol so the offline (Mock) build walks the whole paywall.
 protocol PurchasesAPI {
     func billingContext() async throws -> SubscriptionBillingContext
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation
     /// POST /me/entitlement — hand Apple's signed transaction to the server and
     /// get back the plan it wrote. Throws `APIError` on a non-2xx.
     func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync
@@ -106,9 +115,19 @@ protocol PurchasesAPI {
 // MARK: - Live
 
 extension LiveAPIClient: PurchasesAPI {
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation {
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == appAccountToken,
+              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let data = try await PurchasesRequest.post(path: ["me", "trial", "prepare"], json: [
+            "org_id": orgID.uuidString.lowercased(),
+            "actor_id": appAccountToken.uuidString.lowercased(), "app_account_token": appAccountToken.uuidString.lowercased(),
+            "product_id": productID
+        ], retriesUnauthorized: false, requiredCurrentOrg: orgID)
+        return try TrialPurchaseReservation.decode(data, actor: appAccountToken, org: orgID, product: productID)
+    }
     func billingContext() async throws -> SubscriptionBillingContext {
-        struct Response: Decodable { let billing: SubscriptionBillingContext }
-        return try JSONDecoder().decode(Response.self, from: await PurchasesRequest.getBilling()).billing
+        let data = try await PurchasesRequest.getBilling()
+        return try SubscriptionBillingContext.fromMe(data, selectedOrg: WorkspaceContext.selectedOrgID)
     }
     func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync {
         var body: [String: Any] = ["signed_transaction": signedTransaction]
@@ -119,7 +138,11 @@ extension LiveAPIClient: PurchasesAPI {
         let data = try await PurchasesRequest.post(path: ["me", "entitlement"], json: body)
         let decoder = JSONDecoder()   // EntitlementSync decodes its own snake_case keys
         do {
-            return try decoder.decode(EntitlementSync.self, from: data)
+            let result = try decoder.decode(EntitlementSync.self, from: data)
+            if let activation = result.servingActivation {
+                guard let expectedOrgID, activation.checked(org: expectedOrgID) != nil else { throw CloudSyncError.invalidResponse }
+            }
+            return result
         } catch {
             throw APIError.decoding
         }
@@ -136,6 +159,8 @@ extension LiveAPIClient: PurchasesAPI {
 /// else. If `Networking/APIClient.swift` ever gains `syncEntitlement` on the
 /// `APIClient` protocol, delete this and the body above becomes one line.
 @MainActor private enum PurchasesRequest {
+    private static let reservationSession = URLSession(configuration: .ephemeral,
+        delegate: TrialPurchaseRedirectPolicy(), delegateQueue: nil)
     static func getBilling() async throws -> Data {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         guard let org = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
@@ -149,16 +174,20 @@ extension LiveAPIClient: PurchasesAPI {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else { throw LiveAPIClient.serverError(status: http.statusCode, data: data) }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
         return data
     }
-    static func post(path: [String], json: [String: Any]) async throws -> Data {
+    static func post(path: [String], json: [String: Any], retriesUnauthorized: Bool = true, requiredCurrentOrg: UUID? = nil) async throws -> Data {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         guard var url = Config.apiBaseURL else { throw APIError.notConfigured }
         for segment in path { url.appendPathComponent(segment) }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        req.timeoutInterval = 20
         if let org = json["expected_org_id"] as? String { req.setValue(org, forHTTPHeaderField: "X-Org-Id") }
+        if let requiredCurrentOrg { req.setValue(requiredCurrentOrg.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
@@ -181,9 +210,16 @@ extension LiveAPIClient: PurchasesAPI {
         if Config.enableAuth, let token = await AuthStore.validAccessToken() {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
+        if requiredCurrentOrg != nil, req.value(forHTTPHeaderField: "Authorization") == nil {
+            throw APIError.notConfigured
+        }
 
-        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
+        let session = retriesUnauthorized ? URLSession.shared : reservationSession
+        let (data, resp) = try await session.data(for: req)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         if (200..<300).contains(http.statusCode) { return data }
 
@@ -194,7 +230,7 @@ extension LiveAPIClient: PurchasesAPI {
         // token before giving up. The Idempotency-Key was derived from the
         // body alone, so the retry replays server-side rather than risking a
         // second entitlement write.
-        if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
+        if retriesUnauthorized, http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
             guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
             let refreshed = await AuthStore.shared.forceRefresh()
             if refreshed, let fresh = AuthStore.storedAccessToken() {
@@ -210,9 +246,23 @@ extension LiveAPIClient: PurchasesAPI {
     }
 }
 
+/// A cash reservation POST cannot be redirected to another route or host.
+/// A redirect/error is retained as an unresolved outcome, without a new POST.
+private final class TrialPurchaseRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 // MARK: - Mock (offline dev + the UI walk)
 
 extension MockAPIClient: PurchasesAPI {
+    func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation {
+        // Offline preview must not manufacture a funded trial promise.
+        throw SubscriptionBillingContext.TrialPresentationError.invalidResponse
+    }
     func billingContext() async throws -> SubscriptionBillingContext {
         .init(orgID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, orgName: "Preview workspace",
               role: "owner", canManageSubscription: true, source: nil)

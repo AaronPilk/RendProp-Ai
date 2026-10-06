@@ -1,5 +1,13 @@
 # Rendprop pricing audit — 3 October 2026
 
+**6 October checkpoint:** the inclusive financial admission guards are delivered
+as recorded in [the rollout handoff](handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md),
+with no retail, trial or App Review funds seeded. The advertised 100/200/400-photo
+bundles remain financially **NO-GO** at the currently bounded attempt costs.
+The guards prevent unfunded creation; they do not make those marketed quantities
+deliverable within the owner's 75%-after-Apple serving envelope. The findings
+below retain their dated source and catalog assumptions.
+
 **4 October clarification:** the owner confirmed Small Business Program approval
 (email received last week) and selected a 75% floor **after Apple's fee**.
 The effective date is still unverified. The Topaz correction and current

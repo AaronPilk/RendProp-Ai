@@ -11,6 +11,9 @@ insert into auth.users(id,email,is_anonymous)values
  ('ca100601-0000-4000-8000-000000000002','portfolio-member@fixture.invalid',false),
  ('ca100601-0000-4000-8000-000000000003','portfolio-outsider@fixture.invalid',false);
 create temporary table portfolio_fixture as select org_id org from memberships where user_id='ca100601-0000-4000-8000-000000000001';
+-- These are already-hosted metadata fixtures, with explicit manual authority;
+-- a new free workspace cannot create the publications under test.
+update orgs set plan='pro',plan_source='manual',plan_expires_at=null where id=(select org from portfolio_fixture);
 grant select on portfolio_fixture to service_role;
 insert into memberships(org_id,user_id,role)select org,'ca100601-0000-4000-8000-000000000002','agent'from portfolio_fixture;
 insert into listings(id,org_id,agent_id,address,details)select ('ca100602-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,org,case when n=2 then 'ca100601-0000-4000-8000-000000000001'::uuid else 'ca100601-0000-4000-8000-000000000002'::uuid end,'Synthetic portfolio '||n,'{"allow_indexing":true}'from portfolio_fixture cross join generate_series(1,4)n;

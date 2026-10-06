@@ -12,7 +12,9 @@ create function pg_temp.frefuse(statement text,expected text)returns void langua
   if position(expected in sqlerrm)>0 then perform pg_temp.fcheck(true,expected);return;end if;raise;end;
  raise exception 'Expected refusal: %',expected;
 end$$;
-insert into auth.users(id,email,is_anonymous)values('a1000000-0000-4000-8000-000000000001','funding-owner@example.invalid',false),('a1000000-0000-4000-8000-000000000002','funding-outsider@example.invalid',false);
+insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('a1000000-0000-4000-8000-000000000001','funding-owner@example.invalid',false,now()),('a1000000-0000-4000-8000-000000000002','funding-outsider@example.invalid',false,now());
+-- Local synthetic fixture only; source migration remains disabled/unfunded.
+update subscription_trial_config set enabled=true;
 insert into orgs(id,name,plan,plan_source)values
  ('a2000000-0000-4000-8000-000000000001','Synthetic retail','pro','manual'),
  ('a2000000-0000-4000-8000-000000000002','Synthetic annual','starter','manual'),
@@ -105,7 +107,7 @@ begin
  perform pg_temp.frefuse(format('select serving_operation_begin(%L,%L,''saved-helper-key'',''coach.chat'',%L)',u,'a2000000-0000-4000-8000-000000000004',repeat('b',64)),'RP409');
  perform pg_temp.fcheck(not has_table_privilege('authenticated','serving_operation_results','SELECT,INSERT,UPDATE,DELETE')and not has_table_privilege('service_role','serving_operation_results','INSERT,UPDATE,DELETE'),'bounded generated recovery is private and immutable');
  perform pg_temp.frefuse(format('insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_reserve_components,evidence_sha256)values(''bad'',''USA'',''USD'',49000,4165,1,%L,%L,''{}'',%L,%L)',t,t+interval '1 day',zeros,repeat('a',64)),'check constraint');
- insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256)values('synthetic-trial-pool','trial',200,t,t+interval '14 days',repeat('c',64))returning id into pool;
+ insert into serving_sponsor_pools(collection_ref,source,funded_cents,starts_at,ends_at,evidence_sha256,admissions_enabled)values('synthetic-trial-pool','trial',200,t,t+interval '14 days',repeat('c',64),true)returning id into pool;
  insert into apple_serving_schedules(product_id,storefront,currency,price_milliunits,net_proceeds_floor_cents,service_months,starts_at,ends_at,reserve_components,trial_sponsored_cents,trial_reserve_components,trial_days,trial_pool_id,evidence_sha256)
  values('com.rendprop.app.starter.monthly','USA','USD',49000,4165,1,t-interval '1 day',t+interval '20 days',components,200,components,7,pool,repeat('c',64));
  e:=t+interval '1 month';
@@ -130,19 +132,21 @@ begin
  t2:=t+interval '1 second';
  perform apply_apple_entitlement_v2(o,u,'synthetic-paid-original','synthetic-unpaid-new-tx','com.rendprop.app.starter.monthly','starter','Production','active',t2+interval '7 days',true,'SUBSCRIBED',t2,now()-interval '5 seconds',now()-interval '5 seconds',s);
  r:=fund_verified_apple_transaction(o,'synthetic-paid-original','synthetic-unpaid-new-tx','com.rendprop.app.starter.monthly',0,'USD','USA',null,null,t2,t2+interval '7 days',now()-interval '5 seconds',repeat('a',64));
- perform pg_temp.fcheck(r->>'reason'='unsponsored_trial'and(select revoked_at is null from serving_funding where id=funding),'invalid zero-price offer cannot revoke previous valid paid funds');
- e:=t+interval '7 days';
+ perform pg_temp.fcheck(r->>'reason'='trial_purchase_reservation_required'and(select revoked_at is null from serving_funding where id=funding),'invalid zero-price offer cannot revoke previous valid paid funds');
+ perform prepare_subscription_trial_purchase(u,trial,'com.rendprop.app.starter.monthly');
+ t:=now();s:=now();e:=t+interval '7 days';
  perform apply_apple_entitlement_v2(trial,u,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly','starter','Production','active',e,true,'SUBSCRIBED',t,s,s,s);
- r:=fund_verified_apple_transaction(trial,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
+ r:=fund_reserved_subscription_trial(u,trial,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
  perform pg_temp.fcheck((r->>'funded')::boolean and(r->>'total_budget_cents')::int=200 and(r->>'provider_budget_cents')::int=170,'trial uses inclusive committed sponsor cash, not zero retail proceeds');
- r:=fund_verified_apple_transaction(trial,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
+ r:=fund_reserved_subscription_trial(u,trial,'synthetic-trial-original','synthetic-trial-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
  perform pg_temp.fcheck((r->>'funded')::boolean and(r->>'replay')::boolean and(select count(*)=1 from serving_funding where sponsor_pool_id=pool),'trial restore never revokes or doubles its per-chain pool commitment');
- perform apply_apple_entitlement_v2(competitor,u,'synthetic-competing-original','synthetic-competing-tx','com.rendprop.app.starter.monthly','starter','Production','active',e,true,'SUBSCRIBED',t,s,s,s);
- r:=fund_verified_apple_transaction(competitor,'synthetic-competing-original','synthetic-competing-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
- perform pg_temp.fcheck(r->>'reason'='trial_pool_exhausted'and not exists(select 1 from serving_funding where org_id=competitor),'shared launch sponsor pool cannot overspend across chains');
+ -- A separate eligible account competes for the fully committed pool.
+ insert into memberships(user_id,org_id,role)values('a1000000-0000-4000-8000-000000000002',competitor,'owner');
+ begin perform prepare_subscription_trial_purchase('a1000000-0000-4000-8000-000000000002',competitor,'com.rendprop.app.starter.monthly');raise exception 'Pool overcommitted';exception when others then if position('RP402'in sqlerrm)=0 then raise;end if;end;
+ perform pg_temp.fcheck(not exists(select 1 from serving_funding where org_id=competitor),'shared launch sponsor pool cannot overspend across chains');
  perform revoke_serving_funding(trial,'apple-trial:synthetic-trial-original',repeat('b',64));
- r:=fund_verified_apple_transaction(competitor,'synthetic-competing-original','synthetic-competing-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',t,e,s,repeat('a',64));
- perform pg_temp.fcheck(r->>'reason'='trial_pool_exhausted','revoked trial cannot replenish spent sponsor cash');
+ begin perform prepare_subscription_trial_purchase('a1000000-0000-4000-8000-000000000002',competitor,'com.rendprop.app.starter.monthly');raise exception 'Revoked cash recycled';exception when others then if position('RP402'in sqlerrm)=0 then raise;end if;end;
+ perform pg_temp.fcheck(not exists(select 1 from subscription_trial_purchase_reservations where org_id=competitor),'revoked trial cannot replenish spent sponsor cash');
 end$$;
 reset role;
 delete from auth.users where id='a1000000-0000-4000-8000-000000000001';

@@ -1,5 +1,23 @@
 # Launch beta reconciliation — 6 October 2026
 
+**Fresh readback at 21:26:24 UTC:** five own-app GETs exhausted both feedback
+lists and read the historical crash log. Counts remain 52 screenshot reports
+and one build-37 crash report, with no new IDs, changed comments/dates or changed
+crash text. No new screenshot was downloaded or claimed visually reviewed; the
+previous complete visual review is retained. No report was marked resolved.
+Private receipt `beta/fresh-readback-20261006T212607Z/current-feedback.receipt.json`
+under the local launch audit has SHA-256
+`07c311e6947e5e13d27b41767f6381f9d7988215e75f7b845d715f086e1c82fe`.
+
+**Later delivery checkpoint:** the underlying `5eeb783` candidate is now
+available in internal TestFlight **1.0.4 (45)**, and its Studio assets are live.
+The additive `4a209d4` conflict repair and photo-permission contraction also have
+actual API and database readbacks. See
+[the exact rollout record](CAS-AND-STUDIO-ROLLOUT-20261006.md). The table below
+retains the earlier source review and its original acceptance limits; delivery
+does not mark physical camera, inbox, Apple billing or generated-output feedback
+as accepted. The newer bounded-trial candidate remains separate and disabled.
+
 The App Store Connect GET-only snapshot verified app 6808982413 / com.rendprop.app. At 16:46:28 UTC it exhausted both feedback lists: **52 screenshot reports, 53 image attachments, 51 nonempty comments, and one historical build-37 crash**. The five inventory/identity requests and one crash-log GET returned 200. No new report or crash appeared after the previous final 5 October snapshot. Report contents and crash bytes matched the prior review after excluding refreshed expiring attachment URLs. The prior complete visual review is retained; no unseen screenshot is called reviewed. Raw reports, signed URLs, identities and crash data remain outside Git under /Users/pilksclaes/LocalRendpropAudits/launch-20261006/beta. No submission was marked resolved.
 
 All rows below are **release-candidate source dispositions**. They do not claim deployed code, TestFlight processing, physical-camera acceptance, live provider output, a real purchase, or delivery to a real inbox. Root owns frozen CI, production readback and Apple upload evidence; append its actual commit/build/deployment receipts before calling any row deployed. Existing changed UI code must pass the final native platform build.

@@ -1,13 +1,56 @@
 # Rendprop iOS
 
+The [limited subscription trial candidate](../../docs/studio/subscription-trial.md)
+adds server-recorded remaining usage to Home, Settings → Plan & usage, and the
+paywall. The proposed walkthrough/photo/publication allowance is separate from
+the selected plan's paid monthly limits. Disabled offers show no new numerical
+promise. Purchase/restore refreshes and account/workspace changes fence stale
+trial responses. This work is not included in available internal build 45 and
+does not activate public trial funding.
+
+The candidate adds a separate **Check trial availability** action for a named
+workspace owner. Apple eligibility alone shows no promised trial quantities.
+The server first reserves funding for the exact account UUID, workspace and
+subscription product; only its validated receipt reveals the included usage.
+**Continue with Apple** rechecks the same reservation, fresh `/me` receipt,
+Apple eligibility and account/workspace identity before opening Apple's sheet.
+A held-trial button cannot silently switch to a paid purchase when eligibility
+changes. An explicitly chosen noneligible paid purchase retains the existing
+fresh billing checks. Restore and Manage subscription remain available.
+
+The current funded-trial schedule supports **USA / USD** only. The candidate
+reads [Storefront.current](https://developer.apple.com/documentation/storekit/storefront/current)
+and its [ISO country code](https://developer.apple.com/documentation/storekit/storefront/countrycode),
+and checks [Product.priceFormatStyle](https://developer.apple.com/documentation/storekit/product/priceformatstyle)
+currency before preparing a reservation and again before Apple's confirmation.
+An unknown or changed country, currency, account, session, workspace, receipt or
+eligibility stops the purchase. These frontend checks do not authorize funding;
+the server still verifies Apple's signed transaction and account token.
+Cancellation, pending approval and uncertain results retain the server hold and
+original local workspace binding. There is no automatic release, restart or
+retry of the reservation POST, including a 401 or redirect. An explicit check
+of the same plan recovers the existing reservation.
+
+`tests/run-native-trial-hold.py` compiles the actual receipt, API request and
+pre-StoreKit purchase methods against closed HTTP, Storefront and Apple-sheet
+interfaces. Semantic guard controls and the separately source-bound Release
+simulator build do not establish a real purchase, trial funding, storefront
+change on a phone or customer-media acceptance. The earlier native trial
+handoff remains evidence of its earlier source; this hook needs its own later
+build and deployment.
+
 Native Swift/SwiftUI app for iPhone, targeting iOS 16 and later. The app captures
 and imports property media, creates tours and reels, provides AI photo/video
 workflows, and connects a named account's workspace with
 [Studio](https://studio.rendprop.com/). The normal build uses the live Supabase
 backend; this is no longer an offline-only prototype.
 
-The [6 October candidate](../../docs/handoff/LAUNCH-READINESS-20261006.md) targets
-internal **1.0.4 (45)**. It includes the full beta/debugging stack after 44,
+Internal **1.0.4 (45) is available**, verified by Apple on **6 October 2026 at
+19:23:12 UTC** from source `5eeb783`. Its
+[delivery receipt](../../docs/releases/TESTFLIGHT-45-20261006.json) binds the
+signed package and all twelve CI jobs. The
+[6 October handoff](../../docs/handoff/LAUNCH-READINESS-20261006.md) records
+the beta/debugging stack after 44, including
 account-owned profile sharing, changed-field listing saves, retained AI job
 recovery, private media downloads and **Settings → Download account data**.
 The export is an account-owned JSON inventory with stated omissions; photo and
@@ -15,7 +58,9 @@ video binaries still use their separate downloads. See the
 [export contract](../../docs/handoff/ACCOUNT-DATA-EXPORT-CONTRACT-20261006.md) and
 [52-report reconciliation](../../docs/handoff/LAUNCH-BETA-20261006.md).
 Signed archive, final CI, deployed contracts and Apple processing are separate
-release checks. **44 is still available until the build-45 receipt exists.**
+release checks. The [actual 6 October backend and Studio checkpoint](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+records terminal conflicts and final photo permissions. New limited-trial source
+needs a later build and its own receipt.
 Camera, AR, Files/Photos, real purchases and provider-output quality need phone
 acceptance. Spatial and direct Bria experiments remain in the internal lab.
 
@@ -35,7 +80,7 @@ privacy and scope changes are included. Build 44 is available to the existing
 internal Rendprop team. Physical AR accuracy, camera quality and phone Files/Photos delivery
 need owner checks.
 
-## Current audit source — 5 October 2026
+## Dated audit source checkpoint — 5 October 2026
 
 The [full-system audit follow-up](../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
 contains isolated fixes after build 44, including modal Upgrade presentation,
@@ -43,13 +88,14 @@ form and deep-link recovery, gallery consent, archived listing restoration,
 client email verification and the Sandbox receipt fence. Both unsigned physical
 Release variants compile; three actual mocked Release UIKit cases pass. These
 checks do not verify camera capture, a purchase, real inbox delivery or production
-sync. The current audit changes have not been uploaded to TestFlight or the App
-Store. The installed release checkpoints below remain historical delivery facts.
+sync. That checkpoint preceded the available internal build 45; no public App
+Store submission was performed. The installed release checkpoints below remain
+historical delivery facts.
 
 ## Release status
 
 The [October 5 complete feedback follow-up](../../docs/handoff/BETA-FEEDBACK-20261005.md)
-is isolated source work after build 44. Home and collections use a clickable app
+was source work after build 44, now included in internal build 45. Home and collections use a clickable app
 guide instead of sample listings. Measurements remains usable for entered rooms,
 outlines, worksheets and uploaded plans; automatic 3D capture cards say Coming soon
 and saved scans remain viewable. Profile gains contact-only business-card sharing,

@@ -20,7 +20,16 @@ another editable version; `--build` selects a build, not an App Store version.
 Its broad apply bridge can change prices, territories, subscription screenshots
 and review state. Do not run it for maintenance of the shipped app.
 
-Internal TestFlight **1.0.4 (44) is AVAILABLE** to the existing Rendprop team,
+Current internal TestFlight **1.0.4 (45) is AVAILABLE**, verified by Apple at
+**2026-10-06 19:23:12 UTC** from `5eeb783`. The
+[build-45 receipt](../../docs/releases/TESTFLIGHT-45-20261006.json) binds its
+signed package and twelve CI jobs. The
+[actual backend/Studio rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+records the subsequent terminal-conflict and photo-permission repairs. The
+limited-trial candidate needs its own later build and delivery evidence. No
+public App Store submission was performed for these updates.
+
+Previous internal TestFlight **1.0.4 (44) was AVAILABLE** to the existing Rendprop team,
 verified **5 October 2026 at 01:32:22 UTC** (4 October locally). The
 [delivery receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) binds clean
 source `9d27fb5`, one successful upload, the retained actual IPA, exact Apple
@@ -48,7 +57,8 @@ build/version readback. Five sold subscriptions were previously read back as
 approved; Team Yearly remains withdrawn. The legacy examples below document
 the historical launch sequence. Build 44 adds no public App Store submission
 and does not certify camera, paid provider output or shared-team safety.
-The ordinary listing full-row overwrite bug remains; see the
+Build 44 retains the ordinary listing full-row overwrite bug; build 45 and the
+6 October backend repair address it. See the dated
 [audit limits](../../docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md#delivery-and-remaining-limits).
 
 Offline inspection that does not load credentials or call Apple:

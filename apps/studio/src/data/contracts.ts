@@ -1,4 +1,5 @@
 import { StudioError } from "./config";
+import { decodeServingActivation, decodeTrialOffer, decodeTrialUsage, type ServingActivation, type TrialOffer, type TrialUsage } from "./trial";
 
 export type Role = "owner" | "admin" | "agent" | "marketing";
 export type RealEstateRole = "agent" | "photographer_videographer";
@@ -27,6 +28,9 @@ export type Workspace = {
   /** The server could not verify the effective entitlement; do not display its fallback as a downgrade. */
   planDegraded: boolean;
   trialEndsAt: string | null;
+  trialUsage?: TrialUsage | null;
+  trialOffer?: TrialOffer | null;
+  servingActivation?: ServingActivation | null;
   planExpiresAt: string | null;
   memberships: Membership[];
   usage: { listings: number; leads: number; leadsNew: number; renders: number };
@@ -96,6 +100,9 @@ export type MeDTO = {
   plan: string;
   plan_raw: string | null;
   trial_ends_at: string | null;
+  trial_usage?: unknown;
+  trial_offer?: unknown;
+  serving_activation?: unknown;
   plan_expires_at?: string | null;
   entitlement?: { degraded?: boolean };
   usage: {
@@ -279,6 +286,7 @@ export function decodeWorkspace(
   const entitlement = row.entitlement === undefined ? undefined : record(row.entitlement, "entitlement");
   if (entitlement?.degraded !== undefined && typeof entitlement.degraded !== "boolean")
     invalid("entitlement degraded state");
+  const servingActivation = decodeServingActivation(row.serving_activation, orgId);
   return {
     user: {
       id: userId,
@@ -295,8 +303,11 @@ export function decodeWorkspace(
     },
     plan: str(row.plan, "plan"),
     planRaw: nullableString(row.plan_raw, "plan_raw"),
-    planDegraded: entitlement?.degraded === true,
+    planDegraded: entitlement?.degraded === true || servingActivation?.available === false,
     trialEndsAt: nullableDate(row.trial_ends_at, "trial_ends_at"),
+    trialUsage: decodeTrialUsage(row.trial_usage, orgId),
+    trialOffer: decodeTrialOffer(row.trial_offer),
+    servingActivation,
     planExpiresAt: nullableDate(row.plan_expires_at, "plan_expires_at", true),
     memberships,
     usage: {

@@ -398,9 +398,13 @@ export interface HeadResult {
 }
 
 /** HEAD one object — signed server-side. 404 → { exists: false }. */
-export async function headObject(bucket: string, key: string): Promise<HeadResult> {
+export async function headObject(bucket: string, key: string, signal?: AbortSignal): Promise<HeadResult> {
   const url = `${endpoint()}/${bucket}/${encodeKey(key)}`;
-  const resp = await client().fetch(url, { method: "HEAD" });
+  // Preserve existing callers. Bounded attestation reads use one signed native
+  // dispatch, so the SDK cannot retry beyond this observation's abort budget.
+  const resp = signal
+    ? await fetch(await client().sign(url, { method: "HEAD", signal, redirect: "error" }))
+    : await client().fetch(url, { method: "HEAD" });
   if (resp.status === 404) return { exists: false, bytes: null, contentType: null, etag: null };
   if (!resp.ok) throw new HttpError(502, `R2 HEAD ${bucket}/${key} failed (${resp.status})`);
   const len = resp.headers.get("content-length");

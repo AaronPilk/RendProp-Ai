@@ -1763,6 +1763,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
 
     @MainActor func me() async throws -> UsageSummary {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let selectedOrg = WorkspaceContext.selectedOrgID
         let data = try await execute(makeRequest(url: url(["me"])))
         let dto: MeDTO = try decode(data)
         // /me returns `plan` (effective), `plan_raw`, `trial_ends_at`,
@@ -1770,6 +1771,13 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // listings, by_feature{…}}` — see services/supabase/functions/me/index.ts.
         // cost_cents can be fractional (round4) → round to whole cents for Money.
         let usage = dto.usage
+        if dto.trialUsage != nil || dto.trialOffer != nil || dto.servingActivation != nil {
+            guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
+                  org == selectedOrg, WorkspaceContext.selectedOrgID == selectedOrg,
+                  dto.trialUsage.map({ $0.checked(org: org) != nil }) ?? true,
+                  dto.trialOffer.map({ $0.checked() != nil }) ?? true,
+                  dto.servingActivation.map({ $0.checked(org: org) != nil }) ?? true else { throw CloudSyncError.invalidResponse }
+        }
         var hosting: HostingRetentionSummary?
         if let receipt = dto.hostingRetention {
             guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
@@ -1791,11 +1799,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                 plan: dto.plan ?? dto.org?.plan ?? "free",
                 planRaw: dto.planRaw,
                 trialEndsAt: Self.parseDate(dto.trialEndsAt),
-                rendersPerMonth: ent.rendersPerMonth?.value ?? 0,
-                photoEditsPerMonth: ent.photoEditsPerMonth?.value ?? 0,
-                reelsPerMonth: ent.reelsPerMonth?.value ?? 0,
-                aerialsPerMonth: ent.aerialsPerMonth?.value ?? 0,
-                topazPerMonth: ent.topazPerMonth?.value ?? 0,
+                rendersPerMonth: dto.servingActivation?.available == false ? 0 : ent.rendersPerMonth?.value ?? 0,
+                photoEditsPerMonth: dto.servingActivation?.available == false ? 0 : ent.photoEditsPerMonth?.value ?? 0,
+                reelsPerMonth: dto.servingActivation?.available == false ? 0 : ent.reelsPerMonth?.value ?? 0,
+                aerialsPerMonth: dto.servingActivation?.available == false ? 0 : ent.aerialsPerMonth?.value ?? 0,
+                topazPerMonth: dto.servingActivation?.available == false ? 0 : ent.topazPerMonth?.value ?? 0,
                 used: used,
                 leads: usage?.leads?.value ?? 0,
                 planSource: dto.planSource)
@@ -1821,9 +1829,13 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             brandName: dto.org?.brandKit?.name,
             isAdmin: adminFlag,
             role: serverRole,
-            hostingRetention: hosting)
+            hostingRetention: hosting,
+            trialUsage: dto.trialUsage,
+            trialOffer: dto.trialOffer,
+            servingActivation: dto.servingActivation)
         // Let the Account row show the server-side name (never an email).
-        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == selectedOrg else { throw CloudSyncError.identityChanged }
         AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
         return summary
     }
@@ -2446,6 +2458,9 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let planRaw: String?
         let planSource: String?
         let hostingRetention: HostingRetentionSummary?
+        let trialUsage: TrialUsageSummary?
+        let trialOffer: TrialOfferSummary?
+        let servingActivation: ServingActivationSummary?
         let trialEndsAt: String?
         let entitlement: Entitlement?
         let usage: Usage?

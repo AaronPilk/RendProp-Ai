@@ -14,10 +14,12 @@ deployment order and remaining acceptance. The
 generated-image quality and physical camera tests remain explicitly separate.
 Internal **1.0.4 (45) is available**, verified by Apple on **6 October 2026 at
 19:23:12 UTC**, from source `5eeb783`. Its [delivery receipt](docs/releases/TESTFLIGHT-45-20261006.json)
-binds the signed package and all twelve CI jobs. Backend verification stopped on
-a stale-edit timeout; the [terminal conflict repair](docs/handoff/CAS-CONFLICT-TERMINAL-20261006.md)
-preserves the saved values and fixes the retry code. The new Studio assets,
-photo ACL contraction and protected-media cutover remain pending. No public
+binds the signed package and all twelve CI jobs. The additive
+[terminal conflict repair](docs/handoff/CAS-CONFLICT-TERMINAL-20261006.md), Studio
+assets and photo-permission contraction are now live. The
+[actual rollout checkpoint](docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md) records
+twelve passing CI jobs, 39 owned API requests and 35 served-asset requests, preserving
+the earlier failed attempts. Protected-media cutover remains pending. No public
 App Store submission or release was performed; the public **1.0.3 (42)** record
 remains unchanged. The checkpoints below are historical receipts.
 
@@ -29,6 +31,12 @@ bounded allocations; passing quota tests alone does not establish a margin.
 New subscriptions have an approved **90-day hosting grace period after expiry**;
 existing testers are preserved. A paid-AI trial sponsorship proposal remains
 unapproved and is not activated.
+
+The [limited trial candidate](docs/studio/subscription-trial.md) adds separate
+server counters for one hosted walkthrough, five AI photo edit credits and one
+published listing, within a verified seven-day window. iPhone and Studio show
+the same remaining usage. This package remains disabled pending backend, billing
+and funding acceptance; it is separate from the available build 45.
 
 Previous internal **TestFlight 1.0.4 (44) was AVAILABLE**, verified **5 October 2026 at
 01:32:22 UTC** (4 October locally) for the existing Rendprop team, from source
@@ -42,8 +50,9 @@ readback and verified English testing notes.
 The [5 October full-system audit follow-up](docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
 adds server-authoritative photo edits, Sandbox billing isolation, immutable video
 quota receipts, verified lead forwarding and cleanup, native modal/form recovery,
-and Studio failed-module recovery. This is **isolated source work, not a new
-TestFlight build or production rollout**. Private media revocation, App Review
+and Studio failed-module recovery. This dated checkpoint preceded the delivered
+build 45 and the [6 October rollout](docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md).
+Private media revocation, App Review
 Sandbox authority, full serving-cost allocation and reviewed legal publication
 remain launch gates. The existing owner/family private testing grants remain
 active; retail plans and shared-content access are unchanged.
@@ -66,12 +75,11 @@ deductions are subtracted once, and Letter PDFs identify sources and the 3D
 phone-ruler limitation. Existing LiDAR scans and blueprint upload remain available.
 Physical measurement accuracy, camera quality and owner-device acceptance remain pending.
 
-**Shared-team launch remains blocked by ordinary listing writes.** A stale phone
-saving a main-photo choice or coordinates can replace newer Studio facts,
-sold/archive state and floor-plan attachments through a full-row update.
-Build 44 retains this ordinary-write bug; the independent measurements CAS
-protects its own private plan. Team rollout needs changed-field intent, atomic
-conflict protection and a safe compatibility boundary for older clients.
+**Build 44 had an ordinary-listing write bug.** A stale phone's full-row save
+could replace newer Studio facts and attachments. Build 45 sends changed-field
+intent, and the live 6 October repair returns terminal conflicts with older-client
+compatibility preserved. Owned API checks passed; cross-account team behavior
+still needs real-user acceptance before a shared-team launch.
 
 The [complete October 5 beta follow-up](docs/handoff/BETA-FEEDBACK-20261005.md)
 reviews all 52 submitted reports/53 images, including three reports received during
@@ -86,7 +94,8 @@ explicit Save action. Verified guest-to-account adoption preserves reviewed card
 local drafts and pending paid video requests without replacing an existing account
 card or allowing an automatic second generation. Video allowances distinguish cloud renders from quality
 upgrades without changing plan prices or quotas.
-These changes are **not yet a TestFlight upload or production rollout**. Stronger
+These dated source changes are now included in internal build 45 and the scoped
+6 October backend/Studio rollout. Stronger
 staging prompts still need real output-quality acceptance. The additional staging
 reference-image option is Coming soon and refuses generation before quota or
 provider dispatch until its input costs are included in reviewed pricing.
@@ -222,8 +231,8 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Public **1.0.3 (42)** reports **READY_FOR_SALE** at the 5 October UTC GET. Internal **1.0.4 (44)** is **AVAILABLE** to the existing Rendprop team. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
-| Internal beta | **1.0.4 (44)** is available with Measurements and audit fixes. Both new migrations and **tours v49 / listings v41 / ai-video v51** are deployed. Coach v22/admin v30 remain for compatibility. The ordinary full-row listing bug still blocks shared-team launch; real provider quality and phone acceptance remain. |
+| iOS | Internal **1.0.4 (45)** is **AVAILABLE**, verified on 6 October. Public **1.0.3 (42)** last reported **READY_FOR_SALE** at the 5 October read; no new public submission was made. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
+| Internal beta | Build **45** includes Measurements and the full-system audit fixes. The [6 October rollout](docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md) delivered 25 backend functions, the additive listing/Studio conflict repair and photo authority changes. The separate limited trial remains disabled and absent from build 45. Protected-media, financial, provider-quality and phone acceptance remain open. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the
