@@ -51,7 +51,7 @@ try{
  await page.goto(`${origin}/tests/fixtures/branded.html?spatial=on`);await home();await expect(card('spatial')).toBeVisible();await card('spatial').click();await page.getByRole('dialog').getByRole('button',{name:/10 Oak Street/}).click();await expect(page.getByRole('tab',{name:/Floor plan & 3D/})).toHaveAttribute('aria-selected','true');
  check('3D walkthrough appears only when the real capability contract is enabled');
  await page.goto(`${origin}/tests/fixtures/branded.html?homes=1`);await home();await expect(page.locator('.app-property-card')).toHaveCount(1);await card('studio').click();await expect(page.getByRole('navigation',{name:'Creative tools'})).toBeVisible();await expect(page.getByRole('dialog')).toHaveCount(0);
- await page.goto(`${origin}/tests/fixtures/branded.html?homes=0`);await home();await expect(page.getByRole('button',{name:'Add your first home'})).toBeVisible();await card('studio').click();await expect(page.getByLabel('Address or property name')).toBeVisible();
+ await page.goto(`${origin}/tests/fixtures/branded.html?homes=0`);await home();await expect(page.getByRole('button',{name:'Add your first listing',exact:true})).toBeVisible();await card('studio').click();await expect(page.getByLabel('Address or property name')).toBeVisible();
  check('one-home accounts go directly into the tool; zero-home accounts open the creation form');
  await page.goto(`${origin}/tests/fixtures/branded.html`);await home();await expect(page.locator('.app-property-card')).toHaveCount(2);
  await card('reel').click();await page.getByRole('dialog').getByRole('button',{name:/10 Oak Street/}).click();

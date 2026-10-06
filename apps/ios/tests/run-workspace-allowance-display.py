@@ -32,10 +32,11 @@ def block(source, needle):
 
 paths = [IOS / name for name in ['Team/TeamAPI.swift', 'Team/TeamView.swift',
     'Screens/SettingsView.swift', 'Networking/APIClient.swift',
-    'Networking/LiveAPIClient.swift', 'Models/Money.swift', 'RendpropApp.swift', 'Screens/HomeListingsView.swift']]
+    'Networking/LiveAPIClient.swift', 'Models/Money.swift', 'RendpropApp.swift', 'Screens/HomeListingsView.swift',
+    'Networking/WorkspaceSync.swift']]
 paths += [Path(__file__).resolve(), ROOT / 'apps/ios/tests/WorkspaceAllowanceDisplayTests.swift']
 hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-team, teamview, settings, api, live, money, app, homes, runner, test = [path.read_text() for path in paths]
+team, teamview, settings, api, live, money, app, homes, workspace, runner, test = [path.read_text() for path in paths]
 settingsRows = block(settings, 'private func usageRows(')
 calls = re.findall(r'^\s*(usageRow\([^\n]+\))$', settingsRows, re.M)
 assert len(calls) == 5 and all('plan: e.plan, source: e.planSource' in call for call in calls)
@@ -71,7 +72,6 @@ struct LabeledContent: View {
 }
 enum Theme { static let ink = "ink"; static let inkDim = "dim" }
 enum APIError: Error { case decoding }
-enum CloudSyncError: Error { case identityChanged }
 @MainActor final class AuthStore {
     static let shared = AuthStore()
     var userID: String? = "synthetic-owner"
@@ -81,12 +81,14 @@ enum CloudSyncError: Error { case identityChanged }
 '''
 policy = block(team, 'enum WorkspaceAllowanceDisplay {')
 teamSummary = block(team, 'struct TeamSummary:')
-common = interfaces + '\n' + money + '\n' + policy + '\n' + teamSummary
+common = interfaces + '\n' + money + '\n' + block(workspace, 'enum CloudSyncError:')
+common += '\n' + policy + '\n' + teamSummary
 common += '\n' + block(team, 'struct TeamJoined:')
 common += '\nenum TeamAPI {\n' + block(team, 'struct Failure:') + '\n' + block(team, 'static func parseTimestamp(')
 common += '\n' + block(team, 'private static func decode<T:')
 common += '\nstatic func fixtureDecode<T: Decodable>(_ type: T.Type, data: Data) throws -> T { try decode(data) }\n}\n'
-common += '\n' + block(api, 'struct Entitlements:') + '\n' + block(api, 'struct UsageSummary:')
+common += '\n' + block(api, 'struct Entitlements:') + '\n' + block(api, 'struct HostingRetentionSummary:')
+common += '\n' + block(api, 'struct UsageSummary:')
 usageRow = block(settings, 'private func usageRow(')
 common += '\nstruct SettingsPolicyFixture {\n' + usageRow
 common += '\nfunc rows(_ e: Entitlements) -> [LabeledContent] { return [\n' + ',\n'.join(call + ' as! LabeledContent' for call in calls) + '\n] }\n}\n'

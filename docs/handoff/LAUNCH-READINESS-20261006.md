@@ -91,10 +91,13 @@ accounts are separate from trial acquisition budgets and paid margins.
    recipient confirmation pages before verification email. Existing queued
    promotion/unverified-recipient counts are zero in the read-only preflight.
 5. Install private-output/result tables before new status polling/recovery.
-   The technical-upload migration schedules active sweeps, and retention hooks
-   the existing notice tick; neither is an inert schema step. Verify matching
-   handlers, Vault configuration and the exact candidate inventories before
-   scheduler activation. Read-only preflight has zero pending account deletions;
+   The technical-upload migration installs its three new maintenance jobs
+   inactive within the migration transaction. The read-only preflight found
+   226 upload cleanup operations; this count does not prove their objects are
+   disposable. Review retained-media references before separately enabling a
+   cleanup job. Retention hooks the existing notice tick; hold that tick during
+   its dependency switch and verify matching handlers and Vault configuration
+   before restoring it. Read-only preflight has zero pending account deletions;
    no destructive sweep is used as acceptance evidence.
 6. Deploy and verify the media Worker with both private R2 bindings, public
    exact-object reads and native/Studio private download contracts. Only then

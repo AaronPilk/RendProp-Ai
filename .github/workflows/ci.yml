@@ -365,7 +365,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for fault in missing-upload low-contrast no-op-validator; do
+          for fault in missing-upload missing-export low-contrast no-op-validator; do
             set +e
             python3 tools/web-client/verify_foundation.py --inject-fault "$fault"
             status=$?

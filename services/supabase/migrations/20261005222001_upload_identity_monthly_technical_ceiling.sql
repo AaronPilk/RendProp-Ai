@@ -57,8 +57,9 @@ do $$declare body text;old text;patched text;begin
 end$$;
 
 -- Service-only drains use the existing Vault names. No service credential is
--- copied into a cron command, API response or migration source. Source schedules
--- are enabled only when the required database extensions actually exist.
+-- copied into a cron command, API response or migration source. Install schedules
+-- inactive in this transaction. Deployment must review existing cleanup candidates
+-- and retained-media references before explicitly enabling these maintenance jobs.
 create or replace function public.media_privacy_drain(p_task text)returns bigint
 language plpgsql security definer set search_path='' as $$
 declare service_key text;functions_base text;request_id bigint;path text;
@@ -80,9 +81,9 @@ revoke all on function public.media_privacy_drain(text)from public,anon,authenti
 grant execute on function public.media_privacy_drain(text)to service_role;
 do $$begin
  if exists(select 1 from pg_catalog.pg_extension where extname='pg_cron')and exists(select 1 from pg_catalog.pg_extension where extname='pg_net')then
-  perform cron.schedule('upload-cleanup-drain','*/5 * * * *',$command$select public.media_privacy_drain('uploads');$command$);
-  perform cron.schedule('listing-lead-privacy-drain','*/5 * * * *',$command$select public.media_privacy_drain('privacy');$command$);
-  perform cron.schedule('private-message-retention','43 4 * * *',$command$set role service_role;select public.privacy_retention_sweep();$command$);
+  perform cron.alter_job(cron.schedule('upload-cleanup-drain','*/5 * * * *',$command$select public.media_privacy_drain('uploads');$command$),active:=false);
+  perform cron.alter_job(cron.schedule('listing-lead-privacy-drain','*/5 * * * *',$command$select public.media_privacy_drain('privacy');$command$),active:=false);
+  perform cron.alter_job(cron.schedule('private-message-retention','43 4 * * *',$command$set role service_role;select public.privacy_retention_sweep();$command$),active:=false);
  else
   raise notice 'Media cleanup schedules unavailable; deployment must verify pg_cron/pg_net and all three maintenance jobs before any sweep rollout.';
  end if;
