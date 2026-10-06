@@ -56,6 +56,8 @@ try:
  owner,agent,lid,jid,rid,leadid=map(str,[uuid.uuid4()for _ in range(6)])
  query('race-users',f"insert into auth.users(id,email,is_anonymous)values('{owner}','race-owner@fixture.invalid',false),('{agent}','race-agent@fixture.invalid',false);")
  org=query('race-org',f"select org_id from memberships where user_id='{owner}';").strip()
+ # This forwarding race already owns a tour; it does not test trial admission.
+ query('race-hosting-authority',f"update orgs set plan='pro',plan_source='manual',plan_expires_at=null where id='{org}';")
  query('race-fixture',f"insert into memberships(user_id,org_id,role)values('{agent}','{org}','agent');insert into listings(id,org_id,agent_id,address)values('{lid}','{org}','{owner}','Concurrency fixture');insert into render_jobs(id,listing_id,tier,status)values('{jid}','{lid}','smooth','completed');insert into renders(id,job_id,listing_id,slug,duration_s,published_at)values('{rid}','{jid}','{lid}','concurrent-client-fixture',5,now());set role service_role;select listing_client_contact_put('{owner}','{org}','{lid}',0,true,'{{\"name\":\"Race Client\"}}','initial@fixture.invalid',true,null);")
  writers=[owner,agent]
  values=race('contact-optimistic-concurrency',[f"select listing_client_contact_put('{actor}','{org}','{lid}',1,true,'{{\"name\":\"Race Client {n}\"}}','winner{n}@fixture.invalid',true,null);"for n,actor in enumerate(writers)],org)

@@ -9,10 +9,11 @@ import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261001145730_workspace_selection.sql'
 UPLOAD_SUPPORT=['transport.ts','gateway_contract.ts','content_type.ts']
-# Exact audited registration inventory, including the three new billing cases.
+# Exact audited registration inventory, including current trial reservation and
+# service activation billing cases.
 # Keep file-level counts and individual pass results, not just a total that can
 # hide an omitted file, an ignored/filtered case or duplicate case output.
-HANDLER_INVENTORY={'me/workspaces.test.ts':9,'me/billing.test.ts':18,'listings/create.test.ts':4}
+HANDLER_INVENTORY={'me/workspaces.test.ts':9,'me/billing.test.ts':20,'listings/create.test.ts':4}
 HANDLER_TESTS=sum(HANDLER_INVENTORY.values())
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-workspace-selection-',dir='/tmp'));SOCK,DATA=OUT/'socket',OUT/'cluster';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','NO_COLOR':'1','DENO_NO_PROMPT':'1'}
