@@ -511,13 +511,13 @@ async function main() {
     expect(p.status === 200, `[/a/meridian] want 200, got ${p.status}`);
     expect(p.body.includes('<link rel="canonical" href="https://rendprop.com/a/meridian">'),
       "[/a/meridian] want a canonical built from the requested handle and origin");
-    expect(!p.h("x-robots-tag"), `[/a/meridian] a portfolio is indexable by default, got ${p.h("x-robots-tag")}`);
-    expect(!p.body.includes('name="robots"'), "[/a/meridian] no robots meta on a portfolio");
+    expect(p.h("x-robots-tag") === "noindex, nofollow", "[/a/meridian] portfolio discovery must require a deliberate opt-in");
+    expect(p.body.includes('name="robots" content="noindex, nofollow"'), "[/a/meridian] noindex meta accompanies the header");
     expect(p.body.includes('id="getapp"') && p.body.includes("apps.apple.com/us/app/id6808982413?ct=portfolio&amp;mt=8"),
       "[/a/meridian] want the shared app CTA, tagged as the portfolio surface");
     expect(p.body.includes('href="https://rendprop.com/?ref=portfolio"'),
       "[/a/meridian] want the outbound attribution on the Made-with link");
-    assertValidJsonLd("/a/meridian", p.body, ["ProfilePage", "ItemList"]);
+    expect(!p.body.includes("application/ld+json"), "[/a/meridian] no listing discovery graph before portfolio consent");
     // A payload the renderer cannot place (no handle, no origin) must emit no
     // canonical and no graph rather than guessing an origin.
     const { renderPortfolioPage } = await load("portfolio");
@@ -526,7 +526,7 @@ async function main() {
     expect(!bare.includes('rel="canonical"') && !bare.includes("application/ld+json"),
       "[portfolio, no origin] must emit no canonical and no JSON-LD rather than a guessed origin");
   }
-  ok("/a/<handle> carries a canonical, ProfilePage + ItemList structured data and the app CTA");
+  ok("/a/<handle> keeps its canonical and app CTA while preventing implicit indexing");
 
   // ---- /sitemap.xml ---------------------------------------------------------
   // Served by the WORKER now (public/sitemap.xml is deleted — an exact file
@@ -618,7 +618,7 @@ async function main() {
   expect(/Starter and Pro, billed monthly\s+or yearly, and Team, billed monthly/.test(terms.body),
     "[/terms] §6 must say Starter and Pro bill monthly or yearly and Team bills monthly (LAUNCH-CONTRACT: Team yearly is not sold)");
   expect(!/each\s+billed monthly or yearly/.test(terms.body), "[/terms] must not claim every plan bills yearly");
-  expect(terms.body.includes("Effective September 5, 2026"), "[/terms] effective date");
+  expect(terms.body.includes("Effective October 6, 2026"), "[/terms] proposed notice revision date");
   ok("terms reflect the launch plan line-up");
 
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────

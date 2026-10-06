@@ -11,7 +11,7 @@ finally { Object.defineProperty(Deno, "serve", descriptor); }
 const { resetRouterCache } = await import("../_shared/router.ts");
 const body = { listing_id: listing, draft: { id: "draft", revision: 2, ratio: "9:16", audio: "original", title: "", hasNarration: false, hasOverlays: false, clips: [{ id: "clip", kind: "image", start: 0, end: 5, speed: 1, caption: "", motion: "still", transition: "cut" }] }, message: "Make this square", history: [] };
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
-type Options = { endpoint?: "edit-plan" | "prompt-enhancement"; providerText?: string; enabled?: boolean; role?: string; anonymous?: boolean; deleting?: boolean; member?: boolean; active?: boolean; routeEnabled?: boolean; legacy?: boolean; minPlan?: string; retired?: boolean; capabilities?: string[]; providerFails?: boolean };
+type Options = { endpoint?: "edit-plan" | "prompt-enhancement"; providerText?: string; enabled?: boolean; role?: string; anonymous?: boolean; deleting?: boolean; member?: boolean; active?: boolean; routeEnabled?: boolean; legacy?: boolean; minPlan?: string; retired?: boolean; capabilities?: string[]; providerFails?: boolean; fundingDenied?:boolean };
 async function fixture(options: Options, run: (call: (method: "GET" | "POST", auth?: boolean, payload?: unknown) => Promise<Response>) => Promise<void>) {
   const endpoint = options.endpoint ?? "edit-plan", task = endpoint === "prompt-enhancement" ? "copy.prompt_enhancement" : "copy.edit_plan";
   const oldFetch = globalThis.fetch; resetRouterCache();
@@ -27,6 +27,9 @@ async function fixture(options: Options, run: (call: (method: "GET" | "POST", au
     assertEquals(url.hostname, "edit-plan-fixture.invalid");
     if (url.pathname === "/auth/v1/user") return response({ id: user, is_anonymous: options.anonymous ?? false, email: "fixture@example.invalid" });
     const table = url.pathname.split("/").pop();
+    if(table === "serving_operation_begin")return response({begun:true});
+    if(table === "serving_cost_reserve")return options.fundingDenied?response({message:"RP402: Shared serving allowance exhausted"},400):response({reserved:true});
+    if(table === "serving_cost_finish")return response({finished:true});
     if (table === "memberships") { assertEquals(url.searchParams.get("user_id"), `eq.${user}`); assertEquals(url.searchParams.get("org_id"), `eq.${org}`); return response(options.member === false ? null : { org_id: org, role: options.role ?? "owner" }); }
     if (table === "orgs") return response(options.active === false ? null : { id: org });
     if (table === "deletion_requests") return response(options.deleting ? [{ id: "deletion", user_id: user }] : url.searchParams.get("select") === "id" ? null : []);
@@ -41,7 +44,7 @@ async function fixture(options: Options, run: (call: (method: "GET" | "POST", au
     if (table === "plan_routing_policy" || table === "provider_health") return response([]);
     if (table === "ai_routes") {
       assertEquals(url.searchParams.get("task"), `eq.${task}`);
-      const route = { id: "route", task, position: 1, provider: "openai", model: "fixture", unit: "call", unit_cents: 2, capabilities: options.capabilities ?? ["text", "compliant"], max_latency_s: 30, min_plan: options.minPlan ?? "free", same_model_as: null, privacy_tier: "retained_30d", enabled: options.routeEnabled !== false, retire_after: options.retired ? "2020-01-01" : null, note: options.legacy ? "legacy" : "fixture", params: null };
+      const route = { id: "route", task, position: 1, provider: "openai", model: "gpt-5.6-terra", unit: "call", unit_cents: 2, capabilities: options.capabilities ?? ["text", "compliant"], max_latency_s: 30, min_plan: options.minPlan ?? "free", same_model_as: null, privacy_tier: "retained_30d", enabled: options.routeEnabled !== false, retire_after: options.retired ? "2020-01-01" : null, note: options.legacy ? "legacy" : "fixture", params: null };
       return response(url.searchParams.has("id") ? options.routeEnabled === false ? null : { id: "route" } : [route]);
     }
     if (table === "report_provider_outcome") return response(null);

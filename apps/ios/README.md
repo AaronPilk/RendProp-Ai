@@ -6,6 +6,19 @@ workflows, and connects a named account's workspace with
 [Studio](https://studio.rendprop.com/). The normal build uses the live Supabase
 backend; this is no longer an offline-only prototype.
 
+The [6 October candidate](../../docs/handoff/LAUNCH-READINESS-20261006.md) targets
+internal **1.0.4 (45)**. It includes the full beta/debugging stack after 44,
+account-owned profile sharing, changed-field listing saves, retained AI job
+recovery, private media downloads and **Settings → Download account data**.
+The export is an account-owned JSON inventory with stated omissions; photo and
+video binaries still use their separate downloads. See the
+[export contract](../../docs/handoff/ACCOUNT-DATA-EXPORT-CONTRACT-20261006.md) and
+[52-report reconciliation](../../docs/handoff/LAUNCH-BETA-20261006.md).
+Signed archive, final CI, deployed contracts and Apple processing are separate
+release checks. **44 is still available until the build-45 receipt exists.**
+Camera, AR, Files/Photos, real purchases and provider-output quality need phone
+acceptance. Spatial and direct Bria experiments remain in the internal lab.
+
 The [Measurements addition](../../docs/floor-plan-measurements.md) is implemented
 in the signed **1.0.4 (44)** source `9d27fb5`: named room dimensions in
 feet/inches or metres, irregular wall outlines, categorized area worksheets,
@@ -21,6 +34,17 @@ Coach v22/admin v30 remain for older-client compatibility; the new native Coach
 privacy and scope changes are included. Build 44 is available to the existing
 internal Rendprop team. Physical AR accuracy, camera quality and phone Files/Photos delivery
 need owner checks.
+
+## Current audit source — 5 October 2026
+
+The [full-system audit follow-up](../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+contains isolated fixes after build 44, including modal Upgrade presentation,
+form and deep-link recovery, gallery consent, archived listing restoration,
+client email verification and the Sandbox receipt fence. Both unsigned physical
+Release variants compile; three actual mocked Release UIKit cases pass. These
+checks do not verify camera capture, a purchase, real inbox delivery or production
+sync. The current audit changes have not been uploaded to TestFlight or the App
+Store. The installed release checkpoints below remain historical delivery facts.
 
 ## Release status
 

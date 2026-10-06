@@ -5,6 +5,7 @@ import {
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { HttpError } from "./http.ts";
 import { requiredIdempotencyKey } from "./idempotency.ts";
+import { fundingContext } from "./funded-serving.ts";
 
 Deno.test("paid key validation preserves native UUID/hash keys and rejects absent or malformed keys", () => {
   for (
@@ -93,6 +94,8 @@ async function loadGuard(endpoint: string, name: string, mutant = false) {
     const assertMonthlyHeadroom=(..._args:any[])=>{};const orgMonthSpendCents=async(..._args:any[])=>0;
     const adminClient=()=>({from(_table:string){const q:any={select(_s:string){return q;},eq(_k:string,_v:any){return q;},maybeSingle:async()=>({data:{role:"owner"},error:null})};return q;}});
     async function durableRateLimit(key:string,_max:number,_seconds:number){calls.push(key);if(key.includes("idem")){if(seen.has(key))return false;seen.add(key);}return true;}
+    async function chargeRateReceipt(key:string,max:number,windowSeconds:number){return {accepted:await durableRateLimit(key,max,windowSeconds),receipt:{key,windowSeconds,windowStart:"2026-10-05T00:00:00.000Z"}};}
+    const refundRateReceipt=async(_receipt:unknown)=>true;
     ${body}
   `;
   const module = await import(
@@ -103,13 +106,26 @@ async function loadGuard(endpoint: string, name: string, mutant = false) {
   const user = body.includes("userId: string")
     ? "synthetic-user"
     : { id: "synthetic-user", is_anonymous: false };
+  const operationSeen=new Set<string>();
   return {
     calls: module.calls as string[],
-    run: (key?: string) => {
+    run: async (key?: string) => {
       const req = new Request("https://fixture.invalid/paid", {
         method: "POST",
         headers: key === undefined ? {} : { "idempotency-key": key },
       });
+      if(endpoint==="ai-photo"||endpoint==="ai-chapters"){
+        // These handlers now admit the permanent operation before quota. The
+        // removed 120s counter must not block saved-result recovery.
+        requiredIdempotencyKey(req);
+        await fundingContext("synthetic-user","synthetic-org",req,{},async(rpc,args)=>{
+          assertEquals(rpc,"serving_operation_begin");
+          const operation="idem-operation:"+args.p_key;
+          module.calls.push(operation);
+          if(operationSeen.has(operation))return {data:null,error:{message:"RP409: This operation already started"}};
+          operationSeen.add(operation);return {data:{begun:true},error:null};
+        });
+      }
       return module[name](
         user,
         req,
@@ -133,14 +149,20 @@ for (const [endpoint, name] of routes) {
     for (const key of [undefined, "x".repeat(129), "invalid key", "short"]) {
       await assertRejectedBeforeMeter(fixture, key);
     }
-    await fixture.run("one-logical-paid-tap");
+    const result = await fixture.run("one-logical-paid-tap");
+    if (endpoint === "ai-video") {
+      assertEquals(result.monthlyReceipt,{key:"reelmo:synthetic-org",windowSeconds:2592000,windowStart:"2026-10-05T00:00:00.000Z"});
+      assertEquals(result.burstReceipt,{key:"aivideo:synthetic-org",windowSeconds:300,windowStart:"2026-10-05T00:00:00.000Z"});
+    }
     assert(fixture.calls.some((key) => key.includes("idem")));
+    const allowanceCalls = fixture.calls.filter(key=>!key.includes("idem"));
     try {
       await fixture.run("one-logical-paid-tap");
       throw Error("Replay admitted");
     } catch (error) {
       assert(error instanceof HttpError && error.status === 409);
     }
+    assertEquals(fixture.calls.filter(key=>!key.includes("idem")),allowanceCalls,"A duplicate request must not charge new allowance windows");
   });
 }
 

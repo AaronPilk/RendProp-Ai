@@ -30,6 +30,9 @@ import {
 
 const PROVIDER = "gemini";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+// The legacy GenerateContent hard cutoff includes thoughts and output. The
+// serving quote reads the same generation config that is sent to the provider.
+export const GEMINI_IMAGE_MAX_OUTPUT_TOKENS = 4096;
 
 function geminiKey(): string {
   const key = Deno.env.get("GEMINI_API_KEY")?.trim();
@@ -47,12 +50,16 @@ export function supportsStagingReference(model: string): boolean {
   return ["gemini-2.5-flash-image", "gemini-3.1-flash-image", "gemini-3-pro-image-preview"].includes(model.trim());
 }
 
+export function geminiImageGenerationConfig(model: string): Record<string, unknown> {
+  const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"], candidateCount: 1, maxOutputTokens: GEMINI_IMAGE_MAX_OUTPUT_TOKENS };
+  // Never pay 4K rates by accident: 3.x is pinned to 1K, explicitly.
+  if (needsImageSizePin(model)) generationConfig.imageConfig = { imageSize: "1K" };
+  return generationConfig;
+}
+
 /** The exact generateContent body for an image edit. */
 export function geminiImagePayload(model: string, prompt: string, mime: string, imageB64: string,
   reference?: { mime: string; b64: string }): Record<string, unknown> {
-  const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"] };
-  // Never pay 4K rates by accident: 3.x is pinned to 1K, explicitly.
-  if (needsImageSizePin(model)) generationConfig.imageConfig = { imageSize: "1K" };
   return {
     contents: [{
       role: "user",
@@ -65,7 +72,7 @@ export function geminiImagePayload(model: string, prompt: string, mime: string, 
         ] : []),
       ],
     }],
-    generationConfig,
+    generationConfig: geminiImageGenerationConfig(model),
   };
 }
 

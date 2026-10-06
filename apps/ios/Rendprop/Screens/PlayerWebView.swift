@@ -47,10 +47,13 @@ struct PlayerWebView: UIViewRepresentable {
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        context.coordinator.attach(webView)
+        context.coordinator.showLoading()
 
         if let remoteURL {
             // Nothing to prepare — the page is already on the network.
-            webView.load(URLRequest(url: remoteURL))
+            context.coordinator.retry = { [weak webView] in webView?.load(URLRequest(url: remoteURL)) }
+            context.coordinator.retry?()
             return webView
         }
 
@@ -75,16 +78,19 @@ struct PlayerWebView: UIViewRepresentable {
                                         listing: listing,
                                         agent: agent,
                                         staged: virtuallyStaged)
-        Task { @MainActor in
-            guard let page = await PlayerPage.prepare(request) else {
-                // The template itself couldn't be read or written (bundle damaged,
-                // disk full). Say so — never a blank black card.
-                webView.loadHTMLString(Self.unavailableHTML, baseURL: nil)
-                return
+        context.coordinator.retry = { [weak webView, weak coordinator = context.coordinator] in
+            coordinator?.preparationTask?.cancel()
+            coordinator?.showLoading()
+            coordinator?.preparationTask = Task { @MainActor in
+                guard let page = await PlayerPage.prepare(request), !Task.isCancelled else {
+                    if !Task.isCancelled { coordinator?.showFailure() }
+                    return
+                }
+                guard coordinator?.isMounted == true else { return }
+                webView?.loadFileURL(page.html, allowingReadAccessTo: page.dir)
             }
-            // Read grant = the ONE folder holding the HTML + video.
-            webView.loadFileURL(page.html, allowingReadAccessTo: page.dir)
         }
+        context.coordinator.retry?()
         return webView
     }
 
@@ -106,6 +112,7 @@ struct PlayerWebView: UIViewRepresentable {
     }
     static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "spatialViewer")
+        coordinator.stop()
         webView.stopLoading()
     }
 
@@ -126,12 +133,57 @@ struct PlayerWebView: UIViewRepresentable {
     /// handler. Without this, target="_blank" links are silently dead (no
     /// UIDelegate → no window) and a plain link would hijack the player into
     /// browsing inside the card.
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+    @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         private weak var webView: WKWebView?
         private var endCardObserver: NSObjectProtocol?
         private let spatialExpectation: SpatialViewerExpectation?
         private let onSpatialReady: (() -> Void)?
         private var deliveredSpatialReady = false
+        var retry: (() -> Void)?
+        var preparationTask: Task<Void, Never>?
+        private var timeoutTask: Task<Void, Never>?
+        private(set) var isMounted = true
+        private var statusOverlay: UIView?
+        private var loadingIndicator: UIActivityIndicatorView?
+        private var statusLabel: UILabel?
+        private var retryButton: UIButton?
+
+        func showLoading() {
+            statusOverlay?.isHidden = false
+            statusLabel?.text = "Loading tour…"
+            retryButton?.isHidden = true
+            loadingIndicator?.startAnimating()
+            timeoutTask?.cancel()
+            timeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                guard !Task.isCancelled, self?.isMounted == true else { return }
+                self?.showFailure()
+            }
+        }
+        func showFailure() {
+            guard isMounted else { return }
+            timeoutTask?.cancel()
+            loadingIndicator?.stopAnimating()
+            statusLabel?.text = "Couldn't load this tour. Check your connection and try again."
+            retryButton?.isHidden = false
+            statusOverlay?.isHidden = false
+        }
+        func stop() {
+            isMounted = false
+            timeoutTask?.cancel(); preparationTask?.cancel()
+            retry = nil
+        }
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { showLoading() }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            timeoutTask?.cancel(); loadingIndicator?.stopAnimating(); statusOverlay?.isHidden = true
+        }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            if (error as NSError).code != NSURLErrorCancelled { showFailure() }
+        }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            if (error as NSError).code != NSURLErrorCancelled { showFailure() }
+        }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { showFailure() }
 
         init(spatialExpectation: SpatialViewerExpectation?, onSpatialReady: (() -> Void)?) {
             self.spatialExpectation = spatialExpectation
@@ -151,6 +203,33 @@ struct PlayerWebView: UIViewRepresentable {
         /// not stack observers.
         func attach(_ webView: WKWebView) {
             self.webView = webView
+            if statusOverlay == nil {
+                let overlay = UIView()
+                overlay.translatesAutoresizingMaskIntoConstraints = false
+                overlay.backgroundColor = UIColor(white: 0.04, alpha: 0.98)
+                let spinner = UIActivityIndicatorView(style: .large)
+                spinner.color = .white
+                let label = UILabel()
+                label.textColor = .white; label.font = .preferredFont(forTextStyle: .body)
+                label.numberOfLines = 0; label.textAlignment = .center
+                let button = UIButton(type: .system)
+                button.setTitle("Try again", for: .normal)
+                button.tintColor = UIColor(Theme.accent)
+                button.accessibilityIdentifier = "player.retry"
+                button.addAction(UIAction { [weak self] _ in self?.showLoading(); self?.retry?() }, for: .touchUpInside)
+                let stack = UIStackView(arrangedSubviews: [spinner, label, button])
+                stack.axis = .vertical; stack.spacing = 16
+                stack.translatesAutoresizingMaskIntoConstraints = false
+                overlay.addSubview(stack); webView.addSubview(overlay)
+                NSLayoutConstraint.activate([
+                    overlay.topAnchor.constraint(equalTo: webView.topAnchor), overlay.bottomAnchor.constraint(equalTo: webView.bottomAnchor),
+                    overlay.leadingAnchor.constraint(equalTo: webView.leadingAnchor), overlay.trailingAnchor.constraint(equalTo: webView.trailingAnchor),
+                    stack.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
+                    stack.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 24),
+                    stack.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -24)
+                ])
+                statusOverlay = overlay; loadingIndicator = spinner; statusLabel = label; retryButton = button
+            }
             guard endCardObserver == nil else { return }
             endCardObserver = NotificationCenter.default.addObserver(
                 forName: PlayerWebView.scrollToEndCard, object: nil, queue: .main

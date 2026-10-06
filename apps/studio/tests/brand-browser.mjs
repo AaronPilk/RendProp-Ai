@@ -38,7 +38,7 @@ try{
  check('tour, photo and floor-plan cards select the matching property task');
  await card('agent').click();await expect(page.getByRole('navigation',{name:'Business tools'}).getByRole('button',{name:'Agent card',exact:true})).toHaveAttribute('aria-current','page');await page.getByLabel('Display name',{exact:true}).fill('Unfinished profile change');await home();await card('agent').click();await expect(page.getByLabel('Display name',{exact:true})).toHaveValue('Unfinished profile change');await home();await page.locator('.app-leads-banner').click();await expect(page.getByRole('navigation',{name:'Business tools'}).getByRole('button',{name:'Leads',exact:true})).toHaveAttribute('aria-current','page');
  check('Agent card and leads go directly to their business tools; unfinished profile text survives Home navigation');
- await home();await page.getByRole('button',{name:'Add a home',exact:true}).click();await page.getByLabel('Address or property name').fill('Unfinished home');await home();await nav('My homes').click();await expect(page.getByLabel('Address or property name')).toHaveValue('Unfinished home');await page.getByRole('button',{name:'Cancel',exact:true}).click();
+ await home();await page.getByRole('button',{name:'Add a listing',exact:true}).click();await page.getByLabel('Address or property name').fill('Unfinished home');await home();await nav('My Listings').click();await expect(page.getByLabel('Address or property name')).toHaveValue('Unfinished home');await page.getByRole('button',{name:'Cancel',exact:true}).click();
  check('an unfinished new-home form survives moving Home and back');
  await home();await page.getByLabel('Home for creation tools').selectOption(first);
  // Visual assertions use only synthetic homes/media and never capture an owner account.
@@ -51,7 +51,7 @@ try{
  await page.goto(`${origin}/tests/fixtures/branded.html?spatial=on`);await home();await expect(card('spatial')).toBeVisible();await card('spatial').click();await page.getByRole('dialog').getByRole('button',{name:/10 Oak Street/}).click();await expect(page.getByRole('tab',{name:/Floor plan & 3D/})).toHaveAttribute('aria-selected','true');
  check('3D walkthrough appears only when the real capability contract is enabled');
  await page.goto(`${origin}/tests/fixtures/branded.html?homes=1`);await home();await expect(page.locator('.app-property-card')).toHaveCount(1);await card('studio').click();await expect(page.getByRole('navigation',{name:'Creative tools'})).toBeVisible();await expect(page.getByRole('dialog')).toHaveCount(0);
- await page.goto(`${origin}/tests/fixtures/branded.html?homes=0`);await home();await expect(page.getByRole('button',{name:'Add your first home'})).toBeVisible();await card('studio').click();await expect(page.getByLabel('Address or property name')).toBeVisible();
+ await page.goto(`${origin}/tests/fixtures/branded.html?homes=0`);await home();await expect(page.getByRole('button',{name:'Add your first listing',exact:true})).toBeVisible();await card('studio').click();await expect(page.getByLabel('Address or property name')).toBeVisible();
  check('one-home accounts go directly into the tool; zero-home accounts open the creation form');
  await page.goto(`${origin}/tests/fixtures/branded.html`);await home();await expect(page.locator('.app-property-card')).toHaveCount(2);
  await card('reel').click();await page.getByRole('dialog').getByRole('button',{name:/10 Oak Street/}).click();

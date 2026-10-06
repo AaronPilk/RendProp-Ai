@@ -1,0 +1,149 @@
+begin;
+create temporary table billing_checks(label text primary key,ok boolean not null);
+create function pg_temp.billing_ok(label text,v boolean)returns void language plpgsql security definer as $$begin if v is distinct from true then raise exception 'BILLING FAIL: %',label;end if;insert into pg_temp.billing_checks values(label,true);end$$;
+create function pg_temp.billing_denied(label text,s text,fragment text)returns void language plpgsql as $$declare e text;begin begin execute s;exception when others then e:=sqlerrm;end;if e is null or position(fragment in e)=0 then raise exception 'BILLING FAIL: % wrong denial: %',label,coalesce(e,'accepted');end if;perform pg_temp.billing_ok(label,true);end$$;
+insert into auth.users(id,email,is_anonymous)values
+ ('fa300505-0000-4000-8000-000000000001','billing-owner@fixture.invalid',false),
+ ('fa300505-0000-4000-8000-000000000002','billing-other@fixture.invalid',false),
+ ('fa300505-0000-4000-8000-000000000003','brokerage-owner@fixture.invalid',false);
+create temporary table billing_fixture as select org_id org,user_id actor from memberships where user_id::text like 'fa300505-%';
+grant select on billing_fixture to service_role,authenticated,anon;
+update orgs set plan='team',plan_source='manual'where id=(select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001');
+insert into listings(id,org_id,agent_id,address)select 'fa300505-0000-4000-8000-000000000011',org,actor,'Synthetic paid property'from billing_fixture where actor='fa300505-0000-4000-8000-000000000001';
+-- Include every brokerage_* function and the existing contract writer, so a
+-- missing helper/overload cannot pass by counting only the named revocations.
+create temporary table brokerage_helpers(name text primary key,signature text not null,command text not null);
+insert into brokerage_helpers values
+ ('brokerage_price_cents','public.brokerage_price_cents(integer)','select public.brokerage_price_cents(50)'),
+ ('brokerage_price_floor_cents','public.brokerage_price_floor_cents()','select public.brokerage_price_floor_cents()'),
+ ('brokerage_cogs_ceiling_cents','public.brokerage_cogs_ceiling_cents(public.brokerage_contracts)','select public.brokerage_cogs_ceiling_cents(null::public.brokerage_contracts)'),
+ ('brokerage_contract','public.brokerage_contract(uuid)','select public.brokerage_contract(null::uuid)'),
+ ('brokerage_quote','public.brokerage_quote(integer,integer,integer,integer,integer)','select public.brokerage_quote(50)');
+grant select on brokerage_helpers to service_role,authenticated,anon;
+select pg_temp.billing_ok('complete brokerage function inventory',
+ (select array_agg(p.oid order by p.oid)from pg_proc p where p.pronamespace='public'::regnamespace and p.proname like 'brokerage\_%'escape '\')=
+ (select array_agg(signature::regprocedure::oid order by signature::regprocedure::oid)from(
+  select signature from brokerage_helpers union all select 'public.brokerage_overview(uuid,uuid,interval)')all_brokerage));
+select pg_temp.billing_ok('brokerage helper remains invoker '||name,not p.prosecdef)
+ from brokerage_helpers h join pg_proc p on p.oid=h.signature::regprocedure;
+select pg_temp.billing_ok('brokerage helper service ACL '||h.name||' denies PUBLIC',
+ not exists(select 1 from pg_proc p cross join lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))a
+  where p.oid=h.signature::regprocedure and a.grantee=0 and a.privilege_type='EXECUTE'))from brokerage_helpers h;
+select pg_temp.billing_ok('brokerage helper service ACL '||name||' denies '||role,
+ not has_function_privilege(role,signature,'EXECUTE'))
+ from brokerage_helpers cross join unnest(array['anon','authenticated'])role order by name,role;
+select pg_temp.billing_ok('brokerage helper service ACL '||name||' permits service_role',
+ has_function_privilege('service_role',signature,'EXECUTE'))from brokerage_helpers order by name;
+select pg_temp.billing_ok('brokerage overview remains service only',
+ has_function_privilege('service_role','public.brokerage_overview(uuid,uuid,interval)','EXECUTE')
+ and not has_function_privilege('anon','public.brokerage_overview(uuid,uuid,interval)','EXECUTE')
+ and not has_function_privilege('authenticated','public.brokerage_overview(uuid,uuid,interval)','EXECUTE'));
+select pg_temp.billing_ok('brokerage contract writer remains service only',
+ has_function_privilege('service_role','public.set_brokerage_contract(uuid,integer,text,text,integer,integer,integer,integer,integer,text,timestamptz,text,boolean)','EXECUTE')
+ and not has_function_privilege('anon','public.set_brokerage_contract(uuid,integer,text,text,integer,integer,integer,integer,integer,text,timestamptz,text,boolean)','EXECUTE')
+ and not has_function_privilege('authenticated','public.set_brokerage_contract(uuid,integer,text,text,integer,integer,integer,integer,integer,text,timestamptz,text,boolean)','EXECUTE')
+ and to_regprocedure('public.set_brokerage_contract(uuid,integer,text,text,integer,integer,integer,integer,integer,text,timestamptz,text)')is null);
+select pg_temp.billing_ok('brokerage contract table remains deny all',
+ not has_table_privilege('anon','public.brokerage_contracts','SELECT,INSERT,UPDATE,DELETE')
+ and not has_table_privilege('authenticated','public.brokerage_contracts','SELECT,INSERT,UPDATE,DELETE')
+ and(select relrowsecurity from pg_class where oid='public.brokerage_contracts'::regclass)
+ and not exists(select 1 from pg_policy where polrelid='public.brokerage_contracts'::regclass));
+set local role anon;
+select pg_temp.billing_denied('actual anon denies '||name,command,'permission denied for function '||name)from brokerage_helpers order by name;
+reset role;set local role authenticated;
+select pg_temp.billing_denied('actual authenticated denies '||name,command,'permission denied for function '||name)from brokerage_helpers order by name;
+reset role;set local role service_role;
+do $$declare o uuid;c public.brokerage_contracts;e public.plan_entitlements;q record;begin
+ select org into strict o from billing_fixture where actor='fa300505-0000-4000-8000-000000000003';
+ c:=public.set_brokerage_contract(o,50,'Synthetic Brokerage','brokerage-owner@fixture.invalid');
+ perform pg_temp.billing_ok('service contract uses unchanged list and floor',c.seats=50 and c.price_cents_per_seat=11900
+  and public.brokerage_price_cents(10)=14900 and public.brokerage_price_cents(50)=11900
+  and public.brokerage_price_cents(200)=8900 and public.brokerage_price_cents(9)is null and public.brokerage_price_floor_cents()=5000);
+ perform pg_temp.billing_ok('service contract lookup uses exact stored row',public.brokerage_contract(o)=c);
+ perform pg_temp.billing_ok('service COGS helper keeps contract arithmetic',public.brokerage_cogs_ceiling_cents(c)=51600);
+ e:=public.org_entitlement(o);
+ perform pg_temp.billing_ok('service billing dependencies keep contract projection',public.effective_plan(o)='brokerage'
+  and public.org_seats_allowed(o)=50 and e.plan='brokerage'and e.seats=50 and e.price_cents=595000 and e.cogs_ceiling_cents=51600
+  and e.renders_per_month=150 and e.photo_edits_per_month=2000 and e.reels_per_month=150 and e.aerials_per_month=50);
+ select * into strict q from public.brokerage_quote(50);
+ perform pg_temp.billing_ok('service quote keeps list floor and exact COGS',q.list_cents_per_seat=11900 and q.floor_cents_per_seat=5000
+  and q.mrr_at_list_cents=595000 and q.mrr_at_floor_cents=250000 and q.worst_case_cogs_cents=51600);
+ perform pg_temp.billing_denied('service writer still refuses under floor',format('select public.set_brokerage_contract(%L,50,null,null,4999)',o),'RP400');
+ perform pg_temp.billing_ok('service manager overview preserves contract capacity',
+  (public.brokerage_overview(o,'fa300505-0000-4000-8000-000000000003')#>>'{seats,allowed}')::integer=50);
+end$$;
+reset role;
+select pg_temp.billing_ok('exact-window RPCs service only',not has_function_privilege('authenticated','bump_rate_receipt(text,integer,integer,integer)','EXECUTE')and not has_function_privilege('anon','refund_rate_receipt(text,integer,timestamptz,integer)','EXECUTE'));
+select pg_temp.billing_ok('allowance receipt private',not has_table_privilege('authenticated','app_video_allowance_receipts','SELECT,INSERT,UPDATE,DELETE')and not has_table_privilege('service_role','app_video_allowance_receipts','UPDATE,DELETE'));
+select pg_temp.billing_ok('Sandbox ledger private',not has_table_privilege('authenticated','apple_sandbox_receipts','SELECT,INSERT,UPDATE,DELETE')and not has_function_privilege('authenticated','record_apple_sandbox_receipt(uuid,uuid,text,text,text,text,timestamptz)','EXECUTE'));
+set local role service_role;
+do $$declare o uuid;u uuid;other uuid;monthly text;burst text;m jsonb;b jsonb;r jsonb;oldw timestamptz:=now()-interval '31 days';count_before int;before_raw jsonb;
+begin
+ select org,actor into o,u from billing_fixture where actor='fa300505-0000-4000-8000-000000000001';other:='fa300505-0000-4000-8000-000000000002';monthly:='reelmo:'||o;burst:='aivideo:'||o;
+ perform pg_temp.billing_denied('null quota window cannot create a charge','select bump_rate_receipt(''invalid-window'',null,25,1)','RP400');
+ perform pg_temp.billing_denied('null quota maximum cannot create a charge','select bump_rate_receipt(''invalid-maximum'',300,null,1)','RP400');
+ perform pg_temp.billing_denied('null quota cost cannot create a charge','select bump_rate_receipt(''invalid-cost'',300,25,null)','RP400');
+ m:=bump_rate_receipt(monthly,2592000,25,1);b:=bump_rate_receipt(burst,300,12,1);
+ perform pg_temp.billing_ok('charged window receipts confirmed',(m->>'accepted')::boolean and(m->>'window_start')is not null);
+ r:=app_video_cost_reserve_v2(u,o,'owned-video-1','reel','fal','fixture-model',repeat('a',64),24,5,4.8,'{}',(m->>'window_start')::timestamptz,(b->>'window_start')::timestamptz,'fa300505-0000-4000-8000-000000000011');
+ perform pg_temp.billing_ok('immutable listing and window bound before POST',exists(select 1 from app_video_allowance_receipts where reservation_id=(r->>'id')::uuid and listing_id='fa300505-0000-4000-8000-000000000011'and monthly_window_start=(m->>'window_start')::timestamptz));
+ perform app_video_cost_settle(u,o,'owned-video-1','owned-provider-1');
+ perform pg_temp.billing_ok('unowned invented request cannot refund',(app_video_refund_drift(u,o,'invented-id','reel')->>'refunded')='false'and(select count=1 from rate_limits where key=monthly));
+ perform pg_temp.billing_ok('other actor request cannot refund',(app_video_refund_drift(other,(select org from billing_fixture where actor=other),'owned-provider-1','reel')->>'refunded')='false');
+ perform pg_temp.billing_ok('wrong feature cannot refund',(app_video_refund_drift(u,o,'owned-provider-1','aerial')->>'refunded')='false');
+ r:=app_video_refund_drift(u,o,'owned-provider-1','reel');
+ perform pg_temp.billing_ok('owned charged clip refunds original unit',(r->>'refunded')='true'and(select count=0 from rate_limits where key=monthly));
+ perform pg_temp.billing_ok('one receipt cannot refund twice',(app_video_refund_drift(u,o,'owned-provider-1','reel')->>'refunded')='false');
+ perform pg_temp.billing_ok('quality allowance refund never refunds provider cost',exists(select 1 from cost_ledger where id=(select cost_ledger_id from app_video_cost_reservations where idempotency_key='owned-video-1')and total_cents=24));
+ b:=bump_rate_receipt(burst,300,12,1);
+ update rate_limits set window_start=oldw,count=1 where key=monthly;
+ r:=app_video_cost_reserve_v2(u,o,'owned-video-old-window','reel','fal','fixture-model',repeat('b',64),24,5,4.8,'{}',oldw,(b->>'window_start')::timestamptz,null);
+ perform app_video_cost_settle(u,o,'owned-video-old-window','owned-provider-old');
+ m:=bump_rate_receipt(monthly,2592000,25,1);
+ perform pg_temp.billing_ok('old refund cannot decrement new charge window',not refund_rate_receipt(monthly,2592000,oldw,1)and(select count=1 from rate_limits where key=monthly));
+ perform pg_temp.billing_ok('owned old clip cannot refund later window',(app_video_refund_drift(u,o,'owned-provider-old','reel')->>'refunded')='false'and(select count=1 from rate_limits where key=monthly));
+ perform pg_temp.billing_denied('durable same key never authorizes another POST',format('select app_video_cost_reserve_v2(%L,%L,%L,''reel'',''fal'',''fixture-model'',%L,24,5,4.8,''{}'',%L,%L,null)',u,o,'owned-video-1',repeat('a',64),m->>'window_start',b->>'window_start'),'RP409');
+ perform pg_temp.billing_denied('unconfirmed charge cannot admit priced POST',format('select app_video_cost_reserve_v2(%L,%L,%L,''reel'',''fal'',''fixture-model'',%L,24,5,4.8,''{}'',%L,%L,null)',u,o,'not-charged-window',repeat('c',64),oldw,b->>'window_start'),'RP409');
+ perform pg_temp.billing_ok('failed receipt admission creates no hold',not exists(select 1 from app_video_cost_reservations where idempotency_key='not-charged-window'));
+ -- These are uncertain previously admitted charges, deliberately not expired.
+ insert into app_video_cost_reservations(org_id,actor_id,idempotency_key,feature,provider,model,input_sha256,units,unit_cost_cents,total_cents,hold_cents,created_at)
+ values(o,u,'unknown-old-hold','drone_render','fal','fixture-topaz',repeat('d',64),1,6000,6000,6000,date_trunc('month',now())-interval '1 day');
+ perform pg_temp.billing_ok('old uncertain charged hold remains fenced',app_video_held_cents(o)=6000);
+ perform pg_temp.billing_denied('old uncertain hold still blocks fresh priced admission',format('select app_video_cost_reserve(%L,%L,%L,''reel'',''fal'',''fixture-model'',%L,1,1,1,''{}'')',u,o,'blocked-by-held-cost',repeat('e',64)),'RP402');
+ -- Sandbox cannot become a retail subscription, including a first old RPC.
+ select to_jsonb(x)into before_raw from orgs x where id=(select org from billing_fixture where actor=other);
+ perform pg_temp.billing_denied('ungranted Sandbox cannot change retail plan',format('select apply_apple_entitlement_v2(%L,%L,%L,%L,%L,''team'',''Sandbox'',''active'',now()+interval ''1 day'',true,null,now()-interval ''1 hour'',now()-interval ''1 minute'',null,null)',(select org from billing_fixture where actor=other),other,'sandbox-ungranted','sandbox-tx','com.rendprop.app.team.monthly'),'RP403');
+ perform pg_temp.billing_denied('legacy Sandbox first-bind cannot change retail plan',format('select apply_apple_entitlement(%L,%L,%L,%L,%L,''team'',''Sandbox'',''active'',now()+interval ''1 day'',true,null)',(select org from billing_fixture where actor=other),other,'sandbox-legacy','sandbox-tx','com.rendprop.app.team.monthly'),'RP403');
+ perform pg_temp.billing_ok('ungranted raw billing exact unchanged',before_raw=(select to_jsonb(x)from orgs x where id=(select org from billing_fixture where actor=other))and not exists(select 1 from apple_subscriptions where original_transaction_id like 'sandbox-%'));
+end$$;
+reset role;
+update profiles set is_admin=true where id='fa300505-0000-4000-8000-000000000001';
+insert into org_internal_testing_grants(org_id,owner_user_id,unmetered_business_allowances)select org,actor,true from billing_fixture where actor='fa300505-0000-4000-8000-000000000001';
+create temp table raw_testing_org as select to_jsonb(o)row from orgs o where id=(select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001');grant select on raw_testing_org to service_role;
+set local role service_role;
+select pg_temp.billing_ok('explicit test grant acknowledges fixed authority',(apply_apple_entitlement_v2((select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001'),'fa300505-0000-4000-8000-000000000001','sandbox-granted','sandbox-tx','com.rendprop.app.pro.monthly','pro','Sandbox','active',now()+interval '1 day',true,null,now()-interval '1 hour',now()-interval '1 minute',null,null)->>'test_only')='true');
+select pg_temp.billing_ok('Sandbox grant never mutates retail binding or raw plan',(select row from raw_testing_org)=(select to_jsonb(o)from orgs o where id=(select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001'))and not exists(select 1 from apple_subscriptions where original_transaction_id='sandbox-granted')and exists(select 1 from apple_sandbox_receipts where original_transaction_id='sandbox-granted'));
+select pg_temp.billing_ok('Sandbox notification only updates test ledger',(apply_apple_entitlement_v2(null,null,'sandbox-granted','sandbox-renew','com.rendprop.app.team.monthly','team','Sandbox','active',now()+interval '1 day',true,'DID_RENEW',now()-interval '1 hour',now(),now(),null)->>'test_only')='true');
+select pg_temp.billing_denied('future Sandbox timestamp rejected',format('select record_apple_sandbox_receipt(%L,%L,''sandbox-future'',''sandbox-new'',''com.rendprop.app.team.monthly'',''active'',now()+interval ''1 day'')',(select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001'),'fa300505-0000-4000-8000-000000000001'),'RP400');
+select pg_temp.billing_denied('Sandbox binding cannot move to foreign org',format('select record_apple_sandbox_receipt(%L,%L,''sandbox-granted'',''sandbox-new'',''com.rendprop.app.team.monthly'',''active'',now())',(select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000002'),'fa300505-0000-4000-8000-000000000002'),'RP409');
+select record_apple_sandbox_receipt((select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001'),'fa300505-0000-4000-8000-000000000001','sandbox-granted','old-test-replay','com.rendprop.app.pro.monthly','active',now()-interval '1 hour');
+select pg_temp.billing_ok('Sandbox replay preserves later test ledger',(select transaction_id='sandbox-renew'and product_id='com.rendprop.app.team.monthly'from apple_sandbox_receipts where original_transaction_id='sandbox-granted'));
+reset role;update org_internal_testing_grants set revoked_at=now()where org_id=(select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001');
+set local role service_role;
+select pg_temp.billing_denied('revoked testing grant cannot acknowledge purchase',format('select record_apple_sandbox_receipt(%L,%L,''sandbox-granted'',''sandbox-new'',''com.rendprop.app.team.monthly'',''active'',now())',(select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000001'),'fa300505-0000-4000-8000-000000000001'),'RP403');
+-- Real Production first bind retains existing authority/chronology behavior.
+select pg_temp.billing_ok('Production verified entitlement still applies',(apply_apple_entitlement_v2((select org from billing_fixture where actor='fa300505-0000-4000-8000-000000000002'),'fa300505-0000-4000-8000-000000000002','production-real','production-tx','com.rendprop.app.pro.monthly','pro','Production','active',now()+interval '1 day',true,null,now()-interval '1 hour',now()-interval '1 minute',null,null)->>'ok')='true');
+reset role;
+insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,duration_s)select ('fa300505-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'fa300505-0000-4000-8000-000000000011','video','renders','renders/'||org||'/fa300505-0000-4000-8000-000000000011/render-'||n||'.mp4',true,30 from billing_fixture cross join generate_series(12,13)n where actor='fa300505-0000-4000-8000-000000000001';
+insert into render_jobs(id,listing_id,capture_asset_id,status,source)select ('fa300505-0000-4000-8000-'||lpad((n+10)::text,12,'0'))::uuid,'fa300505-0000-4000-8000-000000000011',('fa300505-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'processing','app'from generate_series(12,13)n;
+select set_config('request.jwt.claim.sub','fa300505-0000-4000-8000-000000000001',true);set local role authenticated;
+select publish_render('fa300505-0000-4000-8000-000000000022',30,2,'[]',null);
+select publish_render('fa300505-0000-4000-8000-000000000023',30,2,'[]',null);
+select pg_temp.billing_ok('real publishes mint two cryptographic slugs',(select count(*)=2 and count(distinct slug)=2 and bool_and(slug~'^[a-f0-9]{32}$')from renders where job_id in('fa300505-0000-4000-8000-000000000022','fa300505-0000-4000-8000-000000000023')));
+select pg_temp.billing_ok('publish same job replays exact slug',(publish_render('fa300505-0000-4000-8000-000000000022',30,2,'[]',null)).slug=(select slug from renders where job_id='fa300505-0000-4000-8000-000000000022'));
+reset role;update renders set slug='legacyabc23'where job_id='fa300505-0000-4000-8000-000000000023';set local role authenticated;
+select pg_temp.billing_ok('historical slug replay unchanged',(publish_render('fa300505-0000-4000-8000-000000000023',30,2,'[]',null)).slug='legacyabc23');
+reset role;
+select count(*)as billing_assertions from billing_checks;
+select 'PASS: backend billing authority SQL assertions; all fixtures rolled back.';
+rollback;

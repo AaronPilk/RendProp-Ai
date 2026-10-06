@@ -23,6 +23,10 @@ async function invoke(o:Options={}) {
    if(table==="workspace_directory")return json({active_org_id:o.selector??ORG,workspaces:[{id:o.selector??ORG,name:"Fixture Workspace",role:o.role??"owner"}]});
    if(table==="org_entitlement")return json(o.degraded?null:{plan:o.plan??"free",renders_per_month:o.projection?2147483647:1,photo_edits_per_month:o.projection?2147483647:0,reels_per_month:o.projection?2147483647:0,aerials_per_month:o.projection?2147483647:0,topaz_per_month:o.projection?2147483647:0,seats:1,cogs_ceiling_cents:o.projection?2147483647:250,price_cents:0});
    if(table==="org_has_internal_testing_grant")return json(o.master??false);
+   if(table==="hosting_retention_state") {
+    assertEquals(await req.json(),{p_org:o.selector??ORG});
+    return json({org_id:o.selector??ORG,policy:"preserved",protected:Boolean(o.master||o.testingContext),retention_ends_at:null,hosting_available:true});
+   }
    if(table==="private_internal_testing_context") {
     assertEquals(await req.json(),{p_user:USER,p_private_org:o.selector??ORG});
     return o.testingError?json({message:"fixture failed"},503):json(o.testingContext??null);

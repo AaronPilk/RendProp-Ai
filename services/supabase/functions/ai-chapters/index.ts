@@ -1,3 +1,4 @@
+import type { RouteStep } from "../_shared/router.ts";
 // ai-chapters — AUTO ROOM CHAPTERS from the walkthrough video (owner-authenticated).
 //
 //   POST /ai-chapters { listing_id, asset_id, max_chapters?: 12, language?: "en" }
@@ -69,6 +70,7 @@ import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
 import * as routerModule from "../_shared/router.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 
+import { fundingContext, fundedAttempt, textAttemptQuote, completeFundingOperation, FundingAdmissionError, abortFundingOperationBeforeDispatch } from "../_shared/funded-serving.ts";
 import { deleteFile, generateChapters, requireGemini, uploadVideoFromUrl, waitForActive } from "./gemini.ts";
 import { allowedLabels, chaptersPrompt, spaceTypeOf, systemInstruction } from "./prompt.ts";
 import { postprocessChapters } from "./postprocess.ts";
@@ -338,10 +340,7 @@ async function guardChapters(user: PaidAiCaller, req: Request, orgId: string): P
   const monthlyCap = ent.renders_per_month; // the CAP is shared with renders; the counter is not
   if (monthlyCap <= 0) throw quotaError("AI room suggestions", 0, 0, ent.plan);
 
-  const idem = requiredIdempotencyKey(req);
-  if (!(await durableRateLimit(`aichidem:${orgId}:${idem}`, 1, 120))) {
-    throw new HttpError(409, "Duplicate submission — these room suggestions were already requested.", "conflict");
-  }
+  requiredIdempotencyKey(req); // Permanent serving-operation authority owns replay.
 
   const burstKey = `aichapters:${orgId}`;
   if (!(await durableRateLimit(burstKey, BURST_MAX_PER_WINDOW, BURST_WINDOW_SECONDS))) {
@@ -511,7 +510,10 @@ Deno.serve(async (req) => {
         "This asset belongs to another workspace — send X-Org-Id for the workspace that owns it.",
       );
     }
-    const charge = await guardChapters(user, req, asset.orgId); // validated — charge, then spend
+    const funding = await fundingContext(user.id, asset.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+    let charge: Charge;
+    try {charge=await guardChapters(user, req, asset.orgId);}
+    catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
 
     const space = spaceTypeOf(asset.spaceType);
     const labels = allowedLabels(space);
@@ -553,20 +555,22 @@ Deno.serve(async (req) => {
       let result: typeof raw | null = null;
       for (let i = 0; i < chain.length; i++) {
         const candidate = chain[i];
+        const pricedStep: RouteStep = {route_id:candidate.routeId ?? "legacy", task:"video.chapters",provider:candidate.provider,model:candidate.model,unit:candidate.unit,unit_cents:candidate.unitCents,capabilities:[],max_latency_s:90,min_plan:"starter",same_model_as:null,privacy_tier:"retained_30d",enabled:true};
         const attemptAt = Date.now();
         try {
-          result = await generateChapters({
+          result = await fundedAttempt(funding, `chapters:${i}`, pricedStep, {asset:asset.id, system, prompt, fps:SAMPLE_FPS}, textAttemptQuote(pricedStep, system, prompt, 4096, true), () => generateChapters({
             model: candidate.model,
             fileUri: uploaded.uri,
             mimeType: uploaded.mimeType,
             systemInstruction: system,
             prompt,
             fps: SAMPLE_FPS,
-          });
+          }));
           route = candidate;
           await reportOutcome(router, candidate, true, Date.now() - attemptAt);
           break;
         } catch (e) {
+          if (e instanceof FundingAdmissionError) throw e;
           lastError = e;
           const cls = errorClassOf(e);
           await reportOutcome(router, candidate, false, Date.now() - attemptAt, cls);
@@ -655,7 +659,7 @@ Deno.serve(async (req) => {
       originalAssetId: asset.id,
     });
 
-    return json({
+    return json(await completeFundingOperation(funding, {
       chapters,
       summary,
       model: route.model,
@@ -670,7 +674,7 @@ Deno.serve(async (req) => {
       warnings,
       disclosure: prov.disclosure,
       provenance: { id: prov.id, recorded: prov.recorded, ...(prov.reason ? { reason: prov.reason } : {}) },
-    });
+    }));
   } catch (err) {
     return respondError(err);
   }

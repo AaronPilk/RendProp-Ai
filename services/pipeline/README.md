@@ -5,6 +5,14 @@ This package implements per-image/per-room enhancement and cost accounting for
 experiments. It is separate from the [Studio editor](../../apps/studio/README.md)
 and [Supabase AI endpoints](../supabase/functions/README.md).
 
+The paid HTTP boundary requires a current funded worker session. Standalone CLI
+estimates remain available, but provider keys alone cannot authorize generation.
+The shared database receipt reserves a conservative liability before dispatch;
+unknown legacy rates require named unlimited private sponsorship. Historical
+flat costs in `providers/costs.py` are estimates, not verified provider invoices
+or a guarantee of retail margin. Ambiguous charges remain reserved, and paid
+POSTs never receive an implicit transport retry.
+
 ## Implemented behavior
 
 `enhance.py` extracts room/chapter keyframes, applies requested declutter/restage,

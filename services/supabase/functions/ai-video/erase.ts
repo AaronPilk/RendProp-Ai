@@ -1,3 +1,5 @@
+import { ProviderError, definitiveSubmitRejection } from "../_shared/providers/common.ts";
+import { fundedAttempt, TARIFF_VERSION, type FundingContext } from "../_shared/funded-serving.ts";
 // Durable, opt-in reflection erasure. All paid attempts have a committed SQL
 // receipt before dispatch; an ambiguous submit is never automatically repeated.
 import { assert, HttpError, json, readJson } from "../_shared/http.ts";
@@ -92,6 +94,7 @@ export interface EraseDeps {
     provider?: "bria",
     config?: Obj,
   ): Promise<string>;
+  completedURL?(job: Obj): Promise<string>;
   now?: () => number;
 }
 function uuid(value: unknown, name: string): string {
@@ -286,12 +289,12 @@ export function createEraseHandler(deps: EraseDeps) {
       provenance: { id: null, recorded: false },
     }, 202);
   }
-  function status(j: Obj): Response {
+  async function status(j: Obj): Promise<Response> {
     if (j.state === "completed") {
       return json({
         status: "completed",
         request_id: j.id,
-        video_url: j.output_url,
+        video_url: deps.completedURL ? await deps.completedURL(j) : j.output_url,
         disclosure: ERASE_DISCLOSURE,
         publishable: false,
       });
@@ -339,21 +342,24 @@ export function createEraseHandler(deps: EraseDeps) {
     job: Obj,
     name: BriaStage,
     videoUrl: string,
+    ctx: Context,
   ): Promise<Obj> {
     const adapter = bria(job);
     let ref;
+    let dispatched = false;
     try {
       const input = { videoUrl, durationSeconds: Number(job.duration_s) };
-      ref = name === "mask"
+      const funding: FundingContext = {actorId:ctx.userId,orgId:ctx.orgId,requestKey:String(job.id),rpc:(name,args)=>deps.rpc(name,args) as Promise<{data:unknown;error:{message?:string}|null}>};
+      ref = await fundedAttempt(funding, `reflection.${name}`, {provider:"bria",model:BRIA_MODEL}, input, null, async () => {dispatched=true; return name === "mask"
         ? await adapter.submitMask({ ...input, prompt: ERASE_MASK_PROMPT })
         : await adapter.submitErase(
           input,
           String(stage(job, "mask").output_url),
-        );
+        ); });
     } catch (error) {
       // Explicit prequeue rejection is the only paid-dispatch outcome that can
       // release this stage's hold. Every ambiguous POST stays fenced forever.
-      const noCharge = error instanceof BriaError &&
+      const noCharge = !dispatched || error instanceof BriaError &&
         ["rejected", "configuration", "invalid"].includes(error.outcome);
       return await finishStage(job, name, noCharge ? "failed" : "uncertain", {
         p_no_charge: noCharge,
@@ -438,7 +444,7 @@ export function createEraseHandler(deps: EraseDeps) {
       });
       if (!admitted.dispatch) return status(object(admitted.job));
       return status(
-        await dispatchDirect(object(admitted.job), "erase", asset.url),
+        await dispatchDirect(object(admitted.job), "erase", asset.url, ctx),
       );
     }
     const key = `video-reflections/${ctx.orgId}/${job.id}.mp4`;
@@ -634,46 +640,28 @@ export function createEraseHandler(deps: EraseDeps) {
         job = object(reserved.job);
       if (!reserved.dispatch) return submission(req, job);
       if (job.provider === "bria") {
-        await dispatchDirect(job, "mask", asset.url);
+        await dispatchDirect(job, "mask", asset.url, ctx);
         return submission(req, job);
       }
       let ref: Ref;
+      let dispatched=false;
       try {
-        const response = await vendor(
-          "https://queue.fal.run/" + ERASE_MODEL,
-          "POST",
-          {
-            video_url: asset.url,
-            prompt: ERASE_PROMPT,
-            auto_trim: false,
-            preserve_audio: true,
-            output_container_and_codec: "mp4_h264",
-          },
-        );
-        if (
-          [400, 401, 403, 404, 405, 413, 415, 422, 429].includes(
-            response.status,
-          )
-        ) {
-          await response.body?.cancel();
-          await finish(String(job.id), "failed", null, {
-            p_error: [401, 403].includes(response.status)
-              ? "Reflection removal is temporarily unavailable. Your AI clip allowance was returned."
-              : "The provider rejected this clip before queueing. Your AI clip allowance was returned.",
-            p_no_charge: true,
-          });
-          return submission(req, job);
-        }
-        if (!response.ok) throw new Error("Provider submit was not confirmed");
-        ref = providerRef(await response.json());
-      } catch {
-        // Dispatch may have reached the provider. Refund user allowance, retain
-        // the cost hold, and never turn an uncertain receipt into a second POST.
-        await finish(String(job.id), "uncertain", null, {
-          p_error:
-            "The provider response could not be confirmed. Your AI clip allowance was returned; no automatic retry was made.",
+        const funding: FundingContext = {actorId:ctx.userId,orgId:ctx.orgId,requestKey:idem,rpc:(name,args)=>deps.rpc(name,args) as Promise<{data:unknown;error:{message?:string}|null}>};
+        ref=await fundedAttempt(funding, "reflection.fal", {provider:"fal",model:ERASE_MODEL}, {asset:assetId,seconds:timing.billable_s}, {cents:timing.billable_s * 14,version:TARIFF_VERSION}, async()=>{
+          dispatched=true;
+          const response=await vendor("https://queue.fal.run/"+ERASE_MODEL,"POST",{video_url:asset.url,prompt:ERASE_PROMPT,auto_trim:false,preserve_audio:true,output_container_and_codec:"mp4_h264"});
+          const data=await response.json().catch(()=>({}));
+          if(!response.ok)throw new ProviderError("fal","upstream","Reflection submission could not be confirmed.",response.status,definitiveSubmitRejection(response.status,data));
+          return providerRef(data);
         });
-        return submission(req, job);
+      } catch(error) {
+        const noCharge=!dispatched || error instanceof ProviderError && error.dispatch_rejected;
+        await finish(String(job.id),noCharge?"failed":"uncertain",null,{
+          p_error:noCharge?"The request was refused before queueing. Your AI clip allowance was returned.":"The provider response could not be confirmed. Your AI clip allowance was returned; no automatic retry was made.",
+          ...(noCharge?{p_no_charge:true}:{}),
+        });
+        if(!dispatched)throw error;
+        return submission(req,job);
       }
       // Failure to save the receipt must not re-dispatch on a client retry.
       await finish(String(job.id), "processing", ref);

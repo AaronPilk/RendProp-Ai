@@ -43,12 +43,13 @@ try:
  assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
  for p,s in migrations:
-  if p not in [TARGET,CUTOVER]:query('migration-'+p.stem,s)
+  if p.name<TARGET.name:query('migration-'+p.stem,s)
  matrix="select jsonb_agg(to_jsonb(e) order by plan)::text from plan_entitlements e;"
  before_matrix=query('allowance-matrix-before',matrix)
  legacy_identity="select md5(prosrc),proconfig::text,proacl::text from pg_proc where oid='public.apply_apple_entitlement(uuid,uuid,text,text,text,text,text,text,timestamptz,boolean,text)'::regprocedure;"
  before_legacy=query('legacy-writer-before-expand',legacy_identity)
  query('chronology-migration',TARGET.read_text())
+ query('chronology-historical-replay',TARGET.read_text())
  assert query('legacy-writer-after-expand',legacy_identity)==before_legacy
  for race in range(4):
   staged_org=str(uuid.uuid4());staged_original='staged-first-'+str(uuid.uuid4())
@@ -88,15 +89,18 @@ try:
  end$$;
  rollback;
  """)
+ for p,s in migrations:
+  if TARGET.name<p.name<CUTOVER.name:query('migration-'+p.stem,s)
  query('legacy-cutover-migration',CUTOVER.read_text())
+ query('legacy-cutover-historical-replay',CUTOVER.read_text())
  assert query('legacy-writer-after-cutover',legacy_identity)!=before_legacy
  receipt['stagedRolloutAssertions']=['old eleven-argument body/config/ACL unchanged after expand','old handler refund still enforced before cutover','v2 rejects signed refund replay before cutover','token/metadata-only writes preserve all chronology','unordered overlap invalidates chronology and refuses old reversal','newer purchase succeeds after unordered overlap','legacy fence installed only by contract migration']
+ for p,s in migrations:
+  if p.name>CUTOVER.name:query('migration-'+p.stem,s)
+ receipt['replayMode']='chronology and cutover replayed at their historical schema points; final fixtures include every later migration'
  assert query('allowance-matrix-after',matrix)==before_matrix
  receipt['allowanceAndPriceRowsPreserved']=True
  for phase in ['fresh','replayed']:
-  if phase=='replayed':
-   query('replay-migration',TARGET.read_text())
-   query('replay-legacy-cutover',CUTOVER.read_text())
   checks=query('chronology-'+phase,(SQL/'tests/subscription_chronology.sql').read_text())
   count=checks.count('|t');assert count>=25,count
   receipt['chronologyAssertions']=count
@@ -143,20 +147,23 @@ try:
  query('race-org',f"insert into orgs(id,name,plan,plan_source)values('{org}','Chronology race','free',null);")
  def contender(n):
   age=1000-n*50
-  return query('race-'+str(n),f"set role service_role;select apply_apple_entitlement_v2('{org}',null,'{original}','race-tx-{n}','com.rendprop.app.pro.monthly','pro','Sandbox','active',now()+interval '{n+1} days',true,'DID_RENEW',date_trunc('hour',now())-interval '{age} seconds',date_trunc('hour',now())-interval '{age-10} seconds',null,null);")
+  return query('race-'+str(n),f"set role service_role;select apply_apple_entitlement_v2('{org}',null,'{original}','race-tx-{n}','com.rendprop.app.pro.monthly','pro','Production','active',now()+interval '{n+1} days',true,'DID_RENEW',date_trunc('hour',now())-interval '{age} seconds',date_trunc('hour',now())-interval '{age-10} seconds',null,null);")
  with ThreadPoolExecutor(max_workers=8)as pool:list(pool.map(contender,range(8)))
  assert query('race-newest',f"select last_transaction_id from apple_subscriptions where original_transaction_id='{original}';").strip()=='race-tx-7'
  receipt['concurrentReceipts']=8
  # Compile the actual SQL body with its ordering guards disabled. The same
  # fixture must catch the demonstrated pre-refund replay, not just a parser.
- source=TARGET.read_text()
- v2=re.search(r'create or replace function public.apply_apple_entitlement_v2\([\s\S]*?end \$\$;',source).group(0)
+ # Compile faults from the final effective body and restore that same exact
+ # definition. Reinstalling an older migration here would erase later fences.
+ sig='public.apply_apple_entitlement_v2(uuid,uuid,text,text,text,text,text,text,timestamptz,boolean,text,timestamptz,timestamptz,timestamptz,timestamptz)'
+ v2=query('current-chronology-definition',f"select pg_get_functiondef('{sig}'::regprocedure);")
+ definition_before=query('current-chronology-security',f"select md5(prosrc),proowner,proacl::text,prosecdef,proconfig::text from pg_proc where oid='{sig}'::regprocedure;")
  reversal_fault=v2.replace(' or p_event_signed_at<=s.entitlement_signed_at','',1)
  assert reversal_fault!=v2
  query('fault-reversal-outer-install',reversal_fault)
  failed=query('fault-reversal-outer',(SQL/'tests/subscription_chronology.sql').read_text(),3)
  assert 'CHRONOLOGY FAIL: old reversal with freshly signed transaction preserves newer refund'in failed
- query('restore-reversal-outer',source)
+ query('restore-reversal-outer',v2)
  receipt['reversalNegativeControl']='removed independent outer reversal chronology caught at freshly signed old reversal'
  fault=v2.replace('    if stale then','    stale:=false; -- deliberately removed ordering guard\n    if stale then',1)
  assert fault!=v2
@@ -164,7 +171,9 @@ try:
  failed=query('fault-replay',(SQL/'tests/subscription_chronology.sql').read_text(),3)
  assert 'CHRONOLOGY FAIL: old pre-refund restore preserves refund'in failed
  receipt['negativeControl']='removed ordering guard caught at old pre-refund restore'
- query('restore-migration',source)
+ query('restore-migration',v2)
+ assert query('current-chronology-security-restored',f"select md5(prosrc),proowner,proacl::text,prosecdef,proconfig::text from pg_proc where oid='{sig}'::regprocedure;")==definition_before
+ receipt['finalChronologyAndSandboxFenceRestored']=True
  deno=[BIN['deno'],'test','--cached-only','--no-config','--no-lock','--node-modules-dir=none','--allow-read','--allow-env','--deny-net','--deny-write','--deny-run']
  results=run('signed-adapters',deno+[SQL/'functions/_shared/applejws.test.ts',SQL/'functions/apple-subscriptions/notify.test.ts',SQL/'functions/me/billing.test.ts'])
  summary=re.findall(r'ok \| (\d+) passed \| 0 failed',results);assert len(summary)==1
@@ -183,6 +192,7 @@ try:
  receipt['floorplanNegativeControl']='Replacing request service RPC with client RPC fails actual handler boundary fixture'
  run('handler-compilation',deno[:2]+['--no-run']+deno[2:]+[SQL/'functions/apple-subscriptions/index.ts',SQL/'functions/me/index.ts',STUDIO/'index.ts'])
  assert hashes=={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths},'Billing source changed during verification'
+ assert receipt['migrationHashes']=={p.name:hashlib.sha256(p.read_bytes()).hexdigest()for p,_ in migrations},'Migration sources changed during verification'
  receipt.update(passed=True,finishedAt=datetime.now(timezone.utc).isoformat(),confirmedTrialAssertions=26,limits=['Synthetic certificate trust root and owned database; no real App Store purchase or restore','Legacy deployed handlers and production schema remain unchanged','No new pricing, margin or Apple offer eligibility certification'])
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])

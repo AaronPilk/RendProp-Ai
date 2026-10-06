@@ -129,6 +129,7 @@ export function voiceStorageKey(value: unknown, orgId: string): string {
 export function downloadURL(
   value: unknown,
   ownPublicBase?: string | null,
+  scope?: {orgId:string;storageKey?:unknown},
 ): string {
   if (typeof value !== "string" || value.length > 8192) {
     throw new HttpError(502, "The generated clip has no downloadable file.");
@@ -140,7 +141,28 @@ export function downloadURL(
     throw new HttpError(502, "The generated clip returned an invalid file.");
   }
   const own = ownPublicBase ? new URL(ownPublicBase) : null;
-  const approved = (own && url.origin === own.origin &&
+  // New private completion URLs use the same header-free path-style SigV4
+  // contract as native build 44. Accept only the server's exact R2 account,
+  // renders bucket and actor-bound output path; never a provider-shaped S3 URL.
+  const account = Deno.env.get("CLOUDFLARE_ACCOUNT_ID")?.trim();
+  const names=[...url.searchParams.keys()];
+  const stamp=url.searchParams.get("X-Amz-Date")??"";
+  const issued=/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp);
+  const time=issued?Date.parse(`${issued[1]}-${issued[2]}-${issued[3]}T${issued[4]}:${issued[5]}:${issued[6]}Z`):NaN;
+  let key="";try{key=url.pathname.slice(R2_BUCKET_RENDERS.length+2).split("/").map(decodeURIComponent).join("/");}catch{/* reject below */}
+  const privateR2 = Boolean(scope && (key.startsWith(`ai-router/${scope.orgId}/`) || key.startsWith(`renders/${scope.orgId}/`)) &&
+    (scope.storageKey===undefined || scope.storageKey===key) && !key.split("/").some(v=>!v||v==="."||v===".."||/[\\%?#\u0000-\u001f]/.test(v)) &&
+    Number.isFinite(time) && time<=Date.now()+60000 && time+Number(url.searchParams.get("X-Amz-Expires"))*1000>Date.now() &&
+    new Set(names.map(name=>name.toLowerCase())).size===names.length &&
+    account && url.hostname === `${account}.r2.cloudflarestorage.com` &&
+    url.pathname.startsWith(`/${R2_BUCKET_RENDERS}/`) &&
+    url.searchParams.get("X-Amz-Algorithm") === "AWS4-HMAC-SHA256" &&
+    url.searchParams.get("X-Amz-SignedHeaders") === "host" &&
+    /^[a-f0-9]{64}$/i.test(url.searchParams.get("X-Amz-Signature") ?? "") &&
+    /^[1-9]\d{0,2}$/.test(url.searchParams.get("X-Amz-Expires") ?? "") &&
+    Number(url.searchParams.get("X-Amz-Expires")) <= 600 &&
+    [...url.searchParams.keys()].every(name => name.startsWith("X-Amz-")));
+  const approved = privateR2 || (own && url.origin === own.origin &&
     url.pathname.startsWith(own.pathname)) ||
     url.hostname === "fal.media" || url.hostname.endsWith(".fal.media") ||
     url.hostname === "v3.fal.media" ||
@@ -545,6 +567,7 @@ export async function handleCreative(
       const source = downloadURL(
         state.video_url,
         Deno.env.get("R2_PUBLIC_BASE_URL"),
+        {orgId:context.orgId,storageKey:state.asset_key},
       );
       const response = await fetch(source, {
         credentials: "omit",

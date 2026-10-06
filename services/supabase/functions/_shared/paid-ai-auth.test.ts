@@ -131,6 +131,11 @@ async function guardModule(spec: typeof routeSpecs[number], omitIdentity = false
     import {requiredIdempotencyKey} from ${JSON.stringify(new URL("./idempotency.ts", import.meta.url).href)};
     type EditCharge=any;type HelperCharge=any;type GenerateCharge=any;type Charge=any;type GenKind="reel"|"aerial"|"drone"|"declutter";
     const durableRateLimit = async (key:string) => { (globalThis as any).__paidAiMeter(key); return true; };
+    const chargeRateReceipt = async (key:string,_max:number,windowSeconds:number) => {
+      (globalThis as any).__paidAiMeter(key);
+      return {accepted:true,receipt:{key,windowSeconds,windowStart:"2026-10-05T00:00:00.000Z"}};
+    };
+    const refundRateReceipt = async (_receipt:unknown) => true;
     const entitlementForCharge = async () => ({plan:"starter",renders_per_month:4,photo_edits_per_month:100,reels_per_month:6,aerials_per_month:2,topaz_per_month:1,cogs_ceiling_cents:1200});
     ${constants}\n${functions}\nexport {${spec.guard}};
   `;
@@ -144,7 +149,12 @@ for (const spec of routeSpecs) Deno.test(`actual ${spec.route}/${spec.guard} aut
     await assertRejects(invoke, HttpError); assertEquals(f.meters, []);
   });
   await fixture({ anonymous: true, source: "apple", plan: "starter" }, async (f) => {
-    await invoke(); assert(f.meters.length > 0);
+    const result = await invoke(); assert(f.meters.length > 0);
+    if (spec.guard === "guardGenerate") {
+      const charge = result as {monthlyReceipt:unknown;burstReceipt:unknown};
+      assertEquals(charge.monthlyReceipt,{key:`reelmo:${ORG}`,windowSeconds:2592000,windowStart:"2026-10-05T00:00:00.000Z"});
+      assertEquals(charge.burstReceipt,{key:`aivideo:${ORG}`,windowSeconds:300,windowStart:"2026-10-05T00:00:00.000Z"});
+    }
   });
 });
 Deno.test("actual paid photo guard negative control detects a removed identity gate", async () => {

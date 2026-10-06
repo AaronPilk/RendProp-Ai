@@ -27,10 +27,9 @@ way round:
     send the whole `record()` through its retry loop and insert the row again,
     inflating `cost_cents` with duplicates.
 
-Local mode: if SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY aren't set, the ledger
-runs offline — it still tallies and prints every row, so the CLI cost-test and a
-keyed-but-DB-less run both work. `enabled` tells callers which mode it's in;
-nothing is spooled in local mode (there is no DB to reconcile against).
+Local ledger mode tallies estimates without writes. It does not authorize paid
+generations: providers/base.py independently requires a current funded worker
+session before any generation POST. A keyed-but-DB-less CLI cannot spend.
 
 Auth: PostgREST needs BOTH `apikey` and `Authorization: Bearer` set to the
 service-role key. Never ship this key to the app (see BACKEND-ARCHITECTURE §4).

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,14 @@ import { chromium, expect } from "@playwright/test";
 
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-business-browser-")), dist = join(artifacts, "dist");
 const receipt = { proof: "Isolated real business UI with native-contract responses; no live customer account or outgoing mail", checks: [], externalRequests: [], errors: [] };
+async function sourceManifest() {
+  const files = [];
+  async function visit(dir) { for (const entry of await readdir(join(root, dir), { withFileTypes: true })) { const name = `${dir}/${entry.name}`; if (entry.isDirectory()) await visit(name); else files.push(name); } }
+  await visit("src"); await visit("tests");
+  files.push("package.json", "package-lock.json", "tsconfig.json", "index.html");
+  return Object.fromEntries(await Promise.all([...new Set(files)].sort().map(async path => [path, createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
+}
+receipt.sourceHashes = await sourceManifest();
 let browser, server;
 try {
   await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/business-fixture.html") } } });
@@ -27,9 +36,17 @@ try {
   await expect(page.getByRole("status")).toContainText("marked contacted");
   receipt.checks.push("Lead details and status roundtrip through native route");
   await nav("Agent card").click(); await page.getByLabel("Display name", { exact: true }).fill("Office Agent");
-  await page.getByRole("button", { name: "Save brand", exact: true }).click(); await expect(page.getByRole("status")).toContainText("Brand saved");
+  await page.getByRole("button", { name: "Save personal card", exact: true }).click(); await expect(page.getByRole("status")).toContainText("Personal card saved");
   await nav("Leads").click(); await nav("Agent card").click(); await expect(page.getByLabel("Display name", { exact: true })).toHaveValue("Office Agent");
-  receipt.checks.push("Brand persists through remote reload and matches card preview");
+  receipt.checks.push("Personal card persists across panel navigation without copying workspace branding");
+  const personal = page.getByRole("form",{name:"Personal contact card"});
+  await personal.getByLabel("Public phone",{exact:true}).fill("+44 20 7946 0958");await page.evaluate(()=>window.businessFixture.failPersonal());await personal.getByRole("button",{name:"Save personal card",exact:true}).click();await expect(personal.getByRole("alert")).toContainText("draft kept");await expect(personal.getByLabel("Public phone",{exact:true})).toHaveValue("+44 20 7946 0958");
+  await personal.getByRole("button",{name:"Save personal card",exact:true}).click();await expect(personal.getByRole("status")).toContainText("Personal card saved");assert.equal((await page.evaluate(()=>window.businessFixture.brand())).name,"Agent");
+  await personal.getByLabel("Public phone",{exact:true}).fill("+44 20 7946 1000");await page.evaluate(()=>window.businessFixture.phoneCard({phone:"+44 20 7946 2000"}));await personal.getByRole("button",{name:"Save personal card",exact:true}).click();await expect(personal.getByRole("alert")).toContainText("changed");await expect(personal.getByLabel("Public phone",{exact:true})).toHaveValue("+44 20 7946 1000");
+  page.once("dialog",dialog=>dialog.accept());await personal.getByRole("button",{name:"Reload personal card"}).click();await expect(personal.getByLabel("Public phone",{exact:true})).toHaveValue("+44 20 7946 2000");
+  receipt.checks.push("Personal rejected Save and same-field phone conflict retain the draft; explicit Reload adopts winner and workspace inviter identity stays intact");
+  const portfolio=page.getByRole("region",{name:"Hosted portfolio selection"});await expect(portfolio.getByRole("checkbox")).not.toBeChecked();await portfolio.getByRole("checkbox").check();await portfolio.getByRole("button",{name:"Save hosted portfolio selection"}).click();await expect(portfolio.getByRole("status")).toContainText("selected listings");await expect(portfolio.getByRole("link",{name:"View your hosted portfolio"})).toHaveAttribute("href",/^https:\/\/rendprop.com\/a\/member-/);await portfolio.getByRole("checkbox").uncheck();await portfolio.getByRole("button",{name:"Save hosted portfolio selection"}).click();await expect(portfolio.getByRole("checkbox")).not.toBeChecked();
+  receipt.checks.push("Hosted portfolio begins empty, publishes only an explicit selected listing and supports deliberate clearing");
   await nav("Account & plan").click(); await page.getByLabel("New leads", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Save notification preferences" }).click(); await expect(page.getByRole("status")).toContainText("preferences saved");
   await page.getByText("Delete Rendprop account", { exact: true }).click(); await page.getByRole("button", { name: "Review account deletion" }).click();
@@ -45,8 +62,8 @@ try {
   receipt.checks.push("Team publishing and disclosure records render without raw payloads");
   await page.evaluate(() => window.businessFixture.marketing()); await nav("Leads").click();
   await expect(page.getByRole("combobox", { name: "Status for Alex Buyer" })).toHaveCount(0);
-  await expect(nav("Team activity")).toHaveCount(0); await nav("Agent card").click(); await expect(page.getByLabel("Display name", { exact: true })).toBeDisabled();
-  receipt.checks.push("Marketing role has read-only lead and brand controls; no team overview");
+  await expect(nav("Team activity")).toHaveCount(0); await nav("Agent card").click(); await expect(page.getByLabel("Business name", { exact: true })).toBeDisabled();
+  receipt.checks.push("Marketing role has read-only lead/shared-brand controls and keeps its own personal card; no team overview");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, "No horizontal page overflow on phone width");
   await page.screenshot({ path: join(artifacts, "business-mobile.png"), fullPage: true });
@@ -55,5 +72,5 @@ try {
   assert.equal(calls.filter((c) => c.method === "DELETE").length, 0);
   assert.equal(calls.filter((c) => c.method === "POST").length, 1);
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []);
-  receipt.status = "passed"; await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));
+  assert.deepEqual(await sourceManifest(),receipt.sourceHashes,"Source changed during browser verification");receipt.status = "passed"; await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));
 } finally { await browser?.close(); if (server) await new Promise((done) => server.close(done)); }

@@ -6,6 +6,22 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
+The [6 October candidate](../../docs/handoff/LAUNCH-READINESS-20261006.md) adds
+personal contact cards with explicit Save, separate workspace branding,
+deliberately selected per-member hosted listings, industry-specific detail forms,
+experimental prompt labels and clearer disabled controls. It pairs private media
+imports with the new server photo authority and funded AI admission. These
+changes require the coordinated schema/API/web rollout; historical deployment
+versions below do not certify the candidate. The
+[beta handoff](../../docs/handoff/LAUNCH-BETA-20261006.md) records actual browser
+and regression evidence, plus live/device acceptance still required.
+
+New subscriptions use the approved 90-day hosting grace period after expiry.
+Existing testers retain their prior hosting policy. Provider generation and
+failed attempts need a reviewed funded allowance, rather than a feature count
+alone; no trial sponsorship has been activated. Higgsfield generation remains
+disabled as requested by the owner.
+
 [Photographer client delivery](../../docs/studio/photographer-client-delivery.md)
 adds **My homes → Create & publish / Details → Listing contact**. Choose **My
 client**, upload a separate contact photo and review the private inquiry email
@@ -235,3 +251,12 @@ prefix means crawl blocking is not proven; noindex remains enabled.
 - [`src/data/`](src/data/): wire contracts and bounded authenticated reads.
 - [Studio API](../../services/supabase/functions/studio/README.md): authenticated
   media, documents, creation and review handlers.
+# Current source audit — 5 October 2026
+
+The [full-system follow-up](../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+adds client-recipient verification and failed-module recovery. The current source
+returns real 404 for missing assets and permits the exact existing R2 host in
+CSP. These changes are **not deployed**; production connection, forwarding and
+private-media delivery remain separate acceptance gates. `node
+tests/recovery-browser.mjs` tests the real production React boundary/lazy chunk
+with a closed-network synthetic workspace.

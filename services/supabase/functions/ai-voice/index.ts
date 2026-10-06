@@ -132,6 +132,8 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
+import { ProviderError, definitiveSubmitRejection } from "../_shared/providers/common.ts";
+import { fundingContext, fundedAttempt, TARIFF_VERSION } from "../_shared/funded-serving.ts";
 import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
@@ -667,25 +669,19 @@ Deno.serve(async (req) => {
         const url =
           `${ELEVEN_BASE}/v1/text-to-speech/${encodeURIComponent(voiceId)}/with-timestamps` +
           `?output_format=${OUTPUT_FORMAT}`;
-        const payload: Record<string, unknown> = { text };
-        if (ELEVENLABS_MODEL_ID) payload.model_id = ELEVENLABS_MODEL_ID;
+        const model = ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
+        const payload: Record<string, unknown> = { text, model_id: model };
+        const funding = await fundingContext(user.id, charge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        const quote = ["eleven_multilingual_v2", "eleven_v3", "eleven_flash_v2_5", "eleven_turbo_v2_5"].includes(model) ? { cents: text.length * .008, version: TARIFF_VERSION } : null;
 
-        const res = await fetch(url, {
-          method: "POST",
-          headers: elevenHeaders(),
-          body: JSON.stringify(payload),
+        const data = await fundedAttempt(funding, "voice.tts", {provider: "elevenlabs", model}, payload, quote, async () => {
+          const res = await fetch(url, {method:"POST",headers:elevenHeaders(),body:JSON.stringify(payload)});
+          const data=await res.json().catch(()=>({} as Record<string,unknown>));
+          if(!res.ok)throw new ProviderError("elevenlabs","upstream","The voice service could not accept this request.",res.status,definitiveSubmitRejection(res.status,data) && !data.audio_base64);
+          if(typeof data.audio_base64!=="string"||!data.audio_base64.length)throw new ProviderError("elevenlabs","upstream","The voice service returned no confirmed audio.");
+          try { if(!atob(data.audio_base64).length)throw new Error(); } catch {throw new ProviderError("elevenlabs","upstream","The voice service returned unreadable audio.");}
+          return data;
         });
-        const data = await res.json().catch(() => ({} as Record<string, unknown>));
-        if (!res.ok) {
-          // Always 502 `upstream`, whatever ElevenLabs said. A 401/403 from the
-          // vendor is OUR misconfiguration, not the caller's — surfacing it as
-          // a 401 would tell the app the USER's session died and sign them out.
-          throw new HttpError(
-            502,
-            `ElevenLabs ${res.status}: ${JSON.stringify(data).slice(0, 300)}`,
-            "upstream",
-          );
-        }
 
         const b64 = (data as Record<string, unknown>).audio_base64;
         if (typeof b64 !== "string" || b64.length === 0) {

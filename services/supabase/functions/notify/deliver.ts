@@ -30,6 +30,7 @@ export interface OutboxRow {
   /** Set only on rows addressed to someone with no profile to look up. */
   to_email?: string | null;
   client_delivery_id?: string | null;
+  client_verification_id?: string | null;
   category: string;
   channel: "push" | "email";
   dedupe_key: string;
@@ -154,7 +155,7 @@ export async function deliverEmail(
     };
   }
 
-  if(row.category === "client_lead_received" && (!clientMessage || clientMessage.to !== address)) {
+  if(["client_lead_received", "client_recipient_verification"].includes(row.category) && (!clientMessage || clientMessage.to !== address)) {
     return {state:"skipped",reason:"Client forwarding was not authorized.",providerId:null,deadTokens:[]};
   }
 

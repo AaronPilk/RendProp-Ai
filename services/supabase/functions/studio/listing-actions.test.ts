@@ -39,40 +39,33 @@ Deno.test("caption edits retain authoritative disclosure without duplicating its
   assertEquals(galleryCaption("", null), null);
   assertThrows(() => galleryCaption("x".repeat(501), null), Error, "500 characters");
 });
-Deno.test("caption action fences simultaneous edits and cannot modify disclosure storage or flags", async () => {
+Deno.test("caption action binds service RPC to verified actor and exact baseline, ignoring injected flags", async () => {
   const photo = { ...photoRow(asset, org, listing, "Kitchen"), is_staged: true, caption: "Kitchen · AI-altered photo", is_main: false };
-  const f = fixture([
-    { table: "memberships", result: { data: { role: "agent" } } },
-    { table: "photos", result: { data: photo } },
-    { table: "media_provenance", result: { data: { disclosure: "AI-altered photo" } } },
-    { table: "photos", result: { data: { ...photo, caption: "Bright kitchen · AI-altered photo" } } },
-  ]);
-  const response = await handleListingActions(request("photos", { listing_id: listing, action: "caption", photo_id: id, expected_caption: photo.caption, caption: "Bright kitchen", is_staged: false, original_key: "invented" }, "PATCH"), f.context);
+  const f = fixture([{ table: "memberships", result: { data: { role: "agent" } } },
+    { table: "studio_photo_caption", client: "admin", result: { data: { ok: true, photo: { ...photo, caption: "Bright kitchen · AI-altered photo" } } } }]);
+  const response = await handleListingActions(request("photos", { listing_id: listing, action: "caption", photo_id: id, expected_caption: photo.caption, caption: "Bright kitchen", is_staged: false, original_key: "invented", org_id: "invented" }, "PATCH"), f.context);
   assertEquals(response?.status, 200);
-  assertEquals(f.calls.find(c => c.op === "update")?.args, [{ caption: "Bright kitchen · AI-altered photo" }]);
-  assertEquals(f.calls.some(c => c.op === "eq" && c.args[0] === "caption" && c.args[1] === photo.caption), true);
-  assertEquals(f.calls.some(c => c.op === "eq" && c.args[0] === "listing_id" && c.args[1] === listing), true);
+  assertEquals(f.calls.find(c => c.op === "rpc")?.args, [{ p_actor: user, p_org: org, p_listing: listing, p_photo: id, p_expected: photo.caption, p_caption: "Bright kitchen" }]);
+  assertEquals(f.calls.some(c => ["update", "insert"].includes(c.op)), false);
 });
-Deno.test("caption conflict leaves server metadata unchanged, replay of desired caption succeeds", async () => {
-  const photo = { ...photoRow(asset, org, listing, "Phone caption"), is_main: false };
-  const make = () => fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "photos", result: { data: photo } }, { table: "media_provenance", result: { data: null } }]);
-  const f = make();
+Deno.test("caption conflict is refused and exact desired replay uses the same atomic RPC", async () => {
+  const make = (result: Result) => fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "studio_photo_caption", client: "admin", result }]);
+  const f = make({ data: null, error: { message: "RP409: This caption changed on another device. Refresh before saving again" } });
   await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, action: "caption", photo_id: id, expected_caption: "Old caption", caption: "Office caption" }, "PATCH"), f.context), Error, "changed on another device");
-  assertEquals(f.calls.some(c => c.op === "update"), false);
-  const replay = await handleListingActions(request("photos", { listing_id: listing, action: "caption", photo_id: id, expected_caption: "Old caption", caption: "Phone caption" }, "PATCH"), make().context);
+  const replay = await handleListingActions(request("photos", { listing_id: listing, action: "caption", photo_id: id, expected_caption: "Old caption", caption: "Phone caption" }, "PATCH"), make({ data: { ok: true, photo: { id, listing_id: listing, caption: "Phone caption" } } }).context);
   assertEquals(replay?.status, 200);
 });
-Deno.test("gallery cover and order use request RLS RPC with server workspace and bounded exact ids", async () => {
-  const f = fixture([{ table: "memberships", result: { data: { role: "agent" } } }, { table: "studio_gallery_update", result: { data: { ok: true, main_photo_key: asset.storage_key } } }]);
+Deno.test("gallery cover and order use actor-bound request service RPC with bounded exact ids", async () => {
+  const f = fixture([{ table: "memberships", result: { data: { role: "agent" } } }, { table: "studio_gallery_update_v2", client: "admin", result: { data: { ok: true, main_photo_key: asset.storage_key } } }]);
   assertEquals((await handleListingActions(request("photos", { listing_id: listing, action: "cover", photo_id: id, expected_main_photo_key: null, org_id: "invented" }, "PATCH"), f.context))?.status, 200);
-  assertEquals(f.calls.find(c => c.op === "rpc")?.args[0], { p_org_id: org, p_listing_id: listing, p_action: "cover", p_photo_id: id, p_expected: null, p_value: null });
+  assertEquals(f.calls.find(c => c.op === "rpc")?.args[0], { p_actor: user, p_org_id: org, p_listing_id: listing, p_action: "cover", p_photo_id: id, p_expected: null, p_value: null });
   const invalid = fixture([{ table: "memberships", result: { data: { role: "agent" } } }]);
   await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, action: "reorder", expected_order: [id, id], photo_ids: [id, id] }, "PATCH"), invalid.context), Error, "each gallery photo once");
 });
 Deno.test("gallery permission and database conflicts remain actionable without succeeding", async () => {
   const denied = fixture([{ table: "memberships", result: { data: { role: "marketing" } } }]);
   await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, action: "cover", photo_id: id, expected_main_photo_key: null }, "PATCH"), denied.context), Error, "role does not permit");
-  const stale = fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "studio_gallery_update", result: { data: null, error: { message: "RP409: The gallery changed on another device. Refresh before reordering" } } }]);
+  const stale = fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "studio_gallery_update_v2", client: "admin", result: { data: null, error: { message: "RP409: The gallery changed on another device. Refresh before reordering" } } }]);
   await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, action: "reorder", expected_order: [id], photo_ids: [id] }, "PATCH"), stale.context), Error, "changed on another device");
 });
 Deno.test("altered gallery photo derives immutable original and disclosure from provenance", () => {
@@ -92,8 +85,7 @@ Deno.test("replayed photo attachment uses stable asset id and does not insert du
   const f = fixture([
     { table: "memberships", result: { data: { role: "agent" } } },
     { table: "capture_assets", result: { data: asset } },
-    { table: "media_provenance", result: { data: null } },
-    { table: "photos", result: { data: row } },
+    { table: "studio_attach_photo", client: "admin", result: { data: { ok: true, created: false, photo: row } } },
   ]);
   const response = await handleListingActions(request("photos", { listing_id: listing, asset_id: id, caption: "Kitchen" }), f.context);
   assertEquals(response?.status, 200); assertEquals(f.calls.some((c) => c.op === "insert"), false);
@@ -179,4 +171,20 @@ Deno.test("direct gallery and floor plan attachment reject an uploaded client he
    await assertRejects(()=>handleListingActions(request(action,{listing_id:listing,asset_id:id}),f.context),Error,"headshots");
    assertEquals(f.calls.some(call=>["update","insert"].includes(call.op)),false);
  }
+});
+
+Deno.test("photo attachment fails closed without request service client or confirmed scoped receipt", async () => {
+  const base = [{ table: "memberships", result: { data: { role: "owner" } } }, { table: "capture_assets", result: { data: asset } }];
+  const missing = fixture([...base]); const { admin: _admin, ...context } = missing.context;
+  await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, asset_id: id }), context), Error, "temporarily unavailable");
+  const foreign = fixture([...base, { table: "studio_attach_photo", client: "admin", result: { data: { ok: true, created: true, photo: { id, listing_id: org } } } }]);
+  await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, asset_id: id }), foreign.context), Error, "could not be confirmed");
+});
+Deno.test("photo service refusal after preliminary read preserves atomic authority gate", async () => {
+  for (const message of ["RP403: Your role does not permit editing photos", "RP409: This account is being deleted"]) {
+    const f = fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "capture_assets", result: { data: asset } }, { table: "studio_attach_photo", client: "admin", result: { data: null, error: { message } } }]);
+    await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, asset_id: id, caption: "Reviewed", is_staged: false, enhanced_key: "invented" }), f.context), Error, message.slice(7));
+    assertEquals(f.calls.find(c => c.op === "rpc")?.args[0], { p_actor: user, p_org: org, p_listing: listing, p_asset: id, p_caption: "Reviewed", p_provenance: null });
+    assertEquals(f.calls.some(c => ["insert", "update"].includes(c.op)), false);
+  }
 });

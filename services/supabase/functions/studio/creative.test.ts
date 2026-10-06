@@ -429,3 +429,13 @@ Deno.test("private saved job references renew after expiry only for their signed
     } else Deno.env.set("JOB_TOKEN_SIGNING_SECRET", previousSecret);
   }
 });
+Deno.test("private native-compatible completion links import only for exact account, workspace, key and live short SigV4 capability",()=>{
+ const previous=Deno.env.get("CLOUDFLARE_ACCOUNT_ID"),account="012345678901234567890123456789ab";Deno.env.set("CLOUDFLARE_ACCOUNT_ID",account);
+ try{
+  const key=`ai-router/${org}/video/${id}.mp4`,now=new Date(Math.floor(Date.now()/1000)*1000),query=new URLSearchParams({"X-Amz-Algorithm":"AWS4-HMAC-SHA256","X-Amz-Credential":"fixture/auto/s3/aws4_request","X-Amz-Date":now.toISOString().replace(/[-:]/g,"").replace(".000",""),"X-Amz-Expires":"600","X-Amz-SignedHeaders":"host","X-Amz-Signature":"a".repeat(64)}),url=`https://${account}.r2.cloudflarestorage.com/rendprop-renders/${key}?${query}`;
+  assertEquals(downloadURL(url,null,{orgId:org,storageKey:key}),url);
+  for(const bad of [url.replace(account,"f".repeat(32)),url.replace(org,user),url.replace("rendprop-renders","rendprop-uploads"),url.replace("X-Amz-Expires=600","X-Amz-Expires=601"),url.replace("X-Amz-Date=","X-Amz-Date=19990101T000000Z&duplicate="),url+"&X-Amz-Expires=600",url+"&token=private",url.replace("X-Amz-SignedHeaders=host","X-Amz-SignedHeaders=host%3Bauthorization")])assertThrows(()=>downloadURL(bad,null,{orgId:org,storageKey:key}),HttpError);
+  assertThrows(()=>downloadURL(url,null,{orgId:org,storageKey:key+"different"}),HttpError);
+  assertThrows(()=>downloadURL(url),HttpError);
+ }finally{if(previous===undefined)Deno.env.delete("CLOUDFLARE_ACCOUNT_ID");else Deno.env.set("CLOUDFLARE_ACCOUNT_ID",previous);}
+});

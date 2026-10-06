@@ -5,6 +5,7 @@ import argparse, hashlib, json, re, subprocess, tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 SYNC = ROOT / "apps/ios/Rendprop/Networking/WorkspaceSync.swift"
+APP = ROOT / "apps/ios/Rendprop/RendpropApp.swift"
 
 
 def block(source, marker):
@@ -22,18 +23,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--expect-regression", action="store_true")
-    parser.add_argument("--inject-fault", choices=["revive-replay-intent", "drop-replay-base", "retain-consumed-address"])
+    parser.add_argument("--inject-fault", choices=["revive-replay-intent", "drop-replay-base", "retain-consumed-address", "drop-archive-restore"])
     args = parser.parse_args()
     out = args.output_dir or Path(tempfile.mkdtemp(prefix="rendprop-listing-create-intent-", dir="/tmp"))
     out.mkdir(parents=True, exist_ok=True)
     models = [ROOT / "apps/ios/Rendprop/Models" / n for n in ["Listing.swift", "ListingClientContact.swift", "Money.swift"]]
-    captured = {p: p.read_bytes() for p in [SYNC, *models]}
+    captured = {p: p.read_bytes() for p in [SYNC, APP, *models]}
     template = Path(__file__).with_name("Fixture.swift.template")
     captured_harness = {p: p.read_bytes() for p in [Path(__file__).resolve(), template]}
     source = captured[SYNC].decode()
     bodies = {"__WIRE__": block(source, "enum ListingWireDetails"),
               "__CREATE__": block(source, "@MainActor enum CloudDraftCreation"),
-              "__ERROR__": block(source, "enum CloudSyncError:")}
+              "__ERROR__": block(source, "enum CloudSyncError:"),
+              "__MODIFY__": block(captured[APP].decode(), "    func modify(_ id: UUID,"),
+              "__SET_SOLD__": block(captured[APP].decode(), "    func setSold(_ sold: Bool,")}
     actual_bodies = bodies.copy()
     if args.inject_fault == "revive-replay-intent":
         branch = block(bodies["__CREATE__"], "        if created.cloudCreateReplayed == true, unchanged {")
@@ -47,6 +50,10 @@ def main():
         needle = 'if sent.value == (first[key] ?? .null), !(newerLocation && locationKeys.contains(key)) {'
         assert bodies["__CREATE__"].count(needle) == 1
         bodies["__CREATE__"] = bodies["__CREATE__"].replace(needle, 'if key != "address", sent.value == (first[key] ?? .null), !(newerLocation && locationKeys.contains(key)) {')
+    elif args.inject_fault == "drop-archive-restore":
+        needle = "; if !sold { $0.cloudArchived = false }"
+        assert bodies["__SET_SOLD__"].count(needle) == 1
+        bodies["__SET_SOLD__"] = bodies["__SET_SOLD__"].replace(needle, "")
     fixture = captured_harness[template].decode()
     for key, body in bodies.items():
         assert fixture.count(key) == 1
@@ -64,7 +71,8 @@ def main():
                "harnessHashes": {str(p.relative_to(ROOT)): hashlib.sha256(b).hexdigest() for p, b in captured_harness.items()},
                "fault": args.inject_fault, "networkCalls": 0, "cameraCalls": 0, "customerFilesAccessed": 0, "productionMutations": 0, "commands": []}
     expected = {"drop-replay-base": "in-flight edits use the originally created values as CAS base",
-                "retain-consumed-address": "create-time untouched intent retires and adopts office facts during a newer edit"}.get(args.inject_fault, "unchanged replay must clear create-time intent instead of reviving it")
+                "retain-consumed-address": "create-time untouched intent retires and adopts office facts during a newer edit",
+                "drop-archive-restore": "a pending unarchive restores phone status and sold marker against the first POST state"}.get(args.inject_fault, "unchanged replay must clear create-time intent instead of reviving it")
     for label, command in [("compile", ["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library", *map(str, copied), str(swift), "-o", str(out / "checks")]),
                            ("run", [str(out / "checks")])]:
         r = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)

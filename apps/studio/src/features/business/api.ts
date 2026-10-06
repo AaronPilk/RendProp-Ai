@@ -56,6 +56,7 @@ export function businessApi(services: Pick<StudioServices, "api">, workspace: Wo
       if (r.ok !== true) throw new Error("The invite could not be accepted. Refresh your workspaces.");
       return uuid(r.org_id);
     },
+    saveWorkspaceBrand: async (brand: Brand, signal?: AbortSignal) => call("me/brand", { method: "PATCH", body: Object.fromEntries(Object.entries(brandPayload({ ...brand, name: "", title: "", phone: "", email: "", website: "", headshot_url: "", avatar_url: "", instagram: "", linkedin: "", tiktok: "" })).filter(([key]) => ["org_name", "space_type", "handle", "brokerage", "accent"].includes(key))), signal }),
     saveBrand: async (brand: Brand, signal?: AbortSignal) => call("me/brand", { method: "PATCH", body: brandPayload(brand), signal }),
     saveNotifications: async (preferences: Notifications, signal?: AbortSignal) => decodeNotifications(record(await call("me/notifications", { method: "PATCH", body: preferences, signal })).notifications),
     overview: async (window: "7d" | "30d" | "90d", signal?: AbortSignal) => {

@@ -1,0 +1,2 @@
+# Known OAuth entry only. Missing hashed assets must stay 404, never SPA HTML.
+/auth/callback /index.html 200

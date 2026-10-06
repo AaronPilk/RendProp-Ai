@@ -555,6 +555,8 @@ final class PurchaseManager: ObservableObject {
             let apiError = error as? APIError
             if apiError?.isUnauthorized == true {
                 lastError = "Sign in to finish turning on your plan. Your purchase is safe — nothing is lost."
+            } else if apiError?.code == "sandbox_testing_required" {
+                lastError = "Your test purchase is saved. This workspace needs authorized testing access before it can activate a test subscription. Once access is enabled, tap Restore purchases."
             } else if let apiError, case .server(let status, _, _) = apiError, status == 409 || status == 403 {
                 lastError = "Your Apple purchase is saved, but this workspace cannot activate it. Return to the workspace you selected when subscribing, then tap Restore purchases. Manage or cancel the subscription with Apple if needed."
             } else {

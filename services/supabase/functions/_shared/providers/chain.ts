@@ -102,6 +102,9 @@ export async function runChain<T>(
       await reportOutcome(step, { ok: true, latency_ms });
       return { step, value, latency_ms };
     } catch (err) {
+      // Financial authority failures and replay refusals belong to this one
+      // operation. They never authorize a new fallback paid attempt.
+      if (err && typeof err === "object" && "funding_admission" in err && err.funding_admission === true) throw err;
       const error_class = errorClassOf(err);
       await reportOutcome(step, { ok: false, latency_ms: Date.now() - startedAt, error_class });
       // The caller's problem, or a refusal about this exact image: stop here.

@@ -7,6 +7,18 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+## Current audit source — 5 October 2026
+
+The [full-system audit follow-up](../../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+tracks source fixes for service-only photo mutation, immutable video allowance
+receipts, Sandbox billing authority, verified email destinations, lead deletion,
+output cleanup journals and bounded upload admission. These changes are not a
+production deployment. Prior-stack schema dependencies, timestamp aliases,
+photo expand/function/contract ordering and legacy media delivery require a
+coordinated rollout. Never infer deployment from a passing local suite or apply
+all migrations with a bulk push. The delivery snapshots below describe earlier
+releases; the full-system report is the authority for remaining launch gates.
+
 ## Delivered direct Bria internal beta
 
 The subsequent [audit rollout](../../../docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)

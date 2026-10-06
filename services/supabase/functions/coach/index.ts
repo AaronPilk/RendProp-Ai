@@ -69,6 +69,7 @@ import { recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute } from "../_shared/router.ts";
 import { runChain } from "../_shared/providers/chain.ts";
+import { fundingContext, fundedAttempt, textAttemptQuote, completeFundingOperation } from "../_shared/funded-serving.ts";
 import { ProviderError } from "../_shared/providers/common.ts";
 import { anthropicMessages } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
@@ -389,7 +390,8 @@ Deno.serve(async (req) => {
 
     const chain = await chooseChain(context.plan);
 
-    const attempt = await runChain("coach.chat", chain, async (step) => {
+    const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
+    const attempt = await runChain("coach.chat", chain, (step) => fundedAttempt(funding, `coach.chat:${chain.indexOf(step)}`, step, {system, userTurn}, textAttemptQuote(step, system, userTurn, MAX_TOKENS), async () => {
       if (step.provider === "anthropic") {
         // The STEP, not step.model: that is what carries the row's `params`
         // (migration 0030) into the request. No coach.chat row seeds any, so
@@ -427,7 +429,7 @@ Deno.serve(async (req) => {
         "other",
         `coach.chat: no adapter for provider "${step.provider}" in this deploy`,
       );
-    });
+    }));
 
     const output = parseCoachOutput(attempt.value, validListingIds);
 
@@ -453,12 +455,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    return json({
+    return json(await completeFundingOperation(funding, {
       reply: output.reply,
       actions: output.actions,
       suggested_replies: output.suggested_replies,
       model: attempt.step.model,
-    });
+    }));
   } catch (err) {
     if (!(err instanceof HttpError) || err.status >= 500) {
       return respondError(new HttpError(503, "Online Coach is temporarily unavailable. Your saved work is unchanged; use the app's local help or try again later.", "upstream"));

@@ -39,12 +39,9 @@
 // credentials — so a forged or leaked/mismatched-owner token never reaches
 // adapter.poll().
 //
-// NO GRACE PATH for the pre-fix unsigned format. Nothing in this repository is
-// a live deployment with async jobs already in flight, so there is nothing an
-// old token needs to keep working for, and a grace path is itself a bounded
-// re-opening of the exact hole this closes. A real rollout that DOES have
-// in-flight jobs at deploy time would need one — time-boxed to the longest
-// supported job (see TOKEN_TTL_SECONDS below) — see docs/handoff/audit-fixes.md.
+// Old signed tokens remain valid under the same signature/owner/expiry rules.
+// Legacy unsigned FAL URLs are authorized separately by an exact owned job
+// receipt in ai-video; possession of a provider URL supplies no authority.
 //
 // WHAT A TOKEN MAY CONTAIN: provider, model, vendor job id, vendor poll URL,
 // submit time, task, the org id + user id that created it, and an expiry.
@@ -64,6 +61,7 @@ export interface RouterJobToken {
   k: string; // task
   o: string; // org id that created the job
   usr: string; // user id that created the job
+  l?: string; // optional admitted listing UUID; never a status-request field
   exp: number; // unix-seconds expiry
 }
 
@@ -71,6 +69,7 @@ export interface RouterJobToken {
 export interface JobTokenOwner {
   orgId: string;
   userId: string;
+  listingId?: string | null;
 }
 
 // How long a minted token stays valid. Generous relative to the longest job
@@ -122,6 +121,11 @@ async function hmacKey(): Promise<CryptoKey> {
   return key;
 }
 
+/** Verify the receipt signer before a submission can incur provider cost. */
+export async function assertJobTokenSigningReady(): Promise<void> {
+  await crypto.subtle.sign("HMAC",await hmacKey(),new TextEncoder().encode("job-receipt-readiness"));
+}
+
 function toB64Url(bytes: Uint8Array): string {
   let bin = "";
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
@@ -162,6 +166,7 @@ export async function encodeJobToken(
     k: job.k,
     o: owner.orgId,
     usr: owner.userId,
+    ...(owner.listingId ? { l: owner.listingId } : {}),
     exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
   };
   const payloadB64 = toB64Url(new TextEncoder().encode(JSON.stringify(full)));
@@ -227,6 +232,7 @@ export async function decodeJobToken(raw: string): Promise<RouterJobToken | null
       return null;
     }
     if (parsed.u !== undefined && typeof parsed.u !== "string") return null;
+    if (parsed.l !== undefined && (typeof parsed.l !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.l))) return null;
     return {
       p: parsed.p,
       m: parsed.m,
@@ -236,6 +242,7 @@ export async function decodeJobToken(raw: string): Promise<RouterJobToken | null
       k: String(parsed.k ?? ""),
       o: parsed.o,
       usr: parsed.usr,
+      ...(parsed.l ? { l: parsed.l } : {}),
       exp: parsed.exp,
     };
   } catch {

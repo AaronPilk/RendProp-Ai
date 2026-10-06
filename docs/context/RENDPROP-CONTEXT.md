@@ -1,5 +1,28 @@
 # RENDPROP — current engineering context and historical chat log
 
+## Current checkpoint — 2026-10-05
+
+Read [the current audit follow-up](../handoff/FULL-SYSTEM-AUDIT-20261005.md),
+[the full beta inventory](../handoff/BETA-FEEDBACK-20261005.md), and
+[private owner/family testing delivery](../handoff/OWNER-PRIVATE-TESTING-20261005.md)
+before relying on the historical September or July notes below. Source work is
+isolated on `fix/full-system-audit-20261005`, stacked over the prior debugging,
+beta and owner-testing branches. Another contributor's shared checkout is not
+edited or force-pushed.
+
+Last verified installed versions are internal 1.0.4 (44) and public 1.0.3 (42).
+The current audit corrections are not uploaded or deployed. The report identifies
+confirmed source fixes, actual regression controls and unresolved launch gates;
+local build success is not real-camera, purchase or generated-output acceptance.
+Spatial capture remains separate owner-phone testing, with global runtime off.
+Retail pricing and allowances stay unchanged. The owner specified a 75% serving
+margin after Apple's fee; ingress limits are not proof of that margin.
+
+Business identity supplied by the owner: RendProp LLC, 855 Central Avenue,
+Saint Petersburg, FL 33701. The exact revised policy renderer is saved as a
+[review draft](../legal/RENDPROP-LEGAL-NOTICE-DRAFT-20261005.md), not a published
+policy or verified provider contract. Existing public contact: aaron@pilk.ai.
+
 ## Current entry point — 2026-09-10 evening
 
 **The July snapshot below is historical, not current build instructions.** Its

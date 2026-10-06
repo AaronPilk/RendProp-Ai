@@ -11,12 +11,20 @@ import json
 import re
 import subprocess
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[3]
 CLIENT = ROOT / "apps/ios/Rendprop/Networking/LiveAPIClient.swift"
 APP = ROOT / "apps/ios/Rendprop/RendpropApp.swift"
 SYNC = ROOT / "apps/ios/Rendprop/Networking/WorkspaceSync.swift"
 EDITOR = ROOT / "apps/ios/Rendprop/Screens/FloorMeasurementsView.swift"
+
+# PR29's hosted macOS runner compiled the positive fixture in 73.56 seconds,
+# then exceeded the old 90-second limit compiling the first copied fault.
+# Allow bounded compiler headroom; executing the proof still has its own
+# unchanged 90-second deadline and exact semantic-rejection requirements.
+COMPILE_TIMEOUT_SECONDS = 240
+RUN_TIMEOUT_SECONDS = 90
 
 
 def block(source, marker):
@@ -213,7 +221,7 @@ def main():
         copied_model = out / model.name
         copied_model.write_bytes(source_bytes[model])
         models[i] = copied_model
-    receipt = {"networkCalls": 0, "cameraCalls": 0, "userFilesAccessed": 0, "productionMutations": 0,
+    receipt = {"passed": False, "networkCalls": 0, "cameraCalls": 0, "userFilesAccessed": 0, "productionMutations": 0,
                "injectedFault": args.inject_fault,
                "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(source_bytes[p]).hexdigest() for p in sources},
                "harnessHashes": {str(p.relative_to(ROOT)): hashlib.sha256(data).hexdigest() for p, data in harness_bytes.items()},
@@ -247,16 +255,36 @@ def main():
                 "compare-backup-wire-only": "Semantically identical shared JSON formatting does not replace the saved phone plan",
                 "retain-backup-after-new-edit": "New pending local geometry replaces the old backup when loading shared measurements"}.get(args.inject_fault)
     for label, command in [("compile", compile_command), ("run", [str(out / "checks")])]:
-        result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90)
+        timeout_seconds = COMPILE_TIMEOUT_SECONDS if label == "compile" else RUN_TIMEOUT_SECONDS
+        started = time.monotonic()
+        timed_out = False
+        try:
+            result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout_seconds)
+            output = result.stdout
+        except subprocess.TimeoutExpired as error:
+            result = None
+            timed_out = True
+            # TimeoutExpired may retain bytes even when text=True. Preserve
+            # the compiler's partial output rather than losing the only
+            # diagnostic to a traceback or treating it as a rejected fault.
+            partial = error.stdout or ""
+            output = partial.decode("utf-8", errors="replace") if isinstance(partial, bytes) else partial
+            receipt["passed"] = False
+            receipt["failure"] = {"kind": "timeout", "stage": label, "timeoutSeconds": timeout_seconds}
         log = out / (label + ".log")
-        log.write_text(result.stdout)
-        receipt["commands"].append({"name": label, "exit": result.returncode, "log": str(log), "sha256": hashlib.sha256(log.read_bytes()).hexdigest()})
+        log.write_text(output)
+        receipt["commands"].append({"name": label, "command": command, "exit": None if timed_out else result.returncode,
+                                    "timedOut": timed_out, "timeoutSeconds": timeout_seconds,
+                                    "elapsedSeconds": round(time.monotonic() - started, 3),
+                                    "log": str(log), "sha256": hashlib.sha256(log.read_bytes()).hexdigest()})
         receipt["sourceHashesAtEnd"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
         receipt["harnessHashesAtEnd"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in harness_bytes}
         receipt["sourceBoundAtEnd"] = receipt["sourceHashes"] == receipt["sourceHashesAtEnd"]
         receipt["harnessBoundAtEnd"] = receipt["harnessHashes"] == receipt["harnessHashesAtEnd"]
         bound = receipt["sourceBoundAtEnd"] and receipt["harnessBoundAtEnd"]
-        if label == "run":
+        if timed_out:
+            receipt["passed"] = False
+        elif label == "run":
             receipt["passed"] = bound and (result.returncode == 0 if expected is None else result.returncode == 1 and expected in result.stdout)
             if expected:
                 receipt["expectedRejection"] = expected
@@ -267,8 +295,11 @@ def main():
         elif result.returncode or not bound:
             receipt["passed"] = False
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-        print(label, result.returncode, result.stdout[-3500:] if label == "compile" or result.returncode == 0 else "Acceptance rejected the copied regression" if receipt.get("passed") else result.stdout[-3500:], flush=True)
-        if not bound or (label == "compile" and result.returncode) or (label == "run" and not receipt["passed"]):
+        if timed_out:
+            print(label, "timed out after", timeout_seconds, "seconds; partial diagnostics retained", flush=True)
+        else:
+            print(label, result.returncode, output[-3500:] if label == "compile" or result.returncode == 0 else "Acceptance rejected the copied regression" if receipt.get("passed") else output[-3500:], flush=True)
+        if timed_out or not bound or (label == "compile" and result.returncode) or (label == "run" and not receipt["passed"]):
             print("Evidence:", out, flush=True)
             raise SystemExit(1)
     print("Evidence:", out, flush=True)

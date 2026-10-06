@@ -170,10 +170,12 @@ final class AppModel: ObservableObject {
     private var spaceTypeSyncOperation: UUID?
 
     init() {
+        AccountExportFiles.purge()
         renderCoordinator.model = self
         // Clear metadata synchronously: a queued Task could run AFTER receipt
         // recovery and erase the IDs we just restored. No media work here.
         AuthStore.shared.onAccountChanged = { [weak self] userID in
+            AccountExportFiles.purge()
             self?.forgetServerIdentities(for: userID)
         }
         AuthStore.shared.onPrepareAdoption = { [weak self] in self?.prepareLocalAdoption($0) == true }
@@ -733,7 +735,7 @@ final class AppModel: ObservableObject {
 
     func setSold(_ sold: Bool, for id: UUID) {
         guard let i = index(of: id), !listings[i].isSample else { return }
-        modify(id) { $0.soldAt = sold ? Date() : nil }
+        modify(id) { $0.soldAt = sold ? Date() : nil; if !sold { $0.cloudArchived = false } }
     }
 
     func setZillow(_ url: String, for id: UUID) {
@@ -1365,7 +1367,7 @@ final class AppModel: ObservableObject {
                      roomTags: [RoomTag],
                      enhancements: Enhancements,
                      tier: Render.Tier,
-                     existingAssetID: String? = nil) async throws -> PublishedTour {
+                     existingAssetID: String? = nil, cellularApproved: Bool = false) async throws -> PublishedTour {
         let id = listing.id
         guard !listing.isSample else { throw PublishError.sampleListing }
         _ = enhancements   // decision A5: the wire always carries the defaults (no video restage exists)
@@ -1421,7 +1423,8 @@ final class AppModel: ObservableObject {
                 let bytes = FileStore.fileSize(renderOutputURL)
                 let meta = UploadMetadata(durationS: durationS, bytes: bytes)
                 assetID = try await UploadManager.shared.upload(
-                    fileURL: renderOutputURL, listingID: serverID, role: "render", metadata: meta)
+                    fileURL: renderOutputURL, listingID: serverID, listingLocalID: id, role: "render", metadata: meta,
+                    cellularApproved: cellularApproved)
             }
             uploadedRenderAssets[id] = UploadedRenderAsset(relPath: relPath, assetID: assetID)
 
@@ -1484,7 +1487,7 @@ final class AppModel: ObservableObject {
     /// Publish the EXISTING local tour — no re-render (decision A2). Used by
     /// the listing detail's "Publish tour", RenderStatusView's "Retry publish",
     /// and the launch-time resume. Returns the public share URL.
-    func publishExisting(listingID id: UUID, existingAssetID: String? = nil) async throws -> URL {
+    func publishExisting(listingID id: UUID, existingAssetID: String? = nil, cellularApproved: Bool = false) async throws -> URL {
         guard let listing = listings.first(where: { $0.id == id }) else { throw PublishError.listingMissing }
         guard !listing.isSample else { throw PublishError.sampleListing }
         guard let tour = tours[id] else { throw PublishError.noLocalTour }
@@ -1497,7 +1500,7 @@ final class AppModel: ObservableObject {
                                               roomTags: tags,
                                               enhancements: render.enhancements,
                                               tier: render.tier,
-                                              existingAssetID: existingAssetID)
+                                              existingAssetID: existingAssetID, cellularApproved: cellularApproved)
         if let url = URL(string: published.shareURL) { return url }
         if let url = listings.first(where: { $0.id == id })?.serverShareURL { return url }
         throw PublishError.noShareURL
@@ -2837,6 +2840,8 @@ struct RendpropApp: App {
         var id: String { rawValue }
     }
     @State private var rootSheet: RootSheet?
+    @State private var incomingQueue = NativeIncomingQueue()
+    @State private var incomingLinkError = false
     @ObservedObject private var push = PushManager.shared
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var model = AppModel()
@@ -2872,7 +2877,7 @@ struct RendpropApp: App {
             // MARK: - analytics additions (P3)
             // First-party analytics only: our own /events route, no third-party
             // SDK, no IDFA, no ATT prompt. `start` is idempotent.
-            .task { Analytics.start(api: model.api as? AnalyticsAPI) }
+            .task { await model.load(); Analytics.start(api: model.api as? AnalyticsAPI) }
             // GUIDELINE 5.1.1(v). A session with NO personal information, minted
             // silently at launch, is what lets every feature and the paywall
             // work without anybody registering. Idempotent, and a no-op when a
@@ -2914,12 +2919,11 @@ struct RendpropApp: App {
             // swallowed - opening the app to nothing is worse than not opening
             // it.
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
-                guard let url = activity.webpageURL, let link = DeepLink.parse(url) else { return }
-                incomingLink = link
+                guard let url = activity.webpageURL else { return }
+                enqueueIncomingURL(url)
             }
             .onOpenURL { url in
-                guard let link = DeepLink.parse(url) else { return }
-                incomingLink = link
+                enqueueIncomingURL(url)
             }
             .fullScreenCover(item: $incomingLink) { link in
                 // A tour and a portfolio are both a page in the viewer. An
@@ -2965,7 +2969,7 @@ struct RendpropApp: App {
             // the same mirror closes the sheet.
             .onChange(of: push.showPrePrompt) { show in
                 if show {
-                    rootSheet = .pushPrePrompt
+                    incomingQueue.enqueue(.pushPermission)
                 } else if rootSheet == .pushPrePrompt {
                     rootSheet = nil
                 }
@@ -2977,8 +2981,21 @@ struct RendpropApp: App {
             // delivered.
             .onChange(of: push.pendingRoute) { _ in consumePushRoute() }
             .task {
-                if push.showPrePrompt { rootSheet = .pushPrePrompt }
+                if push.showPrePrompt { incomingQueue.enqueue(.pushPermission) }
                 consumePushRoute()
+            }
+            .task(id: incomingQueue) {
+                while incomingQueue.hasPending, !Task.isCancelled {
+                    drainIncomingRoutes()
+                    if incomingQueue.hasPending {
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                    }
+                }
+            }
+            .alert("Couldn't open that link", isPresented: $incomingLinkError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Finish your current screen and open the Rendprop link again. Check that an invite includes the complete code.")
             }
             // MARK: - end push additions
             .onChange(of: analyticsAuth.isSignedIn) { signedIn in
@@ -3017,11 +3034,53 @@ struct RendpropApp: App {
     @MainActor
     private func consumePushRoute() {
         guard let route = push.pendingRoute else { return }
+        let accepted: Bool
         switch route {
-        case .tour(let link): incomingLink = link
-        case .leads:          rootSheet = .leadsInbox
+        case .tour(let link): accepted = incomingQueue.enqueue(.link(link))
+        case .leads: accepted = incomingQueue.enqueue(.leads)
         }
-        push.clearPendingRoute()
+        if accepted { push.clearPendingRoute() }
+    }
+
+    @MainActor private func enqueueIncomingURL(_ url: URL) {
+        if let link = DeepLink.parse(url) { incomingQueue.enqueue(.link(link)); return }
+        // An unsupported external or MLS-unbranded URL is never turned into
+        // branded app chrome. Malformed supported routes get an actionable error.
+        let parts = url.pathComponents.filter { $0 != "/" }
+        if url.scheme?.lowercased() == "rendprop"
+            || (DeepLink.hosts.contains((url.host ?? "").lowercased()) && parts.first.map { ["f", "a", "join"].contains($0) } == true) {
+            incomingQueue.enqueue(.invalidLink)
+        }
+    }
+
+    @MainActor private func drainIncomingRoutes() {
+        let canPresent = scenePhase == .active && incomingLink == nil && rootSheet == nil
+            && !incomingLinkError && !PaywallRouter.shared.isPresented
+            && !NativePresentationAvailability.hasPresentedController
+        guard let next = incomingQueue.takeNext(canPresent: canPresent) else { return }
+        switch next {
+        case .link(let link): incomingLink = link
+        case .leads: rootSheet = .leadsInbox
+        case .pushPermission: if push.showPrePrompt { rootSheet = .pushPrePrompt }
+        case .invalidLink: incomingLinkError = true
+        }
+    }
+
+}
+
+/// Checking UIKit catches feature sheets owned below the app root without
+/// interrupting their capture, paid request, or unsaved form.
+@MainActor enum NativePresentationAvailability {
+    static var hasPresentedController: Bool {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+              let root = scene.windows.first(where: \.isKeyWindow)?.rootViewController else { return true }
+        return hasPresentedController(in: root)
+    }
+
+    static func hasPresentedController(in controller: UIViewController) -> Bool {
+        if controller.presentedViewController != nil { return true }
+        return controller.children.contains { hasPresentedController(in: $0) }
     }
 }
 
@@ -3055,7 +3114,6 @@ struct RootTabView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                 .tag(3)
         }
-        .id("\(workspaceAuth.userID ?? "guest"):\(workspace.selected?.id.uuidString ?? "unselected")")
     }
 
     var body: some View {
@@ -3217,6 +3275,8 @@ struct HomeDashboardView: View {
                     .modifier(Reveal(index: 2, on: revealed))
                 appGuideSection
                     .modifier(Reveal(index: 3, on: revealed))
+                demoSection
+                    .modifier(Reveal(index: 4, on: revealed))
                 howItWorksSection
                     .modifier(Reveal(index: 4, on: revealed))
                 // Tutorials are hidden until the videos are filmed — no "coming
@@ -3289,7 +3349,7 @@ struct HomeDashboardView: View {
             guard let listing = model.listings.first(where: { $0.id == listingID }) else { return }
             go(listing, feature)
         case .startProject:
-            gate = .start(.tour)
+            open(.tour)
         case .planUsage, .support, .home:
             break   // RootTabView owns these
         }
@@ -3357,6 +3417,9 @@ struct HomeDashboardView: View {
     ///   • 2+      → "Which home?"
     /// Samples are never candidates — `projects` excludes them.
     private func open(_ feature: ProjectFeature) {
+        guard !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else {
+            goToListings(); return
+        }
         let homes = projects
         if homes.isEmpty {
             gate = .start(feature)
@@ -3395,7 +3458,9 @@ struct HomeDashboardView: View {
             StartProjectSheet(feature: feature) { name in
                 if let created = model.startProject(named: name) {
                     queued = ProjectRoute(listing: created, feature: feature)
+                    return true
                 }
+                return false
             }
             .environmentObject(model)
         case .pick(let feature):
@@ -4477,7 +4542,7 @@ extension AppModel {
     /// type's, still active. Samples are excluded on purpose — every tool is a
     /// no-op on a sample, so offering one as a destination would be a lie.
     var realProjects: [Listing] {
-        listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isSold && isInSelectedWorkspace($0) }
+        listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isInactive && isInSelectedWorkspace($0) }
     }
 
     /// Start a home from just its name or address, so a feature always has one
@@ -4486,7 +4551,7 @@ extension AppModel {
     @discardableResult
     func startProject(named name: String) -> Listing? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        guard !trimmed.isEmpty, !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else { return nil }
         let listing = Listing(address: trimmed,
                               beds: 0, baths: 0, sqft: 0,
                               price: Money(cents: 0),
@@ -4612,10 +4677,14 @@ struct ProjectPickerRow: View {
 struct StartProjectSheet: View {
     let feature: ProjectFeature
     /// Called with the typed name; the sheet dismisses itself right after.
-    var onCreate: (String) -> Void
+    var onCreate: (String) -> Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
+    @State private var creationError: String?
+    @State private var owner = AuthStore.shared.userID
+    @State private var revision = AuthStore.shared.syncSessionRevision
+    @State private var org = WorkspaceContext.selectedOrgID
     @FocusState private var focused: Bool
 
     private var space: SpaceType { SpaceType.current }
@@ -4630,9 +4699,14 @@ struct StartProjectSheet: View {
                     PrimaryButton(title: "Save and continue",
                                   systemImage: "arrow.right",
                                   isDisabled: trimmed.isEmpty) {
-                        onCreate(trimmed)
+                        guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                              org == WorkspaceContext.selectedOrgID, onCreate(trimmed) else {
+                            creationError = "Your account or workspace changed. Close this sheet, choose a workspace, and start the draft there. Your typed name is still here."
+                            return
+                        }
                         dismiss()
                     }
+                    if let creationError { Text(creationError).font(.rpCaption).foregroundStyle(Theme.warn) }
                     Text("You can add the walkthrough video later.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 }

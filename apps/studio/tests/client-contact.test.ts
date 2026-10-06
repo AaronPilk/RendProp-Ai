@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clientContactPayload, clientForm, decodeClientContact } from "../src/features/listings/client-contact";
+import { clientContactPayload, clientForm, clientRecipientVerified, decodeClientContact } from "../src/features/listings/client-contact";
 import { decodeListingState } from "../src/features/listings/model";
 import { validateUpload } from "../src/features/listings/uploads";
 import { decodeRealEstateRole } from "../src/data/contracts";
@@ -12,7 +12,7 @@ test("per-listing client decoding binds identity and retains private delivery se
   assert.equal(clientForm(parsed).separate_recipient, true); assert.equal(clientForm(null).enabled, false); assert.equal(clientForm(null).hide_rendprop_branding, true);
   assert.throws(() => decodeClientContact({ contact }, org), /another property/);
 });
-test("incomplete or unverified client responses block publishing", () => {
+test("incomplete or unreadable client responses block publishing", () => {
   for (const bad of [undefined, {}, { contact: { ...contact, enabled: "true" } }, { contact: { ...contact, revision: 0 } }, { contact: { ...contact, updated_at: "bad" } }, { contact: { ...contact, public_card: {} } }, { contact: { ...contact, recipient_email: "invalid" } }, { contact: { ...contact, public_card: { name: "Client", avatar_url: "javascript:alert(1)" } } }]) assert.throws(() => decodeClientContact(bad, listing));
   assert.equal(decodeClientContact({ contact: null }, listing), null);
 });
@@ -55,4 +55,20 @@ test("headshots never become property gallery or rendering candidates", () => {
   const key = `renders/${org}/${listing}/contact-${photo}.jpg`;
   const decoded = decodeListingState({ org_id: org, listing_id: listing, assets: [{ id: photo, listing_id: listing, storage_key: key, bucket: "renders", kind: "photo", uploaded: true, created_at: contact.updated_at }], photos: [{ id: photo, listing_id: listing, original_key: key, enhanced_key: null, caption: "Client", is_staged: false, is_main: false, sort: 0 }], jobs: [], renders: [], chapters: [], next_offset: null }, org, listing);
   assert.deepEqual(decoded.assets, []); assert.deepEqual(decoded.photos, []);
+});
+
+test("typed client email stays publishable but forwarding authority requires exact verified receipt", () => {
+  const typed = decodeClientContact({ contact }, listing)!;
+  assert.equal(clientRecipientVerified(typed), false);
+  const verified = decodeClientContact({ contact: { ...contact, recipient_verified_email: contact.recipient_email, recipient_verified_at: "2026-10-05T12:00:00Z" } }, listing)!;
+  assert.equal(clientRecipientVerified(verified), true);
+  for (const fields of [
+    { recipient_verified_email: "other@example.invalid", recipient_verified_at: "2026-10-05T12:00:00Z" },
+    { recipient_verified_email: contact.recipient_email, recipient_verified_at: "not-a-date" },
+    { recipient_verified_email: contact.recipient_email, recipient_verified_at: null },
+    { recipient_verified_email: null, recipient_verified_at: "2026-10-05T12:00:00Z" },
+  ]) assert.throws(() => decodeClientContact({ contact: { ...contact, ...fields } }, listing), /verification/);
+  const payload = clientContactPayload(clientForm(verified), verified.revision);
+  assert.equal("recipient_verified_email" in payload, false);
+  assert.equal("recipient_verified_at" in payload, false);
 });

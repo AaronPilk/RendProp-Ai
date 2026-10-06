@@ -7,7 +7,7 @@ create function pg_temp.ok(value boolean,label text) returns void language plpgs
   insert into chronology_checks values(label,true);
 end$$;
 create function pg_temp.apply_snapshot(o uuid,original text,tx text,product text,plan text,status text,purchase_seconds int,signed_seconds int,event_seconds int,kind text,expiry_days int default 30,renew boolean default true,renewal_seconds int default null)
-returns jsonb language sql as $$select public.apply_apple_entitlement_v2(o,null,original,tx,product,plan,'Sandbox',status,now()+expiry_days*interval '1 day',renew,kind,
+returns jsonb language sql as $$select public.apply_apple_entitlement_v2(o,null,original,tx,product,plan,'Production',status,now()+expiry_days*interval '1 day',renew,kind,
   now()+purchase_seconds*interval '1 second',now()+signed_seconds*interval '1 second',
   case when event_seconds is null then null else now()+event_seconds*interval '1 second' end,
   case when renewal_seconds is null then null else now()+renewal_seconds*interval '1 second' end)$$;
@@ -49,7 +49,7 @@ begin
   r:=pg_temp.apply_snapshot(o,'chronology-refund','tx-1','com.rendprop.app.pro.monthly','pro','active',-1000,-100,null,null,365);
   perform pg_temp.ok(r->>'reason'='stale_notification'and(select plan='team'from orgs where id=o),'fresh signature on old purchase cannot reverse upgrade');
   denied:=false;begin
-    perform apply_apple_entitlement(o,null,'chronology-refund','tx-1','com.rendprop.app.pro.monthly','pro','Sandbox','active',now()+interval '365 days',true,null);
+    perform apply_apple_entitlement(o,null,'chronology-refund','tx-1','com.rendprop.app.pro.monthly','pro','Production','active',now()+interval '365 days',true,null);
   exception when others then if sqlerrm like 'RP409:%'then denied:=true;else raise;end if;end;
   perform pg_temp.ok(denied and(select plan='team'from orgs where id=o),'legacy call cannot reverse dated upgrade');
   -- Refunding an earlier renewal does not revoke a later paid transaction.
@@ -71,12 +71,12 @@ begin
   perform pg_temp.apply_snapshot(o2,'chronology-renewal','renew-new','com.rendprop.app.starter.monthly','starter','expired',-2000,-1400,-1300,'EXPIRED',-1,false,-1300);
   perform pg_temp.ok((select plan='free'from orgs where id=o2),'new current expiration removes access');
   -- A legacy refunded row has no signed evidence of a later new purchase.
-  perform apply_apple_entitlement(o3,null,'legacy-refund','legacy-tx','com.rendprop.app.pro.monthly','pro','Sandbox','refunded',now()-interval '1 day',false,'REFUND');
+  perform apply_apple_entitlement(o3,null,'legacy-refund','legacy-tx','com.rendprop.app.pro.monthly','pro','Production','refunded',now()-interval '1 day',false,'REFUND');
   r:=pg_temp.apply_snapshot(o3,'legacy-refund','legacy-tx','com.rendprop.app.pro.monthly','pro','active',-2000,-1000,null,null);
   perform pg_temp.ok(r->>'reason'='chronology_unavailable'and(select plan='free'from orgs where id=o3),'untracked refunded history cannot bootstrap from pre-refund restore');
   r:=pg_temp.apply_snapshot(o3,'legacy-refund','legacy-tx','com.rendprop.app.pro.monthly','pro','active',-2000,-1000,-900,'REFUND_REVERSED');
   perform pg_temp.ok(r->>'reason'='chronology_unavailable'and(select plan='free'from orgs where id=o3),'old reversal cannot bootstrap over an untracked later refund');
-  denied:=false;begin perform apply_apple_entitlement(o3,null,'legacy-refund','legacy-tx','com.rendprop.app.pro.monthly','pro','Sandbox','active',now()+interval '30 days',true,null);
+  denied:=false;begin perform apply_apple_entitlement(o3,null,'legacy-refund','legacy-tx','com.rendprop.app.pro.monthly','pro','Production','active',now()+interval '30 days',true,null);
   exception when others then if sqlerrm like 'RP409:%'then denied:=true;else raise;end if;end;
   perform pg_temp.ok(denied,'legacy restore cannot resurrect untracked refund');
   -- A pending newer receipt can be linked by an older signed device receipt.

@@ -248,6 +248,7 @@ for (const flag of [false, true]) {
         seen: string[] = [],
         charges: string[] = [],
         refunds: string[] = [];
+      const operations: string[] = [];
       const unexpected: string[] = [];
       globalThis.fetch =
         (async (input: string | URL | Request, init?: RequestInit) => {
@@ -275,6 +276,12 @@ for (const flag of [false, true]) {
               cogs_ceiling_cents: 2000,
               price_cents: 7900,
             };
+          } else if (url.pathname.endsWith("/rpc/serving_operation_begin")) {
+            operations.push("begin");
+            answer = { begun: true };
+          } else if (url.pathname.endsWith("/rpc/serving_operation_no_dispatch")) {
+            operations.push("no_dispatch");
+            answer = { retryable: true };
           } else if (url.pathname.endsWith("/rpc/bump_rate")) {
             charges.push(body.p_key);
             answer = true;
@@ -317,11 +324,12 @@ for (const flag of [false, true]) {
         assertEquals(
           charges.sort(),
           edit === "sky"
-            ? ["aiphoto:fixture-org", "aiphotomo:fixture-org", "aipidem:fixture-org:photo-fixture-key"]
+            ? ["aiphoto:fixture-org", "aiphotomo:fixture-org"]
             : [],
         );
-        // Retry protection is not an allowance and must survive a failed
-        // route lookup. Only burst/monthly charges are refundable.
+        // Permanent admission precedes quota, and the zero-provider route
+        // refusal explicitly aborts it. Burst/monthly charges are refunded.
+        assertEquals(operations, edit === "sky" ? ["begin", "no_dispatch"] : []);
         assertEquals(refunds.sort(), edit === "sky" ? ["aiphoto:fixture-org", "aiphotomo:fixture-org"] : []);
         assertEquals(
           unexpected,

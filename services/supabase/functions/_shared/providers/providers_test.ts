@@ -14,7 +14,7 @@ import { imageSizeFor, mapWhisperWords } from "./openai.ts";
 import { assertNotCoveredModel, outputConfigFor } from "./anthropic.ts";
 import { geminiAdapter, geminiImagePayload, supportsStagingReference } from "./gemini.ts";
 import { runChain } from "./chain.ts";
-import { extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
+import { assertJobTokenSigningReady, extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
 import { ProviderError, snippet } from "./common.ts";
 import { MAX_PARAM_OUTPUT_TOKENS } from "./params.ts";
 import { HttpError } from "../http.ts";
@@ -54,7 +54,7 @@ async function withFetch(handler: (url: string, init?: RequestInit) => Response,
 // The literals below are copied from the shipped ai-video/index.ts. If this
 // test fails, the flag-off path has stopped being a no-op.
 
-Deno.test("fal reel-clip payload is byte-identical to the shipped call", () => {
+Deno.test("fal reel-clip payload pins bounded frame count and aspect for price authority", () => {
   const body = falInput(step(), {
     task: "video.reel_clip",
     prompt: "PROMPT",
@@ -69,11 +69,13 @@ Deno.test("fal reel-clip payload is byte-identical to the shipped call", () => {
       image_url: "https://r2.example/photo.jpg",
       resolution: "1080p",
       duration: "5",
+      num_frames:121,
+      aspect_ratio:"16:9",
     }),
   );
 });
 
-Deno.test("fal grounded-aerial payload is byte-identical (aspect_ratio + camera_fixed)", () => {
+Deno.test("fal grounded-aerial payload pins bounded frame count with aspect and camera control", () => {
   const body = falInput(step({ task: "video.aerial" }), {
     task: "video.aerial",
     prompt: "PROMPT",
@@ -89,6 +91,7 @@ Deno.test("fal grounded-aerial payload is byte-identical (aspect_ratio + camera_
       image_url: "data:image/jpeg;base64,AAAA",
       resolution: "1080p",
       duration: "6",
+      num_frames:145,
       aspect_ratio: "16:9",
       camera_fixed: false,
     }),
@@ -379,12 +382,12 @@ Deno.test("Sonnet 5 always carries output_config effort:low", () => {
 
 // ── 6. GEMINI ────────────────────────────────────────────────────────────────
 
-Deno.test("gemini 2.5 payload is the shipped one; 3.x pins imageSize to 1K", () => {
+Deno.test("Gemini payload pins one candidate and bounded requested output;3.x pins1K", () => {
   assertEquals(
     JSON.stringify(geminiImagePayload("gemini-2.5-flash-image", "PROMPT", "image/jpeg", "AAAA")),
     JSON.stringify({
       contents: [{ role: "user", parts: [{ text: "PROMPT" }, { inline_data: { mime_type: "image/jpeg", data: "AAAA" } }] }],
-      generationConfig: { responseModalities: ["IMAGE"] },
+      generationConfig: { responseModalities: ["IMAGE"],candidateCount:1,maxOutputTokens:4096 },
     }),
   );
   const v3 = geminiImagePayload("gemini-3.1-flash-image", "PROMPT", "image/jpeg", "AAAA");
@@ -913,4 +916,29 @@ Deno.test("0030's position shift is guarded and cannot run twice", async () => {
 
   // And the column itself is additive: null default, added if-not-exists.
   assertStringIncludes(sql, "add column if not exists params jsonb");
+});
+
+Deno.test("signed paid status carries admitted listing scope, preserves old tokens and rejects retargeting", async () => {
+  const { encodeJobToken, decodeJobToken } = await import("./jobtoken.ts");
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "synthetic-test-only-signing-placeholder");
+  const owner={orgId:"synthetic-org",userId:"synthetic-user",listingId:"fa300505-0000-4000-8000-000000000011"};
+  const raw=await encodeJobToken({p:"fal",m:"fixture",i:"provider-id",t:"now",k:"video.reel_clip"},owner);
+  assertEquals((await verifyJobToken(raw,owner))?.l,owner.listingId);
+  const old=await encodeJobToken({p:"fal",m:"fixture",i:"provider-old",t:"now",k:"video.reel_clip"},{orgId:owner.orgId,userId:owner.userId});
+  assertEquals((await verifyJobToken(old,owner))?.l,undefined);
+  const [payload,signature]=raw.split(".");
+  const text=JSON.parse(atob(payload.replace(/-/g,"+").replace(/_/g,"/")));
+  text.l="fa300505-0000-4000-8000-000000000099";
+  const changed=btoa(JSON.stringify(text)).replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_");
+  assertEquals(await decodeJobToken(changed+"."+signature),null);
+});
+
+Deno.test("actual receipt signer preflight rejects missing configuration even after a cached key",async()=>{
+ const prior=Deno.env.get("JOB_TOKEN_SIGNING_SECRET");
+ try{
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET","synthetic-receipt-readiness-test-secret");
+  await assertJobTokenSigningReady();
+  Deno.env.delete("JOB_TOKEN_SIGNING_SECRET");
+  await assertRejects(()=>assertJobTokenSigningReady(),Error,"JOB_TOKEN_SIGNING_SECRET");
+ }finally{prior===undefined?Deno.env.delete("JOB_TOKEN_SIGNING_SECRET"):Deno.env.set("JOB_TOKEN_SIGNING_SECRET",prior);}
 });

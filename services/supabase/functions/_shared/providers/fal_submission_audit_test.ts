@@ -80,10 +80,18 @@ function deps(
   const calls: string[] = [];
   return {
     calls,
-    rpc: (name: string, _args: Record<string, unknown>) => {
+    rpc: (name: string, args: Record<string, unknown>) => {
+      if(name==="serving_cost_reserve")return Promise.resolve({data:{reserved:true},error:null});
+      if(name==="serving_cost_finish")return Promise.resolve({data:{finished:true},error:null});
+      if(name==="org_has_internal_testing_grant")return Promise.resolve({data:true,error:null});
       calls.push(name);
+      if(name==="app_video_cost_reserve_v2"){
+        assertEquals(args.p_monthly_window_start,"2026-10-01T00:00:00.123456Z");
+        assertEquals(args.p_burst_window_start,"2026-10-05T00:00:00.654321Z");
+        assertEquals(args.p_listing,null);
+      }
       return Promise.resolve({
-        data: name.endsWith("reserve")
+        data: name === "app_video_cost_reserve_v2"
           ? { reserved: true }
           : name.endsWith("settle")
           ? { settled: true }
@@ -103,6 +111,7 @@ const options = {
   actorId: "synthetic-actor",
   orgId: "synthetic-org",
   key: "synthetic-logical-tap",
+  allowance:{monthlyWindowStart:"2026-10-01T00:00:00.123456Z",burstWindowStart:"2026-10-05T00:00:00.654321Z"},
   feature: "reel" as const,
   steps: [step],
   input,
@@ -124,7 +133,7 @@ for (const status of [400, 401, 402, 403, 404, 413, 422, 429]) {
       assert(!JSON.stringify(error).includes(marker));
       assert(!error.message.includes(marker));
       assertEquals(d.calls, [
-        "app_video_cost_reserve",
+        "app_video_cost_reserve_v2",
         "app_video_cost_release_rejected",
       ]);
       assertEquals(posts, 1);
@@ -151,7 +160,7 @@ for (const status of [408, 409, 425, 500, 503, 504]) {
           }, d),
         VideoDispatchUnconfirmed,
       );
-      assertEquals(d.calls, ["app_video_cost_reserve"]);
+      assertEquals(d.calls, ["app_video_cost_reserve_v2"]);
       assertEquals(posts, 1);
     }, (url) => {
       if (url.startsWith("https://queue.fal.run/")) {
@@ -176,7 +185,7 @@ for (
         () => submitReservedVideo(options, d),
         VideoDispatchUnconfirmed,
       );
-      assertEquals(d.calls, ["app_video_cost_reserve"]);
+      assertEquals(d.calls, ["app_video_cost_reserve_v2"]);
     }, () => Response.json(body));
   });
 }
@@ -188,7 +197,7 @@ Deno.test("4xx carrying a job receipt remains held despite the HTTP failure", as
         () => submitReservedVideo(options, d),
         VideoDispatchUnconfirmed,
       );
-      assertEquals(d.calls, ["app_video_cost_reserve"]);
+      assertEquals(d.calls, ["app_video_cost_reserve_v2"]);
     },
     () =>
       Response.json({ request_id: "possibly-existing-job", detail: marker }, {
@@ -203,7 +212,7 @@ Deno.test("transport timeout remains held without fallback or allowance-release 
       () => submitReservedVideo(options, d),
       VideoDispatchUnconfirmed,
     );
-    assertEquals(d.calls, ["app_video_cost_reserve"]);
+    assertEquals(d.calls, ["app_video_cost_reserve_v2"]);
   }, () => {
     throw new DOMException(marker, "TimeoutError");
   });
@@ -217,7 +226,7 @@ Deno.test("actual accepted fal receipt settles once", async () => {
         receipt.request_id,
       );
       assertEquals(d.calls, [
-        "app_video_cost_reserve",
+        "app_video_cost_reserve_v2",
         "app_video_cost_settle",
       ]);
     },
@@ -236,7 +245,7 @@ for (const patch of [{ releaseFails: true }, { malformedRelease: true }]) {
         VideoDispatchUnconfirmed,
       );
       assertEquals(d.calls, [
-        "app_video_cost_reserve",
+        "app_video_cost_reserve_v2",
         "app_video_cost_release_rejected",
       ]);
     }, () => Response.json({ detail: marker }, { status: 403 }));
@@ -334,7 +343,7 @@ Deno.test("missing fal secret is an explicit before-dispatch rejection with zero
     assert(!(error instanceof VideoDispatchUnconfirmed));
     assertEquals(error.details?.provider_status, 0);
     assertEquals(d.calls, [
-      "app_video_cost_reserve",
+      "app_video_cost_reserve_v2",
       "app_video_cost_release_rejected",
     ]);
     assertEquals(calls, 0);
@@ -358,7 +367,7 @@ Deno.test("unsupported fal input is rejected before any HTTP call", async () => 
     assert(!(error instanceof VideoDispatchUnconfirmed));
     assertEquals(error.details?.provider_status, 0);
     assertEquals(d.calls, [
-      "app_video_cost_reserve",
+      "app_video_cost_reserve_v2",
       "app_video_cost_release_rejected",
     ]);
     assertEquals(calls, 0);

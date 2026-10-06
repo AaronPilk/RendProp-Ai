@@ -156,11 +156,25 @@ struct ListingClientContact: Codable, Hashable, Sendable {
     var photoAssetID: UUID? = nil
     var revision: Int = 0
     var updatedAt: String? = nil
+    var recipientVerifiedEmail: String? = nil
+    var recipientVerifiedAt: String? = nil
     enum CodingKeys: String, CodingKey {
         case listingID = "listing_id", enabled, publicCard = "public_card"
         case recipientEmail = "recipient_email", hideRendpropBranding = "hide_rendprop_branding"
         case photoAssetID = "photo_asset_id", revision, updatedAt = "updated_at"
+        case recipientVerifiedEmail = "recipient_verified_email", recipientVerifiedAt = "recipient_verified_at"
     }
+    var hasVerifiedRecipient: Bool {
+        guard let verified = recipientVerifiedEmail, let timestamp = recipientVerifiedAt,
+              !verified.isEmpty, verified.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                == recipientEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else { return false }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if formatter.date(from: timestamp) != nil { return true }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: timestamp) != nil
+    }
+
     var writeBody: [String: Any] {
         ["expected_revision": revision, "enabled": enabled, "public_card": publicCard.wire,
          "recipient_email": recipientEmail, "hide_rendprop_branding": hideRendpropBranding,

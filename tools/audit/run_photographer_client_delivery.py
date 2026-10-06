@@ -13,7 +13,7 @@ ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','NO_C
 BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb','deno']};assert all(BIN.values())
 ENV['DENO_DIR']=json.loads(subprocess.check_output([BIN['deno'],'info','--no-config','--json'],text=True))['denoDir']
 CONN=['-h',str(SOCK),'-p','55454','-U','postgres'];PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
-paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/photographer_client_delivery.sql',pathlib.Path(__file__).resolve(),*[p for section in ['me','listings','leads','notify','tours','uploads','studio','ai-video','_shared']for p in sorted((SQL/'functions'/section).glob('*.ts'))]]
+paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/photographer_client_delivery.sql',pathlib.Path(__file__).resolve(),*[p for section in ['me','listings','leads','notify','tours','uploads','studio','ai-video','_shared']for p in sorted((SQL/'functions'/section).glob('*.ts'))if not (p.name.endswith('.test.ts')or p.name.endswith('_test.ts'))]]
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
 receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'commands':[],'passed':False,'productionMutations':0,'limits':['Synthetic auth schema and transport; no real phone or cross-device interaction']}
 def run(name,args,stdin=None,expected=0):
@@ -48,7 +48,9 @@ try:
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
  for p in sorted((SQL/'migrations').glob('*.sql')):query('migration-'+p.stem,p.read_text())
  for phase in ['after','replayed']:
-  if phase=='replayed':query('replay',TARGET.read_text())
+  if phase=='replayed':
+   query('replay',TARGET.read_text())
+   query('replay-current-recipient-authority',(SQL/'migrations/20261005220001_verified_notification_and_client_recipients.sql').read_text())
   result=query('client-'+phase,(SQL/'tests/photographer_client_delivery.sql').read_text());assert result.count('|t')==61,result[-2000:]
  # Real overlapping transactions, with a lock proving both entered together.
  owner,agent,lid,jid,rid,leadid=map(str,[uuid.uuid4()for _ in range(6)])
@@ -60,6 +62,8 @@ try:
  assert sorted(v['exit']for v in values)==[0,3]and sum('RP409:'in v['output']for v in values)==1,values
  assert query('contact-race-row',f"select revision from listing_client_contacts where listing_id='{lid}';").strip()=='2'
  recipient=query('contact-race-recipient',f"select recipient_email from listing_client_contacts where listing_id='{lid}';").strip()
+ nonce=uuid.uuid4().hex+uuid.uuid4().hex
+ query('verify-race-recipient',f"set role service_role;select client_recipient_verification_request('{owner}','{org}','{lid}','{nonce}');select client_recipient_verification_consume('{nonce}');")
  query('resend-race-fixture',f"insert into leads(id,org_id,listing_id,render_id,name)values('{leadid}','{org}','{lid}','{rid}','Concurrency Buyer');update notification_outbox set state='sent',sent_at=now()where client_delivery_id in(select id from client_lead_deliveries where lead_id='{leadid}');update client_lead_deliveries set created_at=now()-interval '2 minutes'where lead_id='{leadid}';")
  values=race('different-resends-concurrency',[f"select client_lead_resend('{actor}','{org}','{leadid}','{uuid.uuid4()}','{recipient}');"for actor in writers],org)
  assert sorted(v['exit']for v in values)==[0,3]and sum('RP429:'in v['output']for v in values)==1,values

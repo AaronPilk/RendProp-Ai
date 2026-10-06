@@ -26,7 +26,7 @@ import { assertMediaVisible } from "../_shared/media-source-access.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError, throwRpc } from "../_shared/http.ts";
 import { assertNotDeleting, getUser, userClient } from "../_shared/supabase.ts";
-import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
+import { publishedR2Url, publishedStreamUrl } from "../_shared/r2.ts";
 
 const TIERS = ["smooth", "premium4k", "cinematic"];
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -175,7 +175,7 @@ Deno.serve(async (req) => {
         job_id: job.id,
         share_url: shareUrl(render.slug as string),
         unbranded_url: unbrandedUrl(render.slug as string),
-        poster: publicR2Url(render.poster_key as string | null),
+        poster: publishedR2Url(render.slug as string,render.poster_key as string | null),
       }, 201);
     }
 
@@ -236,8 +236,8 @@ Deno.serve(async (req) => {
       let tour: Record<string, unknown> | null = null;
       if (render) {
         await assertMediaVisible(db, job.listing_id, { renders: [render.id] });
-        const scrubUrl = publicR2Url(render.video_key as string);
-        const hlsUrl = streamHlsUrl(render.stream_uid as string);
+        const scrubUrl = publishedR2Url(render.slug as string,render.video_key as string);
+        const hlsUrl = publishedStreamUrl(render.slug as string,render.stream_uid as string);
         tour = {
           render_id: render.id,
           slug: render.slug,
@@ -246,7 +246,7 @@ Deno.serve(async (req) => {
           video_url: scrubUrl ?? hlsUrl,
           scrub_url: scrubUrl,
           hls_url: hlsUrl,
-          poster: publicR2Url(render.poster_key as string),
+          poster: publishedR2Url(render.slug as string,render.poster_key as string),
           staged: render.staged,
           duration_s: render.duration_s,
           published_at: render.published_at,

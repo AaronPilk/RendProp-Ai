@@ -152,7 +152,7 @@ struct ClientContactFields: View {
             ClientContactInput(title: "Client's lead email", prompt: "Where form submissions should go", text: $contact.recipientEmail,
                                field: .recipient, focus: $focused, keyboard: .emailAddress,
                                contentType: .emailAddress, capitalization: .never, disableCorrection: true)
-            Text("You keep a copy of every inquiry in Leads. This address is only public if you also enter it in Public email above.")
+            Text("You keep a copy of every inquiry in Leads. Forwarding requires email verification. This address is only public if you also enter it in Public email above.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
             Divider().overlay(Theme.border)
             Toggle("Hide Rendprop branding on this listing", isOn: $contact.hideRendpropBranding)
@@ -213,7 +213,7 @@ struct ListingClientContactSummary: View {
                 }
                 if let contact = listing.clientContact, contact.enabled {
                     Text(contact.publicCard.name).font(.rpBody.weight(.semibold))
-                    Text("Inquiries go to \(contact.recipientEmail)").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    Text(contact.hasVerifiedRecipient ? "Inquiries go to \(contact.recipientEmail)" : "Lead email needs verification: \(contact.recipientEmail)").font(.rpCaption).foregroundStyle(Theme.inkDim)
                     if listing.clientContactDirty == true { Text("Saved on this phone · needs cloud save before publishing").font(.rpCaption).foregroundStyle(Theme.warn) }
                     if contact.hideRendpropBranding { Text("Rendprop branding hidden").font(.rpCaption).foregroundStyle(Theme.inkDim) }
                 } else {
@@ -263,6 +263,8 @@ struct ListingClientContactEditor: View {
     @State private var picker: PhotosPickerItem?
     @State private var photoChanged = false
     @State private var saving = false
+    @State private var verifyingRecipient = false
+    @State private var verificationRequested = false
     @State private var loading = false
     @State private var error: String?
     @State private var context: Context?
@@ -287,6 +289,7 @@ struct ListingClientContactEditor: View {
                     ClientContactPublicPreview(card: contact.publicCard, photo: photo)
                     photoCard
                     ClientContactFields(contact: $contact)
+                    recipientVerificationCard
                 }
                 if let error {
                     Text(error)
@@ -301,7 +304,7 @@ struct ListingClientContactEditor: View {
             }.padding(Theme.spacing)
         }
             .background(Theme.bg).tint(Theme.accent)
-            .disabled(saving || loading || !hasFreshContext)
+            .disabled(saving || loading || verifyingRecipient || !hasFreshContext)
             .scrollDismissesKeyboard(.interactively)
             .safeAreaInset(edge: .bottom, spacing: 0) { saveBar }
             .navigationTitle("Listing contact").navigationBarTitleDisplayMode(.inline)
@@ -332,6 +335,52 @@ struct ListingClientContactEditor: View {
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
         }.card()
     }
+    private var recipientVerificationCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(contact.hasVerifiedRecipient ? "Lead email verified" : "Verify the client's lead email",
+                  systemImage: contact.hasVerifiedRecipient ? "checkmark.seal.fill" : "envelope.badge")
+                .font(.rpHeadline).foregroundStyle(contact.hasVerifiedRecipient ? Theme.good : Theme.ink)
+            Text(contact.hasVerifiedRecipient
+                 ? "New listing inquiries can also be forwarded to this verified address."
+                 : "Your client's public card can be saved now. Forwarding inquiries starts after they confirm the email address.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if !contact.hasVerifiedRecipient {
+                Button(verifyingRecipient ? "Requesting…" : "Save and send verification email") {
+                    Task { await verifyRecipient() }
+                }.buttonStyle(.borderedProminent)
+                    .disabled(verifyingRecipient || saving || !hasFreshContext || !ClientContactPolicy.isEmail(contact.recipientEmail))
+                    .accessibilityIdentifier("clientContact.verifyRecipient")
+            }
+            if verificationRequested {
+                Text("Verification requested. Ask your client to check their email, then refresh this listing.")
+                    .font(.rpCaption).foregroundStyle(Theme.accent)
+                Button("Refresh verification") { Task { await load() } }.buttonStyle(.bordered)
+            }
+        }.card().accessibilityIdentifier("clientContact.recipientVerification")
+    }
+    @MainActor private func verifyRecipient() async {
+        guard !verifyingRecipient, hasFreshContext else { return }
+        verifyingRecipient = true; defer { verifyingRecipient = false }
+        let expected = current
+        await save(closeAfterSave: false)
+        guard hasFreshContext, current == expected, error == nil,
+              live.clientContactDirty != true, let serverID = live.serverID, let org = expected.org else { return }
+        let submitted = contact
+        do {
+            let receipt = try await model.api.requestClientRecipientVerification(listingID: serverID, orgID: org)
+            guard hasFreshContext, current == expected, contact == submitted else { throw ClientContactError.changed }
+            _ = try receipt.checked()
+            verificationRequested = receipt.state == "queued"
+            try await model.refreshClientContact(for: listing.id)
+            guard hasFreshContext, current == expected, contact == submitted else { throw ClientContactError.changed }
+            if let stored = live.clientContact { contact = stored }
+            if contact.hasVerifiedRecipient { verificationRequested = false }
+        } catch {
+            guard hasFreshContext, current == expected else { return }
+            self.error = UserFacingError.message(error, fallback: "Couldn't request verification. Your client details are saved; try again when connected.")
+        }
+    }
+
     private var photoCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             ClientContactSectionTitle(title: "Client photo or business logo", subtitle: "Add the person or business buyers should recognize.", icon: "photo.fill")
@@ -353,7 +402,7 @@ struct ListingClientContactEditor: View {
     private var saveBar: some View {
         VStack(spacing: 8) {
             PrimaryButton(title: saving ? "Saving…" : contact.enabled ? "Save client details" : "Use my account card",
-                          systemImage: saving ? nil : "checkmark", isDisabled: saving || loading || !hasFreshContext) {
+                          systemImage: saving ? nil : "checkmark", isDisabled: saving || loading || verifyingRecipient || !hasFreshContext) {
                 // Commit through the existing validated/session-fenced path;
                 // the fixed action stays above the keyboard while editing.
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -366,7 +415,7 @@ struct ListingClientContactEditor: View {
                 Button("Close editor") { dismiss() }.font(.rpCaption.weight(.semibold))
             }
             if saving { ProgressView().tint(Theme.accent) }
-            Text("Form inquiries stay in your Leads. When your client's card is on, inquiries are also emailed to the lead address.")
+            Text("Form inquiries stay in your Leads. Verify the client's lead email to also forward inquiries to them.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }.padding(.horizontal, Theme.spacing).padding(.top, 12).padding(.bottom, 8)
@@ -385,7 +434,7 @@ struct ListingClientContactEditor: View {
             photoChanged = false; error = nil
         } catch { self.error = UserFacingError.message(error, fallback: "Client details couldn't be loaded. Your saved draft is still here.") }
     }
-    @MainActor private func save() async {
+    @MainActor private func save(closeAfterSave: Bool = true) async {
         guard !saving else { return }
         guard hasFreshContext else { error = ClientContactError.changed.localizedDescription; return }
         saving = true; defer { saving = false }
@@ -405,7 +454,9 @@ struct ListingClientContactEditor: View {
             persistedDraft = true; photoChanged = false
             try await model.syncClientContactBeforePublish(listing.id)
             guard hasFreshContext else { throw ClientContactError.changed }
-            Haptics.success(); dismiss()
+            if let stored = live.clientContact { contact = stored }
+            error = nil
+            Haptics.success(); if closeAfterSave { dismiss() }
         } catch {
             // The upload may be confirmed even when PUT is not. Keep its saved
             // receipt for Retry; a newly selected photo or Remove clears it.

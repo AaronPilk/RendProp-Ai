@@ -12,6 +12,10 @@ import hashlib, json, os, pathlib, re, shutil, subprocess, tempfile, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SQL = ROOT / 'services/supabase'
 TARGET = SQL / 'migrations/20261001142823_team_invite_delivery_confirmation.sql'
+# Audited handler inventory: 12 invite/read/role cases, 8 private-sponsorship
+# cases, and 1 ordinary anonymous-owner read case. Keep the entire suite;
+# registering fewer tests or reporting any ignored/filtered case is a failure.
+HANDLER_TESTS = 21
 OUT = pathlib.Path(tempfile.mkdtemp(prefix='rendprop-team-readiness-', dir='/tmp'))
 SOCK, DATA = OUT/'socket', OUT/'cluster'
 SOCK.mkdir(mode=0o700)
@@ -88,7 +92,12 @@ try:
  assert query('race-final',f"select count(*) from memberships where org_id='{org}';select count(*) from org_invites where org_id='{org}' and accepted_at is not null;").strip()=='2\n1'
  deno=[BIN['deno'],'test','--cached-only','--no-config','--no-lock','--node-modules-dir=none','--deny-net','--deny-run','--deny-write','--allow-read','--allow-env']
  output=run('handler-after',deno+[SQL/'functions/team/handler.test.ts'])
- assert re.search(r'ok \| 12 passed \| 0 failed',output)
+ registrations=re.findall(r'^running (\d+) tests? from .*handler\.test\.ts$',output,re.MULTILINE)
+ assert registrations==[str(HANDLER_TESTS)], 'The complete audited handler inventory must be registered'
+ summaries=re.findall(r'^ok \| .*$',output,re.MULTILINE)
+ assert len(summaries)==1 and re.fullmatch(rf'ok \| {HANDLER_TESTS} passed \| 0 failed \([^\r\n]+\)',summaries[0]), 'Every handler test must pass; ignored, filtered or missing cases are refused'
+ passed_names=re.findall(r'^(.*?) \.\.\. ok \([^\r\n]+\)$',output,re.MULTILINE)
+ assert len(passed_names)==HANDLER_TESTS and len(set(passed_names))==HANDLER_TESTS, 'Every registered handler case must report one distinct pass'
  # Inject the former false-confirmation defect into a private source copy.
  # This negative control remains executable in shallow CI after the fix commits.
  baseline=OUT/'handler-baseline';(baseline/'team').mkdir(parents=True)
@@ -101,7 +110,7 @@ try:
  output=run('handler-false-confirmation-control',deno+['--filter','valid invite code survives enqueue failure',baseline/'team/handler.test.ts'],expected=1)
  assert re.search(r'0 passed \| 3 failed',output) and 'AssertionError' in output
  assert all(hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest for name,digest in hashes.items()),'Source changed during verification'
- receipt.update(passed=True,sqlAssertions=34,handlerTests=12,realConnectionRaces=2,baselineSQLDetected=True,handlerFalseConfirmationDetected=True)
+ receipt.update(passed=True,sqlAssertions=34,handlerTests=HANDLER_TESTS,realConnectionRaces=2,baselineSQLDetected=True,handlerFalseConfirmationDetected=True)
 finally:
  if started and (DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')

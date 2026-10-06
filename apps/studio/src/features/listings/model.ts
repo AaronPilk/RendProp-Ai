@@ -1,5 +1,6 @@
 import type { Listing } from "../../data/contracts";
 import { uuid } from "../../data/contracts";
+import { detailChanges, detailInputs } from "./industry";
 export type Asset = { id: string; listing_id: string; storage_key: string; kind: string; bucket: string; uploaded: boolean; duration_s: number | null; bytes?: number; created_at: string; qc_required?: boolean; qc_publishable?: boolean; qc_message?: string | null };
 export type Job = { id: string; listing_id: string; capture_asset_id: string; status: string; progress: number; current_step: string | null; tier: string; error: string | null; created_at: string };
 export type Published = { id: string; listing_id: string; job_id: string; slug: string; published_at: string | null; duration_s: number | null; staged: boolean; created_at: string };
@@ -58,7 +59,8 @@ export function listingPayload(values: FormData, existing?: Listing): Record<str
   const price = number("price");
   const baths = number("baths");
   if (baths !== null && (baths > 99 || Math.abs(baths * 10 - Math.round(baths * 10)) > 1e-8)) throw new Error("Bathrooms must be 99 or fewer, in tenths.");
-  return { address, tagline: text("tagline"), space_type: text("space_type"), beds: number("beds", true), baths, sqft: number("sqft", true), price_cents: price === null ? null : Math.round(price * 100), ...(existing ? {} : { status: "draft", source: "manual" }) };
+  const details = detailChanges(values, existing?.details ?? {}).changes;
+  return { address, tagline: text("tagline"), space_type: text("space_type"), beds: number("beds", true), baths, sqft: number("sqft", true), price_cents: price === null ? null : Math.round(price * 100), ...(existing ? {} : { status: "draft", source: "manual", ...(Object.keys(details).length ? { details } : {}) }) };
 }
 export type ListingFactsBody = { expected: Record<string, unknown>; changes: Record<string, unknown>; details_expected: Record<string, unknown>; details_changes: Record<string, unknown> };
 export function listingFactValues(listing: Listing): Record<string, unknown> {
@@ -75,19 +77,20 @@ export function listingFactsBody(listing: Listing, changes: Record<string, unkno
   return { expected, changes, details_expected: {}, details_changes: {} };
 }
 export function listingFormValues(listing: Listing): Record<string, string | number> {
-  return { address: listing.address ?? "", tagline: listing.tagline ?? "", space_type: listing.spaceType, price: listing.priceCents == null ? "" : listing.priceCents / 100, beds: listing.beds ?? "", baths: listing.baths ?? "", sqft: listing.sqft ?? "" };
+  return { address: listing.address ?? "", tagline: listing.tagline ?? "", space_type: listing.spaceType, price: listing.priceCents == null ? "" : listing.priceCents / 100, beds: listing.beds ?? "", baths: listing.baths ?? "", sqft: listing.sqft ?? "", ...detailInputs(listing.details) };
 }
 export function listingFactsPayload(values: FormData, listing: Listing): ListingFactsBody {
   const original: Record<string, unknown> = { ...listingFactValues(listing), address: listing.address?.trim() || null, tagline: listing.tagline?.trim() || null };
   const desired = listingPayload(values, listing);
   const changes = Object.fromEntries(Object.entries(desired).filter(([key, value]) => value !== original[key]));
-  return listingFactsBody(listing, changes);
+  const details = detailChanges(values, listing.details);
+  return { ...listingFactsBody(listing, changes), details_expected: details.expected, details_changes: details.changes };
 }
 export function listingFactsConfirmed(saved: Listing, body: ListingFactsBody): boolean {
   const actual = listingFactValues(saved);
   return Object.entries(body.changes).every(([key, value]) => key === "sold_at" && value !== null && actual[key] !== null
     ? Date.parse(String(actual[key])) === Date.parse(String(value))
-    : actual[key] === value);
+    : actual[key] === value) && Object.entries(body.details_changes).every(([key, value]) => value === null ? !Object.hasOwn(saved.details, key) : saved.details[key] === value);
 }
 export function parseChapterText(text: string, durationSeconds?: number | null): Chapter[] {
   const lines = text.split("\n").filter((line) => line.trim());

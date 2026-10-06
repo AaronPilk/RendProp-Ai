@@ -34,3 +34,7 @@ f8a6074dbc5ae0965fdb1e0722c4f948778d37a6:tools/audit/floor-measurement-sync-2026
 # Current evidence separates path/sha256 fields; retain full secret scanning.
 3253bf8207e0d616dfeb81ad8743b4f9d2998cab:docs/handoff/FULL-DEBUGGING-EVIDENCE-20261004.json:generic-api-key:8
 3253bf8207e0d616dfeb81ad8743b4f9d2998cab:docs/handoff/FULL-DEBUGGING-EVIDENCE-20261004.json:generic-api-key:11
+# Exact reviewed false positive: the account-export omissions array contains
+# public disclosure prose naming credentials/capabilities that are excluded.
+# The matched line contains no token value. Preserve all other secret scanning.
+c0a3e9838116c5330fa25edef85401e13d7629fb:services/supabase/functions/me/export.ts:generic-api-key:40

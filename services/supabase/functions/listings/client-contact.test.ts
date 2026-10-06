@@ -161,3 +161,8 @@ Deno.test("revoked client headshot suppresses URL and all exposed lineage", asyn
   assertEquals(result?.public_card.avatar_url, undefined);
   assertEquals(refs, { assets: [], keys: [] });
 });
+Deno.test("private contact photo awaits fresh capability and discards a concurrent withdrawal",async()=>{
+  const key=`renders/${ORG}/${LISTING}/contact-${PHOTO}.jpg`,asset={id:PHOTO,kind:"photo",bucket:"renders",storage_key:key,uploaded:true};
+  const query:any={select:()=>query,eq:()=>query,maybeSingle:async()=>({data:asset,error:null})};
+  for(const withdrawn of [false,true]){let signed=false;const refs={assets:[] as string[],keys:[] as string[]};const result=await resolveContactPhoto({from:()=>query,rpc:async()=>({error:null,data:{assets:{[PHOTO]:!(signed&&withdrawn)},keys:{[key]:!(signed&&withdrawn)},renders:{}}})},{org_id:ORG,listing_id:LISTING,photo_asset_id:PHOTO,public_card:{name:"Client"}},refs,async input=>{assertEquals(input,key);signed=true;return "signed-private-headshot";});assertEquals(result?.public_card.avatar_url,withdrawn?undefined:"signed-private-headshot");assertEquals(refs.keys,withdrawn?[]:[key]);}
+});

@@ -23,9 +23,16 @@ struct CloudMediaView: View {
     @State private var imported = Set<UUID>()
 
     private var current: Listing { model.listings.first(where: { $0.id == listing.id }) ?? listing }
+    @State private var mediaContext: String?
+    private func context(org: UUID, listingID: UUID) -> String {
+        "\(auth.userID ?? "")|\(auth.syncSessionRevision)|\(org.uuidString)|\(listingID.uuidString)"
+    }
     private var floorPlanURL: URL? {
-        guard let raw = current.details?["floorplan_url"], let url = URL(string: raw), url.scheme == "https", url.user == nil, url.password == nil else { return nil }
-        return url
+        guard auth.isIdentified, current.cloudUnavailable != true,
+              let org = current.serverOrgID, let sid = current.serverID,
+              mediaContext == context(org: org, listingID: sid) else { return nil }
+        return CloudFloorPlanLink.resolve(details: current.details, photos: photos,
+                                         listingID: sid, orgID: org, now: Date())
     }
     var body: some View {
         ScrollView {
@@ -138,14 +145,14 @@ struct CloudMediaView: View {
 
     @MainActor private func clearAccountFiles() {
         importTask?.cancel(); photos = []; videos = []; chapters = []; imported = []
-        creative = nil; creativeError = nil; notice = nil; replaceVideo = nil
+        creative = nil; creativeError = nil; notice = nil; replaceVideo = nil; mediaContext = nil
     }
 
     @MainActor private func load(more: Bool = false) async {
         guard !loading, importing == nil else { return }
         loading = true; error = nil
         defer { loading = false }
-        if !more { photos = []; videos = []; chapters = []; nextOffset = nil; creative = nil; creativeError = nil }
+        if !more { photos = []; videos = []; chapters = []; nextOffset = nil; creative = nil; creativeError = nil; mediaContext = nil }
         guard auth.isIdentified else { error = "Connect the same Apple account you use in Studio to see shared files."; return }
         if current.serverOrgID == nil { await model.refreshCloudWorkspace() }
         guard let sid = current.serverID, let org = current.serverOrgID, current.cloudUnavailable != true,
@@ -154,9 +161,10 @@ struct CloudMediaView: View {
         do {
             let offset = more ? (nextOffset ?? 0) : 0
             let page = try await cloud.cloudMedia(listingID: sid, orgID: org, offset: offset)
-            guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified, current.serverID == sid else { throw CloudSyncError.identityChanged }
+            guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified, current.serverID == sid, current.serverOrgID == org else { throw CloudSyncError.identityChanged }
             guard Set(photos.map(\.id)).isDisjoint(with: page.photos.map(\.id)), Set(videos.map(\.id)).isDisjoint(with: page.videos.map(\.id)) else { throw CloudSyncError.incomplete }
             photos += page.photos; videos += page.videos; nextOffset = page.next_offset
+            mediaContext = context(org: org, listingID: sid)
             if page.unavailable_count > 0 { notice = "Some files are still processing or no longer available. Refresh after the upload finishes." }
             if !more {
                 let state = try await cloud.cloudListingState(listingID: sid, orgID: org, offset: 0)
@@ -327,5 +335,28 @@ private enum CloudFileDownload {
             try FileManager.default.moveItem(at: temporary, to: owned)
             return File(url: owned, ext: ext)
         } catch { try? FileManager.default.removeItem(at: temporary); throw error }
+    }
+}
+
+/// Private object identities never become browser links. Resolve only the exact
+/// attached asset from the already checked account-scoped, expiring media page.
+enum CloudFloorPlanLink {
+    static func resolve(details: [String: String]?, photos: [CloudMediaPage.Photo],
+                        listingID: UUID, orgID: UUID, now: Date) -> URL? {
+        if let rawID = details?["floorplan_asset_id"] {
+            guard let id = UUID(uuidString: rawID), let photo = photos.first(where: { $0.id == id && $0.listing_id == listingID }),
+                  (try? CloudListingMerge.validateMedia(photo.url, expiry: photo.expires_at,
+                      listingID: listingID, orgID: orgID, now: now)) != nil else { return nil }
+            return photo.url
+        }
+        // Preserve a user's external plan attachment, never an old R2 alias.
+        guard let raw = details?["floorplan_url"], let url = URL(string: raw),
+              url.scheme == "https", url.user == nil, url.password == nil,
+              let host = url.host?.lowercased(), !host.hasSuffix(".r2.cloudflarestorage.com"),
+              !host.hasSuffix(".r2.dev"),
+              !["rendprop.com", "www.rendprop.com", "cdn.rendprop.com", "media.rendprop.com", "renders.rendprop.com"].contains(host),
+              !url.path.split(separator: "/").contains(where: { ["renders", "uploads"].contains(String($0)) }),
+              !raw.contains("X-Amz-") else { return nil }
+        return url
     }
 }
