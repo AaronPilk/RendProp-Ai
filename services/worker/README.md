@@ -320,9 +320,9 @@ the two it has at startup.
 - **HDR curve tuning:** the tone-map is on by default for HDR sources; the
   `npl=100` + `mobius` default is covered by synthetic measurements above;
   check representative real iPhone HLG clips before changing it.
-- **Hero clip has no first-class home:** it's uploaded to R2 and logged, but the
-  schema has no column for it. Add `renders.hero_key` (or a `media` table) so the
-  tour host can play it.
+- **Hero storage:** migration 0016 added `renders.hero_key`, and the worker
+  includes it in the publication payload. Storage persistence does not establish
+  that a hero is selected for public playback or that its output quality is accepted.
 - **Heartbeat / lease:** *implemented* in the worker (claim stamps
   `lease_expires_at`/`worker_id`/`attempts`, a heartbeat thread renews it, the
   claim query reclaims expired leases, and a reaper fails attempts-exhausted

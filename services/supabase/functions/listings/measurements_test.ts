@@ -100,12 +100,15 @@ Deno.test("actual measurement route refuses listing facts and malformed or unsco
 });
 Deno.test("actual measurement route surfaces stale CAS conflict and gates deleting accounts", async () => {
   const f = await fixture();
-  f.state.calls = [];
-  f.state.error = { code: "40001" };
   f.state.deleting = false;
-  const response = await f.handler(request());
-  assertEquals(response.status, 409);
-  assert((await response.json()).error.includes("local copy is safe"));
+  for (const code of ["PT409", "40001"]) {
+    f.state.calls = [];
+    f.state.error = { code };
+    const response = await f.handler(request());
+    assertEquals(response.status, 409);
+    assert((await response.json()).error.includes("local copy is safe"));
+    assertEquals(f.state.calls.length, 1);
+  }
   f.state.calls = [];
   f.state.deleting = true;
   assertEquals((await f.handler(request())).status, 409);

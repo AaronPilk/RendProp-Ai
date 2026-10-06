@@ -162,7 +162,7 @@ Deno.serve(async (req) => {
         p_details_expected: body.details_expected, p_details_changes: body.details_changes,
       });
       if (error) {
-        if (error.code === "40001") throw new HttpError(409, "Listing details changed elsewhere. Your edits have been kept. Review both versions before saving.");
+        if (error.code === "PT409" || error.code === "40001") throw new HttpError(409, "Listing details changed elsewhere. Your edits have been kept. Review both versions before saving.");
         if (error.code === "42501") throw new HttpError(403, "Your role does not permit editing listings.");
         if (error.code === "P0002") throw new HttpError(404, "Listing not found in this workspace.");
         throw new HttpError(400, "These listing edits could not be saved.");
@@ -185,7 +185,7 @@ Deno.serve(async (req) => {
         p_actor:user.id,p_org:explicitOrg,p_listing:id,p_expected:body.expected,p_value:body.value,
       });
       if(error) {
-        if(error.code==="40001") throw new HttpError(409,"Measurements changed elsewhere. Your local copy is safe. Reload the shared version before saving again.");
+        if(error.code==="PT409" || error.code==="40001") throw new HttpError(409,"Measurements changed elsewhere. Your local copy is safe. Reload the shared version before saving again.");
         if(error.code==="42501") throw new HttpError(403,"Your role does not permit editing measurements.");
         if(error.code==="P0002") throw new HttpError(404,"Listing not found in this workspace.");
         throw new HttpError(400,"The measurement plan could not be saved.");

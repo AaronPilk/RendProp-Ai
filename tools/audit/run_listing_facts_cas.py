@@ -15,9 +15,10 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 SQL = ROOT / 'services/supabase'
-MIGRATION = SQL / 'migrations/20261005150951_nearby_places_reviewed_facts.sql'
+MIGRATION = SQL / 'migrations/20261006193633_cas_conflicts_terminal.sql'
 FIXTURE = SQL / 'tests/listing_facts_cas.sql'
 NEARBY_FIXTURE = SQL / 'tests/nearby_places_facts.sql'
+FLOORPLAN_FIXTURE = SQL / 'tests/studio_floorplan_cas.sql'
 TOOLS = {name: shutil.which(name) or str(Path('/opt/homebrew/opt/postgresql@17/bin') / name)
          for name in ('initdb', 'pg_ctl', 'psql', 'createdb')}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), 'Use existing PostgreSQL binaries'
@@ -26,7 +27,7 @@ DATA, SOCK = OUT / 'data', OUT / 'socket'
 SOCK.mkdir()
 ENV = {'PATH': '/opt/homebrew/bin:/usr/bin:/bin', 'LC_ALL': 'C', 'PGOPTIONS': '-c statement_timeout=30000 -c lock_timeout=15000'}
 PORT = '55483'
-SOURCES = [*sorted((SQL / 'migrations').glob('*.sql')), SQL / 'tests/ci-bootstrap.sql', FIXTURE, NEARBY_FIXTURE, Path(__file__).resolve()]
+SOURCES = [*sorted((SQL / 'migrations').glob('*.sql')), SQL / 'tests/ci-bootstrap.sql', FIXTURE, NEARBY_FIXTURE, FLOORPLAN_FIXTURE, Path(__file__).resolve()]
 receipt = {'kind': 'owned disposable local PostgreSQL; no hosted DB/providers', 'output': str(OUT), 'commands': [],
            'sourceHashes': {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
 
@@ -51,16 +52,55 @@ try:
                   f"-k {SOCK} -p {PORT} -c listen_addresses='' -c shared_buffers=16MB", 'start'])
     started = True
     conn = ['-h', SOCK, '-p', PORT, '-U', 'postgres']
-    run('createdb', [TOOLS['createdb'], *conn, 'listing_facts_audit'])
-    psql = [TOOLS['psql'], '-X', '--no-password', *conn, '-d', 'listing_facts_audit', '-v', 'ON_ERROR_STOP=1']
+    run('createdb', [TOOLS['createdb'], *conn, 'rendprop_audit'])
+    psql = [TOOLS['psql'], '-X', '--no-password', *conn, '-d', 'rendprop_audit', '-v', 'ON_ERROR_STOP=1']
     run('bootstrap', [*psql, '-q', '-f', SQL / 'tests/ci-bootstrap.sql'])
     for m in sorted((SQL / 'migrations').glob('*.sql')):
         run('apply-' + m.stem, [*psql, '-q', '-1', '-f', m])
     receipt['fresh'] = json.loads(run('fresh', [*psql, '-Atq', '-f', FIXTURE]).strip())
     receipt['nearbyFresh'] = json.loads(run('nearby-fresh', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
+    receipt['floorplanFresh'] = json.loads(run('floorplan-fresh', [*psql, '-Atq', '-f', FLOORPLAN_FIXTURE]).strip().splitlines()[-1])
+    signatures = [
+        'public.save_listing_facts(uuid,uuid,uuid,jsonb,jsonb,jsonb,jsonb)',
+        'public.save_listing_measurements(uuid,uuid,uuid,text,text)',
+        'public.studio_attach_floorplan(uuid,uuid,uuid,uuid,jsonb,text)',
+    ]
+    catalog = "select jsonb_agg(jsonb_build_object('identity',oid::regprocedure::text,'body',prosrc,'owner',proowner,'acl',proacl::text,'config',proconfig,'security',prosecdef,'volatility',provolatile) order by proname) from pg_proc where oid=any(array[" + ','.join("'" + s + "'::regprocedure" for s in signatures) + "]);"
+    before = run('terminal-catalog-before', [*psql, '-Atq'], catalog)
+    assert all("errcode='40001'" not in row['body'] for row in json.loads(before))
     run('replay', [*psql, '-q', '-1', '-f', MIGRATION])
+    assert run('terminal-catalog-after-replay', [*psql, '-Atq'], catalog) == before
     receipt['replay'] = json.loads(run('replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
     receipt['nearbyReplay'] = json.loads(run('nearby-replay', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
+    receipt['floorplanReplay'] = json.loads(run('floorplan-replay', [*psql, '-Atq', '-f', FLOORPLAN_FIXTURE]).strip().splitlines()[-1])
+
+    # Each complete-body precondition must refuse unknown drift, and the entire
+    # attempted migration must roll back. These changes exist only in this owned
+    # socket-only database; no hosted requests or genuine transaction faults.
+    receipt['terminalBodyGuards'] = []
+    for i, signature in enumerate(signatures):
+        drift = f"""begin;
+do $drift$ declare fn oid:='{signature}'::regprocedure; b text; d text; begin
+ select prosrc into b from pg_proc where oid=fn; d:=pg_get_functiondef(fn);
+ execute replace(d,b,b||E'\\n-- synthetic unreviewed body drift\\n');
+end $drift$;
+"""
+        run('terminal-drift-guard-' + str(i), [*psql, '-Atq'], drift + MIGRATION.read_text() + '\nrollback;', refuses='Terminal CAS reviewed body changed:')
+        assert run('terminal-drift-rollback-' + str(i), [*psql, '-Atq'], catalog) == before
+        receipt['terminalBodyGuards'].append({'identity': signature, 'unreviewedBodyRefused': True, 'rollbackPreservedAllBodiesAndAuthority': True})
+    grant_drift = 'begin; grant execute on function ' + signatures[0] + ' to authenticated;\n'
+    run('terminal-authority-guard', [*psql, '-Atq'], grant_drift + MIGRATION.read_text() + '\nrollback;', refuses='Terminal CAS authority prerequisite changed:')
+    assert run('terminal-authority-rollback', [*psql, '-Atq'], catalog) == before
+    receipt['terminalAuthorityGuard'] = {'exposedClientGrantRefused': True, 'rollbackPreservedAllBodiesAndAuthority': True}
+
+    # Restore the old semantic SQLSTATE without removing CAS comparisons. The
+    # fixture must reject the transient code itself, even though values remain
+    # protected. Then restore the exact additive production migration.
+    run('transient-code-control-install', [*psql, '-Atq'], "do $$ declare d text; begin d:=pg_get_functiondef('" + signatures[0] + "'::regprocedure); execute replace(d,'errcode=''PT409''','errcode=''40001'''); end $$;")
+    run('transient-code-control-fixture', [*psql, '-Atq', '-f', FIXTURE], refuses='expected PT409, got 40001')
+    run('restore-terminal-code-after-control', [*psql, '-q', '-1', '-f', MIGRATION])
+    assert run('terminal-catalog-after-control', [*psql, '-Atq'], catalog) == before
+    receipt['terminalCodeNegativeControl'] = {'restoredTransientApplicationCodeCaught': True, 'exactFinalAuthorityRestored': True}
 
     # Two real concurrent SQL clients, not a sequential RPC stub.
     actor, other, org, listing = [str(uuid.uuid4()) for _ in range(4)]

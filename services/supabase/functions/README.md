@@ -7,17 +7,21 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
-## Current audit source — 5 October 2026
+## Current candidate source — 6 October 2026
 
-The [full-system audit follow-up](../../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
-tracks source fixes for service-only photo mutation, immutable video allowance
-receipts, Sandbox billing authority, verified email destinations, lead deletion,
-output cleanup journals and bounded upload admission. These changes are not a
-production deployment. Prior-stack schema dependencies, timestamp aliases,
-photo expand/function/contract ordering and legacy media delivery require a
-coordinated rollout. Never infer deployment from a passing local suite or apply
-all migrations with a bulk push. The delivery snapshots below describe earlier
-releases; the full-system report is the authority for remaining launch gates.
+The [launch-readiness handoff](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
+records the current candidate: account-owned JSON export, deliberate member
+portfolios, protected media admission, funded provider attempts, finite App Review
+authority and prospective hosting retention. No retail, trial or review funding
+allocation is seeded. The [5 October audit](../../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+retains the preceding source dispositions for photo mutation, billing chronology,
+verified recipients, cleanup journals and bounded uploads. These changes are not
+a production deployment or proof of realized margins or phone/provider acceptance.
+Prior-stack schema dependencies, timestamp aliases, Apple bridge ordering, photo
+expand/function/contract ordering and legacy media delivery require a coordinated
+rollout. Never infer deployment from a passing local suite or apply all migrations
+with a bulk push. The delivery snapshots below describe earlier releases; the
+6 October handoff is the authority for current candidate gates.
 
 ## Delivered direct Bria internal beta
 
@@ -144,7 +148,7 @@ contract and must be preserved per function.
 | `listings` | Authenticated workspace listing CRUD, soft deletion and unpublication. |
 | `uploads` | Authorized single/multipart/batch upload tickets, completion and abort; media goes directly to storage. |
 | `renders` | Authorized native publication, worker jobs/status, publish and chapter updates; source visibility checks. |
-| `me` | Current user/workspace/entitlements, brand and notification settings, device tokens, Apple exchange, account deletion and service-only cleanup. |
+| `me` | Current user/workspace/entitlements, personal card and deliberate portfolio controls, brand/notification settings, device tokens, Apple exchange, account deletion and service-only cleanup. Candidate `GET /me/export` returns authenticated account-owned bounded JSON independently of the selected-workspace header, with explicit omissions and no binary-media export. |
 | `adopt` | Authenticated anonymous-to-connected workspace recovery with verified source/target authority. |
 | `team` | Workspace members, seat limits, single/bulk invitations, atomic acceptance and management. |
 | `property` | Authenticated property-data lookup/import. |
@@ -157,8 +161,8 @@ contract and must be preserved per function.
 | `coach` | Authenticated Ask Rendprop guidance. [Details](coach/README.md). |
 | `ai-enhance` | Legacy worker enhancement queue is closed: authenticated POST returns 503 without changing a render job. Use the active photo/video tools. |
 | `spatial` | Capture/job lifecycle, gated provider execution and permission-checked scene/artifact access. [Details](spatial/README.md). |
-| `tours` | Published, non-sensitive tour payload by slug, including current source permission checks. |
-| `portfolio` | Published portfolio by handle; filters unavailable/revoked sources. |
+| `tours` | Published, non-sensitive tour payload by slug; candidate delivery contracts recheck exact selected objects, publication/deletion and hosting authority for the protected byte proxy. |
+| `portfolio` | Deliberately selected member-owned published listings with current membership, source and hosting checks; legacy org handles return an empty grid in the candidate. |
 | `leads` | Public protected lead submission; authenticated scoped inbox/status actions. [Details](leads/README.md). |
 | `beacon` | Public tour engagement/metering events. |
 | `events` | Authenticated product-event ingestion. |
@@ -331,9 +335,11 @@ unreviewed `db push --include-all` is not a safe reconciliation procedure.
 The [deploy-functions.sh](../deploy-functions.sh) wrapper now delegates to that
 same explicit-selection helper. It no longer deploys an implicit list or forces
 uniform JWT settings. Choose every affected read handler deliberately. Earlier sections of
-[DEPLOYMENT.md](../DEPLOYMENT.md) document older rollout/setup work; use the latest
-[release record](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
-for current production facts.
+[DEPLOYMENT.md](../DEPLOYMENT.md) document older rollout/setup work. Use the
+[6 October candidate handoff](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
+for current dependencies and remaining gates, and dated delivery receipts for
+completed production changes. The [1 October record](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
+retains that release's historical production facts.
 
 ## Configuration and scheduled work
 

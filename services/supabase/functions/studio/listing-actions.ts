@@ -142,7 +142,7 @@ export async function handleListingActions(req: Request, context: ListingActionC
     if (error) {
       if (error.code === "42501") throw new HttpError(403, "Your account no longer permits attaching a floor plan.");
       if (error.code === "P0002") throw new HttpError(404, "Property not found in this workspace.");
-      if (error.code === "40001") throw new HttpError(409, "This property changed on another device. Refresh and attach the floor plan again.");
+      if (error.code === "PT409" || error.code === "40001") throw new HttpError(409, "This property changed on another device. Refresh and attach the floor plan again.");
       if (error.code === "22023") throw new HttpError(400, "Choose an uploaded floor plan from this property.");
       throw new HttpError(503, "Floor plan could not be saved.");
     }

@@ -112,7 +112,7 @@ try:
  failures=[line for line in invariants.splitlines()if re.search(r'\|\s*f\s*\|',line)]
  assert len(failures)==1 and 'each astra ceiling clears its route'in failures[0],failures
  receipt['invariants']={'failures':failures,'passed':sum(bool(re.search(r'\|\s*t\s*\|',line))for line in invariants.splitlines()),'expectedFailure':'owner-retained Astra budget ceiling'}
- facts_source=FACTS.read_text()
+ facts_source=query('current-facts-definition',"select pg_get_functiondef('public.save_listing_facts(uuid,uuid,uuid,jsonb,jsonb,jsonb,jsonb)'::regprocedure);")
  omitted=facts_source.replace('if not current_matches and not desired_matches then','if false then',1)
  assert omitted!=facts_source
  query('facts-removed-conflict-install',omitted)
@@ -122,12 +122,12 @@ try:
  query('facts-restored-direct-grant','grant update(address) on public.listings to authenticated;')
  failure=query('facts-restored-direct-grant-fixture',(SQL/'tests/listing_facts_cas.sql').read_text(),3)
  assert 'Direct fact writes are fenced: address'in failure
- query('facts-restore-grants',facts_source)
+ query('facts-restore-grants','revoke update(address) on public.listings from authenticated;')
  receipt['factsNegativeControls']=['removed conflict comparison fails square-footage protection','restored direct address grant fails privilege boundary']
  floorplan_sql=(SQL/'tests/studio_floorplan_cas.sql').read_text()
  floorplan_checks=query('floorplan-service-cas',floorplan_sql)
  receipt['floorplanDatabaseAssertions']=json.loads(floorplan_checks.strip().splitlines()[-1])['assertions']
- floorplan_migration=FLOORPLAN.read_text()
+ floorplan_migration=query('current-floorplan-definition',"select pg_get_functiondef('public.studio_attach_floorplan(uuid,uuid,uuid,uuid,jsonb,text)'::regprocedure);")
  role_guard="if not found or exists(select 1 from public.deletion_requests where user_id=p_actor and status<>'completed') then"
  role_fault=floorplan_migration.replace(role_guard,'if false then',1);assert role_fault!=floorplan_migration
  query('floorplan-removed-role-install',role_fault)
@@ -186,7 +186,7 @@ try:
  assert fault_source!=floorplan_source
  fault_source=fault_source.replace('from "../_shared/','from "'+(SQL/'functions/_shared').as_uri()+'/')
  (fault_dir/'listing-actions.ts').write_text(fault_source)
- (fault_dir/'listing-actions.test.ts').write_text((STUDIO/'listing-actions.test.ts').read_text())
+ (fault_dir/'listing-actions.test.ts').write_text((STUDIO/'listing-actions.test.ts').read_text().replace('from "../_shared/','from "'+(SQL/'functions/_shared').as_uri()+'/'))
  failed=run('floorplan-client-write-fault',deno+['--filter','floor-plan attachment preserves',fault_dir/'listing-actions.test.ts'],expected=1)
  assert 'floor-plan attachment preserves listing details and uses optimistic concurrency'in failed and 'FAILED | 0 passed | 1 failed'in failed
  receipt['floorplanNegativeControl']='Replacing request service RPC with client RPC fails actual handler boundary fixture'
