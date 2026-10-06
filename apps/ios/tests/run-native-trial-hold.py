@@ -40,12 +40,18 @@ assert button.index('let continuingHeldTrial =') < button.index('Task {')
 assert 'await purchases.checkTrialAvailability(' in button
 assert '!purchases.canStartNewPurchase(for: product) && !purchases.canCheckTrialAvailability(for: product)' in button
 assert 'Check trial availability' in block(paywall, 'private func buyTitle(')
+assert 'Paid subscriptions unavailable' in block(paywall, 'private func buyTitle(')
+assert 'PurchaseDispatchAdmission.paidUnavailableMessage' in block(paywall, 'private func disclosure(')
 assert 'purchases.heldTrialOffer(for: product)' in block(paywall, '@ViewBuilder private var trialDetails:')
 assert purchase.index('validateHeldTrialPurchase(') < purchase.index('validateCurrentHeldTrialPurchase(') < purchase.index('try await product.purchase(')
 assert purchase.count('await trialRegionSupported(') == 2
 assert check.index('await trialRegionSupported(') < check.index('validateHeldTrialPurchase(')
 assert 'discardUnpurchased' not in check and 'automatically released or restarted' in check
-assert purchase.count('if !retainTrialBinding, createdBinding, let binding = preparedBinding') == 3
+assert purchase.count('if !retainTrialBinding, createdBinding, let binding = preparedBinding') == 4
+assert purchase.index('verifiedHeldTrialForDispatch = true') > purchase.index('validateCurrentHeldTrialPurchase(')
+assert purchase.index('guard PurchaseDispatchAdmission.allows(') < purchase.index('try await product.purchase(')
+assert 'await ' not in purchase.split('guard PurchaseDispatchAdmission.allows(', 1)[1].split('try await product.purchase(', 1)[0]
+assert purchase.count('verifiedHeldTrialForDispatch = true') == 1
 assert 'actor.flatMap(UUID.init(uuidString:)).map { [.appAccountToken($0)] }' in purchase
 prepare_needle = 'func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation {'
 assert 'retriesUnauthorized: false, requiredCurrentOrg: orgID' in block(api, prepare_needle)
@@ -55,7 +61,7 @@ interfaces = r'''
 import Foundation
 enum APIError: Error { case decoding, notConfigured, invalidURL, badResponse(Int) }
 enum CloudSyncError: Error { case identityChanged, invalidResponse }
-enum Config { static let useLiveBackend = true; static let isUITesting = false; static let enableAuth = true
+enum Config { static var useLiveBackend = true; static var isUITesting = false; static let enableAuth = true
     static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1")
     static let supabaseAnonKey = "synthetic-anon" }
 enum WorkspaceContext { static var selectedOrgID: UUID? }
@@ -99,13 +105,13 @@ enum SheetError: Error { case cancelled, timeout }
 @MainActor final class Subscription {
     struct Offer { enum Payment { case freeTrial, paid }; enum Unit { case day, week, month, year }
         struct Period { let value: Int; let unit: Unit }
-        let paymentMode: Payment = .freeTrial; let period = Period(value: 7, unit: .day); let periodCount = 1 }
-    let introductoryOffer: Offer? = Offer()
+        var paymentMode: Payment = .freeTrial; let period = Period(value: 7, unit: .day); let periodCount = 1 }
+    var introductoryOffer: Offer? = Offer()
     var values: [Bool?] = [true]; var onRead: (() -> Void)?; var reads = 0
     var isEligibleForIntroOffer: Bool? { get async { reads += 1; onRead?(); return values.count > 1 ? values.removeFirst() : values.first! } }
 }
 @MainActor struct Product {
-    let id: String; let subscription: Subscription? = Subscription()
+    let id: String; var subscription: Subscription? = Subscription()
     struct PriceStyle { var currencyCode = "USD" }; var priceFormatStyle = PriceStyle()
     enum PurchaseOption: Hashable { case appAccountToken(UUID) }
     enum PurchaseResult { case success(Bool), pending, userCancelled, unresolved }
@@ -205,11 +211,21 @@ faults = [
     ('api-response-snapshot', 'let (data, resp) = try await session.data(for: req)\n        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,\n              requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }',
      'let (data, resp) = try await session.data(for: req)', 'Late API response accepted'),
     ('fresh-authority-order', None, None, 'Late server authority during Apple await opened sheet'),
-    ('fresh-false-cache', 'introOfferEligible[product.id] = eligible', 'introOfferEligible[product.id] = true', 'Fresh ineligible result trapped paid CTA'),
+    ('fresh-false-cache', 'introOfferEligible[product.id] = eligible', 'introOfferEligible[product.id] = true', 'Fresh ineligible result reused stale trial authority'),
+    ('paid-proof', 'return verifiedHeldTrial', 'return true', 'Existing authority authorized a new paid charge'),
+    ('paid-dispatch-snapshot', 'guard captured == current, current.actor.flatMap(UUID.init(uuidString:)) != nil,',
+     'guard current.actor.flatMap(UUID.init(uuidString:)) != nil,', 'Stale dispatch snapshot accepted'),
+    ('paid-ui-eligibility', 'guard trialEligibility(for: product) == true, heldTrialOffer(for: product) != nil else',
+     'guard heldTrialOffer(for: product) != nil else', 'Ineligible paywall enabled a new paid purchase'),
+    ('paid-last-dispatch', None, None, 'Unfunded direct paid purchase reached Apple'),
 ]
 results = []
 for name, old, new, expected in faults:
     b, a, m = billing, api, manager
+    if name == 'paid-last-dispatch':
+        original = block(m, 'guard PurchaseDispatchAdmission.allows(')
+        closing = original.index(' else {')
+        m = m.replace(original, 'guard true' + original[closing:])
     if name == 'fresh-authority-order':
         guard = '''                    guard try await validateCurrentHeldTrialPurchase(held, captured: captured) else {
                         throw SubscriptionBillingContext.TrialPresentationError.invalidResponse

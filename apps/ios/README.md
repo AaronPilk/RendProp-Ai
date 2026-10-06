@@ -15,8 +15,13 @@ subscription product; only its validated receipt reveals the included usage.
 **Continue with Apple** rechecks the same reservation, fresh `/me` receipt,
 Apple eligibility and account/workspace identity before opening Apple's sheet.
 A held-trial button cannot silently switch to a paid purchase when eligibility
-changes. An explicitly chosen noneligible paid purchase retains the existing
-fresh billing checks. Restore and Manage subscription remain available.
+changes. In this candidate, every new live purchase must have that freshly
+validated seven-day trial reservation. Ordinary paid checkout and plan changes
+are temporarily unavailable until a separate admission can fund the exact new
+subscription product before Apple's sheet opens. Existing subscriptions, a
+manual plan and private testing access do not authorize a new paid purchase.
+Restore and Manage subscription remain available. This safeguard is candidate
+source; it is not in the available internal build 45.
 
 The current funded-trial schedule supports **USA / USD** only. The candidate
 reads [Storefront.current](https://developer.apple.com/documentation/storekit/storefront/current)

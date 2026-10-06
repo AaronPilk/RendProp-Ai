@@ -130,6 +130,12 @@ acceptance. Those gates remain open.
 - The paid-plan marketed photo bundles exceed the serving budgets supporting
   the owner's 75%-after-Apple margin target. A passing budget guard is not proof
   that a marketed allowance is financially deliverable.
+  A separate native follow-up blocks new live paid checkout and plan changes
+  pending exact-product funding admission; current plan or private testing
+  authority cannot authorize a new charge. Its final StoreKit call requires a
+  freshly validated held seven-day trial. Restore and Manage remain available.
+  This follow-up needs its own tests, CI, signed build and delivery receipt;
+  it is absent from the available build 45 and changes no App Store products.
 - Protected media cutover is incomplete. The existing deployment credential
   cannot read Cloudflare cache rules; account sign-in/readback is still required.
   Public reader functions, flags and managed-public access must not be switched

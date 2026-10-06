@@ -70,7 +70,20 @@ The additive purchase-reservation implementation now commits exact buyer/workspa
 Subscription synchronization must also report a refused financial activation,
 while preserving Apple's signed subscription history.
 
-The candidate trusted-duration overlay probes the retained private MP4 object and records an exact object-identity attestation before trial publication. A client duration cannot authorize a longer video. Its maximum is90 seconds; reviewed deployment and real retained-object acceptance are required before activation.
+The native candidate blocks every new live purchase without a freshly validated
+held seven-day trial reservation at the actual StoreKit purchase call. This
+includes introductory-offer ineligibility, products without a free offer and
+direct calls that bypass the paywall. Ordinary paid checkout and new paid plan
+changes remain unavailable until a separate admission funds the exact new SKU
+before charging. A current paid receipt, manual plan or private testing grant
+cannot substitute for that admission. Restore, subscription management and
+processing existing Apple transactions remain available. This candidate does
+not change the already available build 45 or App Store product availability.
+
+The candidate duration check probes the retained private MP4 object and records
+an attestation bound to that exact object before trial publication. A client
+duration cannot authorize a longer video. Its maximum is 90 seconds; reviewed
+deployment and real retained-object acceptance are required before activation.
 
 ## Verification
 
@@ -91,7 +104,9 @@ controls; no external GET is performed by these tests. Earlier 456-test and
 ten-flow receipts remain retained as prior source evidence. Local tests do not
 describe production or TestFlight availability.
 
-Deploy the bounded-trial, purchase-reservation and trusted-duration migrations in202500→212900→213000 order before dependent `me`, Apple notification and render handlers: every account
+Deploy the bounded-trial, purchase-reservation and trusted-duration migrations in
+202500 → 212900 → 213000 order before dependent `me`, Apple notification and
+render handlers: every account
 read calls the new context RPC. Even with trial activation disabled, the migration
 installs the admission guards. New hosted publication requires a funded trial or
 existing paid, manual, internal-testing or contract authority. Check that change

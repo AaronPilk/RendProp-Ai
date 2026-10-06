@@ -8,6 +8,11 @@ The older source-only labels below belong to the earlier review checkpoint.
 No retail, trial or App Review funds were seeded. The newer atomic limited-trial
 reservation/converter candidate is separate, disabled and not deployed. Neither
 deployment nor local tests establish an actual Apple purchase/restore/renewal.
+The separate native candidate also closes new ordinary paid checkout pending an
+exact-product funding admission. Only a freshly validated held seven-day trial
+can authorize its new live purchase call; Restore, Manage and this notification
+handler continue to process existing subscriptions. This safeguard is not in
+available build 45 and does not change App Store product availability.
 
 Apple tells this endpoint when a subscription starts, renews, lapses, is
 refunded or is revoked. It verifies Apple's signature itself, then applies the

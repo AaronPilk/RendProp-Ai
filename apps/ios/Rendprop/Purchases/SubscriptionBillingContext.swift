@@ -239,6 +239,21 @@ struct TrialPurchaseReservation: Codable, Hashable, Sendable {
     }
 }
 
+/// Temporary release gate: existing subscription/workspace authority cannot
+/// authorize a new charge. A separately admitted held trial is the only live
+/// purchase path until per-SKU paid funding admission is implemented.
+enum PurchaseDispatchAdmission {
+    static let paidUnavailableMessage = "Paid subscriptions are temporarily unavailable. No Apple purchase has started. You can restore purchases or manage an existing subscription below."
+
+    static func allows(liveBackend: Bool, uiTesting: Bool, verifiedHeldTrial: Bool,
+                       captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
+        guard liveBackend && !uiTesting else { return true }
+        guard captured == current, current.actor.flatMap(UUID.init(uuidString:)) != nil,
+              current.org != nil else { return false }
+        return verifiedHeldTrial
+    }
+}
+
 enum TrialPurchaseAdmission {
     static let unavailableMessage = "Free trials are not available in this workspace yet. No Apple billing has started. Your saved work remains available under your workspace's access and retention terms."
     static let unsupportedRegionMessage = "Funded trials are currently supported only in the United States with a USD subscription. No Apple purchase has started. Any existing reservation remains retained. Restore and subscription management remain available."

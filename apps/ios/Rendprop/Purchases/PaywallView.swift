@@ -80,7 +80,7 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Choose a plan. Check trial availability before reviewing any reserved trial terms, or confirm a paid subscription with Apple.")
+                Text("Choose a plan and check trial availability before reviewing any reserved terms. New paid subscriptions are temporarily unavailable. Restore and subscription management remain available.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             }
@@ -326,12 +326,12 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.ink)
                     .accessibilityIdentifier("paywall.selection")
                 buyButton(product)
-                if purchases.activeProductID != product.id,
-                   purchases.trialEligibility(for: product) != false,
-                   !purchases.canStartNewPurchase(for: product) {
+                if purchases.activeProductID != product.id, !purchases.canStartNewPurchase(for: product) {
                     Text(purchases.canCheckTrialAvailability(for: product)
                          ? "Check availability to reserve this plan's trial terms before Apple's confirmation. Checking does not start Apple billing."
-                         : TrialPurchaseAdmission.unavailableMessage)
+                         : purchases.trialEligibility(for: product) == false
+                            ? PurchaseDispatchAdmission.paidUnavailableMessage
+                            : TrialPurchaseAdmission.unavailableMessage)
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .multilineTextAlignment(.center)
                         .accessibilityIdentifier("paywall.trialUnavailable")
@@ -412,9 +412,12 @@ struct PaywallView: View {
     }
 
     /// "Start 7-day free trial" ONLY when the customer is eligible AND the
-    /// product actually carries an introductory offer. Otherwise "Subscribe".
+    /// product has confirmed held terms. New paid purchases stay unavailable
+    /// until their own funding admission exists; Manage remains reachable.
     private func buyTitle(for product: Product) -> String {
         if purchases.activeProductID == product.id { return "Manage current subscription" }
+        if Config.useLiveBackend && !Config.isUITesting,
+           purchases.trialEligibility(for: product) == false { return "Paid subscriptions unavailable" }
         if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
             return purchases.canCheckTrialAvailability(for: product) ? "Check trial availability" : "Trial unavailable"
         }
@@ -425,6 +428,8 @@ struct PaywallView: View {
 
     private func disclosure(for product: Product, period: BillingPeriod) -> String {
         if purchases.activeProductID == product.id { return "This is the subscription on this Apple ID. Apple shows its renewal date and cancellation options; its original workspace keeps the plan." }
+        if Config.useLiveBackend && !Config.isUITesting,
+           purchases.trialEligibility(for: product) == false { return PurchaseDispatchAdmission.paidUnavailableMessage }
         if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
             return "Trial availability depends on a funded reservation and Apple's current eligibility. Checking does not start Apple billing. Review the reserved terms and Apple's confirmation before continuing."
         }

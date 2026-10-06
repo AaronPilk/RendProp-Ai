@@ -37,6 +37,10 @@ server counters for one hosted walkthrough, five AI photo edit credits and one
 published listing, within a verified seven-day window. iPhone and Studio show
 the same remaining usage. This package remains disabled pending backend, billing
 and funding acceptance; it is separate from the available build 45.
+The candidate also blocks new live paid checkout and plan changes until an
+exact-product funding admission exists. Only a freshly validated held trial can
+open a new purchase sheet; Restore and Manage subscription remain available.
+This closes the path that could charge a customer before service funding exists.
 
 Previous internal **TestFlight 1.0.4 (44) was AVAILABLE**, verified **5 October 2026 at
 01:32:22 UTC** (4 October locally) for the existing Rendprop team, from source

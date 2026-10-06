@@ -22,6 +22,7 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             .init(actor: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
         }
         func fixture(ready: Bool = false) -> (PurchaseFixture, HeldAPI, Product) {
+            Config.useLiveBackend = true; Config.isUITesting = false
             AuthStore.shared.userID = actor.uuidString; AuthStore.shared.syncSessionRevision = 1
             AuthStore.shared.isSignedIn = true; AuthStore.shared.isIdentified = true
             AuthStore.shared.refreshes = 0; AuthStore.token = "synthetic-bearer"
@@ -40,6 +41,21 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             return (value, api, Product(id: sku))
         }
         let hold = makeHold(actor: actor, org: org, product: sku)
+        let bound = TrialPurchaseSnapshot(actor: actor.uuidString, revision: 1, org: org)
+        check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, verifiedHeldTrial: false,
+              captured: bound, current: bound), "Existing authority authorized a new paid charge")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, verifiedHeldTrial: true,
+              captured: bound, current: bound), "Verified held trial dispatch refused")
+        for changed in [TrialPurchaseSnapshot(actor: other.uuidString, revision: bound.revision, org: org),
+                        TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision + 1, org: org),
+                        TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision, org: other)] {
+            check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, verifiedHeldTrial: true,
+                  captured: bound, current: changed), "Stale dispatch snapshot accepted")
+        }
+        check(PurchaseDispatchAdmission.allows(liveBackend: false, uiTesting: false, verifiedHeldTrial: false,
+              captured: bound, current: bound), "Offline purchase test purpose blocked")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: true, verifiedHeldTrial: false,
+              captured: bound, current: bound), "UI-test purchase test purpose blocked")
         check(hold.checked(actor: actor, org: org, product: sku) == hold, "Exact held identity refused")
         check(hold.checked(actor: other, org: org, product: sku) == nil, "Wrong held actor accepted")
         let wrongActor = TrialPurchaseReservation(reservationId: hold.reservationId, actorId: other,
@@ -153,17 +169,66 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
         do {
             let (manager, api, product) = fixture(); product.subscription?.values = [false]
             await manager.purchase(product, expectedOrgID: org)
-            check(Product.sheetCalls == 1 && api.prepareCalls == 0, "Explicit noneligible paid purchase was blocked")
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Unfunded direct paid purchase reached Apple")
+            check(manager.lastError == PurchaseDispatchAdmission.paidUnavailableMessage, "Paid refusal lacked clear explanation")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku) == nil, "Unpurchased paid intent was retained")
         }
         do {
             let (manager, api, product) = fixture(); product.subscription?.values = [false]
             await manager.checkTrialAvailability(product, expectedOrgID: org)
             check(api.prepareCalls == 0 && Product.sheetCalls == 0, "Ineligible availability check created hold or purchase")
-            check(manager.trialEligibility(for: product) == false && manager.lastError?.contains("separate Subscribe with Apple tap") == true,
-                  "Fresh ineligible result trapped paid CTA")
-            check(manager.canStartNewPurchase(for: product), "Fresh ineligible result trapped paid CTA")
+            check(manager.trialEligibility(for: product) == false && manager.lastError?.contains("Paid subscriptions are temporarily unavailable") == true,
+                  "Fresh ineligible result reused stale trial authority")
+            check(!manager.canStartNewPurchase(for: product), "Ineligible paywall enabled a new paid purchase")
             await manager.purchase(product, expectedOrgID: org)
-            check(Product.sheetCalls == 1 && api.prepareCalls == 0, "Explicit paid tap after check was blocked")
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Unfunded paid tap after check reached Apple")
+        }
+        do {
+            let (manager, api, product) = fixture(ready: true)
+            manager.introOfferEligible[sku] = false
+            manager.billingContext = try await api.billingContext()
+            check(!manager.canStartNewPurchase(for: product), "Ineligible paywall enabled a new paid purchase")
+        }
+        for mode in ["no-intro", "non-free-intro", "manual", "private-sponsorship", "verified-retail", "same-retail-sku", "retail-upgrade"] {
+            let (manager, api, original) = fixture(); var product = original
+            product.subscription?.values = [false]
+            var context = SubscriptionBillingContext(orgID: org, orgName: "Synthetic workspace", role: "owner",
+                                                    canManageSubscription: true, source: mode.contains("retail") ? "apple" : "manual")
+            if mode == "no-intro" { product.subscription = nil }
+            if mode == "non-free-intro" { product.subscription?.introductoryOffer?.paymentMode = .paid }
+            if mode == "private-sponsorship" {
+                context.servingActivation = .init(orgId: org, available: true, funded: false, authority: .privateSponsorship)
+            }
+            if mode.contains("retail") {
+                context.servingActivation = .init(orgId: org, available: true, funded: true, authority: .verifiedRetail)
+                context.originalTransactionIDs = ["synthetic-chain"]
+            }
+            if mode == "same-retail-sku" || mode == "retail-upgrade" {
+                manager.activeProductID = mode == "same-retail-sku" ? sku : "com.rendprop.app.starter.monthly"
+                manager.activeOriginalTransactionID = "synthetic-chain"
+                manager.activeBillingOwner = actor
+            }
+            api.overrideContext = context; manager.billingContext = context
+            check(!manager.canStartNewPurchase(for: product), "Current workspace authority enabled paid UI")
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Existing workspace authority funded a new paid charge")
+            check(manager.lastError == PurchaseDispatchAdmission.paidUnavailableMessage, "Current subscription disguised paid unavailability")
+        }
+        for change in ["actor", "revision", "workspace"] {
+            let (manager, api, product) = fixture(); product.subscription?.values = [false]
+            api.onBilling = {
+                if change == "actor" { AuthStore.shared.userID = other.uuidString }
+                if change == "revision" { AuthStore.shared.syncSessionRevision += 1 }
+                if change == "workspace" { WorkspaceContext.selectedOrgID = other }
+            }
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Stale paid workspace or actor reached Apple")
+        }
+        for mode in ["offline", "UI-testing"] {
+            let (manager, api, original) = fixture(); var product = original; product.subscription = nil
+            if mode == "offline" { Config.useLiveBackend = false } else { Config.isUITesting = true }
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 1 && api.prepareCalls == 0, "Closed offline/UI-test purchase behavior changed")
         }
         do {
             let (manager, api, product) = fixture(); manager.introOfferEligible[sku] = true
