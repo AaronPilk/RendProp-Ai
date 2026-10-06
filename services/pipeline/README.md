@@ -109,5 +109,7 @@ adapter is not evidence that the worker invokes it.
 
 This package's image edits are also separate from the reflection-removal and
 other video tools implemented in Supabase. Do not infer product-wide capability
-or release status from this package alone. The [current Studio release](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-records what was actually deployed and which new generation features remain off.
+or release status from this package alone. The [6 October launch candidate](../../docs/handoff/LAUNCH-READINESS-20261006.md)
+records current source contracts and remaining rollout/acceptance gates; it is not
+a delivery receipt. The [24 September Studio record](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+retains that release's deployment and activation evidence.

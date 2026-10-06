@@ -13,8 +13,9 @@ Presenter generation.
 ## Files
 
 - `index.ts` — the HTTP handler. Auth (owner JWT, like `ai-chapters`), body
-  validation, two durable per-user rate limits, chain resolution, the
-  provider call, parsing, best-effort cost logging.
+  validation, two durable per-user rate limits, chain resolution, durable
+  operation admission, funded provider-attempt reservations and result recovery.
+  Uncertain provider outcomes retain their financial liability.
 - `prompt.ts` — pure. Space-type vocabulary (mirrors `Listing.SpaceType`),
   the system instruction (persona + onboarding step ladder + customer-service
   rules + hard rules), and the user-turn builder.
@@ -66,8 +67,15 @@ not a portable checked-in release command.
 
 ## Why this function is careful about resilience
 
-`coach.chat` is free on every plan (no plan access gate or monthly quota —
-the two per-user rate limits and a 600-message daily workspace safety cap).
+The [6 October launch candidate](../../../../docs/handoff/LAUNCH-READINESS-20261006.md)
+has no monthly Coach feature-counter quota, but online provider attempts require
+verified funding and a bounded reservation before dispatch. Unpriced attempts
+are limited to explicitly sponsored internal QA; finite retail/review grants
+refuse them. The two per-user rate limits and 600-message daily workspace safety
+cap still apply. Deterministic on-device help is separate from paid provider access.
+These changes are candidate source, not a deployment or funding receipt; no
+retail, trial or App Review allocation is seeded by the migrations.
+
 Workspace membership is resolved before paid work, and the server plan determines
 routing; degraded plan reads route as `free`. `X-Org-Id` is required and checked
 against membership before limits or providers. Clients without a selected workspace

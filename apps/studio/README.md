@@ -195,9 +195,11 @@ passing distribution checks alone does not prove a connected production build.
 The static Worker in [wrangler.jsonc](wrangler.jsonc) serves only Studio; the apex
 marketing site and hosted tours use a separate Worker. Release schema and all
 required read handlers before dependent website assets. The
-[latest release record](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
-includes migration reconciliation, exact function versions/JWT settings, and
-source/hash verification. The updated [backend helper](scripts/deploy-backend.mjs)
+[6 October candidate handoff](../../docs/handoff/LAUNCH-READINESS-20261006.md)
+defines current dependencies and pending rollout gates; it is not a delivery
+receipt. The [1 October record](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
+retains that release's migration reconciliation, function versions/JWT settings
+and source/hash verification. The updated [backend helper](scripts/deploy-backend.mjs)
 requires an explicit list of functions and stages their import closure offline by
 default. `--run` uses the existing Supabase CLI login/environment, verifies current
 live policy against [function-jwt-policy.json](../../services/supabase/function-jwt-policy.json),

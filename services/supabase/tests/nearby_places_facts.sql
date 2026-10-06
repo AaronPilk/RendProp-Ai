@@ -17,7 +17,7 @@ do $$ declare f nearby_ids; r jsonb; original_details jsonb; refused boolean; be
  perform pg_temp.nearby_check(r->'details'->>'nearbyAttractions'='Apple Maps: Synthetic park · approx. 0.5 mi','Reviewed nearby note round-trips');
  perform pg_temp.nearby_check((r->'details')-'nearbyAttractions'=original_details and original_details ? 'amenities' and original_details ? 'floor_measurements_v1','Nearby edit preserves every prior detail, including private measurements');
  refused:=false;
- begin perform public.save_listing_facts(f.actor,f.org,f.listing,'{}','{}','{"nearbyAttractions":{"present":false,"value":null}}','{"nearbyAttractions":"Stale losing note"}'); exception when sqlstate '40001' then refused:=true; end;
+ begin perform public.save_listing_facts(f.actor,f.org,f.listing,'{}','{}','{"nearbyAttractions":{"present":false,"value":null}}','{"nearbyAttractions":"Stale losing note"}'); exception when sqlstate 'PT409' then refused:=true; end;
  perform pg_temp.nearby_check(refused,'Stale nearby edit conflicts');
  refused:=false;
  begin perform public.save_listing_facts(f.actor,f.org,f.listing,'{}','{}',jsonb_build_object('nearbyAttractions',jsonb_build_object('present',true,'value','Apple Maps: Synthetic park · approx. 0.5 mi')),jsonb_build_object('nearbyAttractions',repeat('x',501))); exception when sqlstate '22023' then refused:=true; end;

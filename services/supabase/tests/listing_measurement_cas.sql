@@ -57,11 +57,11 @@ begin
  perform pg_temp.cas_check(after_row.details->>'floorMeasurementsV9'='opaque-future-version','unknown alias survives measurement save');
  r:=public.save_listing_measurements(f.actor,f.org,f.listing,old_plan,new_plan);
  perform pg_temp.cas_check(r->'details'->>'floor_measurements_v1'=new_plan,'lost response same-value replay accepts stale expectation');
- perform pg_temp.cas_refuses(format('select save_listing_measurements(%L,%L,%L,%L,%L)',f.second_actor,f.org,f.listing,old_plan,old_plan),'40001','second stale writer conflicts');
+ perform pg_temp.cas_refuses(format('select save_listing_measurements(%L,%L,%L,%L,%L)',f.second_actor,f.org,f.listing,old_plan,old_plan),'PT409','second stale writer conflicts');
  perform pg_temp.cas_refuses(format('select save_listing_measurements(%L,%L,%L,%L,%L)',f.actor,f.foreign_org,f.listing,new_plan,old_plan),'P0002','wrong org does not disclose or modify listing');
  perform pg_temp.cas_refuses(format('select save_listing_measurements(%L,%L,%L,%L,%L)',f.outsider,f.org,f.listing,new_plan,old_plan),'42501','non-member denied');
  perform pg_temp.cas_refuses(format('select save_listing_measurements(%L,%L,%L,%L,%L)',f.viewer,f.org,f.listing,new_plan,old_plan),'42501','read-only marketing viewer denied');
- perform pg_temp.cas_refuses(format('select save_listing_measurements(%L,%L,%L,%L,%L)',f.actor,f.org,f.conflict_listing,null,new_plan),'40001','conflicting legacy aliases refuse ambiguous overwrite');
+ perform pg_temp.cas_refuses(format('select save_listing_measurements(%L,%L,%L,%L,%L)',f.actor,f.org,f.conflict_listing,null,new_plan),'PT409','conflicting legacy aliases refuse ambiguous overwrite');
  perform pg_temp.cas_check((select details ? 'floorMeasurementsV1' and details ? 'floor_measurements_v1' from listings where id=f.conflict_listing),'conflicting aliases stay intact and recoverable');
  -- A stale build writes its renamed map, then an empty map. Existing private
  -- measurement namespaces survive both, and known aliases remain canonical.

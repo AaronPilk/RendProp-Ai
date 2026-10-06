@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { canonicalPhotoKey, galleryCaption, handleListingActions, photoRow } from "./listing-actions.ts";
+import { HttpError } from "../_shared/http.ts";
 const org = "10000000-0000-4000-8000-000000000001", listing = "20000000-0000-4000-8000-000000000002", id = "30000000-0000-4000-8000-000000000003", user = "40000000-0000-4000-8000-000000000004";
 const asset = { id, listing_id: listing, uploaded: true, bucket: "renders", kind: "photo", content_type: "image/jpeg", storage_key: `renders/${org}/${listing}/gallery-${id}.jpg` };
 type Result = { data: unknown; error?: unknown };
@@ -107,13 +108,18 @@ Deno.test("floor-plan attachment preserves listing details and uses optimistic c
   assertEquals(f.calls.some(c => c.op === "update"), false);
 });
 Deno.test("floor-plan concurrent phone edit produces conflict instead of success", async () => {
+  for (const code of ["PT409", "40001"]) {
   const f = fixture([
     { table: "memberships", result: { data: { role: "owner" } } },
     { table: "capture_assets", result: { data: asset } },
     { table: "listings", result: { data: { id: listing, details: {} } } },
-    { table: "studio_attach_floorplan", result: { data: null, error: { code: "40001" } }, client: "admin" },
+    { table: "studio_attach_floorplan", result: { data: null, error: { code } }, client: "admin" },
   ]);
-  await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), f.context), Error, "changed on another device");
+  const error = await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), f.context), HttpError, "changed on another device");
+  assertEquals(error.status, 409);
+  assertEquals(f.calls.filter(c => c.op === "rpc").length, 1);
+  assertEquals(f.calls.some(c => c.op === "update"), false);
+  }
 });
 
 Deno.test("floor-plan attachment fails safely when its request service client is unavailable", async () => {

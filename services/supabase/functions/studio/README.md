@@ -168,6 +168,8 @@ JWT settings and include every affected privacy read handler (`studio`, `renders
 explicit `--functions` selection and is offline unless `--run` is supplied. It
 checks fresh live JWT policy, stages the parsed import closure, deploys the
 selection and verifies downloaded source hashes. It does not apply schema or
-activate providers. Record completed deployments and acceptance in the
-[current release record](../../../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md),
-keeping activation state and remaining physical-phone work explicit.
+activate providers. Record completed deployments and acceptance in dated delivery
+receipts linked from the [6 October candidate handoff](../../../../docs/handoff/LAUNCH-READINESS-20261006.md),
+keeping activation state and remaining physical-phone work explicit. The
+[27 September checkpoint](../../../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
+retains that release's historical evidence.

@@ -12,9 +12,14 @@ portfolios, industry-specific Studio forms and account-data export. The
 deployment order and remaining acceptance. The
 [beta reconciliation](docs/handoff/LAUNCH-BETA-20261006.md) covers all 52 reports;
 generated-image quality and physical camera tests remain explicitly separate.
-The next internal target is **1.0.4 (45)**. Until a new signed upload and Apple
-readback are recorded, **44 remains the available internal build** and public
-**1.0.3 (42)** remains unchanged. The checkpoints below are historical receipts.
+Internal **1.0.4 (45) is available**, verified by Apple on **6 October 2026 at
+19:23:12 UTC**, from source `5eeb783`. Its [delivery receipt](docs/releases/TESTFLIGHT-45-20261006.json)
+binds the signed package and all twelve CI jobs. Backend verification stopped on
+a stale-edit timeout; the [terminal conflict repair](docs/handoff/CAS-CONFLICT-TERMINAL-20261006.md)
+preserves the saved values and fixes the retry code. The new Studio assets,
+photo ACL contraction and protected-media cutover remain pending. No public
+App Store submission or release was performed; the public **1.0.3 (42)** record
+remains unchanged. The checkpoints below are historical receipts.
 
 Pricing uses the owner's target of **75% after Apple's fee**, with provider
 attempts and ambiguous outcomes charged against the same funded allowance.
@@ -25,7 +30,7 @@ New subscriptions have an approved **90-day hosting grace period after expiry**;
 existing testers are preserved. A paid-AI trial sponsorship proposal remains
 unapproved and is not activated.
 
-Internal **TestFlight 1.0.4 (44) is AVAILABLE**, verified **5 October 2026 at
+Previous internal **TestFlight 1.0.4 (44) was AVAILABLE**, verified **5 October 2026 at
 01:32:22 UTC** (4 October locally) for the existing Rendprop team, from source
 `9d27fb5`. Apple reports VALID / INTERNAL_ONLY / IN_BETA_TESTING.
 All twelve jobs in [CI run 37248967678](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37248967678)
@@ -175,7 +180,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
 [App Store submission receipt](docs/releases/APPSTORE-42-20261002.json) ·
-[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-44-20261004.json) ·
+[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-45-20261006.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)

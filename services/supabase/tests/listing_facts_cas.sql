@@ -36,14 +36,14 @@ do $$ declare f facts_ids; before_row jsonb; r jsonb; sql text; k text; begin
  end loop;
  perform pg_temp.facts_check(public.save_listing_facts(f.actor,f.org,f.listing,'{"lat":35.001,"lng":-80.001}','{"lat":35.235,"lng":-80.346}','{}','{}')=r,'Lost receipt retry returns saved row');
  sql:=format('select public.save_listing_facts(%L,%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,'{"sqft":900}','{"sqft":901}','{}','{}');
- perform pg_temp.facts_refuses(sql,'40001','Conflicting edits keep shared square footage');
+ perform pg_temp.facts_refuses(sql,'PT409','Conflicting edits keep shared square footage');
  r:=public.save_listing_facts(f.actor,f.org,f.listing,'{"beds":4}','{"beds":5}','{"allow_indexing":{"present":true,"value":"false"}}','{"allow_indexing":"true"}');
  perform pg_temp.facts_check(r->>'beds'='5' and r->'details'->>'allow_indexing'='true','Explicit field and detail edits apply atomically');
  for k in select unnest(array['floorplan_asset_id','office_note','floor_measurements_v1','floorMeasurementsV9']) loop
   perform pg_temp.facts_check(r->'details'->k=before_row->'details'->k,'Detail-key edit preserves '||k);
  end loop;
  sql:=format('select public.save_listing_facts(%L,%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,'{"beds":5}','{"beds":6}','{"allow_indexing":{"present":true,"value":"false"}}','{"allow_indexing":"false"}');
- perform pg_temp.facts_refuses(sql,'40001','A detail conflict rolls back all fields');
+ perform pg_temp.facts_refuses(sql,'PT409','A detail conflict rolls back all fields');
  perform pg_temp.facts_check((select beds=5 from listings where id=f.listing),'No partial save after conflict');
  r:=public.save_listing_facts(f.actor,f.org,f.listing,'{"sold_at":"2026-09-30T12:00:00.000Z"}','{"sold_at":null}','{}','{}');
  perform pg_temp.facts_check(r->'sold_at'='null' and r->>'status'='archived','Timestamp spelling normalizes; deliberate un-sell preserves server status');
@@ -75,7 +75,7 @@ do $$ declare f facts_ids; before_row jsonb; r jsonb; sql text; k text; begin
  sql:=format('select public.save_listing_facts(%L,%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,'{}','{}','{"floorplan_asset_id":{"present":true,"value":"office-plan"}}','{"floorplan_asset_id":null}');
  perform pg_temp.facts_refuses(sql,'22023','Phone facts cannot remove Studio attachment');
  sql:=format('select public.save_listing_facts(%L,%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,'{}','{}','{"hours":{"present":false,"value":null}}','{"hours":"9-5"}');
- perform pg_temp.facts_refuses(sql,'40001','Absent detail is distinct from explicit JSON null');
+ perform pg_temp.facts_refuses(sql,'PT409','Absent detail is distinct from explicit JSON null');
  r:=public.save_listing_facts(f.actor,f.org,f.listing,'{}','{}','{"hours":{"present":true,"value":null}}','{"hours":"9-5"}');
  perform pg_temp.facts_check(r->'details'->>'hours'='9-5','Explicit JSON null baseline edits successfully');
  r:=public.save_listing_facts(f.actor,f.org,f.listing,'{}','{}','{"capacitySeated":{"present":true,"value":20},"is247":{"present":true,"value":false},"website":{"present":false,"value":null}}','{"capacitySeated":"25","is247":"true","website":"https://fixture.invalid"}');

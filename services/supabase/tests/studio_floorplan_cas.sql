@@ -94,7 +94,7 @@ do $$declare f floorplan_ids;old_details jsonb;received jsonb;attached jsonb;r j
  perform pg_temp.plan_refuses(format('select public.studio_attach_floorplan(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,f.asset,attached,'https://fixture.invalid/invented.jpg'),'22023','URL must name the verified asset key');
  perform public.save_listing_facts(f.actor,f.org,f.listing,'{}','{}','{"hours":{"present":true,"value":"office hours"}}','{"hours":"new phone hours"}');
  select to_jsonb(l)into before_row from public.listings l where id=f.listing;
- perform pg_temp.plan_refuses(q,'40001','Phone detail edit after read conflicts atomically');
+ perform pg_temp.plan_refuses(q,'PT409','Phone detail edit after read conflicts atomically');
  perform pg_temp.plan_check((select to_jsonb(l)=before_row from public.listings l where id=f.listing),'Conflicted attachment preserves the complete newer row');
  select details into received from public.listings where id=f.listing;
  r:=public.studio_attach_floorplan(f.actor,f.org,f.listing,f.asset,received,url);

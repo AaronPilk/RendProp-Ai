@@ -12,10 +12,13 @@ notification-delivery or App Store Connect receipt. The
 [24 September Studio release](../../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 did not redeploy this function or perform a phone purchase.
 
+The [6 October launch candidate](../../../../docs/handoff/LAUNCH-READINESS-20261006.md)
+records the current **source-only** Sandbox and finite App Review funding authority.
 The [5 October full-system audit](../../../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
-records the **source-only** Sandbox authority fence described below. Synthetic
-local verification is not evidence that this migration or the coordinated
-handlers/native copy are deployed. The 24 September record remains historical.
+is its predecessor. Synthetic local verification is not evidence that these
+migrations or the coordinated handlers/native copy are deployed. No retail,
+trial or review funding allocation is seeded by the migrations. The 24 September
+record remains historical.
 
 | Route | Auth | Answers |
 |---|---|---|
@@ -191,7 +194,8 @@ notification types instead of expecting an instant lapse.
 
 `record_apple_sandbox_receipt` verifies current named-account and workspace
 owner/admin authority, and requires an existing service-owned internal/private
-testing grant. It stores the original transaction's immutable actor/workspace
+testing grant or the candidate's finite App Review funding authority. It stores
+the original transaction's immutable actor/workspace
 binding in `apple_sandbox_receipts`; signed chronology prevents an older receipt
 from overwriting a newer one. Sandbox never changes the retail plan, source,
 expiry, cancellation, contract or `apple_subscriptions` binding. The selected
@@ -204,13 +208,15 @@ pending and offers Restore after access is authorized. Do not finish a transacti
 whose server synchronization has not been confirmed. A Sandbox webhook cannot
 create test access or a retail subscription.
 
-Both TestFlight and App Review purchases use Sandbox. **Rollout is gated:** a
-finite App Review grant needs feature, seat and serving-budget limits measured
-over the entire grant lifetime. Rolling allowance windows alone do not supply
-that limit. No new App Review grant or lifetime meter is implemented by this
-fence; the existing explicit internal grants do not establish reviewer readiness.
-Resolve this gate before activating the fence for review or testers without an
-authorized grant.
+Both TestFlight and App Review purchases use Sandbox. The 6 October candidate
+adds a dedicated finite App Review funding grant, restricted feature/seat access
+and serving reservations bounded over the grant lifetime. A selected Sandbox
+product does not supply money or choose those limits. Provisioning remains
+service-only; the migrations create no review account or funding allocation.
+**Rollout is gated:** authorize actual review funding, verify the coordinated
+schema/handlers and complete purchase/restore acceptance before claiming reviewer
+readiness. Existing internal grants are separate from this finite review authority;
+rolling allowance windows alone are not a lifetime serving limit.
 
 ### Pending notifications
 

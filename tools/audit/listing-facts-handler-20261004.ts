@@ -13,7 +13,7 @@ globalThis.fetch=async(input,init)=>{
  if(u.pathname==='/auth/v1/user')return response({id:USER,is_anonymous:false});
  if(u.pathname.endsWith('/rpc/workspace_directory'))return response({active_org_id:ORG,workspaces:[{id:ORG,name:'Fixture',role:'owner'}]});
  if(u.pathname==='/rest/v1/deletion_requests')return response(deleting?{status:'pending'}:null);
- if(u.pathname.endsWith('/rpc/save_listing_facts'))return rpcError?response({code:rpcError,message:'fixture refusal'},400):response({id:ID,org_id:ORG,address:'Shared',sqft:2345,status:'archived',details:{floorplan_asset_id:'preserved'}});
+ if(u.pathname.endsWith('/rpc/save_listing_facts'))return rpcError?response({code:rpcError,message:'fixture refusal'},rpcError==='PT409'?409:400):response({id:ID,org_id:ORG,address:'Shared',sqft:2345,status:'archived',details:{floorplan_asset_id:'preserved'}});
  if(u.pathname==='/rest/v1/listings')return response({id:ID,org_id:ORG,main_photo_key:null,gallery_asset_ids:[]});
  throw new Error('Unmodeled transport '+r.method+' '+u.pathname);
 };
@@ -26,7 +26,7 @@ let r=await invoke('PUT',intent);check(r.status===200,'Explicit intent succeeds'
 const rpc=calls.find(x=>x.path.endsWith('/rpc/save_listing_facts'))!;
 same(rpc.body,{p_actor:USER,p_org:ORG,p_listing:ID,p_expected:intent.expected,p_changes:intent.changes,p_details_expected:{},p_details_changes:{}},'Actual handler forwards exact intent and authenticated scope');
 check(!calls.some(x=>x.path==='/rest/v1/listings'&&x.method==='PATCH'),'Facts never use broad table PATCH');
-for(const [code,status]of [['40001',409],['42501',403],['P0002',404],['22023',400]]as const){rpcError=code;r=await invoke('PUT',intent);check(r.status===status,'Maps SQL refusal '+code);}
+for(const [code,status]of [['PT409',409],['40001',409],['42501',403],['P0002',404],['22023',400]]as const){rpcError=code;r=await invoke('PUT',intent);check(r.status===status,'Maps SQL refusal '+code);check(calls.filter(x=>x.path.endsWith('/rpc/save_listing_facts')).length===1,'Exactly one RPC on refusal '+code);}
 rpcError=undefined;
 r=await invoke('PUT',intent,'/facts',false);check(r.status===409,'Facts require explicitly selected workspace');check(!calls.some(x=>x.path.endsWith('/rpc/save_listing_facts')),'No RPC without workspace');
 for(const bad of [{...intent,details:{}},{...intent,expected:null},{...intent,changes:{address:123}}]){r=await invoke('PUT',bad);check(r.status===400,'Invalid or extra intent rejected');check(!calls.some(x=>x.path.endsWith('/rpc/save_listing_facts')),'Invalid intent does not reach RPC');}

@@ -1,5 +1,11 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
+The [6 October launch candidate](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
+records the current source contracts and staged rollout gates. The new member
+portfolio and protected media routes below are candidate behavior; this document
+is not a deployment or public-domain cutover receipt. Earlier delivery snapshots
+retain their dated evidence.
+
 The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
 is live at **100%** on Worker `0d5db590-c2c8-4482-9f3f-77bcf893fcd6`, deployed
 at **17:15:45 UTC** from runtime `3615a23`. Selected main photos lead the listing;
@@ -54,13 +60,23 @@ Routes implemented in the current source:
 |---|---|---|
 | `GET /f/:slug` | listing details/photos with an optional fly-through — branded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
 | `GET /u/:slug` | the same listing/player, unbranded — for the MLS field | the same payload |
-| `GET /a/:handle` | an org's **portfolio grid** (cards → `/f/:slug`) | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
+| `GET /a/:handle` | a member's deliberately selected owned-listing portfolio (cards → `/f/:slug`); legacy org handles return an empty grid in the candidate | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
+| `GET/HEAD /media/:slug/r2/:key` | exact selected R2 object; `key` is URL-encoded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug/delivery` before bytes/conditional responses |
+| `GET/HEAD /media/:slug/stream/:uid[/path]` | protected Stream proxy contract; remains unavailable until separate signed-playback acceptance | the same fresh delivery authority |
+| `GET/HEAD /media-brand/renders/:listing/brand/:file` | exact approved business-logo object | scoped `tours/business-logo/:listing` authority |
+| `GET /.well-known/security.txt` | expiring public security contact | Worker source; live routing/readback remains required |
 | `GET /studio` | redirect to `https://studio.rendprop.com/` | Studio has its own Worker |
 | `GET /s/:scene` | spatial viewer shell | `src/spatial.ts` |
 | `GET /s/:scene/manifest`, `GET /s/:scene/model` | permission-checked spatial artifacts | Supabase `spatial` handler; no edge cache |
 | `GET /join/:code` | team invitation landing | native universal-link handoff |
 | `GET /terms`, `GET /privacy`, `GET /healthz` | legal pages and health check | Worker source |
 | `GET /sitemap.xml` | the crawl index — marketing + legal + the demo tour and portfolio | `src/sitemap.ts` (no upstream yet — see TODO 5) |
+
+Candidate media routes recheck the current selected object, publication, deletion
+and hosting authority before GET, HEAD, Range, conditional responses and bytes.
+They emit no-store cache directives. Legacy public R2 ingress must remain enabled
+until the separately verified proxy/reader flag and old-domain cutover. Source
+implementation alone does not establish that an old URL is withdrawn.
 
 Tour and portfolio requests render HTML without a client framework; Wrangler
 bundles the TypeScript Worker at deployment. The spatial viewer additionally loads

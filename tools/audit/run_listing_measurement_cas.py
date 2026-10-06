@@ -16,6 +16,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 SQL = ROOT / 'services/supabase'
 MIGRATION = SQL / 'migrations/20261004220253_listing_measurement_compare_and_set.sql'
+TERMINAL = SQL / 'migrations/20261006193633_cas_conflicts_terminal.sql'
 FIXTURE = SQL / 'tests/listing_measurement_cas.sql'
 TOOLS = {name: shutil.which(name) or str(Path('/opt/homebrew/opt/postgresql@17/bin') / name)
          for name in ('initdb', 'pg_ctl', 'psql', 'createdb')}
@@ -57,6 +58,7 @@ try:
         run('apply-' + m.stem, [*psql, '-q', '-1', '-f', m])
     receipt['fresh'] = json.loads(run('fresh', [*psql, '-Atq', '-f', FIXTURE]).strip())
     run('replay', [*psql, '-q', '-1', '-f', MIGRATION])
+    run('terminal-replay', [*psql, '-q', '-1', '-f', TERMINAL])
     receipt['replay'] = json.loads(run('replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
     actor, second, org, listing = [str(uuid.uuid4()) for _ in range(4)]
     old = '{"version":1,"unit":"meters","rooms":[],"updatedAt":812345678}'
@@ -145,6 +147,7 @@ values('{listing}','{org}','{actor}','Synthetic no-lock race',jsonb_build_object
     else:
         raise AssertionError('Removed-locks control failed to violate the one-writer invariant')
     run('restore-cas-after-lock-control', [*psql, '-q', '-1', '-f', MIGRATION])
+    run('restore-terminal-cas', [*psql, '-q', '-1', '-f', TERMINAL])
     receipt['passed'] = True
 finally:
     if started:
