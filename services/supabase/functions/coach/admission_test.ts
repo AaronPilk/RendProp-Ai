@@ -56,6 +56,7 @@ async function fixture(bypassMembership = false, dropPreference = false) {
     JSON.stringify(new URL("./prompt.ts", import.meta.url).href)
   };
     import {coachContext} from ${JSON.stringify(new URL("./context.ts", import.meta.url).href)};
+    import {fundingContext,fundedAttempt,textAttemptQuote,completeFundingOperation} from ${JSON.stringify(new URL("../_shared/funded-serving.ts",import.meta.url).href)};
     import {parseCoachOutput} from ${
     JSON.stringify(new URL("./actions.ts", import.meta.url).href)
   };
@@ -82,7 +83,12 @@ async function fixture(bypassMembership = false, dropPreference = false) {
       };
       return {select(c:string,o:any={}){columns=c;head=o.head===true;return this;},eq(k:string,v:any){filters[k]=v;return this;},is(k:string,v:any){filters[k]=v;return this;},in(k:string,v:any){filters[k]=v;return this;},gte(k:string,v:any){filters[k]=v;return this;},limit(n:number){filters.limit=n;return this;},order(k:string,v:any){filters.order={k,...v};return this;},async maybeSingle(){return result();},then(resolve:any,reject:any){return Promise.resolve().then(result).then(resolve,reject);}};
     }
-    const adminClient=()=>({from:query,rpc:async(name:string,args:any)=>{state.events.push("org");state.orgLookups.push({name,args});return {error:null,data:${JSON.stringify(ACTIVE_ORG)}};}});
+    const adminClient=()=>({from:query,rpc:async(name:string,args:any)=>{
+      if(name==="serving_operation_begin")return {data:{begun:true},error:null};
+      if(name==="serving_cost_reserve")return {data:{reserved:true},error:null};
+      if(name==="serving_cost_finish")return {data:{finished:true},error:null};
+      if(name==="serving_operation_complete")return {data:{saved:true},error:null};
+      state.events.push("org");state.orgLookups.push({name,args});return {error:null,data:${JSON.stringify(ACTIVE_ORG)}};}});
     const userClient=(_req:Request)=>({from:query});
     ${actualHeader}
     ${actualMembership}

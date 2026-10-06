@@ -18,7 +18,7 @@ const receipt = { status: "running", mutation, artifacts, checks: [], errors: []
   proof: "Separately compiled real App + real Studio services with injected offline Auth/fetch. This is NOT a live Apple sign-in or deployed media proof." };
 let browser, server, page;
 let transformed = false;
-const labels = {"Video editor":"Create","Content library":"Media",Properties:"My homes",Workspace:"Business",Overview:"Home",Create:"AI tools"};
+const labels = {"Video editor":"Create","Content library":"Media",Properties:"My Listings",Workspace:"Business",Overview:"Home",Create:"AI tools"};
 const nav = (name) => ({click: async () => { const label=labels[name]??name; await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: label, exact:true }).click(); }});
 const title = () => page.locator(".rp-editor:visible").getByLabel("Title overlay", { exact: true });
 const check = (name) => receipt.checks.push(name);

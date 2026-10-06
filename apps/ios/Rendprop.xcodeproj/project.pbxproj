@@ -165,6 +165,7 @@
 		8A2B4E9A070B5D1A499F4993 /* FloorMeasurementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9A029F82C6D91949EF45D49 /* FloorMeasurementsView.swift */; };
 		0D03A71F3525C76A1190378D /* RoomMeasureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6482062BAF59C7778ECDB84 /* RoomMeasureView.swift */; };
 		E5A9C88C79F17690EF02F33E /* FloorMeasurementWorksheetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B237875EE276CFF9CAC5088 /* FloorMeasurementWorksheetView.swift */; };
+		E95D43EACF2E0787FF7198E2 /* AccountDataExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10AB0804C5870992EC89D59 /* AccountDataExport.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -340,6 +341,7 @@
 		A9A029F82C6D91949EF45D49 /* FloorMeasurementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorMeasurementsView.swift; sourceTree = "<group>"; };
 		E6482062BAF59C7778ECDB84 /* RoomMeasureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMeasureView.swift; sourceTree = "<group>"; };
 		0B237875EE276CFF9CAC5088 /* FloorMeasurementWorksheetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorMeasurementWorksheetView.swift; sourceTree = "<group>"; };
+		B10AB0804C5870992EC89D59 /* AccountDataExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountDataExport.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -672,6 +674,7 @@
 				0A9FCFCF590205DB9DF9FA70 /* AdminFunnelView.swift */,
 				EAF7254EA3A61DFD3EC2EB19 /* AdminProbeAPI.swift */,
 				14BAC4340C272ABB8FEE04CF /* ClientContactView.swift */,
+				B10AB0804C5870992EC89D59 /* AccountDataExport.swift */,
 				C707F03A58481B09E2D377DC /* CloudMediaView.swift */,
 				159750D918990BA658CFBBB7 /* FlythroughDetailView.swift */,
 				4DB70E1D3371927DB43F686D /* HomeListingsView.swift */,
@@ -922,6 +925,7 @@
 				950A7098FE3FAD991195CB09 /* CaptureView.swift in Sources */,
 				8610B7B0EEED2CE7A9D7BC4F /* ClientContactSync.swift in Sources */,
 				4C552D98C8B8DC86F5714816 /* ClientContactView.swift in Sources */,
+				E95D43EACF2E0787FF7198E2 /* AccountDataExport.swift in Sources */,
 				B085647A7C6B114579C1991A /* CloudMediaView.swift in Sources */,
 				A5D7B33EB7FE0F220A4199A9 /* CloudPhotoReferences.swift in Sources */,
 				A10BAAA5BCAE54E7D540D971 /* CloudVoiceStore.swift in Sources */,

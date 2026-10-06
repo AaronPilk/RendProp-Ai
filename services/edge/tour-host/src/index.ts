@@ -40,6 +40,7 @@ import { renderPortfolioPage } from "./portfolio";
 import { sitemapXml } from "./sitemap";
 import { fetchUpstreamJSON } from "./upstream";
 import { spatialData, spatialModule, spatialPage } from "./spatial";
+import { handleMediaDelivery } from "./media-delivery";
 import { handleRecipientConfirmation } from "./recipient-confirmation";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
@@ -454,6 +455,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (canonical) return canonical;
 
   const path = rawPath;
+  if (path.startsWith("/media/") || path.startsWith("/media-brand/")) return handleMediaDelivery(req,env);
 
   // Keep the discoverable apex entry pointed at the deployed browser app.
   // The destination is fixed; query strings do not cross into the app.

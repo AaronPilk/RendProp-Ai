@@ -84,11 +84,12 @@ import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
-import { type ProvenanceKind, recordProvenance } from "../_shared/provenance.ts";
+import { type ProvenanceKind, disclosureFallback, recordProvenance } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
+import { fundingContext, fundedAttempt, mediaAttemptQuote, textAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { supportsStagingReference } from "../_shared/providers/gemini.ts";
 import {
@@ -97,9 +98,8 @@ import {
   awaitJob,
   inlineBase64,
   inlineImageResult,
-  routedR2Key,
 } from "../_shared/providers/common.ts";
-import type { GenerateInput } from "../_shared/providers/types.ts";
+import type { DoneState, GenerateInput } from "../_shared/providers/types.ts";
 // THE SHARED PROMPT POLISHER. Yes, this reaches into a sibling function's
 // folder — the same mechanism `../_shared/…` uses (both live under functions/
 // and both are followed by the bundler at deploy). ai-copy/prompt.ts imports
@@ -107,7 +107,7 @@ import type { GenerateInput } from "../_shared/providers/types.ts";
 // handler, its router glue or its Supabase clients into this function's bundle.
 // See ai-copy/prompt.ts's header and improvePrompt() below.
 import { MAX_PROMPT_INPUT, MAX_PROMPT_OUTPUT, editPromptInstruction } from "../ai-copy/prompt.ts";
-import { persistPhotoOutput } from "../_shared/photo-output-intent.ts";
+import { persistOwnedPhotoResult, restorePhotoResult, type PhotoResultPointer } from "./photo-result.ts";
 
 // Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
@@ -156,12 +156,9 @@ async function guardEdit(user: PaidAiCaller, req: Request): Promise<EditCharge> 
   const monthlyCap = ent.photo_edits_per_month;
   if (monthlyCap <= 0) throw quotaError("AI photo edit", 0, 0, ent.plan);
 
-  // Idempotency soft-dedupe: NOT refunded on failure, deliberately (mirrors
-  // ai-chapters/index.ts guardChapters) — it is a short dedupe guard, not spend.
-  const idem = requiredIdempotencyKey(req);
-  if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
-    throw new HttpError(409, "Duplicate submission — this edit was already started.", "conflict");
-  }
+  // Permanent serving-operation admission now owns replay. A time-window
+  // counter must not prevent recovery or renew an admitted paid operation.
+  requiredIdempotencyKey(req);
   const burstKey = `aiphoto:${orgId}`;
   const monthlyKey = `aiphotomo:${orgId}`;
   if (!(await durableRateLimit(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
@@ -215,7 +212,7 @@ async function refundHelperCharge(charge: HelperCharge): Promise<void> {
 const MAX_IMAGE_B64_CHARS = 12_000_000;
 const ALLOWED_MIMES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 
-const MODEL = (Deno.env.get("GEMINI_IMAGE_MODEL")?.trim() || "gemini-2.5-flash-image");
+const MODEL = (Deno.env.get("GEMINI_IMAGE_MODEL")?.trim() || "gemini-3.1-flash-image");
 // Text+vision model for the suggest / improve_prompt helper modes (NOT the
 // image model — these are plain generateContent calls returning JSON).
 // Text/vision helper model (suggest + improve_prompt). `gemini-2.5-flash` was
@@ -650,7 +647,10 @@ Deno.serve(async (req) => {
       assert(body.image_b64, 400, "image_b64 is required");
       const helperCharge = await guardHelper(user, req);
       try {
-        return json({ suggestions: await suggestEdits(body.image_b64, mime, profile), space_type: space });
+        const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        const step = legacyPhotoStep("photo.suggest");
+        step.provider = "gemini"; step.model = TEXT_MODEL;
+        return json(await completeFundingOperation(funding, { suggestions: await fundedAttempt(funding, "photo.suggest", step, body, textAttemptQuote(step, suggestInstruction(profile), "", 1024, true), () => suggestEdits(body.image_b64!, mime, profile)), space_type: space }));
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
@@ -666,11 +666,14 @@ Deno.serve(async (req) => {
       assertFairHousing(rough, "That idea", promptSpace);
       const helperCharge = await guardHelper(user, req);
       try {
-        const improved = await improvePrompt(rough, space);
+        const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        const step = legacyPhotoStep("photo.improve_prompt");
+        step.provider = "gemini"; step.model = TEXT_MODEL;
+        const improved = await fundedAttempt(funding, "photo.improve_prompt", step, body, textAttemptQuote(step, editPromptInstruction(space), rough, 1024), () => improvePrompt(rough, space));
         // A safe request can still produce an unsafe suggestion. Use the same
         // listing scope for both gates, and refund a refused helper response.
         assertFairHousing(improved, "The suggested edit", promptSpace);
-        return json({ prompt: improved, space_type: space });
+        return json(await completeFundingOperation(funding, { prompt: improved, space_type: space }));
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
@@ -724,8 +727,32 @@ Deno.serve(async (req) => {
     // Everything validated — NOW charge the quota, immediately before the
     // billable provider call. Keep the org it charged for the cost_ledger row,
     // and the plan for the router's RouteContext.
-    const charge = await guardEdit(user, req);
-    const { orgId, plan } = charge;
+    const orgId = await requireEditorRole(user, req, "AI photo edits");
+    const requestKey = requiredIdempotencyKey(req).trim();
+    const resultIdentity = { actorId: user.id, orgId, requestKey, listingId: body.listing_id ?? null };
+    let funding: FundingContext = {actorId:user.id,orgId,requestKey,rpc:(name,args)=>adminClient().rpc(name,args)};
+    try {
+      funding = await fundingContext(user.id, orgId, req, body, funding.rpc);
+    } catch (error) {
+      if (error instanceof SavedFundingResponse || (error instanceof HttpError && error.details?.funding_operation_replay === true)) {
+        const pointer = error instanceof SavedFundingResponse ? error.saved_response as unknown as PhotoResultPointer : undefined;
+        const saved = await restorePhotoResult(adminClient(), resultIdentity, pointer);
+        if (!saved) throw new HttpError(409, "This edit is already underway, but its saved image is not available yet. Retry the same request shortly.", "conflict");
+        const metadata = pointer?.metadata ?? {
+          edit, space_type: space, ...(style ? {style} : {}),
+          disclosure: disclosureFallback(provenanceKind(edit), edit),
+          provenance: { id: null, recorded: false, reason: "The image was recovered before its disclosure receipt was saved. Review the original before publishing." },
+        };
+        if (!pointer) await completeFundingOperation(funding, {kind:"photo_output",bucket:"renders",key:saved.key,mime:saved.mime,metadata});
+        return json({...metadata, image_b64:saved.image_b64, mime:saved.mime, asset_key:saved.key});
+      }
+      throw error;
+    }
+    let charge: EditCharge;
+    try { charge = await guardEdit(user, req); }
+    catch (error) { await abortFundingOperationBeforeDispatch(funding); throw error; }
+    const { plan } = charge;
+    if (charge.orgId !== orgId) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw new HttpError(409,"The generation workspace changed. Please retry.","conflict"); }
 
     // ── ROUTER (flag-gated, additive) ────────────────────────────────────────
     // The fair-housing gate above has already run — contract §4 puts it BEFORE
@@ -755,6 +782,7 @@ Deno.serve(async (req) => {
     } catch (e) {
       // No authorized route means no provider ran; return both quota charges.
       await refundEditCharge(charge);
+      await abortFundingOperationBeforeDispatch(funding);
       throw e;
     }
 
@@ -783,6 +811,7 @@ Deno.serve(async (req) => {
       chain = chain.filter((step) => step.provider === "gemini" && supportsStagingReference(step.model));
       if (chain.length === 0) {
         await refundEditCharge(charge);
+        await abortFundingOperationBeforeDispatch(funding);
         throw new HttpError(503, "Same-room furniture references are unavailable on the active photo route. No edit was sent. Try staging without a reference or wait until the route supports it.", "upstream");
       }
       genInput.extra = { ...genInput.extra, staging_reference_b64: referenceB64, staging_reference_mime: referenceMime };
@@ -793,40 +822,18 @@ Deno.serve(async (req) => {
     // F-E-16). Once runChain RETURNS, a provider ran and produced bytes; the
     // ledger write just below is what records that, and nothing past this
     // point is ever refunded.
-    let attempt: ChainResult<{ b64: string; mime: string; assetKey: string | null }>;
+    let attempt: ChainResult<{ b64: string; mime: string; local: DoneState }>;
     try {
       attempt = await runChain(task, chain, async (step) => {
         const adapter = adapterFor(step.provider);
-        const ref = await adapter.submit(step, genInput);
+        const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), () => adapter.submit(step, genInput));
         const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
         // One download, reused for both the inline answer and the R2 copy.
         const local = await inlineImageResult(step.provider, done);
         const b64 = inlineBase64(local);
         if (!b64) throw new ProviderError(step.provider, "upstream", `${step.provider} returned no image bytes`);
 
-        // persist(): the canonical asset is ours (contract §4).
-        //
-        // Only while the router is ON — with the flag off this function stores
-        // nothing today, and a no-op deploy must not start writing objects (or
-        // spending the latency) behind an operator's back.
-        //
-        // BEST EFFORT even then, and only here: unlike a video, the edited photo
-        // is returned inline in this very response, so the caller already has the
-        // bytes and a storage hiccup must not destroy an edit they paid for.
-        let assetKey: string | null = null;
-        if (routerOn) {
-          try {
-            const key = routedR2Key(orgId, task, local.mime);
-            const bytes = Math.floor(b64.length * 3 / 4) - (b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0);
-            const stored = await persistPhotoOutput(adminClient(), {
-              userId: user.id, orgId, listingId: body.listing_id, key, bytes,
-            }, () => adapter.persist(local, key));
-            assetKey = stored.key;
-          } catch (e) {
-            console.error("ai-photo: persist to R2 failed (edit still returned):", e instanceof Error ? e.message : e);
-          }
-        }
-        return { b64, mime: local.mime, assetKey };
+        return { b64, mime: local.mime, local };
       });
     } catch (e) {
       await refundEditCharge(charge);
@@ -870,18 +877,21 @@ Deno.serve(async (req) => {
       originalAssetId: body.original_asset_id ?? null,
     });
 
-    return json({
-      image_b64: outB64,
-      mime: outMime ?? "image/png",
+    // Persistence is outside the provider chain: a completed edit's storage
+    // failure cannot dispatch or charge another model. Router-off also stores
+    // the exact owned immutable output for loss-of-response recovery.
+    let savedPhoto: {key:string;mime:string};
+    try { savedPhoto = await persistOwnedPhotoResult(adminClient(), resultIdentity, attempt.value.local); }
+    catch { throw new HttpError(503,"The edit was generated but its saved copy could not be confirmed. Retry the same request to recover it.","upstream",{failure_phase:"persistence",retry_existing_job:true}); }
+    const metadata = {
       edit,
       space_type: space,
       ...(style ? { style } : {}),
-      // ADDITIVE, and only while the router is on: with the flag off the body
-      // is byte-for-byte what shipped.
+      // Provider diagnostics remain additive while the router is on. The
+      // owned asset_key below is available on both paths for recovery.
       ...(routerOn
         ? {
           route: { provider: step.provider, model: step.model, route_id: step.route_id },
-          ...(attempt.value.assetKey ? { asset_key: attempt.value.assetKey } : {}),
         }
         : {}),
       // The disclosure this edit carries onto the tour (CA AB 723 / NorthstarMLS).
@@ -891,7 +901,9 @@ Deno.serve(async (req) => {
         recorded: prov.recorded,
         ...(prov.reason ? { reason: prov.reason } : {}),
       },
-    });
+    };
+    await completeFundingOperation(funding, {kind:"photo_output",bucket:"renders",key:savedPhoto.key,mime:savedPhoto.mime,metadata});
+    return json({...metadata,image_b64:outB64,mime:outMime ?? "image/png",asset_key:savedPhoto.key});
   } catch (err) {
     return respondError(err);
   }
@@ -1006,6 +1018,8 @@ async function geminiText(parts: unknown[], wantJson: boolean): Promise<string> 
   const payload = {
     contents: [{ role: "user", parts }],
     generationConfig: {
+      candidateCount: 1,
+      maxOutputTokens: 1024,
       temperature: 0.4,
       ...(wantJson ? { responseMimeType: "application/json" } : {}),
     },

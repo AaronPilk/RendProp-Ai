@@ -113,6 +113,7 @@ function harness() {
     directMask = "https://outputs.example.com/mask.mp4",
     now = 1_000_000,
     submitStatus = 200,
+    rejectedWithReceipt = false,
     submitThrows = false,
     statusValue = "COMPLETED",
     resultStatus = 200,
@@ -120,7 +121,13 @@ function harness() {
     rpcFailure = "",
     cancelDuringPersist = false,
     applied: O | null = null;
+  const liabilities:unknown[]=[];
   const rpc = async (name: string, args: O) => {
+    // Explicit synthetic unlimited sponsorship for legacy provider protocol
+    // cases. Finite paid admission is tested independently below.
+    if (name === "org_has_internal_testing_grant") return {data:true,error:null};
+    if (name === "serving_cost_reserve") return {data:{reserved:true},error:null};
+    if (name === "serving_cost_finish") {liabilities.push(args.p_state);return {data:{finished:true},error:null};}
     const action = name.replace("video_erase_", "");
     events.push("rpc:" + action);
     if (rpcFailure === action) {
@@ -357,7 +364,7 @@ function harness() {
         events.push("provider-submit");
         bodies.push(JSON.parse(String(init.body)));
         if (submitThrows) throw new Error("lost response");
-        return Response.json(ref, { status: submitStatus });
+        return Response.json(submitStatus<400||rejectedWithReceipt?ref:{error:"synthetic rejection"}, { status: submitStatus });
       }
       events.push("provider-get");
       return input.endsWith("/status")
@@ -404,6 +411,7 @@ function harness() {
     status,
     events,
     bodies,
+    liabilities,
     jobs,
     set: (options: O) => {
       if ("provider" in options) provider = options.provider;
@@ -423,6 +431,7 @@ function harness() {
       if ("key" in options) key = options.key;
       if ("now" in options) now = options.now;
       if ("submitStatus" in options) submitStatus = options.submitStatus;
+      if ("rejectedWithReceipt" in options) rejectedWithReceipt = options.rejectedWithReceipt;
       if ("submitThrows" in options) submitThrows = options.submitThrows;
       if ("statusValue" in options) statusValue = options.statusValue;
       if ("resultStatus" in options) resultStatus = options.resultStatus;
@@ -549,8 +558,14 @@ Deno.test("definitive rejection fails/refunds; HTTP5xx remains ambiguous", async
     h.set({ submitStatus: status });
     equal((await h.submit()).status, 202);
     equal(h.jobs.get(id(10))!.state, status < 500 ? "failed" : "uncertain");
+    equal(h.liabilities[0],status<500?"rejected":"uncertain");
     ok(h.jobs.get(id(10))!.allowance_refunded_at);
   }
+});
+Deno.test("a rejection carrying an allocated receipt retains both shared and reflection liability",async()=>{
+  const h=harness();h.set({submitStatus:400,rejectedWithReceipt:true});
+  equal((await h.submit()).status,202);equal(h.jobs.get(id(10))!.state,"uncertain");
+  equal(h.liabilities[0],"uncertain");
 });
 Deno.test("lost database receipt never redispatches; stale unpollable claim refunds", async () => {
   const h = harness();

@@ -54,7 +54,7 @@ async function withFetch(handler: (url: string, init?: RequestInit) => Response,
 // The literals below are copied from the shipped ai-video/index.ts. If this
 // test fails, the flag-off path has stopped being a no-op.
 
-Deno.test("fal reel-clip payload is byte-identical to the shipped call", () => {
+Deno.test("fal reel-clip payload pins bounded frame count and aspect for price authority", () => {
   const body = falInput(step(), {
     task: "video.reel_clip",
     prompt: "PROMPT",
@@ -69,11 +69,13 @@ Deno.test("fal reel-clip payload is byte-identical to the shipped call", () => {
       image_url: "https://r2.example/photo.jpg",
       resolution: "1080p",
       duration: "5",
+      num_frames:121,
+      aspect_ratio:"16:9",
     }),
   );
 });
 
-Deno.test("fal grounded-aerial payload is byte-identical (aspect_ratio + camera_fixed)", () => {
+Deno.test("fal grounded-aerial payload pins bounded frame count with aspect and camera control", () => {
   const body = falInput(step({ task: "video.aerial" }), {
     task: "video.aerial",
     prompt: "PROMPT",
@@ -89,6 +91,7 @@ Deno.test("fal grounded-aerial payload is byte-identical (aspect_ratio + camera_
       image_url: "data:image/jpeg;base64,AAAA",
       resolution: "1080p",
       duration: "6",
+      num_frames:145,
       aspect_ratio: "16:9",
       camera_fixed: false,
     }),
@@ -379,12 +382,12 @@ Deno.test("Sonnet 5 always carries output_config effort:low", () => {
 
 // ── 6. GEMINI ────────────────────────────────────────────────────────────────
 
-Deno.test("gemini 2.5 payload is the shipped one; 3.x pins imageSize to 1K", () => {
+Deno.test("Gemini payload pins one candidate and bounded requested output;3.x pins1K", () => {
   assertEquals(
     JSON.stringify(geminiImagePayload("gemini-2.5-flash-image", "PROMPT", "image/jpeg", "AAAA")),
     JSON.stringify({
       contents: [{ role: "user", parts: [{ text: "PROMPT" }, { inline_data: { mime_type: "image/jpeg", data: "AAAA" } }] }],
-      generationConfig: { responseModalities: ["IMAGE"] },
+      generationConfig: { responseModalities: ["IMAGE"],candidateCount:1,maxOutputTokens:4096 },
     }),
   );
   const v3 = geminiImagePayload("gemini-3.1-flash-image", "PROMPT", "image/jpeg", "AAAA");

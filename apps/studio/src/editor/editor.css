@@ -678,3 +678,6 @@
 .rp-editor-proxy progress {display:block;width:100%;accent-color:var(--editor-accent);}
 
 .rp-editor-proxy video {display:block;width:100%;max-height:320px;margin-top:12px;border-radius:10px;background:#080a0c;}
+
+/* Disabled actions keep readable neutral text instead of fading the whole control. */
+.rp-editor button:disabled { opacity: 1; color: var(--muted); background: var(--surface-subtle); border-color: var(--input-line); box-shadow: none; cursor: not-allowed; }

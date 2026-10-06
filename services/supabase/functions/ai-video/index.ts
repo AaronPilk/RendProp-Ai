@@ -1,3 +1,4 @@
+import { fundingContext, fundedAttempt, textAttemptQuote, type FundingContext } from "../_shared/funded-serving.ts";
 // ai-video — server-side AI video suite on fal.ai (owner-authenticated).
 //
 // ASYNC SUBMIT/STATUS pattern: edge functions can't babysit multi-minute GPU
@@ -67,7 +68,7 @@
 //   fal-ai/bytedance/seedance/v1/pro/fast/image-to-video
 //       duration enum "2".."12" (string), aspect_ratio 21:9|16:9|4:3|1:1|3:4|9:16|auto, resolution 480p|720p|1080p
 //
-// Needs the FAL_KEY function secret + the shared R2 env (R2_PUBLIC_BASE_URL).
+// Needs the FAL_KEY function secret + the shared private R2 signer environment.
 //
 // ── COMPLIANCE (wave 2, W2-B3) ───────────────────────────────────────────────
 //
@@ -206,7 +207,6 @@ import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingS
 import { durableRateLimit, refundRateLimit, chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementFor, entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
-import { publicR2Url } from "../_shared/r2.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
 import { optionalUuid, recordProvenance } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordAppAiCost, recordRoutedAiCost } from "../_shared/ledger.ts";
@@ -219,9 +219,11 @@ import { BUDGETS, fetchBounded, ProviderError } from "../_shared/providers/commo
 import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
 import { falCompletedFailure } from "../_shared/providers/fal.ts";
-import { persistResult, persistedUrl, routedR2Key, putBytes } from "../_shared/providers/common.ts";
-import { R2_BUCKET_RENDERS } from "../_shared/r2.ts";
+import { persistResult, persistedUrl, putBytes, presignGet } from "../_shared/providers/common.ts";
+import { R2_BUCKET_RENDERS, headObject } from "../_shared/r2.ts";
 import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
+import { renewEraseOutput } from "./erase-output.ts";
+import { createRoutedOutput } from "./routed-output.ts";
 import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
 import { probeMP4Video } from "./mp4video.ts";
@@ -938,10 +940,12 @@ const eraseHandler = createEraseHandler({
       const output = await adapter.downloadOutput(url);
       await putBytes(R2_BUCKET_RENDERS, key, output.bytes, output.mime);
     } else await persistResult("fal", { status: "done", result_url: url, mime: "video/mp4" }, key);
-    const publicUrl = publicR2Url(key);
-    assert(publicUrl, 503, "The edited clip could not be made available", "upstream");
-    return publicUrl;
+    return `urn:rendprop:r2:renders:${key}`;
   },
+  completedURL: (job) => renewEraseOutput(job, {
+    sign: (key, expires) => presignGet(R2_BUCKET_RENDERS, key, expires),
+    read: async (args) => await adminClient().rpc("video_erase_get", args),
+  }),
 });
 
 Deno.serve(async (req) => {
@@ -1505,7 +1509,9 @@ Deno.serve(async (req) => {
         );
       }
 
+      const funding = await fundingContext(user.id, orgId, req, body, (name,args)=>adminClient().rpc(name,args));
       const judged = await judgeDrift({
+        funding,
         plan: await driftRoutingPlan(orgId),
         subject: { kind: kind === "aerial" ? "aerial" : "reel", sceneNoun: SCENE_NOUN[space], motionText },
         source,
@@ -1792,6 +1798,49 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
     submitted_at: job.t,
   };
 
+  let output: Awaited<ReturnType<typeof createRoutedOutput>>;
+  const completed = (saved: {key:string;url:string}) => json({
+    status: "completed", video_url: saved.url, provider: job.p, model: job.m,
+    persisted: true, asset_key: saved.key, drift: uncheckedDriftBlock(),
+  });
+  try {
+    const admin = adminClient();
+    let listingId: string | null = job.l ?? null;
+    if (!job.l) {
+      const { data: reservations, error: receiptError } = await admin.from("app_video_cost_reservations")
+        .select("id").eq("org_id", orgId).eq("actor_id", job.usr).eq("provider_request_id", job.i).eq("provider", job.p).eq("model", job.m).limit(1);
+      if (receiptError) throw new Error("Video receipt unavailable");
+      if (reservations?.[0]?.id) {
+        const { data: allowance, error: allowanceError } = await admin.from("app_video_allowance_receipts")
+          .select("listing_id").eq("reservation_id", reservations[0].id).maybeSingle();
+        if (allowanceError) throw new Error("Video scope unavailable");
+        listingId = allowance?.listing_id ?? null;
+      }
+    }
+    output = await createRoutedOutput({orgId,userId:job.usr,listingId,provider:job.p,model:job.m,requestId:job.i,submittedAt:job.t,kind:job.k||"video"}, {
+      find: async keys => {
+        let query = admin.from("private_ai_outputs").select("org_id,user_id,listing_id,bucket,storage_key,bytes")
+          .eq("org_id",orgId).eq("user_id",job.usr).eq("bucket","renders").in("storage_key",keys);
+        query = listingId === null ? query.is("listing_id",null) : query.eq("listing_id",listingId);
+        const {data,error} = await query.limit(2);
+        if(error || !Array.isArray(data)) throw new Error("Saved video receipt unavailable");
+        return data;
+      },
+      register: async (key,bytes) => {
+        const {data,error} = await admin.rpc("register_private_ai_output", {p_user:job.usr,p_org:orgId,p_listing:listingId,p_bucket:"renders",p_key:key,p_bytes:bytes});
+        if(error || data?.ok!==true || data.key!==key) throw new Error("Video output could not be journaled");
+      },
+      head: key => headObject(R2_BUCKET_RENDERS,key),
+      persist: (state,key,beforeWrite) => persistResult(job.p,state,key,beforeWrite,true),
+      sign: persistedUrl,
+    });
+    const saved = await output.existing();
+    if(saved) return completed(saved);
+  } catch {
+    throw new HttpError(503, "The saved video could not be verified. Retry the saved request shortly.", "upstream",
+      {provider:job.p,error_class:"upstream",failure_phase:"persistence",retry_existing_job:true});
+  }
+
   let state: JobState;
   try { state = await adapter.poll(ref); }
   catch (error) {
@@ -1808,56 +1857,16 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
     return json({ status: "processing", provider: job.p, model: job.m, queue_position: null, logs_tail: [] });
   }
 
-  // COMPLETED → persist before we call it a success (contract §4).
-  let assetKey: string | null = null;
-  let videoUrl: string | null = null;
+  // COMPLETED → one immutable journaled object, including concurrent polls and
+  // recovery from a lost write response. Existing output skips provider fetch.
   try {
-    const { data: reservations, error: receiptError } = await adminClient().from("app_video_cost_reservations")
-      .select("id").eq("org_id", orgId).eq("actor_id", job.usr).eq("provider_request_id", job.i).eq("provider", job.p).eq("model", job.m).limit(1);
-    if (receiptError) throw new Error("Video receipt unavailable");
-    let listingId: string | null = job.l ?? null;
-    if (!job.l && reservations?.[0]?.id) {
-      const { data: allowance, error: allowanceError } = await adminClient().from("app_video_allowance_receipts")
-        .select("listing_id").eq("reservation_id", reservations[0].id).maybeSingle();
-      if (allowanceError) throw new Error("Video scope unavailable");
-      listingId = allowance?.listing_id ?? null;
-    }
-    const stored = await persistResult(job.p, state, routedR2Key(orgId, job.k || "video", state.mime), async intent => {
-      const { data, error } = await adminClient().rpc("register_private_ai_output", {
-        p_user: job.usr, p_org: orgId, p_listing: listingId, p_bucket: "renders", p_key: intent.key, p_bytes: intent.bytes,
-      });
-      if (error || data?.ok !== true || data.key !== intent.key) throw new Error("Video output could not be journaled");
-    });
-    assetKey = stored.key;
-    videoUrl = persistedUrl(stored.key);
+    return completed(await output.complete(state));
   } catch (e) {
     console.error("ai-video result persistence failed", { provider: job.p, model: job.m, error_class: "upstream" });
     throw new HttpError(503, "The clip was generated but could not be stored yet. Retry the saved request shortly.", "upstream",
       { provider: job.p, error_class: "upstream", failure_phase: "persistence", retry_existing_job: true });
   }
 
-  if (!videoUrl) {
-    // The journaled R2 copy exists, but its public base URL may be unset.
-    // A signed vendor URL must never leave this function.
-    const looksSigned = /[?&](x-amz-|token=|signature=|sig=|expires=)/i.test(state.result_url);
-    if (looksSigned) {
-      throw new HttpError(503, "The clip was generated but could not be stored yet. Retry the saved request shortly.", "upstream",
-        { provider: job.p, error_class: "upstream", failure_phase: "persistence", retry_existing_job: true });
-    }
-    videoUrl = state.result_url;
-  }
-
-  return json({
-    status: "completed",
-    video_url: videoUrl,
-    provider: job.p,
-    model: job.m,
-    persisted: assetKey !== null,
-    ...(assetKey ? { asset_key: assetKey } : {}),
-    // Same additive quality-gate block as the legacy path above, for the same
-    // reason: persisted is not the same as approved.
-    drift: uncheckedDriftBlock(),
-  });
 }
 
 // ── The quality gate: validation, routing, and the judge call ────────────────
@@ -2139,6 +2148,7 @@ async function judgeDrift(args: {
   subject: { kind: "reel" | "aerial"; sceneNoun: string; motionText: string | null };
   source: DriftImage;
   frames: DriftFrame[];
+  funding: FundingContext;
 }): Promise<JudgeOutcome> {
   const sourceHash = await driftLineageKey(args.source.b64);
   const rubric = driftRubric(args.subject);
@@ -2153,7 +2163,7 @@ async function judgeDrift(args: {
 
   let primary: ChainResult<string>;
   try {
-    primary = await runChain(DRIFT_TASK, steps, (step) => callJudgeStep(step, rubric, parts));
+    primary = await runChain(DRIFT_TASK, steps, (step) => fundedAttempt(args.funding, `qc.initial:${steps.indexOf(step)}`, step, parts, textAttemptQuote(step, rubric, "", DRIFT_MAX_TOKENS, true), () => callJudgeStep(step, rubric, parts)));
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
     console.error("ai-video: the drift judge could not be reached:", why);
@@ -2182,7 +2192,7 @@ async function judgeDrift(args: {
     const rest = at >= 0 ? steps.slice(at + 1) : [];
     if (rest.length > 0) {
       try {
-        const second = await runChain(DRIFT_TASK, rest, (s) => callJudgeStep(s, rubric, parts));
+        const second = await runChain(DRIFT_TASK, rest, (s) => fundedAttempt(args.funding, `qc.escalation:${steps.indexOf(s)}`, s, parts, textAttemptQuote(s, rubric, "", DRIFT_MAX_TOKENS, true), () => callJudgeStep(s, rubric, parts)));
         calls.push({ step: second.step, escalated: true });
         verdict = parseDriftVerdict(second.value);
         step = second.step;
@@ -2371,17 +2381,16 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
   if (data.bucket !== "renders") {
     throw new HttpError(
       400,
-      `Asset ${assetId} is in the private "${data.bucket ?? "uploads"}" bucket, so fal cannot ` +
-        `fetch it. Upload it to the public renders bucket first (POST /uploads with ` +
+      `Asset ${assetId} is in the "${data.bucket ?? "uploads"}" bucket. Upload this provider input to ` +
+        `the renders bucket first (POST /uploads with ` +
         `role:"render"), or pass image_b64 where the route supports it.`,
     );
   }
-  const url = publicR2Url(data.storage_key as string);
+  const url = await presignGet(R2_BUCKET_RENDERS, data.storage_key as string, 600);
   if (!url) {
     throw new HttpError(
       500,
-      "R2_PUBLIC_BASE_URL is not configured on the server, so no public URL can be built " +
-        "for this asset. Set the R2_PUBLIC_BASE_URL function secret to the renders bucket's public base.",
+      "A private download link could not be created for this asset. Please retry.",
       "internal",
     );
   }

@@ -47,11 +47,18 @@ for (const [label, html] of [["Privacy", privacy], ["Terms", terms]]) {
   expect(html.includes("#7c3aed") && html.includes("#9b6dff"), `${label}: existing light/dark brand accents`);
   expect(html.includes('<html lang="en">') && html.includes('name="viewport"'), `${label}: language and mobile viewport`);
   expect(html.includes('href="/support"') && html.includes('mailto:aaron@pilk.ai'), `${label}: support and contact preserved`);
-  expect(html.includes("Effective October 5, 2026"), `${label}: proposed notice revision date`);
+  expect(html.includes("Effective October 6, 2026"), `${label}: proposed notice revision date`);
   expect(html.includes("RendProp LLC") && html.includes("855 Central Avenue, Saint Petersburg, FL 33701"), `${label}: owner-supplied legal entity and mailing address`);
   expect(!/<script\b/i.test(html), `${label}: no third-party scripts or telemetry added`);
 }
 expect(t.includes("without your written consent") && p.includes("without your written consent"), "Written-consent commitment retained");
+expect(t.includes("90-day grace period") && t.includes("advance notices") && t.includes("download your content"), "Prospective hosting grace preserves notice and download opportunity");
+expect(t.includes("Existing testers retain") && p.includes("Existing testers retain"), "Existing tester hosting arrangements remain separate");
+expect(!t.includes("share links you have already sent keep working") && !p.includes("Your content remains until you request deletion"), "No new permanent hosting promise");
+expect(t.includes("at least 18 years old") && p.includes("adults aged 18 or older"), "Adult business audience matches documented AI provider age restrictions");
+expect(p.includes("Settings → Download account data") && p.includes("scope and omissions") && p.includes("separate download controls"), "Account JSON export and binary-media limits are stated");
+expect(p.includes("Provider copies can remain") && p.includes("paid and unpaid processing") && p.includes("video results do not expire by default"), "Provider retention is not inferred from Rendprop URL expiry");
+expect(!p.includes("They process data solely"), "No unsupported universal processor-use guarantee");
 expect(t.includes("Starter and Pro, billed monthly") && t.includes("Team, billed monthly"), "Payment terms not rewritten");
 expect(t.includes("by confirming an Apple subscription") && t.includes("Downloading or signing in does not activate a trial"), "Trial requires eligible Apple subscription activation");
 expect(t.includes("One introductory") || t.includes("one introductory offer per subscription group"), "Trial eligibility remains Apple subscription-group scoped");

@@ -1,3 +1,4 @@
+import { fundedAttempt, type FundingContext } from "../_shared/funded-serving.ts";
 import type { StudioContext } from "./context.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
@@ -36,7 +37,12 @@ export function presenterProduction(req?: Request, context?: StudioContext): Pre
     sign: (key, seconds) => presignGet(R2_BUCKET_UPLOADS, key, seconds),
     fetch: (url, init) => fetch(url, init),
     estimate: estimateHfMotionTransfer,
-    submit: submitHfMotionTransfer,
+    async submit(input, job) {
+      assert(job && typeof job.actor_id === "string" && typeof job.org_id === "string" && typeof job.id === "string", 503, "Presenter dispatch has no verified workspace budget.");
+      const funding: FundingContext = {actorId:job.actor_id,orgId:job.org_id,requestKey:job.id,rpc:(name,args)=>admin.rpc(name,args)};
+      // Public estimator/config figures are not a binding upper-price contract.
+      return await fundedAttempt(funding, "presenter.motion", {provider:"higgsfield",model:"motion-transfer"}, input, null, () => submitHfMotionTransfer(input));
+    },
     poll: pollHfMotionTransfer,
     cancel: cancelHfMotionTransfer,
     outputHosts,

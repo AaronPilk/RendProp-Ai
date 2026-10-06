@@ -77,3 +77,11 @@ TURNSTILE_SITE_KEY = "0x4AAAAAAErjjtep0GvXjQxs"
 
 [observability]
 enabled = true
+
+# Private media delivery bindings. These do not expose either bucket publicly.
+[[r2_buckets]]
+binding = "MEDIA_RENDERS"
+bucket_name = "rendprop-renders"
+[[r2_buckets]]
+binding = "MEDIA_UPLOADS"
+bucket_name = "rendprop-uploads"

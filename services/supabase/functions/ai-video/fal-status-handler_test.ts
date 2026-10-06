@@ -150,8 +150,10 @@ Deno.test("actual routed status maps poll failure to sanitized recoverable HTTP 
     import {HttpError,json,respondError} from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
     import {asHttpError} from ${JSON.stringify(new URL("../_shared/providers/chain.ts",import.meta.url).href)};
     import {ProviderError} from ${JSON.stringify(new URL("../_shared/providers/common.ts",import.meta.url).href)};
+    import {createRoutedOutput} from ${JSON.stringify(new URL("./routed-output.ts",import.meta.url).href)};
     type RouterJobToken=any;type JobRef=any;type JobState=any;
     const adapterFor=()=>({poll:async()=>{throw new ProviderError("fal","rate_limit",${JSON.stringify(privateMarker)},429);}});
+    const adminClient=()=>({from:()=>{const q:any={select:()=>q,eq:()=>q,is:()=>q,in:()=>q,limit:async()=>({data:[],error:null})};return q;}});
     const routedR2Key=()=>{throw Error("No persist after poll failure");},persistedUrl=routedR2Key,uncheckedDriftBlock=routedR2Key;
     async ${functionBody(source,"routedStatus")}
     export async function run(){try{return await routedStatus("synthetic-org",{p:"fal",m:"synthetic-model",i:"id",u:"synthetic-url",t:"now"});}catch(e){return respondError(e);}}
@@ -172,11 +174,15 @@ Deno.test("actual routed signed-result persistence failure retries the same comp
   const module=await import(encode(`
     import {HttpError,json,respondError} from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
     import {asHttpError} from ${JSON.stringify(new URL("../_shared/providers/chain.ts",import.meta.url).href)};
+    import {createRoutedOutput} from ${JSON.stringify(new URL("./routed-output.ts",import.meta.url).href)};
     type RouterJobToken=any;type JobRef=any;type JobState=any;
     export const counts={polls:0,persists:0,submits:0};
     const adapterFor=()=>({poll:async()=>{counts.polls++;return {status:"done",mime:"video/mp4",result_url:"https://private.invalid/clip?token=${privateMarker}"};}});
-    const adminClient=()=>({from:()=>{const q:any={select:()=>q,eq:()=>q,limit:async()=>({data:[],error:null})};return q;},rpc:async(_n:any,args:any)=>({data:{ok:true,key:args.p_key},error:null})});
-    const persistResult=async(_provider:any,_state:any,key:any,beforeWrite:any)=>{counts.persists++;await beforeWrite({key,bytes:10});if(counts.persists===1)throw Error(${JSON.stringify(privateMarker)});return {key,bytes:10};};
+    let row:any=null,stored=false;
+    const adminClient=()=>({from:(table:string)=>{const q:any={select:()=>q,eq:()=>q,is:()=>q,in:()=>q,limit:async()=>({data:table==="private_ai_outputs"&&row?[row]:[],error:null})};return q;},rpc:async(_n:any,args:any)=>{row={org_id:args.p_org,user_id:args.p_user,listing_id:args.p_listing,bucket:args.p_bucket,storage_key:args.p_key,bytes:args.p_bytes};return{data:{ok:true,key:args.p_key},error:null};}});
+    const R2_BUCKET_RENDERS="rendprop-renders";
+    const headObject=async()=>({exists:stored,bytes:stored?10:null});
+    const persistResult=async(_provider:any,_state:any,key:any,beforeWrite:any)=>{counts.persists++;await beforeWrite({key,bytes:10});if(counts.persists===1)throw Error(${JSON.stringify(privateMarker)});stored=true;return {key,bytes:10};};
     const routedR2Key=()=>"synthetic-destination",persistedUrl=()=>"https://public.invalid/retained.mp4",uncheckedDriftBlock=()=>({publishable:false});
     async ${functionBody(source,"routedStatus")}
     export async function run(){try{return await routedStatus("synthetic-org",{p:"fal",m:"synthetic-model",i:"same-job",u:"synthetic-url",t:"now",usr:"synthetic-actor"});}catch(e){return respondError(e);}}
@@ -265,17 +271,18 @@ async function routedJournalFixture(skipRefusal=false){
   const source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
   let method=functionBody(source,"routedStatus");
   if(skipRefusal){
-    const gate='if (error || data?.ok !== true || data.key !== intent.key) throw new Error("Video output could not be journaled");';
+    const gate='if(error || data?.ok!==true || data.key!==key) throw new Error("Video output could not be journaled");';
     assertEquals(method.split(gate).length,2);method=method.replace(gate,"");
   }
   return await import(encode(`
     // ${crypto.randomUUID()}
     import {HttpError,json,respondError} from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
     import {asHttpError} from ${JSON.stringify(new URL("../_shared/providers/chain.ts",import.meta.url).href)};
+    import {createRoutedOutput} from ${JSON.stringify(new URL("./routed-output.ts",import.meta.url).href)};
     type RouterJobToken=any;type JobRef=any;type JobState=any;
     export const state:any={puts:0,rpc:[]};
     const adapterFor=()=>({poll:async()=>({status:"done",mime:"video/mp4",result_url:"https://cdn.invalid/complete.mp4"})});
-    const adminClient=()=>({from:()=>{const q:any={select:()=>q,eq:()=>q,limit:async()=>({data:[],error:null})};return q;},rpc:async(n:any,args:any)=>{state.rpc.push([n,args]);return {data:null,error:{message:"deleted-scope"}};}});
+    const adminClient=()=>({from:()=>{const q:any={select:()=>q,eq:()=>q,is:()=>q,in:()=>q,limit:async()=>({data:[],error:null})};return q;},rpc:async(n:any,args:any)=>{state.rpc.push([n,args]);return {data:null,error:{message:"deleted-scope"}};}});
     const persistResult=async(_provider:any,_state:any,key:any,beforeWrite:any)=>{await beforeWrite({key,bytes:123});state.puts++;return {key,bytes:123};};
     const routedR2Key=()=>"ai-router/scoped-org/reel/immutable.mp4",persistedUrl=()=>"https://public.invalid/saved.mp4",uncheckedDriftBlock=()=>({publishable:false});
     async ${method}
@@ -289,7 +296,7 @@ async function assertRoutedJournalDenial(skipRefusal=false){
     assertEquals(response.status,503,"journal refusal must retain the saved job without an object write");
     assertEquals(body.retry_existing_job,true);
     assertEquals(m.state.puts,0,"journal refusal must retain the saved job without an object write");
-    assertEquals(m.state.rpc,[["register_private_ai_output",{p_user:"signed-actor",p_org:"scoped-org",p_listing:"fa300505-0000-4000-8000-000000000011",p_bucket:"renders",p_key:"ai-router/scoped-org/reel/immutable.mp4",p_bytes:123}]]);
+    assertEquals(m.state.rpc.length,1);const [name,args]=m.state.rpc[0];assertEquals(name,"register_private_ai_output");assert(/^ai-router\/scoped-org\/completed-video\/[a-f0-9]{64}\.mp4$/.test(args.p_key));assertEquals({...args,p_key:undefined},{p_user:"signed-actor",p_org:"scoped-org",p_listing:"fa300505-0000-4000-8000-000000000011",p_bucket:"renders",p_key:undefined,p_bytes:123});
   }finally{console.error=before;}
 }
 Deno.test("actual routed status binds signed admission scope and fails closed before PUT on journal refusal",async()=>{await assertRoutedJournalDenial();});

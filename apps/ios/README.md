@@ -6,6 +6,19 @@ workflows, and connects a named account's workspace with
 [Studio](https://studio.rendprop.com/). The normal build uses the live Supabase
 backend; this is no longer an offline-only prototype.
 
+The [6 October candidate](../../docs/handoff/LAUNCH-READINESS-20261006.md) targets
+internal **1.0.4 (45)**. It includes the full beta/debugging stack after 44,
+account-owned profile sharing, changed-field listing saves, retained AI job
+recovery, private media downloads and **Settings → Download account data**.
+The export is an account-owned JSON inventory with stated omissions; photo and
+video binaries still use their separate downloads. See the
+[export contract](../../docs/handoff/ACCOUNT-DATA-EXPORT-CONTRACT-20261006.md) and
+[52-report reconciliation](../../docs/handoff/LAUNCH-BETA-20261006.md).
+Signed archive, final CI, deployed contracts and Apple processing are separate
+release checks. **44 is still available until the build-45 receipt exists.**
+Camera, AR, Files/Photos, real purchases and provider-output quality need phone
+acceptance. Spatial and direct Bria experiments remain in the internal lab.
+
 The [Measurements addition](../../docs/floor-plan-measurements.md) is implemented
 in the signed **1.0.4 (44)** source `9d27fb5`: named room dimensions in
 feet/inches or metres, irregular wall outlines, categorized area worksheets,

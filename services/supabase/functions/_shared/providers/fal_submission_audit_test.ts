@@ -81,6 +81,9 @@ function deps(
   return {
     calls,
     rpc: (name: string, args: Record<string, unknown>) => {
+      if(name==="serving_cost_reserve")return Promise.resolve({data:{reserved:true},error:null});
+      if(name==="serving_cost_finish")return Promise.resolve({data:{finished:true},error:null});
+      if(name==="org_has_internal_testing_grant")return Promise.resolve({data:true,error:null});
       calls.push(name);
       if(name==="app_video_cost_reserve_v2"){
         assertEquals(args.p_monthly_window_start,"2026-10-01T00:00:00.123456Z");

@@ -42,7 +42,7 @@ the logs to say so.
 
 | Env var | Required? | Effect |
 |---|---|---|
-| `TURNSTILE_SECRET_KEY` | **yes**, unless `TURNSTILE_OPTIONAL=1` | Cloudflare Turnstile secret key. When set, every `POST /leads` must carry a valid `turnstile_token` (from the widget's site key on the tour end-card) or it is rejected. |
+| `TURNSTILE_SECRET_KEY` | **yes**, unless `TURNSTILE_OPTIONAL=1` | Cloudflare Turnstile secret key. Every verified token must return `success: true`, the exact hostname `rendprop.com`, and the action `listing-inquiry`. The tour widget sends that action; another hostname or surface cannot authorize an inquiry. Verification has a 10-second deadline. |
 | `TURNSTILE_OPTIONAL` | no | Set to the literal string `"1"` to **knowingly** accept running with no bot protection when `TURNSTILE_SECRET_KEY` is unset — a local dev box with no Cloudflare account, or a production deploy that has deliberately chosen to launch without Turnstile. Any other value (`"true"`, `"yes"`, unset) does **not** opt out. |
 
 Whichever path is taken when the secret is missing — rejected, or allowed via

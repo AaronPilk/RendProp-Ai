@@ -285,6 +285,10 @@ struct SettingsView: View {
                 LabeledContent("Account", value: accountStatusLabel)
                 if serverAccountsEnabled {
                     if auth.isIdentified {
+                        NavigationLink { AccountDataExportView() } label: {
+                            Label("Download account data", systemImage: "square.and.arrow.down")
+                        }
+                        .accessibilityIdentifier("settings.accountExport")
                         Button("Sign out", role: .destructive) { showSignOutConfirm = true }
                     } else {
                         Button {
@@ -423,7 +427,7 @@ struct SettingsView: View {
                 Text("Your data")
             } footer: {
                 Text(aiProcessingFooter + "\n\n" + (serverAccountsEnabled
-                     ? "Delete account removes your Rendprop account, published tours and leads from our servers, then clears this phone. Clear data only wipes this phone — your account and published tours stay as they are."
+                     ? "Delete account requests removal of your account and private workspaces. Shared workspace content can remain for other members, and storage cleanup may finish later. Clear data only wipes this phone — your account and published tours stay as they are."
                      : "Clear data removes every \(localItemNoun), video, tour and card stored on this phone."))
             }
 
@@ -897,6 +901,16 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func usageRows(_ usage: UsageSummary) -> some View {
+        if let hosting = usage.hostingRetention {
+            if let deadline = hosting.deadline {
+                LabeledContent(hosting.hostingAvailable ? "Public hosting ends" : "Public hosting ended", value: deadline.formatted(date: .abbreviated, time: .omitted))
+                Text("New subscriptions include 90 days of hosting after expiry. Renew to extend hosting. Download original files from Library and your account JSON from Account data.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            } else {
+                Text(hosting.protected ? "Your verified testing hosting remains available under its existing terms." : "Your existing hosting terms are preserved.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+        }
         if let e = usage.entitlements {
             LabeledContent("Plan", value: Self.planLabel(e))
             if e.plan.lowercased() == "trial", let ends = e.trialEndsAt, ends > Date() {

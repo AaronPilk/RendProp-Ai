@@ -40,6 +40,7 @@ const auth: StudioAuth = {
   async signInWithOAuth() { throw new Error("No provider operation is permitted in this fixture"); },
   async signOut() { callbacks("SIGNED_OUT", null); return { error: null }; },
 };
+const publicCards = new Map<string, Record<string,string>>();
 const fetcher: typeof fetch = async (input, options) => {
   const url = new URL(String(input));
   const org = new Headers(options?.headers).get("X-Org-Id") ?? ORG;
@@ -80,6 +81,12 @@ const fetcher: typeof fetch = async (input, options) => {
     return Response.json([ORG, OTHER].map((id) => ({ user_id: actor, org_id: id, role: "owner",
       orgs: { id, name: id === ORG ? "Fixture business" : "Second business", space_type: "real_estate", deleted_at: null } })), { headers: { "Content-Range": "0-1/2" } });
   }
+  if (url.pathname === "/functions/v1/me/card") {
+    const card = publicCards.get(actor) ?? {};
+    if (options?.method === "PATCH") { const b = JSON.parse(String(options.body)); for (const [key, value] of Object.entries(b.changes)) { const e = b.expected[key]; if (Object.hasOwn(card,key) !== e.present || e.present && card[key] !== e.value) return Response.json({error:"Personal card changed"},{status:409}); if(value===null) delete card[key]; else card[key]=String(value); } publicCards.set(actor,card); }
+    const {space_type,...public_card}=card; return Response.json({ok:true,user_id:actor,space_type:space_type??null,public_card:publicCards.has(actor)?public_card:null});
+  }
+  if (url.pathname === "/functions/v1/me/portfolio") return Response.json({ok:true,user_id:actor,org_id:org,id:null,revision:0,listing_ids:[],portfolio_url:null});
   if (url.pathname === "/functions/v1/me") return Response.json({
     user: { id: actor, name: actor === A ? "  " : "Fixture B", email: "fixture@example.invalid", avatar_url: null },
     org: { id: org, name: org === ORG ? "Fixture business" : "Second business", handle: null, space_type: "real_estate",brand_kit:{name:"Jamie Agent",title:"Real estate agent",accent:"#7C3AED"} },

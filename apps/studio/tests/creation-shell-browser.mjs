@@ -27,7 +27,7 @@ try {
   await expect(nav("Create")).toHaveAttribute("aria-current","page");
   await expect(page.getByLabel("Property reel",{exact:true})).toHaveValue("");
   await expect(prompt()).toBeVisible();
-  assert.deepEqual(await page.getByRole("navigation",{name:"Studio navigation"}).getByRole("button").allTextContents(),["CreateCreate","My homeshomes","MediaMedia","BusinessBusiness"]);
+  assert.deepEqual(await page.getByRole("navigation",{name:"Studio navigation"}).getByRole("button").allTextContents(),["CreateCreate","My Listingslistings","MediaMedia","BusinessBusiness"]);
   receipt.checks.push("Create is the default with four primary destinations; an account with no properties reaches the real local editor immediately");
 
   await page.goto(`${origin}/tests/fixtures/connected.html`);

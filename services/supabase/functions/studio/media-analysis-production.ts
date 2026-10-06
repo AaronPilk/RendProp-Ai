@@ -1,3 +1,4 @@
+import { beginFundingOperation, fundedAttempt, TARIFF_VERSION, type FundingContext } from "../_shared/funded-serving.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import { assertMediaVisible } from "../_shared/media-source-access.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
@@ -162,6 +163,7 @@ export async function loadAnalysisProject(row: ProjectMediaRow, signal: AbortSig
 
 export function mediaAnalysisProduction(context: StudioContext): MediaAnalysisDependencies {
   const { admin, db, userId, orgId } = context;
+  let requestKey: string | null = null;
   const limit = () => Number(Deno.env.get("STUDIO_MEDIA_ANALYSIS_MAX_ESTIMATED_CENTS") ?? "0");
   const enabled = () => Deno.env.get("STUDIO_MEDIA_ANALYSIS_ENABLED") === "true" && Number.isFinite(limit()) && limit() > 0 && limit() <= 10;
   const writable = editPlanProduction(context).writable;
@@ -207,6 +209,7 @@ export function mediaAnalysisProduction(context: StudioContext): MediaAnalysisDe
       return { bytes, duration: analysisMovieDuration(bytes) };
     },
     async reserve(id) {
+      requestKey = id;
       const bump = async (key: string, max: number, seconds: number) => {
         const value = await admin.rpc("bump_rate", { p_key: key, p_max: max, p_window_seconds: seconds, p_cost: 1 });
         assert(!value.error, 503, "Speech analysis limits could not be checked."); return value.data === true;
@@ -216,7 +219,14 @@ export function mediaAnalysisProduction(context: StudioContext): MediaAnalysisDe
       assert(await bump("media-analysis:global", 100, 86400), 429, "Today's speech analysis allowance has been reached.");
       assert(await bump(`media-analysis:request:${orgId}:${userId}:${id}`, 1, 86400), 409, "This analysis was already submitted. No automatic retry was started.");
     },
-    transcribe: transcribeAnalysis,
+    async transcribe(step, bytes, signal) {
+      assert(requestKey, 503, "The speech request has no budget reservation.");
+      const funding: FundingContext = {actorId:userId,orgId,requestKey,rpc:(name,args)=>admin.rpc(name,args)};
+      const seconds = analysisMovieDuration(bytes);
+      await beginFundingOperation(funding, "stt.captions", {bytes:bytes.length,seconds});
+      const quote = step.provider === "openai" && step.model === "whisper-1" ? {cents: Math.ceil(seconds) / 60 * .6,version:TARIFF_VERSION} : null;
+      return await fundedAttempt(funding, "stt.captions", step, {bytes:bytes.length,seconds}, quote, () => transcribeAnalysis(step,bytes,signal));
+    },
     async record(step, seconds, outcome) {
       await recordRoutedAiCost(admin, { orgId, feature: "speech_captions", step, seconds, meta: { kind: "studio_media_analysis", attempts: 1, outcome, price_estimated: true } });
     },

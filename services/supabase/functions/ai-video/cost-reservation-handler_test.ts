@@ -34,9 +34,9 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     await Deno.readTextFile(new URL("./cost-reservation.ts", import.meta.url)),
   );
   if (dropRejectionEvidence) {
-    const original = "const rejected = details?.dispatch_rejected === true";
+    const original = "const rejected = (!dispatched || details?.dispatch_rejected === true)";
     assert(helper.includes(original), "Actual rejection classification anchor changed");
-    helper = helper.replace(original, "const rejected = false && details?.dispatch_rejected === true");
+    helper = helper.replace(original, "const rejected = false && (!dispatched || details?.dispatch_rejected === true)");
   }
   if (reserveLate) {
     const start = helper.indexOf("  let reservation;");
@@ -52,6 +52,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
   }
   const helperUrl = encode(`
     import {HttpError,throwRpc} from ${JSON.stringify(http)};
+    import {fundedAttempt,TARIFF_VERSION} from ${JSON.stringify(new URL("../_shared/funded-serving.ts",import.meta.url).href)};
     type RoutedUsage=any;type RouteStep=any;type ChainResult<T>={value:T,step:any};
     export ${functionBody(ledger, "unitsForStep")}
     ${helper}
@@ -159,6 +160,9 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     const recordAppAiCost=recordRoutedAiCost;
     const adapterFor=(provider:string)=>({submit:async(step:any,input:any)=>{state.events.push("POST");state.posts.push({provider,step,input});if(state.options.submitReject)throw new HttpError(502,"The media service could not accept this request.","upstream",{provider_status:state.options.submitReject,error_class:"upstream",dispatch_rejected:true});if(state.options.submitThrow)throw Error("private-provider-body-marker");return {id:state.options.badReceipt?"":"accepted-provider-id",provider};}});
     const adminClient=()=>({rpc:async(name:string,args:any)=>{
+      if(name==="serving_cost_reserve")return {data:{reserved:true},error:null};
+      if(name==="serving_cost_finish")return {data:{finished:true},error:null};
+      if(name==="org_has_internal_testing_grant")return {data:true,error:null};
       state.events.push(name==="app_video_cost_reserve_v2"?"reserve":name==="app_video_cost_release_rejected"?"release":"settle");state.rpcs.push({name,args});
       if(name==="app_video_cost_reserve_v2"){
         if(state.admitted.has(args.p_key))return {data:null,error:{message:"RP409: This video request was already admitted"}};

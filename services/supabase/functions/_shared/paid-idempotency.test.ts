@@ -5,6 +5,7 @@ import {
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { HttpError } from "./http.ts";
 import { requiredIdempotencyKey } from "./idempotency.ts";
+import { fundingContext } from "./funded-serving.ts";
 
 Deno.test("paid key validation preserves native UUID/hash keys and rejects absent or malformed keys", () => {
   for (
@@ -105,13 +106,26 @@ async function loadGuard(endpoint: string, name: string, mutant = false) {
   const user = body.includes("userId: string")
     ? "synthetic-user"
     : { id: "synthetic-user", is_anonymous: false };
+  const operationSeen=new Set<string>();
   return {
     calls: module.calls as string[],
-    run: (key?: string) => {
+    run: async (key?: string) => {
       const req = new Request("https://fixture.invalid/paid", {
         method: "POST",
         headers: key === undefined ? {} : { "idempotency-key": key },
       });
+      if(endpoint==="ai-photo"||endpoint==="ai-chapters"){
+        // These handlers now admit the permanent operation before quota. The
+        // removed 120s counter must not block saved-result recovery.
+        requiredIdempotencyKey(req);
+        await fundingContext("synthetic-user","synthetic-org",req,{},async(rpc,args)=>{
+          assertEquals(rpc,"serving_operation_begin");
+          const operation="idem-operation:"+args.p_key;
+          module.calls.push(operation);
+          if(operationSeen.has(operation))return {data:null,error:{message:"RP409: This operation already started"}};
+          operationSeen.add(operation);return {data:{begun:true},error:null};
+        });
+      }
       return module[name](
         user,
         req,

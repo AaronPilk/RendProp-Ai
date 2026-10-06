@@ -140,6 +140,23 @@ export function publicR2Url(key: string | null | undefined): string | null {
   return `${R2_PUBLIC_BASE_URL}/${encodeKey(key)}`;
 }
 
+/** Roll out only after the bound Worker passes byte/Range/legacy-ingress checks.
+ * This switch preserves old clients while deploying the replacement boundary. */
+export const PUBLIC_MEDIA_PROXY = trimmedEnv("PUBLIC_MEDIA_DELIVERY") === "proxy-v1";
+const MEDIA_BASE = (trimmedEnv("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
+export function publishedR2Url(slug: string, key: string | null | undefined): string | null {
+  if (!key) return null;
+  return PUBLIC_MEDIA_PROXY ? `${MEDIA_BASE}/media/${encodeURIComponent(slug)}/r2/${encodeURIComponent(key)}` : publicR2Url(key);
+}
+export function publishedBrandLogoUrl(key: string): string | null {
+  return PUBLIC_MEDIA_PROXY ? `${MEDIA_BASE}/media-brand/${encodeKey(key)}` : publicR2Url(key);
+}
+export function publishedStreamUrl(slug: string, uid: string | null | undefined): string | null {
+  if (!uid) return null;
+  if (PUBLIC_MEDIA_PROXY && trimmedEnv("STREAM_PRIVATE_PLAYBACK") !== "1") return null;
+  return PUBLIC_MEDIA_PROXY ? `${MEDIA_BASE}/media/${encodeURIComponent(slug)}/stream/${encodeURIComponent(uid)}/manifest%2Fvideo.m3u8` : streamHlsUrl(uid);
+}
+
 /** Cloudflare Stream HLS manifest URL for a Stream UID, or null if not configured. */
 export function streamHlsUrl(streamUid: string | null | undefined): string | null {
   if (!streamUid || !STREAM_CUSTOMER_CODE) return null;

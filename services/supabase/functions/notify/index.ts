@@ -45,6 +45,7 @@ import * as apns from "./apns.ts";
 import * as email from "./email.ts";
 import { deliverEmail, deliverPush, type DeviceRow, type OutboxRow } from "./deliver.ts";
 import { prepareClientMessage } from "./client-delivery.ts";
+import { hostingNoticeCurrent } from "../_shared/hosting-retention.ts";
 
 /** Same default as functions/me: the routed domain, never rendprop.app. */
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -183,6 +184,7 @@ async function handleDrain(limit: number): Promise<Response> {
       const clientMessage=["client_lead_received", "client_recipient_verification"].includes(row.category) && email.configured() ? await prepareClientMessage(admin,row) : undefined;
       // null means SQL already canceled/expired this claim. Do not revive it.
       if(clientMessage===null){skipped++;continue;}
+      if(!await hostingNoticeCurrent(admin,row)){skipped++;continue;}
       const outcome = row.channel === "push"
         ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE)
         // to_email wins. An invitee has no profile to look an address up

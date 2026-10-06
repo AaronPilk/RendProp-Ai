@@ -12,7 +12,7 @@ out.mkdir(parents=True, exist_ok=True)
 names = ['RendpropApp.swift', 'DeepLink/DeepLink.swift', 'Models/Listing.swift', 'Models/ListingClientContact.swift',
          'Models/Money.swift', 'Models/ProductionGuidance.swift', 'Purchases/PaywallHost.swift',
          'Screens/FlythroughDetailView.swift', 'Screens/NewListingView.swift', 'Screens/OnboardingView.swift',
-         'Screens/PlayerWebView.swift', 'Screens/ReviewSubmitView.swift', 'Screens/HomeListingsView.swift',
+         'Screens/PlayerWebView.swift', 'Screens/ReviewSubmitView.swift', 'Screens/HomeListingsView.swift', 'Screens/CloudMediaView.swift',
          'Networking/LiveAPIClient.swift', 'Networking/WorkspaceSync.swift', 'Team/TeamView.swift',
          'Upload/UploadManager.swift', 'Purchases/PurchaseManager.swift']
 paths = [root/'apps/ios/Rendprop'/name for name in names]
@@ -59,6 +59,11 @@ assert 'l.cloudArchived = dto.status == "archived"' in src['Networking/LiveAPICl
 assert '"beds": number(dto.beds.map(Double.init))' in src['Networking/LiveAPIClient.swift']
 assert 'current.cloudArchived = receipt.cloudArchived' in src['Models/Listing.swift']
 assert 'sandbox_testing_required' in block(src['Purchases/PurchaseManager.swift'], 'private func sync(')
+floor_view = src['Screens/CloudMediaView.swift']
+assert 'mediaContext == context(org: org, listingID: sid)' in block(floor_view, 'private var floorPlanURL:')
+assert 'CloudFloorPlanLink.resolve' in block(floor_view, 'private var floorPlanURL:')
+assert 'current.serverOrgID == org' in block(floor_view, '@MainActor private func load(')
+assert 'mediaContext = context(org: org, listingID: sid)' in block(floor_view, '@MainActor private func load(')
 
 interfaces = '''
 import Foundation
@@ -87,6 +92,7 @@ class WKWebView {}; class WKNavigation {}
 class UIViewController { var presentedViewController: UIViewController?; var children: [UIViewController] = [] }
 '''
 actual = interfaces + src['DeepLink/DeepLink.swift']
+actual += '\n' + block(src['Screens/HomeListingsView.swift'], 'private enum AppGuideTopic:').replace('private enum', 'enum', 1)
 actual += '\n@MainActor enum NativePresentationAvailability {\n' + block(app, 'static func hasPresentedController(in controller:') + '\n}\n'
 actual += block(wall, 'enum PaywallReason:') + '\n' + block(wall, 'final class PaywallRouter:').replace('final class','@MainActor final class',1)
 actual += '\n@MainActor final class FormFixture {\nvar formOwnerID: String?; var formSessionRevision: UInt64 = 1; var formWorkspaceID: UUID?\nvar createdListing: Listing?; var photosListing: Listing?; var pendingAsset: String?; var text = ""\n'
@@ -105,6 +111,9 @@ for anchor in ['func showLoading()', 'func showFailure()', 'func stop()', 'func 
     actual += block(player,anchor)+'\n'
 actual+='}\n'
 actual += '\n' + block(src['Networking/WorkspaceSync.swift'], 'enum CloudSyncError:')
+actual += '\n' + block(src['Networking/WorkspaceSync.swift'], 'struct CloudMediaPage:')
+actual += '\nenum CloudListingMerge {\n' + block(src['Networking/WorkspaceSync.swift'], 'static func date(') + '\n' + block(src['Networking/WorkspaceSync.swift'], 'static func validateMedia(') + '\n}\n'
+actual += block(src['Screens/CloudMediaView.swift'], 'enum CloudFloorPlanLink {')
 actual += '\nenum CloudMergeFixture {\n' + block(src['Networking/WorkspaceSync.swift'], 'static func merge(local:') + '\n}\n'
 actual += '\nfinal class ListingMappingFixture {\n'
 for anchor in ['struct TolerantStringMap:', 'private struct ListingDTO:', 'private static func parseDate(', 'private static func localStatus(', 'private func mapListing(']:
@@ -123,7 +132,8 @@ controls = [
  ('archive-mapping-lost', 'l.cloudArchived = dto.status == "archived"', 'l.cloudArchived = false', 'live DTO archive maps independently of soldAt'),
  ('archive-merge-lost', 'merged.cloudArchived = fresh.cloudArchived', 'merged.cloudArchived = existing.cloudArchived', 'current cloud archive survives real merge'),
  ('zero-CAS-null', '"beds": number(dto.beds.map(Double.init))', '"beds": number(nil)', 'DTO literal zero remains CAS baseline'),
- ('hide-offline-retry', 'retryButton?.isHidden = false', 'retryButton?.isHidden = true', 'offline exposes retry')
+ ('hide-offline-retry', 'retryButton?.isHidden = false', 'retryButton?.isHidden = true', 'offline exposes retry'),
+ ('floorplan-raw-alias', 'return photo.url', 'return URL(string: details?["floorplan_url"] ?? "")', 'attached floorplan uses scoped signed media URL')
 ]
 receipt={'passed':False,'start_source_sha256':start,'runs':[],'limitations':['Closed presentation/network boundaries; actual extracted production bodies and full pure listing models execute.','No camera, provider, StoreKit purchase, production API or Photos write. UIKit integration and physical Release compilation are separate root-owned evidence.']}
 for name,old,new,expected in [('actual',None,None,None)]+controls:

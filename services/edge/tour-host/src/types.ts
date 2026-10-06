@@ -7,7 +7,11 @@
 // read defensively since brand_kit-derived fields are freeform.
 
 /// <reference path="../worker-configuration.d.ts" />
-export interface Env extends Partial<Pick<TourHostBindings, "ASSETS">> {
+export interface Env extends Partial<Pick<TourHostBindings, "ASSETS" | "MEDIA_RENDERS" | "MEDIA_UPLOADS">> {
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_STREAM_TOKEN?: string;
+  CLOUDFLARE_STREAM_CUSTOMER_CODE?: string;
+  STREAM_PRIVATE_PLAYBACK?: string;
   /** Base URL of the Supabase Edge Functions, e.g. https://<ref>.supabase.co/functions/v1 */
   SUPABASE_FUNCTIONS_URL: string;
   /** Supabase anon key — public by design (RLS enforces access). Used as the

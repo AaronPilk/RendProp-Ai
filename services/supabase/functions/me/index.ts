@@ -1,3 +1,4 @@
+import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 // me — the signed-in user, their org, plan, and account lifecycle (owner).
 //
 //   GET    /me                  -> { user, org, plan, plan_raw, trial_ends_at, entitlement,
@@ -80,6 +81,9 @@
 import { deleteAccount, sweepAccounts } from "./deletion.ts";
 import { saveProfileRole } from "./profile.ts";
 import { personalCard } from "./card.ts";
+import { memberPortfolio } from "./portfolio.ts";
+import { accountDataExport } from "./export.ts";
+import { hostingRetention } from "../_shared/hosting-retention.ts";
 import { brandLogo } from "./brand-logo.ts";
 import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
 import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
@@ -95,6 +99,7 @@ import {
   round4,
   throwRpc,
 } from "../_shared/http.ts";
+import { privateProvenanceLinks } from "../_shared/private-provenance-links.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import { cleanupLegacyGhlTarget } from "../_shared/legacy-ghl-cleanup.ts";
 import { sweepPrivacyCleanup } from "../_shared/privacy-cleanup.ts";
@@ -104,7 +109,7 @@ import {
   abortMultipartUpload,
   deleteObjects,
   deleteOwnedPrefixPage,
-  publicR2Url,
+  publishedBrandLogoUrl,
   inspectBrandLogo,
   writeBrandLogo,
   R2_BUCKET_RENDERS,
@@ -162,9 +167,21 @@ Deno.serve(async (req) => {
 
     const user = await getUser(req);
 
+    if (seg.length === 1 && seg[0] === "export") {
+      assert(req.method === "GET", 405, "Use GET to download your account data.");
+      return await accountDataExport(adminClient(), user.id);
+    }
+
     if (seg.length === 1 && seg[0] === "card") {
       assert(req.method === "GET" || req.method === "PATCH",405,"Use GET or PATCH for your personal card.");
       return json(await personalCard(adminClient(),user.id,req.method === "PATCH" ? await readJsonLimited(req,24576) : undefined));
+    }
+
+    if (seg.length === 1 && seg[0] === "portfolio") {
+      assert(req.method === "GET" || req.method === "PUT",405,"Use GET or PUT for your portfolio.");
+      const selected = requestedWorkspace(req);
+      assert(selected,409,"Choose a workspace before reviewing your portfolio.");
+      return json(await memberPortfolio(adminClient(),user.id,selected,req.method === "PUT" ? await readJsonLimited(req,16384) : undefined));
     }
 
     const logoUpload = seg.length === 2 && seg[0] === "brand" && seg[1] === "logo";
@@ -177,7 +194,7 @@ Deno.serve(async (req) => {
       const membership = directory.workspaces.find((w) => w.id === selected);
       assert(membership && ["owner", "admin"].includes(membership.role), 403, "Only the workspace owner or an admin can change its logo.");
       assert(await durableRateLimit(`brandlogoburst:${user.id}`, 30, 300), 429, "Please wait before retrying your logo upload.");
-      return await brandLogo(req, adminClient(), user.id, selected, { publicURL: publicR2Url, write: writeBrandLogo, inspect: inspectBrandLogo }, logoClear ? "clear" : "upload");
+      return await brandLogo(req, adminClient(), user.id, selected, { publicURL: publishedBrandLogoUrl, write: writeBrandLogo, inspect: inspectBrandLogo }, logoClear ? "clear" : "upload");
     }
 
     if (req.method === "GET" && seg[0] === "workspaces" && seg.length === 1) {
@@ -367,6 +384,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     org: { id: org.id, name: org.name, handle: org.handle, space_type: org.space_type, plan: org.plan, brand_kit: org.brand_kit },
     plan: entitlement.plan,          // EFFECTIVE (expired trial → free)
     plan_raw: org.plan ?? null,
+    hosting_retention: await hostingRetention(admin, orgId),
     trial_ends_at: org.trial_ends_at ?? null,
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
@@ -800,7 +818,8 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
 
   const all = (data ?? []) as unknown as Array<Record<string, unknown>>;
   const truncated = all.length > limit;
-  const rows = all.slice(0, limit).map((r) => {
+  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,all.slice(0,limit));
+  const rows = all.slice(0, limit).map((r,index) => {
     const l = (Array.isArray(r.listings) ? r.listings[0] : r.listings) as
       | { address: string | null; space_type: string | null }
       | null
@@ -821,10 +840,7 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
       // never does (tours/index.ts returns the disclosure + URLs only).
       prompt_summary: (r.prompt_summary as string | null) ?? null,
       disclosure: r.disclosure as string,
-      original_url: publicR2Url(r.original_key as string | null),
-      altered_url: publicR2Url(r.altered_key as string | null),
-      /** true when the unaltered original is publicly reachable (AB 723). */
-      original_available: publicR2Url(r.original_key as string | null) !== null,
+      ...privateLinks[index],
     };
   });
 
@@ -878,9 +894,10 @@ async function handleComplianceOrg(
 
   // Identical field order to the per-user rows, with the agent appended — so
   // one renderer serves both and a diff between the two exports is only ever
-  // the attribution. The RPC returns R2 KEYS; publicR2Url stays the single
-  // place a key becomes a link.
-  const rows = scoped.slice(0, opts.limit).map((r) => ({
+  // the attribution. Private links retain exact source identity and the same
+  // current permission checks as the individual export.
+  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,scoped.slice(0,opts.limit));
+  const rows = scoped.slice(0, opts.limit).map((r,index) => ({
     id: r.id as string,
     created_at: r.created_at as string,
     listing_id: (r.listing_id as string | null) ?? null,
@@ -894,9 +911,7 @@ async function handleComplianceOrg(
     model_id: (r.model_id as string | null) ?? null,
     prompt_summary: (r.prompt_summary as string | null) ?? null,
     disclosure: r.disclosure as string,
-    original_url: publicR2Url(r.original_key as string | null),
-    altered_url: publicR2Url(r.altered_key as string | null),
-    original_available: publicR2Url(r.original_key as string | null) !== null,
+    ...privateLinks[index],
     agent_id: (r.agent_id as string | null) ?? null,
     agent_name: (r.agent_name as string | null) ?? null,
     agent_email: (r.agent_email as string | null) ?? null,
@@ -959,6 +974,8 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
   if (error) throwRpc(error.message);
 
   const row = (data ?? {}) as Record<string, unknown>;
+  const orgId=await orgForUser(userId,preferredOrg(req));
+  const [privateLinks]=await privateProvenanceLinks(adminClient(),orgId,[row]);
   return json({
     ok: true,
     provenance: {
@@ -967,8 +984,7 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
       kind: row.kind as string,
       label: (row.label as string | null) ?? null,
       disclosure: row.disclosure as string,
-      original_url: publicR2Url(row.original_key as string | null),
-      altered_url: publicR2Url(row.altered_key as string | null),
+      ...privateLinks,
       created_at: (row.created_at as string | null) ?? null,
     },
   });
@@ -1270,6 +1286,7 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     if (tokErr) console.error("app_account_token write failed:", tokErr.message);
   }
 
+  await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,tx);
   const replayed = await replayPendingNotifications(tx.originalTransactionId, orgId);
 
   // Answer with what the server now ENFORCES, read back after every write —
@@ -1360,6 +1377,7 @@ async function replayPendingNotifications(
       console.error("pending notification replay failed:", rpcErr.message);
       continue; // stays pending; the next sync retries it
     }
+    if (payload?.transaction) await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,payload.transaction);
     await admin.from("apple_notifications")
       .update({ pending: false, org_id: orgId }).eq("notification_uuid", uuid);
     applied++;

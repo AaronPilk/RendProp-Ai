@@ -170,10 +170,12 @@ final class AppModel: ObservableObject {
     private var spaceTypeSyncOperation: UUID?
 
     init() {
+        AccountExportFiles.purge()
         renderCoordinator.model = self
         // Clear metadata synchronously: a queued Task could run AFTER receipt
         // recovery and erase the IDs we just restored. No media work here.
         AuthStore.shared.onAccountChanged = { [weak self] userID in
+            AccountExportFiles.purge()
             self?.forgetServerIdentities(for: userID)
         }
         AuthStore.shared.onPrepareAdoption = { [weak self] in self?.prepareLocalAdoption($0) == true }

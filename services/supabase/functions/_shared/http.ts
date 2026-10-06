@@ -104,6 +104,9 @@ export function json(
  * `error` is human copy the app may show verbatim; `code` is what it branches on.
  */
 export function respondError(err: unknown): Response {
+  if (err instanceof HttpError && "saved_response" in err && err.saved_response && typeof err.saved_response === "object") {
+    return json(err.saved_response);
+  }
   if (err instanceof HttpError) {
     return json({ ...(err.details ?? {}), error: err.message, code: err.code }, err.status);
   }

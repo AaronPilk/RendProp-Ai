@@ -40,7 +40,7 @@ try {
   await name().fill("Client A correction to keep"); cancelDiscard(); await property().selectOption(second);
   await expect(property(), "Canceling property change must retain client A").toHaveValue(first); await expect(name()).toHaveValue("Client A correction to keep");
   receipt.checks.push("Canceling property switch preserves client A fields and selection before any request");
-  await nav("Media").click(); await nav("My homes").click(); await expect(name()).toHaveValue("Client A correction to keep");
+  await nav("Media").click(); await nav("My Listings").click(); await expect(name()).toHaveValue("Client A correction to keep");
   cancelDiscard(); await page.getByRole("button",{name:"＋ New property",exact:true}).click(); await expect(name()).toHaveValue("Client A correction to keep"); await expect(page.getByRole("heading",{name:"A new property",exact:true})).toHaveCount(0);
   receipt.checks.push("Ordinary navigation retains contact work; canceled property creation does not unmount it");
   acceptDiscard(); await property().selectOption(second); await openContact(); await expect(contact().getByRole("radio",{name:"My account",exact:true})).toBeChecked();
@@ -71,7 +71,7 @@ try {
   receipt.checks.push("A held save disables edits; its late receipt after identity replacement cannot clear a newer recovered draft, which retains a visible revision conflict until explicit reload");
   await name().fill("Account A draft retained after logout");
   const beforeLogoutDialogs = dialogs.length; await page.getByRole("button",{name:"Manage Your account",exact:true}).click(); await page.getByRole("button",{name:"Sign out",exact:true}).click(); await expect(page.getByRole("button",{name:"Sign in",exact:true}).first()).toBeVisible(); assert.equal(dialogs.length,beforeLogoutDialogs);
-  await page.evaluate(() => window.studioFixture.switchUser("A")); await expect(page.getByRole("button",{name:"Manage Your account",exact:true})).toBeVisible(); await nav("My homes").click(); await openContact(); await expect(name()).toHaveValue("Account A draft retained after logout");
+  await page.evaluate(() => window.studioFixture.switchUser("A")); await expect(page.getByRole("button",{name:"Manage Your account",exact:true})).toBeVisible(); await nav("My Listings").click(); await openContact(); await expect(name()).toHaveValue("Account A draft retained after logout");
   receipt.checks.push("Unsaved contact does not block logout; signing back into its own account restores the open-tab draft");
   await page.screenshot({path:join(artifacts,"restored-contact.png"),fullPage:true});
   receipt.dialogs = dialogs; receipt.requests = await page.evaluate(() => window.studioFixture.calls());

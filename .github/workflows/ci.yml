@@ -86,6 +86,8 @@ jobs:
         run: python3 apps/ios/tests/run-native-ux-audit.py --evidence-dir "$RUNNER_TEMP/rendprop-native-ux-audit"
       - name: Native client verification and lead deletion require scoped receipts
         run: python3 apps/ios/tests/run-native-lead-privacy.py --evidence-dir "$RUNNER_TEMP/rendprop-native-lead-privacy"
+      - name: Account downloads verify manifests, account changes and private generation-owned files
+        run: python3 apps/ios/tests/run-account-export.py --evidence-dir "$RUNNER_TEMP/rendprop-native-account-export"
       - name: Photo lens, orientation, level and failed-save handling
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
@@ -438,6 +440,8 @@ jobs:
           node tests/creative-browser.mjs
           node tests/photo-delivery-browser.mjs
           node tests/photographer-browser.mjs
+          node tests/business-browser.mjs
+          node tests/industry-details-browser.mjs
           node tests/recovery-browser.mjs
           node --test ../../tools/deploy/check-migration-ledger.test.mjs
       - name: Recovery retains drafts and suppresses private caught errors
@@ -766,6 +770,12 @@ jobs:
           trap 'dropdb --if-exists erase_audit' EXIT
           python3 tools/audit/call-20260919/web/erase-concurrency.py psql -X --no-password -v ON_ERROR_STOP=1 -d erase_audit
 
+      - name: Inclusive serving funds, Apple trial pool and finite reviewer authority
+        run: |
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
+          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006164721_funded_serving_and_app_review_authority.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
+
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
       # exercises signup → publish → quota → chapters → leads → delete.
@@ -940,11 +950,14 @@ jobs:
           python3 tools/audit/run_workspace_selection.py
           python3 tools/audit/run_internal_testing_grants.py
           python3 tools/audit/run_private_internal_testing.py
+          python3 services/supabase/tests/funded_serving_pg.py
           python3 tools/audit/run_listing_gallery_selection.py
           python3 tools/audit/run_listing_measurement_cas.py
           python3 tools/audit/run_listing_facts_cas.py
           python3 tools/audit/run_brand_logo_regression.py
           python3 tools/audit/run_personal_card_regression.py
+          python3 tools/audit/run_member_portfolio_regression.py
+          python3 tools/audit/run_account_export.py
           python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py
@@ -1047,6 +1060,7 @@ jobs:
           python3 services/worker/tests/test_reaper_snapshot.py
           python3 services/worker/tests/test_verification_prerequisites.py
           python3 services/worker/tests/test_stream_fallback.py
+          python3 services/worker/tests/test_provider_funding.py
           python3 services/worker/tests/test_lease_probe_fail_closed.py
           python3 services/worker/tests/test_process_specific.py
           python3 services/worker/tests/test_cost_spool.py

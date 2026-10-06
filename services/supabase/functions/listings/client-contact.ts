@@ -1,5 +1,6 @@
 import { assert, HttpError, throwRpc } from "../_shared/http.ts";
-import { publicR2Url } from "../_shared/r2.ts";
+import { R2_BUCKET_RENDERS } from "../_shared/r2.ts";
+import { presignGet } from "../_shared/providers/common.ts";
 import { mediaVisibility } from "../_shared/media-source-access.ts";
 
 export const CONTACT_FIELDS = [
@@ -146,6 +147,7 @@ export async function resolveContactPhoto(
   admin: any,
   contact: Record<string, any> | null,
   refs?: { assets: string[]; keys: string[] },
+  publicURL: (key: string) => string | null | Promise<string | null> = (key) => presignGet(R2_BUCKET_RENDERS, key, 600),
 ) {
   if (!contact) return null;
   const out = { ...contact, public_card: { ...(contact.public_card ?? {}) } };
@@ -174,7 +176,11 @@ export async function resolveContactPhoto(
     visible.assets[asset.id] !== true ||
     visible.keys[asset.storage_key] !== true
   ) return out;
-  const url = publicR2Url(asset.storage_key);
+  const url = await publicURL(asset.storage_key);
+  const current = await mediaVisibility(admin, contact.listing_id, {
+    assets: [asset.id], keys: [asset.storage_key],
+  });
+  if (current.assets[asset.id] !== true || current.keys[asset.storage_key] !== true) return out;
   if (url) {
     out.public_card.avatar_url = url;
     refs?.assets.push(asset.id);

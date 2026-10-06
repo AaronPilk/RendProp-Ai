@@ -33,6 +33,7 @@ export type Workspace = {
 };
 export type Listing = {
   id: string;
+  agentId?: string;
   orgId: string;
   spaceType: string;
   address: string | null;
@@ -362,6 +363,7 @@ export function decodeListings(
     }
     return {
       id: uuid(row.id, "listing id"),
+      ...(row.agent_id == null ? {} : { agentId: uuid(row.agent_id, "listing agent_id") }),
       orgId: rowOrg,
       spaceType: str(row.space_type, "listing space_type"),
       address: nullableString(row.address, "listing address"),

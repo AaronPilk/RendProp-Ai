@@ -736,7 +736,7 @@ Deno.test("wiring: /ai-video/status stays backward compatible", () => {
     INDEX_SRC,
     'return json({ status: "completed", video_url: videoUrl, drift: uncheckedDriftBlock() });',
   );
-  assertStringIncludes(INDEX_SRC, 'status: "completed",\n    video_url: videoUrl,');
+  assertStringIncludes(INDEX_SRC, 'status: "completed", video_url: saved.url,');
   // Both completion paths — the legacy fal one and the routed one — carry it,
   // so a routed job is not silently the unguarded path.
   assertEquals(

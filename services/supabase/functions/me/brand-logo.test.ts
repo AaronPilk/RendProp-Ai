@@ -89,7 +89,7 @@ async function routeFixture(dropRoleGate=false){
  if(name==="merge_org_brand_fields")return{error:null,data:{id:args.p_org,name:"Selected office",handle:null,brand_kit:{...args.p_brand,business_logo_url:"https://cdn.fixture.invalid/existing.png"}}};
  throw Error("Unexpected RPC "+name);}});
  const durableRateLimit=async(key:string,max:number,seconds:number)=>{state.meters.push({key,max,seconds});return!state.options.limited;};
- const publicR2Url=(key:string)=>"https://cdn.fixture.invalid/"+key;
+ const publishedBrandLogoUrl=(key:string)=>"https://cdn.fixture.invalid/"+key;
  const writeBrandLogo=async(_k:string,b:Uint8Array,type:string,sha256:string)=>{state.writes++;state.object={bytes:b.length,type,sha256,etag:'"synthetic"'};};
  const inspectBrandLogo=async()=>state.object;
  const preferredOrg=requestedWorkspace;const orgForUser=async(_user:string,org:string)=>org;

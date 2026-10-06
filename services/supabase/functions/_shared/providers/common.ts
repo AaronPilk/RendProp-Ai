@@ -8,7 +8,7 @@
 
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { HttpError } from "../http.ts";
-import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS, headObject, presignPut, publicR2Url } from "../r2.ts";
+import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS, headObject, presignPut } from "../r2.ts";
 import type { DoneState, ErrorClass, JobRef, JobState, ProviderAdapter } from "./types.ts";
 
 // ── Time budgets (hard rule: every adapter call is bounded) ───────────────────
@@ -418,14 +418,16 @@ export async function putBytes(
   key: string,
   bytes: BodyInit,
   mime: string,
+  immutable = false,
 ): Promise<{ key: string; bytes: number }> {
   const putUrl = await presignPut({ bucket, key, expiresIn: 600, contentType: mime });
   const put = await fetchBounded("r2", putUrl, {
     method: "PUT",
-    headers: { "content-type": mime },
+    redirect: "error",
+    headers: { "content-type": mime, ...(immutable ? { "if-none-match": "*" } : {}) },
     body: bytes,
   }, BUDGETS.transferMs);
-  if (!put.ok) {
+  if (!put.ok && !(immutable && put.status === 412)) {
     // The presigned URL is a credential — never in the message.
     const detail = await put.text().catch(() => "");
     throw new ProviderError("r2", "upstream", `Storing the result failed (R2 ${put.status}): ${snippet(detail, 160)}`);
@@ -445,11 +447,12 @@ export async function persistResult(
   state: DoneState,
   r2Key: string,
   beforeWrite?: (intent: { key: string; bytes: number }) => Promise<void>,
+  immutable = false,
 ): Promise<{ key: string; bytes: number }> {
   const inlineData = decodeDataUrl(state.result_url);
   if (inlineData) {
     await beforeWrite?.({ key: r2Key, bytes: inlineData.bytes.byteLength });
-    return await putBytes(R2_BUCKET_RENDERS, r2Key, inlineData.bytes, inlineData.mime || state.mime);
+    return await putBytes(R2_BUCKET_RENDERS, r2Key, inlineData.bytes, inlineData.mime || state.mime, immutable);
   }
   const res = await fetchBounded(provider, state.result_url, { method: "GET" }, BUDGETS.transferMs);
   if (!res.ok) {
@@ -470,34 +473,31 @@ export async function persistResult(
   }
   const mime = res.headers.get("content-type")?.split(";")[0].trim() || state.mime;
   await beforeWrite?.({ key: r2Key, bytes: buf.byteLength });
-  return await putBytes(R2_BUCKET_RENDERS, r2Key, buf, mime);
+  return await putBytes(R2_BUCKET_RENDERS, r2Key, buf, mime, immutable);
 }
 
-/** Public https URL for a persisted key, or null when no public base is set. */
-export function persistedUrl(key: string): string | null {
-  return publicR2Url(key);
+/** Private completed-result capability. Header-free native/Studio downloads,
+ * with the existing build-44 maximum 600-second lifetime. */
+export async function persistedUrl(key: string): Promise<string> {
+  return await presignGet(R2_BUCKET_RENDERS, key, 600);
 }
 
 /**
- * Put a caller's inline image into OUR storage and hand back a short-lived
- * presigned GET. Used by vendors that will only fetch a public URL (Kie,
- * Higgsfield): customer media stays on our storage, never on a vendor's upload
- * host, and the link dies with the job.
+ * Inline staging has no actor/org cleanup journal. Fail before any write until
+ * a caller-owned input registration protocol is implemented. Providers that
+ * require a URL can use an already authorized owned source capability instead.
  */
 export async function stageInputImage(
-  b64: string,
-  mime: string,
-  ttlSeconds = 900,
+  _b64: string,
+  _mime: string,
+  _ttlSeconds = 600,
 ): Promise<{ key: string; url: string }> {
-  const bytes = b64Bytes(b64);
-  const key = `ai-router/input/${crypto.randomUUID()}.${extFor(mime)}`;
-  await putBytes(R2_BUCKET_UPLOADS, key, bytes, mime);
-  return { key, url: await presignGet(R2_BUCKET_UPLOADS, key, ttlSeconds) };
+  throw new ProviderError("r2", "validation", "This provider needs an owned image URL. Inline image staging is unavailable until its cleanup ownership can be verified.", 0, true);
 }
 
 /**
- * The public image URL a vendor can actually fetch. Prefers a URL the caller
- * already has; falls back to staging inline base64 into our uploads bucket.
+ * A URL the vendor can fetch. The caller must resolve current source ownership
+ * and provider consent before invoking an adapter. Inline staging fails closed.
  */
 export async function publicImageUrlFor(
   input: { image_url?: string; image_b64?: string; extra?: Record<string, unknown> },

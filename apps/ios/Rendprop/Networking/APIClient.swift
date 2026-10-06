@@ -126,6 +126,27 @@ struct Entitlements: Codable, Hashable {
 }
 
 /// This-month usage/cost rollup for the signed-in org (contract: GET /me → usage).
+struct HostingRetentionSummary: Codable, Hashable {
+    let orgId: UUID
+    let policy: String
+    let protected: Bool
+    let retentionEndsAt: String?
+    let hostingAvailable: Bool
+    var deadline: Date? {
+        guard let retentionEndsAt else { return nil }
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: retentionEndsAt) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: retentionEndsAt)
+    }
+    func checked(org: UUID) -> HostingRetentionSummary? {
+        guard orgId == org else { return nil }
+        if policy == "preserved" { return retentionEndsAt == nil && hostingAvailable ? self : nil }
+        guard policy == "prospective_90_day_grace", !protected, deadline != nil else { return nil }
+        return self
+    }
+}
+
 struct UsageSummary: Codable, Hashable {
     var aiSpendCents: Int? = nil   // usage.cost_cents (total infra+AI spend this month)
     var renderCount: Int? = nil    // usage.renders (this month)
@@ -149,6 +170,7 @@ struct UsageSummary: Codable, Hashable {
     /// Membership role when the server sends one ("owner" | "admin" | "agent" |
     /// "marketing"). Secondary to `isAdmin`.
     var role: String? = nil
+    var hostingRetention: HostingRetentionSummary? = nil
 
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }
@@ -961,6 +983,10 @@ protocol APIClient: Sendable {
     /// CSV bytes. `listingServerID` narrows it to one listing; nil exports the
     /// whole workspace.
     func complianceCSV(listingServerID: UUID?) async throws -> Data
+
+    /// GET /me/export — bounded account-owned cloud inventory with an explicit
+    /// manifest of excluded files and operational data; independent of workspace.
+    func exportAccountData() async throws -> Data
 
     /// PATCH /me/compliance/:id — attach the untouched ORIGINAL and/or the
     /// published ALTERED result to a provenance row after their uploads land.
@@ -1893,6 +1919,9 @@ enum AdminText {
 
 
 extension APIClient {
+    func exportAccountData() async throws -> Data {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to download your account data.")
+    }
     /// Offline and older injected clients cannot claim a server action succeeded.
     func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt {
         throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to request client email verification.")

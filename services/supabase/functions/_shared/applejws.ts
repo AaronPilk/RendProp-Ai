@@ -561,6 +561,13 @@ export interface AppleTransaction {
   webOrderLineItemId: string | null;
   subscriptionGroupIdentifier: string | null;
   signedDate: string | null;
+  /** Apple signs price in milliunits (USD 49.00 is 49000), never cents. */
+  priceMilliunits?: number | null;
+  currency?: string | null;
+  storefront?: string | null;
+  offerType?: number | null;
+  offerIdentifier?: string | null;
+  offerDiscountType?: string | null;
 }
 
 /** Shape a verified JWSTransaction payload. Throws 401 if the identity fields are missing. */
@@ -590,6 +597,12 @@ export function decodeTransaction(payload: Record<string, unknown>): AppleTransa
     webOrderLineItemId: str(payload.webOrderLineItemId),
     subscriptionGroupIdentifier: str(payload.subscriptionGroupIdentifier),
     signedDate: msToIso(payload.signedDate),
+    priceMilliunits: typeof payload.price === "number" && Number.isSafeInteger(payload.price) && payload.price >= 0 ? payload.price : null,
+    currency: str(payload.currency),
+    storefront: str(payload.storefront),
+    offerType: num(payload.offerType),
+    offerIdentifier: str(payload.offerIdentifier),
+    offerDiscountType: str(payload.offerDiscountType),
   };
 }
 

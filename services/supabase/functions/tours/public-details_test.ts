@@ -31,9 +31,9 @@ async function fixture(bypassFilter = false) {
     "export const handler = async (req: Request) => {",
   ).slice(0, -3) + "};";
   if (bypassFilter) {
-    const call = "details: publicListingDetails(listing.details)";
+    const call = "const publicDetails = publicListingDetails(listing.details)";
     assertEquals(handler.split(call).length, 2);
-    handler = handler.replace(call, "details: listing.details ?? {}");
+    handler = handler.replace(call, "const publicDetails = listing.details ?? {}");
   }
   const ownerStart = ownerSource.indexOf("    // ---- GET /listings ----");
   const ownerEnd = ownerSource.indexOf(
@@ -74,13 +74,16 @@ async function fixture(bypassFilter = false) {
       return query;
     }});
     const assertMediaVisible=async()=>{if(state.revoked)throw new HttpError(403,"Media unavailable");};
+    const assertHostingAvailable=async()=>{}; // Retention has its own actual transport/SQL tests.
     const galleryFor=async()=>[];
     const publicMainPhoto=async()=>null;
     const alteredMediaFor=async()=>[];
     const bindSpatialChapters=(chapters:any)=>chapters;
     const resolveContactPhoto=async(_admin:any,row:any)=>row;
     const publicR2Url=(key:string|null)=>key?"https://media-fixture.invalid/"+key:null;
-    const streamHlsUrl=()=>null;
+    const publishedStreamUrl=()=>null;
+    const publishedR2Url=(_slug:string,key:string|null)=>publicR2Url(key);
+    const PUBLIC_MEDIA_PROXY=false;
     export ${productionFunction(source, "publicListingDetails")}
     ${productionFunction(source, "floorplanUrl")}
     ${productionFunction(source, "formatUSD")}
@@ -167,6 +170,19 @@ function listing() {
     status: "ready",
   };
 }
+
+Deno.test("actual public tour quantizes historical precise coordinates and rejects invalid values", async () => {
+  const f = await fixture();
+  f.state.listing = { ...listing(), lat: 27.77512345, lng: -82.63887654 };
+  const publicData = await (await f.handler(request())).json();
+  assertEquals(publicData.listing.lat, 27.775);
+  assertEquals(publicData.listing.lng, -82.639);
+  f.state.listing.lat = 91;
+  f.state.listing.lng = Number.POSITIVE_INFINITY;
+  const invalid = await (await f.handler(request())).json();
+  assertEquals(invalid.listing.lat, null);
+  assertEquals(invalid.listing.lng, null);
+});
 
 function assertPrivateAbsent(value: unknown) {
   const text = JSON.stringify(value);

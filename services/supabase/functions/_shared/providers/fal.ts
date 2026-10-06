@@ -84,7 +84,8 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
         image_url: input.image_url,
         resolution: "1080p",
         duration: String(secondsOf(input, 6)), // Seedance takes duration as a string
-        aspect_ratio: input.aspect,
+        num_frames: secondsOf(input, 6) * 24 + 1,
+        aspect_ratio: input.aspect ?? "16:9",
         camera_fixed: false,
       };
     }
@@ -93,6 +94,8 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
       image_url: input.image_url,
       resolution: "1080p",
       duration: String(secondsOf(input, 5)), // Seedance takes duration as a string
+      num_frames: secondsOf(input, 5) * 24 + 1,
+      aspect_ratio: input.aspect ?? "16:9",
     };
   }
 
@@ -165,6 +168,7 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
   // FLUX.1 Kontext — prompt-only photo edit.
   if (model.includes("flux-pro/kontext")) {
     return {
+      num_images: 1,
       prompt: input.prompt,
       image_url: input.image_url,
     };

@@ -446,7 +446,7 @@ function renderDisclosureSection(tour: Tour): string {
       <div class="disc-body">
         ${lead}
         ${list}
-        <p class="lp-fine">Where an unaltered original exists it is shown and linked above. Edits may change styling and furnishing or remove visible people and their reflections. Layout, dimensions and permanent features — including anything a buyer would want to know about — must be preserved. Compare the original to judge the result.</p>
+        <p class="lp-fine">Where an unaltered original exists it is shown and linked above. Edits may change styling and furnishing or remove visible people and their reflections. Layout, dimensions and permanent features — including anything a visitor would want to know about — must be preserved. Compare the original to judge the result.</p>
       </div>
     </details>
   </div></section>`;
@@ -532,7 +532,7 @@ function renderAgentCard(a: AgentModel, tour: Tour): string {
   // Branded pages only by construction: this card is rendered inside the end
   // card, and the end card is not built at all on /u/.
   const more = tour.client_mode !== true && a.handle
-    ? `<a class="more" href="/a/${encodeURIComponent(a.handle)}">See all their homes</a>`
+    ? `<a class="more" href="/a/${encodeURIComponent(a.handle)}">See their selected tours</a>`
     : "";
 
   return `<div class="agent">
@@ -761,7 +761,7 @@ function renderLeadForm(tour: Tour, turnstileSiteKey = "", opts: LeadFormOpts = 
   // submit handler forwards to /leads as `turnstile_token`.
   const turnstile = turnstileSiteKey
     ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-       <div class="cf-turnstile" data-sitekey="${escapeAttr(turnstileSiteKey)}" data-theme="auto" data-size="compact"></div>`
+       <div class="cf-turnstile" data-sitekey="${escapeAttr(turnstileSiteKey)}" data-action="listing-inquiry" data-theme="auto" data-size="compact"></div>`
     : "";
 
   const base = emailOnly
@@ -2584,7 +2584,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
   // Story.
   const nearby = isRE ? detStr(tour, "nearbyAttractions").slice(0, 500) : "";
   if (nearby) {
-    out.push(sec("nearby", "Nearby places", "Around the property",
+    out.push(sec("nearby", "Nearby places", "Around the location",
       `<div class="lp-prose"><p>${escapeHtml(nearby)}</p><p>Owner-reviewed information. Distances are approximate straight-line distances, not travel times.</p></div>`));
   }
   const story = paragraphs(det(tour, "story", "description", "about"));
@@ -3112,7 +3112,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const coverHtml = `<section class="listing-cover" aria-label="Property media">
     ${coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
     <div class="listing-cover-actions">
-      ${hasVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : `<p>Photos and property details are available below.</p>`}
+      ${hasVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : `<p>Photos and location details are available below.</p>`}
     </div>
     ${staged || hasAltered ? `<span class="listing-media-label">${escapeHtml(chipLabel)}${hasDisclosureSection ? ` · <a href="#disclosure">See disclosures and originals</a>` : ""}</span>` : ""}
   </section>`;

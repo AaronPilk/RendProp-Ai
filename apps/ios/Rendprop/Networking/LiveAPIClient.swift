@@ -467,6 +467,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let decoded: CloudMediaPage = try decodeExact(data)
         return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset)
     }
+    func exportAccountData() async throws -> Data {
+        let data = try await execute(makeRequest(url: url(["me", "export"])))
+        guard data.count <= AccountExportReceipt.maximumBytes else { throw CloudSyncError.invalidResponse }
+        return data
+    }
     func cloudBrand() async throws -> CloudBrand {
         let data = try await execute(makeRequest(url: url(["me"])))
         guard let r = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1595,7 +1600,10 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // timeout. The default 60 s was one slow answer away from throwing away
         // a reply the server had already paid for.
         guard let org = request.orgID, org == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
-        var httpRequest = makeRequest(url: url(["coach"]), method: "POST", json: body)
+        // One key for this user request. execute() retains this URLRequest on
+        // refresh/retry; asking the same question later is a new logical turn.
+        var httpRequest = makeRequest(url: url(["coach"]), method: "POST", json: body,
+                                      idempotency: .perAttempt)
         httpRequest.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         let data = try await execute(httpRequest, session: aiSession, beforeSend: {
             guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
@@ -1762,6 +1770,12 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // listings, by_feature{…}}` — see services/supabase/functions/me/index.ts.
         // cost_cents can be fractional (round4) → round to whole cents for Money.
         let usage = dto.usage
+        var hosting: HostingRetentionSummary?
+        if let receipt = dto.hostingRetention {
+            guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
+                  org == WorkspaceContext.selectedOrgID, let checked = receipt.checked(org: org) else { throw CloudSyncError.invalidResponse }
+            hosting = checked
+        }
         var entitlements: Entitlements? = nil
         if let ent = dto.entitlement {
             var used: [String: Int] = [:]
@@ -1806,7 +1820,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             orgName: dto.org?.name,
             brandName: dto.org?.brandKit?.name,
             isAdmin: adminFlag,
-            role: serverRole)
+            role: serverRole,
+            hostingRetention: hosting)
         // Let the Account row show the server-side name (never an email).
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
@@ -2430,6 +2445,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let plan: String?
         let planRaw: String?
         let planSource: String?
+        let hostingRetention: HostingRetentionSummary?
         let trialEndsAt: String?
         let entitlement: Entitlement?
         let usage: Usage?

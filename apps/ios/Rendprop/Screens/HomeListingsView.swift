@@ -38,7 +38,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .listing: return "Start a listing"
+        case .listing: return "Start a \(SpaceType.current.spaceNoun)"
         case .capture: return "Film a walkthrough"
         case .photos: return "Add and choose photos"
         case .editing: return "Declutter or stage photos"
@@ -76,25 +76,25 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
     var steps: [(String, String)] {
         switch self {
         case .listing: return [
-            ("Add a listing", "Open Listings and tap Add. Give the property an address or name first."),
-            ("Check the details", "Use address suggestions or current location, then enter a unit number separately if needed. Review the property facts."),
+            ("Add a listing", "Open your collection and tap Add. Give the location an address or name first."),
+            ("Check the details", "Use address suggestions or current location, then enter a unit number separately if needed. Review the saved details."),
             ("Keep everything together", "Open this listing whenever you add photos, film, make a reel or edit its contact details. Each workspace keeps its own listings.")]
         case .capture: return [
-            ("Choose your property", "Open the listing, then record a walkthrough or import a video you already have."),
+            ("Choose your location", "Open the listing, then record a walkthrough or import a video you already have."),
             ("Keep the camera steady", "For interiors, use 0.5× on a supported iPhone. Keep the phone level and walk at a steady pace. Avoid quick turns."),
             ("Preview before sharing", "Review the footage and room tags. Motion smoothing can reduce shake; it cannot guarantee drone-like movement from every recording.")]
         case .photos: return [
             ("Open Photos", "Choose a listing and open Photos. Take a photo or import from Photos or Files."),
             ("Choose your main photo", "Pick a clear exterior or another strong image as the main photo. This is the first image visitors see on the listing."),
-            ("Save the version you want", "Use the photo's download action to export a JPEG for MLS, or open AI Photo Studio for version history. Check your MLS's image requirements.")]
+            ("Save the version you want", SpaceType.current == .realEstate ? "Use the photo's download action to export a JPEG for MLS, or open AI Photo Studio for version history. Check your MLS's image requirements." : "Use the photo's download action to export a JPEG, or open AI Photo Studio for version history. Check your advertising platform's image requirements.")]
         case .editing: return [
             ("Choose the change", "Open AI Photo Studio. Choose Declutter, a staging style or another edit, then select the photos you want to change. Review the credit quote."),
             ("Keep each version", "Original, decluttered and staged versions stay separate. You can leave the screen while an accepted job processes. Check its status when you return."),
-            ("Review and export", "Check walls, windows, appliances and access to doors. Select the version for your published gallery or download it. Files exports include disclosure captions; when saving to Photos, copy the caption separately. Follow your MLS's rules.")]
+            ("Review and export", "Check walls, windows, appliances and access to doors. Select the version for your published gallery or download it. Files exports include disclosure captions; when saving to Photos, copy the caption separately. Follow your advertising platform's rules.")]
         case .reel: return [
             ("Pick your photos", "Open Make a reel for a listing. Choose the photos and the format for your social post."),
             ("Choose movement and sound", "Set the clip style and voice options, then review the quote before creating. If processing stops, recover a confirmed saved request or finish a shorter reel from saved clips. Review an unconfirmed request before starting another generation."),
-            ("Watch the whole result", "Review transitions, property accuracy, captions and audio. Save the finished video before posting it to social media.")]
+            ("Watch the whole result", "Review transitions, scene accuracy, captions and audio. Save the finished video before posting it to social media.")]
         case .aerial: return [
             ("Choose an exterior", "Open Make an aerial shot for the listing. Use a clear exterior photo with the property in view."),
             ("Review the request", "Choose the motion and review the credit quote. Generated footage can contain errors in the building or surroundings."),
@@ -109,7 +109,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Choose where leads go", "Enter the client's private lead email and choose whether to hide Rendprop branding. You retain a copy of inquiries in Leads.")]
         case .sharing: return [
             ("Review your listing", "Check the main photo, gallery versions, property details, contact card and disclosures before publishing."),
-            ("Choose the right link", "Share the branded link with clients or social followers. Use the unbranded link only where your MLS permits virtual-tour links."),
+            ("Choose the right link", SpaceType.current == .realEstate ? "Share the branded link with clients or social followers. Use the unbranded link only where your MLS permits virtual-tour links." : "Share the published tour with your customers or social followers. Review its details, contact information and disclosures first."),
             ("Explore or watch", "The public page opens with the main photo and details. Visitors choose the fly-through, then either scroll to explore or play the video.")]
         case .leads: return [
             ("Open Leads", "Inquiries from published listings appear in Leads. Open an inquiry to see its contact information."),

@@ -991,6 +991,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
         ? { data: { ok: true, test_only: true, environment: "Sandbox", plan: "team", source: "manual", org_id: org, product_id: args.p_product, original_transaction_id: args.p_original }, error: null }
         : { data: null, error: { message: "RP403: Sandbox testing requires explicit authorized test access" } });
       if (name === "effective_plan") return Promise.resolve({ data: "free", error: null });
+      if(name === "fund_verified_apple_transaction")return Promise.resolve({data:{funded:false,reason:"stale_or_unbound"},error:null});
       assertEquals(name, "apply_apple_entitlement_v2");
       return Promise.resolve({ data: { status: "refunded", expires_at: storedExpiry }, error: null });
     },
@@ -1021,6 +1022,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   Object.assign(globalThis, { __appleChronologyFixture: fixture });
   const program = `
     import {assert,HttpError,json,readJsonLimited,throwRpc} from ${JSON.stringify(new URL("./http.ts", import.meta.url).href)};
+    import {fundVerifiedAppleTransaction} from ${JSON.stringify(new URL("./apple-funding.ts",import.meta.url).href)};
     import {decodeTransaction,decodeRenewalInfo,deriveEntitlement,productToPlan,type AppleTransaction,type AppleRenewalInfo} from ${JSON.stringify(new URL("./applejws.ts", import.meta.url).href)};
     import {assertExpectedSubscriptionWorkspace,assertVerifiedPurchaseOwner} from ${JSON.stringify(new URL("../me/billing.ts", import.meta.url).href)};
     import {computeEntitlement,resolveVerdict,lookupVerdict,summariseNotification,type NotificationFacts,type PendingEntitlement} from ${JSON.stringify(new URL("../apple-subscriptions/logic.ts", import.meta.url).href)};

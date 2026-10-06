@@ -10,6 +10,8 @@ import {
 import "./business.css";
 import RealEstateRolePicker from "./RealEstateRolePicker";
 import ClientLeadDelivery, { clientDeliveryLabels } from "./ClientLeadDelivery";
+import PersonalCardEditor from "./PersonalCardEditor";
+import HostedPortfolioEditor from "./HostedPortfolioEditor";
 
 export type BusinessWorkspaceProps = {
   services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string;
@@ -153,7 +155,7 @@ function LeadsPanel({ api, workspace, listings, listingId, onChanged, onSelectLi
 function BrandPanel(props: PanelProps) {
   const read = useCallback((signal: AbortSignal) => props.api.account(signal), [props.api]);
   const resource = useResource(read, false, true);
-  return <><div className="business-heading"><div><h3>Your agent card</h3><p>Keep your contact details together on your phone, branded tours and public profile.</p></div></div><ResourceState {...resource} />{resource.data && <BrandForm {...props} account={resource.data} />}</>;
+  return <><PersonalCardEditor services={props.services} workspace={props.workspace} /><HostedPortfolioEditor services={props.services} workspace={props.workspace} listings={props.listings} /><div className="business-heading"><div><h3>Workspace branding</h3><p>Workspace owners and admins maintain the shared business name and color below.</p></div></div><ResourceState {...resource} />{resource.data && <BrandForm {...props} account={resource.data} />}</>;
 }
 function BrandForm({ api, workspace, onChanged, account }: PanelProps & { account: Account }) {
   const [brand, setBrand] = useState<Brand>(account.brand), [saved, setSaved] = useState(account.brand), action = useAction();
@@ -170,17 +172,12 @@ function BrandForm({ api, workspace, onChanged, account }: PanelProps & { accoun
     const before = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", before); return () => window.removeEventListener("beforeunload", before);
   }, [dirty]);
-  const fields: { id: keyof Brand; label: string; type?: string; help?: string }[] = [
-    { id: "name", label: "Display name" }, { id: "title", label: "Professional title" }, { id: "brokerage", label: "Brokerage" },
-    { id: "phone", label: "Public phone", type: "tel" }, { id: "email", label: "Public email", type: "email" }, { id: "website", label: "Website", type: "text" },
-    { id: "headshot_url", label: "Headshot address", type: "url", help: "Public https:// image URL. This appears on branded share pages." }, { id: "avatar_url", label: "Avatar address", type: "url" },
-    { id: "instagram", label: "Instagram link or handle", type: "text" }, { id: "linkedin", label: "LinkedIn link or handle", type: "text" }, { id: "tiktok", label: "TikTok link or handle", type: "text" },
-  ];
-  return <form onSubmit={(e) => { e.preventDefault(); void action.run(async (signal) => { const snapshot = { ...brand }; await api.saveBrand(snapshot, signal); setSaved(snapshot); onChanged(); return "Brand saved to your workspace and public tours."; }); }}>
+  const fields: { id: keyof Brand; label: string; type?: string; help?: string }[] = [{ id: "brokerage", label: workspace.org.spaceType === "real_estate" ? "Workspace brokerage" : "Workspace business" }];
+  return <form onSubmit={(e) => { e.preventDefault(); void action.run(async (signal) => { const snapshot = { ...brand }; await api.saveWorkspaceBrand(snapshot, signal); setSaved(snapshot); onChanged(); return "Brand saved to your workspace and public tours."; }); }}>
     {!editable && <p className="business-notice">Your workspace owner or an admin can update this shared card.</p>}
-    <div className="business-columns"><Card title="Agent & business details"><fieldset disabled={!editable || action.busy} className="business-form-grid"><label>Business name<input value={brand.org_name} maxLength={120} required onChange={(e) => update("org_name", e.target.value)} /></label><label>Business type<select value={brand.space_type} onChange={(e) => update("space_type", e.target.value)}>{["real_estate", "venue", "restaurant", "retail", "fitness", "other"].map((type) => <option value={type} key={type}>{type.replaceAll("_", " ")}</option>)}</select></label>{fields.map((field) => <label key={field.id}>{field.label}<input type={field.type ?? "text"} value={brand[field.id]} maxLength={300} onChange={(e) => update(field.id, e.target.value)} />{field.help && <small>{field.help}</small>}</label>)}</fieldset></Card>
-      <div className="business-stack"><Card title="Portfolio & color"><fieldset disabled={!editable || action.busy}><label>Portfolio address<input value={brand.handle} maxLength={32} placeholder="your-name" onChange={(e) => update("handle", e.target.value)} /><small>rendprop.com/a/{brand.handle || "your-name"}</small></label><label>Brand color<input value={brand.accent} placeholder="#7c3aed" maxLength={9} onChange={(e) => update("accent", e.target.value)} /></label></fieldset>{account.portfolioUrl && <a href={account.portfolioUrl} target="_blank" rel="noopener noreferrer">View current portfolio ↗</a>}</Card>
-      <Card title="Card preview" className="business-preview"><div className="business-brand-rule" style={{ backgroundColor: /^#[a-f\d]{3,8}$/i.test(brand.accent) ? brand.accent : "#7c3aed" }} /><strong>{brand.name || "Your name"}</strong><p>{[brand.title, brand.brokerage].filter(Boolean).join(" · ") || "Your professional title and brokerage"}</p><p>{brand.phone}<br />{brand.email}</p><small>Contact details appear on branded tours. The MLS version stays unbranded.</small></Card></div></div>
+    <div className="business-columns"><Card title="Shared business details"><fieldset disabled={!editable || action.busy} className="business-form-grid"><label>Business name<input value={brand.org_name} maxLength={120} required onChange={(e) => update("org_name", e.target.value)} /></label><label>Business type<select value={brand.space_type} onChange={(e) => update("space_type", e.target.value)}>{["real_estate", "venue", "restaurant", "retail", "fitness", "other"].map((type) => <option value={type} key={type}>{type.replaceAll("_", " ")}</option>)}</select></label>{fields.map((field) => <label key={field.id}>{field.label}<input type={field.type ?? "text"} value={brand[field.id]} maxLength={300} onChange={(e) => update(field.id, e.target.value)} />{field.help && <small>{field.help}</small>}</label>)}</fieldset></Card>
+      <div className="business-stack"><Card title="Workspace address & color"><fieldset disabled={!editable || action.busy}><label>Workspace address<input value={brand.handle} maxLength={32} placeholder="your-name" onChange={(e) => update("handle", e.target.value)} /><small>rendprop.com/a/{brand.handle || "your-name"}. This shared workspace page has no automatic listings. Choose what to publish in My hosted portfolio above.</small></label><label>Brand color<input value={brand.accent} placeholder="#7c3aed" maxLength={9} onChange={(e) => update("accent", e.target.value)} /></label></fieldset>{account.portfolioUrl && <a href={account.portfolioUrl} target="_blank" rel="noopener noreferrer">View workspace page ↗</a>}</Card>
+      <Card title="Card preview" className="business-preview"><div className="business-brand-rule" style={{ backgroundColor: /^#[a-f\d]{3,8}$/i.test(brand.accent) ? brand.accent : "#7c3aed" }} /><strong>{brand.org_name || "Business name"}</strong><p>{brand.brokerage || "Your workspace business"}</p><small>Personal contact details are saved separately above. {workspace.org.spaceType === "real_estate" ? "The MLS version stays unbranded. Review your local MLS rules before using it." : "Unbranded tours keep personal contact details hidden."}</small></Card></div></div>
     <Feedback {...action} /><div className="business-save-bar"><span>{dirty ? "Unsaved changes" : "Your saved workspace brand"}</span><button type="button" disabled={!dirty || action.busy} onClick={() => setBrand(saved)}>Reset</button><button className="primary" disabled={!editable || !dirty || action.busy} type="submit">{action.busy ? "Saving…" : "Save brand"}</button></div>
   </form>;
 }

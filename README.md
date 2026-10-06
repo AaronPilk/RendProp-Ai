@@ -5,6 +5,26 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+The **6 October release candidate** adds the remaining beta fixes, private media
+delivery, a shared budget before paid AI requests, deliberate per-member hosted
+portfolios, industry-specific Studio forms and account-data export. The
+[launch handoff](docs/handoff/LAUNCH-READINESS-20261006.md) tracks source tests,
+deployment order and remaining acceptance. The
+[beta reconciliation](docs/handoff/LAUNCH-BETA-20261006.md) covers all 52 reports;
+generated-image quality and physical camera tests remain explicitly separate.
+The next internal target is **1.0.4 (45)**. Until a new signed upload and Apple
+readback are recorded, **44 remains the available internal build** and public
+**1.0.3 (42)** remains unchanged. The checkpoints below are historical receipts.
+
+Pricing uses the owner's target of **75% after Apple's fee**, with provider
+attempts and ambiguous outcomes charged against the same funded allowance.
+Apple's current USA catalog shows 15% proceeds, but catalog proceeds are not
+settled invoices. Storage, delivery, support and retained media need funded,
+bounded allocations; passing quota tests alone does not establish a margin.
+New subscriptions have an approved **90-day hosting grace period after expiry**;
+existing testers are preserved. A paid-AI trial sponsorship proposal remains
+unapproved and is not activated.
+
 Internal **TestFlight 1.0.4 (44) is AVAILABLE**, verified **5 October 2026 at
 01:32:22 UTC** (4 October locally) for the existing Rendprop team, from source
 `9d27fb5`. Apple reports VALID / INTERNAL_ONLY / IN_BETA_TESTING.

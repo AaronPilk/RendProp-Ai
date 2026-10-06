@@ -17,6 +17,12 @@ worker deployment. See the [HD verification](../../docs/handoff/LISTING-FIRST-FL
 The base render runs on-device; render time depends on the media and phone.
 This optional worker handles server encodes and enhancement stills/hero clips.
 It does not establish that a production worker fleet is currently running.
+Legacy paid enhancement dispatch now also requires the shared funded-serving
+receipt before each provider POST and a fresh worker lease/listing check. Old
+jobs without a recorded requesting actor are enhanced only in a sole-owner
+workspace; shared workspaces use AI Photo Studio. Unknown legacy tariffs are
+restricted to explicit unlimited private testing sponsorship. Provider timeouts
+retain their money hold; replay cannot submit the same paid attempt again.
 The [Studio editor](../../apps/studio/README.md) also has its own browser exporter;
 it does not submit every chat edit to this queue.
 

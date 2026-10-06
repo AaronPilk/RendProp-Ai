@@ -1,5 +1,6 @@
 // Commit a priced, durable hold before ONE potentially billable video POST.
 // Lost acceptance remains held and is never automatically retried/fallen over.
+import { fundedAttempt, TARIFF_VERSION, type AttemptQuote } from "../_shared/funded-serving.ts";
 import { HttpError, throwRpc } from "../_shared/http.ts";
 import { unitsForStep } from "../_shared/ledger.ts";
 import type { RoutedUsage } from "../_shared/ledger.ts";
@@ -89,19 +90,34 @@ export async function submitReservedVideo<T extends { id: string }>(
   }
 
   let attempt: ChainResult<T>;
+  let dispatched = false;
+  const model = step.model.replace(/^fal-ai\//, "");
+  const input = options.input as {seconds?:number;aspect?:string;resolution?:string;extra?:Record<string,unknown>};
+  let quote: AttemptQuote | null = null;
+  if (step.provider === "fal" && model === "topaz/upscale/video" && options.feature === "drone_render") {
+    quote = {cents: Math.max(hold, (options.seconds ?? 0) * 16),version:TARIFF_VERSION};
+  } else if (step.provider === "fal" && model === "bytedance/seedance/v1/pro/fast/image-to-video" && Number.isInteger(input.seconds) && input.seconds! >= 2 && input.seconds! <= 12 && ["16:9","9:16","1:1"].includes(input.aspect ?? "16:9")) {
+    quote = {cents: Math.max(hold, 1920 * 1080 * (input.seconds! * 24 + 1) / 1024 / 10000),version:TARIFF_VERSION};
+  } else if (step.provider === "fal" && ["veo3.1/fast/image-to-video","veo3.1/fast"].includes(model) && Number.isInteger(input.seconds) && [4,6,8].includes(input.seconds!)) {
+    quote = {cents: Math.max(hold, input.seconds! * (input.resolution === "4k" ? 30 : 10)),version:TARIFF_VERSION};
+  }
   try {
     // The same request must never reach a second provider after a timeout or
     // lost acceptance. ResolveChain has already applied eligibility/health.
-    attempt = await deps.submit(step);
-    if (typeof attempt?.value?.id !== "string" || !attempt.value.id.trim() ||
-        attempt.step.provider !== step.provider || attempt.step.model !== step.model) {
-      throw new Error("Unconfirmed provider receipt");
-    }
+    attempt = await fundedAttempt({actorId:options.actorId,orgId:options.orgId,requestKey:options.key,rpc:deps.rpc}, options.feature, step, options.input, quote, async () => {
+      dispatched = true;
+      const receipt = await deps.submit(step);
+      if (typeof receipt?.value?.id !== "string" || !receipt.value.id.trim() ||
+          receipt.step.provider !== step.provider || receipt.step.model !== step.model) {
+        throw new Error("Unconfirmed provider receipt");
+      }
+      return receipt;
+    });
   } catch (error) {
     const details = error instanceof HttpError ? error.details : undefined;
-    const status = details?.provider_status;
-    const errorClass = details?.error_class;
-    const rejected = details?.dispatch_rejected === true && typeof status === "number" &&
+    const status = dispatched ? details?.provider_status : 0;
+    const errorClass = dispatched ? details?.error_class : "validation";
+    const rejected = (!dispatched || details?.dispatch_rejected === true) && typeof status === "number" &&
       [0, 400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(status);
     console.error("app video submission failed", {
       provider: step.provider, model: step.model,

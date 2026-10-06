@@ -9,10 +9,10 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "October 5, 2026";
-// Source reconciliation is not publication approval: owner/legal must approve
-// the effective date, notice, provider terms and retention evidence before deploy.
-// See docs/audits/2026-09-10/PRIVACY-POLICY-RECONCILIATION.md.
+const EFFECTIVE_DATE = "October 6, 2026";
+// Prospective 90-day hosting grace was approved by the owner on October 6.
+// Deploy only with matching retention/read/export contracts; the legal draft
+// and handoff separate tested behavior from account-specific provider evidence.
 const CONTACT_EMAIL = "aaron@pilk.ai";
 const BUSINESS = "RendProp LLC";
 const MAILING_ADDRESS = "855 Central Avenue, Saint Petersburg, FL 33701";
@@ -146,7 +146,7 @@ ${BUSINESS} ("we", "us") and apply whenever you use the app or any page we host 
 creates a guest session, but cloud uploads require a named account or an eligible, verified
 Apple subscription. Sign in with Apple to sync across devices and recover your workspace
 if you delete the app. Keep your account to yourself: you are responsible for
-what happens under it. You must be at least 13 years old (and old enough to form a binding
+what happens under it. You must be at least 18 years old (and old enough to form a binding
 contract where you live) to use Rendprop. If you use Rendprop for a business or team, you
 confirm you have the authority to accept these Terms for it.</p>
 
@@ -209,11 +209,13 @@ and they are what you are charged.</p>
   <li><b>Price changes.</b> If a price rises, Apple notifies you before it takes effect and, where
   Apple requires it, asks you to agree — if you do not, the subscription simply stops renewing.
   We will flag a material change in the app as well.</li>
-  <li><b>When a plan ends or lapses.</b> <b>Your content stays.</b> Cancelling or letting a plan
-  expire does not delete your listings, photos, reels, or published tours, and share links you
-  have already sent keep working. What stops is the monthly allowance: you cannot render new
-  tours or run AI features until you subscribe again. If you want the content gone, delete it —
-  see section 7.</li>
+  <li><b>When a plan ends or lapses.</b> For new subscriptions covered by the hosting policy
+  introduced on October 6, 2026, hosting continues for a <b>90-day grace period after the
+  subscription expires</b>. We provide advance notices and a chance to download your content
+  before hosting ends. Renewing extends the hosting period. After the grace period, public
+  links may stop working and stored media may be removed following notice. Expiry does not
+  grant another AI allowance. Existing testers retain their prior hosting arrangements.
+  You can request removal earlier — see section 7.</li>
 </ul>
 <p><b>We never see or store your card details.</b> Apple sends us a signed record of the purchase
 — the transaction identifiers, which plan you bought, and when it expires — and that record is
@@ -255,8 +257,8 @@ you accept the updated Terms.</p>
     lede:
       "The plain-language version: only record spaces you have rights to, your content stays " +
       "yours, we never use it for marketing or AI training without your written consent, " +
-      "subscriptions renew through the App Store until you cancel (and your content stays even " +
-      "when a plan lapses), and you can request account deletion in the app; shared-workspace " +
+      "subscriptions renew through the App Store until you cancel, new subscriptions have a " +
+      "90-day hosting grace period after expiry, and you can request account deletion in the app; shared-workspace " +
       "content and pending cleanup are explained in section 7.",
     body,
     otherLabel: "Privacy Policy",
@@ -320,8 +322,8 @@ they break (section 4), and keeping the service secure. <b>Your content is never
 marketing and never used to train AI models without your written consent.</b></p>
 
 <h2><span class="num">3.</span>Who processes data for us</h2>
-<p>Rendprop runs on a small set of infrastructure and AI providers. They process data solely to
-provide their function to us:</p>
+<p>Rendprop uses the infrastructure and AI providers below. Their processing and retention
+also depend on the provider's applicable terms and the account settings for that service:</p>
 <table role="table" aria-label="Service providers and data processing">
   <tr role="row"><th role="columnheader" scope="col">Provider</th><th role="columnheader" scope="col">What it does</th><th role="columnheader" scope="col">What it receives</th></tr>
   <tr role="row"><td role="cell">Supabase</td><td role="cell">Authentication, database, and the app's API</td><td role="cell">Your account, listings, leads, and tour engagement counts. Inputs sent through Rendprop's API, including media and text supplied for AI processing</td></tr>
@@ -342,6 +344,12 @@ provide their function to us:</p>
 provider, including for fallback or quality checks. The primary Rendprop database is hosted
 in the United States. Cloud delivery and processing providers may operate in other locations.
 Rendprop does not send your media or buyer inquiries for advertising.</p>
+<p>Provider copies can remain after a result is saved in Rendprop. Google's Gemini terms
+distinguish paid and unpaid processing; unpaid inputs may be used to improve Google's
+products, while paid-service terms provide different protections. Bria's video results do
+not expire by default unless a different retention policy is configured. An expiring Rendprop
+download link does not prove that a provider has erased its copy. Review the AI disclosure
+before submitting personal or confidential content.</p>
 
 <h2><span class="num">4.</span>Analytics, crash reports, and ads</h2>
 <p>All of this is <b>first-party</b>: our own code, sending to our own servers, read only by us.
@@ -381,7 +389,10 @@ ever combined with data from another company's app or website, or given to a dat
 tours for you, and you see them in the app.</p>
 
 <h2><span class="num">5.</span>How long we keep it</h2>
-<p>Your content remains until you request deletion. Removing a listing hides it from the app
+<p>New subscriptions covered by the October 6, 2026 hosting policy have a 90-day hosting
+grace period after expiry, advance notices and a chance to download content before hosting
+ends. Existing testers retain their prior hosting arrangements. Storage removal can finish
+separately from the end of public hosting. Removing a listing hides it from the app
 and starts cleanup of associated media; completing removal of stored files and provider copies
 can take additional work. Account deletion (<b>Settings → Delete account</b>) covers your
 account and private workspaces; content in shared workspaces can remain for other members.
@@ -392,15 +403,19 @@ we do not promise immediate removal from every backup or a single fixed retentio
 Public files already downloaded or copied by someone else cannot be recalled by Rendprop.</p>
 
 <h2><span class="num">6.</span>Your rights</h2>
-<p>You can see and manage your data directly in the app, and delete it there too. For anything
+<p>You can see and manage your data directly in the app, request deletion, and download an
+account-owned cloud JSON inventory in <b>Settings → Download account data</b>. The inventory
+states its scope and omissions; photos and videos use their separate download controls.
+For anything
 the app doesn't cover — a copy of your data, a correction, or a deletion request — email
 <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a> and we'll handle it. Depending on where
 you live, you may have additional statutory rights (such as access, portability, and erasure);
 we honor those.</p>
 
 <h2><span class="num">7.</span>Children</h2>
-<p>Rendprop is not for children under 13, and we don't knowingly collect their data. If you
-believe a child has created an account, contact us and we'll delete it.</p>
+<p>Rendprop is intended for adults aged 18 or older. If you believe a child has created an
+account or submitted personal information, contact us so we can investigate and arrange
+appropriate removal.</p>
 
 <h2><span class="num">8.</span>Changes to this policy</h2>
 <p>If we change this policy in a meaningful way, we'll flag it in the app or by email before

@@ -125,6 +125,30 @@ import Foundation
         expect(player.statusOverlay?.isHidden == true, "successful retry clears loading")
         player.stop(); player.showFailure()
         expect(!player.isMounted && player.retry == nil, "dismantled preview cannot resume")
+        let planListing = UUID(), planOrg = UUID(), planAsset = UUID(), planNow = Date(timeIntervalSince1970: 1_800_000_000)
+        let planStamp = DateFormatter(); planStamp.locale = Locale(identifier: "en_US_POSIX"); planStamp.timeZone = TimeZone(secondsFromGMT: 0); planStamp.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        let planURL = URL(string: "https://" + String(repeating: "a", count: 32) + ".r2.cloudflarestorage.com/bucket/renders/\(planOrg.uuidString.lowercased())/\(planListing.uuidString.lowercased())/plan.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-SignedHeaders=host&X-Amz-Signature=" + String(repeating: "b", count: 64) + "&X-Amz-Expires=600&X-Amz-Date=" + planStamp.string(from: planNow))!
+        let planExpiry = ISO8601DateFormatter().string(from: planNow.addingTimeInterval(600))
+        let planPhoto = CloudMediaPage.Photo(id: planAsset, listing_id: planListing, url: planURL, expires_at: planExpiry, caption: nil, is_staged: false, is_altered: false, original_url: nil)
+        let planDetails = ["floorplan_asset_id": planAsset.uuidString, "floorplan_url": "https://cdn.rendprop.com/renders/old.jpg"]
+        expect(CloudFloorPlanLink.resolve(details: planDetails, photos: [planPhoto], listingID: planListing, orgID: planOrg, now: planNow) == planURL, "attached floorplan uses scoped signed media URL")
+        expect(CloudFloorPlanLink.resolve(details: planDetails, photos: [], listingID: planListing, orgID: planOrg, now: planNow) == nil, "missing plan never falls back to raw R2")
+        expect(CloudFloorPlanLink.resolve(details: planDetails, photos: [planPhoto], listingID: UUID(), orgID: planOrg, now: planNow) == nil, "foreign listing plan refused")
+        expect(CloudFloorPlanLink.resolve(details: planDetails, photos: [planPhoto], listingID: planListing, orgID: UUID(), now: planNow) == nil, "foreign org plan refused")
+        expect(CloudFloorPlanLink.resolve(details: planDetails, photos: [planPhoto], listingID: planListing, orgID: planOrg, now: planNow.addingTimeInterval(601)) == nil, "expired floorplan refuses before link")
+        expect(CloudFloorPlanLink.resolve(details: ["floorplan_url":"https://plans.fixture.invalid/external.png"], photos: [], listingID: planListing, orgID: planOrg, now: planNow)?.host == "plans.fixture.invalid", "external no-asset attachment survives")
+        expect(CloudFloorPlanLink.resolve(details: ["floorplan_url":"https://cdn.fixture.invalid/renders/old.jpg"], photos: [], listingID: planListing, orgID: planOrg, now: planNow) == nil, "legacy private alias refused")
+        expect(CloudFloorPlanLink.resolve(details: ["floorplan_url":"https://pub-fixture.r2.dev/old.jpg"], photos: [], listingID: planListing, orgID: planOrg, now: planNow) == nil, "managed R2 legacy alias refused")
+        let priorIndustry = UserDefaults.standard.object(forKey: "space.type")
+        for industry in SpaceType.allCases {
+            UserDefaults.standard.set(industry.rawValue, forKey: "space.type")
+            let guide = AppGuideTopic.allCases.flatMap { $0.steps.map { $0.1 } }.joined(separator: " ")
+            expect(AppGuideTopic.listing.title == "Start a \(industry.spaceNoun)", "guide title follows selected industry")
+            expect(guide.contains("MLS") == (industry == .realEstate), "guide MLS instructions are housing only")
+            expect(AppGuideTopic.allCases.allSatisfy { $0.steps.count == 3 }, "every industry retains complete offline feature guide")
+        }
+        if let priorIndustry { UserDefaults.standard.set(priorIndustry, forKey: "space.type") }
+        else { UserDefaults.standard.removeObject(forKey: "space.type") }
         print("Native UX actual bodies: \(assertions) assertions passed")
     }
     @MainActor static func settle() async { for _ in 0..<20 { await Task.yield() } }

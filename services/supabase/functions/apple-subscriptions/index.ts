@@ -1,3 +1,4 @@
+import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 // apple-subscriptions — App Store Server Notifications V2, verified and applied.
 //
 //   POST /apple-subscriptions/notify   -> 200 { ok, duplicate?, applied?, ignored?, pending? }
@@ -293,6 +294,7 @@ async function handleNotify(req: Request): Promise<Response> {
     // device receipt then binds this stored state atomically rather than briefly
     // granting the old plan before pending refunds replay.
     applied = await applyEntitlement(entitlement!, orgId);
+    if (applied && orgId && facts.transaction) await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,facts.transaction);
   } catch (err) {
     // The ledger row would otherwise dedupe Apple's retry into a no-op and the
     // entitlement would never land. Best effort; a failure here just means the
