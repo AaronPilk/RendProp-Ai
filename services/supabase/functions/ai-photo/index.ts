@@ -80,7 +80,7 @@
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
 import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
@@ -141,6 +141,8 @@ interface EditCharge {
   plan: string;
   monthlyKey: string;
   burstKey: string;
+  monthlyReceipt: RateChargeReceipt;
+  burstReceipt: RateChargeReceipt;
 }
 
 /**
@@ -161,17 +163,20 @@ async function guardEdit(user: PaidAiCaller, req: Request): Promise<EditCharge> 
   requiredIdempotencyKey(req);
   const burstKey = `aiphoto:${orgId}`;
   const monthlyKey = `aiphotomo:${orgId}`;
-  if (!(await durableRateLimit(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
+  const burst = await chargeRateReceipt(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS);
+  if (!burst.accepted) {
     throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.", "rate_limited");
   }
-  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
+  const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  if (!monthly.accepted) {
+    await refundRateReceipt(burst.receipt);
     throw quotaError("AI photo edit", monthlyCap, monthlyCap, ent.plan);
   }
   // Return the org the quota was charged to, so the handler can attribute the
   // cost_ledger row (F-E-15) and refund the same keys on failure (F-E-16).
   // The effective plan rides along for the router's RouteContext: it is the
   // number entitlementForCharge() just read, not a second lookup.
-  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey, monthlyReceipt: monthly.receipt, burstReceipt: burst.receipt };
 }
 
 /**
@@ -179,32 +184,34 @@ async function guardEdit(user: PaidAiCaller, req: Request): Promise<EditCharge> 
  * ai-chapters/index.ts refundCharge exactly). Call ONLY when route resolution or the provider
  * chain threw — once runChain returns a value the provider ran and billed,
  * and the ledger write right after it is what records that; nothing past that
- * point is ever refunded. Best effort and never throws — see refundRateLimit().
+ * point is ever refunded. Each receipt names the original SQL charge window.
  */
 async function refundEditCharge(charge: EditCharge): Promise<void> {
-  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
-  await refundRateLimit(charge.burstKey, EDIT_WINDOW_SECONDS, 1);
+  await refundRateReceipt(charge.monthlyReceipt);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 /** What guardHelper() charged — burst only, never the monthly meter. */
 interface HelperCharge {
   orgId: string;
   burstKey: string;
+  burstReceipt: RateChargeReceipt;
 }
 
 /** Helper modes: role gate + burst limiter only. Never touches the monthly meter. */
 async function guardHelper(user: PaidAiCaller, req: Request): Promise<HelperCharge> {
   const orgId = await requireEditorRole(user, req, "AI photo suggestions");
   const burstKey = `aiphotohelp:${orgId}`;
-  if (!(await durableRateLimit(burstKey, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS))) {
+  const burst = await chargeRateReceipt(burstKey, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS);
+  if (!burst.accepted) {
     throw new HttpError(429, "Too many suggestion requests for now — try again in a few minutes.", "rate_limited");
   }
-  return { orgId, burstKey };
+  return { orgId, burstKey, burstReceipt: burst.receipt };
 }
 
 /** Hand back a helper-mode burst charge on failure (audit item 2). Never throws. */
 async function refundHelperCharge(charge: HelperCharge): Promise<void> {
-  await refundRateLimit(charge.burstKey, HELP_WINDOW_SECONDS, 1);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 // Bound the inline base64 image so a caller can't push unbounded memory

@@ -86,7 +86,7 @@
 //   $0.24 Seedance clip's allowance. Same published number, separate meter.
 //
 //   CHARGE / REFUND. The meter is charged immediately BEFORE the ElevenLabs
-//   call and refunded with `refundRateLimit` if that call (or the R2 upload)
+//   call and refunded against its original window receipt if that call (or the R2 upload)
 //   fails, so a failed generation costs the org nothing — same net effect as
 //   charging afterwards, without the race that charging afterwards opens (N
 //   concurrent requests would all read an uncharged counter and all spend).
@@ -135,7 +135,7 @@ import { HttpError, assert, json, pathSegments, readJson, respondError } from ".
 import { ProviderError, definitiveSubmitRejection } from "../_shared/providers/common.ts";
 import { fundingContext, fundedAttempt, TARIFF_VERSION } from "../_shared/funded-serving.ts";
 import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { durableRateLimit, chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertMarketingCopy } from "../_shared/fairhousing.ts";
@@ -331,6 +331,8 @@ interface Charge {
   plan: string;
   monthlyKey: string;
   burstKey: string;
+  monthlyReceipt: RateChargeReceipt;
+  burstReceipt: RateChargeReceipt;
 }
 
 /**
@@ -352,14 +354,17 @@ async function guardTTS(user: PaidAiCaller, req: Request): Promise<Charge> {
   }
 
   const burstKey = `aivoice:${orgId}`;
-  if (!(await durableRateLimit(burstKey, TTS_MAX_PER_WINDOW, TTS_WINDOW_SECONDS))) {
+  const burst = await chargeRateReceipt(burstKey, TTS_MAX_PER_WINDOW, TTS_WINDOW_SECONDS);
+  if (!burst.accepted) {
     throw new HttpError(429, "AI voiceover limit reached for now — try again in a few minutes.", "rate_limited");
   }
   const monthlyKey = `aivoicemo:${orgId}`;
-  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
+  const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  if (!monthly.accepted) {
+    await refundRateReceipt(burst.receipt);
     throw quotaError("AI voiceover", monthlyCap, monthlyCap, ent.plan);
   }
-  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey, monthlyReceipt: monthly.receipt, burstReceipt: burst.receipt };
 }
 
 /**
@@ -367,8 +372,8 @@ async function guardTTS(user: PaidAiCaller, req: Request): Promise<Charge> {
  * — a failed refund must not replace the real error the user needs to see.
  */
 async function refundCharge(charge: Charge): Promise<void> {
-  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
-  await refundRateLimit(charge.burstKey, TTS_WINDOW_SECONDS, 1);
+  await refundRateReceipt(charge.monthlyReceipt);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 // ── Voice catalogue ──────────────────────────────────────────────────────────

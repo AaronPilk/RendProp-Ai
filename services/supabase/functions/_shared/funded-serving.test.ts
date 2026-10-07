@@ -31,6 +31,26 @@ Deno.test("failed or malformed money admission never dispatches",async()=>{
   assertEquals(dispatched,0);assertEquals(f.calls.length,1);
  }
 });
+
+Deno.test("missing funded activation is unavailable, exhausted interval is quota, and neither dispatches or falls back", async () => {
+ const originalFetch=globalThis.fetch;globalThis.fetch=async()=>Response.json(null);
+ try {
+  for(const [reason,status,code] of [
+   ["This workspace has no funded serving allowance",503,"upstream"],
+   ["This paid service interval is not funded",503,"upstream"],
+   ["This attempt exceeds the shared funded serving allowance",402,"quota_exceeded"],
+  ] as const){
+   const f=fixture({reserveError:`RP402: ${reason}`});let dispatched=0;
+   const error=await assertRejects(()=>runChain("coach.chat",[step,{...step,model:"fallback"}],s=>
+    fundedAttempt(f.context,"copy",s,{}, {cents:2,version:TARIFF_VERSION},async()=>{dispatched++;})),HttpError);
+   assertEquals(error.status,status);assertEquals(error.code,code);
+   assertEquals(dispatched,0);assertEquals(f.calls.filter(c=>c.name==="serving_cost_reserve").length,1);
+  }
+  const unrelated=fixture({reserveError:"RP402: Upgrade to use this feature"});
+  const error=await assertRejects(()=>fundedAttempt(unrelated.context,"copy",step,{}, {cents:2,version:TARIFF_VERSION},async()=>{}),HttpError);
+  assertEquals(error.status,402);assertEquals(error.code,"plan_required");
+ } finally {globalThis.fetch=originalFetch;}
+});
 Deno.test("finite users cannot use unpriced averages or failed QA authority",async()=>{
  for(const options of [{},{qaError:true}]){
   const f=fixture(options);let dispatched=0;

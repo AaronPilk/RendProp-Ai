@@ -7,6 +7,9 @@ const load = buildSrc("client-delivery-check");
 const { renderTourPage, unbrandedSelfCheck } = await load("player");
 const { buildDemoTour } = await load("demo");
 const source = buildDemoTour();
+// This fixture represents a real publisher's synthetic listing. The public
+// fictional demo deliberately has no inquiry recipient or lead form.
+source.slug = "synthetic-client-delivery";
 source.agent_card = { name: "Synthetic Client Alpha", phone: "555-010-1000", email: "alpha@example.invalid", brokerage: "Synthetic Client Brokerage", avatar_url: "https://media.invalid/client-alpha.jpg", handle: "photographer-private-portfolio" };
 source.cta = { mode: "lead_form", label: "Contact agent", url: null, secondary: [], lead_fields: ["name", "phone", "message"] };
 source.altered_media = [{ label: "Synthetic room", kind: "declutter", disclosure: "Objects were digitally removed.", original_url: "https://media.invalid/original.jpg", altered_url: "https://media.invalid/declutter.jpg" }];

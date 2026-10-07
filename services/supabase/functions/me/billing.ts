@@ -1,5 +1,5 @@
 import { assert, HttpError } from "../_shared/http.ts";
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 /** A purchase started for one workspace must not follow a later active-org switch. */
 export function assertExpectedSubscriptionWorkspace(expected: unknown, actual: string): void {
   if (expected === undefined) return; // Older builds do not send the binding.

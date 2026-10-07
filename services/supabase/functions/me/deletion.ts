@@ -1,6 +1,6 @@
 // The DB owns the deletion boundary; Edge executes only a confirmed leased
 // snapshot. A transient failure must retain work, never invent an empty one.
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError, json, throwRpc } from "../_shared/http.ts";
 import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS, validateOwnedCleanupPrefix, type OwnedCleanupPrefix } from "../_shared/r2.ts";
 import { payloadEmpty, type DeletionPayload } from "./logic.ts";

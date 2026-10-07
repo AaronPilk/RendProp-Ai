@@ -1,4 +1,4 @@
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { assert, HttpError, throwRpc } from "./http.ts";
 
 export type Workspace = { id: string; name: string; role: string };

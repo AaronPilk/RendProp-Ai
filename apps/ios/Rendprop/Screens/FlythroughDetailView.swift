@@ -63,27 +63,28 @@ private final class FeatureSessionAction: ObservableObject {
 /// listing's own `allowSearchIndexing`, which is what actually gets sent.
 enum SearchIndexingDefault {
     private static let valueKey = "tour.searchIndexing.default"
-    private static let ownerKey = "tour.searchIndexing.defaultOwner"
 
     /// The current workspace's identity, as far as this device can tell.
     /// Empty before any session exists — which reads as "not the workspace
     /// that saved a default", i.e. OFF.
     @MainActor private static var owner: String {
-        AuthStore.shared.userID ?? ""
+        guard let actor = AuthStore.shared.userID, !actor.isEmpty,
+              let org = WorkspaceContext.selectedOrgID else { return "" }
+        return "\(actor.lowercased()):\(org.uuidString.lowercased())"
     }
 
     @MainActor static var value: Bool {
         let defaults = UserDefaults.standard
-        guard let saved = defaults.string(forKey: ownerKey), !saved.isEmpty, saved == owner else {
-            return false
-        }
-        return defaults.bool(forKey: valueKey)
+        guard !owner.isEmpty else { return false }
+        return defaults.bool(forKey: valueKey + "." + owner)
     }
 
     @MainActor static func remember(_ allowed: Bool) {
+        // Actor-only entries from older builds cannot opt another workspace
+        // into indexing. They read OFF until a choice is made in this scope.
+        guard !owner.isEmpty else { return }
         let defaults = UserDefaults.standard
-        defaults.set(allowed, forKey: valueKey)
-        defaults.set(owner, forKey: ownerKey)
+        defaults.set(allowed, forKey: valueKey + "." + owner)
     }
 }
 
@@ -426,7 +427,10 @@ struct DetailMetadataRegressionHost: View {
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var workspace = WorkspaceStore.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var presentationScope = NativePresentationScope(
+        actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)
     // LOAD-BEARING: the business type drives every noun, the Zillow/sold gating
     // and which listings exist at all. Switching type while this screen is
     // pushed used to leave a HOUSE open inside Gym mode, still showing
@@ -536,6 +540,24 @@ struct FlythroughDetailView: View {
     /// Live copy from the model (listing here is a value snapshot).
     private var currentListing: Listing {
         model.listings.first(where: { $0.id == listing.id }) ?? listing
+    }
+
+    private var hasCurrentPresentationContext: Bool {
+        presentationScope.matches(actorID: auth.userID, orgID: WorkspaceContext.selectedOrgID)
+    }
+
+    /// Clear only this screen's presentation. Shared admitted jobs and their
+    /// account/workspace completion fences continue to own background work.
+    private func invalidatePresentation() {
+        filesTask?.cancel(); filesTask = nil; filesStamp = nil
+        mediaItems = []; availableRerenderSource = nil; openedFile = nil
+        filePhotoExport = nil; filePhotoExportAdmission = nil
+        provenance = []; provenanceCanExport = nil; auditExport = nil
+        showPhotosScreen = false; showRoomTagger = false; showReelStudio = false
+        showAerialIntro = false; showEdit = false; showListingFactsReview = false
+        qrTarget = nil
+        connection.cancel()
+        dismiss()
     }
 
     /// The business type this screen speaks in. Samples carry no spaceTypeRaw
@@ -650,6 +672,7 @@ struct FlythroughDetailView: View {
 
     var body: some View {
         ScrollView {
+            if hasCurrentPresentationContext {
             VStack(spacing: Theme.spacing) {
                 if !currentListing.isSample {
                     DesktopStudioCard().padding(16)
@@ -701,16 +724,21 @@ struct FlythroughDetailView: View {
                 mapSection
             }
             .padding()
+            .askAI(.listing, listingID: listing.id)
+            } else {
+                Text("Your account or workspace changed. Reopen the listing from your current workspace.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim).padding()
+            }
         }
         .background(Theme.bg)
-        .navigationTitle(currentListing.address)
+        .navigationTitle(hasCurrentPresentationContext ? currentListing.address : "Listing")
         .navigationBarTitleDisplayMode(.inline)
-        .askAI(.listing, listingID: listing.id)
-        .task { if !currentListing.isSample { try? await model.refreshClientContact(for: listing.id) } }
-        .disabled(isDeleting || connection.isWaiting)
+        .task { await refreshClientContactIfCurrent() }
+        .disabled(!hasCurrentPresentationContext || isDeleting || connection.isWaiting)
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
-        .onDisappear { connection.cancel() }
+        .onDisappear { connection.cancel(); filesTask?.cancel(); filesTask = nil }
         .onAppear {
+            guard hasCurrentPresentationContext else { invalidatePresentation(); return }
             // Seed the Zillow field ONCE — re-seeding on every appearance wiped
             // an in-progress paste when a sheet closed (F-A-26).
             if !zillowSeeded {
@@ -750,9 +778,11 @@ struct FlythroughDetailView: View {
             PhotoExportSheet(photos: selection.photos, includeOriginals: false,
                              canExport: filePhotoExportAdmission ?? { false })
         }
-        .onChange(of: auth.userID) { _ in filePhotoExport = nil; filePhotoExportAdmission = nil }
+        .onChange(of: auth.userID) { _ in
+            if !hasCurrentPresentationContext { invalidatePresentation() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
-            filePhotoExport = nil; filePhotoExportAdmission = nil
+            if !hasCurrentPresentationContext { invalidatePresentation() }
         }
         // "Make a reel" opens REEL STUDIO, with this listing's photos and its
         // aerial intro — the same two things `PhotoStudioView` used to hand it
@@ -778,11 +808,14 @@ struct FlythroughDetailView: View {
         .task { await loadCompliance() }
         .task(id: asset?.localURL) {
             availableRerenderSource = nil
+            let expectedScope = presentationScope
+            guard hasCurrentPresentationContext else { return }
             guard let source = asset?.localURL, source.isFileURL else { return }
             let exists = await Task.detached(priority: .utility) {
                 FileManager.default.fileExists(atPath: source.path)
             }.value
-            guard !Task.isCancelled, exists, asset?.localURL == source else { return }
+            guard !Task.isCancelled, exists, expectedScope == presentationScope,
+                  hasCurrentPresentationContext, asset?.localURL == source else { return }
             availableRerenderSource = source
         }
         .onChange(of: spaceTypeRaw) { _ in
@@ -1600,6 +1633,8 @@ struct FlythroughDetailView: View {
     /// studio, the floor-plan scanner and Reel Studio are all pushes, so their
     /// pop-back runs the stamp check and picks up whatever they wrote.
     private func loadFiles(force: Bool = false) {
+        guard hasCurrentPresentationContext else { invalidatePresentation(); return }
+        let expectedScope = presentationScope
         let live = currentListing
         guard !live.isSample else {
             filesTask?.cancel()
@@ -1618,7 +1653,8 @@ struct FlythroughDetailView: View {
         filesTask?.cancel()
         filesTask = Task {
             guard let scan = await ListingMediaItem.scan(request, since: since) else { return }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, expectedScope == presentationScope,
+                  hasCurrentPresentationContext else { return }
             filesStamp = scan.stamp
             // Only publish a list that is actually different. An equal array
             // still invalidates `@State` and re-runs `body`, which on this screen
@@ -2079,17 +2115,24 @@ struct FlythroughDetailView: View {
     @MainActor private func mediaExportAdmission(for snapshot: Listing) -> () -> Bool {
         let context = NativeMediaExportContext()
         return {
-            guard context.isCurrent,
+            guard context.isCurrent, self.hasCurrentPresentationContext,
                   let current = self.model.listings.first(where: { $0.id == snapshot.id }),
                   current.cloudUnavailable != true else { return false }
             return current.serverID == snapshot.serverID && current.serverOrgID == snapshot.serverOrgID
         }
     }
 
+    @MainActor private func refreshClientContactIfCurrent() async {
+        guard !Task.isCancelled, hasCurrentPresentationContext, !currentListing.isSample else { return }
+        try? await model.refreshClientContact(for: listing.id)
+    }
+
     /// Load this listing's provenance rows (GET /me/compliance?listing_id=).
     /// Silent when the account has no access or the route is missing — the card
     /// stays hidden rather than shouting at an agent who did nothing wrong.
     @MainActor private func loadCompliance() async {
+        guard !Task.isCancelled, hasCurrentPresentationContext else { return }
+        let expectedScope = presentationScope
         let l = currentListing
         guard !l.isSample, let serverID = l.serverID else { return }
         guard !Config.enableAuth || auth.isSignedIn else { return }
@@ -2101,13 +2144,14 @@ struct FlythroughDetailView: View {
         defer { isLoadingProvenance = false }
         do {
             let rows = try await model.api.provenance(listingServerID: serverID)
-            guard canExport() else { return }
+            guard canExport(), expectedScope == presentationScope, hasCurrentPresentationContext else { return }
             provenance = rows
             provenanceCanExport = canExport
         } catch is CancellationError {
             // The screen was left mid-load (a push cancels `.task`) — say nothing;
             // coming back re-runs it.
         } catch {
+            guard expectedScope == presentationScope, hasCurrentPresentationContext else { return }
             if (error as? URLError)?.code == .cancelled { return }
             if let api = error as? APIError, api.isNotFound || api.isUnauthorized || api.isForbidden {
                 provenanceError = nil    // nothing to show, and nothing the agent can fix here

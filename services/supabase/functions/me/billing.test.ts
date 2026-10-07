@@ -1,6 +1,6 @@
 import {assert,assertEquals,assertThrows,assertRejects} from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {assertExpectedSubscriptionWorkspace,assertVerifiedPurchaseOwner} from "./billing.ts";
-import type {SupabaseClient} from "npm:@supabase/supabase-js@2";
+import type {SupabaseClient} from "npm:@supabase/supabase-js@2.116.0";
 import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;

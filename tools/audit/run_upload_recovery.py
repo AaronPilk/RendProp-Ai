@@ -60,6 +60,10 @@ def main():
         assert match and int(match[1]) >= 30, "Expected actual assertion count"
         receipt["assertions"] = int(match[1])
         mutations = [
+            ("admission-ignores-quota", files[4], "api.isForbidden || api.isQuota",
+             "api.isForbidden || (api.isQuota && api.status != 429)", "Monthly upload ceiling is terminal", 1),
+            ("admission-ignores-auth", files[4], "api.isValidation || api.isUnauthorized",
+             "api.isValidation || false", "Sign-in refusal is terminal", 1),
             ("no-complete-probe", files[2], "if record.dispatched || record.ticket?.replayed != false {",
              'if false {',
              "Lost complete response must not resend PUT bytes", 1),

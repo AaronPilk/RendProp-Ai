@@ -15,6 +15,13 @@ const LIMIT = 15000;
 let checks = 0, cases = 0;
 const failures = [];
 function expect(value, message) { checks++; if (!value) failures.push(message); }
+for (const slug of ["estate-demo", "demo"]) {
+  for (const space of [undefined, "venue", "fitness"]) {
+    const html = renderTourPage({ ...buildDemoTour(space), slug }, "https://functions.invalid/v1", "fixture-anon", "fixture-site");
+    expect(!/<form|<input|<textarea/i.test(html), `${slug}/${space}: fictional demo collects no contact data`);
+    expect(html.includes("This is a demonstration."), `${slug}/${space}: sample contact state is explicit`);
+  }
+}
 function deferred() { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 async function flush() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
 const good = (status = 201, extra = {}) => ({ ok: true, status, async json() { return { ok: true, id: ID, ...extra }; } });

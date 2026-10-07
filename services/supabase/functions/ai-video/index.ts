@@ -218,7 +218,7 @@ import { asHttpError, type ChainResult, resolveChain, runChain } from "../_share
 import { BUDGETS, fetchBounded, ProviderError } from "../_shared/providers/common.ts";
 import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
-import { falCompletedFailure } from "../_shared/providers/fal.ts";
+import { falCompletedFailure, falLegacyReceipt, falLegacyReceiptMatchesModel } from "../_shared/providers/fal.ts";
 import { persistResult, persistedUrl, putBytes, presignGet } from "../_shared/providers/common.ts";
 import { R2_BUCKET_RENDERS, headObject } from "../_shared/r2.ts";
 import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
@@ -2281,15 +2281,14 @@ async function falSubmit(
  * so only https URLs on fal's own queue hosts are allowed.
  */
 async function assertLegacyVideoReceipt(actorId: string, orgId: string, status: string, response: string): Promise<void> {
-  const statusURL = new URL(status), responseURL = new URL(response);
-  const match = /^\/(.+)\/requests\/([^/]+)\/status$/.exec(statusURL.pathname);
-  assert(match && statusURL.origin === "https://queue.fal.run" && responseURL.origin === statusURL.origin &&
-    responseURL.pathname === `/${match[1]}/requests/${match[2]}`, 403, "This older job needs verified account recovery. No new generation was started.");
-  const { data, error } = await adminClient().from("app_video_cost_reservations").select("id")
-    .eq("org_id", orgId).eq("actor_id", actorId).eq("provider", "fal").eq("model", match[1])
-    .eq("provider_request_id", match[2]).limit(1);
+  const receipt = falLegacyReceipt(status, response);
+  assert(receipt, 403, "This older job needs verified account recovery. No new generation was started.");
+  const { data, error } = await adminClient().from("app_video_cost_reservations").select("id, model, provider_request_id")
+    .eq("org_id", orgId).eq("actor_id", actorId).eq("provider", "fal")
+    .eq("provider_request_id", receipt.requestId).limit(2);
   if (error) throw new HttpError(503, "This saved job could not be checked. Please retry its status.", "upstream");
-  assert(data?.length === 1, 403, "This older job needs verified account recovery. No new generation was started.");
+  assert(data?.length === 1 && falLegacyReceiptMatchesModel(data[0].model, data[0].provider_request_id, receipt),
+    403, "This older job needs verified account recovery. No new generation was started.");
 }
 
 function requireFalUrl(raw: string | null, name: string): string {
