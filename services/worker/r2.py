@@ -3,8 +3,8 @@
 Cloudflare R2 helpers over the S3 API (boto3).
 
 R2 is S3-compatible: point boto3 at the account endpoint
-`https://<account>.r2.cloudflarestorage.com`, region "auto", SigV4. Zero egress,
-so we move bytes freely (AI-COST-MODEL.md §3).
+`https://<account>.r2.cloudflarestorage.com`, region "auto", SigV4. Storage and
+operations require admission even though R2 has no per-byte egress charge.
 
 The worker uses three operations:
   • download_file  — pull the raw capture (.mov) from `rendprop-uploads`.
@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import io
 from functools import lru_cache
 
 import boto3
@@ -71,15 +72,53 @@ def download_file(bucket: str, key: str, dest_path: str) -> str:
     return dest_path
 
 
-def upload_file(local_path: str, bucket: str, key: str, content_type: str | None = None) -> str:
-    """Upload a local file to `bucket/key`. Returns the object key."""
+class _BoundedUpload(io.BufferedIOBase):
+    """SDK sees only the byte extent reserved before dispatch, even if a file grows."""
+    def __init__(self, source, size: int):
+        self.source, self.size = source, size
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.source.tell()
+
+    def seek(self, offset, whence=os.SEEK_SET):
+        if whence == os.SEEK_SET:
+            position = offset
+        elif whence == os.SEEK_CUR:
+            position = self.tell() + offset
+        elif whence == os.SEEK_END:
+            position = self.size + offset
+        else:
+            raise ValueError("Invalid upload seek")
+        if not 0 <= position <= self.size:
+            raise ValueError("Upload seek exceeds reserved bytes")
+        return self.source.seek(position, os.SEEK_SET)
+
+    def read(self, size=-1):
+        remaining = max(0, self.size - self.tell())
+        return self.source.read(remaining if size < 0 else min(size, remaining))
+
+
+def upload_file(local_path: str, bucket: str, key: str, content_type: str | None = None, *, org_id: str) -> str:
+    """Reserve complete bytes before PUT; retain the hold on ambiguous transport."""
     if content_type is None:
         content_type = mimetypes.guess_type(local_path)[0] or "application/octet-stream"
+    import db
     try:
-        _client().upload_file(
-            local_path, bucket, key, ExtraArgs={"ContentType": content_type}
-        )
-    except (BotoCoreError, ClientError) as e:
+        with open(local_path, "rb") as source:
+            size = os.fstat(source.fileno()).st_size
+            db.reserve_media_storage(org_id, bucket, key, size)
+            _client().upload_fileobj(
+                _BoundedUpload(source, size), bucket, key, ExtraArgs={"ContentType": content_type}
+            )
+        if _client().head_object(Bucket=bucket, Key=key).get("ContentLength") != size:
+            raise R2Error("Uploaded object length could not be confirmed")
+    except (BotoCoreError, ClientError, OSError, db.DBError) as e:
         raise R2Error(f"R2 upload failed for s3://{bucket}/{key}: {e}") from e
     return key
 

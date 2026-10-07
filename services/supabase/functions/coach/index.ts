@@ -35,31 +35,55 @@
 //
 //  2. NO PLAN METERING, EVER. Customer service and first-project onboarding
 //     are free on every plan by product decision (see the task brief and
-//     0023's header) — there is no entitlement check and no monthly cap here,
-//     only the durable PER-USER rate limiter below (abuse protection, not a
+//     0023's header) — there is no paid-plan allowance or monthly cap here,
+//     only durable user and workspace safety limits (abuse protection, not a
 //     paid allowance, and never refunded on a failed generation the way the
 //     precious monthly quotas elsewhere in this codebase are).
 //
 //  3. TEXT ONLY, NEVER LOGGED. No photo or video is ever part of a coach
-//     request — `context.listings[]` carries only counts and booleans the app
-//     already has from AppModel (never queried from the DB here; see
-//     prompt.ts). Message content is never in a log line, in either
+//     request — `context.listings[]` carries bounded device hints; context.ts
+//     verifies cloud ids and loads only selected-workspace counts, closed states
+//     and limited account/usage fields. Message content is never in a log line, in either
 //     direction — only ids, counts, provider/model names and error classes.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
+import {
+  assert,
+  HttpError,
+  json,
+  pathSegments,
+  readJsonLimited,
+  respondError,
+} from "../_shared/http.ts";
+import {
+  adminClient,
+  assertPaidAiIdentity,
+  getUser,
+  orgForUser,
+  preferredOrg,
+  userClient,
+} from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { entitlementFor, type Entitlement } from "../_shared/entitlements.ts";
 import { recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute } from "../_shared/router.ts";
 import { runChain } from "../_shared/providers/chain.ts";
+import { fundingContext, fundedAttempt, textAttemptQuote, completeFundingOperation } from "../_shared/funded-serving.ts";
 import { ProviderError } from "../_shared/providers/common.ts";
 import { anthropicMessages } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
 
-import { type CoachContext, type CoachListingCtx, buildUserTurn, spaceTypeOf, systemInstruction } from "./prompt.ts";
+import {
+  buildUserTurn,
+  type CoachContext,
+  type CoachListingCtx,
+  screenOf,
+  spaceTypeOf,
+  systemInstruction,
+} from "./prompt.ts";
 import { parseCoachOutput } from "./actions.ts";
+import { coachContext } from "./context.ts";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -69,6 +93,8 @@ const BURST_MAX_PER_WINDOW = 12;
 const BURST_WINDOW_SECONDS = 300;
 const DAY_MAX_PER_WINDOW = 60;
 const DAY_WINDOW_SECONDS = 86400;
+/** Shared workspace safety fence; free access is independent of paid allowances. */
+const ORG_DAY_MAX_PER_WINDOW = 600;
 
 /** Keep the reply short and the bill small — a coaching message, not an essay. */
 const MAX_TOKENS = 600;
@@ -80,7 +106,15 @@ const MAX_MESSAGE_CHARS = 1200;
 
 const MAX_LISTINGS = 25;
 const MAX_TITLE_CHARS = 120;
-const KNOWN_PLANS = ["free", "trial", "starter", "solo", "pro", "team", "brokerage"] as const;
+const KNOWN_PLANS = [
+  "free",
+  "trial",
+  "starter",
+  "solo",
+  "pro",
+  "team",
+  "brokerage",
+] as const;
 
 // Where the coach was opened from. A CLOSED SET, like KNOWN_PLANS and the
 // action enum — not a length-capped free string. `screen` is a hint to the
@@ -90,7 +124,8 @@ const KNOWN_PLANS = ["free", "trial", "starter", "solo", "pro", "team", "brokera
 // which is exactly what the events vocabulary + scrubber exist to prevent for
 // analytics. Anything unrecognised becomes null. Add a value here when the app
 // adds an entry point (apps/ios/Rendprop/Coach/CoachView.swift call sites).
-const KNOWN_SCREENS = ["home", "settings"] as const;
+// The complete native AskAIScreen vocabulary is kept in prompt.ts and tested
+// against the Swift enum. It remains a closed set, never arbitrary ledger text.
 
 // ── The two-step fallback (see header, point 1) — MUST match migration
 // 0023_coach_routes.sql's seeded rows exactly, so the flag-off path and the
@@ -133,22 +168,33 @@ const OPENAI_FALLBACK: RouteStep = {
  */
 async function chooseChain(plan: string): Promise<RouteStep[]> {
   try {
-    const steps = await resolveRoute("coach.chat", { plan, needs: ["text", "chat"] });
+    const steps = await resolveRoute("coach.chat", {
+      plan,
+      needs: ["text", "chat"],
+    });
     if (steps.length > 0) return steps; // used AS RETURNED — never re-filtered
   } catch (e) {
-    console.error("coach: resolveRoute threw; using the two-step fallback:", e instanceof Error ? e.message : String(e));
+    console.error(
+      "coach: resolveRoute threw; using the two-step fallback:",
+      e instanceof Error ? e.name : "unknown",
+    );
   }
   return [ANTHROPIC_FALLBACK, OPENAI_FALLBACK];
 }
 
+async function trustedEntitlement(orgId: string): Promise<Entitlement | null> {
+  try {
+    return await entitlementFor(orgId);
+  } catch {
+    return null;
+  }
+}
+
 // ── Body validation — every field is untrusted, nothing is a UUID here ──────
 //
-// Unlike every other AI route in this codebase, coach never looks anything up
-// in the database by id: `context.listings[]` is the CLIENT's own report of
-// its own AppModel state (CoachModel.swift), used only to word the reply and
-// to validate which `listing_id` an action may name. A stale or wrong id here
-// costs nothing but a slightly wrong suggestion — it can never leak another
-// org's data, because nothing is ever fetched with it.
+// Client context is untrusted. context.ts verifies cloud row ids under the
+// selected org and excludes unavailable/foreign rows. Device route ids remain
+// distinct from server ids; local drafts are explicitly labelled device hints.
 
 interface CoachMessageIn {
   role?: unknown;
@@ -157,6 +203,8 @@ interface CoachMessageIn {
 
 interface CoachListingIn {
   id?: unknown;
+  server_id?: unknown;
+  local_draft?: unknown;
   title?: unknown;
   has_video?: unknown;
   room_tags?: unknown;
@@ -165,6 +213,7 @@ interface CoachListingIn {
   photos?: unknown;
   edits?: unknown;
   reels?: unknown;
+  attention?: unknown;
 }
 
 interface CoachBody {
@@ -174,6 +223,7 @@ interface CoachBody {
     listings?: CoachListingIn[];
     plan?: unknown;
     screen?: unknown;
+    selected_listing_id?: unknown;
   };
 }
 
@@ -207,12 +257,16 @@ function cleanListings(raw: unknown): CoachListingCtx[] {
     if (out.length >= MAX_LISTINGS) break;
     if (!item || typeof item !== "object") continue;
     const o = item as CoachListingIn;
-    const id = typeof o.id === "string" ? o.id.trim().slice(0, 128) : "";
-    if (!id || seen.has(id)) continue;
+    const id = typeof o.id === "string" ? o.id.trim().toLowerCase() : "";
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) || seen.has(id)) continue;
     seen.add(id);
     out.push({
       id,
-      title: typeof o.title === "string" ? o.title.trim().slice(0, MAX_TITLE_CHARS) : "",
+      serverID: typeof o.server_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(o.server_id.trim()) ? o.server_id.trim().toLowerCase() : null,
+      localDraft: o.local_draft === true && o.server_id == null,
+      title: typeof o.title === "string"
+        ? o.title.trim().slice(0, MAX_TITLE_CHARS)
+        : "",
       hasVideo: o.has_video === true,
       roomTags: nonNegInt(o.room_tags),
       hasTour: o.has_tour === true,
@@ -220,6 +274,7 @@ function cleanListings(raw: unknown): CoachListingCtx[] {
       photos: nonNegInt(o.photos),
       edits: nonNegInt(o.edits),
       reels: nonNegInt(o.reels),
+      attention: ["cloud_access", "facts_review", "upload", "render", "publish", "unknown"].includes(String(o.attention)) ? String(o.attention) : null,
     });
   }
   return out;
@@ -231,8 +286,7 @@ function cleanPlan(raw: unknown): string {
 }
 
 function cleanScreen(raw: unknown): string | null {
-  const s = String(raw ?? "").trim().toLowerCase();
-  return (KNOWN_SCREENS as readonly string[]).includes(s) ? s : null;
+  return screenOf(raw);
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────────
@@ -250,7 +304,7 @@ Deno.serve(async (req) => {
     // app's own CoachModel answers from CoachOffline instead (never dead).
     const user = await getUser(req);
 
-    const body = await readJson<CoachBody>(req);
+    const body = await readJsonLimited<CoachBody>(req, 65_536);
     const messages = cleanMessages(body.messages);
     assert(
       messages.length > 0 && messages[messages.length - 1].role === "user",
@@ -258,21 +312,77 @@ Deno.serve(async (req) => {
       "messages must be a non-empty array ending in a user message",
     );
 
+    // Resolve membership before any paid work. Client plan hints cannot select
+    // a premium route, and a missing workspace cannot produce unaccounted spend.
+    const requestedOrg = preferredOrg(req)?.trim().toLowerCase();
+    assert(
+      requestedOrg,
+      409,
+      "Choose a workspace before using online Coach.",
+      "conflict",
+    );
+    assert(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+        requestedOrg,
+      ),
+      400,
+      "Invalid workspace identity.",
+      "validation",
+    );
+    const orgId = await orgForUser(user.id, requestedOrg);
+    await assertPaidAiIdentity(user, orgId);
+    const entitlement = await trustedEntitlement(orgId);
+    const plan = !entitlement || entitlement.degraded ? "free" : cleanPlan(entitlement.plan);
     const space = spaceTypeOf(body.space_type);
+    const selected = typeof body.context?.selected_listing_id === "string" ? body.context.selected_listing_id.trim().toLowerCase() : null;
+    const verified = await coachContext(userClient(req), adminClient(), user.id, orgId, entitlement, cleanListings(body.context?.listings), selected);
     const context: CoachContext = {
-      listings: cleanListings(body.context?.listings),
-      plan: cleanPlan(body.context?.plan),
+      ...verified,
+      plan,
       screen: cleanScreen(body.context?.screen),
     };
     const validListingIds = new Set(context.listings.map((l) => l.id));
 
     // Rate limits, PER USER, charged before the provider call (same order as
     // every other durable limiter in this codebase) — see header, point 2.
-    if (!(await durableRateLimit(`coachburst:${user.id}`, BURST_MAX_PER_WINDOW, BURST_WINDOW_SECONDS))) {
-      throw new HttpError(429, "That's a lot of messages at once — try again in a few minutes.", "rate_limited");
+    if (
+      !(await durableRateLimit(
+        `coachburst:${user.id}`,
+        BURST_MAX_PER_WINDOW,
+        BURST_WINDOW_SECONDS,
+      ))
+    ) {
+      throw new HttpError(
+        429,
+        "That's a lot of messages at once — try again in a few minutes.",
+        "rate_limited",
+      );
     }
-    if (!(await durableRateLimit(`coachday:${user.id}`, DAY_MAX_PER_WINDOW, DAY_WINDOW_SECONDS))) {
-      throw new HttpError(429, "You've reached today's message limit for the coach — try again tomorrow.", "rate_limited");
+    if (
+      !(await durableRateLimit(
+        `coachday:${user.id}`,
+        DAY_MAX_PER_WINDOW,
+        DAY_WINDOW_SECONDS,
+      ))
+    ) {
+      throw new HttpError(
+        429,
+        "You've reached today's message limit for the coach — try again tomorrow.",
+        "rate_limited",
+      );
+    }
+    if (
+      !(await durableRateLimit(
+        `coachorgday:${orgId}`,
+        ORG_DAY_MAX_PER_WINDOW,
+        DAY_WINDOW_SECONDS,
+      ))
+    ) {
+      throw new HttpError(
+        429,
+        "Your workspace has reached today's coach message limit — try again tomorrow.",
+        "rate_limited",
+      );
     }
 
     const system = systemInstruction(space);
@@ -280,7 +390,8 @@ Deno.serve(async (req) => {
 
     const chain = await chooseChain(context.plan);
 
-    const attempt = await runChain("coach.chat", chain, async (step) => {
+    const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
+    const attempt = await runChain("coach.chat", chain, (step) => fundedAttempt(funding, `coach.chat:${chain.indexOf(step)}`, step, {system, userTurn}, textAttemptQuote(step, system, userTurn, MAX_TOKENS), async () => {
       if (step.provider === "anthropic") {
         // The STEP, not step.model: that is what carries the row's `params`
         // (migration 0030) into the request. No coach.chat row seeds any, so
@@ -300,24 +411,32 @@ Deno.serve(async (req) => {
         // because "valid JSON" is not the same thing as "safe to execute".
         return await openaiChat(
           step,
-          [{ role: "user", content: [{ type: "input_text", text: `${system}\n\n---\n\n${userTurn}` }] }],
+          [{
+            role: "user",
+            content: [{
+              type: "input_text",
+              text: `${system}\n\n---\n\n${userTurn}`,
+            }],
+          }],
           { maxOutputTokens: MAX_TOKENS, json: true },
         );
       }
       // A future admin-added row this deploy doesn't know how to speak. "other"
       // (not "validation") so runChain() tries the NEXT step instead of
       // hard-failing the whole request over one unrecognised row.
-      throw new ProviderError(step.provider, "other", `coach.chat: no adapter for provider "${step.provider}" in this deploy`);
-    });
+      throw new ProviderError(
+        step.provider,
+        "other",
+        `coach.chat: no adapter for provider "${step.provider}" in this deploy`,
+      );
+    }));
 
     const output = parseCoachOutput(attempt.value, validListingIds);
 
-    // Ledger — best effort, and never on the critical path: the user is
-    // waiting on `output` above, which is already computed. A membership
-    // lookup hiccup or a ledger insert failure must never turn a good reply
+    // Ledger — best effort: the user is waiting on `output` above, which is
+    // already computed. A ledger insert failure must never turn a good reply
     // into an error (header, point 2 — this feature has no quota to protect).
     try {
-      const orgId = await orgForUser(user.id, preferredOrg(req));
       await recordRoutedAiCost(adminClient(), {
         orgId,
         feature: "coach",
@@ -330,16 +449,22 @@ Deno.serve(async (req) => {
         },
       });
     } catch (e) {
-      console.error("coach: org resolve / ledger write failed (reply already returned):", e instanceof Error ? e.message : String(e));
+      console.error(
+        "coach: ledger write failed (reply already computed):",
+        e instanceof Error ? e.name : "unknown",
+      );
     }
 
-    return json({
+    return json(await completeFundingOperation(funding, {
       reply: output.reply,
       actions: output.actions,
       suggested_replies: output.suggested_replies,
       model: attempt.step.model,
-    });
+    }));
   } catch (err) {
+    if (!(err instanceof HttpError) || err.status >= 500) {
+      return respondError(new HttpError(503, "Online Coach is temporarily unavailable. Your saved work is unchanged; use the app's local help or try again later.", "upstream"));
+    }
     return respondError(err);
   }
 });

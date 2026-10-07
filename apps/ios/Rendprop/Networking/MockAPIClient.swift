@@ -5,6 +5,22 @@ import Foundation
 /// returns a plausible value; the AI video features report honestly that they
 /// need the live backend instead of handing back a fake file.
 actor MockAPIClient: APIClient {
+    private var mockRealEstateRole: RealEstateRole = .agent
+    private var mockClientContacts: [UUID: ListingClientContact] = [:]
+    func realEstateRole() async throws -> RealEstateRole { mockRealEstateRole }
+    func updateRealEstateRole(_ role: RealEstateRole) async throws { mockRealEstateRole = role }
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact? { mockClientContacts[listingID] }
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact {
+        try ClientContactPolicy.validate(contact)
+        guard contact.revision == (mockClientContacts[listingID]?.revision ?? 0) else { throw APIError.server(status: 409, code: "contact_revision_conflict", message: "Client details changed. Reload them before saving.") }
+        var saved = contact; saved.listingID = listingID; saved.revision += 1
+        saved.updatedAt = ISO8601DateFormatter().string(from: Date()); mockClientContacts[listingID] = saved
+        return saved
+    }
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery {
+        ClientLeadDelivery(state: "email_sent", recipientEmail: recipient, clientName: nil,
+            lastAttemptAt: ISO8601DateFormatter().string(from: Date()), sentAt: ISO8601DateFormatter().string(from: Date()), canResend: true, reason: nil)
+    }
     // Screenshot walks can open the real empty/error UI without pretending that
     // an offline capture produced a model or a publicly shareable room.
     func spatialJobs(listingID: UUID) async throws -> [SpatialJob] { [] }
@@ -61,6 +77,9 @@ actor MockAPIClient: APIClient {
     func deleteListing(serverID: UUID) async throws {
         created = created.filter { $0.value.serverID != serverID && $0.key != serverID }
     }
+
+    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws {}
+    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws {}
 
     // MARK: - Uploads
 
@@ -205,6 +224,49 @@ actor MockAPIClient: APIClient {
     func updateBrand(_ fields: [String: String]) async throws {
         // Offline: the card already lives in UserDefaults; nothing to sync.
         _ = fields
+    }
+
+    private var businessLogos: [UUID: String] = [:]
+    private var businessLogoOperations: [UUID: (org: UUID, bytes: Data, expected: String?, url: String)] = [:]
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard !image.isEmpty, image.count <= 512 * 1024, ["image/png", "image/jpeg"].contains(contentType) else { throw CloudSyncError.invalidResponse }
+        if let previous = businessLogoOperations[operationID] {
+            guard previous.org == orgID, previous.bytes == image, previous.expected == expectedLogoURL,
+                  businessLogos[orgID] == previous.url else { throw ClientContactError.conflict }
+            return .init(ok: true, orgID: orgID, businessLogoURL: previous.url, replayed: true)
+        }
+        guard businessLogos[orgID] == expectedLogoURL else { throw ClientContactError.conflict }
+        let value = "https://assets.fixture.invalid/brand/\(orgID.uuidString.lowercased())/\(operationID.uuidString.lowercased()).png"
+        businessLogos[orgID] = value
+        businessLogoOperations[operationID] = (orgID, image, expectedLogoURL, value)
+        return .init(ok: true, orgID: orgID, businessLogoURL: value)
+    }
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard businessLogos[orgID] == expectedLogoURL || businessLogos[orgID] == nil else { throw ClientContactError.conflict }
+        businessLogos.removeValue(forKey: orgID)
+        return .init(ok: true, orgID: orgID, businessLogoURL: nil)
+    }
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt {
+        .init(ok: true, orgID: orgID, businessLogoURL: businessLogos[orgID])
+    }
+
+    private var personalCards: [UUID: PersonalCardReceipt] = [:]
+    func personalCard() async throws -> PersonalCardReceipt {
+        guard let owner = await AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        return personalCards[owner] ?? .init(ok: true, userID: owner, spaceType: nil, publicCard: nil)
+    }
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt {
+        let current = try await personalCard()
+        guard current.userID == expected.userID, SpaceType(rawValue: spaceType) != nil,
+              Set(fields.keys).isSubset(of: Set(AgentCard.fieldNames)) else { throw CloudSyncError.identityChanged }
+        var desired = current.publicCard ?? [:]
+        for (key, value) in fields { if value.isEmpty { desired.removeValue(forKey: key) } else { desired[key] = value } }
+        if current.publicCard != nil && desired == current.publicCard && current.spaceType == spaceType { return current }
+        guard current.spaceType == expected.spaceType,
+              fields.keys.allSatisfy({ current.publicCard?[$0] == expected.publicCard?[$0] }) else { throw ClientContactError.conflict }
+        let receipt = PersonalCardReceipt(ok: true, userID: current.userID, spaceType: spaceType, publicCard: desired)
+        personalCards[current.userID] = receipt
+        return receipt
     }
 
     // MARK: - Admin console (offline sample data)
@@ -904,7 +966,15 @@ actor MockAPIClient: APIClient {
         // (style/prompt are ignored offline). The disclosure sentence mirrors
         // public.provenance_disclosure() so the compliance copy is exercised
         // offline too; nothing is recorded, because there is no audit log here.
-        try? await Task.sleep(nanoseconds: 500_000_000)
+#if targetEnvironment(simulator)
+        if Config.isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.photoWorkFixture") {
+            try await Task.sleep(nanoseconds: 6_000_000_000)
+        } else {
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+#else
+        try await Task.sleep(nanoseconds: 500_000_000)
+#endif
         return AIPhotoEditResult(imageBase64: request.imageBase64,
                                  mime: request.mime,
                                  disclosure: Self.offlineDisclosure(for: request.edit),
@@ -918,22 +988,20 @@ actor MockAPIClient: APIClient {
         switch edit {
         case "stage":
             return "This photo was virtually staged with AI: furniture and decor were digitally added "
-                + "or restyled. The architecture, dimensions, and views are unchanged."
+                + "or restyled. Compare with the original to check fixed features, layout and access before publication."
         case "declutter":
             return "This photo was digitally decluttered with AI: clutter and personal items were "
-                + "removed. The architecture, dimensions, and views are unchanged."
+                + "removed. Compare with the original to check fixed features, layout and access before publication."
         case "twilight":
             return "This photo was digitally altered with AI: the sky and lighting were changed to "
-                + "simulate dusk. The property itself is unchanged."
+                + "simulate dusk. Compare with the original to check property features before publication."
         case "sky":
-            return "This photo was digitally altered with AI: the sky was replaced. The property "
-                + "itself is unchanged."
+            return "This photo was digitally altered with AI: the sky was replaced. Compare with the original to check property features before publication."
         case "lawn":
             return "This photo was digitally altered with AI: the lawn and landscaping were digitally "
-                + "repaired. The property itself is unchanged."
+                + "repaired. Compare with the original to check property features before publication."
         default:
-            return "This photo was digitally altered with AI. The architecture, dimensions, and views "
-                + "are unchanged."
+            return "This photo was digitally altered with AI. Compare with the original to check fixed features, layout and access before publication."
         }
     }
 

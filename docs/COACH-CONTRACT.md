@@ -92,14 +92,20 @@ can't share a source file) and must be changed together:
 - `apps/ios/Rendprop/Coach/CoachAPI.swift` → `CoachActionType`
 - this document
 
-## 3. Rate limits (durable, per user — abuse protection, not a plan quota)
+## 3. Rate limits (durable — abuse protection, not a plan quota)
 
 - **12 messages / 5 minutes**
 - **60 messages / day**
+- **600 messages / day per workspace**, shared across members as an abuse safety
+  fence. The first two limits remain per user.
 
-No entitlement check, no monthly allowance, no plan gate — coach is free on
+No paid-plan allowance, monthly quota or plan access gate — coach is free on
 every plan by product decision. A limit hit is a `429` with a plain-language
 message; the app shows it as an assistant bubble, not an error dialog.
+Workspace membership is resolved before any paid provider request. Routing uses
+the server's plan for that workspace, with a degraded lookup routed as `free`;
+the client's plan hint cannot select a premium route. The workspace cap is not
+a credit allowance or an invoice-based budget.
 
 ## 4. Never a price
 

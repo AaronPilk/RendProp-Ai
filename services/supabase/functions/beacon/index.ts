@@ -29,8 +29,8 @@
 // docs/ADMIN-CONSOLE-CONTRACT.md.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, clientIp, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { HttpError, assert, clientIp, json, pathSegments, readJsonLimited, respondError } from "../_shared/http.ts";
+import { publicRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient } from "../_shared/supabase.ts";
 import { shouldCountView } from "./logic.ts";
 
@@ -68,14 +68,14 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") throw new HttpError(405, "Only POST is supported");
 
     // Durable per-IP limit — beacons are frequent, so this is generous.
-    if (!(await durableRateLimit(`beacon:${clientIp(req)}`, 120, 60))) {
+    if (!(await publicRateLimit(`beacon:${clientIp(req)}`, 120, 60))) {
       throw new HttpError(429, "Too many requests");
     }
 
-    const body = await readJson<BeaconBody>(req);
+    const body = await readJsonLimited<BeaconBody>(req, 16 * 1024);
     const seg = pathSegments(req, "beacon");
     const slug = seg[0] ?? body.slug;
-    assert(slug, 400, "slug is required (path or body)");
+    assert(typeof slug === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(slug), 400, "A valid tour link is required");
 
     // The public demo tour has no DB render row — its metrics aren't recorded,
     // but the player still beacons. Acknowledge instead of 404ing every viewer.
@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
       .eq("slug", slug)
       .not("published_at", "is", null)
       .maybeSingle();
-    if (rErr) throw new HttpError(500, `Render lookup failed: ${rErr.message}`);
+    if (rErr) throw new HttpError(503, "Tour statistics are temporarily unavailable");
     if (!render) throw new HttpError(404, "Tour not found");
 
     const { data: listing } = await admin
@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     // (IP, slug) per window — see the file header and shouldCountView.
     const countView = await shouldCountView(
       body.view_start,
-      () => durableRateLimit(`beaconview:${clientIp(req)}:${render.id}`, 1, VIEW_DEDUPE_WINDOW_SECONDS),
+      () => publicRateLimit(`beaconview:${clientIp(req)}:${render.id}`, 1, VIEW_DEDUPE_WINDOW_SECONDS),
     );
 
     const { error: mErr } = await admin.rpc("bump_metering", {
@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
       p_streamed: Number(clampN(body.streamed_minutes, MAX_STREAMED_MIN_PER_CALL).toFixed(2)),
       p_scroll: Math.min(1, Math.max(0, num(body.scroll_depth))),
     });
-    if (mErr) throw new HttpError(500, `Metering update failed: ${mErr.message}`);
+    if (mErr) throw new HttpError(503, "Tour statistics are temporarily unavailable");
 
     return json({ ok: true });
   } catch (err) {

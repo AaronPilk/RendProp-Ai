@@ -1,7 +1,6 @@
 import {
   useCallback,
   lazy,
-  Suspense,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -16,10 +15,12 @@ import type { EditDraft } from "./editor/model";
 import type { AgentPlanHandoff, ShotPlanHandoff, CreativeEntryRequest, CreativeTool } from "./features/creative/model";
 import Planner from "./Planner";
 import { AppearanceSelector } from "./Appearance";
+import { SafeLoad } from "./StudioBoundary";
 import Dashboard, { FeatureGate } from "./features/home/Dashboard";
 import { homeWords, type FeatureId } from "./features/home/features";
 import type { BusinessSectionRequest } from "./features/business/BusinessWorkspace";
 import type { ListingEntryRequest } from "./features/listings/ListingWorkflow";
+import type { ContactNavigationGuard } from "./features/listings/ClientContactEditor";
 import Icon from "./icons";
 import type { IconName } from "./icons";
 import { INDUSTRIES, scopeKey, writePlans } from "./workspace";
@@ -32,14 +33,15 @@ type Page = "overview" | "properties" | "creative" | "editor" | "library" | "pla
 const ListingWorkflow = lazy(() => import("./features/listings/ListingWorkflow"));
 const CreativeWorkspace = lazy(() => import("./features/creative/CreativeWorkspace"));
 const BusinessWorkspace = lazy(() => import("./features/business/BusinessWorkspace"));
+const RealEstateRolePicker = lazy(() => import("./features/business/RealEstateRolePicker"));
 const CloudEditor = lazy(() => import("./features/sync/PropertyReels"));
 const CloudPlanner = lazy(() => import("./features/sync/CloudPlanner"));
 const EditorImpl = lazy(() => import("./features/projects/Projects"));
 function VideoEditor(props: VideoEditorProps & {services?: ReturnType<typeof createStudioServices>; workspace?: Workspace | null; storageScope: string}) {
   return (
-    <Suspense fallback={<p role="status">Loading the video editor…</p>}>
+    <SafeLoad resetKey={props.storageScope} fallback={<p role="status">Loading the video editor…</p>}>
       <EditorImpl {...props} />
-    </Suspense>
+    </SafeLoad>
   );
 }
 const pages: { id: Page; label: string; icon: IconName }[] = [
@@ -200,6 +202,12 @@ export default function App({ servicesFactory }: {
   const mediaScope = useRef("");
   mediaScope.current = `${editScope}:${selected?.id ?? ""}`;
   const presenterPending = useRef({scope: "", pending: false, busy: false});
+  const listingContactGuard = useRef<{ scope: string; guard: ContactNavigationGuard | null }>({ scope: "", guard: null });
+  const contactGuardChanged = useCallback((guard: ContactNavigationGuard | null) => { listingContactGuard.current = { scope: editScope, guard }; }, [editScope]);
+  function canReplaceListingContact() {
+    const state = listingContactGuard.current;
+    return state.scope !== editScope || state.guard?.canLeave() !== false;
+  }
   // Local files and Creative drafts can both be mounted. Keep their guards
   // independent so one component cannot clear another component's work.
   const localCreationState = useRef({scope: "", hasSources: false, blockReason: null as string | null});
@@ -233,7 +241,7 @@ export default function App({ servicesFactory }: {
       orgId ? { orgId, identityVersion: session.identityVersion } : undefined,
     );
   }
-  function canReplaceAccountWork() {
+  function canReplaceAccountWork(includeContact = true) {
     const saved = savedCreationState.current;
     if (saved.scope === editScope && saved.blockReason) { setNotice(saved.blockReason); return false; }
     const local = localCreationState.current;
@@ -241,7 +249,7 @@ export default function App({ servicesFactory }: {
       if (local.blockReason) { setNotice(`Video projects: ${local.blockReason} Return to Video projects in Create to finish it.`); return false; }
       if (local.hasSources && !window.confirm("Switch accounts or workspaces? Video projects remain separate for each account and workspace. Projects saved only in this browser stay on this device.")) return false;
     }
-    return canReplacePresenter();
+    return canReplacePresenter() && (!includeContact || canReplaceListingContact());
   }
   function setNotice(message: string) {
     setNoticeScope(editScope);
@@ -249,6 +257,7 @@ export default function App({ servicesFactory }: {
   }
   function selectListing(id: string, alreadyConfirmed = false) {
     if (!alreadyConfirmed && id !== selected?.id && !canReplacePresenter()) return false;
+    if (id !== selected?.id && !canReplaceListingContact()) return false;
     const found = listings.find(item => item.id === id);
     // A newly created row can arrive before the workspace refresh. Preserve
     // its selection so moving from Properties to Create opens the same work.
@@ -264,12 +273,13 @@ export default function App({ servicesFactory }: {
   function openCreative(listingId:string,tool:CreativeTool) {
     if (!workspace || !listings.some(item=>item.id===listingId)) return;
     if (!canReplacePresenter()) return;
-    selectListing(listingId, true);
+    if (!selectListing(listingId, true)) return;
     setFeatureEntry({scope:editScope,creative:{id:crypto.randomUUID(),listingId,tool}});
     navigate("creative");
   }
   function createProperty() {
     if (!workspace) { setShowLogin(true); return; }
+    if (!canReplaceListingContact()) return;
     setFeatureEntry({scope:editScope,create:crypto.randomUUID()});
     navigate("properties");
   }
@@ -299,22 +309,22 @@ export default function App({ servicesFactory }: {
   }
   function useShotPlan(plan: ShotPlanHandoff) {
     if (!workspace || !listings.some(item => item.id === plan.listingId)) return;
+    if (!selectListing(plan.listingId)) return;
     transfer.current?.abort();
     setImportRequest(undefined);
     setStoredAgentPlan(undefined);
     setShotPlanScope(editScope);
     setStoredShotPlan({...structuredClone(plan),id:crypto.randomUUID()});
-    selectListing(plan.listingId);
     navigate("editor");
   }
   function useAgentPlan(plan: AgentPlanHandoff) {
     if (!workspace || !listings.some(item => item.id === plan.listingId)) return;
+    if (!selectListing(plan.listingId)) return;
     transfer.current?.abort();
     setImportRequest(undefined);
     setStoredShotPlan(undefined);
     setAgentPlanScope(editScope);
     setStoredAgentPlan({...structuredClone(plan),id:crypto.randomUUID()});
-    selectListing(plan.listingId);
     navigate("editor");
   }
   function setShowLogin(open: boolean) {
@@ -633,7 +643,7 @@ export default function App({ servicesFactory }: {
   }
   async function signOut() {
     if (!services) return;
-    if (!canReplaceAccountWork()) return;
+    if (!canReplaceAccountWork(false)) return;
     setAuthBusy(true);
     transfer.current?.abort();
     try {
@@ -980,22 +990,23 @@ export default function App({ servicesFactory }: {
               </p>
             </div>
           </div>}
-          {page === "overview" && <Dashboard workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
+          {workspace && services && workspace.org.spaceType === "real_estate" && !workspace.user.realEstateRole && <SafeLoad resetKey={editScope} fallback={<p role="status">Loading your work preference…</p>}><RealEstateRolePicker key={editScope} workspace={workspace} services={services} onboarding onSaved={() => setRefresh(v => v + 1)} /></SafeLoad>}
+          {page === "overview" && <Dashboard services={services} workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
           {entry?.gate && workspace && <FeatureGate feature={entry.gate} listings={listings} spaceType={workspace.org.spaceType} onChoose={id=>openFeature(entry.gate!,id)} onCancel={()=>setFeatureEntry(undefined)} onCreate={createProperty}/>}
-          {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening your properties…</p>}>
-            <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} />
-          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
-          {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening creative tools…</p>}>
+          {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening your properties…</p>}>
+            <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onContactGuardChange={contactGuardChanged} />
+          </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
+          {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening creative tools…</p>}>
             <CreativeWorkspace entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={id => selectListing(id, true)} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} onPresenterPendingChange={presenterPendingChanged} />
-          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
+          </SafeLoad> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "editor" || editorOpened) && (
             <section
               hidden={page !== "editor"}
               aria-label="Video editing workspace"
             >
-              {workspace && services ? <Suspense fallback={<p role="status">Opening your saved edit…</p>}>
+              {workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening your saved edit…</p>}>
                 <CloudEditor entryRequest={entry?.reel} onOpenCreative={openCreative} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing} onSwitchBlockChange={savedBlockChanged} localCreationHasWork={!!draft?.clips.length} renderLocalCreation={(active, observeBlock) => workspaceDraftReady ? <VideoEditor services={services} workspace={workspace} storageScope={key} {...localAssistant} key={`${editScope}:${restoreAttempt}`} active={active} initialMode="conversation" conversationStorageKey={`${key}:conversation`} initialDraft={draft} onDraftChange={saveDraft} onSourcesChange={localSourcesChanged} onSwitchBlockChange={reason => {localBlockChanged(reason); observeBlock(reason);}} importRequest={importRequest?.listingId ? undefined : importRequest} /> : <p role="status">Opening your video projects…</p>} />
-              </Suspense> : workspaceDraftReady ? (
+              </SafeLoad> : workspaceDraftReady ? (
                 <VideoEditor
                   services={services??undefined} workspace={workspace} storageScope={key}
                   key={`${editScope}:${restoreAttempt}`}
@@ -1199,7 +1210,7 @@ export default function App({ servicesFactory }: {
               </section>
             )}
           {(page === "planner" || plannerOpened) && <section hidden={page !== "planner"} aria-label="Content planning workspace">
-            {workspace && services ? <Suspense fallback={<p role="status">Opening saved plans…</p>}><CloudPlanner key={editScope} services={services} workspace={workspace} onNotice={setNotice}/></Suspense> : workspaceDraftReady ? (
+            {workspace && services ? <SafeLoad resetKey={editScope} fallback={<p role="status">Opening saved plans…</p>}><CloudPlanner key={editScope} services={services} workspace={workspace} onNotice={setNotice}/></SafeLoad> : workspaceDraftReady ? (
               <Planner
                 key={restoreScope}
                 items={plans}
@@ -1211,7 +1222,7 @@ export default function App({ servicesFactory }: {
             ) : (
               <p role="status">Opening this workspace’s content plan…</p>
             )}</section>}
-          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><Suspense fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></Suspense></section>}
+          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><SafeLoad resetKey={editScope} fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></SafeLoad></section>}
           {page === "workspace" && (
             <div className="settings-grid">
               <section className="panel">
@@ -1262,9 +1273,9 @@ export default function App({ servicesFactory }: {
                       </div>
                     </dl>
                     <p className="muted small">
-                      Plans and purchases remain managed by the existing
-                      Rendprop app. Studio does not create a second
-                      subscription.
+                      Choose or change your plan in the iPhone app under Settings → Plan &amp; usage.
+                      A 7-day trial starts only after you confirm an eligible Apple subscription offer.
+                      Signing in does not start a trial; Studio uses that same subscription.
                     </p>
                     <button onClick={() => void signOut()} disabled={authBusy}>
                       {authBusy ? "Signing out…" : "Sign out"}

@@ -10,7 +10,7 @@
 // rollup in ONE transaction. Nothing is written when the cap would be blown —
 // the RPC raises and we surface HttpError(402).
 
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError, round4 } from "./http.ts";
 
 export const MAX_GEN_COST_PER_JOB_CENTS = Number(

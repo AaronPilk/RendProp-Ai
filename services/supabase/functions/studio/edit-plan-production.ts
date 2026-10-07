@@ -1,3 +1,4 @@
+import { beginFundingOperation, fundedAttempt, textAttemptQuote, type FundingContext } from "../_shared/funded-serving.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import { recordRoutedAiCost } from "../_shared/ledger.ts";
@@ -70,6 +71,7 @@ export async function generateEditPlanText(step: RouteStep, system: string, turn
 
 export function editPlanProduction(context: StudioContext, task: "copy.edit_plan" | "copy.prompt_enhancement" = EDIT_PLAN_TASK): EditPlanDependencies {
   const { admin, userId, orgId } = context;
+  let requestKey: string | null = null;
   const limit = () => Number(Deno.env.get("STUDIO_EDIT_PLANNER_MAX_ESTIMATED_CENTS") ?? "0");
   const enabled = () => Deno.env.get("STUDIO_EDIT_PLANNER_ENABLED") === "true" && Number.isFinite(limit()) && limit() > 0 && limit() <= 10;
   return {
@@ -103,6 +105,7 @@ export function editPlanProduction(context: StudioContext, task: "copy.edit_plan
       return step;
     },
     async reserve(requestId) {
+      requestKey = requestId;
       const bump = async (key: string, max: number, seconds: number) => {
         const result = await admin.rpc("bump_rate", { p_key: key, p_window_seconds: seconds, p_max: max, p_cost: 1 });
         assert(!result.error, 503, "Editing request limits could not be checked."); return result.data === true;
@@ -118,7 +121,11 @@ export function editPlanProduction(context: StudioContext, task: "copy.edit_plan
     async generate(step, system, turn, signal) {
       const started = Date.now();
       try {
-        const result = await generateEditPlanText(step, system, turn, fetch, signal);
+        assert(requestKey, 503, "The editing request has no budget reservation.");
+        const funding: FundingContext = {actorId:userId, orgId, requestKey, rpc:(name,args)=>admin.rpc(name,args)};
+        await beginFundingOperation(funding, task, {system,turn});
+        const pricedStep = {...step, params:{...paramsOf(step), max_output_tokens:EDIT_PLAN_LIMITS.tokens}};
+        const result = await fundedAttempt(funding, task, step, {system,turn}, textAttemptQuote(pricedStep, system, turn, EDIT_PLAN_LIMITS.tokens), () => generateEditPlanText(step, system, turn, fetch, signal));
         await reportOutcome(step, { ok: true, latency_ms: Date.now() - started });
         return result;
       } catch (error) {

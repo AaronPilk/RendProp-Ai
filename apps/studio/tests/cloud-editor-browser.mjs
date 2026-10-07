@@ -179,8 +179,25 @@ try {
   for(let i=0;i<pcm.length;i+=2){const v=pcm.readInt16LE(i)/32768;power+=v*v;if(i>=2&&pcm.readInt16LE(i-2)<0&&v>=0)crossings++;}
   const rms=Math.sqrt(power/(pcm.length/2)); assert(rms>0.02); assert(crossings>600&&crossings<720,`Narration frequency ${crossings}`);
   const pixel=(time,x=100)=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",exported,"-frames:v","1","-vf",`format=rgb24,crop=1:1:${x}:400`,"-f","rawvideo","pipe:1"])];
-  const dissolve=pixel(.64);assert(dissolve[0]>20&&dissolve[0]<100&&dissolve[2]>170&&dissolve[2]<245,`Dissolve mixed outgoing purple and incoming blue: ${dissolve}`);
-  const whipLeft=pixel(2.6,100),whipRight=pixel(2.6,650);assert(whipLeft[2]>200&&whipLeft[0]<30&&whipRight[0]>200&&whipRight[2]<30,"Whip frame must contain outgoing blue and incoming red at different horizontal positions");
+  // Inspect a fixed window around the 0.5s boundary and 0.28s dissolve.
+  // Encoded frames may arrive late; require progressing blends, not one
+  // hand-picked midpoint. A hard cut or frozen blend cannot pass.
+  const dissolve={before:pixel(.4),samples:[.54,.58,.62,.66,.70,.74,.78,.82,.86].map(time=>({time,rgb:pixel(time)})),after:pixel(1.1)};
+  receipt.exportProbes.at(-1).transitionPixels={dissolve};
+  const blends=dissolve.samples.filter(({rgb})=>rgb[0]>20&&rgb[0]<100&&rgb[2]>170&&rgb[2]<245);
+  assert(blends.some((sample,index)=>blends.slice(index+1).some(later=>sample.rgb[0]-later.rgb[0]>=8&&later.rgb[2]-sample.rgb[2]>=8)),`Dissolve must progress from purple toward blue within the bounded window: ${JSON.stringify(dissolve.samples)}`);
+  assert(dissolve.before[0]>100&&dissolve.before[0]<135&&dissolve.before[1]>65&&dissolve.before[1]<95&&dissolve.before[2]>135&&dissolve.before[2]<175,"The preceding shot must still be purple before the dissolve");
+  assert(dissolve.after[0]<10&&dissolve.after[1]<10&&dissolve.after[2]>240,"The following shot must be fully blue after the dissolve");
+  const isWhip=({left,right})=>left[2]>200&&left[0]<30&&right[0]>200&&right[2]<30;
+  const whipPixels=time=>({time,left:pixel(time,100),right:pixel(time,650)});
+  // Match the export-resume gate: MediaRecorder can shift the 180 ms whip by
+  // a few encoded frames. Require the spatial split inside a bounded window,
+  // plus the intact preceding/following shots; a hard cut cannot pass.
+  const transitionPixels={dissolve,beforeWhip:whipPixels(2.4),whip:[2.54,2.58,2.62,2.66,2.70,2.74].map(whipPixels),afterWhip:whipPixels(2.9)};
+  receipt.exportProbes.at(-1).transitionPixels=transitionPixels;
+  assert(transitionPixels.whip.some(isWhip),`Whip frames must contain outgoing blue and incoming red at different horizontal positions within the bounded timeline window: ${JSON.stringify(transitionPixels.whip)}`);
+  assert(transitionPixels.beforeWhip.left[2]>200&&transitionPixels.beforeWhip.right[2]>200&&!isWhip(transitionPixels.beforeWhip),"The preceding shot must still be blue before the whip");
+  assert(transitionPixels.afterWhip.left[0]>200&&transitionPixels.afterWhip.right[0]>200&&!isWhip(transitionPixels.afterWhip),"The closing shot must be fully red after the whip");
   receipt.checks.push("Decoded exported frames prove actual dissolve blending and horizontal whip movement");
   receipt.checks.push(`Actual exported MP4 is H264/AAC, 2x speed gives ${Number(probe.format.duration).toFixed(2)}s edit, and decoded narration has 660Hz tone (RMS ${rms.toFixed(3)})`);
   await second.evaluate(() => window.cloudFixture.loseComplete());

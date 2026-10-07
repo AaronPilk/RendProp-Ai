@@ -25,12 +25,19 @@ export async function uploadRPC(
 ): Promise<unknown> {
   const { data, error } = await admin.rpc(name, args);
   if (error) {
-    const code = /RP(400|403|404|409|429|503):/.exec(error.message ?? "")?.[1];
+    const code = /RP(400|401|402|403|404|409|413|429|503):/.exec(error.message ?? "")?.[1];
+    const message = code
+      ? (error.message ?? "").replace(/^.*RP\d+:\s*/, "")
+      : "Durable upload state unavailable — retry";
+    // A monthly reservation ceiling cannot recover when connectivity returns.
+    // Keep burst throttling retryable; only this canonical SQL refusal is quota.
+    const monthlyCeiling = code === "429" &&
+      message === "monthly technical upload reservation ceiling exhausted";
     throw new HttpError(
       code ? Number(code) : 503,
-      code
-        ? (error.message ?? "").replace(/^.*RP\d+:\s*/, "")
-        : "Durable upload state unavailable — retry",
+      message,
+      monthlyCeiling ? "quota_exceeded" : undefined,
+      monthlyCeiling ? { feature: "upload_bytes" } : undefined,
     );
   }
   if (data == null) throw new HttpError(503, "Durable upload receipt missing");
@@ -109,6 +116,8 @@ export async function recoverRecordedOperation(
   admin: UploadAdmin,
   op: UploadRow,
 ): Promise<UploadRow> {
+  const admission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:op.asset_id}));
+  if(admission.admitted!==true||typeof admission.legacy_unbudgeted!=="boolean")throw new HttpError(503,"Bounded upload recovery activation pending");
   const bucket = op.bucket === "renders"
     ? R2_BUCKET_RENDERS
     : R2_BUCKET_UPLOADS;

@@ -1,0 +1,57 @@
+        // Publication runs the real AppModel body and real EnhancedPhoto reader,
+        // not a reimplementation of selected gallery IDs.
+        for mutation in ["visit", "capture", "edit", "remove"] {
+            AuthStore.shared.isSignedIn = true; AuthStore.shared.userID = "synthetic-owner"; AuthStore.shared.syncSessionRevision = 1
+            WorkspaceContext.selectedOrgID = UUID(); UploadManager.shared.reset()
+            let id = UUID(), server = UUID(), dir = EnhancedPhoto.directory(for: id)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            for old in ["old-a", "old-b", "old-c"] {
+                try Data("legacy-output-\(old)".utf8).write(to: dir.appendingPathComponent("enh-\(old).jpg"))
+                try Data("legacy-source-\(old)".utf8).write(to: dir.appendingPathComponent("orig-\(old).jpg"))
+            }
+            check(!FileManager.default.fileExists(atPath: dir.appendingPathComponent(".photo-history.json").path), "Legacy gallery starts without an index")
+            let untouched = try files(dir)
+            var wanted: Set<String> = ["asset:enh-old-a.jpg", "asset:enh-old-b.jpg", "asset:enh-old-c.jpg"]
+            switch mutation {
+            case "capture":
+                try PhotoVersionHistory.saveCapture(original: Data("new-original".utf8), enhanced: Data("new-enhanced".utf8), id: "new-photo", directory: dir)
+                wanted.insert("asset:enh-new-photo.jpg")
+            case "edit":
+                _ = try PhotoVersionHistory.trackExisting(id: "old-a", imageFile: "enh-old-a.jpg", priorFile: "orig-old-a.jpg", directory: dir)
+                _ = try PhotoVersionHistory.saveEdit(jpeg: Data("clean-output".utf8), id: "new-clean", parentID: "old-a", sourceID: "old-a", edit: "declutter", style: nil, disclosure: "Synthetic declutter disclosure", provenanceID: "legacy-clean-disclosure", provenanceRecorded: true, directory: dir)
+                wanted.remove("asset:enh-old-a.jpg"); wanted.insert("asset:edit-new-clean.jpg")
+            case "remove":
+                _ = try PhotoVersionHistory.trackExisting(id: "old-a", imageFile: "enh-old-a.jpg", priorFile: "orig-old-a.jpg", directory: dir)
+                try PhotoVersionHistory.hide(id: "old-a", directory: dir)
+                wanted.remove("asset:enh-old-a.jpg")
+            default: break
+            }
+            let model = AppModel(Listing(id: id, serverID: server, mainPhotoRelPath: FileStore.relativePath(for: dir.appendingPathComponent("enh-old-b.jpg")), lastError: AppModel.photoSyncErrorPrefix + " Previous failure."))
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.publications.count == 1, "First legacy \(mutation) reaches actual gallery publication")
+            check(Set(model.api.publications[0].assetIDs) == wanted, "Actual gallery API keeps every untouched legacy sibling after \(mutation)")
+            check(model.api.publications[0].main == "asset:enh-old-b.jpg" && model.api.publications[0].assetIDs.first == "asset:enh-old-b.jpg", "Legacy selected cover is first and present after \(mutation)")
+            check(model.listings[0].lastError == nil, "Legacy reconciliation clears its successful publication warning")
+            let retained = try files(dir)
+            check(untouched.allSatisfy { retained[$0.key] == $0.value }, "Actual gallery synchronization never deletes or rewrites predecessor bytes")
+            if mutation == "edit" { check(model.api.provenance == ["legacy-clean-disclosure"], "Legacy AI edit links its actual recorded disclosure") }
+        }
+        do {
+            let (model, id, server, dir) = try fixture("staged-cover-boundary")
+            _ = try PhotoVersionHistory.saveEdit(jpeg: Data("unreviewed-stage".utf8), id: "stage", parentID: "capture", sourceID: "capture", edit: "stage", style: "modern", disclosure: "Synthetic virtual staging", provenanceID: "stage-disclosure", provenanceRecorded: true, directory: dir)
+            model.listings[0].mainPhotoRelPath = FileStore.relativePath(for: dir.appendingPathComponent("edit-stage.jpg"))
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.publications.isEmpty && UploadManager.shared.calls.isEmpty, "Unreviewed staged cover cannot publish or upload through the actual gallery body")
+            check(model.listings[0].lastError?.contains("cover isn't among") == true, "Cover-selection mismatch reports the actionable selection problem")
+            try PhotoVersionHistory.selectForPublication(id: "stage", directory: dir, reviewed: true)
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.publications.count == 1 && model.api.publications[0].main == "asset:edit-stage.jpg", "Reviewed staged cover reaches actual gallery API")
+            check(model.api.provenance == ["stage-disclosure"], "Reviewed cover retains its staged disclosure binding")
+            let selected = dir.appendingPathComponent("edit-stage.jpg")
+            let saved = try Data(contentsOf: selected); try FileManager.default.removeItem(at: selected)
+            let index = try PhotoVersionHistory.load(directory: dir)
+            check(index.publicationLabel(for: "stage") == "Selected for listing", "Unavailable selected image keeps metadata truthful")
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.publications.count == 1, "A missing selected file preserves the previous server gallery")
+            try saved.write(to: selected)
+        }

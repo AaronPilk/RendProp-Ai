@@ -1,5 +1,65 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
+**7 October legal delivery:** Worker `d9232ced-c945-49f6-9ae0-30f958dbfe0d`
+serves 100% traffic from tested `fe0a59c`. Eight actual metadata/content reads
+verified the bundle and configuration; four ordinary public reads verified
+Terms, Privacy, the existing listing and `site.js`. The two Cloudflare route IDs
+were replaced; all other typed route fields remain identical. The first failed
+route-ID comparison is preserved with a separate reconciliation. See the
+[actual legal rollout](../../../docs/handoff/PUBLIC-LEGAL-ROLLOUT-20261007.md).
+Trial funding and protected-media/cache acceptance remain separate open gates.
+
+**6 October delivery:** Worker `3de4f42e-4b18-4722-8e18-15f3fb1ecad2`
+was the preceding 100% version; its downloaded module matches the reviewed
+`5eeb783` bundle.
+See [the actual rollout record](../../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md).
+The protected media baseline passed 110 read-only GET/HEADs over two phases.
+Cache-rule acceptance, public-reader flag rollout and denial of the old public
+R2 domain remain incomplete. At that checkpoint the newer limited-trial legal
+copy had not been deployed. Earlier Worker versions below are dated history.
+
+The [6 October launch candidate](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
+records the current source contracts and staged rollout gates. The new member
+portfolio renderer and media proxy code are deployed; enabling protected reader
+URLs and completing public-domain cutover remain separate. This README is not a
+cutover receipt. Earlier delivery snapshots retain their dated evidence.
+
+The [2 October beta feedback release](../../../docs/handoff/BETA-POLISH-20261002.md)
+was deployed at **100%** on Worker `0d5db590-c2c8-4482-9f3f-77bcf893fcd6`,
+subsequently replaced by the 6 October version. It was deployed
+at **17:15:45 UTC** from runtime `3615a23`. Selected main photos lead the listing;
+compact navigation opens an isolated **Explore** scroll viewer, with **Play video**
+for ordinary playback. Closing unloads the decoder and returns to the listing.
+All 12 CI jobs passed; four live branded/MLS HTML readbacks match the frozen engine
+and CSS, separately from 195 actual-browser assertions using generated local video.
+HTML readback does not establish every remote Worker bundle byte or real-phone
+playback quality. Routes, variables, secrets and compatibility date are preserved.
+See the [delivery receipt](../../../docs/releases/TESTFLIGHT-41-20261002.json).
+
+[Photographer client delivery](../../../docs/studio/photographer-client-delivery.md)
+adds explicit `client_mode` and `hide_rendprop_branding` payload flags. Only two
+boolean `true` values suppress vendor attribution, promotions, app banners,
+favicon and player wordmarks. Client cards and lead forms remain; client pages
+never link to the photographer's portfolio. Required property alterations,
+original-photo access and privacy links remain. `/u/` retains its existing
+contact-free MLS behavior. Worker `4ad3ab1c-0709-442b-bbf9-6426a5fb0bb2` was the
+preceding deployment. Its live marketing/MLS demo engine and CSS readbacks matched
+the release source; all 12 CI jobs pass. See the
+[release handoff](../../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md).
+Actual client listing publication and inbox acceptance remain controlled owner tests.
+
+The [1 October listing-first release](../../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
+was deployed at 100% traffic on Worker version
+`8268c7a9-aad9-43a7-89ac-f1769e75896b`, from source `a87834c`; the subsequent
+client-delivery deployment superseded that historical version. Its final production
+readback passed 153 assertions on branded/unbranded listings, with photos/details
+first and opt-in playback. All 12 CI jobs passed on that exact web source.
+Home, pricing, legal and health pages retained their verified normalized bodies
+and stable security headers, including the [core release](../../../docs/handoff/CORE-READINESS-20261001.md)'s
+subscription-confirmation wording. Routes, bindings and compatibility date are
+unchanged. See the [delivery receipt](../../../docs/releases/TESTFLIGHT-37-20261001.json).
+
+
 Serves Rendprop's public marketing, tour and portfolio pages, plus the spatial
 viewer shell and permission-checked artifact proxy. This is separate from the
 [Studio static Worker](../../../apps/studio/README.md). Studio's
@@ -7,13 +67,23 @@ viewer shell and permission-checked artifact proxy. This is separate from the
 updated its website and Supabase read handlers; it does not establish a new
 tour-host deployment version.
 
+Current pricing, structured data and terms describe a seven-day introductory
+trial only after confirmation of an eligible Apple subscription in the iPhone
+app. Downloading or signing in does not activate a trial. Prices and plan
+allowances are unchanged. Source-copy updates require a new Worker/static-asset
+deployment; this README alone does not establish that the live site changed.
+
 Routes implemented in the current source:
 
 | Route | Renders | Source |
 |---|---|---|
-| `GET /f/:slug` | the scroll-scrub **tour player** — branded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
-| `GET /u/:slug` | the **same tour, unbranded** — for the MLS field | the same payload |
-| `GET /a/:handle` | an org's **portfolio grid** (cards → `/f/:slug`) | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
+| `GET /f/:slug` | listing details/photos with an optional fly-through — branded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
+| `GET /u/:slug` | the same listing/player, unbranded — for the MLS field | the same payload |
+| `GET /a/:handle` | a member's deliberately selected owned-listing portfolio (cards → `/f/:slug`); legacy org handles return an empty grid in the candidate | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
+| `GET/HEAD /media/:slug/r2/:key` | exact selected R2 object; `key` is URL-encoded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug/delivery` before bytes/conditional responses |
+| `GET/HEAD /media/:slug/stream/:uid[/path]` | protected Stream proxy contract; remains unavailable until separate signed-playback acceptance | the same fresh delivery authority |
+| `GET/HEAD /media-brand/renders/:listing/brand/:file` | exact approved business-logo object | scoped `tours/business-logo/:listing` authority |
+| `GET /.well-known/security.txt` | expiring public security contact | Worker source; live routing/readback remains required |
 | `GET /studio` | redirect to `https://studio.rendprop.com/` | Studio has its own Worker |
 | `GET /s/:scene` | spatial viewer shell | `src/spatial.ts` |
 | `GET /s/:scene/manifest`, `GET /s/:scene/model` | permission-checked spatial artifacts | Supabase `spatial` handler; no edge cache |
@@ -21,13 +91,28 @@ Routes implemented in the current source:
 | `GET /terms`, `GET /privacy`, `GET /healthz` | legal pages and health check | Worker source |
 | `GET /sitemap.xml` | the crawl index — marketing + legal + the demo tour and portfolio | `src/sitemap.ts` (no upstream yet — see TODO 5) |
 
+Candidate media routes recheck the current selected object, publication, deletion
+and hosting authority before GET, HEAD, Range, conditional responses and bytes.
+They emit no-store cache directives. Legacy public R2 ingress must remain enabled
+until the separately verified proxy/reader flag and old-domain cutover. Source
+implementation alone does not establish that an old URL is withdrawn.
+
 Tour and portfolio requests render HTML without a client framework; Wrangler
 bundles the TypeScript Worker at deployment. The spatial viewer additionally loads
 its dedicated browser module and runtime assets. Customer pages check upstream
 on every request and return `Cache-Control: no-store`; only synthetic demo HTML
-remains cacheable. The player shares the iOS webview design (`apps/ios/Rendprop/Resources/player/index.html`) — same
-rAF-lerp scrub loop, buffer gate, chapter rail, room label, jank watchdog and autoplay
-fallback — adapted to stream its video instead of bundling a demo file.
+remains cacheable. The next release's source opens with the selected property
+photo, followed by the address, price and details. `cover_url` is resolved and
+visibility-checked by the backend; ordered gallery photos precede the video
+poster when there is no selected cover. An explicit empty `gallery` stays empty,
+while a missing legacy field may use editorial photos. Photos, rooms, floor plan
+and contact navigation scroll independently of video. **Watch fly-through**
+opens one dialog in **Explore** mode: scrolling stays inside the video viewer,
+with a keyboard-accessible Tour position control. **Play video** switches the
+same source to normal playback with sound. **Back to listing** stops decoding
+and loading and restores the previous scroll position and focus. No video request
+or view beacon occurs before the visitor opens the viewer. `?embed=1` retains
+the legacy scroll-driven player, which the native bundled preview also uses.
 
 See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md) and
 [the spatial API](../../supabase/functions/spatial/README.md) for upstream contracts.
@@ -83,6 +168,7 @@ content. Check the applicable listing service's rules before distribution.
 ```bash
 npm run typecheck   # tsc --noEmit
 npm test            # unbranded, routes, upstream, lead form, legal, spatial and bundle checks
+node scripts/check-listing-browser.mjs # real Chromium + FFmpeg, opt-in playback and cleanup
 ```
 
 > **Deployment constraint:** the host rules ignore media-delivery URLs (any
@@ -96,27 +182,40 @@ npm test            # unbranded, routes, upstream, lead form, legal, spatial and
 
 The tour JSON exposes two video sources, in this preference order:
 
-- **`scrub_url` — PRIMARY.** The **all-intra R2 mp4** (every frame a keyframe) served
-  over HTTP byte-range. Set directly as `video.src` with `preload="auto"`; all-intra encoding gives the browser a keyframe at every frame for responsive
-  seeking. Actual seeking remains subject to browser decoding and buffering.
-- **`hls_url` — FALLBACK ONLY.** Cloudflare Stream HLS (`…/manifest/video.m3u8`).
-  Stream re-encodes with normal GOPs; decoding between keyframes can make
-  repeated scrub seeks less responsive. Used only when `scrub_url` is absent (or the mp4 errors before playback
-  starts): **native HLS** on Safari/iOS, **hls.js** elsewhere (lazy-loaded from cdnjs,
-  pinned `1.5.20` + SRI, big MSE buffers so seeks land inside the buffered range).
-- `video_url` (= `scrub_url ?? hls_url`) is kept for back-compat; if a payload only
-  has `video_url`, it's classified by `.m3u8` extension.
+- **`scrub_url` — primary.** The published all-intra R2 MP4 is served over HTTP
+  byte-range, without a browser re-encode or resolution cap. On normal pages the
+  video has `preload="none"` and no source until an explicit open. Closing removes
+  the source, pauses playback and empties the decoder. Explore seeks the paused
+  timeline; Play video exposes native play/pause, seeking and fullscreen. Room
+  buttons seek the same rendered timeline in either mode.
+- **`hls_url` — fallback.** Cloudflare Stream HLS is used when the MP4 is absent
+  or fails. Safari uses native HLS; other supported browsers lazily load pinned
+  hls.js `1.5.20` with SRI. The normal player uses bounded 30/60-second forward
+  buffers, a 30-second back buffer, and no player-size quality cap. Network and
+  decoder capabilities still determine adaptive quality.
+- `video_url` remains compatible: a payload with only this field is classified
+  by its `.m3u8` extension.
 
-The `<video>` is `muted playsinline webkit-playsinline preload=auto` for reliable
-inline autoplay-less scrubbing on iOS Safari.
+The player shows the actual decoded dimensions and whether it is playing the
+published master or streaming. A larger player cannot restore detail absent
+from an existing 720p file. The [listing-first/HD release](../../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
+changes new native and optional-worker renders to a maximum 1920-pixel long edge
+and a 24 Mbps target, without upscaling. Re-rendering from the original and
+publishing creates a **new sharing link**; older links keep their earlier video.
+The explicit legacy embed continues its muted scroll-driven loading behavior.
 
-> **Chapter timebase:** chapter `t_ms` is already rescaled to the rendered timeline by
-> the app before publish (it divides by `speed_factor`). The player uses `t_ms/1000`
-> against `duration_s` directly — it must **not** divide by `speed_factor` again.
+**Chapter timebase:** `t_ms` is already rescaled to the rendered timeline by
+publication. Both players use `t_ms/1000` directly, without dividing by
+`speed_factor` again.
 
-The browser talks to Supabase **directly** for:
-- **Lead form** → `POST ${SUPABASE_FUNCTIONS_URL}/leads` (`{slug,name,phone,email?,extra,_hp}`; honeypot + per-type fields).
-- **View beacon** → `POST ${SUPABASE_FUNCTIONS_URL}/beacon/:slug` via `navigator.sendBeacon` (CORS-simple `text/plain`, `apikey` in the query string, so it fires reliably on `pagehide`). It counts one view + `streamed_minutes ≈ duration` at start, then batches `watch_ms` deltas + `max scroll_depth`.
+The browser talks directly to Supabase for the existing lead form and view
+beacon. The normal player's beacon starts after a frame has decoded in the opened
+viewer, then batches visible playback or recent Explore interaction time and
+delivered buffered seconds. Merely reading
+a listing does not count as a video view. `scroll_depth` retains its transport
+field name but represents maximum video progress in the normal player.
+Unbranded pages omit the form and agent/contact content and mark video beacons
+unbranded. The legacy embed retains its scroll-playback metering.
 
 The anon key is injected into the page (it's public by design — RLS enforces access, and it already ships in every Supabase client).
 
@@ -243,6 +342,29 @@ normalize those flags. Verify upstream access with the actual configured key;
 opaque publishable keys are not interchangeable with JWT bearer tokens.
 
 ---
+
+### Development dependency security — 7 October source checkpoint
+
+Source `fe0a59c` pins Wrangler **4.148.0**, which selects Miniflare
+**5.20261006.0-alpha** and Undici **7.29.1**. A version-scoped npm override selects
+Sharp **0.35.5** for that exact Miniflare version; Miniflare's declared dependency
+is exactly **0.35.4**, so this is an explicit override of the vendor pin.
+The relevant maintainer patches cover [Sharp's librsvg issue](https://github.com/lovell/sharp/security/advisories/GHSA-wq5f-xc86-pv6w),
+[Sharp's libheif issues](https://github.com/lovell/sharp/security/advisories/GHSA-rgj7-g3m4-5g8c)
+and the [Undici 7.29.1 security fixes](https://github.com/nodejs/undici/releases/tag/v7.29.1).
+
+Owned local copies passed `npm ci --ignore-scripts`, a full lock audit with zero
+reported vulnerabilities, typecheck, Worker tests, actual Wrangler dry-run bundle
+controls and the existing asset gate. Native Sharp loaded and converted a fixed
+synthetic SVG to a JPEG with verified dimensions; a binding-free Miniflare/workerd
+smoke used loopback only. These local checks used Node 25.9 on Darwin arm64. The separate Linux CI gate
+passed on exact `fe0a59c`; see the
+[hosted verification record](../../../docs/handoff/AGENT-REEL-ROLLOUT-20261007.md).
+The Worker source and configuration are unchanged, and this package update has
+not deployed a new Worker.
+Remove the override once the selected upstream Miniflare pins/resolves Sharp
+0.35.5 or later, after a clean audit and toolchain checks. Historical failed
+candidates remain retained in the private release evidence.
 
 ## Local dev
 

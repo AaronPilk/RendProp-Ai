@@ -1,5 +1,24 @@
 import Foundation
 
+/// Display-only compatibility contract for the private owner-testing grant.
+/// Other large caps stay finite, and zero/negative values keep their usual meaning.
+/// The server remains the authority for every allowance and paid operation.
+enum WorkspaceAllowanceDisplay {
+    static let ownerTestingUnlimitedCap = Int(Int32.max)
+
+    static func isUnlimitedTesting(cap: Int, plan: String?, source: String? = nil) -> Bool {
+        cap == ownerTestingUnlimitedCap && plan?.lowercased() == "team" &&
+            (source == nil || source?.lowercased() == "manual")
+    }
+
+    static func value(used: Int?, cap: Int, plan: String?, source: String? = nil) -> String {
+        if isUnlimitedTesting(cap: cap, plan: plan, source: source) {
+            return "\(used ?? 0) used · Unlimited"
+        }
+        return cap > 0 ? "\(used ?? 0) of \(cap)" : "Not included"
+    }
+}
+
 // Seats: the app half of services/supabase/functions/team.
 //
 // DELIBERATELY NOT ON THE `APIClient` PROTOCOL. Every method added there must
@@ -20,10 +39,33 @@ struct TeamSummary: Decodable, Sendable {
     let orgId: String
     let orgName: String?
     let plan: String?
+    /// Optional on older /team responses. A present nonmanual source cannot
+    /// claim the private testing grant even when its numeric cap matches.
+    let planSource: String?
+    let accessMode: String?
     let canManage: Bool
     let seats: Seats
     let members: [Member]
     let invites: [Invite]
+
+    var isPrivateTesting: Bool { accessMode == "private_testing" }
+    var accessLabel: String { isPrivateTesting ? "Private testing accounts" : "Shared workspace" }
+    var accessExplanation: String {
+        isPrivateTesting
+            ? "Each person keeps their own homes, tours and leads private. This team provides testing access without sharing listings."
+            : "This is a shared workspace. Its homes, tours and leads are visible to team members."
+    }
+
+    var hasUnlimitedTestingSeats: Bool {
+        WorkspaceAllowanceDisplay.isUnlimitedTesting(cap: seats.allowed, plan: plan, source: planSource)
+    }
+
+    var seatUsageLabel: String {
+        if hasUnlimitedTestingSeats {
+            return WorkspaceAllowanceDisplay.value(used: seats.used, cap: seats.allowed, plan: plan, source: planSource)
+        }
+        return "\(seats.used) of \(seats.allowed)"
+    }
 
     struct Seats: Decodable, Sendable {
         let used: Int
@@ -38,7 +80,9 @@ struct TeamSummary: Decodable, Sendable {
         let name: String?
         let email: String?
         let isYou: Bool
+        let accessMode: String?
         var id: String { userId }
+        var isPrivateTesting: Bool { accessMode == "private_testing" }
 
         /// What to show as the person's name. An invited agent who signed in
         /// with Apple and withheld their name has neither, so the role is the
@@ -49,12 +93,18 @@ struct TeamSummary: Decodable, Sendable {
             return roleLabel
         }
         var roleLabel: String {
+            if isPrivateTesting { return "Private testing account" }
             switch role {
             case "owner":     return "Owner"
             case "admin":     return "Admin"
             case "marketing": return "Marketing"
             default:          return "Agent"
             }
+        }
+        var removalExplanation: String {
+            isPrivateTesting
+                ? "Their testing access ends. Their private homes, tours and leads stay in their own account."
+                : "\(displayName) loses access to this shared workspace. Its homes, tours and leads stay with the team."
         }
     }
 
@@ -86,6 +136,8 @@ struct TeamInviteCreated: Decodable, Sendable {
     let role: String
     let code: String
     let expiresAt: String?
+    /// Queue acceptance is not email delivery; absent on older deployments.
+    let emailQueued: Bool?
 }
 
 struct TeamJoined: Decodable, Sendable {
@@ -93,6 +145,15 @@ struct TeamJoined: Decodable, Sendable {
     let orgId: String
     let orgName: String?
     let role: String?
+    let accessMode: String?
+    let teamName: String?
+
+    var confirmationMessage: String {
+        if accessMode == "private_testing" {
+            return "\(teamName ?? "The team") provides your testing access. Your homes, tours and leads stay private in your own workspace. Other people's listings are not added to your account."
+        }
+        return "You've joined \(orgName ?? "the team"). This is a shared workspace: its homes, tours and leads are visible to team members. Your personal workspace stays separate."
+    }
 }
 
 enum TeamAPI {
@@ -123,7 +184,10 @@ enum TeamAPI {
         return ISO8601DateFormatter().date(from: raw)
     }
 
-    private static func request(_ path: String, method: String, body: [String: Any]? = nil) async throws -> Data {
+    @MainActor private static func request(_ path: String, method: String, body: [String: Any]? = nil) async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let org = WorkspaceContext.selectedOrgID
+        guard org != nil || path == "accept" else { throw CloudSyncError.identityChanged }
         guard let base = Config.apiBaseURL else {
             throw Failure(status: 0, code: nil, message: "Rendprop isn't configured for the network yet.")
         }
@@ -131,6 +195,7 @@ enum TeamAPI {
             throw Failure(status: 401, code: "unauthorized",
                           message: "This iPhone hasn't reached Rendprop yet. Check your connection and try again.")
         }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         var url = base.appendingPathComponent("team")
         for part in path.split(separator: "/") where !part.isEmpty {
             url.appendPathComponent(String(part))
@@ -141,6 +206,7 @@ enum TeamAPI {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        if let org { req.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
         if let body { req.httpBody = try? JSONSerialization.data(withJSONObject: body) }
 
         let data: Data, resp: URLResponse
@@ -150,6 +216,7 @@ enum TeamAPI {
             throw Failure(status: 0, code: nil,
                           message: "Couldn't reach Rendprop. Check your connection and try again.")
         }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             struct ErrDTO: Decodable { let error: String?; let code: String? }
@@ -176,11 +243,11 @@ enum TeamAPI {
         }
     }
 
-    static func summary() async throws -> TeamSummary {
+    @MainActor static func summary() async throws -> TeamSummary {
         try decode(try await request("", method: "GET"))
     }
 
-    static func invite(email: String?, role: String = "agent") async throws -> TeamInviteCreated {
+    @MainActor static func invite(email: String?, role: String = "agent") async throws -> TeamInviteCreated {
         var body: [String: Any] = ["role": role]
         if let email, !email.trimmingCharacters(in: .whitespaces).isEmpty {
             body["email"] = email.trimmingCharacters(in: .whitespaces)
@@ -191,15 +258,15 @@ enum TeamAPI {
         return try decode(try await request("invites", method: "POST", body: body))
     }
 
-    static func revoke(inviteId: String) async throws {
+    @MainActor static func revoke(inviteId: String) async throws {
         _ = try await request("invites/\(inviteId)", method: "DELETE")
     }
 
-    static func remove(userId: String) async throws {
+    @MainActor static func remove(userId: String) async throws {
         _ = try await request("members/\(userId)", method: "DELETE")
     }
 
-    static func join(code: String) async throws -> TeamJoined {
+    @MainActor static func join(code: String) async throws -> TeamJoined {
         try decode(try await request("accept", method: "POST", body: ["code": code]))
     }
 }

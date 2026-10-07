@@ -15,6 +15,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from .funding import FundingUnavailable, reserve_paid
 
 
 # ── Errors ────────────────────────────────────────────────────────────────────
@@ -25,6 +26,10 @@ class ProviderError(RuntimeError):
 
 class ProviderTimeout(ProviderError):
     """A queued/async job did not complete within the timeout."""
+
+
+class ProviderFundingError(ProviderError):
+    """Financial authority refused; never advance to a fallback provider."""
 
 
 class MissingKey(ProviderError):
@@ -86,6 +91,11 @@ def _retry_sleep(attempt: int, retry_after: str | None) -> float:
     return min(MAX_RETRY_SLEEP_S, 1.0 * (2 ** attempt))
 
 
+class _NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def request_json(
     url: str,
     *,
@@ -94,6 +104,7 @@ def request_json(
     headers: dict | None = None,
     timeout: int = 120,
     retries: int = 0,
+    follow_redirects: bool = True,
 ) -> dict:
     """POST/GET JSON and parse a JSON response. Raises ProviderError on non-2xx.
 
@@ -103,7 +114,13 @@ def request_json(
     """
     data = json.dumps(payload).encode() if payload is not None else None
     idempotent = method.upper() in ("GET", "HEAD")
-    attempts = max(0, int(retries)) + 1
+    try:
+        funding = reserve_paid(url, method, payload)
+    except FundingUnavailable as error:
+        raise ProviderFundingError(str(error)) from error
+    # A generation retry is another potential bill. Queue/lease replay cannot
+    # create a second one behind the workspace's permanent attempt receipt.
+    attempts = 1 if funding else max(0, int(retries)) + 1
     last: ProviderError | None = None
 
     for attempt in range(attempts):
@@ -113,9 +130,15 @@ def request_json(
         for k, v in (headers or {}).items():
             req.add_header(k, v)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            opener = urllib.request.urlopen if follow_redirects else urllib.request.build_opener(_NoCredentialRedirect()).open
+            with opener(req, timeout=timeout) as resp:
                 body = resp.read().decode()
-                return json.loads(body) if body else {}
+                result = json.loads(body) if body else {}
+                if funding:
+                    # Generic transport proves HTTP acceptance, not a finished
+                    # image/video or its final invoice. Preserve that uncertainty.
+                    funding[0].finish(funding[1], "uncertain")
+                return result
         except urllib.error.HTTPError as e:
             detail = ""
             try:
@@ -123,6 +146,10 @@ def request_json(
             except Exception:  # noqa: BLE001
                 pass
             last = ProviderError(f"HTTP {e.code} from {url}: {detail}")
+            if funding:
+                rejected = e.code in (400, 401, 402, 403, 404, 405, 413, 415, 422, 429)
+                funding[0].finish(funding[1], "rejected" if rejected else "uncertain",
+                                  e.code if rejected else None)
             retryable = e.code in RETRY_AFTER_STATUSES or (
                 idempotent and e.code in IDEMPOTENT_5XX)
             if not retryable or attempt == attempts - 1:
@@ -136,6 +163,8 @@ def request_json(
             # it must still be a ProviderError so the per-segment fallback catches it.
             reason = getattr(e, "reason", e)
             last = ProviderError(f"Network error to {url}: {e.__class__.__name__}: {reason}")
+            if funding:
+                funding[0].finish(funding[1], "uncertain")
             if not idempotent or attempt == attempts - 1:
                 raise last from e
             wait = _retry_sleep(attempt, None)
@@ -143,6 +172,10 @@ def request_json(
                   f"{attempt + 1}/{attempts - 1} in {wait:.1f}s")
             time.sleep(wait)
 
+        except (ValueError, UnicodeError) as error:
+            if funding:
+                funding[0].finish(funding[1], "uncertain")
+            raise ProviderError("Provider returned an invalid JSON response") from error
     raise last or ProviderError(f"request to {url} failed")
 
 

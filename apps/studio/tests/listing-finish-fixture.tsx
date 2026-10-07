@@ -23,6 +23,7 @@ const services = {
     if (options.method && options.method !== "GET") throw new Error("This fixture forbids all mutations, paid calls and publication");
     if (scenario === "error") throw new Error("Fixture property status is unavailable");
     if (scenario === "loading") return new Promise(() => {});
+    if (path.endsWith("/client-contact")) return { contact: null };
     if (path.includes("/studio/listing-state?")) return { org_id: org, listing_id: id, assets, photos: [], jobs: ["processing", "failed"].includes(scenario) ? [{ id: jobId, listing_id: id, capture_asset_id: assetId, status: scenario === "processing" ? "rendering" : "failed", progress: .4, tier: "smooth", error: scenario === "failed" ? "The source could not be processed" : null, current_step: "rendering", created_at: listing.createdAt }] : [], renders: scenario === "live" ? [{ id: jobId, listing_id: id, job_id: jobId, slug: "fixture-oak", published_at: listing.createdAt, created_at: listing.createdAt, duration_s: 30, staged: false }] : [], chapters: [], next_offset: null };
     if (path.includes("/spatial?")) return { jobs: [] };
     if (path.endsWith("/spatial/capability")) return { enabled: false, reason: "runtime_disabled" };

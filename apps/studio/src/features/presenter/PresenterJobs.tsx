@@ -18,7 +18,7 @@ export default function PresenterJobs({ org, user, listing, draft, ready, blocke
       try { localStorage.removeItem(key); pending.current = null; setMarker(null); } catch { setError("The job is saved, but browser storage could not be updated. Refresh its status before another generation."); }
     }
   }, [key]);
-  const read = useCallback(async () => decodeJobs(await api(`/jobs?${new URLSearchParams({ listing_id: listing })}`), org, listing), [api, org, listing]);
+  const read = useCallback(async () => decodeJobs(await api(`/jobs?${new URLSearchParams({ listing_id: listing })}`), org, listing, user), [api, org, listing, user]);
   useEffect(() => {
     alive.current = true; const version = ++serial.current;
     void read().then(next => { if (alive.current && current() && version === serial.current) accept(next); }).catch(e => { if (alive.current && current() && version === serial.current) setError(message(e)); });
@@ -35,7 +35,7 @@ export default function PresenterJobs({ org, user, listing, draft, ready, blocke
     if (running.current || !current() || (action && blocked)) return;
     running.current = true; serial.current++; setBusy(true); setError(""); setReviewed("");
     try {
-      const next = action ? decodeJobs(await api("/jobs", { action, ...body }), org, listing) : await read();
+      const next = action ? decodeJobs(await api("/jobs", { action, ...body }), org, listing, user) : await read();
       if (alive.current && current()) accept(next);
     } catch (e) {
       if (!alive.current || !current()) return;

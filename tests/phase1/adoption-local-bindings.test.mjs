@@ -28,10 +28,12 @@ test('source bindings are fail-closed, synchronous and source-before-session / r
   assert.ok(clear.includes('forgetServerIdentities(for: userID)'));
   assert.ok(init.includes('onPrepareAdoption') && init.includes('onConfirmAdoption') && init.includes('onAdoptionStorageReady'));
   assert.ok(auth.includes('self?.onPrepareAdoption?(pending) == true'));
-  assert.ok(auth.includes('self?.onConfirmAdoption?(pending, orgID) == true'));
+  assert.ok(auth.includes('self?.onConfirmAdoption?(pending, orgID, cardData) == true'));
   assert.ok(auth.includes('guard onAdoptionStorageReady?() == true else { return }'));
   const core = readFileSync(root + 'apps/ios/Rendprop/Auth/AnonymousAdoptionRecovery.swift', 'utf8');
-  assert.ok(core.indexOf('guard finishLocal(value, receipt.org_id)') < core.indexOf('guard remove()'));
+  assert.ok(core.indexOf('finishLocal(verifiedValue, receipt.org_id, cardData)') < core.indexOf('guard remove()'));
+  assert.ok(core.indexOf('let (cardData, cardResponse) = try await send(cardRequest)') < core.indexOf('finishLocal(verifiedValue, receipt.org_id, cardData)'));
+  assert.ok(declaration('func confirmLocalAdoption(').includes('JSONDecoder().decode(PersonalCardReceipt.self, from: $0).checked(owner: pending.destinationUserID)'));
   const compliance = declaration('func serverListingIDForCompliance(');
   assert.ok(compliance.indexOf('pendingAdoptionBlocksServerListing') < compliance.indexOf('if let existing'));
   assert.ok(declaration('func syncListing(').includes('guard !pendingAdoptionBlocksServerListing(id)'));
@@ -40,7 +42,7 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
   const out = mkdtempSync(join(tmpdir(), 'rendprop-local-binding-swift-'));
   const methods = ['struct RenderedTour', 'struct UploadedRenderAsset', 'enum PublishError',
     'func forgetServerIdentities(', 'func prepareLocalAdoption(', 'func confirmLocalAdoption(',
-    'func pendingAdoptionBlocksServerListing(', 'func ensureServerListing(', 'func index(of ', 'func load()',
+    'func restoreAdoptedProductionLibrary(', 'func pendingAdoptionBlocksServerListing(', 'var workspaceSwitchIsBusy:', 'func prepareWorkspaceSwitch(', 'func ensureServerListing(', 'func index(of ', 'func load()',
     'func reconcileAfterRestore()', 'func reseedSamples()', 'func persist()'].map(declaration).join('\n');
   const store = app.slice(app.indexOf('enum PersistentStore {'), app.indexOf('// MARK: - Entry'));
   assert.ok(store.includes('extension PersistentStore.PersistedState'));
@@ -49,6 +51,8 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
   // implementation are real; do not replace its identity/fingerprint/save logic.
   const scaffold = `import Foundation
 enum Config { static let useLiveBackend = false }
+enum WorkspaceContext { static var selectedOrgID: UUID? = nil }
+@MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func refresh() async {} }
 enum FileStore {
  static var documents = URL(fileURLWithPath: "/nonexistent/fixture-not-initialized")
  static func url(fromRelativePath p:String)->URL { documents.appendingPathComponent(p) }
@@ -62,14 +66,24 @@ enum FileStore {
  static func validAccessToken() async -> String? { nil }
  func retryPendingAdoptionIfNeeded() async {}
  func reportUnreadableAdoptionBindings() { errors += 1 }
+ func reportProductionRecoveryProblem() { errors += 1 }
  func hasPendingAdoption(operationID:UUID) throws -> Bool {
   if pendingReadFails { throw AdoptionLocalBindings.Failure.invalid }; return pendingExists
  }
 }
+@MainActor final class ProductionVideoLibrary {
+ static let shared=ProductionVideoLibrary(); var busy=false
+ func isBusy(owner:String)->Bool { busy }
+ func reloadAdopted(owner:String, listingIDs:Set<UUID>) {}
+}
+@MainActor final class ProductionPlanSyncStore {
+ static let shared=ProductionPlanSyncStore()
+ func remove(_ id:UUID) {}
+}
 @MainActor final class FixtureAPI {
  var calls=0; var deleted:[UUID]=[]; var onCreate:(() async -> Void)?
  func createListing(_ listing:Listing) async throws -> Listing {
-  calls += 1; await onCreate?(); var created=listing; created.id=UUID(); return created
+  calls += 1; await onCreate?(); var created=listing; created.id=UUID(); created.serverOrgID = listing.cloudDraftOrgID ?? listing.serverOrgID; return created
  }
  func deleteListing(serverID:UUID) async throws { deleted.append(serverID) }
 }
@@ -79,6 +93,7 @@ enum FileStore {
  var uploadedRenderAssets:[UUID:UploadedRenderAsset]=[:]; var pendingPublish:[UUID]=[]
  var publishedOriginalAssets:[String:String]=[:]; var publishedGalleryAssets:[String:String]=[:]
  var hasLoaded=false; var isRestoring=false; var syncInFlight:Set<UUID>=[]; var publishInFlight:Set<UUID>=[]
+ var clientContactSyncInFlight:Set<UUID>=[]
  var cloudRefreshTask:Task<Void,Never>?; var cloudRefreshOperation:UUID?
  var cloudSyncError:String?; var lastCloudSyncAt:Date?
  var serverCreationInFlight:Set<UUID>=[]; var identityOwnerUserID:UUID?
@@ -95,8 +110,10 @@ ${store}
 `;
   const generated = join(out, 'ActualAppModelMetadata.swift');
   writeFileSync(generated, scaffold, { flag: 'wx' });
-  const files = ['Listing', 'Money', 'RoomTag', 'CaptureAsset', 'Render'].map(n => root + `apps/ios/Rendprop/Models/${n}.swift`);
+  const files = ['Listing', 'ListingClientContact', 'Money', 'RoomTag', 'CaptureAsset', 'Render'].map(n => root + `apps/ios/Rendprop/Models/${n}.swift`);
   files.push(root + 'apps/ios/Rendprop/Auth/AnonymousAdoptionRecovery.swift', root + 'apps/ios/Rendprop/Auth/AdoptionLocalBindings.swift',
+    root + 'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift',
+    root + 'apps/ios/Rendprop/Models/ProductionGuidance.swift', root + 'apps/ios/Rendprop/Networking/ProductionPlan.swift',
     root + 'apps/ios/Rendprop/Networking/WorkspaceSync.swift', root + 'apps/ios/Rendprop/Networking/NativeReelDraft.swift');
   const binary = join(out, 'local-binding-tests');
   const compiled = spawnSync('/usr/bin/swiftc', ['-parse-as-library', ...files, generated,

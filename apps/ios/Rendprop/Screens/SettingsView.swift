@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import PhotosUI
 import WebKit
+import ImageIO
 
 struct SettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
@@ -12,6 +13,7 @@ struct SettingsView: View {
     @AppStorage("maxQualityCapture") private var maxQualityCapture = false
     @AppStorage("hasOnboarded") private var hasOnboarded = true
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+    @AppStorage(RealEstateRoleStore.uiRevisionKey) private var realEstateRoleRevision = 0
     // Drives .preferredColorScheme at the app root (RendpropApp reads the same key).
     @AppStorage("appearance") private var appearanceRaw = Appearance.system.rawValue
     @EnvironmentObject var uploads: UploadManager
@@ -31,6 +33,7 @@ struct SettingsView: View {
     // Live-backend plan/usage (contract: GET /me). Loaded only when signed in.
     @State private var usage: UsageSummary?
     @State private var usageError: String?
+    @State private var usageLoadGeneration: UInt64 = 0
     @State private var isLoadingUsage = false
 
     // MARK: Notifications (Push/PushManager.swift)
@@ -62,6 +65,7 @@ struct SettingsView: View {
     // Account deletion flow (App Store Guideline 5.1.1(v) — in-app deletion).
     @State private var showDeleteConfirm = false
     @State private var showDeleteNeedsSignIn = false
+    @State private var accountDeletionContext: AccountDeletionContext?
     @State private var isDeletingAccount = false
     @State private var deleteErrorMessage: String?
     @State private var showDeleteError = false
@@ -108,14 +112,26 @@ struct SettingsView: View {
     /// disclosure is readable without re-opening the consent screen.
     private var aiProcessingFooter: String {
         aiConsent.isGranted
-            ? "AI tools may send the photo or video you pick to Google (Gemini, Veo, Seedance) and Topaz Labs to produce your result. Turning this off stops that; capture, on-device rendering and sharing keep working."
+            ? "AI tools may send selected media, text and project context to \(AIConsent.processors.map(\.name).joined(separator: ", ")) to produce your result. Turning this off stops that; capture, on-device rendering and sharing keep working."
             : "AI tools are off. The next time you open one, Rendprop asks again before sending anything to an outside AI provider."
     }
 
     var body: some View {
         Form {
+            Section { WorkspaceEntry() }
+            Section {
+                DesktopStudioCard()
+            } header: {
+                Text("Desktop Studio")
+            }
 #if SPATIAL_CAPTURE_LAB
             Section {
+                NavigationLink {
+                    GuidedPanoramaLabView()
+                } label: {
+                    Label("Guided room tour", systemImage: "pano")
+                }
+                .accessibilityIdentifier("settings.guidedRoomTour")
                 Button {
                     showSpatialCaptureLab = true
                 } label: {
@@ -125,7 +141,7 @@ struct SettingsView: View {
             } header: {
                 Text("TestFlight lab")
             } footer: {
-                Text("Experimental one-room capture. Images and camera poses stay on this iPhone until you export them. This does not publish a tour.")
+                Text("Guided room tours and walking capture are local tests. Photos stay on this iPhone until you export them. These tests do not publish a tour.")
             }
 #endif
             Section {
@@ -143,7 +159,15 @@ struct SettingsView: View {
             } header: {
                 Text("Business type")
             } footer: {
-                Text("Switch any time — the whole app re-themes instantly: samples, fields, area tags and your tour's call-to-action.")
+                Text("Switch any time — the whole app re-themes instantly: fields, area tags and your tour's call-to-action.")
+            }
+
+            if SpaceType.current == .realEstate {
+                Section {
+                    NavigationLink { RealEstateRoleSettingsView() } label: {
+                        LabeledContent("Real estate workflow", value: RealEstateRoleStore.current.label)
+                    }.accessibilityIdentifier("settings.realEstateRole")
+                }
             }
 
             Section {
@@ -263,6 +287,10 @@ struct SettingsView: View {
                 LabeledContent("Account", value: accountStatusLabel)
                 if serverAccountsEnabled {
                     if auth.isIdentified {
+                        NavigationLink { AccountDataExportView() } label: {
+                            Label("Download account data", systemImage: "square.and.arrow.down")
+                        }
+                        .accessibilityIdentifier("settings.accountExport")
                         Button("Sign out", role: .destructive) { showSignOutConfirm = true }
                     } else {
                         Button {
@@ -284,6 +312,10 @@ struct SettingsView: View {
                         Label("Team", systemImage: "person.2")
                     }
                 }
+                NavigationLink { AppGuideView() } label: {
+                    Label("App walkthrough", systemImage: "hand.tap")
+                }
+                .accessibilityIdentifier("settings.appGuide")
                 Button {
                     if uploads.state?.status == .uploading {
                         showIntroConfirm = true
@@ -397,7 +429,7 @@ struct SettingsView: View {
                 Text("Your data")
             } footer: {
                 Text(aiProcessingFooter + "\n\n" + (serverAccountsEnabled
-                     ? "Delete account removes your Rendprop account, published tours and leads from our servers, then clears this phone. Clear data only wipes this phone — your account and published tours stay as they are."
+                     ? "Delete account requests removal of your account and private workspaces. Shared workspace content can remain for other members, and storage cleanup may finish later. Clear data only wipes this phone — your account and published tours stay as they are."
                      : "Clear data removes every \(localItemNoun), video, tour and card stored on this phone."))
             }
 
@@ -463,6 +495,11 @@ struct SettingsView: View {
         .onChange(of: scenePhase) { phase in
             if phase == .active { Task { await loadUsage(); if !isSavingNotificationPrefs { await loadNotificationPrefs() } } }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            usage = nil; usageError = nil
+            accountDeletionContext = nil; showDeleteConfirm = false; showDeleteError = false
+            Task { await loadUsage() }
+        }
         .refreshable {
             await loadUsage()
             await loadNotificationPrefs()
@@ -492,8 +529,15 @@ struct SettingsView: View {
         }
         .onChange(of: auth.userID) { _ in
             usage = nil; usageError = nil; notificationPrefs = nil; notificationSaveError = nil
+            accountDeletionContext = nil; showDeleteConfirm = false; showDeleteError = false
             showAdminConsole = false; adminProbeDone = false
             Task { await loadUsage(); await loadNotificationPrefs() }
+        }
+        .onChange(of: auth.syncSessionRevision) { _ in
+            accountDeletionContext = nil; showDeleteConfirm = false; showDeleteError = false
+            deleteErrorMessage = nil
+            usage = nil; usageError = nil
+            Task { await loadUsage() }
         }
         .sheet(isPresented: $showSignIn) {
             // Apple's own wording in the 5.1.1(v) rejection: "You may explain to
@@ -523,7 +567,8 @@ struct SettingsView: View {
             Text("A video is uploading. It keeps going in the background, but you'll lose the progress screen.")
         }
         .alert("Delete account?", isPresented: $showDeleteConfirm) {
-            Button("Delete", role: .destructive) { Task { await deleteAccount() } }
+            let context = accountDeletionContext
+            Button("Delete", role: .destructive) { scheduleAccountDeletion(context: context) }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(serverAccountsEnabled
@@ -538,7 +583,13 @@ struct SettingsView: View {
             Text("Your published tours and leads belong to your Rendprop account. Sign in with Apple first so we can delete them — or clear just this phone.")
         }
         .alert("Couldn't delete account", isPresented: $showDeleteError) {
-            Button("Retry") { Task { await deleteAccount() } }
+            let context = accountDeletionContext
+            Button("Retry") { scheduleAccountDeletion(context: context) }
+            Button("Contact support") {
+                if let url = URL(string: "mailto:aaron@pilk.ai?subject=Rendprop%20account%20deletion%20assistance") {
+                    UIApplication.shared.open(url)
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(deleteErrorMessage ?? "Check your connection and try again.")
@@ -612,7 +663,7 @@ struct SettingsView: View {
         }
         return auth.isIdentified
             ? "Signed in with Apple. Publishing, leads and AI tools use this account."
-            : "Everything works without signing in — your homes, tours, leads and plan live in a workspace held for this iPhone. Sign in with Apple to carry them to a new phone, and to get them back if you delete the app."
+            : "Capture on this iPhone without signing in. Cloud uploads require a named account or an eligible Apple subscription. Sign in with Apple to sync across devices and recover your workspace if you delete the app."
     }
 
     // MARK: - Notifications (1.0.2)
@@ -818,7 +869,7 @@ struct SettingsView: View {
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text("Counts reset each month. Pull down to refresh.")
+            Text(usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -839,21 +890,24 @@ struct SettingsView: View {
 
         var body: some View {
             Group {
-                if RendpropProducts.isUpgradeable(planName: planName) {
-                    Button {
-                        PaywallRouter.shared.present(reason: .upgrade)
-                    } label: {
-                        Label("Upgrade plan", systemImage: "arrow.up.circle.fill")
-                    }
-                    .accessibilityIdentifier("settings.upgradePlan")
+                Button {
+                    PaywallRouter.shared.present(reason: .upgrade)
+                } label: {
+                    Label(RendpropProducts.plan(fromPlanName: planName) == nil ? "View plans" : "Change plan",
+                          systemImage: "arrow.up.circle.fill")
                 }
-                if purchases.activePlan != nil {
-                    Button {
-                        Task { await PurchaseManager.shared.manageSubscriptions() }
-                    } label: {
-                        Label("Manage subscription", systemImage: "creditcard")
-                    }
+                .accessibilityIdentifier("settings.upgradePlan")
+                Button { Task { await purchases.manageSubscriptions() } } label: {
+                    Label("Manage or cancel Apple subscription", systemImage: "creditcard")
                 }
+                .accessibilityIdentifier("settings.manageSubscription")
+                Button { Task { await purchases.restore() } } label: {
+                    Label(purchases.isRestoring ? "Restoring…" : "Restore purchases", systemImage: "arrow.clockwise")
+                }
+                .disabled(purchases.isRestoring || purchases.isPurchasing)
+                .accessibilityIdentifier("settings.restorePurchases")
+                if let error = purchases.lastError { Text(error).font(.rpCaption).foregroundStyle(Theme.warn) }
+                if let notice = purchases.notice { Text(notice).font(.rpCaption).foregroundStyle(Theme.inkDim) }
             }
             // The server just wrote a new plan — the rows above are stale.
             .onReceive(NotificationCenter.default.publisher(for: .rendpropPlanChanged)) { _ in
@@ -864,19 +918,49 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func usageRows(_ usage: UsageSummary) -> some View {
-        if let e = usage.entitlements {
+        if let hosting = usage.hostingRetention {
+            if let deadline = hosting.deadline {
+                LabeledContent(hosting.hostingAvailable ? "Public hosting ends" : "Public hosting ended", value: deadline.formatted(date: .abbreviated, time: .omitted))
+                Text("New subscriptions include 90 days of hosting after expiry. Renew to extend hosting. Download original files from Library and your account JSON from Account data.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            } else {
+                Text(hosting.protected ? "Your verified testing hosting remains available under its existing terms." : "Your existing hosting terms are preserved.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+        }
+        if let trial = usage.trialUsage, trial.status != .active {
+            trialUsageRows(trial)
+            if let package = usage.servingPhotoPackage { photoPackageRows(package) }
+        } else if usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
+            LabeledContent("Service", value: ServingActivationSummary.pendingTitle)
+            if let plan = usage.entitlements {
+                LabeledContent("Recorded subscription", value: Self.planLabel(plan))
+            }
+            Text(ServingActivationSummary.pendingExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if let trial = usage.trialUsage { trialUsageRows(trial) }
+        } else if let trial = usage.trialUsage {
+            trialUsageRows(trial)
+            if let package = usage.servingPhotoPackage { photoPackageRows(package) }
+        } else if let package = usage.servingPhotoPackage {
+            if let e = usage.entitlements { LabeledContent("Plan", value: Self.planLabel(e)) }
+            photoPackageRows(package)
+            if let leads = usage.leadCount { LabeledContent("Leads this month", value: "\(leads)") }
+        } else if let e = usage.entitlements {
             LabeledContent("Plan", value: Self.planLabel(e))
-            if let ends = e.trialEndsAt, ends > Date() {
+            if e.plan.lowercased() == "trial", let ends = e.trialEndsAt, ends > Date() {
                 // "Free week", never "trial": the paywall's StoreKit
                 // introductory offer is the "7-day free trial", and the server
                 // week must not share its name (see OnboardingView).
-                LabeledContent("Free week ends", value: ends.formatted(date: .abbreviated, time: .omitted))
+                LabeledContent("Existing trial access ends", value: ends.formatted(date: .abbreviated, time: .omitted))
             }
-            usageRow("Tour renders", used: e.used["renders"], cap: e.rendersPerMonth)
-            usageRow("Photo edits", used: e.used["photo_edits"], cap: e.photoEditsPerMonth)
-            usageRow("Reel clips", used: e.used["reels"], cap: e.reelsPerMonth)
-            usageRow("Aerial intros", used: e.used["aerials"], cap: e.aerialsPerMonth)
-            usageRow("Drone-glide upscales", used: e.used["drone"], cap: e.topazPerMonth)
+            usageRow("Cloud tour renders", used: e.used["renders"], cap: e.rendersPerMonth, plan: e.plan, source: e.planSource)
+            usageRow("Photo edits", used: e.used["photo_edits"], cap: e.photoEditsPerMonth, plan: e.plan, source: e.planSource)
+            usageRow("Reel clips", used: e.used["reels"], cap: e.reelsPerMonth, plan: e.plan, source: e.planSource)
+            usageRow("Aerial intros", used: e.used["aerials"], cap: e.aerialsPerMonth, plan: e.plan, source: e.planSource)
+            usageRow("Video quality upgrades", used: e.used["drone"], cap: e.topazPerMonth, plan: e.plan, source: e.planSource)
+            DisclosureGroup("How video allowances work") {
+                Text(PlanAllowances.videoAllowanceExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }.accessibilityIdentifier("settings.videoAllowances")
             LabeledContent("Leads this month", value: "\(e.leads)")
         } else {
             // Older server shape (no entitlement block): show what we have.
@@ -884,7 +968,7 @@ struct SettingsView: View {
                 LabeledContent("Plan", value: plan.capitalized)
             }
             if let renders = usage.renderCount {
-                LabeledContent("Tour renders", value: "\(renders)")
+                LabeledContent("Cloud tour renders", value: "\(renders)")
             }
             if let leads = usage.leadCount {
                 LabeledContent("Leads this month", value: "\(leads)")
@@ -892,16 +976,42 @@ struct SettingsView: View {
         }
     }
 
-    /// "7 of 150" — or "Not included" when the plan has no allowance for it.
+    @ViewBuilder
+    private func photoPackageRows(_ package: ServingPhotoPackageSummary) -> some View {
+        ForEach(package.rows, id: \.title) { row in
+            LabeledContent(row.title, value: row.value)
+        }
+        if let end = TrialUsageSummary.date(package.endsAt) {
+            LabeledContent("Allowance interval ends", value: end.formatted(date: .abbreviated, time: .shortened))
+        }
+    }
+
+    @ViewBuilder
+    private func trialUsageRows(_ trial: TrialUsageSummary) -> some View {
+        LabeledContent("Access", value: trial.statusLabel)
+        if let end = trial.endDate {
+            LabeledContent("Trial access ends", value: end.formatted(date: .abbreviated, time: .shortened))
+        }
+        ForEach(trial.rows, id: \.title) { row in
+            LabeledContent(row.title, value: row.value)
+        }
+        if trial.status == .expired {
+            Text("New trial work has ended. Your saved walkthroughs, photo versions and downloads remain available under your workspace's access and retention terms.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        } else if trial.status == .exhausted {
+            Text("The included trial usage is used up. Your saved work remains available under your workspace's access and retention terms. Apple keeps the renewal date you confirmed.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        } else {
+            Text("Using your walkthrough does not use your photo credits or first listing. Each counter is checked separately when you start new work.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+    }
+
+    /// "7 of 150", the verified testing marker's "Unlimited", or "Not included".
     /// Never a price: every price the app shows comes from StoreKit's
     /// `Product.displayPrice` on the paywall (App Store 3.1).
-    private func usageRow(_ title: String, used: Int?, cap: Int) -> some View {
-        let value: String
-        if cap > 0 {
-            value = "\(used ?? 0) of \(cap)"
-        } else {
-            value = "Not included"
-        }
+    private func usageRow(_ title: String, used: Int?, cap: Int, plan: String?, source: String?) -> some View {
+        let value = WorkspaceAllowanceDisplay.value(used: used, cap: cap, plan: plan, source: source)
         return LabeledContent(title, value: value)
             .foregroundStyle(cap > 0 ? Theme.ink : Theme.inkDim)
     }
@@ -910,28 +1020,35 @@ struct SettingsView: View {
         let name = e.plan.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return "—" }
         // The server calls the week `trial`; the person is told "free week".
-        if name.lowercased() == "trial" { return "Free week" }
+        if name.lowercased() == "trial" { return "Existing trial access" }
         return name.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     @MainActor
     private func loadUsage() async {
+        usageLoadGeneration &+= 1
+        let generation = usageLoadGeneration
+        usage = nil
         guard Config.useLiveBackend, auth.isSignedIn else {
             usage = nil
             return
         }
         isLoadingUsage = true
-        defer { isLoadingUsage = false }
+        defer { if usageLoadGeneration == generation { isLoadingUsage = false } }
         _ = await AuthStore.validAccessToken()
         let actor = auth.userID, revision = auth.syncSessionRevision
+        let org = WorkspaceContext.selectedOrgID
         do {
             let fetched = try await model.api.me()
-            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == org, usageLoadGeneration == generation else { return }
             usage = fetched
             usageError = nil
         } catch {
             if error is CancellationError { return }
-            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            guard auth.userID == actor, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == org, usageLoadGeneration == generation else { return }
+            usage = nil
             usageError = UserFacingError.message(error, fallback: "Couldn't load usage. Pull down to refresh.")
         }
         await resolveAdminAccess()
@@ -992,7 +1109,53 @@ struct SettingsView: View {
 
     private struct AccountDeleteError: LocalizedError {
         let status: Int
-        var errorDescription: String? { "The server responded with status \(status)." }
+        var assistance: String? = nil
+        var errorDescription: String? { assistance ?? "The server responded with status \(status)." }
+
+        static func response(status: Int, data: Data) -> AccountDeleteError {
+            // Only known custody refusals become UI text. Arbitrary database or
+            // provider errors must not reveal their response bodies here.
+            guard status == 409, data.count <= 4096,
+                  let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let error = body["error"] as? String else { return .init(status: status) }
+            let message: String?
+            switch error {
+            case "A former workspace still has listings assigned to this account. Ask its owner to reassign them before retrying account deletion.":
+                message = "A former workspace still has listings assigned to you. Ask its owner to reassign them, then retry. Contact support if you need help. Your account and saved files have been kept."
+            case "Transfer ownership of the shared workspace before deleting this account. Contact support if an ownership transfer needs assistance.":
+                message = "Transfer your shared workspace to another owner before deleting your account. Contact support for help with the transfer. Your account and saved files have been kept."
+            case "This account has retained work or likeness records in a shared or former workspace. Contact support for workspace-preserving cleanup before retrying account deletion.":
+                message = "Your account has work saved in a shared or former workspace. Contact support so we can remove your account while preserving your team's work. Your account and saved files have been kept."
+            default:
+                message = nil
+            }
+            return .init(status: status, assistance: message)
+        }
+    }
+
+    /// Confirmation belongs to one session, including A → B → A and workspace
+    /// changes. Token refreshes within that session preserve this revision.
+    private struct AccountDeletionContext {
+        let owner: String
+        let revision: UInt64
+        func matches(owner: String?, revision: UInt64, signedIn: Bool) -> Bool {
+            signedIn && self.owner == owner && self.revision == revision
+        }
+    }
+
+    private enum AccountDeletionContextError: LocalizedError {
+        case changedBeforeDispatch
+        case changedAfterDispatch(deletionConfirmed: Bool)
+        var errorDescription: String? {
+            switch self {
+            case .changedBeforeDispatch:
+                return "Your account or workspace changed. Start a new deletion from the current account's Settings."
+            case .changedAfterDispatch(let confirmed):
+                return confirmed
+                    ? "Deletion was confirmed for the earlier account. Your current session and its files were kept."
+                    : "Deletion may have completed for the earlier account. Your current session and its files were kept."
+            }
+        }
     }
 
     /// Decoded shape of DELETE /me — the app must not treat a bare 2xx as
@@ -1010,13 +1173,24 @@ struct SettingsView: View {
     /// Server-side erasure per the backend contract: `DELETE {base}/me` with the
     /// bearer JWT + apikey. Returns whether external cleanup fully completed
     /// inline (false = queued, retried server-side until done).
-    private func requestServerAccountDeletion() async throws -> Bool {
+    @MainActor private func requestServerAccountDeletion(context: AccountDeletionContext) async throws -> Bool {
+        guard context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else {
+            throw AccountDeletionContextError.changedBeforeDispatch
+        }
         guard let url = Config.apiBaseURL?.appendingPathComponent("me") else {
             throw URLError(.badURL)
         }
         // Freshness-guaranteed accessor — refreshes the JWT first if it's stale.
         guard let token = await AuthStore.validAccessToken() else {
             throw URLError(.userAuthenticationRequired)
+        }
+        // validAccessToken awaits refresh, then reads the current Keychain. A
+        // replacement account's token must never authenticate this old intent.
+        guard context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else {
+            throw AccountDeletionContextError.changedBeforeDispatch
+        }
+        guard AuthStore.jwtSubject(token) == context.owner else {
+            throw AccountDeletionContextError.changedBeforeDispatch
         }
         var req = URLRequest(url: url)
         req.httpMethod = "DELETE"
@@ -1025,7 +1199,12 @@ struct SettingsView: View {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, resp) = try await URLSession.shared.data(for: req)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
-        guard (200..<300).contains(status) else { throw AccountDeleteError(status: status) }
+        if !context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) {
+            let confirmed = (200..<300).contains(status)
+                && (try? JSONDecoder().decode(ServerDeleteResponse.self, from: data))?.ok == true
+            throw AccountDeletionContextError.changedAfterDispatch(deletionConfirmed: confirmed)
+        }
+        guard (200..<300).contains(status) else { throw AccountDeleteError.response(status: status, data: data) }
         guard let decoded = try? JSONDecoder().decode(ServerDeleteResponse.self, from: data),
               decoded.ok else {
             throw AccountDeleteError(status: status)
@@ -1044,31 +1223,44 @@ struct SettingsView: View {
     /// on the server, so they must sign in first — or choose the honest
     /// "Clear this phone only".
     private func deleteTapped() {
-        if serverAccountsEnabled && !auth.isSignedIn {
-            showDeleteNeedsSignIn = true
-        } else {
-            showDeleteConfirm = true
+        accountDeletionContext = nil
+        if serverAccountsEnabled {
+            guard auth.isSignedIn, let owner = auth.userID else {
+                showDeleteNeedsSignIn = true
+                return
+            }
+            accountDeletionContext = .init(owner: owner, revision: auth.syncSessionRevision)
         }
+        showDeleteConfirm = true
     }
 
     @MainActor
-    private func deleteAccount() async {
+    @discardableResult private func scheduleAccountDeletion(context: AccountDeletionContext?) -> Task<Void, Never> {
+        Task { await deleteAccount(context: context) }
+    }
+
+    @MainActor
+    private func deleteAccount(context: AccountDeletionContext?) async {
         guard !isDeletingAccount else { return }
+        if serverAccountsEnabled {
+            // A queued old confirmation must not open a Retry dialog backed
+            // by a replacement account's newly prepared confirmation.
+            guard let context, context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else { return }
+        }
         isDeletingAccount = true
         defer { isDeletingAccount = false }
 
         if serverAccountsEnabled {
-            // The session may have expired between the tap and the confirm.
-            guard auth.isSignedIn else {
-                showDeleteNeedsSignIn = true
-                return
-            }
+            guard let context else { return }
             // 1. Server-side erasure first (account, published tours, uploads).
             //    If it fails, STOP — local data stays intact and the alert offers
             //    Retry, so nothing is half-deleted.
             do {
-                deletionPendingCleanup = !(try await requestServerAccountDeletion())
+                deletionPendingCleanup = !(try await requestServerAccountDeletion(context: context))
             } catch {
+                // An older view's task can outlive its navigation stack. Its
+                // error and retry must not become the replacement account's UI.
+                guard context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else { return }
                 deleteErrorMessage = "Your account was NOT deleted. \(UserFacingError.message(error))"
                 showDeleteError = true
                 return
@@ -1078,6 +1270,8 @@ struct SettingsView: View {
             // the confirmation copy said exactly that.
             deletionPendingCleanup = false
         }
+
+        guard !serverAccountsEnabled || context?.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) == true else { return }
 
         // 2. Local erasure: session, listings + videos + tours, profile cards.
         //    signOut() also drops any saved workspace-transfer handoff (and the
@@ -1211,6 +1405,7 @@ struct SettingsView: View {
         // 5. Profile cards for EVERY business type (keys are namespaced per
         //    industry; real estate uses the legacy bare keys) + brand bookkeeping.
         let d = UserDefaults.standard
+        PersonalCardStore.eraseDeviceCache(defaults: d)
         for type in SpaceType.allCases {
             for field in AgentCard.fieldNames {
                 d.removeObject(forKey: AgentCard.key(field, for: type))
@@ -1301,6 +1496,13 @@ struct LeadsView: View {
     @State private var hasLoaded = false
     @State private var errorMessage: String?
     @State private var showSignIn = false
+    @State private var pendingDeletion: Lead?
+    @State private var deletionContext: DeletionContext?
+    @State private var deletingIDs = Set<UUID>()
+    private struct DeletionContext: Equatable { let owner: String?; let revision: UInt64; let org: UUID? }
+    private var currentDeletionContext: DeletionContext {
+        .init(owner: auth.userID, revision: auth.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+    }
 
     private var needsSignIn: Bool { Config.enableAuth && !auth.isSignedIn }
 
@@ -1341,6 +1543,20 @@ struct LeadsView: View {
         .task { await load() }
         .onChange(of: scenePhase) { phase in if phase == .active { Task { await load() } } }
         .refreshable { await load() }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            leads = []; pendingDeletion = nil; deletionContext = nil; Task { await load() }
+        }
+        .confirmationDialog("Delete this saved lead?", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
+            Button("Delete lead", role: .destructive) {
+                if let lead = pendingDeletion, let expected = deletionContext {
+                    Task { await deleteSavedLead(lead, expected: expected) }
+                }
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil; deletionContext = nil }
+        } message: {
+            Text("This removes the saved inquiry from this workspace.")
+        }
         .onChange(of: auth.isSignedIn) { _ in leads = []; Task { await load() } }
         .onChange(of: auth.userID) { _ in leads = []; errorMessage = nil; Task { await load() } }
         .sheet(isPresented: $showSignIn) {
@@ -1432,6 +1648,11 @@ struct LeadsView: View {
                 Section(day.title) {
                     ForEach(day.leads) { lead in
                         LeadRow(lead: lead, showListing: listing == nil)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    pendingDeletion = lead; deletionContext = currentDeletionContext
+                                } label: { Label("Delete", systemImage: "trash") }
+                            }.disabled(deletingIDs.contains(lead.id))
                     }
                 }
             }
@@ -1459,17 +1680,36 @@ struct LeadsView: View {
         return day.formatted(date: .abbreviated, time: .omitted)
     }
 
+    @MainActor private func deleteSavedLead(_ lead: Lead, expected: DeletionContext) async {
+        guard !deletingIDs.contains(lead.id), currentDeletionContext == expected,
+              let org = expected.org, leads.contains(where: { $0.id == lead.id }) else { return }
+        deletingIDs.insert(lead.id); defer { deletingIDs.remove(lead.id) }
+        do {
+            let receipt = try await model.api.deleteLead(leadID: lead.id, orgID: org)
+            _ = try receipt.checked(leadID: lead.id)
+            guard currentDeletionContext == expected else { return }
+            leads.removeAll { $0.id == lead.id }
+            errorMessage = receipt.cleanupPending ? "Lead deleted. Related saved copies are being cleared." : nil
+        } catch {
+            guard currentDeletionContext == expected else { return }
+            errorMessage = UserFacingError.message(error, fallback: "Couldn't confirm deletion. The saved lead is still shown; refresh or try again.")
+        }
+    }
+
     @MainActor
     private func load() async {
         if needsSignIn { hasLoaded = true; return }
+        if Config.useLiveBackend, WorkspaceContext.selectedOrgID == nil {
+            leads = []; errorMessage = "Choose a workspace before opening its leads."; hasLoaded = true; return
+        }
         if let listing, listing.isSample || listing.serverID == nil { hasLoaded = true; return }
         isLoading = true
         defer { isLoading = false }
         _ = await AuthStore.validAccessToken()
-        let actor = auth.userID, revision = auth.syncSessionRevision
+        let actor = auth.userID, revision = auth.syncSessionRevision, org = WorkspaceContext.selectedOrgID
         do {
             let fetched = try await model.api.leads(listingServerID: listing?.serverID)
-            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == org else { return }
             leads = fetched.sorted { $0.createdAt > $1.createdAt }
             errorMessage = nil
             hasLoaded = true
@@ -1486,6 +1726,18 @@ struct LeadsView: View {
 struct LeadRow: View {
     let lead: Lead
     var showListing = true
+    @EnvironmentObject private var model: AppModel
+    @State private var latestDelivery: ClientLeadDelivery?
+    @State private var showSendConfirmation = false
+    @State private var isSending = false
+    @State private var sendError: String?
+    @State private var requestID: UUID?
+    @State private var requestRecipient: String?
+    @State private var confirmedRecipient: String?
+    @State private var confirmedOwner: String?
+    @State private var confirmedRevision: UInt64?
+    @State private var confirmedOrg: UUID?
+    private var delivery: ClientLeadDelivery? { latestDelivery ?? lead.clientDelivery }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1574,6 +1826,27 @@ struct LeadRow: View {
                     .font(.caption2)
                     .foregroundStyle(Theme.inkDim)
             }
+            if let delivery {
+                Divider()
+                Label(delivery.label, systemImage: delivery.state == "email_sent" ? "envelope.badge.fill" : "envelope")
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(delivery.state == "failed" ? Theme.warn : Theme.inkDim)
+                if let email = delivery.recipientEmail { Text(email).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+                if let raw = delivery.sentAt ?? delivery.lastAttemptAt, let date = CloudListingMerge.date(raw) {
+                    Text(date.formatted(date: .abbreviated, time: .shortened)).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                if delivery.canResend, let recipient = delivery.currentRecipientEmail ?? delivery.recipientEmail, ClientContactPolicy.isEmail(recipient) {
+                    Button {
+                        confirmedRecipient = recipient
+                        confirmedOwner = AuthStore.shared.userID
+                        confirmedRevision = AuthStore.shared.syncSessionRevision
+                        confirmedOrg = WorkspaceContext.selectedOrgID
+                        showSendConfirmation = true
+                    } label: {
+                        Label(isSending ? "Sending…" : (requestID == nil ? (delivery.lastAttemptAt == nil ? "Send to client" : "Send to client again") : "Retry sending to client"), systemImage: "paperplane")
+                    }.buttonStyle(.borderless).disabled(isSending).accessibilityIdentifier("lead.sendToClient")
+                }
+                if let sendError { Text(sendError).font(.rpCaption).foregroundStyle(Theme.warn) }
+            }
         }
         .padding(.vertical, 4)
         // NOT `.accessibilityElement(children: .combine)`. That merged the whole
@@ -1582,6 +1855,32 @@ struct LeadRow: View {
         // tap on the phone number resolved to the mail link. `.contain` keeps
         // the card grouped while leaving the two actions separately addressable.
         .accessibilityElement(children: .contain)
+        .onChange(of: lead.clientDelivery) { _ in latestDelivery = nil }
+        .confirmationDialog("Email this inquiry to your client?", isPresented: $showSendConfirmation, titleVisibility: .visible) {
+            Button("Send email") { Task { await sendToClient() } }
+        } message: {
+            Text("The inquiry and buyer's contact details will be sent to \(confirmedRecipient ?? "your client's saved email").")
+        }
+    }
+
+    @MainActor private func sendToClient() async {
+        guard !isSending, let recipient = confirmedRecipient, let org = confirmedOrg,
+              AuthStore.shared.userID == confirmedOwner, AuthStore.shared.syncSessionRevision == confirmedRevision,
+              WorkspaceContext.selectedOrgID == org else {
+            sendError = "Your account or workspace changed. Reopen Leads before sending."; return
+        }
+        isSending = true; defer { isSending = false }
+        let operation = requestRecipient == recipient ? (requestID ?? UUID()) : UUID()
+        requestID = operation; requestRecipient = recipient
+        do {
+            let result = try await model.api.sendLeadToClient(leadID: lead.id, recipient: recipient, requestID: operation, orgID: org)
+            guard AuthStore.shared.userID == confirmedOwner, AuthStore.shared.syncSessionRevision == confirmedRevision,
+                  WorkspaceContext.selectedOrgID == org else { return }
+            latestDelivery = result; requestID = nil; sendError = nil
+        } catch {
+            guard AuthStore.shared.userID == confirmedOwner, AuthStore.shared.syncSessionRevision == confirmedRevision else { return }
+            sendError = UserFacingError.message(error, fallback: "The email couldn't be confirmed. Retry uses this same send request.")
+        }
     }
 
     /// "eventDate" → "Event date"; "party_size" → "Party size".
@@ -1620,17 +1919,288 @@ struct LeadRow: View {
 // RendpropApp.swift). Do not re-add a listing-less studio.
 
 // MARK: - Agent Card
+private enum ProfileLogoError: LocalizedError {
+    case image, storage, changed, response
+    var errorDescription: String? {
+        switch self {
+        case .image: return "Choose a supported image. The logo must fit within 512 KB after resizing."
+        case .storage: return "The logo draft couldn't be saved on this phone. Your existing portrait and hosted logo are unchanged."
+        case .changed: return "Your profile or workspace changed. Reopen your card before updating its logo."
+        case .response: return "The hosted logo couldn't be verified. Your draft is still here; try again."
+        }
+    }
+}
+
+private struct ProfileLogoDraft: Codable, Equatable {
+    enum Action: String, Codable { case upload, remove }
+    let operationID: UUID
+    let owner: String?
+    let orgID: UUID
+    let expectedURL: String?
+    let path: String?
+    let action: Action
+}
+
+/// A logo draft is workspace-owned and immutable. An uncertain upload retries
+/// the same operation and baseline; a receipt cannot erase a newer choice.
+private enum ProfileLogoStore {
+    static let mockOrgID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+    static func invalidateBrandReads(owner: String?, defaults: UserDefaults = .standard) {
+        guard let owner = owner.flatMap(UUID.init(uuidString:)) else { return }
+        let key = PersonalCardStore.prefix(owner) + "generation"
+        defaults.set(defaults.integer(forKey: key) + 1, forKey: key)
+    }
+    static func pendingKey(_ prefix: String) -> String { prefix + "brand.logo.pending.v1" }
+    static func hostedKey(_ prefix: String) -> String { prefix + "brand.business_logo_url" }
+    static func hostedURL(prefix: String, defaults: UserDefaults = .standard) -> String? {
+        let value = defaults.string(forKey: hostedKey(prefix)) ?? ""
+        return value.isEmpty ? nil : value
+    }
+    static func presentationHostedURL(prefix: String, defaults: UserDefaults = .standard) -> String? {
+        if let draft = try? pending(prefix: prefix, defaults: defaults), draft.action == .remove { return nil }
+        return hostedURL(prefix: prefix, defaults: defaults)
+    }
+    static func acceptHostedURL(_ value: String?, prefix: String, defaults: UserDefaults = .standard) {
+        if let value, let url = URL(string: value), url.scheme == "https", url.host != nil,
+           url.user == nil, url.password == nil { defaults.set(value, forKey: hostedKey(prefix)) }
+        else if value == nil { defaults.removeObject(forKey: hostedKey(prefix)) }
+    }
+    static func pending(prefix: String, defaults: UserDefaults = .standard) throws -> ProfileLogoDraft? {
+        guard let bytes = defaults.data(forKey: pendingKey(prefix)) else { return nil }
+        guard bytes.count < 8192, let draft = try? JSONDecoder().decode(ProfileLogoDraft.self, from: bytes),
+              draft.path == nil && draft.action == .remove || draft.path == prefix + "business-logo-" + draft.operationID.uuidString.lowercased() + ".png" && draft.action == .upload else {
+            throw ProfileLogoError.storage
+        }
+        return draft
+    }
+    static func stage(image: Data?, owner: String?, orgID: UUID, prefix: String, defaults: UserDefaults = .standard) throws -> ProfileLogoDraft {
+        _ = try pending(prefix: prefix, defaults: defaults)
+        let operation = UUID()
+        let path = image.map { _ in prefix + "business-logo-" + operation.uuidString.lowercased() + ".png" }
+        if let image, let path {
+            guard !image.isEmpty, image.count <= 512 * 1024 else { throw ProfileLogoError.image }
+            try image.write(to: FileStore.documents.appendingPathComponent(path), options: .atomic)
+        }
+        let draft = ProfileLogoDraft(operationID: operation, owner: owner, orgID: orgID,
+            expectedURL: hostedURL(prefix: prefix, defaults: defaults), path: path, action: image == nil ? .remove : .upload)
+        let bytes = try JSONEncoder().encode(draft)
+        defaults.set(bytes, forKey: pendingKey(prefix))
+        guard defaults.synchronize(), try pending(prefix: prefix, defaults: defaults) == draft else { throw ProfileLogoError.storage }
+        invalidateBrandReads(owner: owner, defaults: defaults)
+        return draft
+    }
+    static func localURL(prefix: String, defaults: UserDefaults = .standard) -> URL? {
+        if let draft = try? pending(prefix: prefix, defaults: defaults) {
+            guard let path = draft.path else { return nil }
+            return FileStore.documents.appendingPathComponent(path)
+        }
+        guard let current = hostedURL(prefix: prefix, defaults: defaults),
+              defaults.string(forKey: prefix + "brand.logo.cachedURL") == current,
+              let path = defaults.string(forKey: prefix + "brand.logo.cachedPath"),
+              path.hasPrefix(prefix + "business-logo-"), !path.contains("/") else { return nil }
+        return FileStore.documents.appendingPathComponent(path)
+    }
+    static func acknowledge(_ receipt: BusinessLogoReceipt, draft: ProfileLogoDraft, prefix: String, defaults: UserDefaults = .standard) throws {
+        guard try pending(prefix: prefix, defaults: defaults) == draft else { throw ProfileLogoError.changed }
+        guard receipt.ok, receipt.orgID == draft.orgID else { throw ProfileLogoError.response }
+        if draft.action == .upload {
+            guard let value = receipt.businessLogoURL, let url = URL(string: value), url.scheme == "https",
+                  url.host != nil, url.user == nil, url.password == nil else { throw ProfileLogoError.response }
+        } else if receipt.businessLogoURL != nil { throw ProfileLogoError.response }
+        acceptHostedURL(receipt.businessLogoURL, prefix: prefix, defaults: defaults)
+        if let path = draft.path, let value = receipt.businessLogoURL {
+            defaults.set(path, forKey: prefix + "brand.logo.cachedPath")
+            defaults.set(value, forKey: prefix + "brand.logo.cachedURL")
+        } else {
+            defaults.removeObject(forKey: prefix + "brand.logo.cachedPath")
+            defaults.removeObject(forKey: prefix + "brand.logo.cachedURL")
+        }
+        guard defaults.synchronize() else { throw ProfileLogoError.storage }
+        defaults.removeObject(forKey: pendingKey(prefix))
+        invalidateBrandReads(owner: draft.owner, defaults: defaults)
+        guard defaults.synchronize() else {
+            defaults.set(try JSONEncoder().encode(draft), forKey: pendingKey(prefix))
+            throw ProfileLogoError.storage
+        }
+    }
+    static func discardPending(prefix: String, defaults: UserDefaults = .standard) {
+        // Explicit Reload discards only this workspace's pointer. An unreadable
+        // record is never trusted as a filesystem deletion instruction.
+        defaults.removeObject(forKey: pendingKey(prefix))
+    }
+}
+
+private enum ProfileLogoCommit {
+    static func resolve(draft: ProfileLogoDraft, image: Data?, isContextCurrent: () -> Bool,
+                        isDraftCurrent: () -> Bool,
+                        upload: (Data, ProfileLogoDraft) async throws -> BusinessLogoReceipt,
+                        remove: (ProfileLogoDraft) async throws -> BusinessLogoReceipt) async throws -> BusinessLogoReceipt {
+        func check() throws {
+            try Task.checkCancellation()
+            guard isContextCurrent(), isDraftCurrent() else { throw ProfileLogoError.changed }
+        }
+        try check()
+        let receipt: BusinessLogoReceipt
+        if draft.action == .upload {
+            guard let image, !image.isEmpty, image.count <= 512 * 1024 else { throw ProfileLogoError.image }
+            receipt = try await upload(image, draft)
+        } else { receipt = try await remove(draft) }
+        try check()
+        guard receipt.ok, receipt.orgID == draft.orgID else { throw ProfileLogoError.response }
+        if draft.action == .upload {
+            guard let value = receipt.businessLogoURL, let url = URL(string: value), url.scheme == "https",
+                  url.host != nil, url.user == nil, url.password == nil else { throw ProfileLogoError.response }
+        } else if receipt.businessLogoURL != nil { throw ProfileLogoError.response }
+        return receipt
+    }
+}
+
+private enum ProfileLogoImage {
+    static func prepare(_ bytes: Data) -> Data? {
+        guard bytes.count <= 20_000_000,
+              let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: 512,
+                kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary) else { return nil }
+        let image = UIImage(cgImage: thumbnail)
+        for maximum in [512, 384, 256, 128] {
+            let scale = min(1, CGFloat(maximum) / max(image.size.width, image.size.height))
+            let size = CGSize(width: max(1, image.size.width * scale), height: max(1, image.size.height * scale))
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
+            format.preferredRange = .standard // Canonical 8-bit raster accepted by the logo endpoint.
+            let clean = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+            if let png = clean.pngData(), png.count <= 512 * 1024 { return png }
+        }
+        return nil
+    }
+}
+
 // The card buyers see at the end of every flythrough. Lives here (in an
 // already-compiled file) rather than a new .swift so it can't get dropped from
 // the build target. Stored in UserDefaults; read into the player at share time.
 //
-// ONE ORG, ONE HOSTED CARD: the server keeps a single `orgs.brand_kit`, while the
-// app keeps a card per business type (a restaurant's card is separate from a
-// real-estate agent's). To keep hosted pages coherent, only the card of the
-// org's PRIMARY business type is pushed to the brand kit. The primary type is
-// whatever `SpaceType.current` was the first time a card was saved (stored under
-// `brand.primaryType`); the card editor offers "Use this card on hosted tours"
-// to move it. Cards for other types are used for in-app previews only.
+// Personal contact cards are account-owned, with a local card per industry.
+// One explicitly selected card is published on hosted tours; workspace agency
+// branding and the business logo have their own workspace scope.
+
+private enum PersonalCardError: LocalizedError {
+    case changed, receipt, baseline, storage
+    var errorDescription: String? {
+        switch self {
+        case .changed: return "Your account or editing context changed. Reopen Profile before saving. Your saved details are safe."
+        case .receipt: return "The saved personal card couldn't be verified. Your edits are still saved on this phone."
+        case .baseline: return "Your details are saved on this phone. Reload the hosted card before saving it online."
+        case .storage: return "Your details couldn't be saved on this phone. Please try again."
+        }
+    }
+}
+
+private struct PersonalCardDraft: Codable, Equatable {
+    let id: UUID
+    let owner: UUID
+    let spaceType: String
+    let fields: [String: String]
+    let expected: PersonalCardReceipt
+    var changedFields: [String: String] {
+        fields.filter { key, value in (expected.publicCard?[key] ?? "") != value }
+    }
+}
+
+private enum PersonalCardStore {
+    static func prefix(_ owner: UUID) -> String { "personal.card.v1." + owner.uuidString.lowercased() + "." }
+    static func eraseDeviceCache(defaults: UserDefaults = .standard) {
+        for key in defaults.dictionaryRepresentation().keys {
+            let privateCardKey = key.hasPrefix("personal.card.v1.") || key.hasPrefix("agent.") || key.hasPrefix("brand.")
+                || (key.hasPrefix("workspace.") && (key.contains(".agent.") || key.contains(".brand.")))
+            if privateCardKey { defaults.removeObject(forKey: key) }
+        }
+    }
+    static func receipt(owner: UUID, defaults: UserDefaults = .standard) -> PersonalCardReceipt? {
+        guard let bytes = defaults.data(forKey: prefix(owner) + "receipt"),
+              let receipt = try? JSONDecoder().decode(PersonalCardReceipt.self, from: bytes) else { return nil }
+        return try? receipt.checked(owner: owner)
+    }
+    static func pending(owner: UUID, defaults: UserDefaults = .standard) throws -> PersonalCardDraft? {
+        guard let bytes = defaults.data(forKey: prefix(owner) + "pending") else { return nil }
+        guard bytes.count <= 24_000, let value = try? JSONDecoder().decode(PersonalCardDraft.self, from: bytes),
+              value.owner == owner, value.expected.userID == owner,
+              SpaceType(rawValue: value.spaceType) != nil,
+              Set(value.fields.keys) == Set(AgentCard.fieldNames) else { throw PersonalCardError.storage }
+        return value
+    }
+    static func accept(_ receipt: PersonalCardReceipt, applyLocal: Bool = true, defaults: UserDefaults = .standard) throws {
+        _ = try receipt.checked(owner: receipt.userID)
+        defaults.set(try JSONEncoder().encode(receipt), forKey: prefix(receipt.userID) + "receipt")
+        // Reading the server never replaces an explicitly saved local draft.
+        guard applyLocal, try pending(owner: receipt.userID, defaults: defaults) == nil,
+              let raw = receipt.spaceType, let type = SpaceType(rawValue: raw), let fields = receipt.publicCard,
+              !defaults.bool(forKey: prefix(receipt.userID) + "dirty." + raw) else { return }
+        for field in AgentCard.fieldNames { defaults.set(fields[field] ?? "", forKey: AgentCard.key(field, for: type)) }
+        defaults.set(type.rawValue, forKey: prefix(receipt.userID) + "brand.primaryType")
+    }
+    /// User-confirmed recovery of the account-only pending JSON. Typed/local
+    /// fields and portrait files remain intact; older receipts cannot clear a
+    /// replacement draft because acknowledge compares the complete record.
+    static func reload(_ receipt: PersonalCardReceipt, owner: UUID, defaults: UserDefaults = .standard) throws {
+        _ = try receipt.checked(owner: owner)
+        defaults.set(try JSONEncoder().encode(receipt), forKey: prefix(owner) + "receipt")
+        guard defaults.synchronize(), self.receipt(owner: owner, defaults: defaults) == receipt else { throw PersonalCardError.storage }
+        defaults.removeObject(forKey: prefix(owner) + "pending")
+        if let type = receipt.spaceType { defaults.set(type, forKey: prefix(owner) + "brand.primaryType") }
+        defaults.set(defaults.integer(forKey: prefix(owner) + "generation") + 1, forKey: prefix(owner) + "generation")
+    }
+    static func saveLocal(_ fields: [String: String], type: SpaceType, owner: UUID, defaults: UserDefaults = .standard) throws {
+        guard Set(fields.keys) == Set(AgentCard.fieldNames) else { throw PersonalCardError.storage }
+        guard WorkspaceContext.owner() == owner else { throw PersonalCardError.changed }
+        for field in AgentCard.fieldNames { defaults.set(fields[field], forKey: AgentCard.key(field, for: type)) }
+        defaults.set(true, forKey: prefix(owner) + "dirty." + type.rawValue)
+        defaults.set(AgentCard.personalReadVersion + 1, forKey: prefix(owner) + "generation")
+        guard defaults.synchronize(), AgentCard.card(for: type).brandFields == fields else { throw PersonalCardError.storage }
+        NotificationCenter.default.post(name: .rendpropCloudBrandUpdated, object: nil)
+    }
+    static func stage(_ fields: [String: String], type: SpaceType, expected: PersonalCardReceipt, defaults: UserDefaults = .standard) throws -> PersonalCardDraft {
+        let owner = expected.userID
+        _ = try pending(owner: owner, defaults: defaults) // Do not silently discard an unreadable earlier save.
+        let draft = PersonalCardDraft(id: UUID(), owner: owner, spaceType: type.rawValue, fields: fields, expected: expected)
+        defaults.set(try JSONEncoder().encode(draft), forKey: prefix(owner) + "pending")
+        guard defaults.synchronize(), try pending(owner: owner, defaults: defaults) == draft else { throw PersonalCardError.storage }
+        return draft
+    }
+    static func acknowledge(_ receipt: PersonalCardReceipt, draft: PersonalCardDraft, defaults: UserDefaults = .standard) throws {
+        guard try pending(owner: draft.owner, defaults: defaults) == draft else { throw PersonalCardError.changed }
+        _ = try receipt.checked(owner: draft.owner)
+        guard receipt.spaceType == draft.spaceType, draft.changedFields.allSatisfy({ key, value in
+            value.isEmpty ? receipt.publicCard?[key] == nil : receipt.publicCard?[key] == value
+        }) else { throw PersonalCardError.receipt }
+        // The server may have merged newer untouched contact fields. Adopt
+        // those only while this exact local Save is still the latest version.
+        let type = SpaceType(rawValue: draft.spaceType)!
+        let matchesLocal = AgentCard.card(for: type).brandFields == draft.fields
+        if matchesLocal {
+            for key in AgentCard.fieldNames where draft.changedFields[key] == nil {
+                defaults.set(receipt.publicCard?[key] ?? "", forKey: AgentCard.key(key, for: type))
+            }
+        }
+        defaults.set(try JSONEncoder().encode(receipt), forKey: prefix(draft.owner) + "receipt")
+        defaults.set(draft.spaceType, forKey: prefix(draft.owner) + "brand.primaryType")
+        guard defaults.synchronize(), self.receipt(owner: draft.owner, defaults: defaults) == receipt else { throw PersonalCardError.storage }
+        defaults.removeObject(forKey: prefix(draft.owner) + "pending")
+        if matchesLocal { defaults.removeObject(forKey: prefix(draft.owner) + "dirty." + draft.spaceType) }
+        defaults.set(AgentCard.personalReadVersion + 1, forKey: prefix(draft.owner) + "generation")
+        NotificationCenter.default.post(name: .rendpropCloudBrandUpdated, object: nil)
+    }
+    static func commit(_ draft: PersonalCardDraft, isCurrent: () -> Bool,
+                       save: (PersonalCardDraft) async throws -> PersonalCardReceipt) async throws -> PersonalCardReceipt {
+        guard isCurrent() else { throw PersonalCardError.changed }
+        let receipt = try await save(draft)
+        guard isCurrent() else { throw PersonalCardError.changed }
+        _ = try receipt.checked(owner: draft.owner)
+        guard receipt.spaceType == draft.spaceType,
+              draft.changedFields.allSatisfy({ key, value in value.isEmpty ? receipt.publicCard?[key] == nil : receipt.publicCard?[key] == value }) else { throw PersonalCardError.receipt }
+        return receipt
+    }
+}
 
 struct AgentCard {
     var name: String
@@ -1641,49 +2211,76 @@ struct AgentCard {
     var instagram: String = ""
     var linkedin: String = ""
     var tiktok: String = ""
+    var customHeadshotRelPath: String? = nil
+    var usesOwnHeadshot = true
+    var publicAvatarURL: String? = nil
+    var publicBusinessLogoURL: String? = nil
 
     static let fieldNames = ["name", "brokerage", "phone", "email", "website", "instagram", "linkedin", "tiktok"]
 
-    /// UserDefaults key of the business type whose card mirrors to the hosted brand kit.
-    static let primaryTypeKey = "brand.primaryType"
-    /// Snapshot of the last payload pushed to PATCH /me/brand (skip identical pushes).
-    static let lastPushedKey = "brand.lastPushed"
-    static let cloudOwnerKey = "brand.cloudOwner"
+    static var personalPrefix: String {
+        WorkspaceContext.owner().map(PersonalCardStore.prefix) ?? "personal.card.v1.signed-out."
+    }
+    static var personalReadVersion: Int { UserDefaults.standard.integer(forKey: personalPrefix + "generation") }
+    static var primaryTypeKey: String { personalPrefix + "brand.primaryType" }
+    static var lastPushedKey: String { personalPrefix + "brand.lastPushed" }
+    static var cloudOwnerKey: String { personalPrefix + "brand.cloudOwner" }
 
-    /// Pull a shared card only when it cannot erase an edit waiting to upload.
-    /// A previous account's card is archived locally before replacing it.
-    @MainActor static func acceptCloud(_ brand: CloudBrand) {
+    /// Workspace identity and logos remain scoped to the selected workspace.
+    /// Personal identity is ingested only from the verified account receipt.
+    @MainActor static func acceptCloud(_ brand: CloudBrand, personalReadVersion: Int? = nil) {
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == brand.userID,
+              WorkspaceContext.selectedOrgID == brand.orgID,
               let type = SpaceType(rawValue: brand.spaceType) else { return }
-        let defaults = UserDefaults.standard
-        let owner = "\(brand.userID.uuidString):\(brand.orgID.uuidString)"
-        let previousOwner = defaults.string(forKey: cloudOwnerKey)
-        let current = card(for: type).brandFields
-        let currentSignature = fieldNames.map { current[$0] ?? "" }.joined(separator: "\u{1F}")
-        let lastPushed = defaults.string(forKey: lastPushedKey)
-        if previousOwner == owner || previousOwner == nil {
-            if card(for: type).isSet && currentSignature != lastPushed { return }
-        } else {
-            defaults.set(current, forKey: "brand.archive.\(previousOwner!).\(type.rawValue)")
+        migrateLegacyIfNeeded(owner: brand.userID, org: brand.orgID)
+        if personalReadVersion == nil || personalReadVersion == Self.personalReadVersion {
+            ProfileLogoStore.acceptHostedURL(brand.fields["business_logo_url"], prefix: WorkspaceContext.storagePrefix)
         }
-        for field in fieldNames { defaults.set(brand.fields[field] ?? "", forKey: key(field, for: type)) }
-        defaults.set(fieldNames.map { brand.fields[$0] ?? "" }.joined(separator: "\u{1F}"), forKey: lastPushedKey)
-        defaults.set(owner, forKey: cloudOwnerKey)
-        primaryBrandType = type
+        let defaults = UserDefaults.standard
+        defaults.set(true, forKey: WorkspaceContext.storagePrefix + "brand.initialized")
+        defaults.set(type.rawValue, forKey: WorkspaceContext.storagePrefix + "space.type.synced")
+        defaults.set(type.rawValue, forKey: "space.type")
+        if let personal = brand.personalCard, personal.userID == brand.userID,
+           personalReadVersion == nil || personalReadVersion == Self.personalReadVersion {
+            try? PersonalCardStore.accept(personal)
+        }
         NotificationCenter.default.post(name: .rendpropCloudBrandUpdated, object: nil)
     }
 
-    /// Storage key NAMESPACED by business type, so each industry keeps its own
-    /// card — a restaurant's card is separate from a real-estate agent's.
-    /// Real estate uses the original un-namespaced keys so any card set up
-    /// before this change is preserved.
+    /// Only the previously recorded original workspace may supply legacy text.
+    /// A newly selected team brand is not proof of a person's own contact card.
+    static func migrateLegacyIfNeeded(owner: UUID, org: UUID) {
+        let d = UserDefaults.standard, destination = PersonalCardStore.prefix(owner)
+        guard !d.bool(forKey: destination + "migrated") else { return }
+        let original = d.string(forKey: "brand.legacy.workspace." + owner.uuidString.lowercased()).flatMap(UUID.init(uuidString:))
+        let sourcePrefix = original.map { "workspace.\(owner.uuidString.lowercased()).\($0.uuidString.lowercased())." }
+        let legacyClaim = d.string(forKey: "brand.legacy.unattributedOwner")
+        for type in SpaceType.allCases {
+            for field in fieldNames {
+                let suffix = type == .realEstate ? "agent.\(field)" : "agent.\(type.rawValue).\(field)"
+                let value = sourcePrefix.flatMap { d.string(forKey: $0 + suffix) }
+                    ?? (legacyClaim == owner.uuidString.lowercased() ? d.string(forKey: suffix) : nil)
+                if let value, d.object(forKey: destination + suffix) == nil { d.set(value, forKey: destination + suffix) }
+            }
+            let file = type == .realEstate ? "agent-headshot.jpg" : "agent-headshot-\(type.rawValue).jpg"
+            if let sourcePrefix {
+                let source = FileStore.documents.appendingPathComponent(sourcePrefix + file)
+                let target = FileStore.documents.appendingPathComponent(destination + file)
+                if FileManager.default.fileExists(atPath: source.path), !FileManager.default.fileExists(atPath: target.path) { try? FileManager.default.copyItem(at: source, to: target) }
+            }
+        }
+        if let sourcePrefix, let type = d.string(forKey: sourcePrefix + "brand.primaryType") { d.set(type, forKey: destination + "brand.primaryType") }
+        d.set(true, forKey: destination + "migrated")
+    }
+
     static func key(_ field: String, for type: SpaceType) -> String {
-        type == .realEstate ? "agent.\(field)" : "agent.\(type.rawValue).\(field)"
+        personalPrefix + (type == .realEstate ? "agent.\(field)" : "agent.\(type.rawValue).\(field)")
     }
 
     static func key(_ field: String) -> String { key(field, for: SpaceType.current) }
 
     static func card(for type: SpaceType) -> AgentCard {
+        if let owner = WorkspaceContext.owner() { migrateLegacyIfNeeded(owner: owner, org: WorkspaceContext.selectedOrgID ?? owner) }
         let d = UserDefaults.standard
         return AgentCard(name: d.string(forKey: key("name", for: type)) ?? "",
                          brokerage: d.string(forKey: key("brokerage", for: type)) ?? "",
@@ -1692,12 +2289,13 @@ struct AgentCard {
                          website: d.string(forKey: key("website", for: type)) ?? "",
                          instagram: d.string(forKey: key("instagram", for: type)) ?? "",
                          linkedin: d.string(forKey: key("linkedin", for: type)) ?? "",
-                         tiktok: d.string(forKey: key("tiktok", for: type)) ?? "")
+                         tiktok: d.string(forKey: key("tiktok", for: type)) ?? "",
+                         publicBusinessLogoURL: ProfileLogoStore.presentationHostedURL(prefix: WorkspaceContext.storagePrefix))
     }
 
     static var current: AgentCard { card(for: SpaceType.current) }
 
-    // MARK: Hosted brand kit (one per org)
+    // MARK: Explicit hosted personal card
 
     /// The business type whose card the hosted pages show. nil until a card has
     /// been pushed once.
@@ -1715,39 +2313,27 @@ struct AgentCard {
         }
     }
 
-    /// The fields PATCH /me/brand accepts (empty string clears server-side).
+    /// Reviewed contact text shared by local previews, exports and personal-card Save.
     var brandFields: [String: String] {
         ["name": name, "brokerage": brokerage, "phone": phone,
          "email": email, "website": website, "instagram": instagram,
          "linkedin": linkedin, "tiktok": tiktok]
     }
 
-    /// Push the card for `type` to the org's hosted brand kit — but ONLY when it
-    /// is set (never erase the hosted card with an empty editor, audit F-C-05)
-    /// and ONLY when `type` is the org's primary type (adopting `type` as primary
-    /// when none is recorded yet). `force` re-pushes even if nothing changed.
-    /// Best-effort, fire-and-forget: offline or signed-out keeps the local card
-    /// and the next edit retries.
-    @MainActor
-    static func syncToBrandKit(for type: SpaceType, api: APIClient, force: Bool = false) {
-        guard Config.useLiveBackend, AuthStore.currentAccessToken != nil else { return }
-        let card = Self.card(for: type)
-        guard card.isSet else { return }
-        if let primary = primaryBrandType {
-            guard primary == type else { return }
-        } else {
-            primaryBrandType = type   // first card ever saved → this is the org's primary type
-        }
-        let fields = card.brandFields
-        let signature = fieldNames.map { fields[$0] ?? "" }.joined(separator: "\u{1F}")
-        if !force, UserDefaults.standard.string(forKey: lastPushedKey) == signature { return }
-        Task.detached {
+    /// Retry only a previously reviewed explicit personal-card save.
+    /// Opening or dismissing Profile never publishes workspace brand text.
+    @MainActor static func retryPendingPersonalCard(for type: SpaceType, api: APIClient) {
+        guard let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+              let draft = try? PersonalCardStore.pending(owner: owner), draft.spaceType == type.rawValue else { return }
+        let revision = AuthStore.shared.syncSessionRevision
+        Task { @MainActor in
             do {
-                try await api.updateBrand(fields)
-                UserDefaults.standard.set(signature, forKey: lastPushedKey)
-            } catch {
-                // Keep the local card; the next edit or launch retries.
-            }
+                let receipt = try await PersonalCardStore.commit(draft, isCurrent: {
+                    AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner && AuthStore.shared.syncSessionRevision == revision
+                        && (try? PersonalCardStore.pending(owner: owner)) == draft
+                }, save: { try await api.savePersonalCard($0.changedFields, spaceType: $0.spaceType, expected: $0.expected) })
+                try PersonalCardStore.acknowledge(receipt, draft: draft)
+            } catch { /* The explicit pending save remains on this phone. */ }
         }
     }
 
@@ -1789,14 +2375,33 @@ struct AgentCard {
         let file = type == .realEstate
             ? "agent-headshot.jpg"
             : "agent-headshot-\(type.rawValue).jpg"
-        return FileStore.documents.appendingPathComponent(file)
+        return FileStore.documents.appendingPathComponent(personalPrefix + file)
     }
     static var headshotURL: URL { headshotURL(for: SpaceType.current) }
 
-    var hasHeadshot: Bool { FileManager.default.fileExists(atPath: Self.headshotURL.path) }
+    var resolvedHeadshotURL: URL? {
+        if let path = customHeadshotRelPath { return FileStore.url(fromRelativePath: path) }
+        return usesOwnHeadshot ? Self.headshotURL : nil
+    }
+    var hasHeadshot: Bool { resolvedHeadshotURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false }
     var headshotBase64: String? {
-        guard let data = try? Data(contentsOf: Self.headshotURL) else { return nil }
+        guard let url = resolvedHeadshotURL, let data = try? Data(contentsOf: url) else { return nil }
         return data.base64EncodedString()
+    }
+    var resolvedBusinessLogoURL: URL? {
+        usesOwnHeadshot ? ProfileLogoStore.localURL(prefix: WorkspaceContext.storagePrefix) : nil
+    }
+    var businessLogoBase64: String? {
+        guard let url = resolvedBusinessLogoURL, let data = try? Data(contentsOf: url) else { return nil }
+        return data.base64EncodedString()
+    }
+
+    static func forListing(_ listing: Listing?, fallback: AgentCard = .current) -> AgentCard {
+        guard let listing, let contact = listing.clientContact, ClientContactPolicy.useClientCard(contact) else { return fallback }
+        let card = contact.publicCard
+        return AgentCard(name: card.name, brokerage: [card.title, card.brokerage].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "), phone: card.phone ?? "",
+            email: card.email ?? "", website: card.website ?? "", instagram: card.instagram ?? "",
+            linkedin: card.linkedin ?? "", customHeadshotRelPath: listing.clientPhotoRelPath, usesOwnHeadshot: false, publicAvatarURL: card.avatarURL)
     }
 
     static func saveHeadshot(_ image: UIImage) {
@@ -1841,35 +2446,64 @@ struct AgentCard {
 
     /// "Demo Realty Group · (555) 012-3456" — drops whichever part is empty.
     var brokerageLine: String {
-        [brokerage, phone].map { $0.trimmingCharacters(in: .whitespaces) }
+        [brokerage, PhoneNumberPresentation.formatted(phone)].map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
     }
 }
 
 struct AgentCardEditorView: View {
-    // Keys namespaced by the current business type (AgentCard.key) so editing
-    // the restaurant card never touches the real-estate card. The editor is
-    // pushed fresh each time, so these resolve to the active industry.
+    @State private var editingWorkspace = WorkspaceContext.storagePrefix
+    @State private var editingContext = ProfileShareContext.current
     @EnvironmentObject private var model: AppModel
-    @AppStorage(AgentCard.key("name")) private var name = ""
-    @AppStorage(AgentCard.key("brokerage")) private var brokerage = ""
-    @AppStorage(AgentCard.key("phone")) private var phone = ""
-    @AppStorage(AgentCard.key("email")) private var email = ""
-    @AppStorage(AgentCard.key("website")) private var website = ""
-    @AppStorage(AgentCard.key("instagram")) private var instagram = ""
-    @AppStorage(AgentCard.key("linkedin")) private var linkedin = ""
-    @AppStorage(AgentCard.key("tiktok")) private var tiktok = ""
-    @AppStorage(AgentCard.primaryTypeKey) private var primaryTypeRaw = ""
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var name = AgentCard.current.name
+    @State private var brokerage = AgentCard.current.brokerage
+    @State private var phone = AgentCard.current.phone
+    @State private var email = AgentCard.current.email
+    @State private var website = AgentCard.current.website
+    @State private var instagram = AgentCard.current.instagram
+    @State private var linkedin = AgentCard.current.linkedin
+    @State private var tiktok = AgentCard.current.tiktok
+    @State private var primaryTypeRaw = UserDefaults.standard.string(forKey: AgentCard.primaryTypeKey) ?? ""
+    @State private var savedFields = AgentCard.current.brandFields
+    @State private var personalBaseline: PersonalCardReceipt?
+    @State private var savingDetails = false
+    @State private var loadingDetails = false
+    @State private var detailsMessage: String?
+    @State private var reloadDetailsConfirm = false
+    @State private var archivedReviews: [AdoptionOwnedIdentity.Review] = []
+    @State private var reviewToLoad: AdoptionOwnedIdentity.Review?
+    @State private var reviewConfirm = false
+    @State private var loadedArchiveReview: AdoptionOwnedIdentity.Review?
+    @State private var archivePortraitIsSelected = false
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var headshot: UIImage?
+    @State private var logoPickerItem: PhotosPickerItem?
+    @State private var businessLogo: UIImage?
+    @State private var logoError: String?
+    @State private var savingLogo = false
+    @State private var reloadLogoConfirm = false
+    @State private var logoRevision = 0
+    @State private var contextInvalidated = false
 
     /// The type this editor was opened for (fixed at push time, like the keys).
     private let editingType = SpaceType.current
 
     private var primaryType: SpaceType? { SpaceType(rawValue: primaryTypeRaw) }
     private var isPrimary: Bool { primaryType == nil || primaryType == editingType }
+    private var detailFields: [String: String] {
+        ["name": name, "brokerage": brokerage, "phone": phone, "email": email, "website": website,
+         "instagram": instagram, "linkedin": linkedin, "tiktok": tiktok]
+    }
+    private var detailsAreDirty: Bool { detailFields != savedFields }
+    private var canEditBusinessLogo: Bool {
+        !Config.useLiveBackend || ["owner", "admin"].contains(WorkspaceContext.current?.selected?.role ?? "")
+    }
+    private var contextIsCurrent: Bool {
+        !contextInvalidated && editingContext == .current && editingWorkspace == WorkspaceContext.storagePrefix
+    }
 
     var body: some View {
         Form {
@@ -1892,6 +2526,7 @@ struct AgentCardEditorView: View {
                         if headshot != nil {
                             Button(role: .destructive) {
                                 AgentCard.removeHeadshot(); headshot = nil; pickerItem = nil
+                                archivePortraitIsSelected = false
                             } label: {
                                 Label("Remove", systemImage: "trash").font(.rpCaption)
                             }
@@ -1908,14 +2543,30 @@ struct AgentCardEditorView: View {
                 Text("Shows in the app and in your in-app previews. Hosted tour pages show your initials.")
             }
 
+            businessLogoSection
+
+            if !archivedReviews.isEmpty {
+                Section {
+                    ForEach(archivedReviews) { review in
+                        Button {
+                            reviewToLoad = review; reviewConfirm = true
+                        } label: {
+                            Label("Review saved card", systemImage: "person.crop.rectangle.badge.checkmark")
+                        }.accessibilityIdentifier("profile.reviewGuestCard")
+                    }
+                } header: { Text("Saved before sign-in") }
+                footer: { Text("Your earlier details and portrait are kept. Review them here; your current personal card stays in place until you tap Save.") }
+            }
+
             Section {
                 TextField(editingType.profileNameLabel, text: $name)
-                    .textContentType(.name)
+                    .textContentType(.name).accessibilityIdentifier("profile.name")
                 TextField(editingType.profileOrgLabel, text: $brokerage)
                     .textContentType(.organizationName)
-                TextField("Phone", text: $phone)
+                TextField("Phone", text: Binding(get: { PhoneNumberPresentation.editing(phone) }, set: { phone = PhoneNumberPresentation.editing($0) }))
                     .keyboardType(.phonePad)
                     .textContentType(.telephoneNumber)
+                    .accessibilityIdentifier("profile.phone")
                 TextField("Email (optional)", text: $email)
                     .keyboardType(.emailAddress)
                     .textContentType(.emailAddress)
@@ -1941,25 +2592,25 @@ struct AgentCardEditorView: View {
                 Text("Paste a full link, a domain like instagram.com/you, or just your @handle. These show on your profile and on your hosted tours.")
             }
 
-            if let primaryType, primaryType != editingType {
-                Section {
-                    Button {
-                        AgentCard.primaryBrandType = editingType
-                        AgentCard.syncToBrandKit(for: editingType, api: model.api, force: true)
-                        Haptics.selection()
-                    } label: {
-                        Label("Use this card on hosted tours", systemImage: "globe")
-                    }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                } footer: {
-                    Text("Your hosted tour pages currently show your \(primaryType.displayName) card. Rendprop hosts one card per account; this \(editingType.displayName) card is used for in-app previews until you switch.")
+            Section {
+                if let primaryType, primaryType != editingType {
+                    Button("Use this card on hosted tours") { Task { await saveDetails(useOnHostedTours: true) } }
+                        .disabled(savingDetails || loadingDetails || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .accessibilityIdentifier("profile.useHostedCard")
+                    Text("Hosted tours currently use your \(primaryType.displayName) personal card. Other industry cards stay on this phone until you choose them.")
+                        .font(.rpCaption)
                 }
+                Button("Reload hosted card") { reloadDetailsConfirm = true }
+                    .accessibilityIdentifier("profile.reloadDetails")
+            } footer: {
+                Text("Your personal contact details belong to your account and stay yours when you join or switch a team. Your sign-in email is never added to this public card automatically.")
             }
 
             Section {
                 AgentCardPreview(
-                    card: AgentCard(name: name, brokerage: brokerage, phone: phone, email: email, website: website),
-                    headshot: headshot)
+                    card: AgentCard(name: name, brokerage: brokerage, phone: phone, email: email, website: website,
+                        publicBusinessLogoURL: ProfileLogoStore.presentationHostedURL(prefix: editingWorkspace)),
+                    headshot: headshot, businessLogo: businessLogo)
                     .padding(.vertical, 6)
             } header: {
                 Text("Preview (in-app)")
@@ -1969,29 +2620,264 @@ struct AgentCardEditorView: View {
                      : "Hosted pages show your \(primaryType?.displayName ?? "primary") card.")
             }
         }
+        .disabled(!contextIsCurrent || savingDetails)
+        .safeAreaInset(edge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !contextIsCurrent { Text(PersonalCardError.changed.localizedDescription).font(.rpCaption).foregroundStyle(Theme.warn) }
+                if let detailsMessage { Text(detailsMessage).font(.rpCaption).accessibilityIdentifier("profile.saveReceipt") }
+                Button { Task { await saveDetails() } } label: {
+                    HStack { if savingDetails { ProgressView() }; Text(savingDetails ? "Saving…" : "Save").fontWeight(.semibold); Spacer(); if detailsAreDirty { Text("Unsaved changes").font(.caption) } }
+                }
+                .buttonStyle(.borderedProminent).disabled(!contextIsCurrent || savingDetails || loadingDetails)
+                .accessibilityIdentifier("profile.save")
+            }.padding().background(.regularMaterial)
+        }
         .navigationTitle(editingType.profileCardName)
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.agentCard)
-        .onAppear { headshot = UIImage(contentsOfFile: AgentCard.headshotURL(for: editingType).path) }
-        .onDisappear {
-            // Sync the card to the org's brand kit so it renders on every
-            // HOSTED share link — the public tour page reads these fields
-            // (2026-08-26 audit P0-1). Only when the card is SET and only for
-            // the org's primary business type (audit F-C-05: an empty editor
-            // dismissed on a second business type used to erase the hosted card).
-            AgentCard.syncToBrandKit(for: editingType, api: model.api)
+        .onAppear {
+            if let owner = editingContext.owner.flatMap(UUID.init(uuidString:)) {
+                personalBaseline = PersonalCardStore.receipt(owner: owner)
+                archivedReviews = AdoptionOwnedIdentity.reviews(owner: owner, type: editingType.rawValue)
+            }
+            Task { await loadDetails(replaceDraft: false) }
+            headshot = UIImage(contentsOfFile: AgentCard.headshotURL(for: editingType).path)
+            refreshLogoPreview()
+            if let draft = try? ProfileLogoStore.pending(prefix: editingWorkspace), draft.owner == editingContext.owner,
+               draft.orgID == (editingContext.org ?? ProfileLogoStore.mockOrgID) {
+                logoError = "Your logo update is saved on this phone. Retry to finish updating the hosted card."
+            }
+        }
+        .onChange(of: auth.syncSessionRevision) { _ in contextInvalidated = true }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in contextInvalidated = true }
+        .confirmationDialog("Replace this phone's logo draft with the current hosted logo?", isPresented: $reloadLogoConfirm, titleVisibility: .visible) {
+            Button("Reload shared logo", role: .destructive) { Task { await reloadLogo() } }
+        }
+        .confirmationDialog("Reload the current hosted card?", isPresented: $reloadDetailsConfirm, titleVisibility: .visible) {
+            Button("Reload hosted card") { Task { await loadDetails(replaceDraft: true) } }
+        } message: {
+            Text("Your typed details stay in this editor. Reload updates the saved baseline; tap Save to explicitly apply your edits to that version.")
+        }
+        .confirmationDialog("Load your saved card into this editor?", isPresented: $reviewConfirm, titleVisibility: .visible) {
+            Button("Review saved details") {
+                if let review = reviewToLoad { Task { await reviewSavedDetails(review) } }
+            }
+        } message: {
+            Text("This loads your earlier details and portrait for review. Nothing is published or replaced until you tap Save. Your other saved copies stay available.")
         }
         .onChange(of: pickerItem) { newItem in
             guard let newItem else { return }
-            let type = editingType
-            Task {
+            let type = editingType, workspace = editingWorkspace
+            let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+            Task { @MainActor in
                 if let data = try? await newItem.loadTransferable(type: Data.self),
                    let img = UIImage(data: data) {
+                    guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                          WorkspaceContext.storagePrefix == workspace, contextIsCurrent, pickerItem == newItem else { return }
                     AgentCard.saveHeadshot(img)
+                    archivePortraitIsSelected = false
                     await MainActor.run { headshot = UIImage(contentsOfFile: AgentCard.headshotURL(for: type).path) }
                 }
             }
         }
+        .onChange(of: logoPickerItem) { item in
+            guard let item, contextIsCurrent else { return }
+            Task { @MainActor in
+                do {
+                    let data = try await item.loadTransferable(type: Data.self)
+                    guard let data, contextIsCurrent, logoPickerItem == item else { throw ProfileLogoError.changed }
+                    let prepared = await Task.detached(priority: .userInitiated) { ProfileLogoImage.prepare(data) }.value
+                    guard contextIsCurrent, logoPickerItem == item else { throw ProfileLogoError.changed }
+                    guard let prepared else { throw ProfileLogoError.image }
+                    _ = try ProfileLogoStore.stage(image: prepared, owner: editingContext.owner,
+                        orgID: editingContext.org ?? ProfileLogoStore.mockOrgID, prefix: editingWorkspace)
+                    refreshLogoPreview()
+                    await saveLogo()
+                } catch { logoError = UserFacingError.message(error, fallback: "The logo couldn't be saved. Your portrait is unchanged.") }
+            }
+        }
+    }
+
+    @MainActor private func loadDetails(replaceDraft: Bool) async {
+        guard !loadingDetails, !savingDetails, contextIsCurrent,
+              let owner = editingContext.owner.flatMap(UUID.init(uuidString:)) else { return }
+        loadingDetails = true; defer { loadingDetails = false }
+        let version = AgentCard.personalReadVersion, before = detailFields
+        do {
+            let receipt = try await model.api.personalCard()
+            guard contextIsCurrent, receipt.userID == owner, AgentCard.personalReadVersion == version else { throw PersonalCardError.changed }
+            _ = try receipt.checked(owner: owner)
+            // Explicit reload changes the baseline, while keeping typed edits and pending saves intact.
+            if replaceDraft { try PersonalCardStore.reload(receipt, owner: owner) }
+            else { try PersonalCardStore.accept(receipt, applyLocal: !detailsAreDirty) }
+            personalBaseline = receipt
+            primaryTypeRaw = receipt.spaceType ?? ""
+            if !replaceDraft, detailFields == before, !detailsAreDirty, receipt.spaceType == editingType.rawValue,
+               (try? PersonalCardStore.pending(owner: owner)) == nil,
+               !UserDefaults.standard.bool(forKey: PersonalCardStore.prefix(owner) + "dirty." + editingType.rawValue) {
+                let card = AgentCard.card(for: editingType)
+                name = card.name; brokerage = card.brokerage; phone = card.phone; email = card.email; website = card.website
+                instagram = card.instagram; linkedin = card.linkedin; tiktok = card.tiktok; savedFields = card.brandFields
+            }
+            if replaceDraft { detailsMessage = "Hosted baseline reloaded. Your edits are unchanged; tap Save to apply them." }
+        } catch { detailsMessage = UserFacingError.message(error, fallback: "Couldn't load the hosted card. You can still save details on this phone.") }
+    }
+
+    @MainActor private func reviewSavedDetails(_ review: AdoptionOwnedIdentity.Review) async {
+        guard !loadingDetails, !savingDetails, contextIsCurrent,
+              let owner = editingContext.owner.flatMap(UUID.init(uuidString:)),
+              AdoptionOwnedIdentity.isCurrent(review, owner: owner, type: editingType.rawValue) else { return }
+        loadingDetails = true; defer { loadingDetails = false }
+        let before = detailFields, version = AgentCard.personalReadVersion
+        do {
+            let receipt = try await model.api.personalCard()
+            guard contextIsCurrent, detailFields == before, AgentCard.personalReadVersion == version,
+                  AdoptionOwnedIdentity.isCurrent(review, owner: owner, type: editingType.rawValue) else { throw PersonalCardError.changed }
+            _ = try receipt.checked(owner: owner)
+            let portrait = try AdoptionOwnedIdentity.reviewPortrait(review, documents: FileStore.documents)
+            personalBaseline = receipt
+            primaryTypeRaw = receipt.spaceType ?? ""
+            for field in AgentCard.fieldNames {
+                let value = review.fields[field] ?? ""
+                switch field {
+                case "name": name = value
+                case "brokerage": brokerage = value
+                case "phone": phone = value
+                case "email": email = value
+                case "website": website = value
+                case "instagram": instagram = value
+                case "linkedin": linkedin = value
+                case "tiktok": tiktok = value
+                default: break
+                }
+            }
+            archivePortraitIsSelected = false
+            if let portrait, let image = UIImage(data: portrait) { headshot = image; archivePortraitIsSelected = true }
+            loadedArchiveReview = review
+            detailsMessage = "Earlier details loaded for review. Tap Save to apply them; your current personal card is unchanged."
+        } catch { detailsMessage = UserFacingError.message(error, fallback: "Your saved card couldn't be loaded safely. Its original details are still kept.") }
+    }
+
+    @MainActor private func saveDetails(useOnHostedTours: Bool = false) async {
+        guard !savingDetails, !loadingDetails, contextIsCurrent,
+              let owner = editingContext.owner.flatMap(UUID.init(uuidString:)) else { return }
+        savingDetails = true; defer { savingDetails = false }
+        do {
+            let card = AgentCard(name: name.trimmingCharacters(in: .whitespacesAndNewlines), brokerage: brokerage.trimmingCharacters(in: .whitespacesAndNewlines),
+                phone: phone.trimmingCharacters(in: .whitespacesAndNewlines), email: email.trimmingCharacters(in: .whitespacesAndNewlines), website: website,
+                instagram: instagram, linkedin: linkedin, tiktok: tiktok)
+            var fields = card.brandFields
+            for (key, url) in [("website", card.websiteURL), ("instagram", card.instagramURL), ("linkedin", card.linkedinURL), ("tiktok", card.tiktokURL)] {
+                if let url {
+                    guard url.scheme == "https", url.host != nil, url.user == nil, url.password == nil else { throw PersonalCardError.receipt }
+                    fields[key] = url.absoluteString
+                }
+            }
+            try PersonalCardStore.saveLocal(fields, type: editingType, owner: owner)
+            if let review = loadedArchiveReview {
+                guard contextIsCurrent, AdoptionOwnedIdentity.isCurrent(review, owner: owner, type: editingType.rawValue) else { throw PersonalCardError.changed }
+                if archivePortraitIsSelected { try AdoptionOwnedIdentity.saveReviewedPortrait(review, documents: FileStore.documents) }
+            }
+            name = fields["name"]!; brokerage = fields["brokerage"]!; phone = fields["phone"]!; email = fields["email"]!; website = fields["website"]!
+            instagram = fields["instagram"]!; linkedin = fields["linkedin"]!; tiktok = fields["tiktok"]!; savedFields = fields
+            detailsMessage = "Saved on this phone."
+            guard isPrimary || useOnHostedTours else { try finishArchiveReview(owner: owner); return }
+            guard let baseline = personalBaseline else { throw PersonalCardError.baseline }
+            let draft = try PersonalCardStore.stage(fields, type: editingType, expected: baseline)
+            let receipt = try await PersonalCardStore.commit(draft, isCurrent: {
+                contextIsCurrent && detailFields == fields && (try? PersonalCardStore.pending(owner: owner)) == draft
+            }, save: { try await model.api.savePersonalCard($0.changedFields, spaceType: $0.spaceType, expected: $0.expected) })
+            guard contextIsCurrent, detailFields == fields else { throw PersonalCardError.changed }
+            try PersonalCardStore.acknowledge(receipt, draft: draft)
+            personalBaseline = receipt; primaryTypeRaw = editingType.rawValue
+            let merged = AgentCard.card(for: editingType)
+            name = merged.name; brokerage = merged.brokerage; phone = merged.phone; email = merged.email; website = merged.website
+            instagram = merged.instagram; linkedin = merged.linkedin; tiktok = merged.tiktok; savedFields = merged.brandFields
+            detailsMessage = "Saved to your personal card."
+            try finishArchiveReview(owner: owner)
+        } catch {
+            detailsMessage = UserFacingError.message(error, fallback: "Your edits are saved on this phone. If the hosted card changed, reload it before saving again.")
+        }
+    }
+
+    @MainActor private func finishArchiveReview(owner: UUID) throws {
+        guard let review = loadedArchiveReview else { return }
+        guard contextIsCurrent, AdoptionOwnedIdentity.isCurrent(review, owner: owner, type: editingType.rawValue) else { throw PersonalCardError.changed }
+        try AdoptionOwnedIdentity.markReviewed(review, owner: owner, type: editingType.rawValue)
+        loadedArchiveReview = nil; archivePortraitIsSelected = false
+        archivedReviews = AdoptionOwnedIdentity.reviews(owner: owner, type: editingType.rawValue)
+    }
+
+    private var businessLogoSection: some View {
+        Section {
+            HStack(spacing: 14) {
+                BusinessLogoPreview(image: businessLogo,
+                    hostedURL: ProfileLogoStore.presentationHostedURL(prefix: editingWorkspace))
+                VStack(alignment: .leading, spacing: 10) {
+                    PhotosPicker(selection: $logoPickerItem, matching: .images) {
+                        Label(businessLogo == nil ? "Choose logo" : "Change logo", systemImage: "photo")
+                    }.accessibilityIdentifier("profile.logo.choose")
+                    if businessLogo != nil || ProfileLogoStore.hostedURL(prefix: editingWorkspace) != nil {
+                        Button("Remove logo", role: .destructive) {
+                            do {
+                                guard contextIsCurrent else { throw ProfileLogoError.changed }
+                                _ = try ProfileLogoStore.stage(image: nil, owner: editingContext.owner,
+                                    orgID: editingContext.org ?? ProfileLogoStore.mockOrgID, prefix: editingWorkspace)
+                                Task { await saveLogo() }
+                            } catch { logoError = error.localizedDescription }
+                        }.accessibilityIdentifier("profile.logo.remove")
+                    }
+                }
+            }
+            if savingLogo { ProgressView("Updating logo…") }
+            if let logoError { Text(logoError).font(.rpCaption).foregroundStyle(Theme.warn).accessibilityIdentifier("profile.logo.error") }
+            if (try? ProfileLogoStore.pending(prefix: editingWorkspace)) != nil {
+                Button("Retry logo update") { Task { await saveLogo() } }
+                    .accessibilityIdentifier("profile.logo.retry")
+            }
+            Button("Reload shared logo") { reloadLogoConfirm = true }.font(.rpCaption)
+                .accessibilityIdentifier("profile.logo.reload")
+        } header: { Text("Business logo") }
+        footer: { Text(canEditBusinessLogo ? "Branding for the selected workspace, separate from your personal portrait. Hosted tours show this logo after upload finishes." : "Branding belongs to the selected workspace. Its owner or admin can change this logo; your personal details remain yours.") }
+        .disabled(savingLogo || !canEditBusinessLogo || Config.useLiveBackend && editingContext.org == nil)
+        .id(logoRevision)
+    }
+    private func refreshLogoPreview() {
+        businessLogo = ProfileLogoStore.localURL(prefix: editingWorkspace).flatMap { UIImage(contentsOfFile: $0.path) }
+        logoRevision += 1
+    }
+    @MainActor private func saveLogo() async {
+        guard !savingLogo else { return }
+        savingLogo = true; defer { savingLogo = false }
+        do {
+            guard contextIsCurrent, let draft = try ProfileLogoStore.pending(prefix: editingWorkspace),
+                  draft.owner == editingContext.owner,
+                  draft.orgID == (editingContext.org ?? ProfileLogoStore.mockOrgID) else { throw ProfileLogoError.changed }
+            let image = try draft.path.map { try Data(contentsOf: FileStore.documents.appendingPathComponent($0)) }
+            let receipt = try await ProfileLogoCommit.resolve(draft: draft, image: image,
+                isContextCurrent: { contextIsCurrent },
+                isDraftCurrent: { (try? ProfileLogoStore.pending(prefix: editingWorkspace)) == draft },
+                upload: { bytes, draft in try await model.api.uploadBusinessLogo(image: bytes, contentType: "image/png",
+                    expectedLogoURL: draft.expectedURL, operationID: draft.operationID, orgID: draft.orgID) },
+                remove: { draft in try await model.api.removeBusinessLogo(expectedLogoURL: draft.expectedURL, orgID: draft.orgID) })
+            guard contextIsCurrent else { throw ProfileLogoError.changed }
+            try ProfileLogoStore.acknowledge(receipt, draft: draft, prefix: editingWorkspace)
+            refreshLogoPreview(); logoError = nil
+            NotificationCenter.default.post(name: .rendpropCloudBrandUpdated, object: nil)
+        } catch { logoError = UserFacingError.message(error, fallback: "Your logo update is saved on this phone. Retry when connected, or reload the shared logo before making a new choice.") }
+    }
+    @MainActor private func reloadLogo() async {
+        guard !savingLogo, contextIsCurrent else { return }
+        savingLogo = true; defer { savingLogo = false }
+        do {
+            let receipt = try await model.api.businessLogo(orgID: editingContext.org ?? ProfileLogoStore.mockOrgID)
+            guard contextIsCurrent else { throw ProfileLogoError.changed }
+            ProfileLogoStore.acceptHostedURL(receipt.businessLogoURL, prefix: editingWorkspace)
+            ProfileLogoStore.discardPending(prefix: editingWorkspace)
+            ProfileLogoStore.invalidateBrandReads(owner: editingContext.owner)
+            refreshLogoPreview(); logoError = nil
+            NotificationCenter.default.post(name: .rendpropCloudBrandUpdated, object: nil)
+        } catch { logoError = UserFacingError.message(error, fallback: "Couldn't reload the hosted logo. Your logo draft is still saved on this phone.") }
     }
 
     private func socialField(_ label: String, _ icon: String, _ text: Binding<String>) -> some View {
@@ -2010,6 +2896,7 @@ struct AgentCardEditorView: View {
 struct AgentCardPreview: View {
     let card: AgentCard
     var headshot: UIImage? = nil
+    var businessLogo: UIImage? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -2039,29 +2926,173 @@ struct AgentCardPreview: View {
                 }
             }
             Spacer()
+            if businessLogo != nil || card.publicBusinessLogoURL != nil {
+                BusinessLogoPreview(image: businessLogo, hostedURL: card.publicBusinessLogoURL)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct BusinessLogoPreview: View {
+    let image: UIImage?
+    let hostedURL: String?
+    var body: some View {
+        Group {
+            if let image { Image(uiImage: image).resizable().scaledToFit() }
+            else if let hostedURL, let url = URL(string: hostedURL) {
+                AsyncImage(url: url) { image in image.resizable().scaledToFit() }
+                    placeholder: { Image(systemName: "building.2").foregroundStyle(Theme.inkDim) }
+            } else { Image(systemName: "building.2").foregroundStyle(Theme.inkDim) }
+        }
+        .frame(width: 72, height: 60).padding(6)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityLabel("Business logo").accessibilityIdentifier("profile.businessLogo")
+    }
+}
+
+/// A named card keeps the desktop entry's layout out of the large detail/form
+/// builders. Opening Studio never transfers a token or starts a purchase.
+struct DesktopStudioCard: View {
+    private let studioURL = URL(string: "https://studio.rendprop.com/")!
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Keep creating on your computer", systemImage: "desktopcomputer")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text("Connect your Apple account in the iPhone app, then sign in with that same Apple account in Studio. Choose the same workspace to see uploaded listings and media. Files saved only on this phone must be uploaded first.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Link(destination: studioURL) {
+                Label("Open Rendprop Studio", systemImage: "arrow.up.right.square")
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+            }.accessibilityIdentifier("studio.desktopLink")
+            Text("studio.rendprop.com").font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct ProfileShareContext: Equatable {
+    let owner: String?
+    let revision: UInt64
+    let org: UUID?
+    let type: SpaceType
+    @MainActor static var current: Self {
+        .init(owner: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision,
+              org: WorkspaceContext.selectedOrgID, type: SpaceType.current)
+    }
+}
+
+private struct ProfileShareSnapshot {
+    let context: ProfileShareContext
+    let listings: [Listing]
+    let brandFields: [String: String]
+    let headshotBase64: String?
+    let businessLogoBase64: String?
+    let businessLogoURL: String?
+    let logoDraft: ProfileLogoDraft?
+    @MainActor func isCurrent(in model: AppModel) -> Bool {
+        guard context == .current, !Config.useLiveBackend || context.org != nil,
+              AgentCard.current.brandFields == brandFields,
+              AgentCard.current.headshotBase64 == headshotBase64,
+              AgentCard.current.businessLogoBase64 == businessLogoBase64,
+              AgentCard.current.publicBusinessLogoURL == businessLogoURL,
+              (try? ProfileLogoStore.pending(prefix: WorkspaceContext.storagePrefix)) == logoDraft else { return false }
+        return listings.allSatisfy {
+            model.listings.contains($0) && model.isInSelectedWorkspace($0)
+                && (!Config.useLiveBackend || $0.serverOrgID == context.org)
+        }
+    }
+}
+
+private struct ProfilePortfolioSelection: Identifiable {
+    let id = UUID()
+    let listings: [Listing]
+    let context: ProfileShareContext
+}
+
+private enum ProfilePresentation: Identifiable {
+    case selection(ProfilePortfolioSelection)
+    case share(UUID, URL, ProfileShareSnapshot)
+    var id: UUID {
+        switch self {
+        case .selection(let value): return value.id
+        case .share(let id, _, _): return id
+        }
+    }
+}
+
+private struct ProfilePortfolioPicker: View {
+    let selection: ProfilePortfolioSelection
+    let onShare: (Set<UUID>) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedIDs: Set<UUID> = []
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(selection.listings) { listing in
+                        Button {
+                            if !selectedIDs.insert(listing.id).inserted { selectedIDs.remove(listing.id) }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: selectedIDs.contains(listing.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(Theme.accent)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(listing.address).font(.rpBody).foregroundStyle(Theme.ink)
+                                    Text(listing.subtitleLine).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                }
+                                Spacer(minLength: 0)
+                            }.padding(.vertical, 4)
+                        }.buttonStyle(.plain)
+                            .accessibilityIdentifier("profile.portfolio.listing.\(listing.id.uuidString.lowercased())")
+                            .accessibilityAddTraits(selectedIDs.contains(listing.id) ? [.isSelected] : [])
+                    }
+                } header: { Text("Choose listings to include") }
+                footer: { Text("Only these published listings will accompany your card. Nothing is selected automatically.") }
+            }
+            .navigationTitle("Share portfolio").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Share (\(selectedIDs.count))") { onShare(selectedIDs) }
+                        .disabled(selectedIDs.isEmpty)
+                        .accessibilityIdentifier("profile.portfolio.shareSelection")
+                }
+            }
+        }
     }
 }
 
 // MARK: - Profile tab (the friendly "about me / contact card" view)
 struct ProfileView: View {
     @EnvironmentObject var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
     // Observed so the card reloads the moment the business type changes.
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var card = AgentCard.current
     @State private var headshot: UIImage?
-    @State private var portfolioURL: URL?
-    @State private var showPortfolioShare = false
+    @State private var businessLogo: UIImage?
     @State private var isBuildingPortfolio = false
     @State private var portfolioNote: String?
+    @State private var presentation: ProfilePresentation?
+    @State private var shareOperation: UUID?
+    @State private var displayedContext = ProfileShareContext.current
 
     /// Exactly the listings the exporter will include — the button count and
     /// the export can never disagree again (audit F-C-13).
-    private var shareable: [Listing] { PortfolioExporter.eligible(model.listings) }
+    private var workspaceListings: [Listing] {
+        guard !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else { return [] }
+        return model.listings.filter { model.isInSelectedWorkspace($0) }
+    }
+    private var shareable: [Listing] {
+        PortfolioExporter.eligible(workspaceListings).filter {
+            !Config.useLiveBackend || $0.serverOrgID == WorkspaceContext.selectedOrgID
+        }
+    }
     /// Real listings of this type that are NOT shareable (unpublished or sold).
     private var realCount: Int {
-        model.listings.filter { !$0.isSample && $0.belongsToCurrentType }.count
+        workspaceListings.filter { !$0.isSample && $0.belongsToCurrentType }.count
     }
 
     var body: some View {
@@ -2081,9 +3112,12 @@ struct ProfileView: View {
                         }
                         .frame(width: 96, height: 96)
 
-                        Text(card.isSet ? card.name : "Set up your card").font(.rpTitle)
+                        Text(card.isSet ? card.name : "Set up your card").font(.rpTitle).accessibilityIdentifier("profile.personalName")
                         if !card.brokerageLine.isEmpty {
                             Text(card.brokerageLine).font(.rpBody).foregroundStyle(Theme.inkDim)
+                        }
+                        if businessLogo != nil || card.publicBusinessLogoURL != nil {
+                            BusinessLogoPreview(image: businessLogo, hostedURL: card.publicBusinessLogoURL)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -2099,6 +3133,18 @@ struct ProfileView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
 
+                    Button { buildBusinessCard() } label: {
+                        Label("Send business card", systemImage: "person.crop.rectangle")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 13)
+                            .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(!card.isSet || isBuildingPortfolio || displayedContext != .current)
+                    .accessibilityIdentifier("profile.sendBusinessCard")
+                    Text(card.isSet ? "Share your contact details without any listings." : "Set up your card before sending your contact details.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim).multilineTextAlignment(.center)
+
                     if Config.useLiveBackend {
                         NavigationLink { LeadsView() } label: {
                             Label("Your leads", systemImage: "person.crop.circle.badge.plus")
@@ -2111,7 +3157,8 @@ struct ProfileView: View {
 
                     if !shareable.isEmpty {
                         Button {
-                            buildPortfolio()
+                            portfolioNote = nil
+                            presentation = .selection(.init(listings: shareable, context: .current))
                         } label: {
                             HStack(spacing: 8) {
                                 if isBuildingPortfolio { ProgressView().tint(Theme.accent) }
@@ -2122,12 +3169,13 @@ struct ProfileView: View {
                             .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .disabled(isBuildingPortfolio)
-                        Text("One page with your \(shareable.count == 1 ? "published \(SpaceType.current.spaceNoun)" : "\(shareable.count) published \(SpaceType.current.spaceNoun)s") — each opens its tour. Shared as a file you can send to \(SpaceType.current.customerNoun).")
+                        .disabled(isBuildingPortfolio || displayedContext != .current)
+                        .accessibilityIdentifier("profile.sharePortfolio")
+                        Text("Choose which published \(SpaceType.current.spaceNoun)s accompany your card. Each opens its tour.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     } else if realCount > 0 {
-                        Text("Publish a tour to share your portfolio — only published, active \(SpaceType.current.spaceNoun)s are included.")
+                        Text("Only published, active \(SpaceType.current.spaceNoun)s with a confirmed workspace can be included in your portfolio.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                             .padding(.top, 4)
@@ -2145,49 +3193,116 @@ struct ProfileView: View {
             .navigationBarTitleDisplayMode(.inline)
             .background(Theme.bg)
             .onAppear {
+                displayedContext = .current
                 card = AgentCard.current
                 headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
-                // Heal older installs: push the card into the org brand kit so
-                // HOSTED tour pages show it (website link included) without
-                // requiring an edit first. Only the primary type's card, only
-                // when set, and skipped when nothing changed since the last push.
-                AgentCard.syncToBrandKit(for: SpaceType.current, api: model.api)
+                businessLogo = card.resolvedBusinessLogoURL.flatMap { UIImage(contentsOfFile: $0.path) }
+                // Retry only a card Save the user already explicitly reviewed.
+                AgentCard.retryPendingPersonalCard(for: SpaceType.current, api: model.api)
             }
             .onChange(of: spaceTypeRaw) { _ in
+                invalidateShare()
+                displayedContext = .current
                 card = AgentCard.current   // load THIS industry's card
                 headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
+                businessLogo = card.resolvedBusinessLogoURL.flatMap { UIImage(contentsOfFile: $0.path) }
             }
             .onReceive(NotificationCenter.default.publisher(for: .rendpropCloudBrandUpdated)) { _ in
                 card = AgentCard.current
+                businessLogo = card.resolvedBusinessLogoURL.flatMap { UIImage(contentsOfFile: $0.path) }
             }
-            .sheet(isPresented: $showPortfolioShare) {
-                if let u = portfolioURL { ShareSheet(items: [u]) }
+            .onChange(of: auth.syncSessionRevision) { _ in reloadProfileContext() }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in reloadProfileContext() }
+            .sheet(item: $presentation) { sheet in
+                switch sheet {
+                case .selection(let selection):
+                    ProfilePortfolioPicker(selection: selection) { ids in
+                        buildPortfolio(selection: selection, selectedIDs: ids)
+                    }
+                case .share(_, let url, let snapshot):
+                    if snapshot.isCurrent(in: model) {
+                        ShareSheet(items: [url])
+                    } else {
+                        Text("Your profile or workspace changed. Close this sheet and share again.").padding()
+                    }
+                }
             }
         }
     }
 
     /// The export inlines every main photo — build it off the main thread so
     /// the tab doesn't freeze on a big portfolio.
-    private func buildPortfolio() {
+    private func buildPortfolio(selection: ProfilePortfolioSelection, selectedIDs: Set<UUID>) {
+        guard selection.context == .current,
+              let chosen = PortfolioExporter.selected(selection.listings, ids: selectedIDs, type: selection.context.type),
+              chosen.allSatisfy({ chosenListing in
+                  model.listings.contains(chosenListing) && model.isInSelectedWorkspace(chosenListing)
+              }) else {
+            portfolioNote = "The selected listings changed. Close this selector and choose them again."
+            return
+        }
+        presentation = nil
+        buildShare(listings: chosen, businessCardOnly: false)
+    }
+
+    private func buildBusinessCard() {
+        guard AgentCard.current.isSet else { portfolioNote = "Set up your card before sharing."; return }
+        buildShare(listings: [], businessCardOnly: true)
+    }
+
+    private func buildShare(listings: [Listing], businessCardOnly: Bool) {
         guard !isBuildingPortfolio else { return }
+        guard displayedContext == .current, card.brandFields == AgentCard.current.brandFields else {
+            portfolioNote = "Your profile or workspace changed. Reopen Profile before sharing."
+            return
+        }
         isBuildingPortfolio = true
         portfolioNote = nil
-        let listings = model.listings
         let agent = AgentCard.current
+        let headshotBase64 = agent.headshotBase64
+        let businessLogoBase64 = agent.businessLogoBase64
+        let snapshot = ProfileShareSnapshot(context: .current, listings: listings,
+            brandFields: agent.brandFields, headshotBase64: headshotBase64,
+            businessLogoBase64: businessLogoBase64, businessLogoURL: agent.publicBusinessLogoURL,
+            logoDraft: try? ProfileLogoStore.pending(prefix: WorkspaceContext.storagePrefix))
+        guard snapshot.isCurrent(in: model) else { isBuildingPortfolio = false; portfolioNote = "Choose a workspace before sharing its card."; return }
+        let operation = UUID(); shareOperation = operation
         Task {
             let url = await Task.detached(priority: .userInitiated) {
-                PortfolioExporter.build(listings: listings, agent: agent)
+                businessCardOnly
+                    ? BusinessCardExporter.build(agent: agent, headshotBase64: headshotBase64, businessLogoBase64: businessLogoBase64)
+                    : PortfolioExporter.build(listings: listings, agent: agent, headshotBase64: headshotBase64,
+                        type: snapshot.context.type, businessLogoBase64: businessLogoBase64)
             }.value
-            await MainActor.run {
-                isBuildingPortfolio = false
-                if let url {
-                    portfolioURL = url
-                    showPortfolioShare = true
-                } else {
-                    portfolioNote = "Couldn't build the portfolio page. Try again."
+            guard shareOperation == operation, snapshot.isCurrent(in: model) else {
+                // This URL was created by this operation and has never been
+                // handed to another app. Existing user exports are untouched.
+                if let url { try? FileManager.default.removeItem(at: url) }
+                if shareOperation == operation {
+                    isBuildingPortfolio = false
+                    portfolioNote = "Your profile, listings or workspace changed. Share again."
                 }
+                return
+            }
+            isBuildingPortfolio = false
+            if let url {
+                presentation = .share(operation, url, snapshot)
+            } else {
+                portfolioNote = "Couldn't build the shared card. Try again."
             }
         }
+    }
+
+    private func invalidateShare() {
+        shareOperation = nil; isBuildingPortfolio = false
+        presentation = nil
+    }
+    private func reloadProfileContext() {
+        invalidateShare()
+        card = AgentCard.current
+        displayedContext = .current
+        headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
+        businessLogo = card.resolvedBusinessLogoURL.flatMap { UIImage(contentsOfFile: $0.path) }
     }
 
     private var socialRow: some View {
@@ -2232,14 +3347,20 @@ enum PortfolioExporter {
     /// The ONE filter both the Profile button and the export use: this
     /// industry's real, unsold, PUBLISHED listings (a tour with no real server
     /// slug is skipped — never a fabricated /f/<uuid> link, audit 2026-08-26).
-    static func eligible(_ listings: [Listing]) -> [Listing] {
+    static func eligible(_ listings: [Listing], type: SpaceType = SpaceType.current) -> [Listing] {
         listings.filter {
-            !$0.isSample && !$0.isSold && $0.belongsToCurrentType && $0.serverShareURL != nil
+            !$0.isSample && !$0.isSold && $0.cloudUnavailable != true && $0.spaceType == type && $0.serverShareURL != nil
         }
     }
 
-    static func build(listings: [Listing], agent: AgentCard) -> URL? {
-        let active = eligible(listings)
+    static func selected(_ listings: [Listing], ids: Set<UUID>, type: SpaceType) -> [Listing]? {
+        guard !ids.isEmpty, Set(listings.map(\.id)).count == listings.count else { return nil }
+        let chosen = eligible(listings, type: type).filter { ids.contains($0.id) }
+        return Set(chosen.map(\.id)) == ids ? chosen : nil
+    }
+
+    static func build(listings: [Listing], agent: AgentCard, headshotBase64: String?, type: SpaceType = SpaceType.current, businessLogoBase64: String? = nil) -> URL? {
+        let active = eligible(listings, type: type)
         guard !active.isEmpty else { return nil }
 
         let cards = active.map { l -> String in
@@ -2257,14 +3378,21 @@ enum PortfolioExporter {
         }.joined(separator: "\n")
 
         var avatar = ""
-        if let b64 = agent.headshotBase64 {
+        if let b64 = headshotBase64 {
             avatar = "<div class=\"avatar\" style=\"background-image:url('data:image/jpeg;base64,\(b64)')\"></div>"
         } else if agent.isSet {
             avatar = "<div class=\"avatar\">\(esc(agent.initials))</div>"
         }
-        let contact = [agent.brokerageLine, agent.email].filter { !$0.isEmpty }.map { esc($0) }.joined(separator: " · ")
+        let phone = PhoneNumberPresentation.telephoneURL(agent.phone).map {
+            "<a href=\"\(esc($0.absoluteString))\">\(esc(PhoneNumberPresentation.formatted(agent.phone)))</a>"
+        } ?? esc(PhoneNumberPresentation.formatted(agent.phone))
+        let contact = [esc(agent.brokerage), phone, esc(agent.email)].filter { !$0.isEmpty }.joined(separator: " · ")
+        let logo: String
+        if let businessLogoBase64 { logo = "<img class=\"business-logo\" alt=\"Business logo\" src=\"data:image/png;base64,\(businessLogoBase64)\">" }
+        else if let value = agent.publicBusinessLogoURL { logo = "<img class=\"business-logo\" alt=\"Business logo\" src=\"\(esc(value))\">" }
+        else { logo = "" }
         let header = agent.isSet
-            ? "<header>\(avatar)<div><div class=\"nm\">\(esc(agent.name))</div><div class=\"ct\">\(contact)</div></div></header>"
+            ? "<header>\(avatar)<div><div class=\"nm\">\(esc(agent.name))</div><div class=\"ct\">\(contact)</div></div>\(logo)</header>"
             : ""
 
         let html = """
@@ -2279,6 +3407,7 @@ enum PortfolioExporter {
           .avatar{width:56px;height:56px;border-radius:50%;background:#ece6ff;background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--accent)}
           header .nm{font-size:20px;font-weight:700}
           header .ct{font-size:13px;color:#6b6b78;margin-top:2px}
+          .business-logo{max-width:100px;max-height:64px;object-fit:contain;margin-left:auto}
           .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
           @media(max-width:520px){.grid{grid-template-columns:1fr}}
           .card{display:block;background:#fff;border-radius:16px;overflow:hidden;text-decoration:none;color:inherit;box-shadow:0 6px 18px rgba(0,0,0,.06)}
@@ -2295,7 +3424,9 @@ enum PortfolioExporter {
         </body></html>
         """
 
-        let out = FileStore.documents.appendingPathComponent("rendprop-portfolio.html")
+        // A discarded export from a prior workspace must never overwrite the
+        // file a later workspace's share sheet is displaying.
+        let out = FileStore.documents.appendingPathComponent("rendprop-portfolio-\(UUID().uuidString.lowercased()).html")
         do {
             try html.write(to: out, atomically: true, encoding: .utf8)
             return out
@@ -2332,6 +3463,162 @@ enum PortfolioExporter {
          .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }
+
+/// A contact file is a business card without a portfolio. Fields are escaped
+/// and folded as vCard text, so pasted newlines cannot inject contact records.
+enum BusinessCardExporter {
+    static func contents(agent: AgentCard, headshotBase64: String?, businessLogoBase64: String? = nil) -> String {
+        var lines = ["BEGIN:VCARD", "VERSION:3.0", "FN:" + escape(agent.name), "N:;" + escape(agent.name) + ";;;"]
+        if !agent.brokerage.isEmpty { lines.append("ORG:" + escape(agent.brokerage)) }
+        if let phone = PhoneNumberPresentation.dialString(agent.phone) { lines.append("TEL;TYPE=WORK,VOICE:" + phone) }
+        if !agent.email.isEmpty { lines.append("EMAIL;TYPE=INTERNET,WORK:" + escape(agent.email)) }
+        if let url = agent.websiteURL { lines.append("URL:" + escape(url.absoluteString)) }
+        for (label, url) in [("Instagram", agent.instagramURL), ("LinkedIn", agent.linkedinURL), ("TikTok", agent.tiktokURL)] {
+            if let url { lines.append("X-SOCIALPROFILE;TYPE=" + label + ":" + escape(url.absoluteString)) }
+        }
+        if let headshotBase64 { lines.append("PHOTO;ENCODING=b;TYPE=JPEG:" + headshotBase64) }
+        if let businessLogoBase64 { lines.append("LOGO;ENCODING=b;TYPE=PNG:" + businessLogoBase64) }
+        else if let url = agent.publicBusinessLogoURL { lines.append("LOGO;VALUE=URI:" + escape(url)) }
+        lines.append("END:VCARD")
+        return lines.map(fold).joined(separator: "\r\n") + "\r\n"
+    }
+
+    static func build(agent: AgentCard, headshotBase64: String?, businessLogoBase64: String? = nil) -> URL? {
+        guard agent.isSet else { return nil }
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("rendprop-business-card-\(UUID().uuidString.lowercased()).vcf")
+        do { try contents(agent: agent, headshotBase64: headshotBase64, businessLogoBase64: businessLogoBase64).write(to: out, atomically: true, encoding: .utf8); return out }
+        catch { return nil }
+    }
+
+    private static func escape(_ value: String) -> String {
+        value.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: ";", with: "\\;").replacingOccurrences(of: ",", with: "\\,")
+    }
+    private static func fold(_ line: String) -> String {
+        var result = "", bytes = 0
+        for scalar in line.unicodeScalars {
+            let piece = String(scalar), size = piece.utf8.count
+            if bytes + size > 75 { result += "\r\n "; bytes = 1 }
+            result += piece; bytes += size
+        }
+        return result
+    }
+}
+
+#if targetEnvironment(simulator)
+/// Synthetic UI inputs only. Device archives cannot enter this host, and its
+/// bootstrap rejects every API except the existing offline MockAPIClient.
+struct ProfileFeedbackFixtureHost: View {
+    static var isRequested: Bool {
+        Config.isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.profileFeedbackFixture")
+    }
+    static let owner = UUID(uuidString: "b3710000-0000-4000-8000-000000000001")!
+    static let org = UUID(uuidString: "b3710000-0000-4000-8000-000000000002")!
+    static let otherOrg = UUID(uuidString: "b3710000-0000-4000-8000-000000000003")!
+    @EnvironmentObject private var model: AppModel
+    @State private var ready = false
+    @State private var failure: String?
+    @State private var contactListing: Listing?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if ready {
+                Button("Switch synthetic workspace") { switchWorkspace() }
+                    .font(.caption).padding(6)
+                    .accessibilityIdentifier("profile.fixture.switchWorkspace")
+                TabView {
+                    ProfileView().tabItem { Label("Profile", systemImage: "person") }
+                    NavigationStack { AppGuideView() }
+                        .tabItem { Label("Guide", systemImage: "book") }
+                    NavigationStack {
+                        if let contactListing { ListingClientContactEditor(listing: contactListing) }
+                    }.tabItem { Label("Client", systemImage: "person.text.rectangle") }
+                    PaywallView().tabItem { Label("Plans", systemImage: "creditcard") }
+                }
+            } else if let failure {
+                Text(failure).accessibilityIdentifier("profile.fixture.failure")
+            } else { ProgressView("Preparing synthetic Profile") }
+        }.environment(\.dynamicTypeSize, ProcessInfo.processInfo.arguments.contains("-ui.profileFeedbackLargeText") ? .accessibility3 : .large)
+            .task { if !ready && failure == nil { seed() } }
+    }
+
+    @MainActor private func seed() {
+        guard Self.isRequested, model.api is MockAPIClient,
+              AuthStore.shared.userID?.lowercased() == Self.owner.uuidString.lowercased() else {
+            failure = "Profile fixture requires its synthetic owner and offline API."; return
+        }
+        let spaces = [WorkspaceMembership(id: Self.org, name: "Synthetic agency", role: "owner"),
+                      WorkspaceMembership(id: Self.otherOrg, name: "Other synthetic agency", role: "agent")]
+        guard WorkspaceContext.save(.init(selectedOrgID: Self.org, workspaces: spaces), owner: Self.owner) else {
+            failure = "Synthetic workspace could not be prepared."; return
+        }
+        UserDefaults.standard.set(SpaceType.realEstate.rawValue, forKey: "space.type")
+        let prefix = WorkspaceContext.storagePrefix
+        for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(PersonalCardStore.prefix(Self.owner)) { UserDefaults.standard.removeObject(forKey: key) }
+        for field in AgentCard.fieldNames { UserDefaults.standard.removeObject(forKey: AgentCard.key(field)) }
+        for (field, value) in ["name": "Synthetic Agent", "brokerage": "Synthetic Agency", "phone": "5551234567", "email": "agent@example.invalid"] {
+            UserDefaults.standard.set(value, forKey: AgentCard.key(field))
+        }
+        ProfileLogoStore.discardPending(prefix: prefix)
+        ProfileLogoStore.acceptHostedURL(nil, prefix: prefix)
+        // A procedurally drawn raster, never a user's photo or a Photos picker.
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let bytes = UIGraphicsImageRenderer(size: CGSize(width: 2048, height: 1200), format: format).image { context in
+            UIColor.systemPurple.setFill(); context.fill(CGRect(x: 0, y: 0, width: 2048, height: 1200))
+            UIColor.white.setFill(); context.fill(CGRect(x: 256, y: 256, width: 512, height: 512))
+        }.pngData()
+        guard let bytes, let clean = ProfileLogoImage.prepare(bytes),
+              let image = UIImage(data: clean), max(image.size.width, image.size.height) <= 512,
+              (try? ProfileLogoStore.stage(image: clean, owner: AuthStore.shared.userID, orgID: Self.org, prefix: prefix)) != nil else {
+            failure = "Synthetic logo preparation failed."; return
+        }
+        var homes = (1...3).map { index -> Listing in
+            var listing = Listing(address: "\(index) Synthetic House", beds: 3, baths: 2, sqft: 1800, price: Money(cents: 42_000_000))
+            listing.id = UUID(uuidString: "b3710000-0000-4000-8000-00000000001\(index)")!
+            listing.serverID = listing.id; listing.serverOrgID = Self.org
+            listing.shareSlug = "synthetic-house-\(index)"; listing.status = .ready
+            listing.clientContactLoaded = true
+            return listing
+        }
+        var draft = homes[0]; draft.id = UUID(); draft.address = "Unpublished control"; draft.shareSlug = nil
+        var sold = homes[0]; sold.id = UUID(); sold.address = "Sold control"; sold.soldAt = Date()
+        var sample = homes[0]; sample.id = UUID(); sample.address = "Sample control"; sample.isSample = true
+        var foreign = homes[0]; foreign.id = UUID(); foreign.address = "Other workspace control"; foreign.serverOrgID = Self.otherOrg
+        var unbound = homes[0]; unbound.id = UUID(); unbound.address = "Unbound workspace control"; unbound.serverOrgID = nil
+        homes[0].clientContact = ListingClientContact(listingID: homes[0].id, enabled: true,
+            publicCard: ClientPublicCard(name: "Synthetic Client", phone: "+44 20 7946 0958"), recipientEmail: "route@example.invalid")
+        contactListing = homes[0]
+        model.listings = homes + [draft, sold, sample, foreign, unbound]
+        if ProcessInfo.processInfo.arguments.contains("-ui.profileGuestArchiveFixture") {
+            let guest = UUID(uuidString: "b3710000-0000-4000-8000-000000000099")!
+            let operation = UUID(uuidString: "b3710000-0000-4000-8000-000000000098")!
+            UserDefaults.standard.set("Saved guest agent", forKey: AdoptionOwnedIdentity.fieldKey(guest, type: "real_estate", field: "name"))
+            UserDefaults.standard.set("+44 20 7946 0958", forKey: AdoptionOwnedIdentity.fieldKey(guest, type: "real_estate", field: "phone"))
+            UserDefaults.standard.set(Data("synthetic reviewed guest draft".utf8), forKey: AdoptionOwnedIdentity.prefix(guest) + "pending")
+            let binding = AdoptionLocalBindings(version: 1, operationID: operation, sourceUserID: guest, destinationUserID: Self.owner,
+                entries: [], confirmedOrgID: Self.org, appliedToCurrentState: true, productionLocalIDs: [], personalCardDisposition: "destination_preserved")
+            do {
+                try clean.write(to: AdoptionOwnedIdentity.portrait(guest, type: "real_estate", documents: FileStore.documents), options: .atomic)
+                try AdoptionOwnedIdentity.restore(binding, activeOwner: Self.owner, survivingIDs: [], documents: FileStore.documents,
+                    verifiedDestinationCard: ["name": "Synthetic Agent"], verifiedDestinationType: "real_estate", destinationCardWasVerified: true)
+            } catch { failure = "Synthetic guest archive could not be prepared."; return }
+        }
+        ready = true
+    }
+
+    @MainActor private func switchWorkspace() {
+        guard ready, model.api is MockAPIClient, var snapshot = WorkspaceContext.current else { return }
+        snapshot.selectedOrgID = snapshot.selectedOrgID == Self.org ? Self.otherOrg : Self.org
+        guard WorkspaceContext.save(snapshot, owner: Self.owner) else { return }
+        AuthStore.shared.workspaceDidChange()
+        AgentCard.acceptCloud(.init(userID: Self.owner, orgID: snapshot.selectedOrgID!, spaceType: SpaceType.realEstate.rawValue,
+            fields: ["name": snapshot.selectedOrgID == Self.otherOrg ? "Inviting agent" : "Synthetic Agency owner", "phone": "5550001111"]))
+        NotificationCenter.default.post(name: .rendpropWorkspaceChanged, object: nil)
+    }
+}
+#endif
 
 // MARK: - Business type picker
 // Reached from Settings → Business type (and the Home tab menu switches the
@@ -3106,7 +4393,7 @@ struct AdminConsoleView: View {
                 Spacer(minLength: 8)
                 healthChip(provider.status)
             }
-            Text(Self.credentialLine(configured: provider.configured, env: provider.credentialEnv))
+            Text(Self.credentialLine(configured: provider.configured))
                 .font(.rpCaption)
                 .foregroundStyle(provider.configured == true ? Theme.inkDim : Theme.bad)
             Text(Self.lastSuccessLine(provider))
@@ -3545,6 +4832,7 @@ struct AdminConsoleView: View {
         switch state {
         case .working:      return Theme.good
         case .wrongKey:     return Theme.bad
+        case .permission:   return Theme.warn
         case .otherFailure: return Theme.bad
         case .unreachable:  return Theme.warn
         case .rateLimited:  return Theme.warn
@@ -3568,12 +4856,12 @@ struct AdminConsoleView: View {
         }
         let untested = report.notProbeableCount ?? 0
         if untested > 0 {
-            parts.append("\(untested) can't be tested without a real sign-in or aren't set")
+            parts.append("\(untested) were not verified: setup, permissions or a real sign-in may be required")
         }
         if report.lastProbeRecorded == false {
             parts.append("this run wasn't saved, so \"last tested\" won't update")
         }
-        return parts.isEmpty ? "Every key was asked directly." : parts.joined(separator: " · ")
+        return parts.isEmpty ? "Results apply to the endpoints tested." : parts.joined(separator: " · ")
     }
 
     /// "Testing 13 keys…" — the count comes from the last run when we have one,
@@ -3586,8 +4874,8 @@ struct AdminConsoleView: View {
     }
 
     private static func keyTestFooter(report: AdminProbeReport?, lastRun: AdminProbeLastRun?) -> String {
-        let base = "Each test is one free call that proves the key still works. "
-            + "The Health list below only shows keys that happened to be used recently."
+        let base = "Available free endpoints are checked directly. A restricted key may work for generation without allowing an account check. "
+            + "The Health list below shows recorded activity, not a live key test."
         guard let line = AdminProbeText.lastTested(lastRun) else {
             return report == nil ? "Never tested. " + base : base
         }
@@ -3616,10 +4904,11 @@ struct AdminConsoleView: View {
 
     private static func healthLabel(_ status: String?) -> String {
         switch (status ?? "").lowercased() {
-        case "ok":           return "Working"
-        case "idle":         return "No activity"
+        case "ok":           return "Recent activity"
+        case "idle":         return "No recent activity"
         case "unmetered":    return "Not metered"
-        case "unconfigured": return "Key missing"
+        case "unconfigured": return "Setup incomplete"
+        case "no_key_required": return "No key required"
         case "":             return "Unknown"
         default:             return AdminText.pretty(status ?? "unknown")
         }
@@ -3635,28 +4924,28 @@ struct AdminConsoleView: View {
         }
     }
 
-    private static func credentialLine(configured: Bool?, env: String?) -> String {
-        let name = trimmed(env) ?? "credential"
-        guard let configured else { return name + " — the server didn't say whether it is set" }
-        return configured ? name + " is set" : name + " is NOT set — this feature is off"
+    private static func credentialLine(configured: Bool?) -> String {
+        guard let configured else { return "Server setup wasn't reported." }
+        return configured ? "Required server configuration is set."
+            : "Server setup incomplete — check all required credentials."
     }
 
     private static func lastSuccessLine(_ provider: AdminHealthProvider) -> String {
         guard let date = provider.lastSuccessDate else {
             if trimmed(provider.ledgerProvider) == nil {
-                return "No success can be shown — this provider never writes ledger rows."
+                return "Activity isn't tracked in this ledger."
             }
-            return "No success recorded in the window."
+            return "No ledger activity recorded in the window."
         }
-        var line = "Last success " + Formatters.relative(date)
+        var line = "Last ledger activity " + Formatters.relative(date)
         if let detail = trimmed(provider.lastSuccessDetail) { line += " — " + detail }
         return line
     }
 
     private static func healthFooter(_ health: AdminHealthReport?) -> String {
-        let base = "This screen calls no provider API — success is inferred from ledger rows already written."
+        let base = "This list reports server configuration and ledger activity. It does not verify credentials or finished outputs."
         guard let health, let note = trimmed(health.note) else { return base }
-        return note
+        return base + " " + note
     }
 
     private static func lastFailureLine(_ failures: AdminJobFailures) -> String {

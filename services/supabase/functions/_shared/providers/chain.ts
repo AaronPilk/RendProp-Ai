@@ -12,7 +12,8 @@
 //
 // Every attempt — success or failure — is reported to the router so the circuit
 // breaker sees it. When the whole chain is exhausted the caller gets one 503
-// naming the task, never a vendor's raw error.
+// naming the task, never a vendor's raw error. A single step retains structured
+// status/class and definitive-rejection evidence while excluding raw bodies.
 
 import { type ErrorCode, HttpError } from "../http.ts";
 import { type RouteContext, type RouteStep, reportOutcome, resolveRoute, requiresActivePhotoRoute } from "../router.ts";
@@ -35,9 +36,20 @@ export function asHttpError(err: unknown): HttpError {
       : err.error_class === "rate_limit"
       ? "rate_limited"
       : "upstream";
-    return new HttpError(err.httpStatus, err.message, code);
+    // Return operator-useful status/class facts, never a vendor body, prompt,
+    // signed URL or key that an adapter may have embedded in its message.
+    return new HttpError(err.httpStatus,
+      err.error_class === "validation" ? "The video or image service could not process these inputs. Review your media and settings." :
+      err.error_class === "nsfw" ? "The service could not process this content under its safety policy." :
+      err.error_class === "rate_limit" ? "The media service is busy. Please try again shortly." :
+      "The media service could not accept this request. Please try again later.", code, {
+        provider: err.provider,
+        provider_status: err.status ?? null,
+        error_class: err.error_class,
+        dispatch_rejected: err.dispatch_rejected,
+      });
   }
-  return new HttpError(502, err instanceof Error ? err.message : String(err), "upstream");
+  return new HttpError(502, "The media service did not return a usable response.", "upstream");
 }
 
 export interface ChainResult<T> {
@@ -90,6 +102,9 @@ export async function runChain<T>(
       await reportOutcome(step, { ok: true, latency_ms });
       return { step, value, latency_ms };
     } catch (err) {
+      // Financial authority failures and replay refusals belong to this one
+      // operation. They never authorize a new fallback paid attempt.
+      if (err && typeof err === "object" && "funding_admission" in err && err.funding_admission === true) throw err;
       const error_class = errorClassOf(err);
       await reportOutcome(step, { ok: false, latency_ms: Date.now() - startedAt, error_class });
       // The caller's problem, or a refusal about this exact image: stop here.
@@ -107,10 +122,9 @@ export async function runChain<T>(
   // surfaces the provider's own error, unchanged in status and code.
   if (steps.length === 1 && lastError != null) throw asHttpError(lastError);
 
-  const detail = lastError instanceof Error ? ` (last error: ${String(lastError.message).slice(0, 160)})` : "";
   throw new HttpError(
     503,
-    `All providers for ${task} are unavailable right now.${detail}`,
+    `All providers for ${task} are unavailable right now.`,
     "upstream",
   );
 }

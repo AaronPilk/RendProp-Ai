@@ -1,11 +1,15 @@
 # App Privacy questionnaire — exact answers
 
-App Store Connect → your app → **App Privacy**. Answers valid for the `launch` branch as
-of **2026-09-05**. This replaces the table in `docs/APP-STORE-CHECKLIST.md` §4, which was
-written before first-party analytics, the device identifier, MetricKit diagnostics,
-SKAdNetwork attribution, and subscriptions existed and still says *"Usage Data /
-Analytics → No — the app ships no analytics SDK"*. **That answer is now false.** The app
-ships no *third-party* analytics SDK; it does collect first-party product analytics.
+App Store Connect → your app → **App Privacy**. Reconciled for regular
+**1.0.3 (42), 2 October 2026**. The authenticated Apple UI confirmed **14
+published data types**, including Audio Data for App Functionality, linked to
+identity and not used for tracking. Existing thirteen declarations were retained.
+See the [release receipt](../releases/APPSTORE-42-20261002.json).
+
+The older launch checklist's claim that the app collects no analytics is stale.
+Rendprop has first-party product analytics and diagnostics, without a third-party
+analytics SDK. Reconcile these answers with the shipped privacy manifest and
+actual feature/provider collection when changing the product.
 
 **"Does this app collect data?" → Yes.**
 
@@ -30,7 +34,7 @@ Every row: **Not used for tracking**. See §3.
 | Identifiers → **User ID** | Linked | App Functionality | The Supabase auth user id every listing, tour, and lead hangs off. |
 | Identifiers → **Device ID** | Linked | **Analytics**, App Functionality, **Developer's Advertising or Marketing** | A UUID this app generates on first launch and keeps in its own Keychain item, sent with every analytics batch so the funnel counts people rather than taps. **Not the IDFA** (never requested) and not the IDFV. |
 | Location → **Precise Location** | Linked | App Functionality | The listing's map pin. Two sources, both rounded to 3 decimals before they are stored or sent anywhere — a one-shot Core Location fix, and a forward geocode of the typed address (fixed 2026-09: this path previously stored the unrounded geocode result — see `docs/handoff/audit-fixes.md`). Three decimals is at Apple's Precise threshold, so **declare Precise, not Coarse** — rounding to 3 decimals is data minimization, not a lower privacy-label tier. The in-app "Open in Maps" link opens by the typed address itself; it falls back to this same rounded fix only when the listing has no address, and never sends a raw, unrounded coordinate. |
-| Usage Data → **Product Interaction** | **Linked** | App Functionality, **Analytics**, **Developer's Advertising or Marketing** | First-party funnel (`POST /events`): a fixed 19-word event vocabulary plus a few enum/count props. The server attaches the account id when signed in, which is what makes it Linked. Also the tour-page view counter. |
+| Usage Data → **Product Interaction** | **Linked** | App Functionality, **Analytics**, **Developer's Advertising or Marketing** | First-party funnel (`POST /events`): an allowlisted event vocabulary plus a few enum/count props. The server attaches the account id when signed in, which is what makes it Linked. Also the tour-page view counter. |
 | Diagnostics → **Crash Data** | Linked | App Functionality, Analytics | MetricKit crash summaries only — kind, signal/exception number, a termination reason clipped to 120 chars with path-shaped tokens removed, and one frame name. Never a full call stack. No third-party crash SDK. |
 | Diagnostics → **Performance Data** | Linked | App Functionality, Analytics | MetricKit hang / CPU / disk-write exceptions and a median launch time, one small number or category each. |
 | Audio Data | Linked | App Functionality | The voiceover recording, submitted to `SFSpeechRecognizer` for captions (`Voice/SpeechTranscriber.swift`). `requiresOnDeviceRecognition` is **not** forced true — it tracks `supportsOnDeviceRecognition`, and even an on-device attempt that fails retries once with it set to `false` — so on a device/locale without an on-device model, or after that retry, the recording is sent to **Apple's** speech-recognition servers over the network (Apple's own docs: `requiresOnDeviceRecognition = true` is what "prevent[s] ... sending audio over the network" — false is the alternative). `NSSpeechRecognitionUsageDescription` in `Info.plist` already tells the user this can happen. Added 2026-09 — previously undeclared; see §6. |
@@ -86,34 +90,18 @@ review problem.
   location prompt and type the address instead. Tick "this data is optional" for Location
   only; everything else is required for the feature it belongs to.
 
-## 5. ⚠️ One thing the integrator must fix in code
+## 5. Purchase History is declared in the shipped manifest
 
-`apps/ios/Rendprop/PrivacyInfo.xcprivacy` declares twelve collected data types but **not**
-`NSPrivacyCollectedDataTypePurchaseHistory`, because the manifest predates the StoreKit
-work. The App Privacy answer above declares Purchase History, so the manifest and the
-questionnaire currently disagree. Add this dict to `NSPrivacyCollectedDataTypes` (this file
-is owned by the iOS agent, not by this document):
+The regular build's `PrivacyInfo.xcprivacy` includes
+`NSPrivacyCollectedDataTypePurchaseHistory`: Linked, Not used for tracking,
+App Functionality. It contains fourteen collected-data declarations, including
+Purchase History and Audio Data. The older instruction to add a missing purchase
+entry is resolved; do not add a duplicate.
 
-```xml
-<!-- Apple's signed transaction: transaction id, original transaction id,
-     product id, environment and expiry, stored server-side to unlock the
-     plan. No card details ever reach us. -->
-<dict>
-  <key>NSPrivacyCollectedDataType</key>
-  <string>NSPrivacyCollectedDataTypePurchaseHistory</string>
-  <key>NSPrivacyCollectedDataTypeLinked</key><true/>
-  <key>NSPrivacyCollectedDataTypeTracking</key><false/>
-  <key>NSPrivacyCollectedDataTypePurposes</key>
-  <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
-</dict>
-```
-
-Everything else in the manifest already matches the answers above.
-
-## 6. Audio Data was undeclared (2026-09 audit finding, now fixed)
+## 6. Audio Data is declared and published
 
 **The manifest now declares `NSPrivacyCollectedDataTypeAudioData`** (Linked, Not used for
-tracking, App Functionality). The App Store Connect answer must change to match: **Audio Data
+tracking, App Functionality). The App Store Connect answer was published on 2 October 2026: **Audio Data
 → Yes / Linked / Not tracking / App Functionality.**
 
 The evidence, so this isn't taken on faith:

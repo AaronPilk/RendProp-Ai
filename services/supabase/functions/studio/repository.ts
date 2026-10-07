@@ -1,4 +1,4 @@
-import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { mediaVisibility } from "../_shared/media-source-access.ts";
 import { HttpError } from "../_shared/http.ts";
 import { PAGE_SIZE, type StudioDependencies } from "./handler.ts";
@@ -67,6 +67,7 @@ export function createStudioRepository(
             "id,listing_id,storage_key,kind,bucket,uploaded,duration_s,created_at",
           )
           .eq("listing_id", scope.listingId).eq("uploaded", true)
+          .not("storage_key", "like", "%/contact-%")
           .order("id", { ascending: true }).range(offset, offset + PAGE_SIZE)
           .abortSignal(req.signal),
         db().from("renders")

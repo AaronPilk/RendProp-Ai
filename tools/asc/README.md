@@ -14,20 +14,53 @@ need Xcode and XcodeGen. The Python utility uses the standard library only.
 
 ## Release target caution
 
-Reviewed against repository source on 24 September 2026. `asc.py` still declares
-`VERSION_STRING = "1.0"` and has **no `--version` option**. It prefers an editable
-1.0 version, then falls back to another editable version; if none exists its
-creation path targets 1.0. `--build` selects a build, not an App Store version.
-The native source currently declares 1.0.3 (31). Reconcile version selection and
-the exact intended build before using any write command for a newer release.
-Do not run the broad apply bridge as routine maintenance of an already shipped app.
+Reviewed against repository source on 4 October 2026. `asc.py` still declares
+`VERSION_STRING = "1.0"` and has **no `--version` option**. It can fall back to
+another editable version; `--build` selects a build, not an App Store version.
+Its broad apply bridge can change prices, territories, subscription screenshots
+and review state. Do not run it for maintenance of the shipped app.
 
-The latest committed [phone delivery receipt](../../docs/handoff/CLAUDE-LIVE-DELIVERY-20260922.md)
-records internal TestFlight 1.0.3 (31) on 22 September. The
-[24 September Studio release](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-did not touch iOS or App Store Connect. This README refresh performed no store
-reads, uploads, metadata changes or submissions. Historical API observations
-below describe the launch run and do not establish current store state.
+Current internal TestFlight **1.0.4 (46) is AVAILABLE**, verified by Apple at
+**2026-10-07 00:47:51 UTC** (6 October locally) from `7f5879e`. The
+[build-46 record](../../docs/releases/TESTFLIGHT-46-20261006.json) binds the actual
+signed distribution package, one upload and twelve CI jobs with original/rerun
+provenance. The [current rollout](../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+records the dormant trial backend and verified Studio files. Trial config/funding
+remain disabled; new paid checkout in build 46 is closed. Build 45 and the
+[earlier coordinated rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+remain historical. No public App Store/App Review submission was performed.
+
+Previous internal TestFlight **1.0.4 (44) was AVAILABLE** to the existing Rendprop team,
+verified **5 October 2026 at 01:32:22 UTC** (4 October locally). The
+[delivery receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) binds clean
+source `9d27fb5`, one successful upload, the retained actual IPA, exact Apple
+build/readback and verified English testing notes.
+All twelve jobs in [CI run 37248967678](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37248967678)
+passed on the exact archive source. The `RendpropSpatialTestFlight` archive uses
+explicit `MARKETING_VERSION=1.0.4` and `CURRENT_PROJECT_VERSION=44` overrides;
+its export policy is internal-only and preserves that version/build. The signed
+archive's source and dSYM binding passed independent local verification.
+
+Regular **App Store 1.0.3 (42)** now reports **READY_FOR_SALE** in Apple GET
+preflight at **01:18:40 UTC on 5 October 2026** (4 October locally), with its
+original build ID unchanged. The
+[public receipt](../../docs/releases/APPSTORE-42-20261002.json) preserves the
+2 October upload/submission and historical Waiting for Review snapshot; the
+[build-44 receipt](../../docs/releases/TESTFLIGHT-44-20261004.json) records the
+new GET. Its regular `Rendprop` scheme and
+[exportOptions-appstore.plist](exportOptions-appstore.plist) explicitly set
+`testFlightInternalTestingOnly = false` and preserve build number 42.
+The lab scheme/options remain separate from public release tooling.
+
+This delivery uses privately reviewed exact-version helpers with clean-source,
+archive/dSYM binding, all twelve CI jobs, one-attempt journals and exact Apple
+build/version readback. Five sold subscriptions were previously read back as
+approved; Team Yearly remains withdrawn. The legacy examples below document
+the historical launch sequence. Build 44 adds no public App Store submission
+and does not certify camera, paid provider output or shared-team safety.
+Build 44 retains the ordinary listing full-row overwrite bug; build 45 and the
+6 October backend repair address it. See the dated
+[audit limits](../../docs/handoff/CLAUDE-AUDIT-REMEDIATION-20261004.md#delivery-and-remaining-limits).
 
 Offline inspection that does not load credentials or call Apple:
 

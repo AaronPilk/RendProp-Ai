@@ -46,10 +46,11 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Signing in — what needs an account",
-    source: "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
+    source:
+      "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
     fact:
       "No account is required to record, edit, build or publish a tour, or to use the AI Photo " +
-      "Studio, reels, aerial intros and floor plans. The app connects through an anonymous " +
+      "Studio, reels, aerial intros and manual Measurements. The app connects through an anonymous " +
       "session. Publishing needs an internet connection. Sign in with Apple is optional " +
       "for accessing your workspace on another device.",
   },
@@ -67,7 +68,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "How AI-generated content is disclosed",
     source: "description.txt + support.html + UPLOAD-CONTRACT.md",
     fact:
-      "Every AI photo edit is labelled \"Virtually staged\" on the published tour, and the " +
+      'Every AI photo edit is labelled "Virtually staged" on the published tour, and the ' +
       "untouched original is published right beside it so anyone can compare. The AI aerial " +
       "intro is always disclosed as AI-generated, never presented as real drone footage. A " +
       "listing's Compliance section lists every AI asset with its disclosure and can export the " +
@@ -78,8 +79,8 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     source: "description.txt + features.html",
     fact:
       "One tap each for: a blue sky, a twilight sky, a green lawn, a tidied (decluttered) room, " +
-      "or added furniture (virtual staging). A free-text \"custom\" edit is also available, and " +
-      "an \"improve my prompt\" button sharpens rough wording first. Every edit is a COPY — the " +
+      'or added furniture (virtual staging). A free-text "custom" edit is also available, and ' +
+      'an "improve my prompt" button sharpens rough wording first. Every edit is a COPY — the ' +
       "untouched original photo is always kept and published alongside it, never replaced.",
   },
   {
@@ -101,13 +102,19 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "so a viewer's trust in the rest of the tour stays intact.",
   },
   {
-    topic: "Floor plans — what they do",
-    source: "description.txt + features.html + support.html",
+    topic: "Measurements and floor plans — current availability",
+    source:
+      "FloorMeasurementsView.swift + floor-plan-measurements handoff + support.html",
     fact:
-      "Scan a room in 3D with RoomPlan by walking it with the phone — this needs an iPhone with " +
-      "a LiDAR sensor. Any other iPhone can instead upload a floor plan the agent already has " +
-      "(PDF or image) and skip the scan entirely. Either way the output is clean and labelled: " +
-      "rooms, dimensions and furniture footprints, no clutter.",
+      "Open a listing's Measurements card. Draw a floor outline by entering each " +
+      "wall's length and direction, or enter rectangular room dimensions. Review the area " +
+      "worksheet and export an image or PDF. Garage, porch and unfinished areas stay separate; " +
+      "open-below areas are deducted only from their chosen finished outline. Calculated closing " +
+      "walls and phone estimates need checking. These totals do not set advertised living area. " +
+      "Any phone can upload an existing PDF or image. Automatic 3D floor plans and 3D walkthroughs " +
+      "are Coming soon. The separate TestFlight Lab keeps local capture tests available; it is " +
+      "not the normal listing workflow. The ordinary listing detail no longer has a Plan your " +
+      "video entry; agency and Studio capture planning remain available in their own workflows.",
   },
   {
     topic: "Filming tips for a good walkthrough",
@@ -124,7 +131,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     source: "description.txt + INDUSTRY-LOGIC.md + features.html",
     fact:
       "Rendprop ships modes for real estate, event venues, restaurants and bars, retail stores, " +
-      "and gyms and studios (plus a general \"other business\" mode). Switching the business " +
+      'and gyms and studios (plus a general "other business" mode). Switching the business ' +
       "type — from the menu at the top-left of Home — re-themes the whole app: the fields to " +
       "fill in, the words on screen, the area tags in the room tagger, and the sample tour.",
   },
@@ -141,7 +148,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     source: "support.html + description.txt",
     fact:
       "Subscriptions are sold and billed by Apple, so they are managed through Apple: in the " +
-      "app, Settings → Plan & usage → \"Manage subscription\" opens the same sheet as the " +
+      'app, Settings → Plan & usage → "Manage subscription" opens the same sheet as the ' +
       "device's own Settings → your name → Subscriptions → Rendprop. Cancelling stops the NEXT " +
       "renewal — the plan keeps working until the end of the period already paid for. Deleting " +
       "the app does NOT cancel a subscription. Refunds are handled by Apple at " +
@@ -149,19 +156,20 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Free trial",
-    source: "description.txt + migration 0044 (plan_entitlement_overrides)",
+    source: "Subscription-confirmed trial policy (2026-10-01)",
     fact:
-      "Every plan starts with a 7-day free trial, available once per Apple ID. Any unused " +
-      "portion of a trial is forfeited if the person buys a subscription before it ends. The " +
-      "free week is sized to the business: a real-estate workspace can publish 3 tours during " +
-      "it; a single-location business (venue, restaurant, retail, gym or studio, other) can " +
-      "publish 1 tour. Photo edits, reels and the aerial intro are included in both.",
+      "Eligible customers can start a 7-day introductory trial by choosing a subscription " +
+      "and confirming it in Apple's purchase sheet. Apple determines eligibility; creating " +
+      "an account or installing Rendprop does not start that trial. The selected plan's " +
+      "allowances apply after confirmation. It renews at the displayed subscription price " +
+      "unless cancelled through Apple. Existing previously granted trial windows keep their " +
+      "original end date. Plan & usage shows the current access and Apple's offer terms.",
   },
   {
     topic: "Deleting an account",
     source: "SettingsView.swift deleteAccount + me/index.ts handleDelete",
     fact:
-      "In the app: Settings → \"Your data\" → \"Delete account\". Guests using an anonymous " +
+      'In the app: Settings → "Your data" → "Delete account". Guests using an anonymous ' +
       "session also have a server account: this is not a local-only wipe. Account deletion " +
       "requests removal of that account and its solo-workspace data; the phone clears its " +
       "local data after server confirmation. Shared-team data is not all deleted with your " +
@@ -172,17 +180,19 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "What the app needs to run",
     source: "support.html",
     fact:
-      "An iPhone on iOS 16 or later. The app is free to download. Scanning a room into a floor " +
-      "plan needs an iPhone with a LiDAR sensor; on any other iPhone, upload a plan instead.",
+      "An iPhone on iOS 16 or later. The app is free to download. Manual Measurements and plan " +
+      "uploads work without LiDAR. Automatic 3D floor plans and 3D walkthroughs are Coming soon; " +
+      "LiDAR capture experiments belong to the separate TestFlight Lab.",
   },
   {
     topic: "A render or upload failed",
     source: "support.html",
     fact:
-      "Uploads resume on their own, so a dropped connection mid-upload is usually fixed by " +
-      "reopening the app on a better connection. A job that fails gives its monthly allowance " +
-      "back automatically. If the same walkthrough fails twice, contact support with the " +
-      "listing name and roughly when it was tried.",
+      "Open the affected project to review its status and available retry action. Check the " +
+      "connection before retrying an upload. If details need review or workspace access has " +
+      "changed, review those first. Plan & usage shows the current allowance; do not promise " +
+      "that every failed attempt is refunded. If the same walkthrough fails twice, contact " +
+      "support with the listing name and roughly when it was tried.",
   },
   {
     topic: "Your content and privacy",
@@ -195,10 +205,10 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Contacting support",
-    source: "support.html + SettingsView's own \"Contact support\" row",
+    source: 'support.html + SettingsView\'s own "Contact support" row',
     fact:
       "A person answers support email directly — there is no ticket bot. It is the same address " +
-      "as the app's own Settings → \"Contact support\" row. Billing and refunds go through Apple " +
+      'as the app\'s own Settings → "Contact support" row. Billing and refunds go through Apple ' +
       "at reportaproblem.apple.com; everything else about the app or a plan goes to support.",
   },
 ];
@@ -220,7 +230,14 @@ export const PLAN_ALLOWANCES: Array<{
 }> = [
   { plan: "Starter", renders: 4, photoEdits: 100, reels: 6, aerials: 2 },
   { plan: "Pro", renders: 10, photoEdits: 200, reels: 12, aerials: 4 },
-  { plan: "Team", renders: 25, photoEdits: 400, reels: 25, aerials: 8, seats: 2 },
+  {
+    plan: "Team",
+    renders: 25,
+    photoEdits: 400,
+    reels: 25,
+    aerials: 8,
+    seats: 2,
+  },
 ];
 
 /** One line per plan, e.g. "Pro — 10 tour renders, 200 AI photo edits, 12 reels, 4 aerial intros a month." */
@@ -242,8 +259,9 @@ export function knowledgeBlock(): string {
     facts,
     "",
     "• Plan allowances (NEVER state a price — every price comes from the App Store, never from " +
-      "you): " + allowances + " Every plan includes a 7-day free trial, once per Apple ID: 3 " +
-      "tours for a real-estate workspace, 1 tour for a single-location business. For " +
-      "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
+    "you): " + allowances +
+    " An eligible 7-day introductory trial starts only after the " +
+    "user selects a subscription and confirms Apple's purchase sheet, never on signup. For " +
+    "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
   ].join("\n");
 }

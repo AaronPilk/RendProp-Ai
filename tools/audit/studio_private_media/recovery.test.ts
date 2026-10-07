@@ -4,10 +4,14 @@ import {settleProjectPart,handleProjectMedia,projectMediaManifest,type ProjectMe
 import {HttpError} from '../../../services/supabase/functions/_shared/http.ts';
 import type {StudioContext} from '../../../services/supabase/functions/studio/context.ts';
 const actor='11111111-1111-4111-8111-111111111111',org='22222222-2222-4222-8222-222222222222',id='33333333-3333-4333-8333-333333333333',hash='a'.repeat(64),other='b'.repeat(64),bytes=new Uint8Array([1,2,3]);
-function setup(state='claimed',attempts=3){
+function setup(state='claimed',attempts=3,storageResult:{data:{reserved:boolean}|null,error:{message:string}|null}={data:{reserved:true},error:null}){
  const calls:string[]=[],row:ProjectMediaRow={id,actor_id:actor,org_id:org,sha256:hash,bytes:3,mime:'video/mp4',filename:'private.mp4',modified:0,parts:1,write_deadline:new Date(Date.now()+60000).toISOString(),receipts:state?{'0':{state,bytes:3,sha256:hash}}:{}};
  const context={userId:actor,orgId:org,admin:{rpc:(name:string,p:Record<string,unknown>)=>({abortSignal:async(signal:AbortSignal)=>{
-  signal.throwIfAborted();assertEquals(name,'studio_project_media_write');assertEquals(p.p_actor,actor);assertEquals(p.p_org,org);assertEquals(p.p_id,id);assertEquals(p.p_data,{part:0,bytes:3,sha256:hash});const action=p.p_action as string;calls.push(action);
+  signal.throwIfAborted();
+  if(name==='media_storage_reserve'){
+   assertEquals(p,{p_org:org,p_bucket:'uploads',p_key:`studio-project/${org}/${actor}/${id}/0`,p_bytes:3});calls.push('reserve');return storageResult;
+  }
+  assertEquals(name,'studio_project_media_write');assertEquals(p.p_actor,actor);assertEquals(p.p_org,org);assertEquals(p.p_id,id);assertEquals(p.p_data,{part:0,bytes:3,sha256:hash});const action=p.p_action as string;calls.push(action);
   if(action==='claim'&&attempts>=3&&row.receipts['0']?.state!=='complete')return {error:{message:'RP409: Upload retry limit reached; existing data is preserved'}};
   if(action==='claim')row.receipts['0']={state:'claimed',bytes:3,sha256:hash};
   if(action==='finish')row.receipts['0']={state:'complete',bytes:3,sha256:hash};
@@ -26,14 +30,21 @@ Deno.test('recovery rejects wrong HEAD size or SHA without finish or PUT',async(
  for(const found of [{bytes:4,sha256:hash},{bytes:3,sha256:other}]){const f=setup();let writes=0;await assertRejects(()=>settleProjectPart(f.context,id,0,bytes,hash,new AbortController().signal,{inspect:async()=>found,write:async()=>{writes++;}}),HttpError,'does not match');assertEquals(f.calls,['inspect']);assertEquals(writes,0);}
 });
 Deno.test('fresh part never probes arbitrary storage and uses one admitted write',async()=>{
- const f=setup('',0);let heads=0,writes=0;await settleProjectPart(f.context,id,0,bytes,hash,new AbortController().signal,{inspect:async()=>{heads++;return null;},write:async()=>{writes++;}});assertEquals(f.calls,['inspect','claim','finish']);assertEquals([heads,writes],[0,1]);
+ const f=setup('',0);let heads=0,writes=0;await settleProjectPart(f.context,id,0,bytes,hash,new AbortController().signal,{inspect:async()=>{heads++;return null;},write:async()=>{assertEquals(f.calls,['inspect','claim','reserve']);writes++;}});assertEquals(f.calls,['inspect','claim','reserve','finish']);assertEquals([heads,writes],[0,1]);
 });
 Deno.test('client abort after HEAD cannot settle or dispatch a part',async()=>{
  const f=setup(),controller=new AbortController();let writes=0;await assertRejects(()=>settleProjectPart(f.context,id,0,bytes,hash,controller.signal,{inspect:async()=>{controller.abort();return {bytes:3,sha256:hash};},write:async()=>{writes++;}}),DOMException);assertEquals(f.calls,['inspect']);assertEquals(writes,0);
 });
 Deno.test('uncertain PUT preserves claim; a later request uses HEAD then settles',async()=>{
  const f=setup('',0);let writes=0;await assertRejects(()=>settleProjectPart(f.context,id,0,bytes,hash,new AbortController().signal,{inspect:async()=>null,write:async()=>{writes++;throw new Error('network lost after accepted write');}}),Error,'network lost');assertEquals(f.row.receipts['0'].state,'claimed');
- await settleProjectPart(f.context,id,0,bytes,hash,new AbortController().signal,{inspect:async()=>({bytes:3,sha256:hash}),write:async()=>{writes++;}});assertEquals(writes,1);assertEquals(f.calls,['inspect','claim','inspect','finish']);
+ await settleProjectPart(f.context,id,0,bytes,hash,new AbortController().signal,{inspect:async()=>({bytes:3,sha256:hash}),write:async()=>{writes++;}});assertEquals(writes,1);assertEquals(f.calls,['inspect','claim','reserve','inspect','finish']);
+});
+Deno.test('unconfirmed storage reserve preserves the claim and dispatches no media bytes',async()=>{
+ for(const denied of [{data:null,error:null},{data:{reserved:true},error:{message:'RP402: Storage funding unavailable'}}]){
+  const f=setup('',0,denied);let writes=0;
+  await assertRejects(()=>settleProjectPart(f.context,id,0,bytes,hash,new AbortController().signal,{inspect:async()=>null,write:async()=>{writes++;}}),HttpError,'activation pending');
+  assertEquals(f.calls,['inspect','claim','reserve']);assertEquals(writes,0);assertEquals(f.row.receipts['0'].state,'claimed');
+ }
 });
 Deno.test('completed part replays finish with neither HEAD nor PUT',async()=>{
  const f=setup('complete');let storage=0;await settleProjectPart(f.context,id,0,bytes,hash,new AbortController().signal,{inspect:async()=>{storage++;return null;},write:async()=>{storage++;}});assertEquals(storage,0);assertEquals(f.calls,['inspect','finish']);

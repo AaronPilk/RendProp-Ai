@@ -9,11 +9,13 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "September 5, 2026";
-// Source reconciliation is not publication approval: owner/legal must approve
-// the effective date, notice, provider terms and retention evidence before deploy.
-// See docs/audits/2026-09-10/PRIVACY-POLICY-RECONCILIATION.md.
+const EFFECTIVE_DATE = "October 6, 2026";
+// Prospective 90-day hosting grace was approved by the owner on October 6.
+// Deploy only with matching retention/read/export contracts; the legal draft
+// and handoff separate tested behavior from account-specific provider evidence.
 const CONTACT_EMAIL = "aaron@pilk.ai";
+const BUSINESS = "RendProp LLC";
+const MAILING_ADDRESS = "855 Central Avenue, Saint Petersburg, FL 33701";
 
 const LEGAL_CSS = `
   :root {
@@ -123,6 +125,7 @@ function legalShell(opts: {
       <a href="/support">Support</a>
       <a href="https://rendprop.com">rendprop.com</a>
       <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>
+      <p>${BUSINESS}<br>${MAILING_ADDRESS}</p>
     </footer>
   </div>
 </body>
@@ -136,12 +139,14 @@ export function termsPage(): string {
 a property (or venue, restaurant, store, or studio), and Rendprop turns that footage into
 polished, shareable tours, enhanced photos, and short videos — some of it processed with AI —
 hosted on public pages you can send to anyone. These Terms are an agreement between you and
-Rendprop ("we", "us") and apply whenever you use the app or any page we host for you.</p>
+${BUSINESS} ("we", "us") and apply whenever you use the app or any page we host for you.</p>
 
 <h2><span class="num">2.</span>Your account</h2>
-<p>You can use Rendprop without signing in with Apple. The app creates a guest session for its
-online features; signing in with Apple is optional. Keep your account to yourself: you are responsible for
-what happens under it. You must be at least 13 years old (and old enough to form a binding
+<p>You can capture and work locally in Rendprop without signing in with Apple. The app
+creates a guest session, but cloud uploads require a named account or an eligible, verified
+Apple subscription. Sign in with Apple to sync across devices and recover your workspace
+if you delete the app. Keep your account to yourself: you are responsible for
+what happens under it. You must be at least 18 years old (and old enough to form a binding
 contract where you live) to use Rendprop. If you use Rendprop for a business or team, you
 confirm you have the authority to accept these Terms for it.</p>
 
@@ -149,6 +154,10 @@ confirm you have the authority to accept these Terms for it.</p>
 <p>The one big rule: <b>only record and upload spaces you have the right to record.</b> That
 means your own property, a client's listing you represent, or a space whose owner gave you
 permission. Beyond that, don't:</p>
+<p>Before filming an occupied space or using someone's face or voice, obtain the permission
+you need from the people involved. Do not upload private documents, conversations, or other
+personal information you are not authorized to share. You are responsible for reviewing
+property facts, measurements, AI edits, disclosures and contact details before publishing.</p>
 <ul>
   <li>upload content that is unlawful, infringing, deceptive, or invades someone's privacy;</li>
   <li>misrepresent a property — AI enhancements are for presentation, not for hiding real defects
@@ -180,10 +189,20 @@ or yearly, and Team, billed monthly. <b>The app is the source of truth</b>: the 
 allowances, billing periods, and prices you see there come from the App Store in your own currency,
 and they are what you are charged.</p>
 <ul>
-  <li><b>Free trial.</b> Each plan starts with a 7-day free trial. Apple grants that trial
-  <b>once per Apple ID</b> across all Rendprop plans, so changing plans does not start a second
-  one. Cancel at least 24 hours before it ends and you pay nothing.</li>
-  <li><b>Auto-renewal.</b> Payment is charged to your Apple ID at confirmation of purchase. The
+  <li><b>Free trial.</b> Eligible subscribers can start a <b>7-day introductory trial by confirming
+  an Apple subscription</b> in Rendprop when a funded trial offer is available in the app.
+  Downloading or signing in does not activate a trial. Trial usage is separate from paid-plan
+  allowances and can run out before the seven days end. Using an allowance stops new work for
+  that feature; it does not move Apple's renewal date forward.
+  Checking trial availability reserves it for that account, workspace and plan before
+  Apple's confirmation. Cancelling, closing the app or an interrupted connection does
+  not reset Rendprop's trial reservation. No Apple purchase starts until you continue
+  to Apple's confirmation.
+  Apple determines eligibility and shows the offer and renewal price before confirmation.
+  You may redeem one introductory offer per subscription group; changing plans does not create another
+  trial. Cancel at least 24 hours before the trial ends to avoid renewal charges.</li>
+  <li><b>Auto-renewal.</b> Apple charges the price and billing schedule shown when you confirm,
+  with the first charge after any applicable free trial. The
   subscription <b>renews automatically for the same period unless you cancel at least 24 hours
   before the current period ends</b>, and Apple charges the renewal within the 24 hours before
   that period ends.</li>
@@ -197,11 +216,13 @@ and they are what you are charged.</p>
   <li><b>Price changes.</b> If a price rises, Apple notifies you before it takes effect and, where
   Apple requires it, asks you to agree — if you do not, the subscription simply stops renewing.
   We will flag a material change in the app as well.</li>
-  <li><b>When a plan ends or lapses.</b> <b>Your content stays.</b> Cancelling or letting a plan
-  expire does not delete your listings, photos, reels, or published tours, and share links you
-  have already sent keep working. What stops is the monthly allowance: you cannot render new
-  tours or run AI features until you subscribe again. If you want the content gone, delete it —
-  see section 7.</li>
+  <li><b>When a plan ends or lapses.</b> For new subscriptions covered by the hosting policy
+  introduced on October 6, 2026, hosting continues for a <b>90-day grace period after the
+  subscription expires</b>. We provide advance notices and a chance to download your content
+  before hosting ends. Renewing extends the hosting period. After the grace period, public
+  links may stop working and stored media may be removed following notice. Expiry does not
+  grant another AI allowance. Existing testers retain their prior hosting arrangements.
+  You can request removal earlier — see section 7.</li>
 </ul>
 <p><b>We never see or store your card details.</b> Apple sends us a signed record of the purchase
 — the transaction identifiers, which plan you bought, and when it expires — and that record is
@@ -243,8 +264,8 @@ you accept the updated Terms.</p>
     lede:
       "The plain-language version: only record spaces you have rights to, your content stays " +
       "yours, we never use it for marketing or AI training without your written consent, " +
-      "subscriptions renew through the App Store until you cancel (and your content stays even " +
-      "when a plan lapses), and you can request account deletion in the app; shared-workspace " +
+      "subscriptions renew through the App Store until you cancel, new subscriptions have a " +
+      "90-day hosting grace period after expiry, and you can request account deletion in the app; shared-workspace " +
       "content and pending cleanup are explained in section 7.",
     body,
     otherLabel: "Privacy Policy",
@@ -267,17 +288,18 @@ export function privacyPage(): string {
   context, scripts or transcript excerpts to the AI providers below. Media and text can contain
   personal information, including an address you include in a voiceover script. Review your
   inputs before requesting cloud processing.</li>
-  <li><b>Listing location</b> — the address or business name you enter, and an approximate
-  (rounded) map coordinate we derive from it. These are part of the listing and are
+  <li><b>Listing location</b> — the address or business name you enter, and map
+  coordinates we derive from it. These are part of the listing and are
   <b>published on your public tour page</b> so viewers can find the space; the app may also use
   your device's approximate location, only when you ask it to fill in an address.</li>
-  <li><b>Leads</b> — when someone submits the contact form on one of your tour pages, we store
-  the details they enter (name, phone, email, and any message or preferred date) so you can see
-  them in your Leads inbox in the app. When CRM sync is configured, we send GoHighLevel /
-  LeadConnector the submitter's name, email and phone, plus tour, workspace and listing tags
-  and the listing address used in the contact's source label. The message or preferred date
-  remains part of the lead details stored for your Leads inbox. Lead forms carry a short notice
-  linking to this policy.</li>
+  <li><b>Leads</b> — when someone submits a contact form, we store their name,
+  phone, email, message or preferred date so the listing's agent or business can respond.
+  For a listing managed by a photographer or video producer, they retain an inquiry in
+  their inbox and may send it to the client's verified email address. Our email provider
+  processes the inquiry to deliver that message. An inquiry does not subscribe the buyer
+  to marketing calls, texts or emails. Automatic CRM export is disabled; older versions
+  may have created GoHighLevel contacts that need separate cleanup. Lead forms carry a
+  notice linking to this policy.</li>
   <li><b>Tour viewers</b> — for each visit to a tour page we record engagement telemetry (that the
   tour started, how long it was watched, how far the viewer scrolled) tied to the tour, not to a
   named person. The viewer's IP address is used briefly as a rate-limit key to prevent abuse of
@@ -287,6 +309,12 @@ export function privacyPage(): string {
   (product id) you bought, the store environment, and when it expires</b> — that is what unlocks
   your plan. <b>We never see or store your card details</b>, and Apple does not give them to
   us.</li>
+  <li><b>Trial eligibility and usage</b> — we record the trial's account and workspace identifiers,
+  selected subscription, reserved allowances, reservation date and funding commitment,
+  Apple subscription-chain identifier when available, trial dates, usage counters and
+  a one-way digest of the confirmed email address. This limited record prevents repeat trials or resets after a workspace change
+  or deletion. The eligibility record contains no photos, videos or email-address text; it is
+  still account-related data.</li>
   <li><b>App analytics and diagnostics</b> — a short, fixed list of in-app events, a device
   identifier we generate ourselves, and crash and performance summaries from Apple. Section 4
   sets out exactly what those are, and what they are not.</li>
@@ -301,20 +329,24 @@ with a data broker; and we never sell your personal information.</p>
 <h2><span class="num">2.</span>How we use it</h2>
 <p>Only to operate and improve Rendprop: signing you in, storing and processing your media,
 generating the AI enhancements you request, hosting your public tour pages, capturing your leads
-into your Leads inbox (and our CRM provider) so you can follow up, measuring tour engagement,
+into your Leads inbox and delivering them to verified listing contacts so you can follow up, measuring tour engagement,
 unlocking the plan you subscribed to, understanding which parts of the app are used and where
 they break (section 4), and keeping the service secure. <b>Your content is never used for our
 marketing and never used to train AI models without your written consent.</b></p>
 
 <h2><span class="num">3.</span>Who processes data for us</h2>
-<p>Rendprop runs on a small set of infrastructure and AI providers. They process data solely to
-provide their function to us:</p>
+<p>Rendprop uses the infrastructure and AI providers below. Their processing and retention
+also depend on the provider's applicable terms and the account settings for that service:</p>
 <table role="table" aria-label="Service providers and data processing">
   <tr role="row"><th role="columnheader" scope="col">Provider</th><th role="columnheader" scope="col">What it does</th><th role="columnheader" scope="col">What it receives</th></tr>
   <tr role="row"><td role="cell">Supabase</td><td role="cell">Authentication, database, and the app's API</td><td role="cell">Your account, listings, leads, and tour engagement counts. Inputs sent through Rendprop's API, including media and text supplied for AI processing</td></tr>
   <tr role="row"><td role="cell">Cloudflare</td><td role="cell">Media storage (R2), video delivery (Stream), hosting of your tour pages, and Turnstile bot protection on lead forms</td><td role="cell">Your uploaded and generated media; requests to your tour pages, including viewers' IP addresses</td></tr>
   <tr role="row"><td role="cell">Apple</td><td role="cell">Sign in with Apple; App Store subscriptions; crash and performance summaries (MetricKit); ad attribution (SKAdNetwork); Speech recognition for captions</td><td role="cell">Sign-in and account-deletion tokens; Apple gives us the email (or private relay address) and name you choose to share, and a signed record of any subscription you buy (never your card details). Recorded voiceover audio may be processed by Apple when on-device recognition is unavailable or a recognition attempt falls back to the server</td></tr>
-  <tr role="row"><td role="cell">GoHighLevel (LeadConnector)</td><td role="cell">CRM — so a lead can be followed up, and so lead contacts can be deleted with your account</td><td role="cell">The name, phone and email submitted through a tour's lead form; tour, workspace and listing tags; and the listing address used in the contact's source label</td></tr>
+  <tr role="row"><td role="cell">GoHighLevel (LeadConnector)</td><td role="cell">Cleanup of legacy CRM contacts; automatic export of new inquiries is disabled</td><td role="cell">Older versions sent lead names, phones and emails with listing and workspace tags. Contact identifiers or matching contact details can be used to request cleanup</td></tr>
+  <tr role="row"><td role="cell">Resend</td><td role="cell">Transactional emails, inquiry delivery and email-address verification</td><td role="cell">Recipient addresses and message contents, including inquiry details sent to verified listing contacts</td></tr>
+  <tr role="row"><td role="cell">RentCast</td><td role="cell">Requested property-record lookups</td><td role="cell">The listing address used for the lookup</td></tr>
+  <tr role="row"><td role="cell">Bria</td><td role="cell">Requested video masking and object removal</td><td role="cell">Selected video clips, masks and instructions when that feature is enabled and requested</td></tr>
+  <tr role="row"><td role="cell">cdnjs and jsDelivr</td><td role="cell">Player software delivery on public tour pages</td><td role="cell">Network request information, including the viewer's IP address, when the browser loads player software from these services</td></tr>
   <tr role="row"><td role="cell">Google&nbsp;Gemini</td><td role="cell">Photo editing, video analysis, and writing assistance</td><td role="cell">Selected photos or video, sampled frames, and text inputs for those features</td></tr>
   <tr role="row"><td role="cell">fal.ai</td><td role="cell">AI image and video editing, generation, and upscaling, using the selected model</td><td role="cell">Photos, video, and prompts for those features, including exterior photos used for aerial intros</td></tr>
   <tr role="row"><td role="cell">Anthropic</td><td role="cell">Chat and writing assistance, planning, and quality checks on AI output</td><td role="cell">User text, chat history and project context; source photos and frames from generated clips for quality checks</td></tr>
@@ -322,9 +354,15 @@ provide their function to us:</p>
   <tr role="row"><td role="cell">ElevenLabs</td><td role="cell">Voiceover generation</td><td role="cell">Your voiceover script, including any address or personal details in it, and your selected voice</td></tr>
 </table>
 <p>Rendprop sends inputs for the feature you request. Some AI features use more than one
-provider, including for fallback or quality checks. Lead submissions are handled by our backend
-and may also be synced to the CRM as described above. Rendprop does not send these inputs for
-advertising.</p>
+provider, including for fallback or quality checks. The primary Rendprop database is hosted
+in the United States. Cloud delivery and processing providers may operate in other locations.
+Rendprop does not send your media or buyer inquiries for advertising.</p>
+<p>Provider copies can remain after a result is saved in Rendprop. Google's Gemini terms
+distinguish paid and unpaid processing; unpaid inputs may be used to improve Google's
+products, while paid-service terms provide different protections. Bria's video results do
+not expire by default unless a different retention policy is configured. An expiring Rendprop
+download link does not prove that a provider has erased its copy. Review the AI disclosure
+before submitting personal or confidential content.</p>
 
 <h2><span class="num">4.</span>Analytics, crash reports, and ads</h2>
 <p>All of this is <b>first-party</b>: our own code, sending to our own servers, read only by us.
@@ -364,24 +402,43 @@ ever combined with data from another company's app or website, or given to a dat
 tours for you, and you see them in the app.</p>
 
 <h2><span class="num">5.</span>How long we keep it</h2>
-<p>Your content stays until you delete it — delete a listing, tour, or asset in the app and the
-associated records go with it. Deleting your account (<b>Settings → Delete account</b>) removes
-your account data and the content of organizations that only you belong to. Content in shared
-workspaces can remain for other members. Account deletion and completion of associated cleanup
-are separate statuses; the app indicates when cleanup is pending. Analytics events are
-deleted after 180 days (section 4), and residual copies in backups and logs age out on a short,
-fixed schedule.</p>
+<p>New subscriptions covered by the October 6, 2026 hosting policy have a 90-day hosting
+grace period after expiry, advance notices and a chance to download content before hosting
+ends. Existing testers retain their prior hosting arrangements. Storage removal can finish
+separately from the end of public hosting. Removing a listing hides it from the app
+and starts cleanup of associated media; completing removal of stored files and provider copies
+can take additional work. Account deletion (<b>Settings → Delete account</b>) covers your
+account and private workspaces; content in shared workspaces can remain for other members.
+Account deletion and associated cleanup are separate statuses, and the app indicates pending
+cleanup. Analytics events are scheduled for deletion after 180 days (section 4).
+Limited trial-eligibility and usage records remain after listing or account deletion to prevent
+another trial. A reservation does not reset after cancellation or an interrupted purchase.
+Deleting content does not replenish a trial allowance. These records do not keep
+the deleted photos or videos available.
+Limited funded photo-admission records also remain to prevent deleted work, account
+changes or refunds from replenishing usage. They record account, workspace, operation
+and funding identities, task, input fingerprint and timing; they do not contain the
+photo or a downloadable media link. Workspace package allocations and operator
+startup-funding evidence are separate accounting records, and are not another
+member's personal export. Contact us for help with retained accounting records.
+Backups, operational logs and provider copies follow their applicable retention settings;
+we do not promise immediate removal from every backup or a single fixed retention period.
+Public files already downloaded or copied by someone else cannot be recalled by Rendprop.</p>
 
 <h2><span class="num">6.</span>Your rights</h2>
-<p>You can see and manage your data directly in the app, and delete it there too. For anything
+<p>You can see and manage your data directly in the app, request deletion, and download an
+account-owned cloud JSON inventory in <b>Settings → Download account data</b>. The inventory
+states its scope and omissions; photos and videos use their separate download controls.
+For anything
 the app doesn't cover — a copy of your data, a correction, or a deletion request — email
 <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a> and we'll handle it. Depending on where
 you live, you may have additional statutory rights (such as access, portability, and erasure);
 we honor those.</p>
 
 <h2><span class="num">7.</span>Children</h2>
-<p>Rendprop is not for children under 13, and we don't knowingly collect their data. If you
-believe a child has created an account, contact us and we'll delete it.</p>
+<p>Rendprop is intended for adults aged 18 or older. If you believe a child has created an
+account or submitted personal information, contact us so we can investigate and arrange
+appropriate removal.</p>
 
 <h2><span class="num">8.</span>Changes to this policy</h2>
 <p>If we change this policy in a meaningful way, we'll flag it in the app or by email before
@@ -398,7 +455,7 @@ the change takes effect. The date at the top always shows the current version.</
       "The plain-language version: we collect your account and session details, including details " +
       "from Apple if you choose to sign in, the content and " +
       "listing details you upload (your listing's address or business name is published on its " +
-      "tour page), the leads viewers send you (stored for you and synced to the CRM when configured), " +
+      "tour page), the leads viewers send you (stored for the listing team and emailed to verified contacts), " +
       "engagement counts on your tour pages, and our own app-usage and crash statistics. We use " +
       "them only to run and improve the service. There is no third-party analytics SDK, no ad " +
       "SDK and no advertising identifier in the app, we never track you across other companies' " +

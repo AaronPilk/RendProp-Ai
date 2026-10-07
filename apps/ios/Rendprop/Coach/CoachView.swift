@@ -16,10 +16,11 @@ struct CoachView: View {
     /// (never read from `@EnvironmentObject`) so `CoachModel` — a
     /// `@StateObject`, created exactly once — can be built right here with
     /// everything it needs from the very first frame.
-    init(model: AppModel, originScreen: String? = nil, starters: [String]? = nil) {
+    init(model: AppModel, originScreen: String? = nil, starters: [String]? = nil, listingID: UUID? = nil) {
         _coachModel = StateObject(wrappedValue: CoachModel(model: model,
                                                           originScreen: originScreen,
-                                                          starters: starters))
+                                                          starters: starters,
+                                                          listingID: listingID))
     }
 
     var body: some View {

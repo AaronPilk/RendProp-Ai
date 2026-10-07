@@ -705,7 +705,7 @@ export function createStudioServices(
         signal,
         selected,
       );
-      return decodeMedia(result, selected, listing, page);
+      return decodeMedia(result, selected, listing, page, actor.userId);
     },
     dispose() {
       disposed = true;

@@ -16,7 +16,8 @@ for (const [name, needle, broken] of [
   ['receipt-operation-binding', 'receipt.adopted, receipt.operation_id == value.operationID,', 'receipt.adopted, true,'],
   ['write-failure-before-replacement', 'write(raw) else', '(write(raw) || true) else'],
   ['late-response-fence', 'guard !Task.isCancelled, isCurrent() else { return }\n                if (200..<300)', 'if (200..<300)'],
-  ['local-persistence-before-clear', 'guard finishLocal(value, receipt.org_id) else { throw RecoveryError.storage }', '_ = finishLocal(value, receipt.org_id)'],
+  ['local-persistence-before-clear', 'finishLocal(verifiedValue, receipt.org_id, cardData) else { throw RecoveryError.storage }', 'true else { throw RecoveryError.storage }\n                    _ = finishLocal(verifiedValue, receipt.org_id, cardData)'],
+  ['current-card-late-session', 'let (cardData, cardResponse) = try await send(cardRequest)\n                    guard !Task.isCancelled, isCurrent() else { return }', 'let (cardData, cardResponse) = try await send(cardRequest)'],
 ]) {
   test(`real recovery mutant rejected: ${name}`, { timeout: 30000 }, () => {
     assert.equal(source.split(needle).length - 1, 1, 'unique actual-source mutation');

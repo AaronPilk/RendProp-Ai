@@ -1,0 +1,774 @@
+import Foundation
+import CryptoKit
+
+// No real documents, credentials, networking or camera APIs exist in this fixture.
+enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/\(path)") } }
+enum APIError: Error { case decoding, server(Int); var isConflict: Bool { if case .server(409) = self { return true }; return false } }
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
+enum FixtureError: Error { case failed }
+struct AssertionFailure: Error { let message: String }
+func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+
+@MainActor final class WireClient {
+    enum Idempotency { case none, key(String) }
+    var requests: [URLRequest] = []
+    var response = Data()
+    func url(_ pieces: [String]) -> URL { URL(string: "https://fixture.invalid/" + pieces.joined(separator: "/"))! }
+    func makeRequest(url: URL, method: String, json: [String: Any], idempotency: Idempotency = .none) -> URLRequest {
+        var request = URLRequest(url: url); request.httpMethod = method
+        request.httpBody = try! JSONSerialization.data(withJSONObject: json)
+        if case .key(let key) = idempotency { request.setValue(key, forHTTPHeaderField: "Idempotency-Key") }
+        return request
+    }
+    func execute(_ request: URLRequest, beforeSend: (() throws -> Void)? = nil) async throws -> Data { try beforeSend?(); requests.append(request); return response }
+    func body(_ listing: Listing, patch: Bool) throws -> [String: Any] { try listingBody(listing, forPatch: patch) }
+    func mapped(_ data: Data) throws -> Listing { mapListing(try decode(data)) }
+__CREATE__
+__UPDATE__
+__UPDATE_MEASUREMENTS__
+__LISTING_BODY__
+__MAP_LISTING__
+__LISTING_DTO__
+__TOLERANT_MAP__
+__DECODE__
+__PARSE_DATE__
+__ISO_STRING__
+__WIRE_STATUS__
+__LOCAL_STATUS__
+}
+
+@MainActor final class HeldBoundary {
+    var arrivals = 0
+    private var continuation: CheckedContinuation<Void, Never>?
+    func hold() async {
+        arrivals += 1
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { let saved = continuation; continuation = nil; saved?.resume() }
+}
+@MainActor final class SyncAPI: WorkspaceSyncAPI {
+    var snapshots: [Listing] = []
+    var measurementSnapshots: [Listing] = []
+    var measurementUpdate: (Listing) async throws -> Listing = { $0 }
+    func updateMeasurements(_ listing: Listing) async throws -> Listing { measurementSnapshots.append(listing); return try await measurementUpdate(listing) }
+    var update: (Listing) async throws -> Listing = { $0 }
+    func updateListing(_ listing: Listing) async throws -> Listing {
+        snapshots.append(listing)
+        var receipt = try await update(listing)
+        // Server DTO mapping records the accepted values as a fresh baseline;
+        // it never returns a phone's still-pending edit state as a receipt.
+        receipt.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(receipt), detailBaseline: ListingFactsSync.detailFacts(receipt))
+        receipt.needsServerSync = false
+        return receipt
+    }
+    var cloudRead: () async throws -> [Listing] = { [] }
+    var cloudReads = 0
+    func cloudListings() async throws -> [Listing] { cloudReads += 1; return try await cloudRead() }
+    func cloudListingState(listingID: UUID, orgID: UUID, offset: Int) async throws -> CloudListingState { throw FixtureError.failed }
+    func cloudMedia(listingID: UUID, orgID: UUID, offset: Int) async throws -> CloudMediaPage { throw FixtureError.failed }
+    func cloudBrand() async throws -> CloudBrand { throw FixtureError.failed }
+    func cloudCreative(listingID: UUID, orgID: UUID) async throws -> CloudCreative { throw FixtureError.failed }
+    func cloudNativeReel(listingID: UUID, orgID: UUID) async throws -> CloudNativeReelDocument? { throw FixtureError.failed }
+    func saveCloudNativeReel(_ draft: NativeReelDraft, listingID: UUID, orgID: UUID, revision: Int) async throws -> CloudNativeReelDocument { throw FixtureError.failed }
+}
+enum Config { static let useLiveBackend = true; static let enableAuth = true }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var isIdentified = true
+    var isSignedIn = true
+    var userID: String? = "22222222-2222-4222-8222-222222222222"
+    var syncSessionRevision: UInt64 = 1
+}
+@MainActor final class SyncModel {
+    var listings: [Listing]
+    var syncInFlight = Set<UUID>()
+    let api = SyncAPI()
+    init(_ listing: Listing) { listings = [listing] }
+    func index(of id: UUID) -> Int? { listings.firstIndex(where: { $0.id == id }) }
+    func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool { false }
+    func ensureServerListing(_ draft: Listing) async throws -> UUID { throw FixtureError.failed }
+    func setLastError(_ message: String, for id: UUID) { if let i = index(of: id) { listings[i].lastError = message } }
+__MODIFY__
+__SAVE_MEASUREMENTS__
+__RELOAD_SHARED__
+__CONFIRM_LOCAL__
+__LOAD_FACTS_REVIEW__
+__RESOLVE_FACTS__
+__MARK_DIRTY__
+__SYNC_LISTING__
+}
+
+struct MeasurementUIError: Error { let message: String }
+@MainActor final class PlanEditor {
+    let model: SyncModel
+    let listing: Listing
+    var plan: FloorMeasurementPlan
+    var unsupported = false
+    var currentContext = true
+    var error: String?
+    init(model: SyncModel, listing: Listing, plan: FloorMeasurementPlan) {
+        self.model = model; self.listing = listing; self.plan = plan
+    }
+    func save(_ candidate: FloorMeasurementPlan) throws { try persist(candidate) }
+__EDITOR_PERSIST__
+}
+
+@main struct FloorMeasurementSyncChecks {
+    @MainActor static func main() async {
+        do { try await run() }
+        catch let failure as AssertionFailure { print("FAIL: \(failure.message)"); exit(1) }
+        catch { print("FAIL: unexpected fixture error \(error)"); exit(1) }
+    }
+
+    @MainActor static func run() async throws {
+        var checks = 0
+        func check(_ condition: Bool, _ message: String) throws {
+            guard condition else { throw AssertionFailure(message: message) }; checks += 1
+        }
+        func refuses(_ body: () throws -> Void, _ message: String) throws {
+            do { try body() } catch { checks += 1; return }
+            throw AssertionFailure(message: message)
+        }
+        func waitUntil(_ predicate: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while !predicate() {
+                if Date() > deadline { throw AssertionFailure(message: "Held fixture boundary timed out") }
+                await Task.yield()
+            }
+        }
+        func stagedOrdinaryEdit(_ listing: Listing) -> Listing {
+            var base = listing
+            base.needsServerSync = false
+            base.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(base), detailBaseline: ListingFactsSync.detailFacts(base))
+            var edited = base
+            edited.address += " reviewed edit"
+            ListingFactsSync.stage(from: base, in: &edited)
+            return edited
+        }
+        // Frozen raw-details algorithm from the pre-measurements source.
+        // This represents pending cloudCreateFingerprint snapshots already on
+        // phones, independently of the current production implementation.
+        func priorFingerprint(_ listing: Listing) throws -> String {
+            let facts: [String: Any] = ["address": listing.address, "space": listing.spaceType.rawValue,
+                "beds": listing.beds, "baths": listing.baths, "sqft": listing.sqft, "price": listing.price.cents,
+                "tagline": listing.tagline ?? "", "details": listing.details ?? [:], "zillow": listing.zillowURL ?? "",
+                "lat": listing.latitude as Any? ?? NSNull(), "lng": listing.longitude as Any? ?? NSNull(),
+                "sold": listing.soldAt?.timeIntervalSince1970 as Any? ?? NSNull(), "indexing": listing.allowSearchIndexing as Any? ?? NSNull()]
+            let data = try JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys])
+            return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        }
+        let sid = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let org = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let localID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let otherOrg = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        let fixedDate = Date(timeIntervalSinceReferenceDate: 1_000)
+        let room = FloorMeasurementRoom(id: UUID(uuidString: "55555555-5555-4555-8555-555555555555")!, name: "Living room", widthMeters: 3, lengthMeters: 4)
+        let plan = FloorMeasurementPlan(unit: .meters, rooms: [room], updatedAt: fixedDate)
+        var newer = plan; newer.rooms[0].widthMeters = 3.5; newer.updatedAt = fixedDate.addingTimeInterval(1)
+        let wire = try plan.encodedWireValue(), newerWire = try newer.encodedWireValue()
+        var local = Listing(id: localID, address: "Fixture property", beds: 2, baths: 1, sqft: 900, price: Money(cents: 100))
+        local.serverID = sid; local.serverOrgID = org; local.cloudDraftOrgID = org
+        local.mainPhotoRelPath = "Photos/owned-fixture.jpg"; local.exteriorPhotoRelPath = "Photos/owned-exterior.jpg"
+        local.details = ["floorplan_url": "https://fixture.invalid/owned-plan.svg", "year_built": "2001", "future_key_v4": "opaque", FloorMeasurementPlan.wireKey: newerWire]
+        local.floorMeasurements = plan; local.allowSearchIndexing = false
+        let client = WireClient()
+        let body = try client.body(local, patch: false)
+        let details = body["details"] as! [String: String]
+        try check(details[FloorMeasurementPlan.wireKey] == wire, "Typed plan overrides stale wire independently of generic details")
+        try check(details["floorplan_url"] == local.details?["floorplan_url"] && details["year_built"] == "2001" && details["future_key_v4"] == "opaque", "Measurement save preserves floor-plan URL and unrelated details")
+        try check(details[Listing.searchIndexingKey] == "false", "Measurement merge preserves explicit search preference")
+        try check(body["main_photo_key"] == nil && body["main_photo_asset_id"] == nil && body["gallery_asset_ids"] == nil, "Measurement facts CAS never overwrites cloud photo or gallery selection")
+        try check(local.details?[FloorMeasurementPlan.wireKey] == newerWire, "Wire assembly leaves local raw details untouched")
+        var formless = local; formless.details = nil
+        try check((try client.body(formless, patch: false)["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == wire, "Typed plan is sent even when the generic form has no details")
+        let response: [String: Any] = ["id": sid.uuidString, "org_id": org.uuidString, "address": "Cloud facts", "beds": 3, "sqft": 1500, "price_cents": 3500, "details": details]
+        client.response = try JSONSerialization.data(withJSONObject: response)
+        let mapped = try client.mapped(client.response)
+        try check(mapped.details?[FloorMeasurementPlan.wireKey] == wire, "Actual DTO decoder retains the exact measurements wire key")
+        try check(mapped.floorMeasurements == plan && mapped.address == "Cloud facts" && mapped.serverOrgID == org, "Wire measurements hydrate alongside ordinary Listing facts")
+        try check(mapped.details?["floorplan_url"] == details["floorplan_url"] && mapped.allowSearchIndexing == false, "Snake-case freeform URL and indexing keys survive readback")
+        _ = try await client.createListing(local)
+        _ = try await client.updateListing(stagedOrdinaryEdit(local))
+        try check(client.requests.count == 2, "Actual create and update reach the isolated request boundary once")
+        try check(client.requests[0].httpMethod == "POST" && client.requests[0].value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Actual create remains scoped to its original workspace")
+        try check(client.requests[1].httpMethod == "PUT" && client.requests[1].url!.lastPathComponent == "facts" && client.requests[1].url!.deletingLastPathComponent().lastPathComponent.lowercased() == sid.uuidString.lowercased(), "Actual facts update uses PUT and the bound server listing identity")
+        let sent = try JSONSerialization.jsonObject(with: client.requests[1].httpBody!) as! [String: Any]
+        let sentChanges = sent["changes"] as! [String: Any]
+        try check(Set(sent.keys) == Set(["expected", "changes", "details_expected", "details_changes"]) && Set(sentChanges.keys) == Set(["address"]), "Actual staged facts request sends only the edited ordinary field and its CAS base")
+        try check((sent["details_changes"] as? [String: Any])?[FloorMeasurementPlan.wireKey] == nil && (sent["details_expected"] as? [String: Any])?[FloorMeasurementPlan.wireKey] == nil, "Generic facts CAS omits private measurements")
+        var empty = local; empty.floorMeasurements = FloorMeasurementPlan(rooms: [], updatedAt: fixedDate)
+        let emptyBody = try client.body(empty, patch: false)["details"] as! [String: String]
+        try check(FloorMeasurementPlan.decodeWireValue(emptyBody[FloorMeasurementPlan.wireKey])?.rooms.isEmpty == true, "An empty supported plan deliberately clears all rooms")
+        var cleared = local; cleared.floorMeasurements = nil; cleared.details?.removeValue(forKey: FloorMeasurementPlan.wireKey)
+        try check((try client.body(cleared, patch: true)["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == nil, "Explicit nil and raw-key removal clears only measurements")
+        var future = local; future.floorMeasurements = nil
+        let futureWire = "{\"version\":7,\"future_room_shape\":\"opaque\"}"
+        future.details?[FloorMeasurementPlan.wireKey] = futureWire
+        let futureBody = try client.body(future, patch: false)["details"] as! [String: String]
+        try check(futureBody[FloorMeasurementPlan.wireKey] == futureWire, "Nil typed plan preserves future raw wire verbatim")
+        var invalidResponse = response; invalidResponse["details"] = [FloorMeasurementPlan.wireKey: "{broken", "year_built": 1998, "allow_indexing": false, "nested": ["x": 1], "missing": NSNull()]
+        let tolerant = try client.mapped(JSONSerialization.data(withJSONObject: invalidResponse))
+        try check(tolerant.floorMeasurements == nil && tolerant.address == "Cloud facts" && tolerant.beds == 3, "Malformed measurements do not crash or hide other listing facts")
+        try check(tolerant.details?[FloorMeasurementPlan.wireKey] == "{broken" && tolerant.details?["year_built"] == "1998" && tolerant.details?["allow_indexing"] == "false" && tolerant.details?["nested"] == nil, "Tolerant scalars retain exact keys and skip nested values")
+        var futureResponse = response; futureResponse["details"] = futureBody
+        let futureMapped = try client.mapped(JSONSerialization.data(withJSONObject: futureResponse))
+        try check(futureMapped.floorMeasurements == nil && futureMapped.details?[FloorMeasurementPlan.wireKey] == futureWire, "Future wire can round-trip through real mapping without replacement")
+        let restored = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(local))
+        try check(restored.floorMeasurements == plan && restored.mainPhotoRelPath == local.mainPhotoRelPath, "Local snapshot persists the typed plan and device photo path")
+        let legacyData = try JSONSerialization.data(withJSONObject: ["address": "Old phone snapshot", "details": [FloorMeasurementPlan.wireKey: wire]])
+        let legacy = try JSONDecoder().decode(Listing.self, from: legacyData)
+        try check(legacy.floorMeasurements == plan, "Old snapshots recover a valid raw plan when the typed field is absent")
+        let futureLocal = try JSONDecoder().decode(Listing.self, from: JSONSerialization.data(withJSONObject: ["address": "Future snapshot", "details": [FloorMeasurementPlan.wireKey: wire], "floorMeasurements": ["version": 7]]))
+        try check(futureLocal.floorMeasurements == nil, "Invalid present typed snapshot does not resurrect stale raw measurements")
+        var invalid = local; invalid.floorMeasurements?.rooms[0].widthMeters = .nan
+        let beforeInvalid = client.requests.count
+        do { _ = try await client.updateListing(invalid); throw AssertionFailure(message: "Invalid plan reached request execution") }
+        catch let error as FloorMeasurementError { try check(error == .invalidDimension && client.requests.count == beforeInvalid, "Invalid dimensions fail before actual HTTP boundary") }
+        var oversized = local; oversized.details?["large_note"] = String(repeating: "x", count: 16_000)
+        do { _ = try await client.createListing(oversized); throw AssertionFailure(message: "Oversized details reached request execution") }
+        catch is ListingWireDetails.ValidationError { try check(client.requests.count == beforeInvalid, "Full details envelope cap fails before actual HTTP boundary") }
+        var largePlan = plan
+        largePlan.rooms = (0..<24).map { i in
+            FloorMeasurementRoom(name: String(repeating: "e\u{301}\u{301}\u{301}\u{301}\u{301}", count: 40), widthMeters: 0.1, lengthMeters: 0.1, xMeters: Double(i))
+        }
+        var largeTyped = local; largeTyped.floorMeasurements = largePlan
+        do { _ = try await client.updateListing(largeTyped); throw AssertionFailure(message: "Oversized inner plan reached request execution") }
+        catch let error as FloorMeasurementError { try check(error == .tooLarge && client.requests.count == beforeInvalid, "Inner 10,000-byte model cap fails before actual HTTP boundary") }
+        var escaped = local; escaped.details?["quoted"] = String(repeating: "\"", count: 8_000)
+        try refuses({ _ = try client.body(escaped, patch: true) }, "JSON escaping overhead must count toward the details cap")
+        var unicode = local; unicode.details?["unicode"] = String(repeating: "😀", count: 4_000)
+        try refuses({ _ = try client.body(unicode, patch: true) }, "Details cap bounds UTF-8, including multibyte text")
+        let fingerprint = try CloudDraftCreation.fingerprint(local)
+        var measurementEdit = local; measurementEdit.floorMeasurements = newer
+        try check(try CloudDraftCreation.fingerprint(measurementEdit) != fingerprint, "Measurement-only edits change the create fingerprint")
+        var equivalent = local; equivalent.details?[FloorMeasurementPlan.wireKey] = wire
+        try check(try CloudDraftCreation.fingerprint(equivalent) == fingerprint, "Fingerprint uses the same validated merged wire truth as the request")
+
+        // The request-assembly checks above deliberately used stale raw data.
+        // Ordinary-edit tests below represent a known, acknowledged CAS base.
+        local.details?[FloorMeasurementPlan.wireKey] = wire
+        local.measurementSync = FloorMeasurementSyncState(expected: wire)
+
+        var remote = mapped; remote.floorMeasurements = newer; remote.details?[FloorMeasurementPlan.wireKey] = newerWire
+        let clean = try CloudListingMerge.merge(local: [local], remote: [remote], protected: [])[0]
+        try check(clean.floorMeasurements == newer && clean.id == localID && clean.serverID == sid, "Clean cloud merge copies measurements under the existing binding")
+        try check(clean.mainPhotoRelPath == local.mainPhotoRelPath && clean.exteriorPhotoRelPath == local.exteriorPhotoRelPath, "Measurement hydration preserves owned local media paths")
+        var dirty = local; dirty.needsServerSync = true
+        let dirtyMerged = try CloudListingMerge.merge(local: [dirty], remote: [remote], protected: [])[0]
+        try check(dirtyMerged.floorMeasurements == plan && dirtyMerged.details == local.details, "Dirty manual plan survives an older remote snapshot")
+        let protected = try CloudListingMerge.merge(local: [local], remote: [remote], protected: [localID])[0]
+        try check(protected.floorMeasurements == plan, "Protected upload/render plan cannot be replaced during refresh")
+        var oldCloud = remote; oldCloud.floorMeasurements = nil; oldCloud.details = ["old_fact": "kept"]
+        try check(try CloudListingMerge.merge(local: [dirty], remote: [oldCloud], protected: [])[0].floorMeasurements == plan, "Dirty local measurements survive a cloud snapshot from an older client")
+        let cleanAbsent = try CloudListingMerge.merge(local: [local], remote: [oldCloud], protected: [])[0]
+        try check(cleanAbsent.floorMeasurements == nil && cleanAbsent.details?[FloorMeasurementPlan.wireKey] == nil, "Acknowledged clean listings observe authoritative measurement deletion")
+        let unsupportedClean = try CloudListingMerge.merge(local: [local], remote: [futureMapped], protected: [])[0]
+        try check(unsupportedClean.floorMeasurements == nil && unsupportedClean.details?[FloorMeasurementPlan.wireKey] == futureWire, "Clean listings adopt unsupported future raw wire without retaining a stale typed plan")
+        let gone = try CloudListingMerge.merge(local: [dirty], remote: [], protected: [])[0]
+        try check(gone.floorMeasurements == plan && gone.cloudUnavailable == true, "Revoked or missing cloud membership preserves manual measurements locally")
+        var unbound = local; unbound.serverID = nil; unbound.serverOrgID = nil; unbound.cloudSyncOwnerID = org
+        try check(!CloudDraftCreation.canAutoSync(unbound, userID: otherOrg), "Another account cannot auto-upload the owner's manual measurements")
+        var unscoped = remote; unscoped.serverOrgID = nil
+        try refuses({ _ = try CloudListingMerge.merge(local: [local], remote: [unscoped], protected: []) }, "Unscoped cloud measurements cannot enter the listing")
+
+        let identity = CloudDraftCreation.Identity(userID: org.uuidString, revision: 10)
+        var activeIdentity = identity
+        var draft = unbound; draft.measurementSync = nil
+        draft.cloudCreateFingerprint = try CloudDraftCreation.fingerprint(draft)
+        var current: Listing? = draft
+        var replay = remote; replay.cloudCreateReplayed = true
+        _ = try await CloudDraftCreation.ensure(snapshot: draft, identity: identity, create: { _ in replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == newer && current?.needsServerSync == false, "Unedited replay adopts the office measurement plan")
+        var oldDraft = draft; oldDraft.floorMeasurements = nil
+        oldDraft.details?.removeValue(forKey: FloorMeasurementPlan.wireKey)
+        oldDraft.cloudCreateFingerprint = try priorFingerprint(oldDraft)
+        current = oldDraft
+        _ = try await CloudDraftCreation.ensure(snapshot: oldDraft, identity: identity, create: { _ in replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == newer && current?.needsServerSync == false, "Old raw-details fingerprints still adopt an unedited office replay")
+        current = oldDraft; current?.floorMeasurements = plan
+        _ = try await CloudDraftCreation.ensure(snapshot: oldDraft, identity: identity, create: { _ in replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == plan && current?.needsServerSync == true && current?.measurementSync?.factsReviewRequired == true, "Legacy fingerprint cannot hide a new typed measurement edit")
+        var rawDraft = draft; rawDraft.floorMeasurements = FloorMeasurementPlan.decodeWireValue(rawDraft.details?[FloorMeasurementPlan.wireKey])
+        rawDraft.cloudCreateFingerprint = try priorFingerprint(rawDraft); current = rawDraft
+        _ = try await CloudDraftCreation.ensure(snapshot: rawDraft, identity: identity, create: { _ in replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.needsServerSync == false && current?.floorMeasurements == newer, "Legacy replay comparison is safe when the typed plan exactly matches raw wire")
+        current = draft
+        let createGate = HeldBoundary()
+        let pending = Task { @MainActor in
+            try await CloudDraftCreation.ensure(snapshot: draft, identity: identity, create: { _ in await createGate.hold(); return replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        }
+        try await waitUntil { createGate.arrivals == 1 }
+        current?.floorMeasurements = newer
+        createGate.release(); _ = try await pending.value
+        try check(current?.floorMeasurements == newer && current?.needsServerSync == true && current?.measurementSync?.pending == true && current?.measurementSync?.factsReviewRequired == true, "An old combined-hash replay keeps geometry in CAS and ordinary facts behind explicit review")
+        current = draft
+        let identityGate = HeldBoundary()
+        let switched = Task { @MainActor in
+            try await CloudDraftCreation.ensure(snapshot: draft, identity: identity, create: { _ in await identityGate.hold(); return replay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        }
+        try await waitUntil { identityGate.arrivals == 1 }
+        activeIdentity = .init(userID: otherOrg.uuidString, revision: 11); identityGate.release()
+        do { _ = try await switched.value; throw AssertionFailure(message: "Account change adopted a measurement plan") }
+        catch is CloudSyncError { try check(current?.serverID == nil && current?.floorMeasurements == plan, "Create identity change preserves unbound manual measurements") }
+        activeIdentity = identity
+        var wrongOrg = replay; wrongOrg.serverOrgID = otherOrg
+        do { _ = try await CloudDraftCreation.ensure(snapshot: draft, identity: identity, create: { _ in wrongOrg }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in }); throw AssertionFailure(message: "Wrong workspace create adopted measurements") }
+        catch is CloudSyncError { try check(current?.serverID == nil, "Create receipt from another org cannot bind the manual plan") }
+
+        var casLocal = local
+        casLocal.details?[FloorMeasurementPlan.wireKey] = wire
+        casLocal.measurementSync = nil
+        try FloorMeasurementSync.stage(newer, in: &casLocal)
+        try check(casLocal.measurementSync?.expected == wire && casLocal.measurementSync?.pending == true && casLocal.needsServerSync != true, "Measurement-only staging keeps exact base without full-row dirty state")
+        let snap = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(casLocal))
+        try check(snap.measurementSync == casLocal.measurementSync, "Pending measurement CAS survives offline relaunch")
+        client.response = try JSONSerialization.data(withJSONObject: ["id": sid.uuidString, "org_id": org.uuidString, "details": [FloorMeasurementPlan.wireKey: newerWire]])
+        _ = try await client.updateMeasurements(casLocal)
+        let casRequest = client.requests.last!
+        let casBody = try JSONSerialization.jsonObject(with: casRequest.httpBody!) as! [String: Any]
+        try check(casBody.count == 2 && casBody["expected"] as? String == wire && casBody["value"] as? String == newerWire, "Actual measurement request contains only CAS base and value, never sqft/status/sold_at")
+        try check(casRequest.httpMethod == "PUT" && casRequest.url!.path.lowercased().hasSuffix("/" + sid.uuidString.lowercased() + "/measurements") && casRequest.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Actual measurement endpoint is bound to server listing and captured workspace")
+        let beforeScope = client.requests.count
+        WorkspaceContext.selectedOrgID = otherOrg
+        do { _ = try await client.updateMeasurements(casLocal); throw AssertionFailure(message: "Foreign workspace measurement dispatched") }
+        catch is CloudSyncError { try check(client.requests.count == beforeScope, "Workspace change prevents measurement dispatch") }
+        WorkspaceContext.selectedOrgID = org
+        let casModel = SyncModel(local), casGate = HeldBoundary()
+        casModel.listings[0].details?[FloorMeasurementPlan.wireKey] = wire
+        casModel.api.measurementUpdate = { submitted in
+            await casGate.hold()
+            var receipt = submitted; receipt.sqft = 2000; receipt.soldAt = fixedDate; receipt.status = .expired
+            receipt.details?["floorplan_url"] = "https://fixture.invalid/studio-new-plan.svg"
+            return receipt
+        }
+        try casModel.saveMeasurements(newer, for: localID)
+        try check(casModel.listings[0].details?[FloorMeasurementPlan.wireKey] == newerWire, "Actual measurement save mirrors typed geometry and exact raw wire atomically")
+        try await waitUntil { casGate.arrivals == 1 }
+        try check(casModel.api.snapshots.isEmpty && casModel.listings[0].needsServerSync != true, "Actual measurement save never calls full-row updateListing")
+        var casThird = newer; casThird.rooms[0].lengthMeters = 5
+        try casModel.saveMeasurements(casThird, for: localID)
+        casGate.release()
+        try await waitUntil { casGate.arrivals == 2 }
+        try check(casModel.api.measurementSnapshots[1].measurementSync?.expected == newerWire && casModel.listings[0].floorMeasurements == casThird, "Mid-request edit retains local geometry and advances only acknowledged CAS base")
+        casGate.release()
+        try await waitUntil { !casModel.syncInFlight.contains(localID) }
+        try check(casModel.listings[0].measurementSync?.pending == false && casModel.api.snapshots.isEmpty, "Only acknowledged latest measurement clears its independent queue")
+        try check(casModel.listings[0].sqft == 2000 && casModel.listings[0].soldAt == fixedDate && casModel.listings[0].status == .expired && casModel.listings[0].details?["floorplan_url"] == "https://fixture.invalid/studio-new-plan.svg", "Measurement receipt adopts unrelated shared facts and authoritative Studio attachment")
+        let conflictModel = SyncModel(casLocal)
+        conflictModel.api.measurementUpdate = { _ in throw APIError.server(409) }
+        await conflictModel.syncListing(localID)
+        try check(conflictModel.listings[0].measurementSync?.conflict == true && conflictModel.listings[0].floorMeasurements == newer, "Conflicting measurement write retains local plan and surfaces resolution state")
+        try refuses({ try conflictModel.saveMeasurements(plan, for: localID) }, "Conflict cannot silently overwrite shared geometry on another edit")
+        var pendingRemote = remote; pendingRemote.floorMeasurements = plan
+        pendingRemote.details?[FloorMeasurementPlan.wireKey] = wire
+        let pendingMerge = try CloudListingMerge.merge(local: [casLocal], remote: [pendingRemote], protected: [])[0]
+        try check(pendingMerge.floorMeasurements == newer && pendingMerge.measurementSync?.expected == wire && pendingMerge.sqft == remote.sqft, "Offline measurement refresh retains CAS state while adopting other shared facts")
+        var camelResponse = response; camelResponse["details"] = ["floorMeasurementsV1": wire]
+        let camelMapped = try client.mapped(JSONSerialization.data(withJSONObject: camelResponse))
+        try check(camelMapped.floorMeasurements == plan && camelMapped.measurementSync?.expected == wire, "Actual old-build camel-case wire recovers measurements and exact CAS baseline")
+        var ambiguousResponse = response; ambiguousResponse["details"] = ["floorMeasurementsV1": wire, FloorMeasurementPlan.wireKey: newerWire]
+        let ambiguous = try client.mapped(JSONSerialization.data(withJSONObject: ambiguousResponse))
+        try check(ambiguous.floorMeasurements == nil && FloorMeasurementPlan.hasUnreadableValue(in: ambiguous.details), "Conflicting legacy aliases remain unreadable instead of choosing and losing a plan")
+
+        // A new creation records ordinary intent separately. Geometry-only
+        // changes while a lost receipt is retried cannot republish stale facts.
+        var prepared = local
+        prepared.serverID = nil; prepared.serverOrgID = nil
+        prepared.cloudCreateFingerprint = nil; prepared.cloudCreateFactsFingerprint = nil
+        prepared.needsServerSync = false
+        prepared.measurementSync = FloorMeasurementSyncState(expected: nil, pending: true)
+        try CloudDraftCreation.prepare(&prepared)
+        try check(prepared.cloudCreateFingerprint != nil && prepared.cloudCreateFactsFingerprint == CloudDraftCreation.factsFingerprint(prepared), "First create captures ordinary facts intent separately from measurements")
+        let preparedRestored = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(prepared))
+        try check(preparedRestored.cloudCreateFactsFingerprint == prepared.cloudCreateFactsFingerprint, "Original ordinary facts fingerprint survives a lost-receipt relaunch")
+        var preparedEdit = prepared
+        try FloorMeasurementSync.stage(newer, in: &preparedEdit)
+        try CloudDraftCreation.prepare(&preparedEdit)
+        try check(preparedEdit.cloudCreateFactsFingerprint == prepared.cloudCreateFactsFingerprint && preparedEdit.cloudCreateFingerprint == prepared.cloudCreateFingerprint, "A retry preserves original fingerprints after a newer local measurement edit")
+
+        var office = remote
+        office.address = "Office corrected address"; office.sqft = 2750
+        office.soldAt = fixedDate; office.status = .expired
+        office.floorMeasurements = plan; office.details?[FloorMeasurementPlan.wireKey] = wire
+        office.details?["floorplan_url"] = "https://fixture.invalid/office-plan.pdf"
+        office.measurementSync = FloorMeasurementSyncState(expected: wire)
+        office.cloudCreateReplayed = true
+        office.factsSync = ListingFactsSyncState(baseline: ListingFactsSync.values(office), detailBaseline: ListingFactsSync.detailFacts(office))
+        let replayModel = SyncModel(prepared), replayGate = HeldBoundary()
+        let replayCreate = Task { @MainActor in
+            try await CloudDraftCreation.ensure(snapshot: prepared, identity: identity,
+                create: { _ in await replayGate.hold(); return office }, current: { replayModel.listings[0] },
+                activeIdentity: { identity }, save: { replayModel.listings[0] = $0 }, deleteRemoved: { _ in })
+        }
+        try await waitUntil { replayGate.arrivals == 1 }
+        try replayModel.saveMeasurements(newer, for: localID)
+        await Task.yield()
+        try await waitUntil { !replayModel.syncInFlight.contains(localID) }
+        replayGate.release(); _ = try await replayCreate.value
+        try check(replayModel.listings[0].floorMeasurements == newer && replayModel.listings[0].measurementSync?.expected == wire && replayModel.listings[0].needsServerSync != true, "Geometry-only create replay advances CAS base without generic dirty state")
+        try check(replayModel.listings[0].address == office.address && replayModel.listings[0].sqft == office.sqft && replayModel.listings[0].soldAt == office.soldAt && replayModel.listings[0].details?["floorplan_url"] == office.details?["floorplan_url"], "Geometry-only replay adopts office facts and attachment while retaining local geometry")
+        replayModel.api.measurementUpdate = { submitted in
+            var accepted = office; accepted.floorMeasurements = submitted.floorMeasurements
+            accepted.details = FloorMeasurementPlan.replacingWire(in: accepted.details, with: FloorMeasurementPlan.wireValue(in: submitted.details)!)
+            return accepted
+        }
+        await replayModel.syncListing(localID)
+        try check(replayModel.api.measurementSnapshots.count == 1 && replayModel.api.snapshots.isEmpty && replayModel.listings[0].measurementSync?.pending == false, "A measurement-only lost-receipt replay never sends stale full-row facts CAS")
+
+        // If the office changed geometry too, a recovered creation must keep
+        // the old baseline and ask for a choice, not overwrite the office plan.
+        var officeGeometry = office
+        officeGeometry.floorMeasurements = newer; officeGeometry.details?[FloorMeasurementPlan.wireKey] = newerWire
+        officeGeometry.measurementSync = FloorMeasurementSyncState(expected: newerWire)
+        let changedOfficeModel = SyncModel(prepared)
+        try FloorMeasurementSync.stage(casThird, in: &changedOfficeModel.listings[0])
+        _ = try await CloudDraftCreation.ensure(snapshot: prepared, identity: identity,
+            create: { _ in officeGeometry }, current: { changedOfficeModel.listings[0] },
+            activeIdentity: { identity }, save: { changedOfficeModel.listings[0] = $0 }, deleteRemoved: { _ in })
+        changedOfficeModel.api.measurementUpdate = { _ in throw APIError.server(409) }
+        await changedOfficeModel.syncListing(localID)
+        try check(changedOfficeModel.listings[0].floorMeasurements == casThird && changedOfficeModel.listings[0].measurementSync?.conflict == true && changedOfficeModel.api.snapshots.isEmpty, "Office geometry changes during lost-receipt replay preserve local plan and surface CAS conflict")
+        changedOfficeModel.api.cloudRead = { [officeGeometry] }
+        try await changedOfficeModel.reloadSharedMeasurements(localID)
+        let casThirdWire = try casThird.encodedWireValue()
+        try check(changedOfficeModel.listings[0].floorMeasurements == newer && changedOfficeModel.listings[0].measurementSync?.expected == newerWire && changedOfficeModel.listings[0].measurementSync?.savedLocalCopy == casThirdWire, "Actual shared reload stores the local plan and exact shared CAS base")
+        let savedChoice = FloorMeasurementPlan.decodeWireValue(changedOfficeModel.listings[0].measurementSync?.savedLocalCopy)!
+        changedOfficeModel.api.measurementUpdate = { submitted in
+            var accepted = officeGeometry; accepted.floorMeasurements = submitted.floorMeasurements
+            accepted.details = FloorMeasurementPlan.replacingWire(in: accepted.details, with: FloorMeasurementPlan.wireValue(in: submitted.details)!)
+            return accepted
+        }
+        try changedOfficeModel.saveMeasurements(savedChoice, for: localID)
+        try await waitUntil { changedOfficeModel.api.measurementSnapshots.count == 2 && !changedOfficeModel.syncInFlight.contains(localID) }
+        try check(changedOfficeModel.api.measurementSnapshots.last?.measurementSync?.expected == newerWire && changedOfficeModel.listings[0].floorMeasurements == casThird && changedOfficeModel.api.snapshots.isEmpty, "Restoring saved local geometry uses the loaded shared baseline through actual CAS save")
+
+        // Old snapshots have a typed plan ahead of raw cached wire, but cannot
+        // prove the intent of their generic dirty bit. Recover geometry first;
+        // preserve ordinary fields behind an explicit review decision.
+        var priorPending = local
+        priorPending.floorMeasurements = newer; priorPending.measurementSync = nil
+        priorPending.needsServerSync = true
+        let recoveredPrior = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(priorPending))
+        try check(recoveredPrior.floorMeasurements == newer && recoveredPrior.measurementSync?.expected == wire && recoveredPrior.measurementSync?.pending == true && recoveredPrior.measurementSync?.factsReviewRequired == true && recoveredPrior.details?[FloorMeasurementPlan.wireKey] == newerWire, "Legacy pending geometry recovers exact CAS baseline before generic acknowledgement")
+        let recoveredModel = SyncModel(recoveredPrior)
+        await recoveredModel.syncListing(localID)
+        try check(recoveredModel.api.measurementSnapshots.count == 1 && recoveredModel.api.snapshots.isEmpty && recoveredModel.listings[0].measurementSync?.pending == false && recoveredModel.listings[0].measurementSync?.factsReviewRequired == true && recoveredModel.listings[0].needsServerSync == true, "Unproven legacy listing facts never reach generic facts CAS")
+        let recoveredMerge = try CloudListingMerge.merge(local: recoveredModel.listings, remote: [office], protected: [])[0]
+        try check(recoveredMerge.floorMeasurements == newer && recoveredMerge.address == local.address && recoveredMerge.measurementSync?.factsReviewRequired == true, "Refresh retains recovered geometry and unreviewed local ordinary facts")
+        let undecodedMerge = try CloudListingMerge.merge(local: [priorPending], remote: [office], protected: [])[0]
+        try check(undecodedMerge.floorMeasurements == newer && undecodedMerge.measurementSync?.expected == wire && undecodedMerge.measurementSync?.factsReviewRequired == true, "Cloud merge recovers legacy queue before adopting shared fields")
+        WorkspaceContext.selectedOrgID = otherOrg
+        try refuses({ try recoveredModel.confirmLocalListingDetails(localID) }, "Ordinary review confirmation is bound to the selected workspace")
+        WorkspaceContext.selectedOrgID = org
+        recoveredModel.api.cloudRead = { [office] }
+        try recoveredModel.confirmLocalListingDetails(localID)
+        try await waitUntil { recoveredModel.api.snapshots.count == 1 && !recoveredModel.syncInFlight.contains(localID) }
+        try check(recoveredModel.api.cloudReads == 1 && recoveredModel.listings[0].needsServerSync == false && recoveredModel.listings[0].measurementSync?.factsReviewRequired == false && recoveredModel.api.snapshots[0].address == local.address && recoveredModel.api.snapshots[0].factsSync?.fields["address"]?.expected == .text(office.address), "Only explicit keep-local confirmation permits the reviewed ordinary facts CAS")
+
+        var recoveredConflict = recoveredPrior
+        recoveredConflict.measurementSync?.conflict = true
+        let sharedChoiceModel = SyncModel(recoveredConflict)
+        sharedChoiceModel.api.cloudRead = { [office] }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try check(sharedChoiceModel.listings[0].address == local.address && sharedChoiceModel.listings[0].needsServerSync == true && sharedChoiceModel.listings[0].measurementSync?.factsReviewRequired == true && sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire, "Loading only shared measurements does not approve unproven ordinary facts")
+        try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
+        try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire && sharedChoiceModel.listings[0].floorMeasurements == plan, "Sequential shared measurements then shared facts retain the original phone backup")
+        try check(sharedChoiceModel.listings[0].address == office.address && sharedChoiceModel.listings[0].sqft == office.sqft && sharedChoiceModel.listings[0].soldAt == office.soldAt && sharedChoiceModel.listings[0].details?["floorplan_url"] == office.details?["floorplan_url"] && sharedChoiceModel.listings[0].needsServerSync == false && sharedChoiceModel.listings[0].measurementSync?.factsReviewRequired != true && sharedChoiceModel.api.snapshots.isEmpty, "Explicit use-shared choice adopts office facts and retains local measurement backup without facts CAS")
+        var formattedOffice = office
+        let formattedWire = "\n" + wire + "\n"
+        formattedOffice.details?[FloorMeasurementPlan.wireKey] = formattedWire
+        formattedOffice.measurementSync = FloorMeasurementSyncState(expected: formattedWire)
+        sharedChoiceModel.api.cloudRead = { [formattedOffice] }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
+        try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire && sharedChoiceModel.listings[0].measurementSync?.expected == formattedWire && sharedChoiceModel.listings[0].floorMeasurements == plan, "Semantically identical shared JSON formatting does not replace the saved phone plan")
+        var absentOffice = office
+        absentOffice.floorMeasurements = nil
+        absentOffice.details = (absentOffice.details ?? [:]).filter { !FloorMeasurementPlan.isPlanKey($0.key) }
+        absentOffice.measurementSync = FloorMeasurementSyncState(expected: nil)
+        sharedChoiceModel.api.cloudRead = { [absentOffice] }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
+        try check(sharedChoiceModel.listings[0].floorMeasurements == nil && sharedChoiceModel.listings[0].measurementSync?.expected == nil && sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == newerWire, "Repeated shared absence retains the previous restorable phone plan")
+        let originalBackup = FloorMeasurementPlan.decodeWireValue(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy)!
+        try sharedChoiceModel.saveMeasurements(originalBackup, for: localID)
+        try await waitUntil { sharedChoiceModel.api.measurementSnapshots.count == 1 && !sharedChoiceModel.syncInFlight.contains(localID) }
+        try check(sharedChoiceModel.listings[0].floorMeasurements == newer && sharedChoiceModel.api.measurementSnapshots[0].measurementSync?.expected == nil && sharedChoiceModel.api.snapshots.isEmpty, "Original phone backup restores through CAS after both shared choices and shared absence")
+        let replacementGate = HeldBoundary()
+        sharedChoiceModel.api.measurementUpdate = { _ in await replacementGate.hold(); throw APIError.server(409) }
+        try sharedChoiceModel.saveMeasurements(casThird, for: localID)
+        try await waitUntil { replacementGate.arrivals == 1 }
+        sharedChoiceModel.api.cloudRead = { [office] }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == casThirdWire && sharedChoiceModel.listings[0].floorMeasurements == plan, "New pending local geometry replaces the old backup when loading shared measurements")
+        replacementGate.release()
+        try await waitUntil { !sharedChoiceModel.syncInFlight.contains(localID) }
+        let clearGate = HeldBoundary()
+        let deliberatelyEmpty = FloorMeasurementPlan(unit: .meters, rooms: [], updatedAt: fixedDate)
+        let deliberatelyEmptyWire = try deliberatelyEmpty.encodedWireValue()
+        sharedChoiceModel.api.measurementUpdate = { _ in await clearGate.hold(); throw APIError.server(409) }
+        try sharedChoiceModel.saveMeasurements(deliberatelyEmpty, for: localID)
+        try await waitUntil { clearGate.arrivals == 1 }
+        try await sharedChoiceModel.reloadSharedMeasurements(localID)
+        try await sharedChoiceModel.reloadSharedMeasurements(localID, includeListingDetails: true)
+        try check(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy == deliberatelyEmptyWire && FloorMeasurementPlan.decodeWireValue(sharedChoiceModel.listings[0].measurementSync?.savedLocalCopy)?.isEmpty == true, "An intentional empty local plan remains restorable across repeated shared loads")
+        clearGate.release()
+        try await waitUntil { !sharedChoiceModel.syncInFlight.contains(localID) }
+        var ambiguousPrior = priorPending
+        ambiguousPrior.details?[FloorMeasurementPlan.wireKey] = "{unsupported"
+        FloorMeasurementSync.recoverLegacyPending(in: &ambiguousPrior)
+        let ambiguousPriorModel = SyncModel(ambiguousPrior)
+        await ambiguousPriorModel.syncListing(localID)
+        try check(ambiguousPriorModel.listings[0].floorMeasurements == newer && ambiguousPriorModel.listings[0].details?[FloorMeasurementPlan.wireKey] == "{unsupported" && ambiguousPriorModel.listings[0].measurementSync?.conflict == true && ambiguousPriorModel.api.measurementSnapshots.isEmpty && ambiguousPriorModel.api.snapshots.isEmpty, "Unreadable legacy baseline retains both representations and permits no guessed CAS or ordinary facts CAS")
+
+        // A manual shared-version load replaces the queue while HTTP is held.
+        // Neither a late success nor late conflict may revive the old queue.
+        for lateConflict in [false, true] {
+            let lateModel = SyncModel(local), lateGate = HeldBoundary()
+            lateModel.api.measurementUpdate = { submitted in
+                await lateGate.hold()
+                if lateConflict { throw APIError.server(409) }
+                return submitted
+            }
+            var loadedShared = office; loadedShared.floorMeasurements = casThird
+            loadedShared.details?[FloorMeasurementPlan.wireKey] = casThirdWire
+            loadedShared.measurementSync = FloorMeasurementSyncState(expected: casThirdWire)
+            lateModel.api.cloudRead = { [loadedShared] }
+            try lateModel.saveMeasurements(newer, for: localID)
+            try await waitUntil { lateGate.arrivals == 1 }
+            try await lateModel.reloadSharedMeasurements(localID)
+            lateGate.release()
+            try await waitUntil { !lateModel.syncInFlight.contains(localID) || lateModel.api.measurementSnapshots.count > 1 }
+            try check(lateModel.listings[0].floorMeasurements == casThird && lateModel.listings[0].measurementSync?.expected == casThirdWire && lateModel.listings[0].measurementSync?.pending == false && lateModel.listings[0].measurementSync?.conflict != true && lateModel.api.measurementSnapshots.count == 1 && lateModel.api.snapshots.isEmpty, "Late CAS success or conflict cannot revive a queue replaced by shared reload")
+        }
+
+        let heldReloadModel = SyncModel(local), heldReloadGate = HeldBoundary()
+        heldReloadModel.api.cloudRead = { await heldReloadGate.hold(); return [office] }
+        let heldReload = Task { try await heldReloadModel.reloadSharedMeasurements(localID) }
+        try await waitUntil { heldReloadGate.arrivals == 1 }
+        heldReloadModel.listings[0].tagline = "Edited during shared read"
+        heldReloadGate.release()
+        do { try await heldReload.value; throw AssertionFailure(message: "Shared read replaced a mid-flight local edit") }
+        catch is CloudSyncError {
+            try check(heldReloadModel.listings[0].tagline == "Edited during shared read" && heldReloadModel.listings[0].floorMeasurements == plan, "Actual shared reload refuses changed local state and retains mid-flight edits")
+        }
+
+        // Compile the actual AppModel modify/markDirty/syncListing methods and
+        // suspend their HTTP boundary to prove dirty acknowledgement ordering.
+        let model = SyncModel(local), updateGate = HeldBoundary()
+        model.api.update = { snapshot in await updateGate.hold(); return snapshot }
+        model.modify(localID) { $0.tagline = "First ordinary edit" }
+        try await waitUntil { updateGate.arrivals == 1 }
+        try check(model.listings[0].needsServerSync == true && model.api.snapshots[0].tagline == "First ordinary edit" && model.api.measurementSnapshots.isEmpty, "Actual modify sends ordinary facts through generic facts CAS independently of measurements")
+        model.modify(localID) { $0.tagline = "Second ordinary edit" }
+        updateGate.release()
+        try await waitUntil { updateGate.arrivals == 2 }
+        try check(model.api.snapshots.count == 2 && model.api.snapshots[1].tagline == "Second ordinary edit" && model.listings[0].needsServerSync == true, "Mid-facts CAS ordinary edits require a second save before acknowledgement")
+        updateGate.release()
+        try await waitUntil { !model.syncInFlight.contains(localID) }
+        try check(model.listings[0].needsServerSync == false && model.listings[0].tagline == "Second ordinary edit" && model.listings[0].floorMeasurements == plan, "Only the acknowledged latest ordinary edit clears generic dirty state")
+        let ordinaryPending = stagedOrdinaryEdit(local)
+        let failureModel = SyncModel(ordinaryPending), failureGate = HeldBoundary()
+        failureModel.api.update = { _ in await failureGate.hold(); throw FixtureError.failed }
+        let failed = Task { await failureModel.syncListing(localID) }
+        try await waitUntil { failureGate.arrivals == 1 }; failureGate.release(); await failed.value
+        try check(failureModel.listings[0].needsServerSync == true && failureModel.listings[0].floorMeasurements == plan, "Failed facts CAS preserves dirty measurements for retry")
+        let cancelModel = SyncModel(ordinaryPending), cancelGate = HeldBoundary()
+        cancelModel.api.update = { _ in await cancelGate.hold(); try Task.checkCancellation(); return ordinaryPending }
+        let cancelled = Task { await cancelModel.syncListing(localID) }
+        try await waitUntil { cancelGate.arrivals == 1 }; cancelled.cancel(); cancelGate.release(); await cancelled.value
+        try check(cancelModel.listings[0].needsServerSync == true && cancelModel.listings[0].floorMeasurements == plan, "Cancelled facts CAS does not clear a manual plan's dirty state")
+        let switchModel = SyncModel(ordinaryPending), switchGate = HeldBoundary()
+        switchModel.api.update = { snapshot in await switchGate.hold(); return snapshot }
+        let switchedUpdate = Task { await switchModel.syncListing(localID) }
+        try await waitUntil { switchGate.arrivals == 1 }
+        AuthStore.shared.syncSessionRevision += 1
+        switchGate.release(); await switchedUpdate.value
+        try check(switchModel.listings[0].needsServerSync == true && switchModel.listings[0].floorMeasurements == plan, "Account revision change cannot acknowledge another session's plan write")
+        // Version two may consist only of an irregular outline. A rooms-only
+        // emptiness check would silently discard the feature's primary input.
+        let outline = FloorMeasurementOutline(id: UUID(uuidString: "66666666-6666-4666-8666-666666666666")!,
+            name: "Measured L-shaped first floor", floor: 0,
+            vertices: [.init(x: 0, y: 0), .init(x: 5, y: 0), .init(x: 5, y: 2),
+                       .init(x: 2, y: 2), .init(x: 2, y: 5), .init(x: 0, y: 5)], category: .finished)
+        let outlinePlan = FloorMeasurementPlan(version: 2, unit: .meters, rooms: [], outlines: [outline], updatedAt: fixedDate)
+        let outlineWire = try outlinePlan.encodedWireValue()
+        try check(!outlinePlan.isEmpty && outlinePlan.rooms.isEmpty, "An outline-only measurement plan is not an empty plan")
+        var outlineNewer = outlinePlan
+        outlineNewer.outlines[0].vertices[1].x = 6
+        outlineNewer.updatedAt = fixedDate.addingTimeInterval(3)
+        let outlineNewerWire = try outlineNewer.encodedWireValue()
+        var outlineLocal = local
+        outlineLocal.floorMeasurements = outlinePlan
+        // Deliberately stale raw wire: request assembly must use the current
+        // typed outline even before an editor has mirrored its local details.
+        outlineLocal.details?[FloorMeasurementPlan.wireKey] = wire
+        for isPatch in [false, true] {
+            let body = try client.body(outlineLocal, patch: isPatch)
+            try check((body["details"] as? [String: String])?[FloorMeasurementPlan.wireKey] == (isPatch ? nil : outlineWire),
+                      "Outline-only plan survives create assembly and stays out of generic facts CAS")
+            try check(body["sqft"] as? Int == local.sqft, "Measured outlines do not replace advertised listing area in a wire write")
+            try check(body["main_photo_key"] == nil && body["gallery_asset_ids"] == nil,
+                      "Outline-only writes do not clear separately owned listing media")
+        }
+        var outlineResponse = response
+        outlineResponse["details"] = try client.body(outlineLocal, patch: false)["details"]
+        client.response = try JSONSerialization.data(withJSONObject: outlineResponse)
+        let outlineMapped = try client.mapped(client.response)
+        try check(outlineMapped.floorMeasurements == outlinePlan && outlineMapped.details?[FloorMeasurementPlan.wireKey] == outlineWire,
+                  "Actual DTO mapping decodes an outline-only version-two plan under the existing wire key")
+        let outlineRequestStart = client.requests.count
+        _ = try await client.createListing(outlineLocal)
+        _ = try await client.updateListing(stagedOrdinaryEdit(outlineLocal))
+        try check(client.requests.count == outlineRequestStart + 2, "Outline-only plans reach both actual create and facts CAS request boundaries")
+        let outlineSent = try JSONSerialization.jsonObject(with: client.requests.last!.httpBody!) as! [String: Any]
+        try check((outlineSent["details_changes"] as? [String: Any])?[FloorMeasurementPlan.wireKey] == nil && (outlineSent["details_expected"] as? [String: Any])?[FloorMeasurementPlan.wireKey] == nil,
+                  "The generic outline facts CAS request cannot replace private measurements")
+        try check(client.requests.last!.httpMethod == "PUT" && client.requests.last!.url!.lastPathComponent == "facts" && client.requests.last!.url!.deletingLastPathComponent().lastPathComponent.lowercased() == sid.uuidString.lowercased(),
+                  "Outline-only facts CAS targets the bound server listing rather than an unbound local UUID")
+        let outlineRestored = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(outlineLocal))
+        try check(outlineRestored.floorMeasurements == outlinePlan && outlineRestored.sqft == local.sqft,
+                  "Local snapshots preserve irregular outlines without changing advertised area")
+        let rawOnlySnapshot = try JSONSerialization.data(withJSONObject: ["address": "New outline raw snapshot", "details": [FloorMeasurementPlan.wireKey: outlineWire]])
+        try check(try JSONDecoder().decode(Listing.self, from: rawOnlySnapshot).floorMeasurements == outlinePlan,
+                  "A current app recovers version-two outlines from raw-only snapshot details")
+
+        // Compile the complete frozen v1 reader, rather than simulating its
+        // version guard. Old clients must refuse v2, retain the raw string and
+        // save unrelated facts without overwriting it as an empty room plan.
+        try check(LegacyFloorMeasurementPlan.decodeWireValue(wire)?.rooms.count == 1,
+                  "Frozen prior reader still accepts a real supported version-one rectangle plan")
+        try check(LegacyFloorMeasurementPlan.decodeWireValue(outlineWire) == nil,
+                  "Frozen v1 reader refuses version-two outlines instead of interpreting them as an empty rectangle plan")
+        var oldReaderListing = outlineLocal
+        oldReaderListing.floorMeasurements = nil
+        oldReaderListing.details?[FloorMeasurementPlan.wireKey] = outlineWire
+        oldReaderListing.address = "Unrelated old-client fact edit"
+        try check(try LegacyListingWireDetails.merged(oldReaderListing)[FloorMeasurementPlan.wireKey] == outlineWire,
+                  "Frozen older write assembly preserves unreadable version-two raw wire verbatim")
+        try check(try ListingWireDetails.merged(oldReaderListing)[FloorMeasurementPlan.wireKey] == outlineWire,
+                  "Current raw-preserving write assembly keeps an unknown typed plan unchanged")
+        let editorModel = SyncModel(local)
+        let editor = PlanEditor(model: editorModel, listing: local, plan: plan)
+        try editor.save(outlinePlan)
+        let editorSaved = editorModel.listings[0]
+        let savedOutlineWire = try editorSaved.floorMeasurements!.encodedWireValue()
+        try check(editorSaved.details?[FloorMeasurementPlan.wireKey] == savedOutlineWire && editorSaved.floorMeasurements?.outlines.count == 1,
+                  "Actual editor saves the exact encoded outline wire and typed plan atomically in the same Listing")
+        let savedSnapshot = try JSONEncoder().encode(editorSaved)
+        let downgradedSnapshot = try JSONDecoder().decode(LegacySnapshotListing.self, from: savedSnapshot)
+        try check(downgradedSnapshot.floorMeasurements == nil && downgradedSnapshot.details?[FloorMeasurementPlan.wireKey] == savedOutlineWire,
+                  "The actual older Listing snapshot decoder refuses typed v2 and retains its exact mirrored raw wire")
+        try check(try LegacySnapshotWireDetails.merged(downgradedSnapshot)[FloorMeasurementPlan.wireKey] == savedOutlineWire,
+                  "The older snapshot write path preserves mirrored outline wire on unrelated facts edits")
+        let upgradedSnapshot = try JSONDecoder().decode(Listing.self, from: JSONEncoder().encode(downgradedSnapshot))
+        try check(upgradedSnapshot.floorMeasurements == editorSaved.floorMeasurements && upgradedSnapshot.sqft == local.sqft,
+                  "The current app recovers the exact outline after a supported old-reader snapshot round trip")
+        editor.currentContext = false
+        try refuses({ try editor.save(outlineNewer) }, "Actual editor refuses to save an outline after an account or workspace context change")
+        var clearedOutline = outlineLocal
+        clearedOutline.floorMeasurements = FloorMeasurementPlan(version: 2, rooms: [], outlines: [], updatedAt: fixedDate)
+        let emptyOutlineWire = (try client.body(clearedOutline, patch: false)["details"] as! [String: String])[FloorMeasurementPlan.wireKey]!
+        try check(FloorMeasurementPlan.decodeWireValue(emptyOutlineWire)?.isEmpty == true && emptyOutlineWire != outlineWire,
+                  "Deleting the last outline writes a supported empty version-two plan as an intentional clear")
+        var unknownOutlineObject = try JSONSerialization.jsonObject(with: Data(outlineWire.utf8)) as! [String: Any]
+        var unknownOutlines = unknownOutlineObject["outlines"] as! [[String: Any]]
+        unknownOutlines[0]["category"] = "future-category"
+        unknownOutlineObject["outlines"] = unknownOutlines
+        let unknownOutlineWire = String(decoding: try JSONSerialization.data(withJSONObject: unknownOutlineObject), as: UTF8.self)
+        outlineResponse["details"] = [FloorMeasurementPlan.wireKey: unknownOutlineWire]
+        let unsupportedOutline = try client.mapped(JSONSerialization.data(withJSONObject: outlineResponse))
+        try check(unsupportedOutline.floorMeasurements == nil && unsupportedOutline.details?[FloorMeasurementPlan.wireKey] == unknownOutlineWire,
+                  "An unsupported outline category preserves raw wire while ordinary listing facts remain readable")
+        try check(try ListingWireDetails.merged(unsupportedOutline)[FloorMeasurementPlan.wireKey] == unknownOutlineWire,
+                  "An unsupported outline category is never silently replaced by an empty current plan")
+        var badOutline = outlineLocal
+        badOutline.floorMeasurements?.outlines[0].vertices[1].x = .infinity
+        let beforeBadOutline = client.requests.count
+        try refuses({ _ = try client.body(badOutline, patch: true) }, "Nonfinite outline vertices fail before any actual HTTP request")
+        try check(client.requests.count == beforeBadOutline, "Invalid outline validation has no HTTP side effects")
+
+        let outlineFingerprint = try CloudDraftCreation.fingerprint(outlineLocal)
+        var outlineEdit = outlineLocal; outlineEdit.floorMeasurements = outlineNewer
+        try check(try CloudDraftCreation.fingerprint(outlineEdit) != outlineFingerprint,
+                  "Outline-only edits change the actual create fingerprint")
+        var outlineRemote = outlineMapped
+        outlineRemote.floorMeasurements = outlineNewer
+        outlineRemote.details?[FloorMeasurementPlan.wireKey] = outlineNewerWire
+        let outlineClean = try CloudListingMerge.merge(local: [outlineLocal], remote: [outlineRemote], protected: [])[0]
+        try check(outlineClean.floorMeasurements == outlineNewer && outlineClean.mainPhotoRelPath == outlineLocal.mainPhotoRelPath,
+                  "Clean remote hydration adopts outline-only data and preserves local photos")
+        var outlineDirty = outlineLocal; outlineDirty.needsServerSync = true
+        try check(try CloudListingMerge.merge(local: [outlineDirty], remote: [outlineRemote], protected: [])[0].floorMeasurements == outlinePlan,
+                  "Dirty irregular outlines survive an older remote snapshot")
+        try check(try CloudListingMerge.merge(local: [outlineLocal], remote: [outlineRemote], protected: [localID])[0].floorMeasurements == outlinePlan,
+                  "Protected irregular outlines survive a concurrent refresh")
+        try check(try CloudListingMerge.merge(local: [outlineLocal], remote: [oldCloud], protected: [])[0].floorMeasurements == nil,
+                  "Clean outline-only plans observe authoritative remote deletion")
+        try check(try CloudListingMerge.merge(local: [outlineDirty], remote: [oldCloud], protected: [])[0].floorMeasurements == outlinePlan,
+                  "Dirty outline-only plans survive remote absence until their write is acknowledged")
+        try check(try CloudListingMerge.merge(local: [outlineLocal], remote: [unsupportedOutline], protected: [])[0].details?[FloorMeasurementPlan.wireKey] == unknownOutlineWire,
+                  "Clean outline-only plans adopt future raw content rather than resurrecting a stale typed outline")
+
+        var outlineDraft = outlineLocal; outlineDraft.serverID = nil; outlineDraft.serverOrgID = nil; outlineDraft.measurementSync = nil
+        outlineDraft.cloudCreateFingerprint = try CloudDraftCreation.fingerprint(outlineDraft)
+        var outlineReplay = outlineRemote; outlineReplay.cloudCreateReplayed = true
+        current = outlineDraft
+        _ = try await CloudDraftCreation.ensure(snapshot: outlineDraft, identity: identity, create: { _ in outlineReplay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == outlineNewer && current?.needsServerSync == false,
+                  "An unedited outline-only create replay adopts the office outline")
+        current = outlineDraft; current?.floorMeasurements = outlineNewer
+        _ = try await CloudDraftCreation.ensure(snapshot: outlineDraft, identity: identity, create: { _ in outlineReplay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == outlineNewer && current?.needsServerSync == true && current?.measurementSync?.pending == true && current?.measurementSync?.factsReviewRequired == true,
+                  "An old outline-only create replay stages CAS and requires ordinary-facts review")
+        var priorOutlineDraft = outlineDraft
+        priorOutlineDraft.cloudCreateFingerprint = try priorFingerprint(priorOutlineDraft)
+        current = priorOutlineDraft; current?.floorMeasurements = outlineNewer
+        _ = try await CloudDraftCreation.ensure(snapshot: priorOutlineDraft, identity: identity, create: { _ in outlineReplay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == outlineNewer && current?.needsServerSync == true && current?.measurementSync?.factsReviewRequired == true,
+                  "Legacy raw fingerprints cannot overlook an independent outline edit")
+        var alignedOutlineDraft = outlineDraft
+        alignedOutlineDraft.details?[FloorMeasurementPlan.wireKey] = outlineWire
+        alignedOutlineDraft.cloudCreateFingerprint = try priorFingerprint(alignedOutlineDraft)
+        current = alignedOutlineDraft
+        _ = try await CloudDraftCreation.ensure(snapshot: alignedOutlineDraft, identity: identity, create: { _ in outlineReplay }, current: { current }, activeIdentity: { activeIdentity }, save: { current = $0 }, deleteRemoved: { _ in })
+        try check(current?.floorMeasurements == outlineNewer && current?.needsServerSync == false,
+                  "An unedited outline matching raw wire remains compatible with a pending legacy create fingerprint")
+
+        // The actual anonymous-account journal rebinds identities only. It
+        // must preserve the newer local outline, its raw wire and listing area.
+        let adoption = AnonymousAdoptionRecovery.Pending(version: 1, operationID: UUID(), sourceUserID: org,
+            destinationUserID: otherOrg, sourceAccessToken: "inert-fixture-token", sourceRefreshToken: nil)
+        let journal = try AdoptionLocalBindings.capture(adoption, listings: [outlineLocal])
+        var detachedOutline = outlineEdit; detachedOutline.serverID = nil
+        let adopted = try journal.restoring([detachedOutline], pending: adoption, currentUserID: otherOrg, orgID: org)[0]
+        try check(adopted.floorMeasurements == outlineNewer && adopted.details == outlineEdit.details && adopted.needsServerSync == true,
+                  "Actual anonymous adoption preserves current outlines and raw wire while marking the rebound listing dirty")
+        try check(adopted.sqft == local.sqft && adopted.serverID == sid,
+                  "Anonymous adoption rebinds the same listing without replacing advertised area")
+        try check(try CloudDraftCreation.fingerprint(adopted) == CloudDraftCreation.fingerprint(outlineEdit),
+                  "Anonymous adoption does not change the facts fingerprint of an outline-only measurement plan")
+        try refuses({ _ = try journal.restoring([detachedOutline], pending: adoption, currentUserID: org, orgID: org) },
+                    "Another account cannot adopt an irregular outline through a foreign handoff")
+
+        var acknowledgedOutline = outlineLocal
+        acknowledgedOutline.details?[FloorMeasurementPlan.wireKey] = outlineWire
+        acknowledgedOutline.measurementSync = FloorMeasurementSyncState(expected: outlineWire)
+        let outlineModel = SyncModel(acknowledgedOutline), outlineUpdateGate = HeldBoundary()
+        outlineModel.api.measurementUpdate = { snapshot in await outlineUpdateGate.hold(); return snapshot }
+        try outlineModel.saveMeasurements(outlineNewer, for: localID)
+        try await waitUntil { outlineUpdateGate.arrivals == 1 }
+        try check(outlineModel.listings[0].measurementSync?.pending == true && outlineModel.api.measurementSnapshots[0].floorMeasurements == outlineNewer && outlineModel.api.snapshots.isEmpty,
+                  "Actual saveMeasurements sends an outline-only edit through CAS without generic facts CAS")
+        try outlineModel.saveMeasurements(clearedOutline.floorMeasurements!, for: localID)
+        outlineUpdateGate.release()
+        try await waitUntil { outlineUpdateGate.arrivals == 2 }
+        try check(outlineModel.api.measurementSnapshots[1].floorMeasurements?.isEmpty == true && outlineModel.listings[0].measurementSync?.pending == true && outlineModel.api.snapshots.isEmpty,
+                  "Deleting the last outline during held CAS dispatches a second empty version-two write")
+        outlineUpdateGate.release()
+        try await waitUntil { !outlineModel.syncInFlight.contains(localID) }
+        try check(outlineModel.listings[0].floorMeasurements?.isEmpty == true && outlineModel.listings[0].measurementSync?.pending == false && outlineModel.api.snapshots.isEmpty,
+                  "Only acknowledgement of the latest outline clear removes its CAS queue")
+        print("PASS: \(checks) assertions; actual wire/create/facts CAS/dirty-sync/replay/adoption sources plus frozen v1 reader; zero network or camera calls")
+    }
+}

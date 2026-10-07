@@ -49,6 +49,7 @@ export interface StudioDependencies {
     bucket: "uploads" | "renders",
     key: string,
     seconds: number,
+    scope: MediaScope,
   ): Promise<string>;
   now(): number;
 }
@@ -191,7 +192,7 @@ export function createStudioHandler(deps: StudioDependencies) {
         if (signed.has(key as string)) return null;
         signed.add(key as string);
         exposedKeys.add(key as string);
-        return await deps.sign(bucket, key as string, MEDIA_TTL_SECONDS);
+        return await deps.sign(bucket, key as string, MEDIA_TTL_SECONDS,scope);
       }
       // Sequential signing is intentionally bounded (at most 200 objects per page).
       // It does no object download, provider work, mutation, or publication.
@@ -204,7 +205,7 @@ export function createStudioHandler(deps: StudioDependencies) {
           const originalBucket = bucketForKey(photo.original_key, scope);
           const originalURL = originalBucket && photo.original_key && access.keys[photo.original_key] === true
             ? photo.original_key === (photo.enhanced_key || photo.original_key) ? url
-              : await deps.sign(originalBucket, photo.original_key, MEDIA_TTL_SECONDS)
+              : await deps.sign(originalBucket, photo.original_key, MEDIA_TTL_SECONDS,scope)
             : null;
           if (originalURL && photo.original_key) exposedKeys.add(photo.original_key);
           photos.push({
@@ -221,6 +222,7 @@ export function createStudioHandler(deps: StudioDependencies) {
         }
       }
       for (const asset of pageAssets) {
+        if (/\/contact-[^/]+$/.test(asset.storage_key)) continue;
         if (access.assets[asset.id] !== true) { unavailable++; continue; }
         if (!asset.uploaded || !["photo", "video"].includes(asset.kind)) {
           continue;

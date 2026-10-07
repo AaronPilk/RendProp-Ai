@@ -1,0 +1,283 @@
+import Foundation
+
+// Platform boundaries only. Actual save/permission/caller bodies are inserted
+// below unchanged; these doubles never import UIKit or Photos.
+struct UIImage {}
+enum PHAccessLevel { case addOnly }
+enum PHAuthorizationStatus { case notDetermined, authorized, limited, denied }
+enum FakeError: Error { case failedWrite }
+
+final class PhotoBoundary {
+    static let shared = PhotoBoundary()
+    private let lock = NSLock()
+    private var status: PHAuthorizationStatus = .authorized
+    private var permission: CheckedContinuation<PHAuthorizationStatus, Never>?
+    private var write: CheckedContinuation<Void, Error>?
+    private var holdWrite = false, failWrite = false
+    private var attempts = 0, creations = 0, successes = 0
+    private func locked<T>(_ body: () -> T) -> T { lock.lock(); defer { lock.unlock() }; return body() }
+    func reset(_ status: PHAuthorizationStatus = .authorized, hold: Bool = false, fail: Bool = false) {
+        locked { precondition(permission == nil && write == nil); self.status = status
+            holdWrite = hold; failWrite = fail; attempts = 0; creations = 0; successes = 0 }
+    }
+    var authorization: PHAuthorizationStatus { locked { status } }
+    var waitingPermission: Bool { locked { permission != nil } }
+    var waitingWrite: Bool { locked { write != nil } }
+    var writeAttempts: Int { locked { attempts } }
+    var creationRequests: Int { locked { creations } }
+    var completedWrites: Int { locked { successes } }
+    func request(_ continuation: CheckedContinuation<PHAuthorizationStatus, Never>) { locked { permission = continuation } }
+    func permit(_ status: PHAuthorizationStatus) {
+        let continuation = locked { let c = permission; permission = nil; self.status = status; return c }
+        precondition(continuation != nil); continuation?.resume(returning: status)
+    }
+    func beginWrite() { locked { attempts += 1 } }
+    func create() { locked { creations += 1 } }
+    func finish(_ continuation: CheckedContinuation<Void, Error>) {
+        let flags = locked { () -> (Bool, Bool) in
+            if holdWrite { write = continuation }
+            return (holdWrite, failWrite)
+        }
+        guard !flags.0 else { return }
+        if flags.1 { continuation.resume(throwing: FakeError.failedWrite) }
+        else { locked { successes += 1 }; continuation.resume() }
+    }
+    func completeWrite() {
+        let continuation = locked { let c = write; write = nil; successes += 1; return c }
+        precondition(continuation != nil); continuation?.resume()
+    }
+}
+
+final class PHPhotoLibrary {
+    static let instance = PHPhotoLibrary()
+    static func shared() -> PHPhotoLibrary { instance }
+    static func authorizationStatus(for level: PHAccessLevel) -> PHAuthorizationStatus { PhotoBoundary.shared.authorization }
+    static func requestAuthorization(for level: PHAccessLevel) async -> PHAuthorizationStatus {
+        await withCheckedContinuation { PhotoBoundary.shared.request($0) }
+    }
+    func performChanges(_ changes: @escaping () -> Void) async throws {
+        PhotoBoundary.shared.beginWrite(); changes()
+        try await withCheckedThrowingContinuation { PhotoBoundary.shared.finish($0) }
+    }
+}
+enum PHAssetChangeRequest {
+    static func creationRequestForAsset(from image: UIImage) -> Int { PhotoBoundary.shared.create(); return 1 }
+    static func creationRequestForAssetFromImage(atFileURL url: URL) -> Int { PhotoBoundary.shared.create(); return 1 }
+    static func creationRequestForAssetFromVideo(atFileURL url: URL) -> Int { PhotoBoundary.shared.create(); return 1 }
+}
+@MainActor enum Haptics { static var successes = 0; static func selection() {}; static func success() { successes += 1 } }
+@MainActor enum Analytics { static func track(_ event: String, _ values: [String: String]) {} }
+struct APIError: Error { let isNotFound = false; let isUnauthorized = false; let isForbidden = false }
+enum AIImagePrep { static func error(_ message: String) -> Error { NSError(domain: message, code: 1) } }
+struct AIFailure { let message: String; init(_ error: Error) { message = error.localizedDescription } }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var userID: String? = "A"
+    var syncSessionRevision: UInt64 = 1
+    var isSignedIn = true
+}
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
+enum Config { static let enableAuth = true }
+struct Listing { let id: UUID; var serverID: UUID?; var serverOrgID: UUID?; var cloudUnavailable: Bool?; var isSample = false; var address = "Synthetic A address" }
+struct ProvenanceRecord { var originalURL: URL? }
+struct AuditExport { var url: URL }
+struct ListingMediaItem { let url: URL; var isVideo: Bool; var title = "Synthetic file"; var id = "synthetic-local-file"; enum Kind: String { case photo, video }; var kind: Kind { isVideo ? .video : .photo } }
+@MainActor final class URLSession {
+    static let shared = URLSession()
+    var waiting = false
+    var hold = false
+    var continuation: CheckedContinuation<Void, Never>?
+    var downloads = 0
+    var urls: [URL] = []
+    var root: URL!
+    func reset() { waiting = false; hold = false; continuation = nil; downloads = 0; urls = [] }
+    func download(from remote: URL) async throws -> (URL, URLResponse) {
+        precondition(remote.host == "synthetic.invalid")
+        downloads += 1
+        let url = root.appendingPathComponent("returned-download-" + UUID().uuidString)
+        try Data("synthetic-private-original".utf8).write(to: url)
+        urls.append(url)
+        if hold { waiting = true; await withCheckedContinuation { continuation = $0 } }
+        return (url, HTTPURLResponse(url: remote, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+    }
+    func release() { waiting = false; let saved = continuation; continuation = nil; hold = false; saved?.resume() }
+}
+@MainActor final class API {
+    var provenanceCalls = 0
+    var csvCalls = 0
+    var waiting = false
+    var hold = false
+    var continuation: CheckedContinuation<Void, Never>?
+    func provenance(listingServerID: UUID) async throws -> [ProvenanceRecord] {
+        provenanceCalls += 1
+        return [ProvenanceRecord(originalURL: URL(string: "https://synthetic.invalid/A-original.jpg"))]
+    }
+    func complianceCSV(listingServerID: UUID) async throws -> Data {
+        csvCalls += 1
+        if hold { waiting = true; await withCheckedContinuation { continuation = $0 } }
+        return Data("Synthetic A private audit".utf8)
+    }
+    func release() { waiting = false; let saved = continuation; continuation = nil; hold = false; saved?.resume() }
+}
+@MainActor final class AppModel { var listings: [Listing]; let api = API(); init(_ listing: Listing) { listings = [listing] } }
+__SCOPE__
+__CONTEXT__
+__SAVER__
+@MainActor final class Harness {
+    let listing: Listing
+    let model: AppModel
+    var currentListing: Listing { model.listings.first { $0.id == listing.id } ?? listing }
+    var auth: AuthStore { .shared }
+__PRESENTATION_STATE__
+__PRESENTATION__
+    var provenance: [ProvenanceRecord] = []
+    var provenanceCanExport: (() -> Bool)?
+    var isLoadingProvenance = false
+    var provenanceError: String?
+    var isSavingOriginals = false
+    var complianceNote: String?
+    var isSavingFile = false
+    var filesNote: String?
+    var filesNoteOK = false
+    var savedFiles = Set<String>()
+    var isExportingAudit = false
+    var auditExport: AuditExport?
+    init() {
+        listing = Listing(id: UUID(), serverID: UUID(), serverOrgID: WorkspaceContext.selectedOrgID, cloudUnavailable: false)
+        model = AppModel(listing)
+    }
+    func load() async { await loadCompliance() }
+    func originals() { saveOriginalsToPhotos() }
+    func local(_ url: URL, video: Bool = false) { saveFileToPhotos(.init(url: url, isVideo: video)) }
+    func csv() { exportAudit() }
+    func admission() -> () -> Bool { mediaExportAdmission(for: currentListing) }
+__ADMISSION__
+__LOAD__
+__ORIGINALS__
+__LOCAL__
+__CSV__
+__FILENAME__
+}
+@main @MainActor enum Checks {
+    static var count = 0
+    static let boundary = PhotoBoundary.shared
+    static var original: URL!
+    static func check(_ value: Bool, _ label: String) {
+        count += 1
+        guard value else { print("FAIL: " + label); exit(1) }
+    }
+    static func until(_ label: String, _ predicate: () -> Bool) async {
+        for _ in 0..<100_000 { if predicate() { return }; await Task.yield() }
+        print("FAIL: held boundary timeout: " + label); exit(1)
+    }
+    static func reset() {
+        AuthStore.shared.userID = "A"; AuthStore.shared.syncSessionRevision = 1
+        WorkspaceContext.selectedOrgID = UUID(); Haptics.successes = 0
+        boundary.reset(); URLSession.shared.reset()
+    }
+    static func change(_ mode: String, _ harness: Harness) {
+        switch mode {
+        case "account": AuthStore.shared.userID = "B"
+        case "session": AuthStore.shared.syncSessionRevision += 1
+        case "workspace": WorkspaceContext.selectedOrgID = UUID()
+        case "listing": harness.model.listings[0].serverID = UUID()
+        case "org": harness.model.listings[0].serverOrgID = UUID()
+        case "deleted": harness.model.listings = []
+        case "unavailable": harness.model.listings[0].cloudUnavailable = true
+        default: preconditionFailure("Unknown synthetic context")
+        }
+    }
+    static func sourceSafe() throws {
+        check(try Data(contentsOf: original) == Data("synthetic-private-original".utf8), "source file survives rejected/completed export unchanged")
+    }
+    static func main() async throws {
+        let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        URLSession.shared.root = root
+        original = root.appendingPathComponent("source-original.jpg")
+        try Data("synthetic-private-original".utf8).write(to: original)
+
+        for mode in ["account", "workspace"] {
+            reset(); let previous = Harness(); change(mode, previous)
+            await previous.load()
+            check(previous.model.api.provenanceCalls == 0 && previous.provenance.isEmpty,
+                  "old presentation cannot schedule provenance for replacement actor or workspace")
+            previous.csv()
+            check(previous.model.api.csvCalls == 0 && previous.auditExport == nil,
+                  "old presentation cannot schedule CSV for replacement actor or workspace")
+            previous.local(original)
+            check(boundary.writeAttempts == 0 && previous.savedFiles.isEmpty,
+                  "old presentation cannot schedule Photos for replacement actor or workspace")
+            try sourceSafe()
+        }
+
+        reset(); let normal = Harness(); await normal.load(); normal.originals()
+        await until("normal original") { !normal.isSavingOriginals }
+        check(URLSession.shared.downloads == 1 && boundary.completedWrites == 1, "valid original downloads and writes once")
+        check(normal.complianceNote == "Saved 1 original to Photos." && Haptics.successes == 1, "valid original completion reports success")
+        try sourceSafe()
+
+        for mode in ["account", "session", "workspace", "listing", "org", "deleted", "unavailable"] {
+            reset(); let changed = Harness(); await changed.load(); URLSession.shared.hold = true
+            changed.originals(); await until("held download") { URLSession.shared.waiting }
+            change(mode, changed); URLSession.shared.release()
+            await until("rejected download") { !changed.isSavingOriginals }
+            check(boundary.writeAttempts == 0, "changed download never writes Photos")
+            check(URLSession.shared.downloads == 1 && URLSession.shared.urls.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) }, "only returned owned downloads are removed")
+            check(changed.complianceNote == nil && Haptics.successes == 0, "changed download never reports saved")
+            try sourceSafe()
+        }
+        reset(); let stale = Harness(); await stale.load(); change("session", stale); stale.originals()
+        check(URLSession.shared.downloads == 0 && boundary.writeAttempts == 0, "stale loaded provenance cannot start a download")
+
+        for video in [false, true] {
+            for mode in ["account", "session", "workspace", "listing", "org", "deleted", "unavailable"] {
+                reset(); boundary.reset(.notDetermined); let changed = Harness()
+                changed.local(original, video: video)
+                await until("local permission") { boundary.waitingPermission }
+                change(mode, changed); boundary.permit(.authorized)
+                await until("local denied context") { !changed.isSavingFile }
+                check(boundary.writeAttempts == 0, "permission change prevents Photos transaction")
+                check(changed.savedFiles.isEmpty && changed.filesNote == nil && Haptics.successes == 0, "stale local completion remains silent")
+                try sourceSafe()
+            }
+            reset(); let normalFile = Harness(); normalFile.local(original, video: video)
+            await until("normal file") { !normalFile.isSavingFile }
+            check(boundary.completedWrites == 1 && normalFile.savedFiles.count == 1, "valid photo/video writes and confirms once")
+            reset(); boundary.reset(.notDetermined); let denied = Harness(); denied.local(original, video: video)
+            await until("denied permission") { boundary.waitingPermission }; boundary.permit(.denied)
+            await until("denied completion") { !denied.isSavingFile }
+            check(boundary.writeAttempts == 0 && denied.filesNoteOK == false && denied.filesNote != nil, "permission denial reports failure without writing")
+            reset(); boundary.reset(.authorized, hold: true); let begun = Harness(); begun.local(original, video: video)
+            await until("begun write") { boundary.waitingWrite }; change("session", begun); boundary.completeWrite()
+            await until("begun completion") { !begun.isSavingFile }
+            check(boundary.completedWrites == 1 && begun.savedFiles.isEmpty && Haptics.successes == 0, "already begun Photos completion cannot mark replacement session saved")
+            try sourceSafe()
+        }
+        for video in [false, true] {
+            reset(); boundary.reset(.notDetermined)
+            let task = Task { @MainActor in
+                do {
+                    if video { try await PhotosLibrarySaver.saveVideo(at: original) }
+                    else { try await PhotosLibrarySaver.saveImageFile(at: original) }
+                    return false
+                } catch { return true }
+            }
+            await until("cancel permission") { boundary.waitingPermission }; task.cancel(); boundary.permit(.authorized)
+            check(await task.value, "cancelled direct photo/video save throws")
+            check(boundary.writeAttempts == 0, "cancelled permission causes no Photos transaction")
+        }
+        for mode in ["account", "session", "workspace", "listing", "org", "deleted", "unavailable"] {
+            reset(); let audit = Harness(); audit.model.api.hold = true; audit.csv()
+            await until("held CSV") { audit.model.api.waiting }; change(mode, audit); audit.model.api.release()
+            await until("CSV completion") { !audit.isExportingAudit }
+            check(audit.auditExport == nil && Haptics.successes == 0, "stale CSV response never reaches Files handoff")
+            try sourceSafe()
+        }
+        reset(); let audit = Harness(); audit.csv(); await until("valid CSV") { !audit.isExportingAudit }
+        check(audit.auditExport != nil && Haptics.successes == 1, "valid CSV reaches Files handoff")
+        let exported = audit.auditExport!.url
+        check(try Data(contentsOf: exported) == Data("Synthetic A private audit".utf8), "CSV handoff retains exact returned bytes")
+        try FileManager.default.removeItem(at: exported.deletingLastPathComponent())
+        print("PASS: \(count) native media export assertions")
+    }
+}

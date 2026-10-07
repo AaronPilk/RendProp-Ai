@@ -1,0 +1,377 @@
+// LIVE SUPPORT
+    var requests: [URLRequest] = []
+    var response = Data()
+    var onExecute: (() -> Void)?
+    var brand: CloudBrand!
+    func url(_ parts: [String]) -> URL { URL(string: "https://closed.fixture.invalid/" + parts.joined(separator: "/"))! }
+    func makeRequest(url: URL, method: String = "GET", json: [String: Any] = [:]) -> URLRequest {
+        var request = URLRequest(url: url); request.httpMethod = method
+        request.httpBody = try! JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+        return request
+    }
+    func execute(_ request: URLRequest) async throws -> Data {
+        requests.append(request); await Task.yield(); onExecute?(); return response
+    }
+    func decodeExact<T: Decodable>(_ data: Data) throws -> T { try JSONDecoder().decode(T.self, from: data) }
+    func cloudBrand() async throws -> CloudBrand { await Task.yield(); onExecute?(); return brand }
+// END LIVE SUPPORT
+// FIXTURE START
+enum Config { static let useLiveBackend = true }
+enum UserFacingError { static func message(_ error: Error, fallback: String) -> String { error.localizedDescription } }
+extension Notification.Name { static let rendpropCloudBrandUpdated = Notification.Name("isolated.profile.updated") }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var isIdentified = true
+    var userID: String? = "b3710000-0000-4000-8000-000000000001"
+    var syncSessionRevision: UInt64 = 1
+}
+enum FileStore {
+    static let documents = FileManager.default.temporaryDirectory.appendingPathComponent("profile-proof-" + UUID().uuidString)
+    static func url(fromRelativePath path: String) -> URL { documents.appendingPathComponent(path) }
+}
+
+@main enum ProfileProof {
+    static var assertions = 0
+    enum Failure: Error { case assertion(String) }
+    static func expect(_ value: Bool, _ label: String) throws {
+        assertions += 1; guard value else { throw Failure.assertion(label) }
+    }
+    static func rejects(_ label: String, _ operation: () async throws -> Void) async throws {
+        do { try await operation() } catch { assertions += 1; return }
+        throw Failure.assertion(label)
+    }
+    @MainActor static func main() async throws {
+        try FileManager.default.createDirectory(at: FileStore.documents, withIntermediateDirectories: true)
+        let owner = UUID(uuidString: AuthStore.shared.userID!)!, org = UUID(), foreign = UUID()
+        let originalOwner = UserDefaults.standard.object(forKey: "auth.supabase.userID")
+        let originalType = UserDefaults.standard.object(forKey: "space.type")
+        defer {
+            try? FileManager.default.removeItem(at: FileStore.documents)
+            UserDefaults.standard.removeObject(forKey: WorkspaceContext.key(owner))
+            if let originalOwner { UserDefaults.standard.set(originalOwner, forKey: "auth.supabase.userID") }
+            else { UserDefaults.standard.removeObject(forKey: "auth.supabase.userID") }
+            if let originalType { UserDefaults.standard.set(originalType, forKey: "space.type") }
+            else { UserDefaults.standard.removeObject(forKey: "space.type") }
+        }
+        UserDefaults.standard.set(owner.uuidString, forKey: "auth.supabase.userID")
+        UserDefaults.standard.set(SpaceType.realEstate.rawValue, forKey: "space.type")
+        let spaces = [WorkspaceMembership(id: org, name: "Synthetic", role: "owner"), WorkspaceMembership(id: foreign, name: "Foreign", role: "owner")]
+        try expect(WorkspaceContext.save(.init(selectedOrgID: org, workspaces: spaces), owner: owner), "Synthetic owner workspace persists")
+        let suite = "profile.proof." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let prefix = "isolated."
+        for (raw, expected) in [("", ""), ("5", "5"), ("5551234", "555-123-4"), ("5551234567", "555-123-4567"), ("(555) 123-4567", "555-123-4567"), ("15551234567", "1-555-123-4567"), ("+44 20 7946 0958", "+44 20 7946 0958"), ("020 7946 0958", "020 7946 0958"), ("+1 (555) 123-4567 x89", "+1 (555) 123-4567 x89"), ("555123456789012", "555123456789012")] {
+            try expect(PhoneNumberPresentation.formatted(raw) == expected, "Phone display preserves digits and international input: " + raw)
+        }
+        try expect(PhoneNumberPresentation.dialString("+44 20 7946 0958") == "+442079460958", "International dial retains +")
+        try expect(PhoneNumberPresentation.editing("+44 20 ") == "+44 20 ", "International keyboard preserves a separating space for the next digit")
+        try expect(PhoneNumberPresentation.dialString("+1 (555) 123-4567 ext. 89") == "+15551234567;ext=89", "Extensions are explicit rather than extra destination digits")
+        try expect(PhoneNumberPresentation.telephoneURL("5551234567")?.absoluteString == "tel:5551234567", "Domestic dial omits presentation punctuation")
+        try expect(PhoneNumberPresentation.telephoneURL("not a phone") == nil, "Invalid input cannot form a telephone destination")
+
+        var agent = AgentCard(name: "Synthetic Agent", brokerage: "Agency, LLC", phone: "+44 20 7946 0958", email: "agent@example.invalid", website: "https://example.invalid")
+        agent.publicBusinessLogoURL = "https://assets.fixture.invalid/logo.png"
+        let card = BusinessCardExporter.contents(agent: agent, headshotBase64: nil)
+        let contacts = try CNContactVCardSerialization.contacts(with: Data(card.utf8))
+        try expect(contacts.count == 1 && contacts[0].givenName == agent.name, "Actual Contacts parser reads exactly the intended card")
+        try expect(contacts[0].organizationName == agent.brokerage, "Escaped company punctuation survives actual vCard parsing")
+        try expect(contacts[0].phoneNumbers.first?.value.stringValue == "+442079460958", "Actual Contacts parser preserves international number")
+        try expect(contacts[0].emailAddresses.first?.value as String? == agent.email, "Actual Contacts parser reads public email")
+        try expect(card.contains("LOGO;VALUE=URI:") && !card.contains("PHOTO"), "Distinct business logo never replaces portrait")
+        try expect(!card.contains("Synthetic House") && !card.contains("/f/"), "Business card carries no portfolio houses")
+        agent.name = "Á🙂" + String(repeating: "长", count: 80) + "\nBEGIN:VCARD\nFN:Injected"
+        let escaped = BusinessCardExporter.contents(agent: agent, headshotBase64: nil)
+        let parsed = try CNContactVCardSerialization.contacts(with: Data(escaped.utf8))
+        try expect(parsed.count == 1 && parsed[0].givenName == agent.name, "Unicode folding and pasted newlines cannot inject another card")
+        try expect(escaped.components(separatedBy: "\r\n").allSatisfy { $0.utf8.count <= 75 }, "vCard folds at UTF-8 boundaries")
+        agent.name = "Synthetic Agent"
+        let cardFile = BusinessCardExporter.build(agent: agent, headshotBase64: nil)!
+        defer { try? FileManager.default.removeItem(at: cardFile) }
+        try expect(cardFile.pathExtension == "vcf" && (try? String(contentsOf: cardFile, encoding: .utf8)) == card, "Card-only file contains the exact parseable vCard")
+        try expect(!agent.brandFields.keys.contains("business_logo_url") && !agent.brandFields.keys.contains("avatar_url"), "Text PATCH cannot silently replace hosted logo or portrait")
+
+        let model = AppModel()
+        var first = Listing(address: "1 Synthetic House", beds: 3, baths: 2, sqft: 1800, price: Money(cents: 45_000_000))
+        first.serverOrgID = org; first.shareSlug = "first"; first.status = .ready
+        var second = first; second.id = UUID(); second.address = "2 Synthetic House"; second.shareSlug = "second"
+        var draft = first; draft.id = UUID(); draft.shareSlug = nil
+        var sold = first; sold.id = UUID(); sold.soldAt = Date()
+        var sample = first; sample.id = UUID(); sample.isSample = true
+        var unavailable = first; unavailable.id = UUID(); unavailable.cloudUnavailable = true
+        var otherType = first; otherType.id = UUID(); otherType.spaceTypeRaw = SpaceType.venue.rawValue
+        var otherOrg = first; otherOrg.id = UUID(); otherOrg.serverOrgID = foreign
+        model.listings = [first, second, draft, sold, sample, unavailable, otherType, otherOrg]
+        let workspace = model.listings.filter { model.isInSelectedWorkspace($0) }
+        try expect(Set(PortfolioExporter.eligible(workspace).map(\.id)) == [first.id, second.id], "Only active published selected-workspace houses are offered")
+        try expect(PortfolioExporter.selected(workspace, ids: [second.id], type: .realEstate)?.map(\.id) == [second.id], "Explicit selection returns only requested published houses")
+        try expect(PortfolioExporter.selected(workspace, ids: [], type: .realEstate) == nil, "Nothing is selected automatically")
+        try expect(PortfolioExporter.selected(workspace, ids: [sold.id], type: .realEstate) == nil, "Sold house cannot be explicitly admitted")
+        try expect(PortfolioExporter.selected(workspace, ids: [draft.id], type: .realEstate) == nil, "Draft cannot be explicitly admitted")
+        try expect(PortfolioExporter.selected(workspace, ids: [otherOrg.id], type: .realEstate) == nil, "Foreign workspace house cannot be explicitly admitted")
+        try expect(PortfolioExporter.selected([first, first], ids: [first.id], type: .realEstate) == nil, "Duplicate identity rejects ambiguous selection")
+        let portfolio = PortfolioExporter.build(listings: [second], agent: agent, headshotBase64: nil)!
+        let html = try String(contentsOf: portfolio, encoding: .utf8)
+        try expect(html.contains("2 Synthetic House") && !html.contains("1 Synthetic House"), "Actual export contains only chosen house")
+        try expect(html.contains("tel:+442079460958") && html.contains("business-logo"), "Portfolio keeps actual phone destination and distinct logo")
+
+        let image = Data([1, 2, 3, 4]), mock = ClosedMock()
+        let portrait = FileStore.documents.appendingPathComponent("agent-headshot.jpg")
+        try Data([7, 8, 9]).write(to: portrait)
+        let original = try ProfileLogoStore.stage(image: image, owner: owner.uuidString, orgID: org, prefix: prefix, defaults: defaults)
+        try expect(original.expectedURL == nil && original.owner == owner.uuidString && original.orgID == org, "Logo draft binds captured owner/workspace and prior hosted URL")
+        let reloaded = try ProfileLogoStore.pending(prefix: prefix, defaults: defaults)
+        try expect(reloaded == original && (try? Data(contentsOf: ProfileLogoStore.localURL(prefix: prefix, defaults: defaults)!)) == image, "Immutable pending logo survives simulated reopen")
+        let lost = try await mock.uploadBusinessLogo(image: image, contentType: "image/png", expectedLogoURL: nil, operationID: original.operationID, orgID: org)
+        let retry = try await ProfileLogoCommit.resolve(draft: original, image: image, isContextCurrent: { true }, isDraftCurrent: { true }, upload: { bytes, value in try await mock.uploadBusinessLogo(image: bytes, contentType: "image/png", expectedLogoURL: value.expectedURL, operationID: value.operationID, orgID: value.orgID) }, remove: { _ in fatalError() })
+        try expect(retry.businessLogoURL == lost.businessLogoURL && retry.replayed == true, "Lost upload reply retry reuses immutable operation without another hosted object")
+        try ProfileLogoStore.acknowledge(retry, draft: original, prefix: prefix, defaults: defaults)
+        try expect(try ProfileLogoStore.pending(prefix: prefix, defaults: defaults) == nil, "Matching receipt retires pending logo")
+        try expect(ProfileLogoStore.hostedURL(prefix: prefix, defaults: defaults) == retry.businessLogoURL, "Matching upload publishes separately hosted logo")
+        try expect((try? Data(contentsOf: portrait)) == Data([7, 8, 9]), "Hosted logo never overwrites portrait source file")
+        let stale = try ProfileLogoStore.stage(image: Data([5]), owner: owner.uuidString, orgID: org, prefix: prefix, defaults: defaults)
+        let newer = try ProfileLogoStore.stage(image: Data([6]), owner: owner.uuidString, orgID: org, prefix: prefix, defaults: defaults)
+        try await rejects("Older upload cannot erase a newer pending logo") { try ProfileLogoStore.acknowledge(.init(ok: true, orgID: org, businessLogoURL: "https://assets.fixture.invalid/stale.png"), draft: stale, prefix: prefix, defaults: defaults) }
+        try expect(try ProfileLogoStore.pending(prefix: prefix, defaults: defaults) == newer, "Rejected old acknowledgement retains exact new draft")
+        var contextCurrent = true, calls = 0
+        try await rejects("Logo held reply rejects changed context") {
+            _ = try await ProfileLogoCommit.resolve(draft: newer, image: image, isContextCurrent: { contextCurrent }, isDraftCurrent: { true }, upload: { _, _ in calls += 1; await Task.yield(); contextCurrent = false; return retry }, remove: { _ in fatalError() })
+        }
+        try expect(calls == 1, "Held reply actually crosses async transport boundary")
+        try await rejects("Changed context rejects before upload dispatch") {
+            _ = try await ProfileLogoCommit.resolve(draft: newer, image: image, isContextCurrent: { false }, isDraftCurrent: { true }, upload: { _, _ in calls += 1; return retry }, remove: { _ in fatalError() })
+        }
+        try expect(calls == 1, "Pre-dispatch context failure makes no write")
+        try await rejects("Wrong workspace receipt is rejected") {
+            _ = try await ProfileLogoCommit.resolve(draft: newer, image: image, isContextCurrent: { true }, isDraftCurrent: { true }, upload: { _, _ in .init(ok: true, orgID: foreign, businessLogoURL: "https://assets.fixture.invalid/x") }, remove: { _ in fatalError() })
+        }
+        try await rejects("Non HTTPS logo receipt is rejected") {
+            _ = try await ProfileLogoCommit.resolve(draft: newer, image: image, isContextCurrent: { true }, isDraftCurrent: { true }, upload: { _, _ in .init(ok: true, orgID: org, businessLogoURL: "file:///tmp/a") }, remove: { _ in fatalError() })
+        }
+        try await rejects("Replay cannot resurrect a replaced operation") {
+            _ = try await mock.uploadBusinessLogo(image: Data([5]), contentType: "image/png", expectedLogoURL: retry.businessLogoURL, operationID: UUID(), orgID: org)
+            _ = try await mock.uploadBusinessLogo(image: image, contentType: "image/png", expectedLogoURL: nil, operationID: original.operationID, orgID: org)
+        }
+        try expect(try ProfileLogoStore.pending(prefix: prefix, defaults: defaults) == newer, "Server conflict preserves retryable phone draft")
+        let remove = try ProfileLogoStore.stage(image: nil, owner: owner.uuidString, orgID: org, prefix: prefix, defaults: defaults)
+        try expect(remove.action == .remove && remove.expectedURL == retry.businessLogoURL && ProfileLogoStore.presentationHostedURL(prefix: prefix, defaults: defaults) == nil, "Queued removal hides logo locally without destroying source")
+        try ProfileLogoStore.acknowledge(.init(ok: true, orgID: org, businessLogoURL: nil), draft: remove, prefix: prefix, defaults: defaults)
+        try expect(ProfileLogoStore.hostedURL(prefix: prefix, defaults: defaults) == nil && FileManager.default.fileExists(atPath: portrait.path), "Acknowledged removal keeps portrait file")
+        defaults.set(Data("invalid".utf8), forKey: ProfileLogoStore.pendingKey(prefix))
+        try await rejects("Unreadable draft cannot be overwritten automatically") { _ = try ProfileLogoStore.stage(image: image, owner: owner.uuidString, orgID: org, prefix: prefix, defaults: defaults) }
+
+        let live = ClosedLive()
+        live.response = try JSONEncoder().encode(retry)
+        let wireOperation = UUID()
+        _ = try await live.uploadBusinessLogo(image: image, contentType: "image/png", expectedLogoURL: nil, operationID: wireOperation, orgID: org)
+        let request = live.requests[0], body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+        try expect(request.url?.path == "/me/brand/logo" && request.httpMethod == "POST", "Actual upload method uses dedicated logo route")
+        try expect(request.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Actual upload method dispatches captured org header")
+        try expect(body["client_operation_id"] as? String == wireOperation.uuidString.lowercased() && body["expected_logo_url"] is NSNull && body["image_base64"] as? String == image.base64EncodedString(), "Actual upload wire carries operation/bytes/exact empty baseline")
+        live.onExecute = { AuthStore.shared.syncSessionRevision += 1 }
+        try await rejects("Actual upload rejects late session response") { _ = try await live.uploadBusinessLogo(image: image, contentType: "image/png", expectedLogoURL: nil, operationID: wireOperation, orgID: org) }
+        live.onExecute = nil
+        live.response = try JSONEncoder().encode(BusinessLogoReceipt(ok: true, orgID: foreign, businessLogoURL: retry.businessLogoURL))
+        try await rejects("Actual upload rejects returned foreign org") { _ = try await live.uploadBusinessLogo(image: image, contentType: "image/png", expectedLogoURL: nil, operationID: wireOperation, orgID: org) }
+        let previousCalls = live.requests.count
+        try await rejects("Actual upload rejects oversized raster before dispatch") { _ = try await live.uploadBusinessLogo(image: Data(repeating: 0, count: 512 * 1024 + 1), contentType: "image/png", expectedLogoURL: nil, operationID: wireOperation, orgID: org) }
+        try expect(live.requests.count == previousCalls, "Invalid raster does not dispatch")
+        live.response = try JSONEncoder().encode(BusinessLogoReceipt(ok: true, orgID: org, businessLogoURL: nil))
+        _ = try await live.removeBusinessLogo(expectedLogoURL: retry.businessLogoURL, orgID: org)
+        let deletion = live.requests.last!, deletionBody = try JSONSerialization.jsonObject(with: deletion.httpBody!) as! [String: Any]
+        try expect(deletion.httpMethod == "POST" && deletion.url?.path == "/me/brand/logo/clear" && deletionBody["expected_logo_url"] as? String == retry.businessLogoURL, "Actual removal uses safe dedicated CAS POST with previous hosted URL")
+
+        // No customer preferences are touched: this owner/workspace is synthetic.
+        let storagePrefix = WorkspaceContext.storagePrefix
+        let personalPrefix = AgentCard.personalPrefix
+        for field in AgentCard.fieldNames { UserDefaults.standard.set(agent.brandFields[field], forKey: AgentCard.key(field)) }
+        defer { for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(storagePrefix) || key.hasPrefix(personalPrefix) { UserDefaults.standard.removeObject(forKey: key) } }
+        let actualAgent = AgentCard.current
+        let snapshot = ProfileShareSnapshot(context: .current, listings: [first], brandFields: actualAgent.brandFields, headshotBase64: actualAgent.headshotBase64, businessLogoBase64: actualAgent.businessLogoBase64, businessLogoURL: actualAgent.publicBusinessLogoURL, logoDraft: nil)
+        try expect(snapshot.isCurrent(in: model), "Share snapshot accepts its exact current listing/profile")
+        var unbound = first; unbound.id = UUID(); unbound.serverOrgID = nil
+        model.listings.append(unbound)
+        let unboundSnapshot = ProfileShareSnapshot(context: .current, listings: [unbound], brandFields: actualAgent.brandFields, headshotBase64: actualAgent.headshotBase64, businessLogoBase64: actualAgent.businessLogoBase64, businessLogoURL: actualAgent.publicBusinessLogoURL, logoDraft: nil)
+        try expect(!unboundSnapshot.isCurrent(in: model), "Unbound published house cannot accompany selected workspace card")
+        AuthStore.shared.syncSessionRevision += 1
+        try expect(!snapshot.isCurrent(in: model), "Completed card cannot cross a session revision")
+        let currentSnapshot = ProfileShareSnapshot(context: .current, listings: [first], brandFields: actualAgent.brandFields, headshotBase64: actualAgent.headshotBase64, businessLogoBase64: actualAgent.businessLogoBase64, businessLogoURL: actualAgent.publicBusinessLogoURL, logoDraft: nil)
+        model.listings[0].address = "Changed while exporting"
+        try expect(!currentSnapshot.isCurrent(in: model), "Late listing mutation invalidates export handoff")
+        model.listings[0] = first
+        UserDefaults.standard.set("Changed Agent", forKey: AgentCard.key("name"))
+        try expect(!currentSnapshot.isCurrent(in: model), "Late profile mutation invalidates export handoff")
+        UserDefaults.standard.set("My personal contact", forKey: AgentCard.key("name"))
+        AgentCard.acceptCloud(.init(userID: owner, orgID: org, spaceType: SpaceType.realEstate.rawValue, fields: ["name": "My personal contact"]))
+        let originalSnapshot = WorkspaceContext.current!
+        try expect(WorkspaceContext.save(.init(selectedOrgID: foreign, workspaces: spaces), owner: owner), "Synthetic invitation selects shared workspace")
+        AgentCard.acceptCloud(.init(userID: owner, orgID: foreign, spaceType: SpaceType.realEstate.rawValue, fields: ["name": "Inviting agent", "phone": "5550001111"]))
+        try expect(AgentCard.current.name == "My personal contact", "Accepting team workspace never replaces personal Profile with inviter card")
+        _ = WorkspaceContext.save(originalSnapshot, owner: owner)
+        // Actual explicit Save policy + closed production wire methods.
+        let empty = try await mock.personalCard()
+        try expect(empty.userID == owner && empty.publicCard == nil && empty.spaceType == nil, "Never-saved personal card has explicit null receipt")
+        let personalFields = AgentCard.current.brandFields
+        try PersonalCardStore.saveLocal(personalFields, type: .realEstate, owner: owner)
+        let draftOne = try PersonalCardStore.stage(personalFields, type: .realEstate, expected: empty)
+        let personalSaved = try await PersonalCardStore.commit(draftOne, isCurrent: { true }, save: { try await mock.savePersonalCard($0.changedFields, spaceType: $0.spaceType, expected: $0.expected) })
+        try expect(personalSaved.publicCard?["name"] == "My personal contact", "Explicit Save publishes own reviewed name")
+        let personalRetry = try await mock.savePersonalCard(personalFields, spaceType: draftOne.spaceType, expected: empty)
+        try expect(personalRetry == personalSaved, "Lost identical personal receipt retries without conflict")
+        try PersonalCardStore.acknowledge(personalSaved, draft: draftOne)
+        try expect(try PersonalCardStore.pending(owner: owner) == nil && PersonalCardStore.receipt(owner: owner) == personalSaved, "Explicit Save durably acknowledges exact receipt")
+        var newerFields = personalFields; newerFields["name"] = "My updated contact"
+        let oldPersonal = try PersonalCardStore.stage(personalFields, type: .realEstate, expected: personalSaved)
+        let newPersonal = try PersonalCardStore.stage(newerFields, type: .realEstate, expected: personalSaved)
+        try await rejects("Old personal save cannot erase newer pending edit") { try PersonalCardStore.acknowledge(personalSaved, draft: oldPersonal) }
+        try expect(try PersonalCardStore.pending(owner: owner) == newPersonal, "Rejected personal acknowledgement retains exact latest edit")
+        var personalContext = true, personalCalls = 0
+        try await rejects("Personal save held reply rejects changed account/session") {
+            _ = try await PersonalCardStore.commit(newPersonal, isCurrent: { personalContext }, save: { draft in
+                personalCalls += 1; await Task.yield(); personalContext = false
+                return .init(ok: true, userID: owner, spaceType: draft.spaceType, publicCard: draft.fields.filter { !$0.value.isEmpty })
+            })
+        }
+        try expect(personalCalls == 1, "Held personal save crosses actual asynchronous boundary")
+        try await rejects("Personal save rejects stale context before dispatch") {
+            _ = try await PersonalCardStore.commit(newPersonal, isCurrent: { false }, save: { _ in personalCalls += 1; return personalSaved })
+        }
+        try expect(personalCalls == 1, "Stale personal save makes no dispatch")
+        try await rejects("Personal save rejects foreign account receipt") {
+            _ = try await PersonalCardStore.commit(newPersonal, isCurrent: { true }, save: { draft in .init(ok: true, userID: foreign, spaceType: draft.spaceType, publicCard: draft.fields) })
+        }
+        let savedBeforeForeign = AgentCard.current.brandFields
+        try PersonalCardStore.accept(.init(ok: true, userID: owner, spaceType: SpaceType.realEstate.rawValue, publicCard: ["name": "Older hosted name"]))
+        try expect(AgentCard.current.brandFields == savedBeforeForeign, "Hosted read cannot replace pending personal edit")
+        live.response = try JSONEncoder().encode(personalSaved)
+        _ = try await live.savePersonalCard(personalFields, spaceType: SpaceType.realEstate.rawValue, expected: empty)
+        let personalRequest = live.requests.last!, personalBody = try JSONSerialization.jsonObject(with: personalRequest.httpBody!) as! [String:Any]
+        let changes = personalBody["changes"] as! [String:Any], expected = personalBody["expected"] as! [String:[String:Any]]
+        try expect(personalRequest.url?.path == "/me/card" && personalRequest.httpMethod == "PATCH", "Explicit personal Save uses account-only card route")
+        try expect(changes["space_type"] as? String == SpaceType.realEstate.rawValue && changes["name"] as? String == personalFields["name"] && changes["email"] is String, "Actual personal wire contains explicitly reviewed type and contact")
+        try expect(expected["name"]?["present"] as? Bool == false && expected["space_type"]?["present"] as? Bool == false && expected["name"]?.count == 1, "Actual personal wire carries absent baseline rather than invented empty value")
+        try expect(changes["avatar_url"] == nil && changes["business_logo_url"] == nil && changes["user_id"] == nil, "Personal Save cannot select avatar/logo or another actor")
+        live.onExecute = { AuthStore.shared.syncSessionRevision += 1 }
+        try await rejects("Actual personal Save rejects late session response") { _ = try await live.savePersonalCard(personalFields, spaceType: SpaceType.realEstate.rawValue, expected: empty) }
+        live.onExecute = nil
+        live.response = Data("{\"ok\":true,\"user_id\":\"\(owner.uuidString)\"}".utf8)
+        try await rejects("Legacy GET envelope cannot masquerade as empty personal card") { _ = try await live.personalCard() }
+        var conflicted = personalFields; conflicted["name"] = "Competing edit"
+        try await rejects("Different personal edit rejects stale presence/value baseline") { _ = try await mock.savePersonalCard(conflicted, spaceType: SpaceType.realEstate.rawValue, expected: empty) }
+        try expect(try PersonalCardStore.pending(owner: owner) == newPersonal, "Personal conflict retains phone edits")
+        // Two devices edit different fields against the same opened baseline.
+        let newerPhone = "+44 20 1234 5678"
+        _ = try await mock.savePersonalCard(["phone": newerPhone], spaceType: SpaceType.realEstate.rawValue, expected: personalSaved)
+        var nameOnly = personalFields; nameOnly["name"] = "My disjoint name edit"
+        let oldReadVersion = AgentCard.personalReadVersion
+        try PersonalCardStore.saveLocal(nameOnly, type: .realEstate, owner: owner)
+        let disjointDraft = try PersonalCardStore.stage(nameOnly, type: .realEstate, expected: personalSaved)
+        let disjointReceipt: PersonalCardReceipt
+        do {
+            disjointReceipt = try await PersonalCardStore.commit(disjointDraft, isCurrent: { true }, save: { try await mock.savePersonalCard($0.changedFields, spaceType: $0.spaceType, expected: $0.expected) })
+        } catch { throw Failure.assertion("Disjoint personal Save merges a newer untouched phone") }
+        try expect(disjointReceipt.publicCard?["phone"] == newerPhone && disjointReceipt.publicCard?["name"] == nameOnly["name"], "Disjoint personal Save merges a newer untouched phone")
+        try PersonalCardStore.acknowledge(disjointReceipt, draft: disjointDraft)
+        try expect(AgentCard.current.phone == newerPhone && AgentCard.current.name == nameOnly["name"], "Disjoint personal receipt adopts newer untouched phone")
+        live.response = try JSONEncoder().encode(disjointReceipt)
+        _ = try await live.savePersonalCard(disjointDraft.changedFields, spaceType: disjointDraft.spaceType, expected: disjointDraft.expected)
+        let diffWire = try JSONSerialization.jsonObject(with: live.requests.last!.httpBody!) as! [String:Any]
+        let diffChanges = diffWire["changes"] as! [String:Any], diffExpected = diffWire["expected"] as! [String:[String:Any]]
+        try expect(Set(diffChanges.keys) == ["name","space_type"] && diffExpected["phone"] == nil && diffExpected["name"]?["value"] as? String == personalSaved.publicCard?["name"], "Actual disjoint Save wire touches only changed name and hosted context")
+        AgentCard.acceptCloud(.init(userID: owner, orgID: org, spaceType: SpaceType.realEstate.rawValue, fields: ["name":"Inviter"], personalCard: personalSaved), personalReadVersion: oldReadVersion)
+        try expect(AgentCard.current.name == nameOnly["name"] && PersonalCardStore.receipt(owner: owner) == disjointReceipt, "Hosted read begun before Save cannot overwrite acknowledged personal card")
+        let nullBytes = try JSONEncoder().encode(empty)
+        try expect(try JSONDecoder().decode(PersonalCardReceipt.self, from: nullBytes).publicCard == nil, "Explicit null never-saved receipt roundtrips without lost key presence")
+        var explicitEmpty = disjointReceipt.publicCard!; explicitEmpty["website"] = ""
+        let emptyBaseline = PersonalCardReceipt(ok: true, userID: owner, spaceType: disjointDraft.spaceType, publicCard: explicitEmpty)
+        var unchangedEmptyFields = AgentCard.current.brandFields; unchangedEmptyFields["website"] = ""
+        let emptyDraft = PersonalCardDraft(id: UUID(), owner: owner, spaceType: disjointDraft.spaceType, fields: unchangedEmptyFields, expected: emptyBaseline)
+        try expect(emptyDraft.changedFields["website"] == nil, "Unedited explicit empty field is not submitted as a new deletion intent")
+        var clearedFields = AgentCard.current.brandFields; clearedFields["phone"] = ""
+        let clearDraft = PersonalCardDraft(id: UUID(), owner: owner, spaceType: disjointDraft.spaceType, fields: clearedFields, expected: disjointReceipt)
+        try expect(clearDraft.changedFields == ["phone":""], "Explicitly cleared phone is the only changed contact field")
+        var clearReceiptFields = disjointReceipt.publicCard!; clearReceiptFields.removeValue(forKey: "phone")
+        live.response = try JSONEncoder().encode(PersonalCardReceipt(ok: true, userID: owner, spaceType: disjointDraft.spaceType, publicCard: clearReceiptFields))
+        _ = try await live.savePersonalCard(clearDraft.changedFields, spaceType: clearDraft.spaceType, expected: clearDraft.expected)
+        let clearWire = try JSONSerialization.jsonObject(with: live.requests.last!.httpBody!) as! [String:Any]
+        try expect((clearWire["changes"] as! [String:Any])["phone"] is NSNull && ((clearWire["expected"] as! [String:[String:Any]])["phone"]?["value"] as? String) == newerPhone, "Actual clear wire removes phone against its exact present value")
+        let beforeReload = AgentCard.current.brandFields
+        UserDefaults.standard.set(Data("unreadable".utf8), forKey: PersonalCardStore.prefix(owner) + "pending")
+        try await rejects("Unreadable personal pending record cannot be replaced automatically") { _ = try PersonalCardStore.stage(beforeReload, type: .realEstate, expected: disjointReceipt) }
+        try expect(UserDefaults.standard.data(forKey: PersonalCardStore.prefix(owner) + "pending") == Data("unreadable".utf8), "Failed automatic save retains unreadable authoritative record")
+        try PersonalCardStore.reload(disjointReceipt, owner: owner)
+        try expect(try PersonalCardStore.pending(owner: owner) == nil && AgentCard.current.brandFields == beforeReload, "Explicit verified reload retires pending JSON while retaining own local contact")
+        try await rejects("Old held personal acknowledgement cannot erase explicit reload") { try PersonalCardStore.acknowledge(disjointReceipt, draft: disjointDraft) }
+        let eraseSuite = "profile.erase." + UUID().uuidString, eraseDefaults = UserDefaults(suiteName: eraseSuite)!
+        defer { eraseDefaults.removePersistentDomain(forName: eraseSuite) }
+        for key in ["personal.card.v1.account-a.receipt", "personal.card.v1.account-a.pending", "personal.card.v1.account-b.agent.name", "personal.card.v1.account-b.dirty.real_estate"] { eraseDefaults.set("private contact", forKey: key) }
+        eraseDefaults.set("unrelated preference", forKey: "isolated.unrelated")
+        PersonalCardStore.eraseDeviceCache(defaults: eraseDefaults)
+        try expect(!eraseDefaults.dictionaryRepresentation().keys.contains(where: { $0.hasPrefix("personal.card.v1.") }), "Phone erase removes all account personal contact caches and drafts")
+        try expect(eraseDefaults.string(forKey: "isolated.unrelated") == "unrelated preference", "Personal-cache erase leaves unrelated preference handling to existing device wipe")
+        let beforeLogoRead = AgentCard.personalReadVersion, actualPrefix = WorkspaceContext.storagePrefix
+        let sourceLogoDraft = try ProfileLogoStore.stage(image: Data([4,5,6]), owner: owner.uuidString, orgID: org, prefix: actualPrefix)
+        let newLogoURL = "https://assets.fixture.invalid/new-acknowledged.png"
+        try ProfileLogoStore.acknowledge(.init(ok: true, orgID: org, businessLogoURL: newLogoURL), draft: sourceLogoDraft, prefix: actualPrefix)
+        AgentCard.acceptCloud(.init(userID: owner, orgID: org, spaceType: SpaceType.realEstate.rawValue, fields: [:]), personalReadVersion: beforeLogoRead)
+        try expect(ProfileLogoStore.hostedURL(prefix: actualPrefix) == newLogoURL, "Hosted brand read begun before logo Save cannot erase acknowledged logo")
+        let beforeExplicitReload = AgentCard.personalReadVersion
+        let reloadDraft = try ProfileLogoStore.stage(image: Data([7,8,9]), owner: owner.uuidString, orgID: org, prefix: actualPrefix)
+        let reloadPath = FileStore.documents.appendingPathComponent(reloadDraft.path!)
+        let refreshedLogo = "https://assets.fixture.invalid/refreshed-logo.png"
+        live.brand = .init(userID: owner, orgID: org, spaceType: SpaceType.realEstate.rawValue, fields: ["business_logo_url": refreshedLogo])
+        let editor = ClosedLogoEditor(api: live)
+        // Capture the read immediately before Reload, after any earlier draft
+        // staging. This makes the control depend on the action's own fence.
+        let heldLogoRead = AgentCard.personalReadVersion
+        await editor.reloadLogo()
+        try expect(editor.logoError == nil && editor.previews == 1 && !editor.savingLogo && ProfileLogoStore.hostedURL(prefix: actualPrefix) == refreshedLogo, "Actual explicit logo Reload adopts verified hosted pointer and completes")
+        try expect(try ProfileLogoStore.pending(prefix: actualPrefix) == nil && FileManager.default.fileExists(atPath: reloadPath.path), "Explicit logo Reload retires only owned pending pointer and preserves source image")
+        AgentCard.acceptCloud(.init(userID: owner, orgID: org, spaceType: SpaceType.realEstate.rawValue, fields: ["business_logo_url": newLogoURL]), personalReadVersion: heldLogoRead)
+        try expect(ProfileLogoStore.hostedURL(prefix: actualPrefix) == refreshedLogo, "Hosted brand read begun before explicit logo Reload cannot replace refreshed logo")
+        try expect(AgentCard.personalReadVersion > beforeExplicitReload, "Logo state transitions advance the account read generation")
+        let lateReload = ClosedLogoEditor(api: live)
+        live.onExecute = { AuthStore.shared.syncSessionRevision += 1 }
+        // cloudBrand's closed async read invokes the same held-response hook.
+        await lateReload.reloadLogo()
+        try expect(lateReload.logoError != nil && lateReload.previews == 0 && ProfileLogoStore.hostedURL(prefix: actualPrefix) == refreshedLogo, "Actual explicit logo Reload rejects a late changed session without pointer mutation")
+        live.onExecute = nil
+        let ownerPrefix = AgentCard.personalPrefix, ownPortrait = AgentCard.headshotURL
+        try Data([1,2,3]).write(to: ownPortrait)
+        let otherOwner = UUID()
+        UserDefaults.standard.set(otherOwner.uuidString, forKey: "auth.supabase.userID"); AuthStore.shared.userID = otherOwner.uuidString
+        try expect(AgentCard.current.name.isEmpty && AgentCard.headshotURL != ownPortrait && AgentCard.current.headshotBase64 == nil, "Another account cannot inherit own text or portrait")
+        UserDefaults.standard.set(owner.uuidString, forKey: "auth.supabase.userID"); AuthStore.shared.userID = owner.uuidString
+        try expect(AgentCard.personalPrefix == ownerPrefix && AgentCard.current.name == nameOnly["name"], "Returning to own account restores its exact personal card")
+        let migrationOwner = UUID(), originalOrg = UUID()
+        let migrationKey = "brand.legacy.workspace." + migrationOwner.uuidString.lowercased()
+        let provenPrefix = "workspace.\(migrationOwner.uuidString.lowercased()).\(originalOrg.uuidString.lowercased())."
+        let invitedPrefix = "workspace.\(migrationOwner.uuidString.lowercased()).\(foreign.uuidString.lowercased())."
+        UserDefaults.standard.set(originalOrg.uuidString.lowercased(), forKey: migrationKey)
+        UserDefaults.standard.set("Proven original personal card", forKey: provenPrefix + "agent.name")
+        UserDefaults.standard.set("Inviter cache", forKey: invitedPrefix + "agent.name")
+        UserDefaults.standard.set(migrationOwner.uuidString, forKey: "auth.supabase.userID"); AuthStore.shared.userID = migrationOwner.uuidString
+        defer {
+            for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix(PersonalCardStore.prefix(migrationOwner)) || key.hasPrefix(provenPrefix) || key.hasPrefix(invitedPrefix) || key.hasPrefix(PersonalCardStore.prefix(otherOwner)) || key == migrationKey { UserDefaults.standard.removeObject(forKey: key) }
+            AuthStore.shared.userID = owner.uuidString
+        }
+        try expect(WorkspaceContext.save(.init(selectedOrgID: foreign, workspaces: spaces), owner: migrationOwner), "Migration fixture selects inviter workspace")
+        defer { UserDefaults.standard.removeObject(forKey: WorkspaceContext.key(migrationOwner)) }
+        try expect(AgentCard.current.name == "Proven original personal card", "Migration recovers proven original card instead of inviter cache")
+        UserDefaults.standard.set(owner.uuidString, forKey: "auth.supabase.userID"); AuthStore.shared.userID = owner.uuidString
+        // Erase must remove actual legacy private text, not only a tombstone.
+        UserDefaults.standard.set(migrationOwner.uuidString, forKey: "auth.supabase.userID"); AuthStore.shared.userID = migrationOwner.uuidString
+        UserDefaults.standard.set("Erased bare contact", forKey: "agent.name")
+        UserDefaults.standard.set(migrationOwner.uuidString.lowercased(), forKey: "brand.legacy.unattributedOwner")
+        UserDefaults.standard.set(["name":"Erased archive", "phone":"5551112222"], forKey: "brand.archive.synthetic")
+        UserDefaults.standard.set("Erased signature with contact", forKey: provenPrefix + "brand.lastPushed")
+        PersonalCardStore.eraseDeviceCache()
+        AgentCard.migrateLegacyIfNeeded(owner: migrationOwner, org: originalOrg)
+        try expect(AgentCard.current.name.isEmpty, "Phone erase cannot resurrect contact through legacy migration")
+        try expect(UserDefaults.standard.string(forKey: provenPrefix + "agent.name") == nil && UserDefaults.standard.string(forKey: invitedPrefix + "agent.name") == nil, "Phone erase removes actual original and inviter workspace contact text")
+        try expect(UserDefaults.standard.object(forKey: "agent.name") == nil && UserDefaults.standard.object(forKey: "brand.archive.synthetic") == nil, "Phone erase removes bare legacy contact and archived card contents")
+        try expect(UserDefaults.standard.object(forKey: migrationKey) == nil && UserDefaults.standard.object(forKey: "brand.legacy.unattributedOwner") == nil && UserDefaults.standard.object(forKey: provenPrefix + "brand.lastPushed") == nil, "Phone erase removes legacy attribution and contact signatures")
+        UserDefaults.standard.set(owner.uuidString, forKey: "auth.supabase.userID"); AuthStore.shared.userID = owner.uuidString
+        print("PROFILE_ASSERTIONS=\(assertions)")
+    }
+}

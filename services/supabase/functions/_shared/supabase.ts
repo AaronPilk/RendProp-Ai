@@ -9,13 +9,15 @@
 //                     user. Use for every owner route so a user can only ever
 //                     touch their own org's rows.
 
-import { createClient } from "npm:@supabase/supabase-js@2";
-import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.116.0";
+import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError } from "./http.ts";
+import { runtimeApiKey, serviceKeyMatches } from "./api-key-config.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+const LEGACY_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SERVICE_ROLE_KEY = runtimeApiKey(Deno.env.get("SUPABASE_SECRET_KEYS"), Deno.env.get("RENDPROP_SECRET_KEY_NAME") ?? "default", "secret", LEGACY_SERVICE_ROLE_KEY);
+const ANON_KEY = runtimeApiKey(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS"), Deno.env.get("RENDPROP_PUBLISHABLE_KEY_NAME") ?? "default", "publishable", Deno.env.get("SUPABASE_ANON_KEY"));
 
 function requireEnv(name: string, value: string | undefined): string {
   if (!value) throw new HttpError(500, `Missing required env var: ${name}`);
@@ -29,7 +31,7 @@ export function adminClient(): SupabaseClient {
   if (_admin) return _admin;
   _admin = createClient(
     requireEnv("SUPABASE_URL", SUPABASE_URL),
-    requireEnv("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ROLE_KEY),
+    requireEnv("SUPABASE_SECRET_KEYS", SERVICE_ROLE_KEY),
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
   return _admin;
@@ -40,7 +42,7 @@ export function userClient(req: Request): SupabaseClient {
   const authHeader = req.headers.get("Authorization") ?? "";
   return createClient(
     requireEnv("SUPABASE_URL", SUPABASE_URL),
-    requireEnv("SUPABASE_ANON_KEY", ANON_KEY),
+    publicApiKey(),
     {
       global: { headers: { Authorization: authHeader } },
       auth: { persistSession: false, autoRefreshToken: false },
@@ -57,10 +59,11 @@ export function getBearer(req: Request): string | null {
   return token.trim();
 }
 
-/** True when the caller presented the service-role key as its bearer (worker path). */
+export function publicApiKey(): string { return requireEnv("SUPABASE_PUBLISHABLE_KEYS", ANON_KEY); }
+
+/** Exact server credential, never a caller's unverified JWT role claim. */
 export function isServiceRole(req: Request): boolean {
-  const token = getBearer(req);
-  return !!token && !!SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY;
+  return serviceKeyMatches(req, SERVICE_ROLE_KEY, LEGACY_SERVICE_ROLE_KEY, Deno.env.get("RENDPROP_LEGACY_SERVICE_AUTH"));
 }
 
 /** Validate the bearer JWT against Supabase Auth and return the auth user, or 401. */
@@ -70,6 +73,29 @@ export async function getUser(req: Request): Promise<User> {
   const { data, error } = await adminClient().auth.getUser(token);
   if (error || !data?.user) throw new HttpError(401, "Invalid or expired token");
   return data.user;
+}
+
+export type PaidAiCaller = Pick<User, "id" | "is_anonymous">;
+
+/**
+ * A free allowance cannot be renewed by minting another anonymous account.
+ * Use the Auth-validated user and the route's already resolved workspace, before
+ * charging a meter. An explicit StoreKit purchase remains usable by its guest
+ * owner: only a current, server-bound Apple subscription permits that exception.
+ * General getUser() deliberately continues to support anonymous local work.
+ */
+export async function assertPaidAiIdentity(user: PaidAiCaller, orgId: string): Promise<void> {
+  if (user.is_anonymous === false) return;
+  const denied = () => new HttpError(401, "Sign in to use AI tools, or restore your active subscription.", "unauthorized");
+  if (user.is_anonymous !== true) throw denied();
+  const unavailable = () => new HttpError(503, "Subscription access could not be verified. Please retry.", "upstream");
+  // The SQL operation/reservation/result readers use this identical retail
+  // predicate. A loose active/grace row cannot admit an unfunded guest first.
+  const { data, error } = await adminClient().rpc("org_has_verified_retail_guest", {
+    p_actor: user.id, p_org: orgId,
+  });
+  if (error) throw unavailable();
+  if (data !== true) throw denied();
 }
 
 // Prefer owner > admin > agent > marketing when a user has multiple memberships.

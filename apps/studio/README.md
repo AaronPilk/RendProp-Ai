@@ -6,6 +6,92 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
+The [6 October candidate](../../docs/handoff/LAUNCH-READINESS-20261006.md) adds
+personal contact cards with explicit Save, separate workspace branding,
+deliberately selected per-member hosted listings, industry-specific detail forms,
+experimental prompt labels and clearer disabled controls. It pairs private media
+imports with the new server photo authority and funded AI admission. These
+core changes are now delivered in the
+[6 October rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md), with
+35 actual served-asset requests and matching live API source. Protected media
+cutover remains pending. Historical deployment
+versions below describe their dated releases. The
+[beta handoff](../../docs/handoff/LAUNCH-BETA-20261006.md) records actual browser
+and regression evidence, plus live/device acceptance still required.
+
+New subscriptions use the approved 90-day hosting grace period after expiry.
+Existing testers retain their prior hosting policy. Provider generation and
+failed attempts need a reviewed funded allowance, rather than a feature count
+alone; no trial sponsorship has been activated. Higgsfield generation remains
+disabled as requested by the owner.
+
+The [limited trial](../../docs/studio/subscription-trial.md) adds a
+trial card in **Business → Account & plan** for the same named trial owner using
+iPhone and Studio. It displays the server's
+remaining walkthrough, photo edit and publication allowances, with no monthly
+reset or early Apple charge. Missing trial data keeps the existing plan view;
+disabled offer data does not advertise new quantities. This source is deployed
+with trial configuration OFF and no funded trial pool.
+
+The [current rollout](../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+records Studio version `aef8c5c8-32ab-495b-9ebb-0aa41bd876e4`, verified on
+7 October 2026 at 00:56:59 UTC. One deployment CLI returned exit 0 with empty
+logs; its uncertain original receipt is preserved. Separate read-only evidence
+verified exact source `7f5879e` and all 31 application files across 35 served
+requests. Callback queries survive the 307 redirect; missing paths return 404.
+No second deployment occurred. Native build 46 is available, and three dormant
+backend migrations plus me v50, apple-subscriptions v25 and renders v44 have
+actual acceptance. No pool, serving schedule or trial allowance has been funded.
+These checks do not establish authenticated cross-device or physical acceptance.
+
+The workspace-bound service activation receipt keeps Apple's recorded plan
+separate from usable creation allowances. An unavailable active subscription
+shows **Service activation pending**, preserves subscription management,
+restoration and saved-work guidance, and suppresses paid caps. Historical
+expired/free states and terminal trial counters keep their own labels. A recorded
+active trial without current service keeps its used/cap history visible while
+new creation is unavailable. Contradictory or foreign-workspace activation data
+fails closed until a fresh read succeeds.
+
+[Photographer client delivery](../../docs/studio/photographer-client-delivery.md)
+adds **My homes → Create & publish / Details → Listing contact**. Choose **My
+client**, upload a separate contact photo and review the private inquiry email
+before saving and publishing. **Business → Leads** keeps the inquiry and its email
+status, with recipient confirmation before resend. The real estate work
+preference is changeable in **Business → Account & plan**. Conflicting or unsaved
+contacts block publication. At this dated release, Worker
+`1cc57a97-e685-4c7c-aae1-641901a0087d` was deployed: all **31 served application files** matched
+the connected release build, with 28 bundles totaling **330,202 B gzip** against
+350,000 B. All 12 exact-source CI jobs pass. See the
+[release handoff](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for
+backend/readback evidence and controlled cross-device/inbox acceptance still needed.
+
+The [photo-delivery update](../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
+adds **Download photo/photos** in AI Photo Studio, with clean MLS JPEGs, labelled
+web/social JPEGs, unchanged verified originals and disclosure captions in a ZIP.
+Default export keeps source framing/full available output; optional crops have
+a preview. Declutter → stage → restyle uses the correct current/pre-staging image.
+Pre-staging history lasts during the open Studio session; it is not yet a shared
+native/desktop version-history contract. Its historical deployment used Worker
+`70d092cd-0a7b-41d3-bc3f-16743907a4c5`; all 30 application assets matched source
+`0e7c78c`, which passed all 12 CI jobs. See the
+[delivery receipt](../../docs/releases/TESTFLIGHT-36-20261001.json).
+
+Video export now prepares one source ahead and bounds frame waits by the segment
+deadline and existing 30 fps capture interval. Actual MP4/AAC checks under delayed
+callbacks preserve full source playback, transitions and audio without widening
+acceptance bounds. A fully blocked browser thread remains outside that recovery.
+
+`node tests/photo-delivery-browser.mjs` verifies actual photo UI, canvas JPEGs and
+ZIP downloads using isolated synthetic provider replies; no paid generation.
+
+The [1 October core release](../../docs/handoff/CORE-READINESS-20261001.md) is
+live: rejected project creation/copy keeps the current edit, empty drafts no
+longer create phantom recovery prompts, and billing copy explains subscription
+activation. All 30 deployed files match the tested build; live saved-project
+restoration and playback passed. iPhone 1.0.3 (34) carries the related workspace
+and billing changes; real-phone acceptance remains separate.
+
 The [27 September release checkpoint](../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 confirms the new website, database migrations and Studio API v12 are deployed.
 All 30 website files and 44 API runtime files match their release source. Bounded
@@ -90,6 +176,38 @@ on-device tests. The release verified the existing signed-in browser workspace
 and a synthetic saved-project AI/edit/export path. It did not perform a fresh
 Apple sign-in, second-browser production restoration or phone-to-browser run.
 
+Restore or manage an existing Apple subscription in Rendprop for iPhone under
+**Settings → Plan & usage**. New paid checkout and plan changes remain closed in
+build 46. A new trial requires Apple eligibility and an exact funded server hold;
+with dormant configuration it cannot open a purchase sheet. Signing in does not
+activate a trial or advance Apple's renewal date. Studio uses the same account
+and workspace subscription and offers existing subscription management; it has
+no separate web checkout.
+
+### Development dependency security — 7 October source checkpoint
+
+Source `fe0a59c` pins Wrangler **4.148.0**, selecting Miniflare
+**5.20261006.0-alpha** and Undici **7.29.1**. A version-scoped override selects
+Sharp **0.35.5** for that exact Miniflare version, overriding the vendor's exact
+**0.35.4** pin. PostCSS's existing `source-map-js` range `^1.2.1` now resolves
+**1.2.2**. Direct application dependency versions and package scripts are unchanged.
+See the maintainer fixes for [Sharp/librsvg](https://github.com/lovell/sharp/security/advisories/GHSA-wq5f-xc86-pv6w),
+[Sharp/libheif](https://github.com/lovell/sharp/security/advisories/GHSA-rgj7-g3m4-5g8c),
+[Undici](https://github.com/nodejs/undici/releases/tag/v7.29.1) and
+[source-map-js](https://github.com/7rulnik/source-map-js/releases/tag/v1.2.2).
+
+Owned local copies passed `npm ci --ignore-scripts`, a full lock audit with zero
+reported vulnerabilities, all **461** tests, typecheck, Vite build and distribution
+checks, plus a native Sharp synthetic SVG-to-JPEG round-trip. The local build had
+no connected production configuration. These local checks used Node 25.9/Darwin arm64. The separate Linux CI
+gate passed on exact `fe0a59c`; see the
+[hosted verification record](../../docs/handoff/AGENT-REEL-ROLLOUT-20261007.md).
+Connected served bytes and the existing Studio deployment retain their separate
+release receipt.
+Remove the override when the selected upstream Miniflare pins/resolves Sharp
+0.35.5 or later and the resulting audit/toolchain checks pass. The actual build-46
+Studio deployment receipt above remains its own immutable checkpoint.
+
 ## Develop and verify
 
 Run from this directory (`apps/studio`). Use Node **22.12+** and the committed
@@ -132,9 +250,12 @@ passing distribution checks alone does not prove a connected production build.
 
 The static Worker in [wrangler.jsonc](wrangler.jsonc) serves only Studio; the apex
 marketing site and hosted tours use a separate Worker. Release schema and all
-required read handlers before dependent website assets. The latest release record
-includes migration reconciliation, exact function versions/JWT settings, and
-source/hash verification. The updated [backend helper](scripts/deploy-backend.mjs)
+required read handlers before dependent website assets. The
+[6 October candidate handoff](../../docs/handoff/LAUNCH-READINESS-20261006.md)
+defines current dependencies and pending rollout gates; it is not a delivery
+receipt. The [1 October record](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
+retains that release's migration reconciliation, function versions/JWT settings
+and source/hash verification. The updated [backend helper](scripts/deploy-backend.mjs)
 requires an explicit list of functions and stages their import closure offline by
 default. `--run` uses the existing Supabase CLI login/environment, verifies current
 live policy against [function-jwt-policy.json](../../services/supabase/function-jwt-policy.json),
@@ -159,8 +280,13 @@ npx wrangler deploy
 node scripts/verify-deployed.mjs
 ```
 
-The verifier compares the custom domain against the exact local build, checks
-headers and SPA fallback, and handles the known managed robots prefix explicitly.
+The verifier compares the custom domain against the exact local build and checks
+response headers. The current 28-asset build has 31 exact files. Its configured
+OAuth callback has only the known 307 canonical redirect to the same-origin root
+with the query preserved; one separate GET must return the identical entry.
+`/workspace` and a missing JavaScript asset must return 404. The complete check
+uses 35 GETs and never follows arbitrary redirects or accepts blanket SPA
+fallback. It handles the known managed robots prefix explicitly.
 The 27 September release matched all **30 files** with no verifier warnings. Its
 connected gzip sizes were **135,649 B initial / 216,383 B Create / 318,219 B total**,
 within separate budgets of 160,000 / 260,000 / 350,000 bytes. The editing-copy
@@ -188,3 +314,14 @@ prefix means crawl blocking is not proven; noindex remains enabled.
 - [`src/data/`](src/data/): wire contracts and bounded authenticated reads.
 - [Studio API](../../services/supabase/functions/studio/README.md): authenticated
   media, documents, creation and review handlers.
+# Source audit checkpoint — 5 October 2026
+
+The [full-system follow-up](../../docs/handoff/FULL-SYSTEM-AUDIT-20261005.md)
+added client-recipient verification and failed-module recovery. Its source
+returns real 404 for missing assets and permits the exact existing R2 host in
+CSP. The [6 October rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+subsequently deployed that source and verified served assets and missing-path
+404 responses. Real client inbox acceptance and the protected-media cutover
+remain open. `node
+tests/recovery-browser.mjs` tests the real production React boundary/lazy chunk
+with a closed-network synthetic workspace.

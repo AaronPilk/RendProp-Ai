@@ -47,6 +47,37 @@ export function falEndpoint(model: string): string {
   return PASSTHROUGH_NAMESPACES.some((p) => m.startsWith(p)) ? m : `fal-ai/${m}`;
 }
 
+export type FalLegacyReceipt = { endpoint: string; requestId: string };
+
+/** Parse only the paired, credential-free queue URLs used by older jobs. */
+export function falLegacyReceipt(status: string, response: string): FalLegacyReceipt | null {
+  try {
+    const statusURL = new URL(status), responseURL = new URL(response);
+    for (const url of [statusURL, responseURL]) {
+      if (url.origin !== FAL_QUEUE_BASE || url.username || url.password || url.search || url.hash) return null;
+    }
+    const match = /^\/([A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)+)\/requests\/([A-Za-z0-9_-]{1,256})\/status$/.exec(statusURL.pathname);
+    if (!match || responseURL.pathname !== `/${match[1]}/requests/${match[2]}`) return null;
+    return { endpoint: match[1], requestId: match[2] };
+  } catch {
+    return null;
+  }
+}
+
+/** The complete model comes from our owned durable receipt, never the caller.
+ * fal's SDK status/result methods use owner/alias and omit the endpoint subpath:
+ * https://github.com/fal-ai/fal-js/blob/main/libs/client/src/queue.ts
+ * The REST docs also show complete endpoint URLs, so preserve that exact form.
+ * No other prefix or sibling endpoint is an equivalent receipt. */
+export function falLegacyReceiptMatchesModel(model: unknown, requestId: unknown, receipt: FalLegacyReceipt): boolean {
+  if (typeof model !== "string" || requestId !== receipt.requestId) return false;
+  const endpoint = falEndpoint(model);
+  const parts = endpoint.split("/");
+  if (parts.length < 2 || parts.some((p) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p))) return false;
+  const applicationRoot = parts.slice(0, 2).join("/");
+  return receipt.endpoint === endpoint || receipt.endpoint === applicationRoot;
+}
+
 function falKey(): string {
   const key = Deno.env.get("FAL_KEY")?.trim();
   if (!key) throw new ProviderError(PROVIDER, "upstream", "FAL_KEY function secret is not set");
@@ -84,7 +115,8 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
         image_url: input.image_url,
         resolution: "1080p",
         duration: String(secondsOf(input, 6)), // Seedance takes duration as a string
-        aspect_ratio: input.aspect,
+        num_frames: secondsOf(input, 6) * 24 + 1,
+        aspect_ratio: input.aspect ?? "16:9",
         camera_fixed: false,
       };
     }
@@ -93,6 +125,8 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
       image_url: input.image_url,
       resolution: "1080p",
       duration: String(secondsOf(input, 5)), // Seedance takes duration as a string
+      num_frames: secondsOf(input, 5) * 24 + 1,
+      aspect_ratio: input.aspect ?? "16:9",
     };
   }
 
@@ -165,6 +199,7 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
   // FLUX.1 Kontext — prompt-only photo edit.
   if (model.includes("flux-pro/kontext")) {
     return {
+      num_images: 1,
       prompt: input.prompt,
       image_url: input.image_url,
     };
@@ -190,10 +225,25 @@ export function falResponseUrl(statusUrl: string): string {
 }
 
 function classifyFal(status: number, body: unknown): ErrorClass {
-  const text = snippet(body, 400).toLowerCase();
+  const text = snippet(body, 400).toLowerCase().replace(/[_-]/g, " ");
   if (/nsfw|safety|content policy/.test(text)) return "nsfw";
   if (status === 422) return "validation";
   return classifyStatus(status);
+}
+
+/** fal's terminal failure is COMPLETED plus error/error_type, not a new take. */
+export function falCompletedFailure(data: Record<string, unknown>): Extract<JobState, { status: "failed" }> | null {
+  const hasError = data.error != null && data.error !== false && data.error !== "";
+  const hasType = typeof data.error_type === "string" && data.error_type.trim().length > 0;
+  if (!hasError && !hasType) return null;
+  // An opaque message cannot mask the provider's explicit safety type.
+  // Only the derived class and generic sentence leave this helper.
+  const errorClass = classifyFal(500, `${snippet(data.error_type, 120)} ${snippet(data.error, 280)}`);
+  return {
+    status: "failed", error_class: errorClass,
+    message: errorClass === "nsfw" ? "The service refused this content under its safety policy." :
+      "The video service could not complete this generation.",
+  };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -239,36 +289,41 @@ function extractResult(result: any): { url: string; mime: string; width?: number
   return null;
 }
 
-/** Last few log lines from a fal status body (?logs=1). */
-function logsTail(st: Record<string, unknown>): string[] {
-  const logs = Array.isArray(st.logs) ? st.logs : [];
-  return logs
-    .slice(-5)
-    .map((l) => String((l as Record<string, unknown>)?.message ?? ""))
-    .filter((m) => m.length > 0);
-}
-
 export const falAdapter: ProviderAdapter = {
   key: PROVIDER,
 
   async submit(step: RouteStep, input: GenerateInput): Promise<JobRef> {
-    const endpoint = falEndpoint(step.model);
-    const body = falInput(step, input);
+    let endpoint: string, body: Record<string, unknown>, headers: Record<string, string>;
+    try {
+      endpoint = falEndpoint(step.model);
+      body = falInput(step, input);
+      headers = falHeaders({ [FAL_OBJECT_LIFECYCLE_HEADER]: FAL_OBJECT_LIFECYCLE_VALUE });
+    } catch (error) {
+      // No network call has started. Status0 is an internal before-dispatch
+      // marker, never a fabricated upstream HTTP answer.
+      if (error instanceof ProviderError) {
+        throw new ProviderError(PROVIDER, error.error_class, "The service could not prepare this submission.", 0, true);
+      }
+      throw new ProviderError(PROVIDER, "validation", "The service could not prepare this submission.", 0, true);
+    }
     const data = await fetchJson<Record<string, unknown>>(
       PROVIDER,
       `${FAL_QUEUE_BASE}/${endpoint}`,
       {
         method: "POST",
-        headers: falHeaders({ [FAL_OBJECT_LIFECYCLE_HEADER]: FAL_OBJECT_LIFECYCLE_VALUE }),
+        headers,
         body: JSON.stringify(body),
       },
       BUDGETS.submitMs,
       classifyFal,
     );
     const { request_id, status_url, response_url } = data;
-    if (!request_id || !status_url || !response_url) {
-      throw new ProviderError(PROVIDER, "upstream", `Unexpected fal submit response (${endpoint}): ${snippet(data, 400)}`);
+    if (typeof request_id !== "string" || !/^[!-~]{1,256}$/.test(request_id) ||
+        typeof status_url !== "string" || typeof response_url !== "string") {
+      throw new ProviderError(PROVIDER, "upstream", "The service did not return a valid submission receipt.");
     }
+    requireHost(status_url, FAL_HOSTS, PROVIDER);
+    requireHost(response_url, FAL_HOSTS, PROVIDER);
     const echo = {
       request_id: String(request_id),
       status_url: String(status_url),
@@ -302,18 +357,28 @@ export const falAdapter: ProviderAdapter = {
     if (status === "IN_PROGRESS") return { status: "running" };
 
     if (status === "COMPLETED") {
+      const failed = falCompletedFailure(st);
+      if (failed) return failed;
       const responseUrl = requireHost(
         typeof st.response_url === "string" ? st.response_url : falResponseUrl(ref.poll_url),
         FAL_HOSTS,
         PROVIDER,
       );
-      const result = await fetchJson<Record<string, unknown>>(
-        PROVIDER,
-        responseUrl,
-        { method: "GET", headers: falHeaders() },
-        BUDGETS.pollMs,
-        classifyFal,
-      );
+      let result: Record<string, unknown>;
+      try {
+        result = await fetchJson<Record<string, unknown>>(
+          PROVIDER, responseUrl, { method: "GET", headers: falHeaders() }, BUDGETS.pollMs, classifyFal,
+        );
+      } catch (error) {
+        if (!(error instanceof ProviderError) || !error.status) throw error;
+        console.error("fal completed result failed", { provider_status: error.status, error_class: error.error_class });
+        // The generation already completed. A temporary result GET failure is
+        // recoverable by polling this receipt; it must not invite another POST.
+        if (error.status === 408 || error.status === 429 || error.status >= 500) throw error;
+        return { status: "failed", error_class: error.error_class, message: "The video service could not return this generation." };
+      }
+      const resultFailed = falCompletedFailure(result);
+      if (resultFailed) return resultFailed;
       // Some fal image models report the safety verdict in the result body.
       const nsfwFlags = (result as { has_nsfw_concepts?: unknown }).has_nsfw_concepts;
       if (Array.isArray(nsfwFlags) && nsfwFlags.some(Boolean)) {
@@ -321,7 +386,7 @@ export const falAdapter: ProviderAdapter = {
       }
       const out = extractResult(result);
       if (!out) {
-        return { status: "failed", error_class: "upstream", message: `fal result had no media url: ${snippet(result)}` };
+        return { status: "failed", error_class: "upstream", message: "The service completed without a usable media file." };
       }
       return {
         status: "done",
@@ -334,11 +399,12 @@ export const falAdapter: ProviderAdapter = {
       };
     }
 
-    const tail = logsTail(st);
+    const terminalFailure = falCompletedFailure(st);
+    if (terminalFailure) return terminalFailure;
     return {
       status: "failed",
       error_class: "upstream",
-      message: tail.length > 0 ? tail.join(" | ").slice(0, 500) : `fal reported status ${status || "FAILED"}`,
+      message: "The video service could not complete this generation.",
     };
   },
 

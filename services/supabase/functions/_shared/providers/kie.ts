@@ -16,7 +16,7 @@
 //        -> data.successFlag 0 = generating, 1 = success, 2|3 = failed
 //
 // Kie answers HTTP 200 with a `code` in the body far more often than it answers
-// a real status, so BOTH are classified.  402 -> validation ("credits"),
+// a real status, so BOTH are classified.  402 -> upstream (our vendor credits),
 // 408/455/501 -> upstream, 429 -> rate_limit.
 //
 // TRUST NOTHING IN THE ECHO. Kie has silently downgraded duration/resolution on
@@ -64,7 +64,7 @@ export function isLegacyVeoModel(model: string): boolean {
 
 /** Kie's own status codes → the router's error vocabulary. */
 export function classifyKie(code: number, message = ""): ErrorClass {
-  if (code === 402) return "validation"; // out of credits: a caller-visible refusal
+  if (code === 402) return "upstream"; // our vendor balance, never invalid customer inputs
   if (code === 429) return "rate_limit";
   if (code === 408 || code === 455 || code === 501) return "upstream";
   if (code === 400 || code === 422 || code === 451) {

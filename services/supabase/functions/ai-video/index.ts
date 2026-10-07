@@ -1,3 +1,4 @@
+import { fundingContext, fundedAttempt, textAttemptQuote, type FundingContext } from "../_shared/funded-serving.ts";
 // ai-video — server-side AI video suite on fal.ai (owner-authenticated).
 //
 // ASYNC SUBMIT/STATUS pattern: edge functions can't babysit multi-minute GPU
@@ -67,7 +68,7 @@
 //   fal-ai/bytedance/seedance/v1/pro/fast/image-to-video
 //       duration enum "2".."12" (string), aspect_ratio 21:9|16:9|4:3|1:1|3:4|9:16|auto, resolution 480p|720p|1080p
 //
-// Needs the FAL_KEY function secret + the shared R2 env (R2_PUBLIC_BASE_URL).
+// Needs the FAL_KEY function secret + the shared private R2 signer environment.
 //
 // ── COMPLIANCE (wave 2, W2-B3) ───────────────────────────────────────────────
 //
@@ -110,39 +111,19 @@
 //
 // ── COST SAFETY on /drone ────────────────────────────────────────────────────
 //
-// The 4,000 sq ft field test: a 410 s 4K60 tour billed ~$48 from one tap, and
-// the route took it without comment — no ceiling, no confirmation, no estimate.
-// Topaz bills per OUTPUT second and the output runs the source's wall-clock, so
-// spend on this route is linear in a number the user picks by walking around a
-// house, on a plan whose whole monthly AI budget is $82.00.
-//
-// The per-generation cap this repo commits to elsewhere ($25.00,
-// MAX_GEN_COST_PER_JOB_CENTS) lives inside log_job_cost(), which raises RP404
-// without a render_job row to lock — and the in-app AI routes have none, so it
-// never applied here and never can. ./dronecost.ts is the pre-flight of the
-// checks that RPC would have made, with a per-submission ceiling DERIVED from
-// the duration cap at the top tier (300 s × 16.0¢ = $48.00) rather than
-// borrowed from a cap that cannot reach this route:
-//
-//   1. a submission with no usable duration_s is REFUSED (409 `conflict`, the
-//      same shape /declutter already uses) — Topaz cannot be priced per second
-//      without one, and a spend we cannot price is a spend we cannot cap;
-//   2. a source longer than DRONE_MAX_SOURCE_SECONDS is refused (400) with the
-//      length said in minutes, so an agent can act on it;
-//   3. the projected cost (duration × tier × output frame rate) over
-//      DRONE_MAX_SUBMISSION_CENTS is refused (400) naming the price and the
-//      length that would fit — in practice this catches a submission whose
-//      PRICE is out of line with its LENGTH (a `4k30` tap asking for 120 fps),
-//      since a full-length tour at the top tier is exactly at the ceiling;
-//   4. the projected cost is then composed with the org's EXISTING per-org
-//      monthly COGS ceiling — org_month_spend_cents() vs the plan's
-//      cogs_ceiling_cents, the same pair log_job_cost() compares — inside
-//      guardGenerate(), BEFORE any meter is consumed (402 `quota_exceeded`).
-//
-// All four run before a meter is charged and before fal is called, so a refused
-// submission costs the org nothing and leaves no state to unwind. Nothing here
-// writes to cost_ledger, so the ceiling is checked, never double-counted: the
-// one row for an accepted submission is still written after fal accepts it.
+// Estimate the output from an immutable source's checked headers before any allowance
+// or paid POST. A requested 1080p tier does not downscale a 4K source: Topaz's
+// minimum factor is one, so its rate must still be the above-1080p rate.
+// The bounded MP4 probe supplies container geometry, duration and frame cadence;
+// it does not decode sample payloads. Client-upload hints never price this route. Unknown/unsupported media and
+// output above 60 fps are refused because their tariff is not verified.
+// ./dronecost.ts applies the 300-second, 4096-pixel-long-edge and $48 ceilings.
+// guardGenerate performs the monthly precheck, then submitReservedVideo locks
+// the workspace and commits a 16c/s maximum-published-tariff hold BEFORE one provider POST.
+// An accepted receipt swaps the hold for one estimated ledger row. Uncertain
+// acceptance or failed settlement retain the hold; neither triggers a retry.
+// These are published-rate estimates, not reconciled provider invoices or a
+// complete subscription margin fence (hosting and other AI paths are separate).
 //
 // ── QUALITY GATE — POST /ai-video/drift (2026-09-07) ─────────────────────────
 //
@@ -222,34 +203,44 @@ import {
   readJsonLimited,
   respondError,
 } from "../_shared/http.ts";
-import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { durableRateLimit, refundRateLimit, chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
+import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementFor, entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
-import { publicR2Url } from "../_shared/r2.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
 import { optionalUuid, recordProvenance } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordAppAiCost, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute, routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
-import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
-import { ProviderError } from "../_shared/providers/common.ts";
+import type { JobState } from "../_shared/providers/types.ts";
+import { asHttpError, type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
+import { BUDGETS, fetchBounded, ProviderError } from "../_shared/providers/common.ts";
 import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
-import { falSubmitEcho } from "../_shared/providers/fal.ts";
-import { persistResult, persistedUrl, routedR2Key } from "../_shared/providers/common.ts";
-import { createEraseHandler, extractEraseJob } from "./erase.ts";
+import { falCompletedFailure, falLegacyReceipt, falLegacyReceiptMatchesModel } from "../_shared/providers/fal.ts";
+import { persistResult, persistedUrl, putBytes, presignGet } from "../_shared/providers/common.ts";
+import { R2_BUCKET_RENDERS, headObject } from "../_shared/r2.ts";
+import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
+import { renewEraseOutput } from "./erase-output.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
+import { createRoutedOutput } from "./routed-output.ts";
+import { createBriaAdapter } from "./bria.ts";
+import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
+import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
   extractJobToken,
   type JobTokenOwner,
   type RouterJobToken,
   routerStatusUrl,
+  assertJobTokenSigningReady,
   verifyJobToken,
 } from "../_shared/providers/jobtoken.ts";
 import {
   assertDroneWithinLimits,
   assertMonthlyHeadroom,
+  droneReservation,
   DRONE_TIER_CENTS,
   DRONE_TIERS,
   type DroneEstimate,
@@ -344,6 +335,8 @@ interface GenerateCharge {
   plan: string;
   monthlyKey: string;
   burstKey: string;
+  monthlyReceipt: RateChargeReceipt;
+  burstReceipt: RateChargeReceipt;
 }
 
 /**
@@ -358,20 +351,22 @@ interface GenerateCharge {
  * otherwise picks the caller's highest-privilege membership, so a user in two
  * workspaces could have quota charged to the wrong one.
  *
- * `projectedCents` — when the caller can price the submission up front (today
- * only /drone, whose per-output-second rate card makes that exact) — is checked
+ * `projectedCents` — when the caller can reserve a conservative submission
+ * cost up front (today /drone) — is checked
  * against the org's EXISTING monthly COGS ceiling BEFORE any meter is consumed,
  * so a submission that cannot fit the budget burns no allowance on its way to
  * being refused. See assertMonthlyHeadroom() in ./dronecost.ts for why this is
  * a pre-flight of log_job_cost()'s own check rather than a second ceiling.
  */
 async function guardGenerate(
-  userId: string,
+  user: PaidAiCaller,
   req: Request,
   kind: GenKind,
   projectedCents?: number,
+  sourceOrgId?: string,
 ): Promise<GenerateCharge> {
-  const orgId = await orgForUser(userId, preferredOrg(req));
+  const userId = user.id;
+  const orgId = await orgForUser(userId, sourceOrgId ?? preferredOrg(req));
   const admin = adminClient();
 
   const { data: mem, error: mErr } = await admin
@@ -381,13 +376,15 @@ async function guardGenerate(
     throw new HttpError(403, "Your role does not permit AI video generation");
   }
 
+  await assertPaidAiIdentity(user, orgId);
+
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = capFor(kind, ent);
 
   // A zero allowance is a PLAN BOUNDARY, not a rate limit — 402 `plan_required`
   // so the app shows an upgrade prompt instead of "try again later". This is
-  // what keeps Topaz (up to $14.40 a tap) off the cheap plans.
+  // what keeps Topaz (up to $48 reserved per tap) off the cheap plans.
   if (monthlyCap <= 0) throw quotaError(labelFor(kind), 0, 0, ent.plan);
 
   // PROJECTED SPEND vs the org's monthly COGS ceiling. Ordered AFTER the plan
@@ -404,45 +401,45 @@ async function guardGenerate(
     });
   }
 
-  // Idempotency soft-dedupe: when the client sends an Idempotency-Key, a
-  // duplicate submit inside 2 minutes is rejected instead of double-billed.
+  // A caller-selected key is required; a duplicate submit inside 2 minutes
+  // is rejected instead of double-billed.
   // NOT refunded on failure, deliberately (mirrors ai-chapters/index.ts
   // guardChapters): it is a short dedupe guard, not spend.
-  const idem = req.headers.get("idempotency-key")?.trim();
-  if (idem && idem.length <= 128) {
-    if (!(await durableRateLimit(`aividem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — this job was already started.", "conflict");
-    }
+  const idem = requiredIdempotencyKey(req);
+  if (!(await durableRateLimit(`aividem:${orgId}:${idem}`, 1, 120))) {
+    throw new HttpError(409, "Duplicate submission — this job was already started.", "conflict");
   }
   const burstKey = `aivideo:${orgId}`;
   const monthlyKey = `${meterKeyFor(kind)}:${orgId}`;
-  if (!(await durableRateLimit(burstKey, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS))) {
+  const burst = await chargeRateReceipt(burstKey, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS);
+  if (!burst.accepted) {
     throw new HttpError(429, "AI video generation limit reached for now — try again in a few minutes.", "rate_limited");
   }
-  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
+  const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  if (!monthly.accepted) {
+    await refundRateReceipt(burst.receipt);
     throw quotaError(labelFor(kind), monthlyCap, monthlyCap, ent.plan);
   }
   // The effective plan rides along for the router's RouteContext — it is the
   // number entitlementForCharge() just read, not a second lookup.
-  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey, monthlyReceipt: monthly.receipt, burstReceipt: burst.receipt };
 }
 
 /**
  * Hand back everything a submission that never reached the provider charged
  * (audit item 2 / F-E-16, mirrors ai-chapters/index.ts refundCharge exactly).
  *
- * Call ONLY when the provider submit itself threw — a fal/router submit that
- * THROWS never billed us, so nothing was produced for the quota it consumed.
- * Once a submit call RETURNS, the provider has ACCEPTED the job and the spend
- * is committed (see the COST LEDGER comments below); nothing past that point
- * is ever refunded, even if the async job later fails — that failure surfaces
- * from GET /ai-video/status, which never charged anything to begin with.
+ * Call only before dispatch or after a definitive non-allocation whose priced
+ * hold release was confirmed. A thrown POST can have
+ * been accepted remotely, so VideoDispatchUnconfirmed keeps BOTH its priced
+ * hold and allowance. Once a receipt returns the expense is committed;
+ * a later async failure never automatically refunds its original allowance.
  *
  * Best effort and never throws — see refundRateLimit().
  */
 async function refundGenerateCharge(charge: GenerateCharge): Promise<void> {
-  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
-  await refundRateLimit(charge.burstKey, GEN_WINDOW_SECONDS, 1);
+  await refundRateReceipt(charge.monthlyReceipt);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 // ── The quality gate's own guards (POST /ai-video/drift) ─────────────────────
@@ -490,10 +487,11 @@ const DRIFT_LINEAGE_WINDOW_SECONDS = 6 * 3600;
  * is billing an agent twice for our model's failure. Past the cap the clip is
  * still refused; only the goodwill refund stops, and the response says so.
  */
-const DRIFT_MAX_REFUNDS_PER_MONTH = 20;
+// SQL app_video_refund_drift caps current-window refunds at 20.
 
 /** Role gate + burst limiter for the check. Mirrors ai-copy's guardAssist(). */
-async function guardDriftCheck(userId: string, req: Request): Promise<string> {
+async function guardDriftCheck(user: PaidAiCaller, req: Request): Promise<string> {
+  const userId = user.id;
   const orgId = await orgForUser(userId, preferredOrg(req));
   const { data: mem, error: mErr } = await adminClient()
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
@@ -501,6 +499,7 @@ async function guardDriftCheck(userId: string, req: Request): Promise<string> {
   if (!mem?.role || mem.role === "marketing") {
     throw new HttpError(403, "Your role does not permit AI video generation");
   }
+  await assertPaidAiIdentity(user, orgId);
   if (!(await durableRateLimit(`aidrift:${orgId}`, DRIFT_MAX_PER_WINDOW, DRIFT_WINDOW_SECONDS))) {
     throw new HttpError(
       429,
@@ -517,9 +516,8 @@ async function guardDriftCheck(userId: string, req: Request): Promise<string> {
  * ── Why this is not refundGenerateCharge, and must not be confused with it ───
  *
  * refundGenerateCharge exists for a submission that never reached a provider:
- * "a fal/router submit that THROWS never billed us". Its own comment is
- * explicit that once a submit RETURNS, the spend is committed and "nothing past
- * that point is ever refunded, even if the async job later fails". That rule is
+ * its pre-dispatch charge refund. A thrown POST is not proof of no bill. This
+ * policy keeps accepted spend committed even if the async job later fails. That rule is
  * about VENDOR MONEY and it still holds here: the rejected clip was generated,
  * Seedance billed us for it, and its cost_ledger row stands untouched. So does
  * the retry's. COGS stays honest and GET /admin/spend still sees every cent.
@@ -536,7 +534,7 @@ async function guardDriftCheck(userId: string, req: Request): Promise<string> {
  *   1. IDEMPOTENT PER CLIP. Keyed on the request id, so re-posting the same
  *      frames cannot mint allowance. Same shape as guardGenerate()'s
  *      Idempotency-Key dedupe.
- *   2. CAPPED PER ORG PER MONTH (DRIFT_MAX_REFUNDS_PER_MONTH).
+ *   2. CAPPED PER ORG PER MONTH (20, enforced atomically by SQL).
  *   3. ONLY ON A REAL FAILURE. The caller runs this exclusively for a verdict a
  *      model actually delivered and that actually failed — never for `hold`,
  *      never for a check that could not run, and never on a client's say-so:
@@ -545,32 +543,15 @@ async function guardDriftCheck(userId: string, req: Request): Promise<string> {
  * Best effort and never throws, exactly like refundGenerateCharge: a failed
  * refund must not turn a delivered verdict into a 500.
  */
-async function refundRejectedClipAllowance(
-  orgId: string,
-  kind: GenKind,
-  requestId: string,
-): Promise<{ refunded: boolean; reason: string }> {
+async function refundRejectedClipAllowance(orgId: string, kind: GenKind, requestId: string, actorId: string): Promise<{ refunded: boolean; reason: string }> {
   try {
-    if (!(await durableRateLimit(`aidriftref:${orgId}:${requestId}`, 1, MONTH_SECONDS))) {
-      return { refunded: false, reason: "already refunded for this clip" };
-    }
-    if (!(await durableRateLimit(`aidriftrefmo:${orgId}`, DRIFT_MAX_REFUNDS_PER_MONTH, MONTH_SECONDS))) {
-      return {
-        refunded: false,
-        reason:
-          `this workspace has already had ${DRIFT_MAX_REFUNDS_PER_MONTH} clips refunded this month`,
-      };
-    }
-    const monthly = await refundRateLimit(`${meterKeyFor(kind)}:${orgId}`, MONTH_SECONDS, 1);
-    await refundRateLimit(`aivideo:${orgId}`, GEN_WINDOW_SECONDS, 1);
-    return monthly
-      ? { refunded: true, reason: "the clip we rejected was not charged to your plan" }
-      : { refunded: false, reason: "the allowance counter had already rolled over" };
-  } catch (e) {
-    // Key names are org ids and feature slugs — no secrets, no user content.
-    console.error("ai-video: rejected-clip refund failed:", e instanceof Error ? e.message : e);
-    return { refunded: false, reason: "the refund could not be applied" };
-  }
+    const { data, error } = await adminClient().rpc("app_video_refund_drift", {
+      p_actor: actorId, p_org: orgId, p_request: requestId,
+      p_feature: kind === "drone" ? "drone_render" : kind,
+    });
+    if (error || typeof data?.refunded !== "boolean" || typeof data?.reason !== "string") throw new Error("Unconfirmed refund");
+    return { refunded: data.refunded, reason: data.reason };
+  } catch { return { refunded: false, reason: "The clip refund could not be confirmed" }; }
 }
 
 /**
@@ -682,10 +663,14 @@ function legacyVideoStep(
 /**
  * The three fields every 202 carries.
  *
- * Flag OFF + fal → fal's own ids, verbatim (today's contract, unchanged).
- * Otherwise      → our opaque, SIGNED token (audit item 4) in all three
- * fields, bound to `owner` — the org + user that submitted the job.
+ * The raw provider request_id stays unchanged. Both status links carry an
+ * owner-bound signed token, including submissions with the router flag off.
  */
+async function assertVideoReceiptSigningReady(): Promise<void> {
+  try { await assertJobTokenSigningReady(); }
+  catch { throw new HttpError(503,"Video submission receipts could not be secured. Please retry later.","upstream"); }
+}
+
 async function submitEnvelope(
   req: Request,
   routerOn: boolean,
@@ -693,10 +678,8 @@ async function submitEnvelope(
   ref: JobRef,
   owner: JobTokenOwner,
 ): Promise<{ request_id: string; status_url: string; response_url: string }> {
-  if (!routerOn && ref.provider === "fal") {
-    const echo = falSubmitEcho(ref.id);
-    if (echo) return echo;
-  }
+  // Every new receipt uses an owner-bound link, including router-off FAL.
+  void routerOn;
   const url = await routerStatusUrl(req, "ai-video", task, ref, owner);
   return { request_id: ref.id, status_url: url, response_url: url };
 }
@@ -942,12 +925,28 @@ const eraseHandler = createEraseHandler({
   resolveAsset: async (id, req) => await resolvePublicAsset(userClient(req), id, req),
   fetch: (url, init) => fetch(url, init),
   falKey: () => Deno.env.get("FAL_KEY")?.trim() ?? "",
-  persist: async (url, key) => {
-    await persistResult("fal", { status: "done", result_url: url, mime: "video/mp4" }, key);
-    const publicUrl = publicR2Url(key);
-    assert(publicUrl, 503, "The edited clip could not be made available", "upstream");
-    return publicUrl;
+  config: (req, ctx) => readEraseConfig((name) => Deno.env.get(name), req, ctx),
+  bria: (config) => createBriaAdapter({
+    fetch: (url, init) => fetch(url, init),
+    apiToken: () => Deno.env.get("BRIA_API_TOKEN")?.trim() ?? "",
+    outputHosts: Array.isArray(config.output_hosts) ? config.output_hosts as string[] : [],
+  }),
+  persist: async (url, key, provider, config) => {
+    if (provider === "bria") {
+      const adapter = createBriaAdapter({
+        fetch: (input, init) => fetch(input, init),
+        apiToken: () => Deno.env.get("BRIA_API_TOKEN")?.trim() ?? "",
+        outputHosts: Array.isArray(config?.output_hosts) ? config.output_hosts as string[] : [],
+      });
+      const output = await adapter.downloadOutput(url);
+      await putBytes(R2_BUCKET_RENDERS, key, output.bytes, output.mime);
+    } else await persistResult("fal", { status: "done", result_url: url, mime: "video/mp4" }, key);
+    return `urn:rendprop:r2:renders:${key}`;
   },
+  completedURL: (job) => renewEraseOutput(job, {
+    sign: (key, expires) => privateMediaUrl({actor:String(job.user_id),org:String(job.org_id),listing:null,bucket:"renders",key},expires),
+    read: async (args) => await adminClient().rpc("video_erase_get", args),
+  }),
 });
 
 Deno.serve(async (req) => {
@@ -969,6 +968,7 @@ Deno.serve(async (req) => {
     const eraseId = req.method === "GET" && seg.length === 1 && seg[0] === "status" ? extractEraseJob(req) : null;
     if (eraseAction || eraseId) {
       const orgId = await orgForUser(user.id, preferredOrg(req));
+      if (eraseAction === "submit") await assertPaidAiIdentity(user, orgId);
       return await eraseHandler(req, { orgId, userId: user.id }, eraseAction ?? "status", eraseId ?? undefined);
     }
 
@@ -982,55 +982,45 @@ Deno.serve(async (req) => {
       assert(body.asset_id, 400, "asset_id is required");
       const tier = body.tier ?? "4k30";
       const target = DRONE_TIERS[tier];
-      assert(target, 400, `tier must be one of ${Object.keys(DRONE_TIERS).join(", ")}`);
+      assert(Object.hasOwn(DRONE_TIERS, tier), 400, `tier must be one of ${Object.keys(DRONE_TIERS).join(", ")}`);
 
       const asset = await resolvePublicAsset(db, body.asset_id, req);
       assert(asset.kind === "video", 400, "drone-glide needs a video asset");
-
-      // Upscale factor from the SOURCE: reach the tier's long edge, never exceed
-      // it, never exceed 4K. Unknown dimensions fall back to the old defaults.
-      const srcLong = asset.width && asset.height ? Math.max(asset.width, asset.height) : null;
-      let upscale: number;
-      if (srcLong) {
-        upscale = Math.max(1, Math.min(4, Math.round((target.longEdge / srcLong) * 100) / 100));
-      } else {
-        upscale = tier === "1080p60" ? 1 : 2;
-      }
-      const outLong = srcLong ? Math.round(srcLong * upscale) : null;
-      assert(outLong == null || outLong <= 4096, 400, "This source is already above 4K; drone-glide would exceed the 4K ceiling");
-
-      // Target fps from the tier (client override bounded 24–120). No
-      // interpolation request when the source already runs at/above it.
-      let fps = Math.round(Number(body.target_fps ?? target.fps));
-      if (!Number.isFinite(fps)) throw new HttpError(400, "target_fps must be a number");
-      fps = Math.min(120, Math.max(24, fps));
-      const interpolate = asset.fps == null || asset.fps < fps - 0.5;
-
-      // COST SAFETY (the 4,000 sq ft field test: a 410 s 4K60 tour billed ~$48
-      // from one tap). Everything above this line is free; everything below it
-      // spends money. So the duration ceiling, the missing-duration refusal and
-      // the per-submission cost ceiling all run HERE — before guardGenerate()
-      // charges a meter and long before fal is called — and the estimate they
-      // return is the single place this submission's price is computed. Sizing,
-      // arithmetic and the fail-closed reasoning are all in ./dronecost.ts.
-      //
-      // Topaz preserves duration, so the OUTPUT runs at the source's
-      // wall-clock; the output FRAME RATE is the interpolation target when we
-      // ask for one, and otherwise the source's own rate (Topaz does not
-      // re-time what it is not asked to). That distinction is what the estimate
-      // is priced on, so a `4k30` tap that quietly emits 120 fps is costed as
-      // the 120 fps job it is rather than at the 30 fps tier price.
-      const outputFps = interpolate ? fps : (asset.fps ?? fps);
+      // V2 completion publishes once to a unique immutable key. Legacy final
+      // keys may retain write capabilities: do not price one representation
+      // and then let the provider fetch a replacement. Client metadata is only
+      // a hint; the bounded MP4 probe is the source of pricing dimensions/time.
+      assert(asset.transport_version === 2, 409,
+        "Upload the saved clip again before enhancing it; this older upload cannot be priced safely.");
+      const fps = Math.round(Number(body.target_fps ?? target.fps));
+      assert(Number.isFinite(fps) && fps >= 24 && fps <= 60, 400,
+        "Choose a frame rate from 24 to 60 fps. Higher frame rates are not priced yet.");
+      const source = await probeMP4Video(asset.url, (url, init) => fetch(url, init));
+      const srcLong = Math.max(source.width, source.height);
+      // Topaz's factor is at least one. A 4K source selected as 1080p stays 4K;
+      // never silently downscale it or reserve at the requested tier's rate.
+      const upscale = Math.max(1, Math.min(4, Math.round((target.longEdge / srcLong) * 100) / 100));
+      const outputWidth = Math.ceil(source.width * upscale);
+      const outputHeight = Math.ceil(source.height * upscale);
+      const interpolate = source.fps < fps - 0.5;
+      const outputFps = interpolate ? fps : source.fps;
       const estimate: DroneEstimate = assertDroneWithinLimits({
         tier,
-        durationS: asset.duration_s,
+        durationS: source.billable_s,
+        outputWidth,
+        outputHeight,
         outputFps,
         assetId: asset.id,
       });
+      // Header checks cannot establish decoded pictures for malformed avc1
+      // bytes. Keep the highest published tariff reserved/booked until trusted
+      // decoding or invoice reconciliation can support a cheaper cost bound.
+      const reservation = droneReservation(estimate);
 
       // Priced — now compose with the org's existing monthly COGS ceiling
       // (inside guardGenerate, before any meter is consumed) and charge.
-      const charge = await guardGenerate(user.id, req, "drone", estimate.cents);
+      await assertVideoReceiptSigningReady();
+      const charge = await guardGenerate(user, req, "drone", reservation.cents, asset.org_id);
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated): 4K tiers and the 1080p60 tier are separate tasks
@@ -1051,53 +1041,35 @@ Deno.serve(async (req) => {
           ...(interpolate ? { target_fps: fps } : {}),
         },
       };
-      // The submit itself failing means no provider ever accepted the job —
-      // hand the charge back (audit item 2). See refundGenerateCharge.
+      // Reserve the exact priced attempt under the workspace lock BEFORE POST.
+      // One eligible provider is attempted; lost acceptance keeps its hold.
       let attempt: ChainResult<JobRef>;
       try {
-        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+        assert(steps[0]?.provider === "fal" && /^(?:fal-ai\/)?topaz\/upscale\/video$/.test(steps[0]?.model ?? "") && steps[0]?.unit === "second",
+          503, "This video route could not be priced safely. Please try again later.", "upstream");
+        attempt = await submitReservedVideo({
+          actorId: user.id, orgId, key: requiredIdempotencyKey(req),
+          allowance: { monthlyWindowStart: charge.monthlyReceipt.windowStart, burstWindowStart: charge.burstReceipt.windowStart },
+          listingId: asset.listing_id,
+          feature: "drone_render", steps, input: genInput, seconds: estimate.seconds,
+          // The maximum published tariff prices admission and settlement.
+          unitCentsOverride: () => reservation.unit_cents,
+          minHoldCents: reservation.cents,
+          meta: { tier, upscale_factor: upscale, target_fps: fps, interpolated: interpolate,
+            estimate_cents: reservation.cents, output_fps: outputFps },
+        }, {
+          rpc: async (name, args) => await adminClient().rpc(name, args),
+          submit: (step) => runChain(task, [step], (selected) => adapterFor(selected.provider).submit(selected, genInput)),
+        });
       } catch (e) {
-        await refundGenerateCharge(charge);
+        if (!(e instanceof VideoDispatchUnconfirmed)) await refundGenerateCharge(charge);
         throw e;
       }
       const step = attempt.step;
-      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
+      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id, listingId: asset.listing_id });
 
-      // COST LEDGER (F-E-15): Topaz bills per OUTPUT second, and the output runs
-      // the same wall-clock as the source, so units = the source duration. One
-      // org-scoped row, job_id = NULL, best effort. Written only after fal ACCEPTED
-      // the submit — the spend is committed at that point (E-network.md §1), and a
-      // retried Idempotency-Key was already 409'd above, so one render → one row.
-      //
-      // The row is now UNCONDITIONAL: assertDroneWithinLimits() above refuses a
-      // submission with no usable duration_s, so anything that reaches this
-      // point has one. That closes the F-E-15 residual gap the old branch
-      // documented (submit anyway, warn, record nothing) — a spend we could not
-      // price is a spend we now never make, rather than one the ledger, the
-      // per-org monthly ceiling and GET /admin/spend all miss.
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "drone_render",
-        step,
-        seconds: estimate.seconds,
-        // ONE route row cannot price Topaz: it bills per OUTPUT pixel-frame,
-        // so 4K60 is twice 4K30 while `video.upscale_4k` is a single row. The
-        // tier price in _shared/ledger.ts stays authoritative for Topaz; any
-        // other provider is billed at its own row price. NOTE this is the TIER
-        // price, deliberately unscaled by the frame-rate multiplier the
-        // pre-flight estimate applies — the estimate errs high on purpose so a
-        // 120 fps tap cannot slip past the ceiling, but the accounting stays on
-        // the number the three-way rate-card lockstep owns (see dronecost.ts).
-        unitCentsOverride: /topaz/i.test(step.model) ? DRONE_TIER_CENTS[tier] : undefined,
-        meta: {
-          tier,
-          request_id: attempt.value.id,
-          upscale_factor: upscale,
-          target_fps: fps,
-          interpolated: interpolate,
-          estimate_cents: estimate.cents,
-        },
-      });
+      // submitReservedVideo atomically swaps its hold for one ledger row;
+      // failed settlement retains the hold while the receipt remains usable.
       return json({
         ...sub,
         kind: "drone",
@@ -1106,7 +1078,7 @@ Deno.serve(async (req) => {
         target_fps: fps,
         upscale_factor: upscale,
         interpolated: interpolate,
-        source: { width: asset.width, height: asset.height, fps: asset.fps, duration_s: asset.duration_s },
+        source: { width: source.width, height: source.height, fps: source.fps, duration_s: source.duration_s },
         // ADDITIVE (cost safety): what this submission is expected to cost, so
         // the app can show a number instead of the user finding out on an
         // invoice. A new key on an existing object — AIVideoJobDTO decodes only
@@ -1114,6 +1086,7 @@ Deno.serve(async (req) => {
         // unaffected. Every refusal above carries the same figures in its error
         // details, so the client has one shape to read either way.
         estimated_cost: estimate,
+        reserved_cost: reservation,
       }, 202);
     }
 
@@ -1188,7 +1161,8 @@ Deno.serve(async (req) => {
         style,
       });
 
-      const charge = await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
+      await assertVideoReceiptSigningReady();
+      const charge = await guardGenerate(user, req, "aerial"); // validated — charge, then submit
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). GROUNDED is an image-to-video task carrying the
@@ -1217,39 +1191,29 @@ Deno.serve(async (req) => {
         aspect,
         resolution: "1080p",
       };
-      // The submit itself failing means no provider ever accepted the job —
-      // hand the charge back (audit item 2). See refundGenerateCharge.
+      // Fence the priced attempt before one potentially accepted provider POST.
       let attempt: ChainResult<JobRef>;
       try {
-        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+        attempt = await submitReservedVideo({
+          actorId: user.id, orgId, key: requiredIdempotencyKey(req),
+          allowance: { monthlyWindowStart: charge.monthlyReceipt.windowStart, burstWindowStart: charge.burstReceipt.windowStart },
+          listingId: body.listing_id ?? assetListingId,
+          feature: "aerial", steps, input: genInput, seconds,
+          meta: { grounded, seconds, aspect, motion: aerialMove.motion,
+            ...(aerialMove.substituted ? { motion_requested: aerialMove.requested } : {}) },
+        }, {
+          rpc: async (name, args) => await adminClient().rpc(name, args),
+          submit: (step) => runChain(task, [step], (selected) => adapterFor(selected.provider).submit(selected, genInput)),
+        });
       } catch (e) {
-        await refundGenerateCharge(charge);
+        if (!(e instanceof VideoDispatchUnconfirmed)) await refundGenerateCharge(charge);
         throw e;
       }
       const step = attempt.step;
       const modelId = step.model;
-      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
+      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id, listingId: body.listing_id ?? assetListingId });
 
-      // COST LEDGER (F-E-15): a GROUNDED aerial is Seedance i2v (billed per output
-      // second); an UNGROUNDED one is Veo 3.1 Fast (a flat per-clip price — the
-      // repo has no per-second Veo rate). One org-scoped row, job_id = NULL, best
-      // effort, only after fal ACCEPTED the submit (spend committed; see §1).
-      // The step's own unit decides the maths: "second" bills per output second
-      // (grounded Seedance), "call" bills flat per clip (ungrounded Veo).
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "aerial",
-        step,
-        seconds,
-        meta: {
-          grounded,
-          seconds,
-          aspect,
-          request_id: attempt.value.id,
-          motion: aerialMove.motion,
-          ...(aerialMove.substituted ? { motion_requested: aerialMove.requested } : {}),
-        },
-      });
+      // Cost was settled once under the same lock that admitted its hold.
 
       // COMPLIANCE: an aerial is synthetic camera movement — HousingWire's
       // disclosure test names exactly this case, and WI Act 69 covers generated
@@ -1383,7 +1347,8 @@ Deno.serve(async (req) => {
       // row report no motion rather than one we never sent.
       const chosenMotion: ReelMotion | null = userMotion ? null : shotMotion;
 
-      const charge = await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
+      await assertVideoReceiptSigningReady();
+      const charge = await guardGenerate(user, req, "reel"); // validated — charge, then submit
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). With the flag off this resolves to the one legacy
@@ -1411,34 +1376,53 @@ Deno.serve(async (req) => {
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
       };
-      // The submit itself failing means no provider ever accepted the job —
-      // hand the charge back (audit item 2). See refundGenerateCharge.
+      // A priced hold precedes one POST. Definitive refusal releases it;
+      // transport ambiguity retains it without another provider attempt.
       let attempt: ChainResult<JobRef>;
       try {
-        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+        attempt = await submitReservedVideo({
+          actorId: user.id, orgId, key: requiredIdempotencyKey(req),
+          allowance: { monthlyWindowStart: charge.monthlyReceipt.windowStart, burstWindowStart: charge.burstReceipt.windowStart },
+          listingId: body.listing_id ?? reelListingId,
+          feature: "reel", steps, input: genInput, seconds: secs,
+          meta: { seconds: secs, ...(chosenMotion ? { motion: chosenMotion } : {}) },
+        }, {
+          rpc: async (name, args) => await adminClient().rpc(name, args),
+          submit: (selected) => runChain(task, [selected], async (step) => {
+          try {
+            return await adapterFor(step.provider).submit(step, genInput);
+          } catch (error) {
+            // Deliberate HttpErrors are returned without logging. Preserve the
+            // provider's HTTP status before runChain maps it to our 502, so
+            // account authorization failures can be distinguished from an
+            // outage. Never log its message/body, token or customer image URL.
+            const known = error instanceof ProviderError ? error : null;
+            const httpStatus = known?.status;
+            console.error("ai-video reel submit failed", {
+              provider: step.provider,
+              model: step.model,
+              error_class: known?.error_class ?? "other",
+              provider_http_status: typeof httpStatus === "number" &&
+                  Number.isInteger(httpStatus) && httpStatus >= 100 &&
+                  httpStatus <= 599
+                ? httpStatus
+                : null,
+              reason: known?.message === "FAL_KEY function secret is not set"
+                ? "provider_not_configured"
+                : "submission_failed",
+            });
+            throw error;
+          }
+          }),
+        });
       } catch (e) {
-        await refundGenerateCharge(charge);
+        if (!(e instanceof VideoDispatchUnconfirmed)) await refundGenerateCharge(charge);
         throw e;
       }
       const step = attempt.step;
-      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
+      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id, listingId: body.listing_id ?? reelListingId });
 
-      // COST LEDGER (F-E-15): i2v bills per output second. One org-scoped row,
-      // job_id = NULL, best effort, only after the provider ACCEPTED the submit,
-      // and attributed to the provider/model that actually ran (contract §4).
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "reel",
-        step,
-        seconds: secs,
-        meta: {
-          seconds: secs,
-          space_type: space,
-          request_id: attempt.value.id,
-          ...(chosenMotion ? { motion: chosenMotion } : {}),
-          ...(room ? { room } : {}),
-        },
-      });
+      // submitReservedVideo settled one ledger row or retained its priced hold.
 
       const prov = await recordProvenance(req, {
         listingId: body.listing_id ?? reelListingId,
@@ -1511,7 +1495,7 @@ Deno.serve(async (req) => {
       const provenanceId = optionalUuid(body.provenance_id);
       const sourceAssetId = optionalUuid(body.asset_id);
 
-      const orgId = await guardDriftCheck(user.id, req);
+      const orgId = await guardDriftCheck(user, req);
 
       // ONE JUDGEMENT PER CLIP (step 3). Same 409 shape guardGenerate() uses
       // for a duplicate Idempotency-Key. Without it, re-posting the frames of a
@@ -1526,7 +1510,9 @@ Deno.serve(async (req) => {
         );
       }
 
+      const funding = await fundingContext(user.id, orgId, req, body, (name,args)=>adminClient().rpc(name,args));
       const judged = await judgeDrift({
+        funding,
         plan: await driftRoutingPlan(orgId),
         subject: { kind: kind === "aerial" ? "aerial" : "reel", sceneNoun: SCENE_NOUN[space], motionText },
         source,
@@ -1583,7 +1569,7 @@ Deno.serve(async (req) => {
       // bad, and handing back an allowance for a clip that may be perfectly
       // good would make an outage in Anthropic's API into free reels.
       const charge = decision.action === "retry" || decision.action === "refuse"
-        ? await refundRejectedClipAllowance(orgId, kind, requestId)
+        ? await refundRejectedClipAllowance(orgId, kind, requestId, user.id)
         : { refunded: false, reason: "this clip was charged to your plan as usual" };
 
       // ── The audit trail (step 7) ─────────────────────────────────────────
@@ -1691,8 +1677,8 @@ Deno.serve(async (req) => {
       // no client change is needed). Poll through the adapter and PERSIST the
       // result into our R2 the moment it completes — every reseller expires
       // media (fal 24 h by our own lifecycle header, Higgsfield 7 d, Kie 14 d),
-      // so the canonical asset has to become ours here. The legacy fal path
-      // below is untouched and still runs for every flag-off submit.
+      // so the canonical asset has to become ours here. Older unsigned FAL
+      // receipts below require an exact owned admission mapping first.
       //
       // SECURITY (audit item 4): verifyJobToken() checks signature, shape,
       // expiry AND that the token's org+user match the CALLER's own JWT —
@@ -1716,13 +1702,15 @@ Deno.serve(async (req) => {
 
       const statusUrl = requireFalUrl(params.get("status_url"), "status_url");
       const responseUrl = requireFalUrl(params.get("response_url"), "response_url");
+      await assertLegacyVideoReceipt(user.id, await orgForUser(user.id, preferredOrg(req)), statusUrl, responseUrl);
 
       const su = new URL(statusUrl);
       su.searchParams.set("logs", "1");
-      const stRes = await fetch(su.toString(), { headers: falHeaders() });
+      const stRes = await fetchBounded("fal", su.toString(), { headers: falHeaders() }, BUDGETS.pollMs);
       const st = await stRes.json().catch(() => ({} as Record<string, unknown>));
       if (!stRes.ok) {
-        throw new HttpError(502, `fal status ${stRes.status}: ${JSON.stringify(st).slice(0, 300)}`, "upstream");
+        console.error("ai-video fal status read failed", { provider_status: stRes.status, error_class: "upstream" });
+        throw new HttpError(502, "The video status could not be checked. Please try again shortly.", "upstream", { provider_status: stRes.status, error_class: "upstream" });
       }
 
       const status = String(st.status ?? "");
@@ -1736,14 +1724,26 @@ Deno.serve(async (req) => {
       }
 
       if (status === "COMPLETED") {
-        const rRes = await fetch(responseUrl, { headers: falHeaders() });
+        const terminalFailure = falCompletedFailure(st);
+        if (terminalFailure) {
+          console.error("ai-video fal generation failed", { provider_status: stRes.status, error_class: terminalFailure.error_class });
+          return json({ status: "failed", error: terminalFailure.message, error_class: terminalFailure.error_class, provider: "fal" });
+        }
+        const rRes = await fetchBounded("fal", responseUrl, { headers: falHeaders() }, BUDGETS.pollMs);
         const result = await rRes.json().catch(() => ({} as Record<string, unknown>));
         if (!rRes.ok) {
-          throw new HttpError(502, `fal result ${rRes.status}: ${JSON.stringify(result).slice(0, 300)}`, "upstream");
+          console.error("ai-video fal completed result failed", { provider_status: rRes.status, error_class: "upstream" });
+          if (rRes.status === 408 || rRes.status === 429 || rRes.status >= 500) {
+            throw new HttpError(502, "The clip finished, but its file could not be retrieved yet. Retry the saved request shortly.", "upstream",
+              { provider: "fal", provider_status: rRes.status, error_class: "upstream", failure_phase: "result", retry_existing_job: true });
+          }
+          return json({ status: "failed", error: "The video service could not return this generation.", error_class: "upstream", provider_status: rRes.status });
         }
+        const resultFailure = falCompletedFailure(result);
+        if (resultFailure) return json({ status: "failed", error: resultFailure.message, error_class: resultFailure.error_class, provider: "fal" });
         const videoUrl = extractVideoUrl(result);
         if (!videoUrl) {
-          throw new HttpError(502, `fal result had no video url: ${JSON.stringify(result).slice(0, 300)}`, "upstream");
+          return json({ status: "failed", error: "The service completed without a usable video file.", error_class: "upstream", provider: "fal" });
         }
         // ADDITIVE (quality gate). A completed clip is not an APPROVED clip.
         // This route is stateless — it holds no verdict and cannot fetch one
@@ -1759,9 +1759,12 @@ Deno.serve(async (req) => {
 
       // FAILED / ERROR / anything unexpected. Log the provider's reason so
       // failures are diagnosable from the function logs (audit follow-up).
-      const failMsg = await failureError(st, responseUrl);
-      console.error("ai-video job failed:", failMsg);
-      return json({ status: "failed", error: failMsg });
+      const terminalFailure = falCompletedFailure(st);
+      const errorClass = terminalFailure?.error_class ?? "upstream";
+      console.error("ai-video fal generation failed", { provider_status: stRes.status,
+        fal_status: status === "FAILED" || status === "ERROR" ? status : "unexpected", error_class: errorClass });
+      return json({ status: "failed", error: terminalFailure?.message ?? "The video service could not complete this generation.",
+        error_class: errorClass, provider: "fal", provider_status: stRes.status, failure_phase: "generation" });
     }
 
     throw new HttpError(405, `Method ${req.method} not allowed on this path`);
@@ -1796,7 +1799,57 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
     submitted_at: job.t,
   };
 
-  const state = await adapter.poll(ref);
+  let output: Awaited<ReturnType<typeof createRoutedOutput>>;
+  const completed = (saved: {key:string;url:string}) => json({
+    status: "completed", video_url: saved.url, provider: job.p, model: job.m,
+    persisted: true, asset_key: saved.key, drift: uncheckedDriftBlock(),
+  });
+  try {
+    const admin = adminClient();
+    let listingId: string | null = job.l ?? null;
+    if (!job.l) {
+      const { data: reservations, error: receiptError } = await admin.from("app_video_cost_reservations")
+        .select("id").eq("org_id", orgId).eq("actor_id", job.usr).eq("provider_request_id", job.i).eq("provider", job.p).eq("model", job.m).limit(1);
+      if (receiptError) throw new Error("Video receipt unavailable");
+      if (reservations?.[0]?.id) {
+        const { data: allowance, error: allowanceError } = await admin.from("app_video_allowance_receipts")
+          .select("listing_id").eq("reservation_id", reservations[0].id).maybeSingle();
+        if (allowanceError) throw new Error("Video scope unavailable");
+        listingId = allowance?.listing_id ?? null;
+      }
+    }
+    output = await createRoutedOutput({orgId,userId:job.usr,listingId,provider:job.p,model:job.m,requestId:job.i,submittedAt:job.t,kind:job.k||"video"}, {
+      find: async keys => {
+        let query = admin.from("private_ai_outputs").select("org_id,user_id,listing_id,bucket,storage_key,bytes")
+          .eq("org_id",orgId).eq("user_id",job.usr).eq("bucket","renders").in("storage_key",keys);
+        query = listingId === null ? query.is("listing_id",null) : query.eq("listing_id",listingId);
+        const {data,error} = await query.limit(2);
+        if(error || !Array.isArray(data)) throw new Error("Saved video receipt unavailable");
+        return data;
+      },
+      register: async (key,bytes) => {
+        const {data,error} = await admin.rpc("register_private_ai_output", {p_user:job.usr,p_org:orgId,p_listing:listingId,p_bucket:"renders",p_key:key,p_bytes:bytes});
+        if(error || data?.ok!==true || data.key!==key) throw new Error("Video output could not be journaled");
+      },
+      head: key => headObject(R2_BUCKET_RENDERS,key),
+      persist: (state,key,beforeWrite) => persistResult(job.p,state,key,beforeWrite,true),
+      sign: key=>privateMediaUrl({actor:job.usr,org:orgId,listing:listingId,bucket:"renders",key},600),
+    });
+    const saved = await output.existing();
+    if(saved) return completed(saved);
+  } catch {
+    throw new HttpError(503, "The saved video could not be verified. Retry the saved request shortly.", "upstream",
+      {provider:job.p,error_class:"upstream",failure_phase:"persistence",retry_existing_job:true});
+  }
+
+  let state: JobState;
+  try { state = await adapter.poll(ref); }
+  catch (error) {
+    const failure = asHttpError(error);
+    console.error("ai-video routed status read failed", { provider: job.p, model: job.m,
+      provider_status: failure.details?.provider_status ?? null, error_class: failure.details?.error_class ?? "upstream" });
+    throw failure;
+  }
   if (state.status !== "done") {
     if (state.status === "failed") {
       console.error(`ai-video routed job failed (${job.p}/${job.m}):`, state.message);
@@ -1805,43 +1858,16 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
     return json({ status: "processing", provider: job.p, model: job.m, queue_position: null, logs_tail: [] });
   }
 
-  // COMPLETED → persist before we call it a success (contract §4).
-  let assetKey: string | null = null;
-  let videoUrl: string | null = null;
+  // COMPLETED → one immutable journaled object, including concurrent polls and
+  // recovery from a lost write response. Existing output skips provider fetch.
   try {
-    const stored = await adapter.persist(state, routedR2Key(orgId, job.k || "video", state.mime));
-    assetKey = stored.key;
-    videoUrl = persistedUrl(stored.key);
+    return completed(await output.complete(state));
   } catch (e) {
-    console.error(`ai-video: persisting ${job.p} result to R2 failed:`, e instanceof Error ? e.message : e);
+    console.error("ai-video result persistence failed", { provider: job.p, model: job.m, error_class: "upstream" });
+    throw new HttpError(503, "The clip was generated but could not be stored yet. Retry the saved request shortly.", "upstream",
+      { provider: job.p, error_class: "upstream", failure_phase: "persistence", retry_existing_job: true });
   }
 
-  if (!videoUrl) {
-    // No R2 copy (storage failed, or R2_PUBLIC_BASE_URL is unset). Handing back
-    // the vendor's own URL is honest degradation — UNLESS it carries a
-    // signature, which must never leave this function.
-    const looksSigned = /[?&](x-amz-|token=|signature=|sig=|expires=)/i.test(state.result_url);
-    if (looksSigned) {
-      return json({
-        status: "failed",
-        error: "The clip was generated but could not be stored — try again.",
-        error_class: "upstream",
-      });
-    }
-    videoUrl = state.result_url;
-  }
-
-  return json({
-    status: "completed",
-    video_url: videoUrl,
-    provider: job.p,
-    model: job.m,
-    persisted: assetKey !== null,
-    ...(assetKey ? { asset_key: assetKey } : {}),
-    // Same additive quality-gate block as the legacy path above, for the same
-    // reason: persisted is not the same as approved.
-    drift: uncheckedDriftBlock(),
-  });
 }
 
 // ── The quality gate: validation, routing, and the judge call ────────────────
@@ -2123,6 +2149,7 @@ async function judgeDrift(args: {
   subject: { kind: "reel" | "aerial"; sceneNoun: string; motionText: string | null };
   source: DriftImage;
   frames: DriftFrame[];
+  funding: FundingContext;
 }): Promise<JudgeOutcome> {
   const sourceHash = await driftLineageKey(args.source.b64);
   const rubric = driftRubric(args.subject);
@@ -2137,7 +2164,7 @@ async function judgeDrift(args: {
 
   let primary: ChainResult<string>;
   try {
-    primary = await runChain(DRIFT_TASK, steps, (step) => callJudgeStep(step, rubric, parts));
+    primary = await runChain(DRIFT_TASK, steps, (step) => fundedAttempt(args.funding, `qc.initial:${steps.indexOf(step)}`, step, parts, textAttemptQuote(step, rubric, "", DRIFT_MAX_TOKENS, true), () => callJudgeStep(step, rubric, parts)));
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
     console.error("ai-video: the drift judge could not be reached:", why);
@@ -2166,7 +2193,7 @@ async function judgeDrift(args: {
     const rest = at >= 0 ? steps.slice(at + 1) : [];
     if (rest.length > 0) {
       try {
-        const second = await runChain(DRIFT_TASK, rest, (s) => callJudgeStep(s, rubric, parts));
+        const second = await runChain(DRIFT_TASK, rest, (s) => fundedAttempt(args.funding, `qc.escalation:${steps.indexOf(s)}`, s, parts, textAttemptQuote(s, rubric, "", DRIFT_MAX_TOKENS, true), () => callJudgeStep(s, rubric, parts)));
         calls.push({ step: second.step, escalated: true });
         verdict = parseDriftVerdict(second.value);
         step = second.step;
@@ -2254,6 +2281,17 @@ async function falSubmit(
  * SSRF guard: the status route fetches caller-supplied URLs with OUR fal key,
  * so only https URLs on fal's own queue hosts are allowed.
  */
+async function assertLegacyVideoReceipt(actorId: string, orgId: string, status: string, response: string): Promise<void> {
+  const receipt = falLegacyReceipt(status, response);
+  assert(receipt, 403, "This older job needs verified account recovery. No new generation was started.");
+  const { data, error } = await adminClient().from("app_video_cost_reservations").select("id, model, provider_request_id")
+    .eq("org_id", orgId).eq("actor_id", actorId).eq("provider", "fal")
+    .eq("provider_request_id", receipt.requestId).limit(2);
+  if (error) throw new HttpError(503, "This saved job could not be checked. Please retry its status.", "upstream");
+  assert(data?.length === 1 && falLegacyReceiptMatchesModel(data[0].model, data[0].provider_request_id, receipt),
+    403, "This older job needs verified account recovery. No new generation was started.");
+}
+
 function requireFalUrl(raw: string | null, name: string): string {
   assert(raw, 400, `${name} query param is required`);
   let url: URL;
@@ -2296,29 +2334,10 @@ function logsTail(st: Record<string, unknown>): string[] {
     .filter((m) => m.length > 0);
 }
 
-/** Best-effort human-readable error for a FAILED fal job. */
-async function failureError(st: Record<string, unknown>, responseUrl: string): Promise<string> {
-  try {
-    const res = await fetch(responseUrl, { headers: falHeaders() });
-    const body = await res.json().catch(() => null);
-    if (body && typeof body === "object") {
-      // deno-lint-ignore no-explicit-any
-      const detail = (body as any).detail ?? (body as any).error ?? (body as any).message;
-      if (detail) {
-        return (typeof detail === "string" ? detail : JSON.stringify(detail)).slice(0, 500);
-      }
-    }
-  } catch {
-    // fall through to logs
-  }
-  const tail = logsTail(st);
-  if (tail.length > 0) return tail.join(" | ").slice(0, 500);
-  return `fal reported status ${String(st.status ?? "FAILED")}`;
-}
-
 // ── asset resolution ──────────────────────────────────────────────────────────
 
 interface ResolvedAsset {
+  org_id: string;
   id: string;
   /** The listing the asset belongs to — the provenance row's anchor (W2-B3). */
   listing_id: string | null;
@@ -2329,6 +2348,7 @@ interface ResolvedAsset {
   height: number | null;
   fps: number | null;
   space_type: string | null;
+  transport_version: number;
 }
 
 /**
@@ -2341,12 +2361,13 @@ interface ResolvedAsset {
 async function resolvePublicAsset(db: any, assetId: string, req: Request): Promise<ResolvedAsset> {
   const { data, error } = await db
     .from("capture_assets")
-    .select("id, listing_id, kind, bucket, storage_key, uploaded, duration_s, width, height, fps, listings!inner(org_id, space_type, deleted_at)")
+    .select("id, listing_id, kind, bucket, storage_key, uploaded, duration_s, width, height, fps, transport_version, listings!inner(org_id, space_type, deleted_at)")
     .eq("id", assetId)
     .maybeSingle();
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);
   if (!data) throw new HttpError(404, "Asset not found");
   assert(data.uploaded === true, 409, "Asset upload is not complete");
+  assert(!String(data.storage_key).includes("/contact-"), 400, "Choose property media for this video.");
   const listing = (Array.isArray(data.listings) ? data.listings[0] : data.listings) as
     | { org_id: string; space_type: string | null; deleted_at: string | null }
     | undefined;
@@ -2360,22 +2381,22 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
   if (data.bucket !== "renders") {
     throw new HttpError(
       400,
-      `Asset ${assetId} is in the private "${data.bucket ?? "uploads"}" bucket, so fal cannot ` +
-        `fetch it. Upload it to the public renders bucket first (POST /uploads with ` +
+      `Asset ${assetId} is in the "${data.bucket ?? "uploads"}" bucket. Upload this provider input to ` +
+        `the renders bucket first (POST /uploads with ` +
         `role:"render"), or pass image_b64 where the route supports it.`,
     );
   }
-  const url = publicR2Url(data.storage_key as string);
+  const url = await presignGet(R2_BUCKET_RENDERS, data.storage_key as string, 600);
   if (!url) {
     throw new HttpError(
       500,
-      "R2_PUBLIC_BASE_URL is not configured on the server, so no public URL can be built " +
-        "for this asset. Set the R2_PUBLIC_BASE_URL function secret to the renders bucket's public base.",
+      "A private download link could not be created for this asset. Please retry.",
       "internal",
     );
   }
   const num = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
   return {
+    org_id: listing.org_id,
     id: data.id as string,
     listing_id: (data.listing_id as string | null) ?? null,
     kind: data.kind as string,
@@ -2385,6 +2406,7 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
     height: num(data.height),
     fps: num(data.fps),
     space_type: listing.space_type ?? null,
+    transport_version: Number(data.transport_version),
   };
 }
 

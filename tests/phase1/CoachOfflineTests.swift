@@ -7,13 +7,33 @@ import Combine
 typealias ObservableObject = Combine.ObservableObject
 typealias Published<Value> = Combine.Published<Value>
 enum ProjectFeature: Equatable { case tour, photos, reel, floorPlan, aerial }
-struct Listing { let id: UUID; let address: String; var shareURL: String? = nil }
+struct SyncState { var reviewRequired = false; var conflict = false; var factsReviewRequired: Bool? = nil }
+struct Listing {
+    enum Status { case draft, uploading, processing, ready }
+    var status: Status = .draft
+    var serverID: UUID? = nil
+    var cloudUnavailable: Bool? = nil
+    var factsSync: SyncState? = nil
+    var measurementSync: SyncState? = nil
+    var lastError: String? = nil
+    var needsAttention: Bool { !(lastError ?? "").isEmpty }
+    let id: UUID; let address: String; var shareURL: String? = nil
+    var serverOrgID: UUID? = nil; var cloudDraftOrgID: UUID? = nil
+}
 struct Asset { var roomTags: [String] = [] }
 enum SpaceType: String {
     case realEstate = "real_estate"
     static var current: Self { .realEstate }
     var spaceNoun: String { "home" }
 }
+enum Config { static let useLiveBackend = false }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var userID: String? = nil
+    var syncSessionRevision: UInt64 = 0
+}
+enum WorkspaceContext { static let selectedOrgID: UUID? = nil }
+enum CloudSyncError: Error { case identityChanged }
 @MainActor final class AppModel {
     var listings: [Listing] = []
     var realProjects: [Listing] { listings }
@@ -104,6 +124,11 @@ struct CoachOfflineTests {
             try check(deletion.text.contains("shared-team data is not all deleted"), "do not promise deletion of colleagues' data")
             try check(deletion.text.contains("does not cancel an App Store subscription"), "preserve billing distinction")
             try check(deletion.action?.kind == .openSupport, "topic reply must not execute deletion")
+            let measurements = CoachOffline.answer(to: "How do I use Measurements?", model: model, space: .realEstate)
+            for required in ["Measurements card", "outline", "worksheet", "upload a plan", "Coming soon", "TestFlight Lab", "local capture tests", "agency and Studio capture planning"] {
+                try check(measurements.text.contains(required), "actual offline Measurements guidance omitted: \(required)")
+            }
+            try check(!measurements.text.contains("LiDAR phones can also scan"), "ordinary offline help must not promise automatic generation")
             print("PASS: \(assertions) actual offline Coach response assertions; 0 skipped; no API/app-state access")
         } catch {
             fputs("FAIL: \(error)\n", stderr)

@@ -1,5 +1,7 @@
 import type { Role, Workspace } from "../../data/contracts";
 import { uuid } from "../../data/contracts";
+import { decodeServingActivation, decodeTrialUsage, type ServingActivation, type TrialUsage } from "../../data/trial";
+import { decodePhotoPackage, type PhotoPackage } from "../../data/photo-package";
 
 export const leadStatuses = ["new", "contacted", "won", "lost"] as const;
 export type LeadStatus = typeof leadStatuses[number];
@@ -9,14 +11,21 @@ export const notificationLabels = {
 } as const;
 export type NotificationKey = keyof typeof notificationLabels;
 export type Notifications = Record<NotificationKey, boolean> & { muted_until: string | null };
-export type Lead = { id: string; listingId: string | null; name: string; email: string; phone: string; message: string; address: string; source: string; status: LeadStatus; synced: boolean; createdAt: string };
+export type ClientDelivery = { state: "queued" | "sending" | "email_sent" | "failed" | "skipped"; recipient_email: string | null; client_name: string | null; current_recipient_email?: string | null; current_client_name?: string | null; last_attempt_at: string | null; sent_at: string | null; can_resend: boolean; reason: string | null };
+export type Lead = { id: string; listingId: string | null; name: string; email: string; phone: string; message: string; address: string; source: string; status: LeadStatus; synced: boolean; createdAt: string; clientDelivery?: ClientDelivery | null };
 export type TeamMember = { id: string; name: string; email: string; role: Role; isYou: boolean };
 export type TeamInvite = { id: string; email: string; role: Role; expiresAt: string };
 export type Team = { canManage: boolean; used: number; allowed: number; members: TeamMember[]; invites: TeamInvite[] };
 export type InviteResult = { email: string; outcome: string; code: string | null; expiresAt: string | null };
 export const brandFields = ["name", "title", "brokerage", "phone", "email", "website", "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent"] as const;
 export type Brand = Record<typeof brandFields[number], string> & { org_name: string; handle: string; space_type: string };
-export type Account = { brand: Brand; notifications: Notifications; portfolioUrl: string | null; planSource: string; degraded: boolean; meters: { key: string; title: string; used: number; cap: number; resetsAt: string | null }[] };
+export type Account = { brand: Brand; notifications: Notifications; portfolioUrl: string | null; planSource: string; plan: string | null; planExpiresAt: string | null; trialEndsAt: string | null; degraded: boolean; trialUsage?: TrialUsage | null; servingActivation?: ServingActivation | null; servingPhotoPackage?: PhotoPackage | null; meters: { key: string; title: string; used: number; cap: number; resetsAt: string | null }[] };
+export function serviceActivationPending(account: Account, now = Date.now()): boolean {
+  if (account.servingActivation?.available !== false) return false;
+  if (account.trialUsage) return account.trialUsage.status === "active";
+  return account.planSource === "apple" && (account.plan === "starter" || account.plan === "pro" || account.plan === "team")
+    && account.planExpiresAt !== null && Date.parse(account.planExpiresAt) > now;
+}
 export type ComplianceRow = { id: string; listingId: string | null; address: string; label: string; kind: string; edit: string; disclosure: string; originalUrl: string | null; alteredUrl: string | null; originalAvailable: boolean; agent: string; createdAt: string; model: string; prompt: string };
 export type Compliance = { rows: ComplianceRow[]; truncated: boolean };
 export type Overview = { from: string; to: string; seats: { used: number; allowed: number; pending: number }; totals: { listings: number; tours: number; ai: number; inactive: number }; members: { id: string; name: string; role: string; listings: number; tours: number; ai: number; lastActive: string | null }[] };
@@ -67,12 +76,19 @@ export function decodeLead(value: unknown): Lead {
   const r = record(value);
   const status = text(r.status);
   if (!(leadStatuses as readonly string[]).includes(status)) throw new Error("Rendprop returned an unknown lead status.");
-  return { id: uuid(r.id), listingId: nullableId(r.listing_id), name: text(r.name, "New inquiry"), email: text(r.email), phone: text(r.phone), message: text(r.message), address: text(r.listing_address, "General inquiry"), source: text(r.source, "tour"), status: status as LeadStatus, synced: boolean(r.synced_crm), createdAt: date(r.created_at) };
+  return { id: uuid(r.id), listingId: nullableId(r.listing_id), name: text(r.name, "New inquiry"), email: text(r.email), phone: text(r.phone), message: text(r.message), address: text(r.listing_address, "General inquiry"), source: text(r.source, "tour"), status: status as LeadStatus, synced: boolean(r.synced_crm), createdAt: date(r.created_at), clientDelivery: r.client_delivery == null ? null : decodeClientDelivery(r.client_delivery) };
+}
+export function decodeClientDelivery(value: unknown): ClientDelivery {
+  const r = record(value), state = text(r.state), recipient_email = r.recipient_email === null ? null : text(r.recipient_email);
+  if (!["queued", "sending", "email_sent", "failed", "skipped"].includes(state) || (recipient_email === null ? state !== "skipped" || r.last_attempt_at != null || r.sent_at != null : recipient_email.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(recipient_email))) throw new Error("The client email delivery could not be verified. Refresh your leads.");
+  const current_recipient_email = r.current_recipient_email == null ? null : text(r.current_recipient_email);
+  if (current_recipient_email && (current_recipient_email.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(current_recipient_email))) throw new Error("The current client recipient could not be verified.");
+  return { state: state as ClientDelivery["state"], recipient_email, client_name: r.client_name === null ? null : text(r.client_name), ...(r.current_recipient_email === undefined ? {} : {current_recipient_email}), ...(r.current_client_name === undefined ? {} : {current_client_name: r.current_client_name === null ? null : text(r.current_client_name)}), last_attempt_at: r.last_attempt_at == null ? null : date(r.last_attempt_at), sent_at: r.sent_at == null ? null : date(r.sent_at), can_resend: boolean(r.can_resend), reason: r.reason == null ? null : text(r.reason) };
 }
 export function decodeLeads(value: unknown): Lead[] { return unique(rows(record(value).leads, 500).map(decodeLead)); }
 export function filterLeads(leads: Lead[], query: string): Lead[] {
   const q = query.trim().toLocaleLowerCase();
-  return q ? leads.filter((l) => [l.name, l.email, l.phone, l.address, l.message].some((v) => v.toLocaleLowerCase().includes(q))) : leads;
+  return q ? leads.filter((l) => [l.name, l.email, l.phone, l.address, l.message, l.clientDelivery?.client_name ?? "", l.clientDelivery?.recipient_email ?? "", l.clientDelivery?.current_client_name ?? "", l.clientDelivery?.current_recipient_email ?? ""].some((v) => v.toLocaleLowerCase().includes(q))) : leads;
 }
 export function decodeTeam(value: unknown, orgId: string): Team {
   const r = record(value), seats = record(r.seats);
@@ -103,9 +119,14 @@ export function decodeAccount(value: unknown, workspace: Workspace): Account {
   for (const field of brandFields) brand[field] = text(kit[field]);
   Object.assign(brand, { org_name: text(org.name), handle: text(org.handle), space_type: text(org.space_type) });
   const usage = record(r.usage), used = record(usage.by_feature), caps = record(usage.caps), windows = record(usage.windows);
+  const servingActivation = decodeServingActivation(r.serving_activation, workspace.org.id);
+  const entitlement = record(r.entitlement), degraded = (entitlement.degraded === undefined ? false : boolean(entitlement.degraded)) || servingActivation?.available === false;
   const titles: Record<string, string> = { renders: "Cloud renders", photo_edits: "Photo edits", reels: "AI reels", aerials: "Aerial videos", drone: "Drone enhancements" };
-  const meters = Object.entries(titles).map(([key, title]) => ({ key, title, used: count(used[key]), cap: count(caps[key]), resetsAt: windows[key] === null ? null : date(record(windows[key]).resets_at) }));
-  return { brand, notifications: decodeNotifications(r.notifications), portfolioUrl: safeHTTPS(r.portfolio_url), planSource: text(r.plan_source), degraded: record(r.entitlement).degraded === true, meters };
+  const meters = Object.entries(titles).map(([key, title]) => {
+    const cap = count(caps[key]);
+    return { key, title, used: count(used[key]), cap: servingActivation?.available === false ? 0 : cap, resetsAt: windows[key] === null ? null : date(record(windows[key]).resets_at) };
+  });
+  return { brand, notifications: decodeNotifications(r.notifications), portfolioUrl: safeHTTPS(r.portfolio_url), planSource: text(r.plan_source), plan: r.plan == null ? null : text(r.plan), planExpiresAt: r.plan_expires_at == null ? null : date(r.plan_expires_at), trialEndsAt: r.trial_ends_at == null ? null : date(r.trial_ends_at), degraded, trialUsage: decodeTrialUsage(r.trial_usage, workspace.org.id), servingActivation, servingPhotoPackage: decodePhotoPackage(r.serving_photo_package, workspace.org.id), meters };
 }
 export function brandPayload(brand: Brand): Record<string, string | null> {
   if (!brand.org_name.trim() || brand.org_name.length > 120 || brand.org_name.includes("@")) throw new Error("Enter a business name up to 120 characters.");

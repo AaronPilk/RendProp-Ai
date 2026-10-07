@@ -11,6 +11,14 @@ interruption and thermal acceptance require the owner's physical phone.
 
 ## Offline production-source concurrency tests
 
+`node --test tests/phase1/formatters-runtime.test.mjs tests/phase1/duplicate-listing-snapshot.test.mjs`
+compiles actual production formatters, capture metadata and persistence code,
+plus mechanically extracted review labels and the sync binding guard. It checks
+nonfinite/out-of-range numbers and duplicate saved IDs without dropping rows or
+media. Deliberate assertion failures and three unsafe conversion/guard mutants
+must fail; the mutants reproduce Swift traps. These executable checks do not
+replace the Release SwiftUI detail tests described in the iOS test guide.
+
 Run `bash tests/phase1/run-unit.sh` from this worktree. This compiles the real
 `Auth/SessionConnection.swift` with the Swift test entry point. It asserts
 single-flight retry, continuation of the original four waiting actions,
@@ -28,11 +36,20 @@ called. This is an offline response check, not CoachView/consent UI or live
 Supabase publication/deletion verification. No iOS simulator or Xcode app build
 is launched by this portable gate.
 
+It also executes `run-coach-privacy.sh`: the full production model makes scripted
+offline-to-online sends, then resends a deliberately old/provider-echoed address
+bubble after a cached listing rename. The 32 assertions cover transcript redaction,
+local-only bubbles, scoped project/action IDs, missing workspace, and account,
+workspace, revision and industry changes during consent/provider awaits. Four
+separately compiled source mutants must fail their intended runtime assertions.
+Unrelated app/provider boundaries are inert; no real network, credentials or
+customer files are used.
+
 Server knowledge is independently executable without runtime permissions or
 downloads:
 
 ```sh
-deno test --cached-only --deny-net --deny-env --deny-run --deny-read --deny-write services/supabase/functions/coach/
+deno test --cached-only --deny-net --deny-env --deny-run --allow-read --deny-write services/supabase/functions/coach/
 ```
 
 The new `knowledge_test.ts` imports only local production knowledge/formatter

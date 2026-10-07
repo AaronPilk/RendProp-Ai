@@ -1,5 +1,6 @@
+import {isPrivateMediaURL,privateMediaCapability} from "../../data/private-media";
 import {useEffect,useRef,useState} from "react";
-import type { Listing, Workspace } from "../../data";
+import type { Listing, Workspace, StudioServices } from "../../data";
 import Icon from "../../icons";
 import {AI_FEATURES,FEATURES,featureFor,homeWords,listingStatus,type Feature,type FeatureId} from "./features";
 
@@ -9,25 +10,31 @@ export function FeatureCards({features,onOpen}: {features:readonly Feature[];onO
     <strong>{feature.title}</strong><span>{feature.description}</span>
   </button>)}</div>;
 }
-export function PropertyPreview({listing}:{listing:Listing}) {
-  const [failed,setFailed]=useState(false);
-  const key=listing.mainPhotoKey;
-  const safe=key?.startsWith(`renders/${listing.orgId}/${listing.id}/`)&&!key.includes("..")&&!/[?#\\]/.test(key);
-  useEffect(()=>setFailed(false),[key]);
-  return <div className="app-property-image">{safe&&!failed?<img src={`https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev/${key!.split("/").map(encodeURIComponent).join("/")}`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={()=>setFailed(true)}/>:<Icon name="home" size={36}/>}<span className={`app-property-status status-${listing.status}`}>{listingStatus(listing.status,listing.soldAt)}</span></div>;
+export function PropertyPreview({listing,services,workspace}:{listing:Listing;services:StudioServices|null;workspace:Workspace}) {
+  const [url,setURL]=useState<string|null>(null),[failed,setFailed]=useState(false);
+  useEffect(()=>{const controller=new AbortController(),version=services?.getSnapshot().identityVersion;setURL(null);setFailed(false);
+    if(!services||!listing.mainPhotoKey||listing.orgId!==workspace.org.id)return()=>controller.abort();
+    void services.listMedia(workspace.org.id,listing.id,controller.signal).then(media=>{
+      const identity=services.getSnapshot();if(controller.signal.aborted||identity.identityVersion!==version||identity.identity?.userId!==workspace.user.id)return;
+      const photo=media.photos.find(p=>{try{return(isPrivateMediaURL(p.url)?privateMediaCapability(p.url,{actor:workspace.user.id,org:workspace.org.id,listing:listing.id}).key:new URL(p.url).pathname.split("/").slice(2).map(decodeURIComponent).join("/"))===listing.mainPhotoKey;}catch{return false;}});setURL(photo?.url??null);
+    }).catch(()=>{if(!controller.signal.aborted)setFailed(true);});return()=>controller.abort();
+  },[listing.id,listing.orgId,listing.mainPhotoKey,services,workspace.org.id,workspace.user.id]);
+  return <div className="app-property-image">{url&&!failed?<img src={url} alt="" loading="lazy" referrerPolicy="no-referrer" onError={()=>setFailed(true)}/>:<Icon name="home" size={36}/>}<span className={`app-property-status status-${listing.status}`}>{listingStatus(listing.status,listing.soldAt)}</span></div>;
 }
-type Props={workspace:Workspace|null;listings:Listing[];selectedId?:string;busy:boolean;spatialAvailable:boolean;onSelect:(id:string)=>void;onFeature:(id:FeatureId,listingId?:string)=>void;onCreate:()=>void;onStartCreating:()=>void;onProperties:()=>void;onLeads:()=>void;onPlanner:()=>void;onConnect:()=>void;onLibrary:()=>void;};
+type Props={services:StudioServices|null;workspace:Workspace|null;listings:Listing[];selectedId?:string;busy:boolean;spatialAvailable:boolean;onSelect:(id:string)=>void;onFeature:(id:FeatureId,listingId?:string)=>void;onCreate:()=>void;onStartCreating:()=>void;onProperties:()=>void;onLeads:()=>void;onPlanner:()=>void;onConnect:()=>void;onLibrary:()=>void;};
 export default function Dashboard(props:Props) {
   const {workspace,listings}=props,words=homeWords(workspace?.org.spaceType??"real_estate");
   const active=listings.filter(l=>!l.soldAt),current=active.find(l=>l.id===props.selectedId);
+  const photographer = workspace?.user.realEstateRole === "photographer_videographer";
   return <div className="app-dashboard">
     <section className="app-home-hero">
       <div><span className="app-brand-kicker">RENDPROP</span><h1>Your next video starts here.</h1><p>Describe the video you want, add your photos or clips, and make it your own.</p></div>
       <div className="app-hero-action"><button onClick={props.onStartCreating}><Icon name="film" size={20}/>Create a video<Icon name="arrow" size={18}/></button><span>Start with files on this device or media from your phone.</span></div>
     </section>
+    {photographer && <section className="app-handoff-guide" aria-label="Client production workflow"><h2>Capture for your clients</h2><p>Open a property, then choose <strong>Create &amp; publish → My client</strong>. Add their contact card and lead delivery email before sharing the listing. Your client does not need an account.</p><button onClick={props.onProperties}>Open client properties</button><button onClick={props.onLeads}>Check client leads</button></section>}
     <section aria-label={words.collection}>
       <div className="app-section-heading"><div><h2>{words.collection}</h2><p>Pick up where you left off on your phone.</p></div><button onClick={props.onCreate}><Icon name="plus" size={18}/>Add a {words.noun}</button></div>
-      {props.busy&&!workspace?<p role="status">Opening your {words.plural}…</p>:!workspace?<div className="app-empty-property"><Icon name="phone" size={30}/><h3>Your phone and desktop, together</h3><p>Sign in once to see your {words.plural}, uploaded photos and videos here.</p><button className="primary" onClick={props.onConnect}>Connect my account</button></div>:!active.length?<div className="app-empty-property"><Icon name="home" size={32}/><h3>Start with a {words.noun}</h3><p>Add it here or in the app. Everything you make stays with that {words.noun}.</p><button className="primary" onClick={props.onCreate}>Add your first {words.noun}</button></div>:<div className="app-property-grid">{active.slice(0,4).map(listing=><button key={listing.id} className="app-property-card" onClick={()=>props.onFeature("photos",listing.id)}><PropertyPreview listing={listing}/><span className="app-property-info"><strong>{listing.address||listing.tagline||`Untitled ${words.noun}`}</strong><span>{[listing.beds!=null?`${listing.beds} beds`:null,listing.baths!=null?`${listing.baths} baths`:null,listing.sqft!=null?`${listing.sqft.toLocaleString()} sq ft`:null].filter(Boolean).join(" · ")||"Open photos, videos and tools"}</span><span>Open {words.noun}<Icon name="arrow" size={16}/></span></span></button>)}</div>}
+      {props.busy&&!workspace?<p role="status">Opening your {words.plural}…</p>:!workspace?<div className="app-empty-property"><Icon name="phone" size={30}/><h3>Your phone and desktop, together</h3><p>Sign in once to see your {words.plural}, uploaded photos and videos here.</p><button className="primary" onClick={props.onConnect}>Connect my account</button></div>:!active.length?<div className="app-empty-property"><Icon name="home" size={32}/><h3>Start with a {words.noun}</h3><p>Add it here or in the app. Everything you make stays with that {words.noun}.</p><button className="primary" onClick={props.onCreate}>Add your first {words.noun}</button></div>:<div className="app-property-grid">{active.slice(0,4).map(listing=><button key={listing.id} className="app-property-card" onClick={()=>props.onFeature("photos",listing.id)}><PropertyPreview listing={listing} services={props.services} workspace={workspace}/><span className="app-property-info"><strong>{listing.address||listing.tagline||`Untitled ${words.noun}`}</strong><span>{[listing.beds!=null?`${listing.beds} beds`:null,listing.baths!=null?`${listing.baths} baths`:null,listing.sqft!=null?`${listing.sqft.toLocaleString()} sq ft`:null].filter(Boolean).join(" · ")||"Open photos, videos and tools"}</span><span>Open {words.noun}<Icon name="arrow" size={16}/></span></span></button>)}</div>}
       {!!listings.length&&<button className="text-button" onClick={props.onProperties}>View all {words.plural}{listings.some(l=>l.soldAt)?" & sold properties":""}<Icon name="arrow" size={16}/></button>}
     </section>
     <details className="app-all-tools"><summary><Icon name="sparkles" size={20}/><span>All tools<small>Photo edits, tours, scripts, AI video and more</small></span></summary><div>

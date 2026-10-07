@@ -86,9 +86,9 @@ enum AskAIScreen: String {
                     "Should I use my own voice?",
                     "What do I post this to?"]
         case .floorPlan:
-            return ["How do I scan a second floor?",
-                    "Why did it miss a room?",
-                    "How slowly should I walk?",
+            return ["How do I enter room measurements?",
+                    "Can my phone measure a distance?",
+                    "How do I draw a second floor outline?",
                     "Can I upload a plan I already have?"]
         case .aerial:
             return ["What is an aerial intro for?",
@@ -130,13 +130,14 @@ extension View {
     /// Use it on the screen's own root content, INSIDE whatever
     /// `NavigationStack` / `NavigationLink` destination it lives in — a
     /// toolbar item only renders when there is a nav bar above it.
-    func askAI(_ screen: AskAIScreen) -> some View {
-        modifier(AskAIModifier(screen: screen))
+    func askAI(_ screen: AskAIScreen, listingID: UUID? = nil) -> some View {
+        modifier(AskAIModifier(screen: screen, listingID: listingID))
     }
 }
 
 private struct AskAIModifier: ViewModifier {
     let screen: AskAIScreen
+    let listingID: UUID?
     @EnvironmentObject private var model: AppModel
     @State private var showCoach = false
 
@@ -149,7 +150,7 @@ private struct AskAIModifier: ViewModifier {
             }
             .sheet(isPresented: $showCoach) {
                 CoachView(model: model, originScreen: screen.rawValue,
-                          starters: screen.starters)
+                          starters: screen.starters, listingID: listingID)
             }
     }
 }

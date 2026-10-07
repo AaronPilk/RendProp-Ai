@@ -106,6 +106,12 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        // Active-context endpoints must never follow a server-side workspace
+        // change from another device while this request is in flight.
+        let mePath = base.appendingPathComponent("me").path
+        if (url.path == mePath || url.path.hasPrefix(mePath + "/")), let org = WorkspaceContext.selectedOrgID {
+            req.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        }
         if let token = AuthStore.currentAccessToken {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -182,22 +188,41 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// Send, verify 2xx, decode the error envelope otherwise. Refreshes the JWT
     /// first (never sends a token we know is expired), and on a 401 forces ONE
     /// refresh + retry; a 401 after that means the session is dead → sign out.
-    private func execute(_ req: URLRequest, session: URLSession? = nil) async throws -> Data {
+    @MainActor private func execute(_ req: URLRequest, session: URLSession? = nil,
+                                    beforeSend: (@MainActor () throws -> Void)? = nil) async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        // The request can have been assembled before a hop to this actor. Its
+        // old bearer identifies the intended account; refresh may replace an
+        // expired token, but never replace that account with another one.
+        if Config.enableAuth, let header = req.value(forHTTPHeaderField: "Authorization"), header.hasPrefix("Bearer "),
+           let expected = AnonymousAdoptionRecovery.identity(String(header.dropFirst(7)))?.id,
+           actor.flatMap(UUID.init(uuidString:)) != expected { throw CloudSyncError.identityChanged }
+        let mePath = base.appendingPathComponent("me").path
+        let workspaceRead = req.httpMethod == "GET" && req.url?.path == mePath
+        let workspaceWrite = req.url?.path == mePath + "/brand" || req.url?.path.hasPrefix(mePath + "/compliance") == true
+        if Config.enableAuth, workspaceRead || workspaceWrite,
+           req.value(forHTTPHeaderField: "X-Org-Id") == nil { throw CloudSyncError.identityChanged }
         let client = session ?? self.session
         var request = req
         if Config.enableAuth, let token = await AuthStore.validAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        try beforeSend?()
         let (data, resp) = try await client.data(for: request)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         if (200..<300).contains(http.statusCode) { return data }
 
         if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
             let refreshed = await AuthStore.shared.forceRefresh()
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
             if refreshed, let fresh = AuthStore.storedAccessToken() {
                 request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+                try beforeSend?()
                 let (data2, resp2) = try await client.data(for: request)
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
                 guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
                 if (200..<300).contains(http2.statusCode) { return data2 }
                 if http2.statusCode == 401 {
@@ -436,11 +461,18 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
     func cloudMedia(listingID: UUID, orgID: UUID, offset: Int = 0) async throws -> CloudMediaPage {
         guard offset >= 0, offset <= 10000, offset % 50 == 0 else { throw CloudSyncError.invalidResponse }
+        let context = try await CloudMediaAccessContext.capture(orgID: orgID)
         var request = makeRequest(url: url(["studio", "media"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()), URLQueryItem(name: "org_id", value: orgID.uuidString.lowercased()), URLQueryItem(name: "offset", value: String(offset))]))
         request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
-        let data = try await execute(request)
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try await context.check()
         let decoded: CloudMediaPage = try decodeExact(data)
-        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset)
+        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset, actorID: context.actorID)
+    }
+    func exportAccountData() async throws -> Data {
+        let data = try await execute(makeRequest(url: url(["me", "export"])))
+        guard data.count <= AccountExportReceipt.maximumBytes else { throw CloudSyncError.invalidResponse }
+        return data
     }
     func cloudBrand() async throws -> CloudBrand {
         let data = try await execute(makeRequest(url: url(["me"])))
@@ -449,17 +481,26 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
               let org = r["org"] as? [String: Any], let orgRaw = org["id"] as? String, let orgID = UUID(uuidString: orgRaw),
               let type = org["space_type"] as? String else { throw CloudSyncError.invalidResponse }
         let fields = (org["brand_kit"] as? [String: Any] ?? [:]).compactMapValues { $0 as? String }
-        return CloudBrand(userID: userID, orgID: orgID, spaceType: type, fields: fields)
+        var personal: PersonalCardReceipt?
+        if user.keys.contains("public_card"), user.keys.contains("public_card_space_type") {
+            let bytes = try JSONSerialization.data(withJSONObject: ["ok": true, "user_id": userRaw,
+                "space_type": user["public_card_space_type"] ?? NSNull(), "public_card": user["public_card"] ?? NSNull()])
+            let receipt: PersonalCardReceipt = try decodeExact(bytes)
+            personal = try receipt.checked(owner: userID)
+        }
+        return CloudBrand(userID: userID, orgID: orgID, spaceType: type, fields: fields, personalCard: personal)
     }
     func cloudCreative(listingID: UUID, orgID: UUID) async throws -> CloudCreative {
+        let context = try await CloudMediaAccessContext.capture(orgID: orgID)
         var resultRequest = makeRequest(url: url(["studio", "creative-results"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased())]))
         resultRequest.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         struct Results: Decodable { let results: [CloudCreative.Result] }
-        let results: Results = try decodeExact(try await execute(resultRequest))
+        let results: Results = try decodeExact(try await execute(resultRequest, beforeSend: { try context.check() }))
+        try await context.check()
         guard results.results.count <= 100, Set(results.results.map(\.id)).count == results.results.count,
               results.results.allSatisfy({ $0.listing_id == listingID && ["voice", "video"].contains($0.kind) && $0.words.count <= 20_000 && $0.words.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end >= $0.start && $0.text.count <= 1000 }) }) else { throw CloudSyncError.invalidResponse }
         for result in results.results {
-            if let media = result.url, let expiry = result.expires_at { try CloudListingMerge.validateMedia(media, expiry: expiry, listingID: listingID, orgID: orgID, now: Date(), voice: result.kind == "voice") }
+            if let media = result.url, let expiry = result.expires_at { try CloudListingMerge.validateMedia(media, expiry: expiry, listingID: listingID, orgID: orgID, now: Date(), voice: result.kind == "voice", actorID: context.actorID) }
             else if result.url != nil { throw CloudSyncError.invalidResponse }
         }
         var documentRequest = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "creative:\(listingID.uuidString.lowercased())")]))
@@ -468,7 +509,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             struct Document: Decodable { struct Payload: Decodable { let script: String }; let listing_id: UUID; let payload: Payload }
             let document: Document?
         }
-        let document: DocumentEnvelope = try decodeExact(try await execute(documentRequest))
+        let document: DocumentEnvelope = try decodeExact(try await execute(documentRequest, beforeSend: { try context.check() }))
+        try await context.check()
         if let document = document.document { guard document.listing_id == listingID, document.payload.script.count <= 100_000 else { throw CloudSyncError.invalidResponse } }
         return CloudCreative(script: document.document?.payload.script ?? "", results: results.results)
     }
@@ -514,24 +556,64 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     func createListing(_ listing: Listing) async throws -> Listing {
-        let data = try await execute(makeRequest(url: url(["listings"]), method: "POST",
-                                                 json: listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())")))
+        guard let org = listing.cloudDraftOrgID else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(["listings"]), method: "POST",
+                                  json: try listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())"))
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
         return mapListing(try decode(data))
     }
 
     func updateListing(_ listing: Listing) async throws -> Listing {
-        // PATCH the SERVER row (serverID), never the local UUID — the local id
-        // is unknown to the backend once the listing has been created there.
-        let target = listing.serverID ?? listing.id
-        let data = try await execute(makeRequest(url: url(["listings", target.uuidString]),
-                                                 method: "PATCH",
-                                                 json: listingBody(listing, forPatch: true)))
-        return mapListing(try decode(data))
+        _ = try ListingWireDetails.merged(listing)
+        guard let target = listing.serverID, let org = listing.serverOrgID,
+              org == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(["listings", target.uuidString, "facts"]),
+                                  method: "PUT", json: try ListingFactsSync.body(listing))
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+        })
+        let dto: ListingDTO = try decode(data)
+        guard dto.id.flatMap(UUID.init(uuidString:)) == target,
+              dto.orgId.flatMap(UUID.init(uuidString:)) == org else { throw CloudSyncError.invalidResponse }
+        return mapListing(dto)
+    }
+
+    func updateMeasurements(_ listing: Listing) async throws -> Listing {
+        guard let target = listing.serverID, let org = listing.serverOrgID,
+              org == WorkspaceContext.selectedOrgID,
+              let state = listing.measurementSync, state.pending, !state.conflict,
+              let value = FloorMeasurementPlan.wireValue(in: listing.details) else {
+            throw CloudSyncError.identityChanged
+        }
+        var request = makeRequest(url: url(["listings", target.uuidString, "measurements"]), method: "PUT",
+            json: ["expected": state.expected as Any? ?? NSNull(), "value": value])
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+        })
+        let dto: ListingDTO = try decode(data)
+        guard dto.id.flatMap(UUID.init(uuidString:)) == target,
+              dto.orgId.flatMap(UUID.init(uuidString:)) == org else { throw CloudSyncError.invalidResponse }
+        return mapListing(dto)
     }
 
     func deleteListing(serverID: UUID) async throws {
         _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]),
                                           method: "DELETE"))
+    }
+
+    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws {
+        var body: [String: Any] = ["main_photo_asset_id": mainAssetID.map { $0 as Any } ?? NSNull()]
+        if let galleryAssetIDs { body["gallery_asset_ids"] = galleryAssetIDs }
+        _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]), method: "PATCH", json: body))
+    }
+
+    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws {
+        var body: [String: Any] = ["gallery_add_asset_ids": assetIDs]
+        if let mainAssetID { body["main_photo_asset_id"] = mainAssetID }
+        _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]), method: "PATCH", json: body))
     }
 
     // MARK: - Uploads (contract §2)
@@ -735,7 +817,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         }
         if let prompt = request.prompt {
             let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }   // custom only, server cap 600
+            if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }
+        }
+        if request.edit == "stage", let reference = request.stagingReferenceBase64 {
+            body["staging_reference_b64"] = reference
+            body["staging_reference_mime"] = request.stagingReferenceMime ?? "image/jpeg"
         }
         // Industry-aware prompts server-side (a restaurant is not staged like a
         // living room) — contract §B4. The LISTING's type when the caller has
@@ -1118,7 +1204,25 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote {
         let target = url(["ai-video", "declutter", "quote"],
                          query: [URLQueryItem(name: "listing_id", value: listingID.uuidString)])
-        return try decode(await execute(makeRequest(url: target), session: aiSession))
+        return try decode(await executeReflection(makeRequest(url: target)))
+    }
+
+    @MainActor private func executeReflection(_ request: URLRequest) async throws -> Data {
+        var request = request
+#if SPATIAL_CAPTURE_LAB
+        // Only the explicit internal TestFlight scheme can opt into the Bria
+        // beta. The server independently checks the configured tester list.
+        if AIConsent.shared.isGranted {
+            let revision = AIConsent.shared.revocationRevision
+            request.setValue("bria-video-v1", forHTTPHeaderField: "x-rendprop-ai-consent")
+            return try await execute(request, session: aiSession, beforeSend: {
+                guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == revision else {
+                    throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+                }
+            })
+        }
+#endif
+        return try await execute(request, session: aiSession)
     }
 
     func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
@@ -1220,12 +1324,26 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     /// Shared submit → decode for the three generate routes (202 responses).
-    private func submitAIVideo(path: String, body: [String: Any],
+    @MainActor private func submitAIVideo(path: String, body: [String: Any],
                                fallbackKind: String, idempotencyKey: String?) async throws -> AIVideoJob {
-        let data = try await execute(makeRequest(url: url(["ai-video", path]),
+        let consentRevision = AIConsent.shared.revocationRevision
+        let workspace = WorkspaceContext.selectedOrgID
+        guard AIConsent.shared.isGranted else {
+            throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+        }
+        var request = makeRequest(url: url(["ai-video", path]),
                                                  method: "POST", json: body,
-                                                 idempotency: Self.aiIdempotency(idempotencyKey)),
-                                     session: aiSession)
+                                                 idempotency: Self.aiIdempotency(idempotencyKey))
+        if let workspace { request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+#if SPATIAL_CAPTURE_LAB
+        if path == "declutter" { request.setValue("bria-video-v1", forHTTPHeaderField: "x-rendprop-ai-consent") }
+#endif
+        let data = try await execute(request, session: aiSession, beforeSend: {
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consentRevision else {
+                throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+            }
+            guard WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+        })
         let dto: AIVideoJobDTO = try decode(data)
         guard let requestId = dto.requestId, !requestId.isEmpty,
               let statusUrl = dto.statusUrl, !statusUrl.isEmpty,
@@ -1256,7 +1374,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // surfaces as a normal APIError to the caller's retry/fallback path).
         let target = comps?.url ?? plain
 
-        let data = try await execute(makeRequest(url: target), session: aiSession)
+        let request = makeRequest(url: target)
+        let data = job.kind == "declutter" ? try await executeReflection(request) : try await execute(request, session: aiSession)
         let dto: AIVideoStatusDTO = try decode(data)
         switch dto.status {
         case "completed":
@@ -1465,11 +1584,15 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                     "photos": l.photos,
                     "edits": l.edits,
                     "reels": l.reels,
+                    "attention": l.attention ?? "",
+                    "server_id": l.serverID.map { $0 as Any } ?? NSNull(),
+                    "local_draft": l.localDraft,
                 ]
             },
             "plan": request.context.plan,
         ]
         if let screen = request.context.screen { context["screen"] = screen }
+        if let selected = request.context.selectedListingID { context["selected_listing_id"] = selected }
 
         let body: [String: Any] = [
             "messages": request.messages.map { ["role": $0.role, "content": $0.content] },
@@ -1481,8 +1604,15 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // other model-backed route on this client already uses the longer
         // timeout. The default 60 s was one slow answer away from throwing away
         // a reply the server had already paid for.
-        let data = try await execute(makeRequest(url: url(["coach"]), method: "POST", json: body),
-                                     session: aiSession)
+        guard let org = request.orgID, org == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        // One key for this user request. execute() retains this URLRequest on
+        // refresh/retry; asking the same question later is a new logical turn.
+        var httpRequest = makeRequest(url: url(["coach"]), method: "POST", json: body,
+                                      idempotency: .perAttempt)
+        httpRequest.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(httpRequest, session: aiSession, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+        })
         // decodeExact, NOT decode: `CoachResponse` spells its own CodingKeys in
         // snake_case, which `.convertFromSnakeCase` cannot match. See the note
         // on `decodeExact`.
@@ -1491,14 +1621,154 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
 
     // MARK: - Account / usage / leads
 
+    func realEstateRole() async throws -> RealEstateRole {
+        let data = try await execute(makeRequest(url: url(["me"])))
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let user = root["user"] as? [String: Any] else { throw APIError.decoding }
+        return RealEstateRole(rawValue: user["real_estate_role"] as? String ?? "agent") ?? .agent
+    }
+
+    func updateRealEstateRole(_ role: RealEstateRole) async throws {
+        _ = try await execute(makeRequest(url: url(["me", "profile"]), method: "PATCH",
+            json: ["real_estate_role": role.rawValue]))
+    }
+
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact? {
+        var request = makeRequest(url: url(["listings", listingID.uuidString.lowercased(), "client-contact"]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let contact: ListingClientContact? }
+        let envelope: Envelope = try decodeExact(try await execute(request))
+        return try envelope.contact?.checked(listingID: listingID)
+    }
+
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact {
+        try ClientContactPolicy.validate(contact)
+        var request = makeRequest(url: url(["listings", listingID.uuidString.lowercased(), "client-contact"]),
+            method: "PUT", json: contact.writeBody)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let contact: ListingClientContact }
+        let envelope: Envelope = try decodeExact(try await execute(request))
+        return try envelope.contact.checked(listingID: listingID)
+    }
+
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt {
+        var request = makeRequest(url: url(["leads", "client-recipient-verification"]), method: "POST",
+            json: ["listing_id": listingID.uuidString.lowercased()])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let receipt: ClientRecipientVerificationReceipt = try decodeExact(try await execute(request))
+        return try receipt.checked()
+    }
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt {
+        var request = makeRequest(url: url(["leads", leadID.uuidString.lowercased()]), method: "DELETE")
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let receipt: LeadDeletionReceipt = try decodeExact(try await execute(request))
+        return try receipt.checked(leadID: leadID)
+    }
+
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery {
+        guard ClientContactPolicy.isEmail(recipient) else { throw ClientContactError.invalidEmail }
+        var request = makeRequest(url: url(["leads", leadID.uuidString.lowercased(), "send-to-client"]),
+            method: "POST", json: ["request_id": requestID.uuidString.lowercased(), "expected_recipient_email": recipient],
+            idempotency: .key("client-lead:\(requestID.uuidString.lowercased())"))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let ok: Bool; let delivery: ClientLeadDelivery }
+        let result: Envelope = try decodeExact(try await execute(request))
+        guard result.ok else { throw ClientContactError.invalidResponse }
+        return result.delivery
+    }
+
     func updateBrand(_ fields: [String: String]) async throws {
         // PATCH /me/brand — the org brand kit is what the PUBLIC tour/portfolio
         // pages render as the agent card, so this is what puts the agent's
         // identity on every hosted share link (2026-08-26 audit P0-1).
-        _ = try await execute(makeRequest(url: url(["me", "brand"]), method: "PATCH", json: fields))
+        guard let org = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        try await updateBrand(fields, orgID: org)
     }
 
-    func me() async throws -> UsageSummary {
+    @MainActor func updateBrand(_ fields: [String: String], orgID: UUID) async throws {
+        var request = makeRequest(url: url(["me", "brand"]), method: "PATCH", json: fields)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        _ = try await execute(request)
+    }
+
+    @MainActor func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard !image.isEmpty, image.count <= 512 * 1024, ["image/png", "image/jpeg"].contains(contentType) else { throw CloudSyncError.invalidResponse }
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let body: [String: Any] = ["image_base64": image.base64EncodedString(), "content_type": contentType,
+            "expected_logo_url": expectedLogoURL as Any? ?? NSNull(), "client_operation_id": operationID.uuidString.lowercased()]
+        var request = makeRequest(url: url(["me", "brand", "logo"]), method: "POST", json: body)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let receipt: BusinessLogoReceipt = try decodeExact(data)
+        guard receipt.ok, receipt.orgID == orgID, let value = receipt.businessLogoURL,
+              let logo = URL(string: value), logo.scheme == "https", logo.host != nil,
+              logo.user == nil, logo.password == nil else { throw CloudSyncError.invalidResponse }
+        return receipt
+    }
+
+    @MainActor func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        // Old /me handlers interpret every DELETE subpath as account deletion.
+        // A dedicated POST fails closed during a mixed-version rollout.
+        var request = makeRequest(url: url(["me", "brand", "logo", "clear"]), method: "POST",
+            json: ["expected_logo_url": expectedLogoURL as Any? ?? NSNull()])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let receipt: BusinessLogoReceipt = try decodeExact(data)
+        guard receipt.ok, receipt.orgID == orgID, receipt.businessLogoURL == nil else { throw CloudSyncError.invalidResponse }
+        return receipt
+    }
+
+    @MainActor func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt {
+        guard WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let brand = try await cloudBrand()
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID, brand.orgID == orgID else { throw CloudSyncError.identityChanged }
+        let value = brand.fields["business_logo_url"]
+        if let value {
+            guard let logo = URL(string: value), logo.scheme == "https", logo.host != nil,
+                  logo.user == nil, logo.password == nil else { throw CloudSyncError.invalidResponse }
+        }
+        return .init(ok: true, orgID: orgID, businessLogoURL: value)
+    }
+
+    @MainActor func personalCard() async throws -> PersonalCardReceipt {
+        guard let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        let revision = AuthStore.shared.syncSessionRevision
+        let data = try await execute(makeRequest(url: url(["me", "card"])))
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        let receipt: PersonalCardReceipt = try decodeExact(data)
+        return try receipt.checked(owner: owner)
+    }
+
+    @MainActor func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt {
+        guard let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)), expected.userID == owner,
+              SpaceType(rawValue: spaceType) != nil,
+              Set(fields.keys).isSubset(of: Set(AgentCard.fieldNames)) else { throw CloudSyncError.identityChanged }
+        _ = try expected.checked(owner: owner)
+        let revision = AuthStore.shared.syncSessionRevision
+        var changes = fields.mapValues { $0.isEmpty ? NSNull() as Any : $0 as Any }
+        changes["space_type"] = spaceType
+        let request = makeRequest(url: url(["me", "card"]), method: "PATCH",
+            json: ["changes": changes, "expected": expected.expectedWire(keys: Array(changes.keys))])
+        let data = try await execute(request)
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner,
+              AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        let receipt: PersonalCardReceipt = try decodeExact(data)
+        return try receipt.checked(owner: owner)
+    }
+
+    @MainActor func me() async throws -> UsageSummary {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let selectedOrg = WorkspaceContext.selectedOrgID
         let data = try await execute(makeRequest(url: url(["me"])))
         let dto: MeDTO = try decode(data)
         // /me returns `plan` (effective), `plan_raw`, `trial_ends_at`,
@@ -1506,6 +1776,25 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // listings, by_feature{…}}` — see services/supabase/functions/me/index.ts.
         // cost_cents can be fractional (round4) → round to whole cents for Money.
         let usage = dto.usage
+        if dto.trialUsage != nil || dto.trialOffer != nil || dto.servingActivation != nil || dto.servingPhotoPackage != nil {
+            guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
+                  org == selectedOrg, WorkspaceContext.selectedOrgID == selectedOrg,
+                  dto.trialUsage.map({ $0.checked(org: org) != nil }) ?? true,
+                  dto.trialOffer.map({ $0.checked() != nil }) ?? true,
+                  dto.servingActivation.map({ $0.checked(org: org) != nil }) ?? true else { throw CloudSyncError.invalidResponse }
+        }
+        if let package = dto.servingPhotoPackage {
+            guard let org = selectedOrg, package.checked(org: org) != nil,
+                  let owner = actor.flatMap(UUID.init(uuidString:)),
+                  dto.user?.id.flatMap(UUID.init(uuidString:)) == owner,
+                  dto.servingActivation?.available != false else { throw CloudSyncError.invalidResponse }
+        }
+        var hosting: HostingRetentionSummary?
+        if let receipt = dto.hostingRetention {
+            guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
+                  org == WorkspaceContext.selectedOrgID, let checked = receipt.checked(org: org) else { throw CloudSyncError.invalidResponse }
+            hosting = checked
+        }
         var entitlements: Entitlements? = nil
         if let ent = dto.entitlement {
             var used: [String: Int] = [:]
@@ -1521,13 +1810,14 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                 plan: dto.plan ?? dto.org?.plan ?? "free",
                 planRaw: dto.planRaw,
                 trialEndsAt: Self.parseDate(dto.trialEndsAt),
-                rendersPerMonth: ent.rendersPerMonth?.value ?? 0,
-                photoEditsPerMonth: ent.photoEditsPerMonth?.value ?? 0,
-                reelsPerMonth: ent.reelsPerMonth?.value ?? 0,
-                aerialsPerMonth: ent.aerialsPerMonth?.value ?? 0,
-                topazPerMonth: ent.topazPerMonth?.value ?? 0,
+                rendersPerMonth: dto.servingActivation?.available == false ? 0 : ent.rendersPerMonth?.value ?? 0,
+                photoEditsPerMonth: dto.servingActivation?.available == false ? 0 : ent.photoEditsPerMonth?.value ?? 0,
+                reelsPerMonth: dto.servingActivation?.available == false ? 0 : ent.reelsPerMonth?.value ?? 0,
+                aerialsPerMonth: dto.servingActivation?.available == false ? 0 : ent.aerialsPerMonth?.value ?? 0,
+                topazPerMonth: dto.servingActivation?.available == false ? 0 : ent.topazPerMonth?.value ?? 0,
                 used: used,
-                leads: usage?.leads?.value ?? 0)
+                leads: usage?.leads?.value ?? 0,
+                planSource: dto.planSource)
         }
         // Admin flag: whatever the SERVER says, never a local rule. Today's /me
         // sends neither field, so both stay nil and the owner console probes
@@ -1549,9 +1839,16 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             orgName: dto.org?.name,
             brandName: dto.org?.brandKit?.name,
             isAdmin: adminFlag,
-            role: serverRole)
+            role: serverRole,
+            hostingRetention: hosting,
+            trialUsage: dto.trialUsage,
+            trialOffer: dto.trialOffer,
+            servingActivation: dto.servingActivation,
+            servingPhotoPackage: dto.servingPhotoPackage)
         // Let the Account row show the server-side name (never an email).
-        await AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == selectedOrg else { throw CloudSyncError.identityChanged }
+        AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
         return summary
     }
 
@@ -1602,12 +1899,14 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     func leads(listingServerID: UUID?) async throws -> [Lead] {
         var query: [URLQueryItem] = []
         if let listingServerID { query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString)) }
-        let data = try await execute(makeRequest(url: url(["leads"], query: query)))
+        var request = makeRequest(url: url(["leads"], query: query))
+        if let org = WorkspaceContext.selectedOrgID { request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+        let data = try await execute(request)
         // `{ leads: [...] }` per contract; tolerate a bare array too.
         let dtos: [LeadDTO]
-        if let wrapped: LeadsDTO = try? decode(data), let list = wrapped.leads {
+        if let wrapped: LeadsDTO = try? decodeExact(data), let list = wrapped.leads {
             dtos = list
-        } else if let bare: [LeadDTO] = try? decode(data) {
+        } else if let bare: [LeadDTO] = try? decodeExact(data) {
             dtos = bare
         } else {
             throw APIError.decoding
@@ -1701,7 +2000,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// sends the FULL local truth, using JSON null to clear a server value the
     /// user removed (un-sell, drop the Zillow link, unknown beds) — a partial
     /// PATCH that omits them would leave stale values on the hosted page.
-    private func listingBody(_ l: Listing, forPatch: Bool) -> [String: Any] {
+    private func listingBody(_ l: Listing, forPatch: Bool) throws -> [String: Any] {
         var b: [String: Any] = [
             "space_type": l.spaceType.rawValue,
             "address": l.address,
@@ -1728,10 +2027,12 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // can never quietly index a page whose owner said no. A server that
         // does nothing with the key stores it harmlessly — publishing is
         // unaffected either way.
-        var details = l.details ?? [:]
-        if let allow = l.allowSearchIndexing {
-            details[Listing.searchIndexingKey] = allow ? "true" : "false"
-        }
+        // Measurements, like indexing, are independent of the generic form's
+        // details. Preserve all other keys, including an unsupported future
+        // measurements value, and reject invalid/oversized writes before HTTP.
+        let mergedDetails = try ListingWireDetails.merged(l)
+        // Private measurements have their own atomic endpoint. Full listing edits cannot replace them.
+        let details = forPatch ? mergedDetails.filter { !FloorMeasurementPlan.isPrivateKey($0.key) } : mergedDetails
         if !details.isEmpty {
             b["details"] = details
         } else if forPatch {
@@ -1801,12 +2102,25 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             tagline: dto.tagline,
             details: dto.details?.value
         )
+        l.cloudArchived = dto.status == "archived"
         l.serverID = serverID
         l.serverOrgID = dto.orgId.flatMap(UUID.init(uuidString:))
         l.cloudCreateReplayed = dto.createReplayed
+        l.floorMeasurements = FloorMeasurementPlan.decodeWireValue(FloorMeasurementPlan.wireValue(in: l.details))
+        l.measurementSync = FloorMeasurementSyncState(expected: FloorMeasurementPlan.wireValue(in: l.details))
         if let raw = l.details?[Listing.searchIndexingKey]?.lowercased() {
             l.allowSearchIndexing = ["true", "1", "yes"].contains(raw)
         }
+        func text(_ value: String?) -> ListingFactValue { value.map(ListingFactValue.text) ?? .null }
+        func number(_ value: Double?) -> ListingFactValue { value.map(ListingFactValue.number) ?? .null }
+        var state = ListingFactsSyncState()
+        state.baseline = ["space_type": text(dto.spaceType), "address": text(dto.address),
+            "beds": number(dto.beds.map(Double.init)), "baths": number(dto.baths),
+            "sqft": number(dto.sqft.map(Double.init)), "price_cents": number(dto.priceCents.map(Double.init)),
+            "tagline": text(dto.tagline), "zillow_url": text(dto.zillowUrl), "lat": number(dto.lat), "lng": number(dto.lng),
+            "sold_at": text(dto.soldAt), "status": text(dto.status)]
+        state.detailBaseline = (dto.details?.raw ?? [:]).filter { ListingFactsSync.editableDetailKeys.contains($0.key) }
+        l.factsSync = state
         return l
     }
 
@@ -1826,7 +2140,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             extra: dto.extra?.value,
             createdAt: Self.parseDate(dto.createdAt) ?? Date(),
             source: clean(dto.source),
-            listingAddress: clean(dto.listingAddress), status: clean(dto.status))
+            listingAddress: clean(dto.listingAddress), status: clean(dto.status), clientDelivery: dto.clientDelivery)
     }
 
     /// Tolerant `[String: String]` decoder for jsonb maps: numbers/bools are
@@ -1835,30 +2149,27 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// can't fail the entire /listings array decode.
     struct TolerantStringMap: Decodable {
         let value: [String: String]
+        let raw: [String: ListingFactValue]
 
-        private struct AnyKey: CodingKey {
-            var stringValue: String
-            var intValue: Int? { nil }
-            init?(stringValue: String) { self.stringValue = stringValue }
-            init?(intValue: Int) { return nil }
+        private struct Scalar: Decodable {
+            let value: String?
+            init(from decoder: Decoder) throws {
+                let c = try decoder.singleValueContainer()
+                if let s = try? c.decode(String.self) { value = s }
+                else if let i = try? c.decode(Int.self) { value = String(i) }
+                else if let d = try? c.decode(Double.self) { value = String(d) }
+                else if let b = try? c.decode(Bool.self) { value = String(b) }
+                else { value = nil } // null / arrays / objects remain tolerated.
+            }
         }
 
         init(from decoder: Decoder) throws {
-            var out: [String: String] = [:]
-            let c = try decoder.container(keyedBy: AnyKey.self)
-            for key in c.allKeys {
-                if let s = try? c.decode(String.self, forKey: key) {
-                    out[key.stringValue] = s
-                } else if let i = try? c.decode(Int.self, forKey: key) {
-                    out[key.stringValue] = String(i)
-                } else if let d = try? c.decode(Double.self, forKey: key) {
-                    out[key.stringValue] = String(d)
-                } else if let b = try? c.decode(Bool.self, forKey: key) {
-                    out[key.stringValue] = String(b)
-                }
-                // null / arrays / objects: skipped — tolerate, never throw.
-            }
-            value = out
+            // A String-keyed Dictionary bypasses convertFromSnakeCase. Dynamic
+            // details are stored keys, not DTO field names: rewriting them
+            // loses floor_measurements_v1, floorplan_url and future raw keys.
+            let c = try decoder.singleValueContainer()
+            raw = try c.decode([String: ListingFactValue].self)
+            value = try c.decode([String: Scalar].self).compactMapValues(\.value)
         }
     }
 
@@ -2157,6 +2468,12 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let org: Org?
         let plan: String?
         let planRaw: String?
+        let planSource: String?
+        let hostingRetention: HostingRetentionSummary?
+        let trialUsage: TrialUsageSummary?
+        let trialOffer: TrialOfferSummary?
+        let servingActivation: ServingActivationSummary?
+        let servingPhotoPackage: ServingPhotoPackageSummary?
         let trialEndsAt: String?
         let entitlement: Entitlement?
         let usage: Usage?
@@ -2181,5 +2498,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let source: String?
         let listingAddress: String?
         let status: String?
+        let clientDelivery: ClientLeadDelivery?
+        enum CodingKeys: String, CodingKey {
+            case id, listingId = "listing_id", name, phone, email, message, extra
+            case createdAt = "created_at", source, listingAddress = "listing_address", status
+            case clientDelivery = "client_delivery"
+        }
     }
 }

@@ -10,9 +10,10 @@ export interface PresenterExecutionDeps {
   worker(job: string, action: string, payload?: PresenterObject): Promise<PresenterObject>;
   liveConfigured(): boolean;
   sign: MediaSign;
+  previewSign?: (key:string,seconds:number,listing:string)=>Promise<string>;
   fetch: MediaFetch;
   estimate(input: GenerateInput): Promise<HfMotionTransferEstimate>;
-  submit(input: GenerateInput): Promise<HfMotionTransferRef>;
+  submit(input: GenerateInput, job?: PresenterObject): Promise<HfMotionTransferRef>;
   poll(ref: HfMotionTransferRef): Promise<HfMotionTransferStatus>;
   cancel(ref: HfMotionTransferRef): Promise<"accepted" | "already_started">;
   outputHosts(): readonly string[];
@@ -86,11 +87,12 @@ export function createPresenterExecution(deps: PresenterExecutionDeps) {
     // Failure to persist the receipt leaves dispatching; the drain converts it
     // to uncertain and retains the hold for manual provider reconciliation.
     let ref: HfMotionTransferRef;
-    try { ref = await deps.submit(verified.input); }
+    try { ref = await deps.submit(verified.input, job); }
     catch (error) {
-      const rejected = error instanceof ProviderError && [400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(error.status ?? 0);
+      const beforeDispatch = !!error && typeof error === "object" && "funding_admission" in error && error.funding_admission === true;
+      const rejected = beforeDispatch || error instanceof ProviderError && [400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(error.status ?? 0);
       await deps.worker(jobId, rejected ? "failed" : "ambiguous", rejected
-        ? { dispatch_token: token, charged_cents: 0, billing_final: true, billing_reference: `rejected_http_${(error as ProviderError).status}` }
+        ? { dispatch_token: token, charged_cents: 0, billing_final: true, billing_reference: beforeDispatch ? "funding_admission_refused" : `rejected_http_${(error as ProviderError).status}` }
         : { dispatch_token: token });
       return;
     }
@@ -201,7 +203,7 @@ export function createPresenterExecution(deps: PresenterExecutionDeps) {
       if (permissions.can_preview === true) {
         const before = await deps.user("preview", listing, { job_id: id(job.id) });
         const key = privateOutputKey(id(data.org_id), id(job.id), before.output_key);
-        const preview_url = await deps.sign(key, 300);
+        const preview_url = await (deps.previewSign?deps.previewSign(key,300,listing):deps.sign(key,300));
         const after = await deps.user("preview", listing, { job_id: job.id });
         assert(JSON.stringify(before) === JSON.stringify(after), 409, "Presenter approval changed. Reload before reviewing.");
         Object.assign(dto, { output: { sha256: before.sha256, bytes: before.bytes, duration_s: before.duration_s, preview_url, preview_expires_at: new Date(now() + 300_000).toISOString() } });

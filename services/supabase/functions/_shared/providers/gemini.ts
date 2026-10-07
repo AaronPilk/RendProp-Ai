@@ -30,6 +30,9 @@ import {
 
 const PROVIDER = "gemini";
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+// The legacy GenerateContent hard cutoff includes thoughts and output. The
+// serving quote reads the same generation config that is sent to the provider.
+export const GEMINI_IMAGE_MAX_OUTPUT_TOKENS = 4096;
 
 function geminiKey(): string {
   const key = Deno.env.get("GEMINI_API_KEY")?.trim();
@@ -42,20 +45,34 @@ export function needsImageSizePin(model: string): boolean {
   return /^gemini-3(\.|-)/i.test(model.trim());
 }
 
-/** The exact generateContent body for an image edit. */
-export function geminiImagePayload(model: string, prompt: string, mime: string, imageB64: string): Record<string, unknown> {
-  const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"] };
+/** Explicitly supported image-edit models; an unknown route fails closed. */
+export function supportsStagingReference(model: string): boolean {
+  return ["gemini-2.5-flash-image", "gemini-3.1-flash-image", "gemini-3-pro-image-preview"].includes(model.trim());
+}
+
+export function geminiImageGenerationConfig(model: string): Record<string, unknown> {
+  const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"], candidateCount: 1, maxOutputTokens: GEMINI_IMAGE_MAX_OUTPUT_TOKENS };
   // Never pay 4K rates by accident: 3.x is pinned to 1K, explicitly.
   if (needsImageSizePin(model)) generationConfig.imageConfig = { imageSize: "1K" };
+  return generationConfig;
+}
+
+/** The exact generateContent body for an image edit. */
+export function geminiImagePayload(model: string, prompt: string, mime: string, imageB64: string,
+  reference?: { mime: string; b64: string }): Record<string, unknown> {
   return {
     contents: [{
       role: "user",
       parts: [
         { text: prompt },
         { inline_data: { mime_type: mime, data: imageB64 } },
+        ...(reference ? [
+          { text: "FURNITURE REFERENCE ONLY. Edit the first image's room and camera view; use this second image only to match movable furniture. Never copy its architecture, appliances, windows or viewpoint." },
+          { inline_data: { mime_type: reference.mime, data: reference.b64 } },
+        ] : []),
       ],
     }],
-    generationConfig,
+    generationConfig: geminiImageGenerationConfig(model),
   };
 }
 
@@ -99,6 +116,17 @@ export const geminiAdapter: ProviderAdapter = {
       (input.image_url?.startsWith("data:") ? input.image_url.split(",")[1] : undefined);
     if (!imageB64) throw new ProviderError(PROVIDER, "validation", "gemini image edit needs image_b64");
     const mime = String(input.extra?.image_mime ?? "image/jpeg");
+    const referenceB64 = input.extra?.staging_reference_b64;
+    let reference: { mime: string; b64: string } | undefined;
+    if (referenceB64 !== undefined) {
+      if (input.task !== "photo.stage" || !supportsStagingReference(step.model)
+        || typeof referenceB64 !== "string" || referenceB64.length === 0 || referenceB64.length > 6_000_000
+        || imageB64.length + referenceB64.length > 12_000_000
+        || !["image/jpeg", "image/png", "image/webp"].includes(String(input.extra?.staging_reference_mime))) {
+        throw new ProviderError(PROVIDER, "validation", "This staging furniture reference is not supported.");
+      }
+      reference = { mime: String(input.extra?.staging_reference_mime), b64: referenceB64 };
+    }
 
     const data = await fetchJson<Record<string, unknown>>(
       PROVIDER,
@@ -106,7 +134,7 @@ export const geminiAdapter: ProviderAdapter = {
       {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": geminiKey() },
-        body: JSON.stringify(geminiImagePayload(step.model, input.prompt ?? "", mime, imageB64)),
+        body: JSON.stringify(geminiImagePayload(step.model, input.prompt ?? "", mime, imageB64, reference)),
       },
       BUDGETS.submitMs,
       classifyGemini,

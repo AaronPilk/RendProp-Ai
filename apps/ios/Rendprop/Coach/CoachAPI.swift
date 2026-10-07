@@ -31,19 +31,26 @@ struct CoachRequest: Sendable {
         var photos: Int
         var edits: Int
         var reels: Int
+        var attention: String? = nil
+        var serverID: String? = nil
+        var localDraft: Bool = false
     }
 
     struct Context: Sendable {
         var listings: [ListingContext]
         var plan: String
-        /// A hint only, never load-bearing — e.g. "home" | "settings".
+        /// A closed screen hint; matches AskAIScreen and the server's vocabulary.
         var screen: String?
+        var selectedListingID: String? = nil
     }
 
     /// Oldest first; the LAST entry must be the user's newest message.
     var messages: [Message]
     var spaceType: String
     var context: Context
+    /// Captured workspace routing metadata. This becomes X-Org-Id, never a
+    /// prompt/body field, and must not be reread after an asynchronous hop.
+    var orgID: UUID? = nil
 }
 
 /// The closed action enum — MUST stay in lockstep with `ACTION_TYPES` in
@@ -69,7 +76,7 @@ enum CoachActionType: String, Sendable {
         case .openTour:      return "Open the tour"
         case .openPhotos:    return "Open Photo Studio"
         case .openReel:      return "Make a reel"
-        case .openFloorPlan: return "Open floor plan"
+        case .openFloorPlan: return "Open Measurements"
         case .openAerial:    return "Make an aerial shot"
         case .shareTour:     return "Share the tour"
         case .openPlanUsage: return "Open Plan & usage"

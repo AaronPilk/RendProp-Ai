@@ -3,6 +3,34 @@ import UIKit
 import CoreLocation
 import MapKit
 
+/// Unit numbers travel with the existing address, so phone edits, Studio sync
+/// and published pages use one truth without adding a parallel metadata field.
+/// Only the conventional ` #unit` suffix on the street line is separated;
+/// city/state and older free-form apartment addresses are never guessed apart.
+enum ListingUnitAddress {
+    static func split(_ value: String) -> (address: String, unit: String) {
+        let address = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let streetEnd = address.firstIndex(of: ",") ?? address.endIndex
+        let street = String(address[..<streetEnd])
+        guard let marker = street.range(of: " #", options: .backwards) else { return (address, "") }
+        let unit = String(street[marker.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = String(street[..<marker.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !base.isEmpty, !unit.isEmpty else { return (address, "") }
+        return (base + String(address[streetEnd...]), unit)
+    }
+
+    static func compose(address: String, unit: String) -> String {
+        let parts = split(address)
+        let entered = unit.trimmingCharacters(in: .whitespacesAndNewlines)
+        var chosen = entered.isEmpty ? parts.unit : entered
+        if chosen.hasPrefix("#") { chosen = String(chosen.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines) }
+        if chosen.lowercased().hasPrefix("unit ") { chosen = String(chosen.dropFirst(5)).trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard !chosen.isEmpty else { return parts.address }
+        let end = parts.address.firstIndex(of: ",") ?? parts.address.endIndex
+        return String(parts.address[..<end]) + " #" + chosen + String(parts.address[end...])
+    }
+}
+
 // MARK: - Form data shared by New Listing and Edit
 
 /// Everything the owner types about a space, independent of the screen that
@@ -10,6 +38,7 @@ import MapKit
 /// type: name/address + tagline + the industry's `detailFields`.
 struct ListingFormData: Equatable {
     var address = ""
+    var unit = ""
     /// 0 = unknown for beds/baths (shown as "—"). Never publish invented facts.
     var beds = 0
     var baths = 0.0
@@ -18,24 +47,45 @@ struct ListingFormData: Equatable {
     var tagline = ""
     var details: [String: String] = [:]
     var spaceType: SpaceType = SpaceType.current
+    var clientContact: ListingClientContact? = nil
 
-    init() {}
+    init() {
+        if spaceType == .realEstate && RealEstateRoleStore.current.isProducer {
+            clientContact = .init(listingID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!, enabled: true, publicCard: .init(), recipientEmail: "")
+        }
+    }
 
     init(listing: Listing) {
-        address = listing.address
+        let location = listing.spaceType.showsPropertyDetails ? ListingUnitAddress.split(listing.address) : (listing.address, "")
+        address = location.0
+        unit = location.1
         beds = listing.beds
         baths = listing.baths
         sqft = listing.sqft > 0 ? String(listing.sqft) : ""
-        priceDollars = listing.price.cents > 0 ? String(listing.price.cents / 100) : ""
+        if listing.price.cents > 0 {
+            priceDollars = String(listing.price.cents / 100)
+            if listing.price.cents % 100 != 0 { priceDollars += String(format: ".%02d", listing.price.cents % 100) }
+        } else { priceDollars = "" }
         tagline = listing.tagline ?? ""
         details = listing.details ?? [:]
         spaceType = listing.spaceType
+        clientContact = listing.clientContact
     }
 
     var isRealEstate: Bool { spaceType.showsPropertyDetails }
     var isValid: Bool { !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-    private var trimmedAddress: String { address.trimmingCharacters(in: .whitespacesAndNewlines) }
+    var formattedAddress: String {
+        isRealEstate ? ListingUnitAddress.compose(address: address, unit: unit)
+            : address.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    /// Location/link suggestions replace the street without erasing a unit the
+    /// person entered. A suggestion carrying its own explicit unit wins.
+    mutating func setSuggestedAddress(_ value: String) {
+        let parts = isRealEstate ? ListingUnitAddress.split(value) : (value, "")
+        address = parts.0
+        if !parts.1.isEmpty { unit = parts.1 }
+    }
     private var trimmedTagline: String? {
         let t = tagline.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : t
@@ -50,22 +100,70 @@ struct ListingFormData: Equatable {
         guard !digits.isEmpty, digits.count <= 9 else { return 0 }
         return Int(digits) ?? 0
     }
+    private var priceValue: Money {
+        let raw = priceDollars.replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard raw.range(of: "^[0-9]{1,14}(\\.[0-9]{0,2})?$", options: .regularExpression) != nil,
+              let amount = Decimal(string: raw, locale: Locale(identifier: "en_US")) else { return Money(cents: 0) }
+        let cents = NSDecimalNumber(decimal: amount * 100)
+        guard cents.compare(NSDecimalNumber(value: Int.max)) != .orderedDescending else { return Money(cents: 0) }
+        return Money(cents: cents.intValue)
+    }
+
+    /// A saved sheet compares with what the person opened, then applies only
+    /// those inputs to the current listing. A foreground refresh can update
+    /// every untouched fact without turning the old form into new edit intent.
+    func applyEdits(from original: ListingFormData, to l: inout Listing) {
+        if address != original.address || unit != original.unit { l.address = formattedAddress }
+        if isRealEstate {
+            if beds != original.beds { l.beds = beds }
+            if baths != original.baths { l.baths = baths }
+            if sqft != original.sqft { l.sqft = sqftValue }
+            if priceDollars != original.priceDollars { l.price = priceValue }
+            let key = "nearbyAttractions"
+            if details[key] != original.details[key] {
+                let value = details[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if value.isEmpty { l.details?.removeValue(forKey: key) }
+                else { if l.details == nil { l.details = [:] }; l.details?[key] = String(value.prefix(500)) }
+            }
+        } else {
+            if tagline != original.tagline { l.tagline = trimmedTagline }
+            for key in spaceType.detailFields.map(\.key) where details[key] != original.details[key] {
+                let value = details[key]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if value.isEmpty { l.details?.removeValue(forKey: key) }
+                else { if l.details == nil { l.details = [:] }; l.details?[key] = value }
+            }
+        }
+        if clientContact != original.clientContact {
+            var contact = clientContact
+            contact?.listingID = l.serverID ?? l.id
+            l.clientContact = contact
+            l.clientContactDirty = true
+        }
+    }
 
     /// Write the form into a listing (edit path). Beds/baths/sqft/price are
     /// real-estate concepts — never store the steppers on a venue/gym listing.
     func apply(to l: inout Listing) {
-        l.address = trimmedAddress
+        l.address = formattedAddress
         l.beds = isRealEstate ? beds : 0
         l.baths = isRealEstate ? baths : 0
         l.sqft = isRealEstate ? sqftValue : 0
-        l.price = .dollars(isRealEstate ? (Money.parseDollars(priceDollars) ?? 0) : 0)
+        l.price = isRealEstate ? priceValue : Money(cents: 0)
         l.tagline = isRealEstate ? nil : trimmedTagline
-        l.details = isRealEstate ? nil : cleanedDetails
+        // Keep lookup/publish metadata such as yearBuilt when editing a home;
+        // only empty values are removed, just as for business listings.
+        l.details = cleanedDetails
+        if clientContact != l.clientContact {
+            var contact = clientContact
+            contact?.listingID = l.serverID ?? l.id
+            l.clientContact = contact
+            l.clientContactDirty = true
+        }
     }
 
     /// A brand-new listing from the form (create path).
     func makeListing(coordinate: CLLocationCoordinate2D?) -> Listing {
-        var l = Listing(address: trimmedAddress,
+        var l = Listing(address: formattedAddress,
                         beds: 0, baths: 0, sqft: 0,
                         price: Money(cents: 0),
                         status: .draft,
@@ -86,6 +184,7 @@ struct ListingFieldsForm<Middle: View>: View {
     @Binding var form: ListingFormData
     var locationAction: (() -> Void)? = nil
     var locating = false
+    var expandPropertyDetails = false
     @ViewBuilder var middle: () -> Middle
 
     /// Step 2's buttons are gated on Step 1 being filled in. When someone taps
@@ -99,6 +198,8 @@ struct ListingFieldsForm<Middle: View>: View {
     /// without one.
     var addressFocus: FocusState<Bool>.Binding? = nil
     @FocusState private var ownAddressFocus: Bool
+    @FocusState private var unitFocused: Bool
+    @State private var propertyDetailsExpanded = false
     private var addressFocused: FocusState<Bool>.Binding { addressFocus ?? $ownAddressFocus }
 
     /// Address type-ahead. Only ever consulted for real-estate style spaces —
@@ -133,14 +234,38 @@ struct ListingFieldsForm<Middle: View>: View {
             // friction; "4 beds" is not.
             if space.showsPropertyDetails { listingLinkCard }
             addressCard
+            if space.showsPropertyDetails, form.clientContact != nil { clientContactCard }
             middle()
             if space.showsPropertyDetails {
                 propertyDetailsCard
+                NearbyPlacesEditor(address: form.address, value: Binding(
+                    get: { form.details["nearbyAttractions"] ?? "" },
+                    set: { form.details["nearbyAttractions"] = $0 }))
             } else {
                 taglineCard
                 businessDetailsCard
             }
         }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                if addressFocused.wrappedValue || unitFocused {
+                    Spacer()
+                    Button("Done") { addressFocused.wrappedValue = false; unitFocused = false }
+                        .accessibilityIdentifier("newListing.keyboardDone")
+                }
+            }
+        }
+    }
+
+    private var clientContactCard: some View {
+        DisclosureGroup("Client contact · add now or before publishing") {
+            ClientContactFields(contact: Binding(get: {
+                form.clientContact ?? .init(listingID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!, enabled: true, publicCard: .init(), recipientEmail: "")
+            }, set: { form.clientContact = $0 }))
+            .padding(.top, 12)
+            Text("Add a client photo from Listing contact once this listing is created.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).padding(.top, 8)
+        }.font(.rpHeadline).foregroundStyle(Theme.ink).card()
     }
 
     /// Paste a Zillow / Redfin / Realtor.com link and the address fills itself.
@@ -214,7 +339,7 @@ struct ListingFieldsForm<Middle: View>: View {
             Haptics.warning()
             return
         }
-        form.address = parsed.formatted
+        form.setSuggestedAddress(parsed.formatted)
         linkResult = parsed
         linkFailed = false
         Haptics.success()
@@ -244,6 +369,22 @@ struct ListingFieldsForm<Middle: View>: View {
                 .onChange(of: addressFocused.wrappedValue) { focused in
                     if !focused { completer.clear() }
                 }
+                .accessibilityIdentifier("newListing.address")
+
+            if space.showsPropertyDetails {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Apartment or condo unit (optional)").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.ink)
+                    TextField("e.g. 4B", text: $form.unit)
+                        .font(.rpBody).focused($unitFocused)
+                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        .submitLabel(.done).onSubmit { unitFocused = false }
+                        .padding(14).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
+                        .accessibilityLabel("Apartment or condo unit")
+                        .accessibilityIdentifier("newListing.unit")
+                    Text("Included in the listing address. Current location can find the building, but only you know the unit.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+                }
+            }
 
             // Suggestions sit directly under the field, so the list is where
             // the eye already is. Capped at four: more than that and the video
@@ -254,7 +395,7 @@ struct ListingFieldsForm<Middle: View>: View {
                         Button {
                             Haptics.selection()
                             completer.accept()
-                            form.address = AddressCompleter.fullAddress(item)
+                            form.setSuggestedAddress(AddressCompleter.fullAddress(item))
                             addressFocused.wrappedValue = false
                         } label: {
                             HStack(spacing: 10) {
@@ -310,6 +451,7 @@ struct ListingFieldsForm<Middle: View>: View {
                     .foregroundStyle(Theme.accent)
                 }
                 .disabled(locating)
+                .accessibilityIdentifier("newListing.currentLocation")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -378,13 +520,16 @@ struct ListingFieldsForm<Middle: View>: View {
     /// every call is metered on the server and a retry is a second charge.
     @MainActor
     private func runPropertyLookup() async {
-        let address = form.address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let address = form.formattedAddress
         guard address.count >= 6, !lookingUp else { return }
         lookingUp = true
         lookupNote = nil
         defer { lookingUp = false }
         do {
             let result = try await model.api.propertyLookup(address: address)
+            // A delayed record for a different building/unit must not fill the
+            // property currently being edited. Existing typed facts stay intact.
+            guard form.formattedAddress == address else { return }
             lookupAvailable = result.configured
             guard result.configured else { return }
             guard let f = result.facts else {
@@ -413,17 +558,21 @@ struct ListingFieldsForm<Middle: View>: View {
     }
 
     private var propertyDetailsCard: some View {
-        DisclosureGroup {
+        DisclosureGroup(isExpanded: $propertyDetailsExpanded) {
             VStack(spacing: 14) {
                 Stepper(form.beds > 0 ? "Bedrooms: \(form.beds)" : "Bedrooms: —",
                         value: $form.beds, in: 0...12)
+                    .accessibilityIdentifier("listing.beds")
                 Stepper(form.baths > 0 ? String(format: "Bathrooms: %g", form.baths) : "Bathrooms: —",
                         value: $form.baths, in: 0...12, step: 0.5)
+                    .accessibilityIdentifier("listing.baths")
                 TextField("Square feet", text: $form.sqft)
+                    .accessibilityIdentifier("listing.sqft")
                     .keyboardType(.numberPad)
                     .padding(12)
                     .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 TextField("Asking price", text: $form.priceDollars)
+                    .accessibilityIdentifier("listing.price")
                     .keyboardType(.numberPad)
                     .padding(12)
                     .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -440,6 +589,7 @@ struct ListingFieldsForm<Middle: View>: View {
         }
         .tint(Theme.inkDim)
         .card()
+        .onAppear { if expandPropertyDetails { propertyDetailsExpanded = true } }
     }
 
     private var taglineCard: some View {
@@ -520,9 +670,26 @@ struct NewListingView: View {
     /// the next screen is its photo library rather than Review & Submit.
     @State private var photosListing: Listing?
     @State private var goToPhotos = false
+    @State private var formOwnerID = AuthStore.shared.userID
+    @State private var formSessionRevision = AuthStore.shared.syncSessionRevision
+    @State private var formWorkspaceID = WorkspaceContext.selectedOrgID
+    @ObservedObject private var formAuth = AuthStore.shared
+    @ObservedObject private var formWorkspace = WorkspaceStore.shared
 
     var body: some View {
         ScrollView {
+            if !formContextIsCurrent {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Your account or workspace changed. These details are still here; choose where to start the new draft.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    Button("Use these details in this workspace") {
+                        guard createdListing == nil, photosListing == nil, pendingAsset == nil,
+                              !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else { return }
+                        bindFormContext()
+                    }.buttonStyle(.bordered)
+                        .disabled(createdListing != nil || photosListing != nil || pendingAsset != nil)
+                }.padding().card().padding(.horizontal)
+            }
             ListingFieldsForm(form: $form,
                               locationAction: { useCurrentLocation() },
                               locating: locating,
@@ -533,6 +700,9 @@ struct NewListingView: View {
         }
         .background(Theme.bg)
         .scrollDismissesKeyboard(.interactively)
+        .onChange(of: formAuth.userID) { _ in bindInitialFormContext() }
+        .onChange(of: formWorkspace.selected?.id) { _ in bindInitialFormContext() }
+        .onAppear { bindInitialFormContext() }
         .navigationTitle(SpaceType.current.newItemTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $goToReview) {
@@ -548,6 +718,24 @@ struct NewListingView: View {
                 FlythroughDetailView(listing: listing, openPhotosOnAppear: true)
             }
         }
+    }
+
+    private var formContextIsCurrent: Bool {
+        formOwnerID == AuthStore.shared.userID && formSessionRevision == AuthStore.shared.syncSessionRevision
+            && formWorkspaceID == WorkspaceContext.selectedOrgID
+            && (!Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil)
+    }
+    private func bindFormContext() {
+        formOwnerID = AuthStore.shared.userID
+        formSessionRevision = AuthStore.shared.syncSessionRevision
+        formWorkspaceID = WorkspaceContext.selectedOrgID
+    }
+    private func bindInitialFormContext() {
+        guard createdListing == nil, photosListing == nil, pendingAsset == nil else { return }
+        // The first anonymous connection and first workspace fetch are launch
+        // readiness, not permission to move an established account's draft.
+        if formOwnerID == nil, !AuthStore.shared.isIdentified { bindFormContext() }
+        else if formOwnerID == AuthStore.shared.userID, formWorkspaceID == nil { bindFormContext() }
     }
 
     // Step 2 — video (two big buttons, shared with AddVideoFlowView)
@@ -573,7 +761,7 @@ struct NewListingView: View {
                     .accessibilityIdentifier("newListing.addressFirst")
             }
 
-            VideoSourcePicker(enabled: form.isValid,
+            VideoSourcePicker(enabled: form.isValid && formContextIsCurrent,
                               onBlocked: { addressFocused = true },
                               onPhotosFirst: { startWithPhotos() }) { asset in
                 receive(asset)
@@ -584,6 +772,13 @@ struct NewListingView: View {
     }
 
     private func useCurrentLocation() {
+#if targetEnvironment(simulator)
+        if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.currentLocationFixture") {
+            pendingCoord = CLLocationCoordinate2D(latitude: 35.123, longitude: -80.987)
+            form.setSuggestedAddress("100 Synthetic Condo Way, Fixture City, NC 28000")
+            return
+        }
+#endif
         locating = true
         locator.request { loc in
             guard let loc else { locating = false; return }
@@ -593,7 +788,7 @@ struct NewListingView: View {
                                                   longitude: coarseCoordinate(loc.coordinate.longitude))
             CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
                 if let p = placemarks?.first {
-                    form.address = Self.formatAddress(p)
+                    form.setSuggestedAddress(Self.formatAddress(p))
                 }
                 locating = false
             }
@@ -614,20 +809,14 @@ struct NewListingView: View {
     /// its photo library. No video is attached and none is required; the
     /// listing screen keeps offering one until there is.
     private func startWithPhotos() {
-        guard form.isValid else { addressFocused = true; return }
+        guard form.isValid, formContextIsCurrent else { addressFocused = true; return }
         // Re-tapping must not mint a second listing for the same address, and
         // must not resurrect one the user has since deleted.
         if let existing = photosListing,
            model.listings.contains(where: { $0.id == existing.id }) {
             // The draft may already be in Studio. Keep corrections queued until
             // the cloud confirms them so a foreground refresh cannot erase them.
-            model.modify(existing.id, sync: true) {
-                form.apply(to: &$0)
-                if let coordinate = pendingCoord {
-                    $0.latitude = coordinate.latitude
-                    $0.longitude = coordinate.longitude
-                }
-            }
+            guard applyExistingEdits(existing) else { return }
             photosListing = model.listings.first(where: { $0.id == existing.id }) ?? existing
             createdListing = photosListing
             goToPhotos = true
@@ -637,21 +826,15 @@ struct NewListingView: View {
         // Review, now wants photos instead) — reuse it rather than duplicate it.
         if let existing = createdListing,
            model.listings.contains(where: { $0.id == existing.id }) {
-            model.modify(existing.id, sync: true) {
-                form.apply(to: &$0)
-                if let coordinate = pendingCoord {
-                    $0.latitude = coordinate.latitude
-                    $0.longitude = coordinate.longitude
-                }
-            }
+            guard applyExistingEdits(existing) else { return }
             photosListing = model.listings.first(where: { $0.id == existing.id }) ?? existing
             goToPhotos = true
             return
         }
         let listing = form.makeListing(coordinate: pendingCoord)
         model.add(listing)
-        createdListing = listing
-        photosListing = listing
+        createdListing = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        photosListing = createdListing
         // Use the shared contract event. The old undeclared event name
         // crashed this entry path in Debug builds.
         Analytics.track("home_created", ["space_type": SpaceType.current.rawValue, "source": "photos"])
@@ -662,7 +845,7 @@ struct NewListingView: View {
     /// A usable video exists → NOW create the listing (once) with everything
     /// typed so far, incl. the location fix, and go to Review.
     private func receive(_ asset: CaptureAsset) {
-        guard form.isValid else { return }
+        guard form.isValid, formContextIsCurrent else { return }
         let listing: Listing
         // Re-point an existing listing at a new video ONLY while it is still an
         // unfinished draft from this screen. Once it has a rendered tour, doing
@@ -675,15 +858,7 @@ struct NewListingView: View {
            model.tours[existing.id] == nil {
             // Came back from Review and picked a different video: keep the
             // listing, refresh its fields, drop the previous file.
-            model.modify(existing.id, sync: true) {
-                form.apply(to: &$0)
-                // A location fix taken AFTER the listing was created used to be
-                // dropped here (audit F-B-06).
-                if let coordinate = pendingCoord {
-                    $0.latitude = coordinate.latitude
-                    $0.longitude = coordinate.longitude
-                }
-            }
+            guard applyExistingEdits(existing) else { return }
             if let old = model.assets[existing.id], old.localURL != asset.localURL {
                 FileStore.removeVideoAndPreview(old.localURL)
                 if let sidecar = old.motionSidecarURL { try? FileManager.default.removeItem(at: sidecar) }
@@ -694,9 +869,28 @@ struct NewListingView: View {
             model.add(listing)
         }
         model.assets[listing.id] = asset
-        createdListing = listing
+        createdListing = model.listings.first(where: { $0.id == listing.id }) ?? listing
         pendingAsset = asset
         goToReview = true
+    }
+
+    private func applyExistingEdits(_ existing: Listing) -> Bool {
+        guard formOwnerID == AuthStore.shared.userID,
+              formSessionRevision == AuthStore.shared.syncSessionRevision,
+              formWorkspaceID == WorkspaceContext.selectedOrgID,
+              let current = model.listings.first(where: { $0.id == existing.id }),
+              current.serverOrgID == nil || current.serverOrgID == formWorkspaceID else { return false }
+        let originalForm = ListingFormData(listing: existing)
+        model.modify(existing.id, expectedFacts: existing) {
+            form.applyEdits(from: originalForm, to: &$0)
+            // Only a location fix newly chosen on this screen is edit intent.
+            if let coordinate = pendingCoord,
+               coordinate.latitude != existing.latitude || coordinate.longitude != existing.longitude {
+                $0.latitude = coordinate.latitude
+                $0.longitude = coordinate.longitude
+            }
+        }
+        return true
     }
 }
 
@@ -925,12 +1119,20 @@ struct ListingEditSheet: View {
     let listing: Listing
     @State private var form: ListingFormData
     private let original: ListingFormData
+    private let originalListing: Listing
+    private let ownerID: String?
+    private let sessionRevision: UInt64
+    private let workspaceID: UUID?
 
     init(listing: Listing) {
         self.listing = listing
         let data = ListingFormData(listing: listing)
         self._form = State(initialValue: data)
         self.original = data
+        self.originalListing = listing
+        self.ownerID = AuthStore.shared.userID
+        self.sessionRevision = AuthStore.shared.syncSessionRevision
+        self.workspaceID = WorkspaceContext.selectedOrgID
     }
 
     private var canSave: Bool { form.isValid && form != original }
@@ -938,7 +1140,7 @@ struct ListingEditSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                ListingFieldsForm(form: $form) {
+                ListingFieldsForm(form: $form, expandPropertyDetails: true) {
                     EmptyView()
                 }
                 .padding()
@@ -955,17 +1157,20 @@ struct ListingEditSheet: View {
                     Button("Save") { save() }
                         .fontWeight(.semibold)
                         .disabled(!canSave)
+                        .accessibilityIdentifier("listing.edit.save")
                 }
             }
         }
     }
 
     private func save() {
-        guard canSave, !listing.isSample else { return }
+        guard canSave, !listing.isSample,
+              ownerID == AuthStore.shared.userID,
+              sessionRevision == AuthStore.shared.syncSessionRevision,
+              workspaceID == WorkspaceContext.selectedOrgID,
+              listing.serverOrgID == nil || listing.serverOrgID == workspaceID else { return }
         let id = listing.id
-        model.modify(id, sync: false) { form.apply(to: &$0) }
-        model.markDirty(id)
-        Task { await model.syncListing(id) }
+        model.modify(id, expectedFacts: originalListing) { form.applyEdits(from: original, to: &$0) }
         Haptics.success()
         dismiss()
     }
@@ -1286,5 +1491,143 @@ final class AddressCompleter: NSObject, ObservableObject, MKLocalSearchCompleter
     nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
         // A failed lookup must never block typing — the field still works.
         Task { @MainActor in self.suggestions = [] }
+    }
+}
+
+private struct NearbyPlaceChoice: Identifiable {
+    let id: String
+    let name: String
+    let metres: Double
+    var line: String { "\(name) · approx. \(String(format: "%.1f", metres / 1609.344)) mi" }
+}
+
+/// Every search is deliberate. Neither geocoding nor a delayed Maps response
+/// can write into a different address/account/workspace's form.
+@MainActor private final class NearbyPlacesSearch: ObservableObject {
+    @Published var choices: [NearbyPlaceChoice] = []
+    @Published var locationLabel = ""
+    @Published var isLoading = false
+    @Published var error: String?
+    private var generation = UUID()
+    private let geocoder = CLGeocoder()
+    private var search: MKLocalSearch?
+    private var context: String?
+    static var currentContext: String {
+        "\(AuthStore.shared.userID ?? "local")|\(AuthStore.shared.syncSessionRevision)|\(WorkspaceContext.selectedOrgID?.uuidString ?? "local")"
+    }
+    var hasCurrentContext: Bool { context == Self.currentContext }
+    func cancel() {
+        generation = UUID(); geocoder.cancelGeocode(); search?.cancel(); search = nil
+        isLoading = false; choices = []; locationLabel = ""; context = nil; error = nil
+    }
+    func find(address: String) async {
+        cancel()
+        let opened = Self.currentContext
+        context = opened
+        let token = generation
+        isLoading = true
+        defer { if generation == token { isLoading = false } }
+        do {
+            let matches = try await geocoder.geocodeAddressString(address)
+            guard generation == token, opened == Self.currentContext else { return }
+            guard matches.count == 1, let match = matches.first, let origin = match.location,
+                  CLLocationCoordinate2DIsValid(origin.coordinate) else {
+                error = "Couldn't identify one property. Enter a complete street address and try again."
+                return
+            }
+            locationLabel = [match.name, match.locality, match.administrativeArea, match.postalCode]
+                .compactMap { $0 }.joined(separator: ", ")
+            let request = MKLocalPointsOfInterestRequest(center: origin.coordinate, radius: 5_000)
+            request.pointOfInterestFilter = MKPointOfInterestFilter(including: [.park, .museum, .cafe, .restaurant, .store, .publicTransport])
+            let next = MKLocalSearch(request: request); search = next
+            let response = try await next.start()
+            guard generation == token, opened == Self.currentContext else { return }
+            var seen = Set<String>()
+            choices = response.mapItems.compactMap { item -> NearbyPlaceChoice? in
+                guard let raw = item.name, CLLocationCoordinate2DIsValid(item.placemark.coordinate) else { return nil }
+                let name = String(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }.map(String.init).joined().prefix(80))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let metres = origin.distance(from: CLLocation(latitude: item.placemark.coordinate.latitude, longitude: item.placemark.coordinate.longitude))
+                guard !name.isEmpty, metres.isFinite, metres >= 0, metres <= 5_000 else { return nil }
+                let key = "\(name.lowercased())|\(Int(metres / 20))"
+                guard seen.insert(key).inserted else { return nil }
+                return NearbyPlaceChoice(id: key, name: name, metres: metres)
+            }.sorted { $0.metres < $1.metres }.prefix(20).map { $0 }
+            if choices.isEmpty { error = "No nearby places came back. You can enter a reviewed note yourself." }
+        } catch {
+            guard generation == token, opened == Self.currentContext else { return }
+            self.error = "Apple Maps couldn't complete the search. Try again or enter a reviewed note yourself."
+        }
+    }
+}
+
+private struct NearbyPlacesEditor: View {
+    let address: String
+    @Binding var value: String
+    @StateObject private var lookup = NearbyPlacesSearch()
+    @ObservedObject private var auth = AuthStore.shared
+    @State private var selected = Set<String>()
+    @State private var verifiedLocation = false
+    @State private var changedAddress = false
+    private var canApply: Bool {
+        verifiedLocation && !selected.isEmpty && selected.count <= 3 && lookup.hasCurrentContext
+    }
+    var body: some View {
+        DisclosureGroup("Nearby places (optional)") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Search Apple Maps, check the property location, then choose up to 3 places to include. Distances are approximate straight-line distances, not driving or walking times.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button {
+                    selected = []; verifiedLocation = false
+                    Task { await lookup.find(address: address.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                } label: {
+                    Label(lookup.isLoading ? "Finding places…" : "Find nearby places", systemImage: "map")
+                }.disabled(lookup.isLoading || address.trimmingCharacters(in: .whitespacesAndNewlines).count < 6)
+                    .accessibilityIdentifier("listing.nearby.search")
+                if !lookup.locationLabel.isEmpty {
+                    Text("Search location: \(lookup.locationLabel)").font(.rpCaption)
+                    Toggle("This is the property's location", isOn: $verifiedLocation).font(.rpCaption)
+                }
+                ForEach(lookup.choices) { place in
+                    Button {
+                        if selected.contains(place.id) { selected.remove(place.id) }
+                        else if selected.count < 3 { selected.insert(place.id) }
+                    } label: {
+                        HStack(alignment: .top) {
+                            Image(systemName: selected.contains(place.id) ? "checkmark.circle.fill" : "circle")
+                            Text(place.line).multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                        }.font(.rpCaption).padding(.vertical, 8)
+                    }.foregroundStyle(Theme.accent)
+                        .disabled(!selected.contains(place.id) && selected.count >= 3)
+                }
+                if !lookup.choices.isEmpty {
+                    Button("Add selected places") {
+                        guard canApply else { lookup.error = "The account or workspace changed. Find the places again before adding them."; return }
+                        let lines = lookup.choices.filter { selected.contains($0.id) }.map(\.line)
+                        value = String(("Apple Maps: " + lines.joined(separator: "; ")).prefix(500))
+                        changedAddress = false
+                        lookup.cancel(); selected = []; verifiedLocation = false
+                    }.disabled(!canApply).accessibilityIdentifier("listing.nearby.apply")
+                }
+                if !lookup.choices.isEmpty && !lookup.hasCurrentContext {
+                    Text("The account or workspace changed. Find the places again before adding them.")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                }
+                if let error = lookup.error { Text(error).font(.rpCaption).foregroundStyle(Theme.warn) }
+                if changedAddress && !value.isEmpty {
+                    Text("The address changed. Review or remove the saved nearby-place note before publishing.")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                }
+                TextField("Reviewed nearby-place note", text: $value, axis: .vertical)
+                    .font(.rpBody).padding(12)
+                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityIdentifier("listing.nearby.note")
+                    .onChange(of: value) { text in if text.count > 500 { value = String(text.prefix(500)) } }
+                if !value.isEmpty { Button("Remove nearby-place note", role: .destructive) { value = ""; changedAddress = false } }
+            }.padding(.top, 12)
+        }.font(.rpHeadline).foregroundStyle(Theme.ink).card()
+            .onChange(of: address) { _ in lookup.cancel(); selected = []; verifiedLocation = false; changedAddress = true }
+            .onDisappear { lookup.cancel() }
     }
 }

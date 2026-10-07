@@ -60,7 +60,7 @@ export async function verifyTurnstile(token: string | undefined, ip: string): Pr
     );
     return optedOut;
   }
-  if (!token) return false;
+  if (typeof token !== "string" || !token.trim() || token.length > 2048) return false;
   try {
     const form = new URLSearchParams();
     form.set("secret", secret);
@@ -70,11 +70,16 @@ export async function verifyTurnstile(token: string | undefined, ip: string): Pr
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: form.toString(),
+      signal: AbortSignal.timeout(10_000),
     });
+    if (!res.ok) return false;
     const data = await res.json().catch(() => ({ success: false }));
-    return data?.success === true;
-  } catch (e) {
-    console.error("Turnstile verify error:", e);
+    // All production listing forms are canonicalized to this exact hostname.
+    // A valid token minted for another widget surface is not a listing inquiry.
+    return data?.success === true && data?.hostname === "rendprop.com" && data?.action === "listing-inquiry";
+  } catch {
+    // Provider errors can contain submitted tokens and addresses. Keep logs generic.
+    console.error("Turnstile verification unavailable");
     return false; // a configured verifier that errors should not let bots through
   }
 }

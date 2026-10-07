@@ -233,7 +233,7 @@ interface CreateBody {
    *  an AI-altered photo → public renders bucket, key `original-<asset>.<ext>`
    *  (always kind photo; CA AB 723 access-to-the-original). default "capture" =
    *  raw walkthrough/photo → private uploads bucket. */
-  role?: "capture" | "render" | "original" | "gallery";
+  role?: "capture" | "render" | "original" | "gallery" | "contact_photo";
 }
 
 interface BatchBody {
@@ -446,6 +446,8 @@ Deno.serve(async (req) => {
             uploadId: String(asset.upload_id),
             parts: actual.map((p) => ({ partNumber: p.number, etag: p.etag })),
           });
+          const readAdmission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:assetId}));
+          assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Bounded upload completion activation pending");
           const head = await headObject(bucket, String(asset.storage_key));
           assert(
             head.exists && head.bytes === Number(asset.bytes) && head.etag &&
@@ -458,6 +460,8 @@ Deno.serve(async (req) => {
         },
       );
     } else {
+      const readAdmission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:assetId}));
+      assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Bounded upload completion activation pending");
       const transfer = transfers[0],
         head = await headObject(bucket, String(transfer.object_key));
       const type = baseMediaType(head.contentType),
@@ -539,11 +543,12 @@ function uploadSpec(
 ) {
   const role = body.role ?? "capture";
   assert(
-    ["capture", "render", "original", "gallery"].includes(role),
+    ["capture", "render", "original", "gallery", "contact_photo"].includes(role),
     400,
     "Invalid upload role",
   );
-  const publicPhoto = role === "original" || role === "gallery" ||
+  assert(role !== "contact_photo" || body.kind === undefined || body.kind === "photo", 400, "Client headshots must be photos.");
+  const publicPhoto = role === "original" || role === "gallery" || role === "contact_photo" ||
     role === "render" && body.kind === "photo";
   const kind = publicPhoto || body.kind === "photo" ? "photo" : "video";
   const bucket = role === "capture" ? "uploads" : "renders";
@@ -569,6 +574,8 @@ function uploadSpec(
     ? `original-${id}`
     : role === "gallery"
     ? `gallery-${id}`
+    : role === "contact_photo"
+    ? `contact-${id}`
     : id;
   const multipart = kind === "video" &&
     (body.multipart === true || Number(body.bytes) > MULTIPART_THRESHOLD);

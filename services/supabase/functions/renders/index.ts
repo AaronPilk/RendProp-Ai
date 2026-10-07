@@ -4,8 +4,9 @@
 // RPCs (migrations 0006/0008/0011) that do the whole thing atomically:
 //   create_render_job — membership + role + plan entitlement (monthly cap, via
 //     effective_plan()) + max 3 WORKER jobs in flight + Idempotency-Key replay,
-//     under a per-org advisory lock. `p_source:'app'` jobs are FREE (pricing:
-//     "publishing is always free") and never counted or claimed by the worker.
+//     under a per-org advisory lock. App jobs require current funded paid/trial
+//     or explicit internal/manual/contract authority at the SQL insertion
+//     boundary; they are never counted or claimed by the paid render worker.
 //   publish_render    — server-derived video key (the job's verified
 //     role=render upload) and server-verified poster (a renders-bucket photo
 //     asset of the same listing), chapters + job/listing status flips in one
@@ -25,8 +26,10 @@
 import { assertMediaVisible } from "../_shared/media-source-access.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError, throwRpc } from "../_shared/http.ts";
-import { assertNotDeleting, getUser, userClient } from "../_shared/supabase.ts";
-import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
+import { adminClient, assertNotDeleting, getUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { headObject, publishedR2Url, publishedStreamUrl, R2_BUCKET_RENDERS } from "../_shared/r2.ts";
+import { presignGet } from "../_shared/providers/common.ts";
+import { attestTrialVideo } from "../_shared/trial-video-attestation.ts";
 
 const TIERS = ["smooth", "premium4k", "cinematic"];
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -75,6 +78,30 @@ Deno.serve(async (req) => {
     const db = userClient(req);
     const seg = pathSegments(req, "renders");
     const idem = req.headers.get("idempotency-key");
+    const attest = async (listing: unknown, asset: unknown) => {
+      assert(typeof listing === "string" && UUID_RE.test(listing) && typeof asset === "string" && UUID_RE.test(asset),
+        400, "Choose a valid video and property.");
+      // The asset/listing must first be visible through the caller's RLS.
+      const { data: owned, error } = await db.from("capture_assets").select("id,listing_id")
+        .eq("id", asset).eq("listing_id", listing).maybeSingle();
+      assert(!error && owned, 404, "Video upload not found.");
+      const { data: property, error: propertyError } = await db.from("listings").select("org_id")
+        .eq("id", listing).maybeSingle();
+      assert(!propertyError && property && typeof property.org_id === "string", 404, "Property not found.");
+      const org = property.org_id;
+      const preferred = preferredOrg(req);
+      assert(!preferred || preferred.toLowerCase() === org.toLowerCase(), 409, "Your selected workspace changed.");
+      return await attestTrialVideo({ actor: user.id, org, listing, asset }, {
+        rpc: (name, args) => adminClient().rpc(name, args), rendersBucket: R2_BUCKET_RENDERS,
+        head: (_bucket, key, signal) => headObject(R2_BUCKET_RENDERS, key, signal),
+        sign: (_bucket, key, expires) => presignGet(R2_BUCKET_RENDERS, key, expires), fetch,
+      });
+    };
+    const alreadyPublished = async (job: string) => {
+      const { data, error } = await db.from("renders").select("id").eq("job_id", job).maybeSingle();
+      if (error) throw new HttpError(503, "Recorded publication could not be checked.");
+      return Boolean(data);
+    };
 
     // ---- POST /renders (worker path) ----
     if (req.method === "POST" && seg.length === 0) {
@@ -104,10 +131,17 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg.length === 2 && seg[1] === "publish") {
       const jobId = seg[0];
       const body = await readJson<Record<string, unknown>>(req);
+      let verifiedDuration: number | null = null;
+      if (!await alreadyPublished(jobId)) {
+        const { data: job, error: jobError } = await db.from("render_jobs")
+          .select("id,listing_id,capture_asset_id").eq("id", jobId).maybeSingle();
+        assert(!jobError && job, 404, "Render job not found.");
+        verifiedDuration = (await attest(job.listing_id, job.capture_asset_id))?.duration_s ?? null;
+      }
 
       const { data: render, error } = await db.rpc("publish_render", {
         p_job: jobId,
-        p_duration: optionalNumber(body.duration_s, "duration_s"),
+        p_duration: verifiedDuration ?? optionalNumber(body.duration_s, "duration_s"),
         p_speed: optionalNumber(body.speed_factor, "speed_factor") ?? 2.0,
         // `staged` is deliberately NOT forwarded: virtual-staging disclosure is
         // derived server-side from the job's enhancements (migration 0008).
@@ -136,16 +170,26 @@ Deno.serve(async (req) => {
       assert(body.asset_id, 400, "asset_id is required");
       const tier = (body.tier as string) ?? "smooth";
       const posterAsset = optionalUuid(body.poster_asset_id, "poster_asset_id");
-      const duration = optionalNumber(body.duration_s, "duration_s");
+      let duration = optionalNumber(body.duration_s, "duration_s");
       const speed = optionalNumber(body.speed_factor, "speed_factor") ?? 2.0;
       await assertNotDeleting(user.id);
+      const requestKey = idem ?? (body.idempotency_key as string | undefined) ?? null;
+      let replayPublished = false;
+      if (requestKey) {
+        const { data: prior, error: priorError } = await db.from("render_jobs").select("id")
+          .eq("listing_id", body.listing_id).eq("capture_asset_id", body.asset_id)
+          .eq("idem_key", requestKey).eq("source", "app").maybeSingle();
+        if (priorError) throw new HttpError(503, "Recorded walkthrough could not be checked.");
+        replayPublished = prior ? await alreadyPublished(prior.id) : false;
+      }
+      if (!replayPublished) duration = (await attest(body.listing_id, body.asset_id))?.duration_s ?? duration;
 
       const { data: job, error: jErr } = await db.rpc("create_render_job", {
         p_listing: body.listing_id,
         p_asset: body.asset_id,
         p_tier: TIERS.includes(tier) ? tier : "smooth",
         p_enhancements: (body.enhancements as Record<string, unknown>) ?? {},
-        p_idem: idem ?? (body.idempotency_key as string | undefined) ?? null,
+        p_idem: requestKey,
         p_source: "app",
       });
       if (jErr) throwRpc(jErr.message);
@@ -175,7 +219,7 @@ Deno.serve(async (req) => {
         job_id: job.id,
         share_url: shareUrl(render.slug as string),
         unbranded_url: unbrandedUrl(render.slug as string),
-        poster: publicR2Url(render.poster_key as string | null),
+        poster: publishedR2Url(render.slug as string,render.poster_key as string | null),
       }, 201);
     }
 
@@ -236,8 +280,8 @@ Deno.serve(async (req) => {
       let tour: Record<string, unknown> | null = null;
       if (render) {
         await assertMediaVisible(db, job.listing_id, { renders: [render.id] });
-        const scrubUrl = publicR2Url(render.video_key as string);
-        const hlsUrl = streamHlsUrl(render.stream_uid as string);
+        const scrubUrl = publishedR2Url(render.slug as string,render.video_key as string);
+        const hlsUrl = publishedStreamUrl(render.slug as string,render.stream_uid as string);
         tour = {
           render_id: render.id,
           slug: render.slug,
@@ -246,7 +290,7 @@ Deno.serve(async (req) => {
           video_url: scrubUrl ?? hlsUrl,
           scrub_url: scrubUrl,
           hls_url: hlsUrl,
-          poster: publicR2Url(render.poster_key as string),
+          poster: publishedR2Url(render.slug as string,render.poster_key as string),
           staged: render.staged,
           duration_s: render.duration_s,
           published_at: render.published_at,

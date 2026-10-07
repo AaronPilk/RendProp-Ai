@@ -1,0 +1,334 @@
+{
+  "release": "claude-audit-followup-20261002",
+  "recorded_at_utc": "2026-10-03T02:55:10.154Z",
+  "project": "ymgqpbnjpztwjsyvceld",
+  "implementation_commit": "b886a3484c83815ce01105b6ff96b5d5c38b9754",
+  "tested_commit": "38157107bb5bbc826a0011e303695d915d2684a9",
+  "test_only_successor": true,
+  "pull_request": "https://github.com/AaronPilk/RendProp-Ai/pull/21",
+  "ci": {
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312",
+    "status": "completed",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "conclusion": "success",
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642602"
+      },
+      {
+        "conclusion": "success",
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642670"
+      },
+      {
+        "conclusion": "success",
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642697"
+      },
+      {
+        "conclusion": "success",
+        "name": "Supabase edge functions (deno check + tests)",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642751"
+      },
+      {
+        "conclusion": "success",
+        "name": "Cloudflare Worker (tour-host)",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642767"
+      },
+      {
+        "conclusion": "success",
+        "name": "iOS static gates",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642778"
+      },
+      {
+        "conclusion": "success",
+        "name": "Secret scan",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642788"
+      },
+      {
+        "conclusion": "success",
+        "name": "Python workers (render, spatial, training adapter)",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642793"
+      },
+      {
+        "conclusion": "success",
+        "name": "Studio contracts, build and property workflows (offline)",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642801"
+      },
+      {
+        "conclusion": "success",
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642825"
+      },
+      {
+        "conclusion": "success",
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109642871"
+      },
+      {
+        "conclusion": "success",
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "status": "completed",
+        "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37090508312/job/111109643050"
+      }
+    ]
+  },
+  "migration": {
+    "source": "services/supabase/migrations/20261003020955_app_video_cost_reservations.sql",
+    "sha256": "486dacab63d3d7ffff3f674d5b711be977b9766a7d2d6984c57c9f728ddf4236",
+    "live_version": "20261003024724",
+    "live_name": "app_video_cost_reservations",
+    "applied_once": true,
+    "live_catalog_checks": 117,
+    "copied_catalog_negative_controls": 26,
+    "production_fixture_mutations": 0,
+    "runtime_reservation_rpc_calls": 0
+  },
+  "verification": {
+    "offline_edge_tests_passed": 1297,
+    "offline_edge_tests_ignored": 1,
+    "edge_function_typechecks_passed": 25,
+    "local_postgresql_version": "17.11",
+    "ordinary_video_fresh_assertions": 101,
+    "ordinary_video_replay_assertions": 101,
+    "legacy_reflection_assertions": 51,
+    "direct_bria_assertions": 37,
+    "removed_lock_mutation_detected": true,
+    "reserve_after_dispatch_mutation_detected": true,
+    "safe_http_probes_passed": 27,
+    "safe_http_unsigned_post_status": 401,
+    "safe_http_preflight_status": 200,
+    "submitted_source_files": 199,
+    "api_returned_source_files": 196,
+    "all_returned_bytes_match": true
+  },
+  "deployed_functions": [
+    {
+      "name": "ai-photo",
+      "version": 52,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 25,
+      "returned_file_count": 25,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "ai-copy",
+      "version": 19,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 20,
+      "returned_file_count": 19,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": [
+        "functions/_shared/providers/types.ts"
+      ]
+    },
+    {
+      "name": "ai-video",
+      "version": 49,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 32,
+      "returned_file_count": 32,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "ai-chapters",
+      "version": 26,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 15,
+      "returned_file_count": 15,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "ai-voice",
+      "version": 35,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 17,
+      "returned_file_count": 16,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": [
+        "functions/_shared/providers/types.ts"
+      ]
+    },
+    {
+      "name": "coach",
+      "version": 22,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 18,
+      "returned_file_count": 17,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": [
+        "functions/_shared/providers/types.ts"
+      ]
+    },
+    {
+      "name": "property",
+      "version": 16,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 8,
+      "returned_file_count": 8,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "ai-enhance",
+      "version": 35,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 4,
+      "returned_file_count": 4,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "beacon",
+      "version": 38,
+      "status": "ACTIVE",
+      "verify_jwt": false,
+      "submitted_file_count": 6,
+      "returned_file_count": 6,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "leads",
+      "version": 39,
+      "status": "ACTIVE",
+      "verify_jwt": false,
+      "submitted_file_count": 9,
+      "returned_file_count": 9,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "events",
+      "version": 29,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 6,
+      "returned_file_count": 6,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "team",
+      "version": 19,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 6,
+      "returned_file_count": 6,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "admin",
+      "version": 30,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 9,
+      "returned_file_count": 9,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "me",
+      "version": 46,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "submitted_file_count": 17,
+      "returned_file_count": 17,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    },
+    {
+      "name": "apple-subscriptions",
+      "version": 22,
+      "status": "ACTIVE",
+      "verify_jwt": false,
+      "submitted_file_count": 7,
+      "returned_file_count": 7,
+      "all_returned_file_bytes_match": true,
+      "compiler_type_only_omissions": []
+    }
+  ],
+  "security_advisor_delta": [
+    {
+      "name": "rls_enabled_no_policy",
+      "level": "INFO",
+      "object": "app_video_cost_reservations",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy",
+      "intentional": true,
+      "explanation": "Private service-only table intentionally has no client RLS policies."
+    },
+    {
+      "name": "authenticated_security_definer_function_executable",
+      "level": "WARN",
+      "object": "app_video_held_cents",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+      "intentional": true,
+      "explanation": "Aggregate has exact-source membership guard and returns only held-cost sum; reserve, settlement and raw rows are service-only."
+    }
+  ],
+  "unchanged": {
+    "native_source": true,
+    "TestFlight43": true,
+    "AppStore42_submission": true,
+    "spatial_capture": true,
+    "bria_configuration": true,
+    "shared_branches": true
+  },
+  "limitations": {
+    "paid_provider_calls": 0,
+    "physical_camera_tests": 0,
+    "universal_ai_cost_reservation": false,
+    "photo_chapter_voice_key_window_seconds": 120,
+    "unconfirmed_video_holds_require_operator_reconciliation": true,
+    "automatic_paid_retry": false,
+    "prices_invoice_reconciled": false,
+    "phone_purchase_restore_sync_and_media_quality_acceptance_outstanding": true
+  },
+  "evidence_privacy": "Original customer reports, identities, provider receipts and raw source readbacks remain outside Git.",
+  "independent_verification": [
+    {
+      "artifact": "edge-deploy-independent-review.json",
+      "sha256": "6d24f820e6755bae760a99c783bdb7d9cea6fa84dd05c47746d3091abd412cf0",
+      "passed": true
+    },
+    {
+      "artifact": "edge-type-elision-independent-review.json",
+      "sha256": "dabacfee6ab24f6793ec5c7b623ae86ac650d7e0f23647f1ab6cf820f593f954",
+      "passed": true
+    },
+    {
+      "artifact": "app-video-production-readback/live-verification.json",
+      "sha256": "b78133a84ad6cd7799c4fa64972d8c95fbcfc12c95b32fda8632c2305525d737",
+      "passed": true
+    },
+    {
+      "artifact": "app-video-production-readback/checker-negative-controls.json",
+      "sha256": "4446a889d91c0b9e61bffafb0a9c5a8f736ccd383c2b33dda09b595b148fe96a",
+      "passed": true
+    }
+  ]
+}

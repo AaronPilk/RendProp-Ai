@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { uploadListingAsset } from "../listings/uploads";
@@ -8,7 +8,6 @@ import {
   editedImage,
   imageFromURL,
   prepareImage,
-  type SourceImage,
   videoFrames,
 } from "./media";
 import {
@@ -36,6 +35,8 @@ import {
 } from "./model";
 import "./creative.css";
 import BatchPhotoStudio from "./BatchPhotoStudio";
+import PhotoExportPanel from "./PhotoExportPanel";
+import { continuePhoto, importedPhoto, inputForEdit, photoDelivery, propertyPhoto, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
 const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
 const PromptLibrary = lazy(() => import("../prompts/PromptLibrary"));
@@ -181,7 +182,7 @@ function ListingCreative(
     [renderJobs, setRenderJobs] = useState<
       ReturnType<typeof decodeListingState>["jobs"]
     >([]);
-  const [source, setSource] = useState<SourceImage | null>(null),
+  const [source, setSource] = useState<PhotoSource | null>(null),
     [edit, setEdit] = useState<Edit>("declutter"),
     [style, setStyle] = useState("modern"),
     [prompt, setPrompt] = useState(""),
@@ -190,14 +191,7 @@ function ListingCreative(
       { edit: Edit; reason: string }[]
     >([]),
     [photoResult, setPhotoResult] = useState<
-      {
-        file: File;
-        preview: string;
-        provenanceId: string | null;
-        disclosure: string;
-        originalAssetId: string;
-        saved: boolean;
-      } | null
+      (PhotoDelivery & { preview: string; disclosure: string; originalAssetId: string; saved: boolean; edit: Edit; source: PhotoSource }) | null
     >(null);
   const [draft, setDraft] = useState<CreativeDraft>(EMPTY_DRAFT),
     [draftReady, setDraftReady] = useState(false),
@@ -431,7 +425,7 @@ function ListingCreative(
           })}`,
         ),
       );
-      found.push(...rows(result.results, 100).map(decodeResult));
+      found.push(...rows(result.results, 100).map(value=>decodeResult(value,{actor:workspace.user.id,org:orgId,listing:listingId})));
       if (result.next_offset === null || result.next_offset === undefined) {
         break;
       }
@@ -515,7 +509,7 @@ function ListingCreative(
               }),
             );
             if (!cancelled) {
-              const updated = decodeResult(result.result);
+              const updated = decodeResult(result.result,{actor:workspace.user.id,org:orgId,listing:listingId});
               setResults((old) => old.map((r) => r.id === id ? updated : r));
             }
           }
@@ -571,22 +565,34 @@ function ListingCreative(
     asset.id === draft.agentAssetId
   );
   const agentSeconds = agentBase?.duration_s ?? draft.agentDuration ?? 30;
-  async function chooseSource(next: SourceImage) {
+  const photoIdentityVersion = useRef(services.getSnapshot().identityVersion).current;
+  function assertPhotoScope(editing = true) {
+    signal.throwIfAborted();
+    const current = services.getSnapshot();
+    if (!alive.current || current.status !== "signed-in" || current.identityVersion !== photoIdentityVersion ||
+      current.identity?.userId !== workspace.user.id || current.identity.isAnonymous || listing.orgId !== orgId ||
+      !(editing ? ["owner", "admin", "agent"] : ["owner", "admin", "agent", "marketing"]).includes(role ?? "")) throw new Error("Your account or editing access changed. Reopen this property.");
+  }
+  async function chooseSource(next: PhotoSource) {
+    assertPhotoScope(false);
     setSource(next);
     setPhotoResult(null);
     setSuggestions([]);
   }
   async function ensureOriginal() {
     if (!source) throw new Error("Choose the photo you want to work on first.");
+    assertPhotoScope();
+    if (!source.originalVerified || !source.original) throw new Error("Review and confirm the unedited original before creating another edit.");
     if (source.originalAssetId) return source.originalAssetId;
     const asset = await uploadListingAsset(services, {
       orgId,
       listingId,
-      file: source.file,
+      file: source.original.file,
       role: "original",
       signal,
     });
-    if (alive.current) setSource({ ...source, originalAssetId: asset.assetId });
+    assertPhotoScope();
+    setSource({ ...source, originalAssetId: asset.assetId });
     return asset.assetId;
   }
   async function generatePhoto() {
@@ -595,12 +601,14 @@ function ListingCreative(
       throw new Error("Describe the change you want to make.");
     }
     const originalAssetId = await ensureOriginal();
+    assertPhotoScope();
+    const input = inputForEdit(source, edit);
     const response = record(
       await api("ai-photo", {
         listing_id: listingId,
         original_asset_id: originalAssetId,
-        image_b64: source.base64,
-        mime: source.mime,
+        image_b64: input.base64,
+        mime: input.mime,
         edit,
         space_type: listing.spaceType,
         label: room || "Studio photo",
@@ -612,26 +620,17 @@ function ListingCreative(
         maxResponseBytes: 32 * 1024 * 1024,
       }),
     );
+    assertPhotoScope();
     const file = editedImage(
         requiredText(response.image_b64, "an edited photo", 32 * 1024 * 1024),
         text(response.mime, 50) || "image/png",
       ),
       preview = `data:${file.type};base64,${String(response.image_b64)}`;
     const provenance = response.provenance ? record(response.provenance) : {};
-    setPhotoResult({
-      file,
-      preview,
-      originalAssetId,
-      provenanceId: provenance.recorded === true
-        ? text(provenance.id, 80) || null
-        : null,
-      disclosure: requiredText(
-        response.disclosure,
-        "the photo disclosure",
-        1000,
-      ),
-      saved: false,
-    });
+    const disclosure = requiredText(response.disclosure, "the photo disclosure", 1000);
+    const delivery = photoDelivery(source, file, edit, disclosure, provenance.recorded === true ? text(provenance.id, 80) || null : null);
+    setPhotoResult({ ...delivery, preview, originalAssetId, disclosure: delivery.disclosures.join("\n"),
+      saved: false, edit, source: { ...source, originalAssetId } });
     if (provenance.recorded !== true) {
       setNotice(
         "Your edited photo is ready to review, but its disclosure record could not be saved. Download the result and retry later before adding it to a public gallery.",
@@ -640,11 +639,14 @@ function ListingCreative(
   }
   async function savePhoto() {
     if (!photoResult) return;
+    assertPhotoScope();
     if (!photoResult.provenanceId) {
       throw new Error(
         "This edit needs its disclosure record before it can be saved to the gallery.",
       );
     }
+    const caption = [room, ...photoResult.disclosures.slice(0, -1)].filter(Boolean).join(" · ");
+    if (caption.length > 400) throw new Error("This edit history is too long for a gallery caption. Download its complete photo package instead.");
     const result = await uploadListingAsset(services, {
       orgId,
       listingId,
@@ -652,6 +654,7 @@ function ListingCreative(
       role: "gallery",
       signal,
     });
+    assertPhotoScope();
     await services.api(
       `/functions/v1/me/compliance/${photoResult.provenanceId}`,
       {
@@ -664,12 +667,14 @@ function ListingCreative(
         },
       },
     );
+    assertPhotoScope();
     await api("studio/photos", {
       listing_id: listingId,
       asset_id: result.assetId,
-      caption: room || PRESETS.find((p) => p.id === edit)?.name,
+      caption,
       provenance_id: photoResult.provenanceId,
     });
+    assertPhotoScope();
     setPhotoResult({ ...photoResult, saved: true });
     setNotice(
       "Photo saved to this property's cloud gallery with the original and AI disclosure attached.",
@@ -811,7 +816,7 @@ function ListingCreative(
         label: "Property voiceover",
       }, { idempotencyKey: crypto.randomUUID(), timeoutMs: 360_000 }),
     );
-    setResults((old) => [decodeResult(raw.result), ...old]);
+    setResults((old) => [decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId}), ...old]);
     setNotice(
       "Your narration is saved with this property and can be opened again on another device.",
     );
@@ -854,7 +859,7 @@ function ListingCreative(
         timeoutMs: 360_000,
       }),
     );
-    setResults((old) => [decodeResult(raw.result), ...old]);
+    setResults((old) => [decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId}), ...old]);
     setNotice(
       "Generation started. You can leave this page and return to this property's saved results.",
     );
@@ -862,6 +867,7 @@ function ListingCreative(
   async function reviewVideo(result: CreativeResult) {
     const signed = decodeResult(
       record(await api("studio/sign-media", { result_id: result.id })).result,
+      {actor:workspace.user.id,org:orgId,listing:listingId},
     );
     if (!signed.url || !signed.sourceUrl || !signed.requestId) {
       throw new Error(
@@ -1032,6 +1038,9 @@ function ListingCreative(
       )}
     </div>
   );
+  const selectedPhotoDelivery = useMemo(() => source && source.edits.length ? [{ file: source.file, original: source.original?.file ?? null,
+    originalPreview: source.original?.preview ?? null, originalVerified: source.originalVerified, disclosures: source.disclosures,
+    edits: source.edits, provenanceId: null }] : [], [source]);
   const sourcePicker = (
     <div className="creative-source">
       <h2>Choose your photo</h2>
@@ -1046,7 +1055,7 @@ function ListingCreative(
             if (file) {
               void run(
                 "Preparing photo",
-                async () => chooseSource(await prepareImage(file, signal)),
+                async () => chooseSource(importedPhoto(await prepareImage(file, signal))),
               );
             }
             e.target.value = "";
@@ -1061,29 +1070,18 @@ function ListingCreative(
             disabled={isBusy}
             onChange={(e) => {
               const photo = photos.find((p) => p.id === e.target.value);
-              if (
-                photo &&
-                (!(photo.isAltered || photo.isStaged) || photo.originalUrl)
-              ) {
+              if (photo) {
                 void run("Opening photo", async () => {
                   await chooseSource(
-                    await imageFromURL(
-                      (photo.isAltered || photo.isStaged)
-                        ? photo.originalUrl!
-                        : photo.url,
-                      `${photo.caption || "property"}.jpg`,
-                      signal,
-                    ),
+                    await propertyPhoto(photo, signal),
                   );
-                  setRoom(photo.caption || "");
+                  setRoom((photo.caption || "").split(" · ")[0]!.slice(0, 60));
                 });
               }
             }}
           >
             <option value="">Choose a cloud photo</option>
-            {photos.filter((p) =>
-              (!p.isAltered && !p.isStaged) || !!p.originalUrl
-            ).map((p, i) => (
+            {photos.map((p, i) => (
               <option key={p.id} value={p.id}>
                 {p.caption || `Photo ${i + 1}`}
                 {p.isStaged ? " · AI edited" : ""}
@@ -1096,7 +1094,18 @@ function ListingCreative(
         ? (
           <figure>
             <img src={source.preview} alt="Selected source property" />
-            <figcaption>{source.file.name} · original preserved</figcaption>
+            <figcaption>{source.file.name} · current editing image</figcaption>
+            {!source.originalVerified && source.original && <details open><summary>Check the paired original</summary>
+              <img src={source.original.preview} alt="Paired source to verify" />
+              <p>This saved edit predates verified history. Check this source before another AI edit.</p>
+              <label><input type="checkbox" disabled={isBusy} onChange={event => setSource({ ...source, originalVerified: event.target.checked })} />This is the actual unedited original.</label>
+            </details>}
+            {edit === "stage" && source.stageBase && <div>
+              <p>Restyling starts from this pre-staging image. Changes made after staging are not included in the new version.</p>
+              <img src={source.stageBase.preview} alt="Pre-staging input for new style" />
+            </div>}
+            {edit === "stage" && source.edits.length > 0 && !source.stageBase && <p>Staging uses the current photo. If it already has virtual furniture, start from the original or choose the saved decluttered version to avoid adding furniture twice.</p>}
+            {source.edits.length > 0 && <button disabled={isBusy || !source.originalVerified} onClick={() => void chooseSource(importedPhoto(source.original!))}>Start again from original</button>}
           </figure>
         )
         : (
@@ -1105,6 +1114,7 @@ function ListingCreative(
             your computer.
           </div>
         )}
+      {selectedPhotoDelivery.length > 0 && <PhotoExportPanel photos={selectedPhotoDelivery} assertScope={() => assertPhotoScope(false)} disabled={isBusy} />}
       {source && (
         <label>
           Room or view<input
@@ -1367,7 +1377,7 @@ function ListingCreative(
               </button>
               <button
                 className="creative-primary"
-                disabled={!source || isBusy || !canCreate}
+                disabled={!source || !source.originalVerified || isBusy || !canCreate}
                 onClick={() => run("Creating your photo", generatePhoto)}
               >
                 Generate preview
@@ -1392,8 +1402,8 @@ function ListingCreative(
               <div className="creative-comparison">
                 <figure>
                   <img
-                    src={source?.preview}
-                    alt="Original photo before the edit"
+                    src={photoResult.originalPreview ?? undefined}
+                    alt="Unedited original photo"
                   />
                   <figcaption>Original</figcaption>
                 </figure>
@@ -1417,9 +1427,11 @@ function ListingCreative(
                     ? "Saved to gallery"
                     : "Save to property gallery"}
                 </button>
-                <a href={photoResult.preview} download={photoResult.file.name}>
-                  Download edited photo
-                </a>
+                <button disabled={isBusy} onClick={() => void run("Preparing next edit", async () => {
+                  const next = await continuePhoto(photoResult.source, photoResult, photoResult.edit, signal);
+                  await chooseSource(next);
+                })}>Continue editing this result</button>
+                <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy} />
               </div>
             </section>
           )}
@@ -2014,7 +2026,7 @@ function ListingCreative(
                             setResults((old) =>
                               old.map((r) =>
                                 r.id === result.id
-                                  ? decodeResult(raw.result)
+                                  ? decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId})
                                   : r
                               )
                             );

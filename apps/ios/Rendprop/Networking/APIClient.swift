@@ -4,6 +4,16 @@ import Foundation
 /// `RenderTier`; the model keeps it nested as `Render.Tier`. Same type.
 typealias RenderTier = Render.Tier
 
+struct BusinessLogoReceipt: Codable, Equatable, Sendable {
+    let ok: Bool
+    let orgID: UUID
+    let businessLogoURL: String?
+    var replayed: Bool? = nil
+    enum CodingKeys: String, CodingKey {
+        case ok, replayed; case orgID = "org_id", businessLogoURL = "business_logo_url"
+    }
+}
+
 /// Result of `POST /uploads`. Expresses BOTH server modes (contract §2.1):
 ///  • `.single`    — one presigned PUT (`putURL`), files ≤ 64 MB / photos.
 ///  • `.multipart` — R2/S3 multipart (`uploadID` + `partSize` + `partCount`),
@@ -88,6 +98,9 @@ struct Entitlements: Codable, Hashable {
     /// This window's usage. Keys: renders, photo_edits, reels, aerials, drone.
     var used: [String: Int]
     var leads: Int
+    /// /me plan_source. Optional for older responses; used only for displaying
+    /// the private testing allowance, never for granting access.
+    var planSource: String? = nil
 
     /// Monthly cap for a `used` key (renders | photo_edits | reels | aerials | drone).
     func cap(for feature: String) -> Int {
@@ -113,6 +126,27 @@ struct Entitlements: Codable, Hashable {
 }
 
 /// This-month usage/cost rollup for the signed-in org (contract: GET /me → usage).
+struct HostingRetentionSummary: Codable, Hashable {
+    let orgId: UUID
+    let policy: String
+    let protected: Bool
+    let retentionEndsAt: String?
+    let hostingAvailable: Bool
+    var deadline: Date? {
+        guard let retentionEndsAt else { return nil }
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: retentionEndsAt) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: retentionEndsAt)
+    }
+    func checked(org: UUID) -> HostingRetentionSummary? {
+        guard orgId == org else { return nil }
+        if policy == "preserved" { return retentionEndsAt == nil && hostingAvailable ? self : nil }
+        guard policy == "prospective_90_day_grace", !protected, deadline != nil else { return nil }
+        return self
+    }
+}
+
 struct UsageSummary: Codable, Hashable {
     var aiSpendCents: Int? = nil   // usage.cost_cents (total infra+AI spend this month)
     var renderCount: Int? = nil    // usage.renders (this month)
@@ -136,6 +170,11 @@ struct UsageSummary: Codable, Hashable {
     /// Membership role when the server sends one ("owner" | "admin" | "agent" |
     /// "marketing"). Secondary to `isAdmin`.
     var role: String? = nil
+    var hostingRetention: HostingRetentionSummary? = nil
+    var trialUsage: TrialUsageSummary? = nil
+    var trialOffer: TrialOfferSummary? = nil
+    var servingActivation: ServingActivationSummary? = nil
+    var servingPhotoPackage: ServingPhotoPackageSummary? = nil
 
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }
@@ -227,8 +266,12 @@ struct AIPhotoEditRequest: Sendable, Hashable {
     var edit: String
     /// Stage only ("modern" | "rustic" | "minimalist" | "scandinavian").
     var style: String? = nil
-    /// Custom only (free text, ≤ 600 chars server-side).
+    /// Custom instruction or staging furnishing brief (≤ 600 chars).
     var prompt: String? = nil
+    /// Staging only. A reviewed version in this listing, selected explicitly
+    /// as a reference for movable furniture in another view of the same room.
+    var stagingReferenceBase64: String? = nil
+    var stagingReferenceMime: String? = nil
     /// The LISTING's business type (`SpaceType.rawValue`) — selects the
     /// industry prompt set and scopes the fair-housing gate server-side. Set it
     /// from the listing in hand; nil falls back to `SpaceType.current`.
@@ -665,6 +708,26 @@ struct AIShotListRequest: Sendable, Hashable {
 }
 
 /// A prospect who submitted the hosted tour's lead form (`GET /leads`).
+struct LeadDeletionReceipt: Decodable, Equatable {
+    let ok: Bool
+    let leadID: UUID
+    let deleted: Bool
+    let cleanupPending: Bool
+    enum CodingKeys: String, CodingKey { case ok, leadID = "lead_id", deleted, cleanupPending = "cleanup_pending" }
+    func checked(leadID expected: UUID) throws -> Self {
+        guard ok, deleted, leadID == expected else { throw ClientContactError.invalidResponse }
+        return self
+    }
+}
+struct ClientRecipientVerificationReceipt: Decodable {
+    let ok: Bool
+    let state: String
+    func checked() throws -> Self {
+        guard ok, ["queued", "verified"].contains(state) else { throw ClientContactError.invalidResponse }
+        return self
+    }
+}
+
 struct Lead: Identifiable, Codable, Hashable {
     var id: UUID
     var listingID: UUID? = nil
@@ -677,6 +740,7 @@ struct Lead: Identifiable, Codable, Hashable {
     var source: String? = nil
     var listingAddress: String? = nil
     var status: String? = nil
+    var clientDelivery: ClientLeadDelivery? = nil
 }
 
 /// One tap-to-jump chapter sent with a publish (`{label, t_ms, sort}` on the
@@ -768,6 +832,12 @@ protocol APIClient: Sendable {
     /// address, price, beds/baths/sqft, tagline, details, lat/lng, zillow_url,
     /// sold_at (JSON null to un-sell) and status (`uploading` → `processing`).
     func updateListing(_ listing: Listing) async throws -> Listing
+    /// Saves only measurements, conditional on the exact cached wire value.
+    func updateMeasurements(_ listing: Listing) async throws -> Listing
+    /// Select uploaded gallery versions and a main image; nil gallery preserves
+    /// a cloud listing's existing selection, while [] explicitly hides its gallery.
+    func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws
+    func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws
     /// DELETE `listings/<serverID>` — soft-deletes and unpublishes its tours.
     func deleteListing(serverID: UUID) async throws
 
@@ -879,6 +949,18 @@ protocol APIClient: Sendable {
     /// functions allow-list exactly these fields). Empty-string values clear
     /// the field server-side. Best-effort: callers fire-and-forget.
     func updateBrand(_ fields: [String: String]) async throws
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt
+    func personalCard() async throws -> PersonalCardReceipt
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt
+    func realEstateRole() async throws -> RealEstateRole
+    func updateRealEstateRole(_ role: RealEstateRole) async throws
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact?
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt
 
     /// POST /ai-photo — single-image AI edit. `request.edit` = "twilight" |
     /// "sky" | "lawn" | "declutter" | "stage" | "custom"; `style` applies to
@@ -905,6 +987,10 @@ protocol APIClient: Sendable {
     /// CSV bytes. `listingServerID` narrows it to one listing; nil exports the
     /// whole workspace.
     func complianceCSV(listingServerID: UUID?) async throws -> Data
+
+    /// GET /me/export — bounded account-owned cloud inventory with an explicit
+    /// manifest of excluded files and operational data; independent of workspace.
+    func exportAccountData() async throws -> Data
 
     /// PATCH /me/compliance/:id — attach the untouched ORIGINAL and/or the
     /// published ALTERED result to a provenance row after their uploads land.
@@ -1181,6 +1267,14 @@ protocol APIClient: Sendable {
 
 // MARK: - Convenience overloads (protocol requirements can't carry defaults)
 extension APIClient {
+    func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
+    func personalCard() async throws -> PersonalCardReceipt { throw APIError.notConfigured }
+    func savePersonalCard(_ fields: [String: String], spaceType: String, expected: PersonalCardReceipt) async throws -> PersonalCardReceipt { throw APIError.notConfigured }
+    // Mock/unsupported transports fail closed instead of falling back to a full-row write.
+    func updateMeasurements(_ listing: Listing) async throws -> Listing { throw APIError.notConfigured }
+
     /// Capture uploads (the common case) don't specify a role or type.
     func requestUpload(filename: String, bytes: Int64,
                        listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {
@@ -1824,5 +1918,19 @@ enum AdminText {
         let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "—" }
         return pretty(trimmed)
+    }
+}
+
+
+extension APIClient {
+    func exportAccountData() async throws -> Data {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to download your account data.")
+    }
+    /// Offline and older injected clients cannot claim a server action succeeded.
+    func requestClientRecipientVerification(listingID: UUID, orgID: UUID) async throws -> ClientRecipientVerificationReceipt {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to request client email verification.")
+    }
+    func deleteLead(leadID: UUID, orgID: UUID) async throws -> LeadDeletionReceipt {
+        throw APIError.server(status: 501, code: "live_service_required", message: "Connect to Rendprop to delete this saved lead.")
     }
 }

@@ -44,6 +44,9 @@ routes = [
 # ---------------------------------------------------------------------------
 [assets]
 directory = "./public"
+binding = "ASSETS"
+# Canonical HTTPS/apex routing must also run for exact static-file matches.
+run_worker_first = true
 
 [vars]
 # Base URL of the Supabase Edge Functions (no trailing slash needed).
@@ -74,3 +77,22 @@ TURNSTILE_SITE_KEY = "0x4AAAAAAErjjtep0GvXjQxs"
 
 [observability]
 enabled = true
+
+[observability.logs]
+enabled = true
+# Invocation URLs can contain single-use recipient tokens or media identities.
+# Keep only explicit sanitized application events; do not persist raw requests.
+invocation_logs = false
+head_sampling_rate = 0.1
+
+[limits]
+# Bound CPU liability used by the media tariff admission (not a response SLA).
+cpu_ms = 1000
+
+# Private media delivery bindings. These do not expose either bucket publicly.
+[[r2_buckets]]
+binding = "MEDIA_RENDERS"
+bucket_name = "rendprop-renders"
+[[r2_buckets]]
+binding = "MEDIA_UPLOADS"
+bucket_name = "rendprop-uploads"

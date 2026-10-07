@@ -569,3 +569,6 @@
 @media(max-width:620px) { .batch-photo-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }.batch-photo-results { grid-template-columns:1fr; } }
 .batch-photo-studio fieldset { border:0;padding:0;margin:24px 0;min-width:0; }
 .batch-photo-studio legend { font-size:.92rem;font-weight:650;margin-bottom:6px; }
+
+/* Disabled actions keep readable neutral text instead of fading the whole control. */
+.creative-workspace button:disabled { opacity: 1; color: var(--muted); background: var(--surface-subtle); border-color: var(--input-line); box-shadow: none; cursor: not-allowed; }

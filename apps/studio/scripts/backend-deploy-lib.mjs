@@ -6,18 +6,21 @@ import ts from "typescript-parser";
 
 export const PROJECT_REF = "ymgqpbnjpztwjsyvceld";
 const FUNCTION_NAME = /^[a-z][a-z0-9-]{0,62}$/;
+export const MODERN_SERVICE_FUNCTIONS = ["notify", "presenter-drain", "me", "uploads", "tours"];
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
 export function parseDeploymentArgs(args) {
-  let functions, run = false;
+  let functions, run = false, modernServiceTransport = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--run" && !run) run = true;
+    else if (args[i] === "--modern-service-transport" && !modernServiceTransport) modernServiceTransport = true;
     else if (args[i] === "--functions" && functions === undefined) functions = args[++i]?.split(",");
     else throw new Error("Use --functions name[,other] and optional --run. No implicit all-functions deploy is allowed.");
   }
   assert(functions?.length && functions.every((name) => FUNCTION_NAME.test(name)), "Explicit valid --functions name[,other] is required.");
   assert(new Set(functions).size === functions.length, "Duplicate function selection.");
-  return { functions, run };
+  if (modernServiceTransport) assert(MODERN_SERVICE_FUNCTIONS.every((name) => functions.includes(name)), "Modern transport transition requires all five declared service entrypoints.");
+  return { functions, run, ...(modernServiceTransport ? { modernServiceTransport: true } : {}) };
 }
 
 export function selectedPolicy(policy, functions) {
@@ -42,6 +45,20 @@ export function verifyLivePolicy(inventory, policy) {
     assert.equal(live.status, "ACTIVE", `Live function ${name} is not ACTIVE.`);
     return [name, { id: live.id, version: live.version, verifyJwt: expected }];
   }));
+}
+
+/** Explicit transition only. Ordinary deploys keep the exact drift check. The
+ * new application guards, never a JWT claim, authenticate these server routes.
+ * No other function may lose its declared JWT policy through this option. */
+export function verifyModernServiceTransition(inventory, policy) {
+  assert(MODERN_SERVICE_FUNCTIONS.every((name) => Object.hasOwn(policy, name) && policy[name] === false), "Exactly five declared modern service policies must be false.");
+  const previous = { ...policy };
+  for (const name of MODERN_SERVICE_FUNCTIONS) {
+    const rows = inventory.filter((row) => row.slug === name || row.name === name);
+    assert(rows.length === 1 && typeof rows[0].verify_jwt === "boolean", "A unique boolean service policy is required.");
+    previous[name] = rows[0].verify_jwt;
+  }
+  return verifyLivePolicy(inventory, previous);
 }
 
 /** Parse syntax, never comments/strings that happen to resemble imports. */

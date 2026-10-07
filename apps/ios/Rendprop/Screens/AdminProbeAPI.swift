@@ -77,7 +77,7 @@ struct AdminProbeResult: Decodable, Hashable, Sendable {
     /// couldn't reach it · nil = NOT TESTABLE. nil is never drawn as a pass.
     var ok: Bool? = nil
     var latencyMs: Int? = nil
-    /// "auth" | "network" | "rate_limit" | "other".
+    /// "auth" | "permission" | "network" | "rate_limit" | "other".
     var errorClass: String? = nil
     /// Plain words: what was called, and what a pass proves.
     var how: String? = nil
@@ -95,6 +95,7 @@ struct AdminProbeResult: Decodable, Hashable, Sendable {
     /// The single state this row is in. Everything on screen keys off this.
     var state: AdminProbeState {
         if configured == false { return .notSet }
+        if ok == nil && (errorClass ?? "").lowercased() == "permission" { return .permission }
         guard let ok else { return .notTestable }
         if ok { return .working }
         switch (errorClass ?? "").lowercased() {
@@ -122,6 +123,7 @@ enum AdminProbeState: Hashable, Sendable {
     case unreachable
     case rateLimited
     case otherFailure
+    case permission
     case notSet
     case notTestable
 
@@ -132,6 +134,7 @@ enum AdminProbeState: Hashable, Sendable {
         case .unreachable:  return "Failed: can't reach"
         case .rateLimited:  return "Rate limited"
         case .otherFailure: return "Failed"
+        case .permission:   return "Can't test: permission"
         case .notSet:       return "Not set"
         case .notTestable:  return "Can't test"
         }
@@ -140,7 +143,7 @@ enum AdminProbeState: Hashable, Sendable {
     var isFailure: Bool {
         switch self {
         case .wrongKey, .unreachable, .rateLimited, .otherFailure: return true
-        case .working, .notSet, .notTestable:                      return false
+        case .working, .permission, .notSet, .notTestable:         return false
         }
     }
 }
@@ -180,9 +183,10 @@ struct AdminProbeReport: Decodable, Hashable, Sendable {
         case .otherFailure: return 1
         case .unreachable:  return 2
         case .rateLimited:  return 3
-        case .notTestable:  return 4
-        case .notSet:       return 5
-        case .working:      return 6
+        case .permission:   return 4
+        case .notTestable:  return 5
+        case .notSet:       return 6
+        case .working:      return 7
         }
     }
 }

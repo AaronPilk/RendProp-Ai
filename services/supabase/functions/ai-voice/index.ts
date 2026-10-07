@@ -86,7 +86,7 @@
 //   $0.24 Seedance clip's allowance. Same published number, separate meter.
 //
 //   CHARGE / REFUND. The meter is charged immediately BEFORE the ElevenLabs
-//   call and refunded with `refundRateLimit` if that call (or the R2 upload)
+//   call and refunded against its original window receipt if that call (or the R2 upload)
 //   fails, so a failed generation costs the org nothing — same net effect as
 //   charging afterwards, without the race that charging afterwards opens (N
 //   concurrent requests would all read an uncharged counter and all spend).
@@ -132,8 +132,11 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { ProviderError, definitiveSubmitRejection } from "../_shared/providers/common.ts";
+import { fundingContext, fundedAttempt, TARIFF_VERSION } from "../_shared/funded-serving.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { durableRateLimit, chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
+import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertMarketingCopy } from "../_shared/fairhousing.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
@@ -144,6 +147,7 @@ import { R2_BUCKET_UPLOADS, presignPut } from "../_shared/r2.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { saveSharedVoice } from "./shared-result.ts";
 import { assertVoiceWriteWindow, reserveVoiceStorage } from "./storage-reservation.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 
 // Denial-of-wallet guard: every TTS call bills ElevenLabs per character.
 const TTS_MAX_PER_WINDOW = 20;
@@ -306,7 +310,8 @@ async function presignGet(bucket: string, key: string, expiresIn: number): Promi
 // ── Guards ───────────────────────────────────────────────────────────────────
 
 /** Role gate: marketing is read-only, same rule as ai-photo / ai-video. */
-async function requireEditorRole(userId: string, req: Request, what: string): Promise<string> {
+async function requireEditorRole(user: PaidAiCaller, req: Request, what: string): Promise<string> {
+  const userId = user.id;
   const orgId = await orgForUser(userId, preferredOrg(req));
   const { data: mem, error: mErr } = await adminClient()
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
@@ -314,6 +319,7 @@ async function requireEditorRole(userId: string, req: Request, what: string): Pr
   if (!mem?.role || mem.role === "marketing") {
     throw new HttpError(403, `Your role does not permit ${what}`);
   }
+  await assertPaidAiIdentity(user, orgId);
   return orgId;
 }
 
@@ -326,6 +332,8 @@ interface Charge {
   plan: string;
   monthlyKey: string;
   burstKey: string;
+  monthlyReceipt: RateChargeReceipt;
+  burstReceipt: RateChargeReceipt;
 }
 
 /**
@@ -334,29 +342,30 @@ interface Charge {
  * how `{}` bodies used to burn an org's allowance without a provider call ever
  * being made (audit round 4).
  */
-async function guardTTS(userId: string, req: Request): Promise<Charge> {
-  const orgId = await requireEditorRole(userId, req, "AI voiceovers");
+async function guardTTS(user: PaidAiCaller, req: Request): Promise<Charge> {
+  const orgId = await requireEditorRole(user, req, "AI voiceovers");
   // A degraded plan lookup is a 503, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.reels_per_month; // the CAP is shared; the counter is not
   if (monthlyCap <= 0) throw quotaError("AI voiceover", 0, 0, ent.plan);
 
-  const idem = req.headers.get("idempotency-key")?.trim();
-  if (idem && idem.length <= 128) {
-    if (!(await durableRateLimit(`aivoiceidem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — this voiceover was already started.", "conflict");
-    }
+  const idem = requiredIdempotencyKey(req);
+  if (!(await durableRateLimit(`aivoiceidem:${orgId}:${idem}`, 1, 120))) {
+    throw new HttpError(409, "Duplicate submission — this voiceover was already started.", "conflict");
   }
 
   const burstKey = `aivoice:${orgId}`;
-  if (!(await durableRateLimit(burstKey, TTS_MAX_PER_WINDOW, TTS_WINDOW_SECONDS))) {
+  const burst = await chargeRateReceipt(burstKey, TTS_MAX_PER_WINDOW, TTS_WINDOW_SECONDS);
+  if (!burst.accepted) {
     throw new HttpError(429, "AI voiceover limit reached for now — try again in a few minutes.", "rate_limited");
   }
   const monthlyKey = `aivoicemo:${orgId}`;
-  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
+  const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  if (!monthly.accepted) {
+    await refundRateReceipt(burst.receipt);
     throw quotaError("AI voiceover", monthlyCap, monthlyCap, ent.plan);
   }
-  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey, monthlyReceipt: monthly.receipt, burstReceipt: burst.receipt };
 }
 
 /**
@@ -364,8 +373,8 @@ async function guardTTS(userId: string, req: Request): Promise<Charge> {
  * — a failed refund must not replace the real error the user needs to see.
  */
 async function refundCharge(charge: Charge): Promise<void> {
-  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
-  await refundRateLimit(charge.burstKey, TTS_WINDOW_SECONDS, 1);
+  await refundRateReceipt(charge.monthlyReceipt);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 // ── Voice catalogue ──────────────────────────────────────────────────────────
@@ -645,7 +654,7 @@ Deno.serve(async (req) => {
 
       // ── CHARGE ── everything above is validated; the meter is charged here,
       // immediately before the billable call, and refunded on any failure.
-      const charge = await guardTTS(user.id, req);
+      const charge = await guardTTS(user, req);
 
       try {
         // Reserve an owned object key before provider dispatch. Account deletion
@@ -666,25 +675,19 @@ Deno.serve(async (req) => {
         const url =
           `${ELEVEN_BASE}/v1/text-to-speech/${encodeURIComponent(voiceId)}/with-timestamps` +
           `?output_format=${OUTPUT_FORMAT}`;
-        const payload: Record<string, unknown> = { text };
-        if (ELEVENLABS_MODEL_ID) payload.model_id = ELEVENLABS_MODEL_ID;
+        const model = ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
+        const payload: Record<string, unknown> = { text, model_id: model };
+        const funding = await fundingContext(user.id, charge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        const quote = ["eleven_multilingual_v2", "eleven_v3", "eleven_flash_v2_5", "eleven_turbo_v2_5"].includes(model) ? { cents: text.length * .008, version: TARIFF_VERSION } : null;
 
-        const res = await fetch(url, {
-          method: "POST",
-          headers: elevenHeaders(),
-          body: JSON.stringify(payload),
+        const data = await fundedAttempt(funding, "voice.tts", {provider: "elevenlabs", model}, payload, quote, async () => {
+          const res = await fetch(url, {method:"POST",headers:elevenHeaders(),body:JSON.stringify(payload)});
+          const data=await res.json().catch(()=>({} as Record<string,unknown>));
+          if(!res.ok)throw new ProviderError("elevenlabs","upstream","The voice service could not accept this request.",res.status,definitiveSubmitRejection(res.status,data) && !data.audio_base64);
+          if(typeof data.audio_base64!=="string"||!data.audio_base64.length)throw new ProviderError("elevenlabs","upstream","The voice service returned no confirmed audio.");
+          try { if(!atob(data.audio_base64).length)throw new Error(); } catch {throw new ProviderError("elevenlabs","upstream","The voice service returned unreadable audio.");}
+          return data;
         });
-        const data = await res.json().catch(() => ({} as Record<string, unknown>));
-        if (!res.ok) {
-          // Always 502 `upstream`, whatever ElevenLabs said. A 401/403 from the
-          // vendor is OUR misconfiguration, not the caller's — surfacing it as
-          // a 401 would tell the app the USER's session died and sign them out.
-          throw new HttpError(
-            502,
-            `ElevenLabs ${res.status}: ${JSON.stringify(data).slice(0, 300)}`,
-            "upstream",
-          );
-        }
 
         const b64 = (data as Record<string, unknown>).audio_base64;
         if (typeof b64 !== "string" || b64.length === 0) {
@@ -698,6 +701,7 @@ Deno.serve(async (req) => {
         } catch {
           throw new HttpError(502, "ElevenLabs returned audio that is not valid base64", "upstream");
         }
+        assert(audioBuf.byteLength <= 20 * 1024 * 1024, 502, "The narration exceeds its reserved storage limit.");
         if (audioBuf.byteLength === 0) {
           throw new HttpError(502, "ElevenLabs returned an empty audio file", "upstream");
         }
@@ -737,7 +741,7 @@ Deno.serve(async (req) => {
           const detail = await put.text().catch(() => "");
           throw new HttpError(502, `Storing the voiceover failed (R2 ${put.status}): ${detail.slice(0, 200)}`, "upstream");
         }
-        const audioUrl = await presignGet(R2_BUCKET_UPLOADS, key, AUDIO_URL_TTL_SECONDS);
+        const audioUrl = await privateMediaUrl({actor:user.id,org:charge.orgId,listing:body.listing_id??null,bucket:"uploads",key},AUDIO_URL_TTL_SECONDS);
 
         // ── DURATION ── measured, estimated or absent, and always labelled.
         let durationS = 0;

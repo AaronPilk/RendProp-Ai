@@ -384,7 +384,9 @@ final class UploadManager: NSObject, ObservableObject {
         let relPath = FileStore.relativePath(for: fileURL)
         // The SAME file parked for Wi-Fi earlier: adopt it (the user approved
         // cellular, or asked again before Wi-Fi came back).
-        if let s = state, s.status == .queued, s.filePath == relPath {
+        if let s = state, s.status == .queued, s.filePath == relPath,
+           s.listingID == listingID, s.role == role,
+           listingLocalID == nil || s.listingLocalID == nil || s.listingLocalID == listingLocalID {
             guard cellularApproved else { throw UploadError.cellularConfirmationRequired }
             return try await awaitEngine { self.confirmCellularAndStart() }
         }
@@ -758,6 +760,14 @@ final class UploadManager: NSObject, ObservableObject {
 
     // MARK: - Ticket
 
+    /// Admission refusals need an explicit account, allowance or request change.
+    /// A burst 429 remains transient; the server marks a monthly limit as quota.
+    static func isTerminalAdmissionFailure(_ error: Error) -> Bool {
+        guard let api = error as? APIError else { return false }
+        return api.isValidation || api.isUnauthorized || api.isForbidden || api.isQuota
+            || api.isNotFound || api.isPayloadTooLarge
+    }
+
     /// New operations persist a UUID key before requesting any ticket. Old
     /// records retain their exact historical path/size key during migration;
     /// changing it before the old cancellation receipt would reserve twice.
@@ -788,14 +798,11 @@ final class UploadManager: NSObject, ObservableObject {
                 await MainActor.run {
                     self.isRequestingTicket = false
                     guard self.state?.id == expectedID else { return }
-                    // 400/401/403/404/413 = the server refused THIS request (bad
-                    // listing id, forbidden role, type not allowed, signed out) —
-                    // retrying on network regain would loop. 429/5xx/offline are
-                    // transient and stay auto-resumable.
-                    let api = error as? APIError
-                    let terminal = api.map { $0.isValidation || $0.isUnauthorized || $0.isForbidden
-                                              || $0.isNotFound || $0.isPayloadTooLarge } ?? false
-                    self.fail(error.localizedDescription, terminal: terminal)
+                    // Sign-in, permission and monthly quota refusals cannot be
+                    // fixed by a network regain. Genuine rate limits, 5xx and
+                    // offline failures remain eligible for bounded recovery.
+                    self.fail(error.localizedDescription,
+                              terminal: Self.isTerminalAdmissionFailure(error))
                 }
             }
         }

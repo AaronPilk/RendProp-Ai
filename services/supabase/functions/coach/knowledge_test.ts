@@ -87,3 +87,23 @@ Deno.test("knowledge: known defective account statement is rejected", () => {
   }
   assert(rejected, "negative control did not reject stale policy");
 });
+
+Deno.test("knowledge: introductory trial requires Apple's subscription confirmation", () => {
+  const trial = fact("Free trial");
+  for (const required of ["7-day", "choosing a subscription", "confirming it in Apple's purchase sheet", "does not start that trial", "selected plan's allowances", "renews at the displayed subscription price", "original end date"]) {
+    assert(trial.includes(required), `trial policy omitted: ${required}`);
+  }
+  const block = knowledgeBlock();
+  assert(block.includes(trial), "actual guidance must contain the trial policy");
+  assert(block.includes("never on signup"), "allowances summary must not grant an automatic trial");
+});
+
+Deno.test("knowledge: current Measurements remains usable while automatic 3D generation is Coming soon", () => {
+  const measurement = fact("Measurements and floor plans — current availability");
+  for (const required of ["Measurements card", "floor outline", "worksheet", "PDF or image", "Automatic 3D floor plans and 3D walkthroughs", "Coming soon", "TestFlight Lab", "local capture tests", "agency and Studio capture planning"]) {
+    assert(measurement.includes(required), `current availability omitted: ${required}`);
+  }
+  assert(!measurement.includes("LiDAR phones can also scan"), "ordinary workflow must not promise automatic generation");
+  assert(knowledgeBlock().includes(measurement), "actual online prompt must carry current availability");
+  assert(!fact("A render or upload failed").includes("back automatically"), "recovery must not promise every attempt is refunded");
+});

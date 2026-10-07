@@ -1,5 +1,5 @@
 // Copy/source contracts plus the exact production AIConsent class running with
-// isolated real Foundation preferences across three executable invocations.
+// isolated real Foundation preferences across separate executable invocations.
 // NOT SwiftUI/device/network/provider-policy verification. No installations.
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync } from 'node:fs';
@@ -18,6 +18,7 @@ const production = app.slice(begin, end);
 const expected = [
   ['Google (Gemini)', 'Receives photos, video or text for photo editing, video analysis and writing assistance.'],
   ['fal.ai', 'Receives photos, video and prompts for AI edits, generated clips and upscaling. Available models include ByteDance Seedance, Google Veo, Topaz Labs, Bria, FLUX and MiniMax Hailuo.'],
+  ['Bria', 'Receives the video intervals you select, removal prompts and generated masks to remove people, objects or reflections from video.'],
   ['Anthropic and OpenAI', 'Receive chat, project context and writing requests. Quality checks can also send source photos and frames from generated clips; OpenAI can edit photos.'],
   ['ElevenLabs', 'Receives your voiceover script, including any address or personal details in it, and your selected voice to generate narration.'],
 ];
@@ -43,51 +44,91 @@ test('disclosure names actual input types and avoids global never-send promises'
   }
 });
 
-test('production uses only the material-disclosure v2 key', () => {
-  assert.match(production, /private static let storageKey = "ai\.thirdPartyProcessing\.consent\.v2"/);
-  assert.doesNotMatch(production, /"ai\.thirdPartyProcessing\.consent\.v1"/);
+test('production uses only the direct-Bria material-disclosure v3 key', () => {
+  assert.match(production, /private static let storageKey = "ai\.thirdPartyProcessing\.consent\.v3"/);
+  assert.doesNotMatch(production, /"ai\.thirdPartyProcessing\.consent\.v[12]"/);
 });
 
-test('all current UI launch overrides target v2; historical receipts are not rewritten', () => {
+test('all current UI launch overrides target v3; historical receipts are not rewritten', () => {
   const directory = new URL('../../apps/ios/RendpropUITests/', import.meta.url);
   const configured = [];
   for (const name of readdirSync(directory).filter((name) => name.endsWith('.swift'))) {
     const source = readFileSync(new URL(name, directory), 'utf8');
-    assert.doesNotMatch(source, /ai\.thirdPartyProcessing\.consent\.v1/, name);
-    if (source.includes('-ai.thirdPartyProcessing.consent.v2')) configured.push(name);
-    if (name === 'CaptureRecoveryTests.swift') {
-      assert.match(source, /"-ai\.thirdPartyProcessing\.consent\.v2", "NO"/,
-        'offline capture recovery fixtures keep cloud AI consent declined');
+    assert.doesNotMatch(source, /ai\.thirdPartyProcessing\.consent\.v[12]/, name);
+    if (source.includes('-ai.thirdPartyProcessing.consent.v3')) configured.push(name);
+    if (['CaptureRecoveryTests.swift', 'SubscriptionFlowTests.swift'].includes(name)) {
+      assert.match(source, /"-ai\.thirdPartyProcessing\.consent\.v3", "NO"/,
+        'offline recovery and billing fixtures keep cloud AI consent declined');
     }
   }
   assert.deepEqual(configured.sort(), [
-    'CaptureRecoveryTests.swift', 'CoachShot.swift', 'GuideShot.swift', 'IndustryWalk.swift',
-    'OnboardingTour.swift', 'PaywallShot.swift', 'RendpropUITests.swift', 'ReviewerWalk.swift', 'StoreShots.swift',
+    'BetaPolishUITests.swift', 'CaptureRecoveryTests.swift', 'CoachShot.swift', 'DetailMetadataRegressionUITests.swift', 'GuideShot.swift', 'GuidedPhotoNavigationTests.swift', 'IndustryWalk.swift',
+    'OnboardingTour.swift', 'PaywallShot.swift', 'RendpropUITests.swift', 'ReviewerWalk.swift', 'StoreShots.swift', 'SubscriptionFlowTests.swift',
   ], 'review every current consent launch fixture explicitly');
+  for (const name of ['README.md', 'bridge-cmd-reviewerwalk.sh']) {
+    const source = readFileSync(new URL(name, directory), 'utf8');
+    assert.doesNotMatch(source, /ai\.thirdPartyProcessing\.consent\.v[12]/, name);
+    assert.ok(source.includes('-ai.thirdPartyProcessing.consent.v3'), `${name}: current launch guidance must use v3`);
+  }
 });
 
-test('actual consent grant, relaunch, revoke, decline and cancel with isolated persisted defaults', () => {
+function compileConsent(source) {
   const dir = mkdtempSync(join(tmpdir(), 'rendprop-consent-policy.'));
   const support = readFileSync(new URL('AIConsentPersistenceTests.swift', import.meta.url), 'utf8');
   const extracted = join(dir, 'AIConsent.swift');
   const harness = join(dir, 'Persistence.swift');
   // Mechanical extraction only; assertions never run a copied consent body.
-  writeFileSync(extracted, `import Foundation\nimport Combine\n${production}\n`, { flag: 'wx' });
+  writeFileSync(extracted, `import Foundation\nimport Combine\n${source}\n`, { flag: 'wx' });
   writeFileSync(harness, support, { flag: 'wx' });
   const binary = join(dir, 'consent-persistence');
   const compile = spawnSync('/usr/bin/swiftc', ['-parse-as-library', extracted, harness, '-o', binary],
     { encoding: 'utf8', timeout: 60000 });
   assert.equal(compile.status, 0, `Swift compile failed: ${compile.error ?? ''}\n${compile.stdout}\n${compile.stderr}`);
+  return { dir, run: (scenario, suite) => spawnSync(binary, [scenario, suite], { encoding: 'utf8', timeout: 5000 }) };
+}
+
+let actualExecutable;
+function actualConsent() {
+  actualExecutable ??= compileConsent(production);
+  return actualExecutable;
+}
+
+function assertPass(result, scenario) {
+  assert.equal(result.status, 0, `${scenario}: ${result.error ?? ''}\n${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /^PASS \d+ assertions:/m);
+  console.log(result.stdout.trim());
+}
+
+test('actual consent grant, relaunch, revoke, decline and cancel with isolated persisted defaults', () => {
+  const { dir, run } = actualConsent();
   const suite = `com.rendprop.offline-consent-tests.${randomUUID()}`;
   console.log(`Evidence: ${dir}; isolated preferences suite: ${suite}`);
-  const run = (scenario) => spawnSync(binary, [scenario, suite], { encoding: 'utf8', timeout: 5000 });
-  const negative = run('deliberate-unknown-scenario');
+  const negative = run('deliberate-unknown-scenario', suite);
   assert.equal(negative.status, 1, 'negative control must fail with exit 1');
   assert.match(negative.stdout, /FAIL: unknown scenario/);
   for (const scenario of ['v1-only-then-grant', 'relaunch-then-revoke', 'relaunch-then-decline']) {
-    const result = run(scenario);
-    assert.equal(result.status, 0, `${scenario}: ${result.error ?? ''}\n${result.stdout}\n${result.stderr}`);
-    assert.match(result.stdout, /^PASS \d+ assertions:/m);
-    console.log(result.stdout.trim());
+    assertPass(run(scenario, suite), scenario);
   }
+});
+
+test('an old v2 grant followed by relaunch cannot authorize the new direct Bria disclosure', () => {
+  const { dir, run } = actualConsent();
+  const suite = `com.rendprop.offline-consent-tests.${randomUUID()}`;
+  console.log(`v2 migration evidence: ${dir}; isolated preferences suite: ${suite}`);
+  for (const scenario of ['seed-old-v2-grant', 'v2-relaunch-requires-disclosure']) {
+    assertPass(run(scenario, suite), scenario);
+  }
+});
+
+test('privacy negative control catches silently reusing the old v2 grant', () => {
+  const mutated = production.replace(
+    'private static let storageKey = "ai.thirdPartyProcessing.consent.v3"',
+    'private static let storageKey = "ai.thirdPartyProcessing.consent.v2"');
+  assert.notEqual(mutated, production, 'negative control must change the actual consent storage key');
+  const { run } = compileConsent(mutated);
+  const suite = `com.rendprop.offline-consent-tests.${randomUUID()}`;
+  assertPass(run('seed-old-v2-grant', suite), 'seed-old-v2-grant');
+  const negative = run('v2-relaunch-requires-disclosure', suite);
+  assert.equal(negative.status, 1, 'reusing v2 must fail the real persistence/privacy check');
+  assert.match(negative.stdout, /FAIL: a persisted v2 YES must not grant direct Bria v3/);
 });

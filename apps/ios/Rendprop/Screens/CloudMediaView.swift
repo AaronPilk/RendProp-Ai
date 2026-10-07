@@ -23,9 +23,21 @@ struct CloudMediaView: View {
     @State private var imported = Set<UUID>()
 
     private var current: Listing { model.listings.first(where: { $0.id == listing.id }) ?? listing }
+    @State private var mediaContext: String?
+    @State private var importGeneration = UUID()
+    private func context(org: UUID, listingID: UUID) -> String {
+        "\(auth.userID ?? "")|\(auth.syncSessionRevision)|\(org.uuidString)|\(listingID.uuidString)"
+    }
+    @MainActor private func hasCurrentMediaContext(_ captured: CloudMediaAccessContext, localID: UUID, listingID: UUID) -> Bool {
+        (try? captured.check()) != nil && mediaContext == context(org: captured.orgID, listingID: listingID) &&
+            model.listings.contains(where: { $0.id == localID && $0.serverID == listingID && $0.serverOrgID == captured.orgID && $0.cloudUnavailable != true })
+    }
     private var floorPlanURL: URL? {
-        guard let raw = current.details?["floorplan_url"], let url = URL(string: raw), url.scheme == "https", url.user == nil, url.password == nil else { return nil }
-        return url
+        guard auth.isIdentified, current.cloudUnavailable != true,
+              let org = current.serverOrgID, let sid = current.serverID,
+              mediaContext == context(org: org, listingID: sid) else { return nil }
+        return CloudFloorPlanLink.resolve(details: current.details, photos: photos,
+                                         listingID: sid, orgID: org, now: Date(), actorID: auth.userID.flatMap(UUID.init(uuidString:)))
     }
     var body: some View {
         ScrollView {
@@ -91,6 +103,8 @@ struct CloudMediaView: View {
         .toolbar { Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }.disabled(loading || importing != nil).accessibilityLabel("Refresh cloud files") }
         .onDisappear { importTask?.cancel() }
         .onChange(of: auth.userID) { _ in clearAccountFiles() }
+        .onChange(of: auth.syncSessionRevision) { _ in clearAccountFiles() }
+        .onChange(of: WorkspaceContext.selectedOrgID) { _ in clearAccountFiles() }
         .onChange(of: auth.isIdentified) { identified in if !identified { clearAccountFiles() } }
         .confirmationDialog("Replace the walkthrough on this iPhone?", isPresented: Binding(get: { replaceVideo != nil }, set: { if !$0 { replaceVideo = nil } }), presenting: replaceVideo) { video in
             Button("Use cloud video") { replaceVideo = nil; importVideo(video) }
@@ -106,7 +120,9 @@ struct CloudMediaView: View {
                     Text("Studio script").font(.headline)
                     Text(creative.script).font(.subheadline).textSelection(.enabled)
                     Button("Use script in Reel Studio") {
-                        guard auth.isIdentified, current.serverID != nil else { return }
+                        guard let org = current.serverOrgID, let sid = current.serverID,
+                              let captured = try? CloudMediaAccessContext.capture(orgID: org),
+                              hasCurrentMediaContext(captured, localID: current.id, listingID: sid) else { return }
                         do {
                             try CloudVoiceStore.saveScript(creative.script, listingID: current.id)
                             notice = "Script saved. Open Reel Studio on this listing to continue."
@@ -137,37 +153,46 @@ struct CloudMediaView: View {
     }
 
     @MainActor private func clearAccountFiles() {
-        importTask?.cancel(); photos = []; videos = []; chapters = []; imported = []
-        creative = nil; creativeError = nil; notice = nil; replaceVideo = nil
+        importTask?.cancel(); importGeneration = UUID(); importing = nil; importTask = nil
+        photos = []; videos = []; chapters = []; imported = []
+        creative = nil; creativeError = nil; notice = nil; replaceVideo = nil; mediaContext = nil
     }
 
     @MainActor private func load(more: Bool = false) async {
         guard !loading, importing == nil else { return }
         loading = true; error = nil
         defer { loading = false }
-        if !more { photos = []; videos = []; chapters = []; nextOffset = nil; creative = nil; creativeError = nil }
+        if !more { photos = []; videos = []; chapters = []; nextOffset = nil; creative = nil; creativeError = nil; mediaContext = nil }
         guard auth.isIdentified else { error = "Connect the same Apple account you use in Studio to see shared files."; return }
+        let initialActor = auth.userID, initialRevision = auth.syncSessionRevision, initialOrg = WorkspaceContext.selectedOrgID
         if current.serverOrgID == nil { await model.refreshCloudWorkspace() }
+        guard auth.userID == initialActor, auth.syncSessionRevision == initialRevision, WorkspaceContext.selectedOrgID == initialOrg else { return }
         guard let sid = current.serverID, let org = current.serverOrgID, current.cloudUnavailable != true,
               let cloud = model.api as? WorkspaceSyncAPI else { error = "This listing hasn't reached your cloud workspace yet. Publish or upload it first."; return }
         let actor = auth.userID, revision = auth.syncSessionRevision
+        guard let captured = try? CloudMediaAccessContext.capture(orgID: org) else { return }
         do {
             let offset = more ? (nextOffset ?? 0) : 0
             let page = try await cloud.cloudMedia(listingID: sid, orgID: org, offset: offset)
-            guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified, current.serverID == sid else { throw CloudSyncError.identityChanged }
+            guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified, current.serverID == sid, current.serverOrgID == org,
+                  (try? captured.check()) != nil else { throw CloudSyncError.identityChanged }
             guard Set(photos.map(\.id)).isDisjoint(with: page.photos.map(\.id)), Set(videos.map(\.id)).isDisjoint(with: page.videos.map(\.id)) else { throw CloudSyncError.incomplete }
             photos += page.photos; videos += page.videos; nextOffset = page.next_offset
+            mediaContext = context(org: org, listingID: sid)
             if page.unavailable_count > 0 { notice = "Some files are still processing or no longer available. Refresh after the upload finishes." }
             if !more {
                 let state = try await cloud.cloudListingState(listingID: sid, orgID: org, offset: 0)
-                guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified else { throw CloudSyncError.identityChanged }
+                guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified,
+                      hasCurrentMediaContext(captured, localID: current.id, listingID: sid) else { throw CloudSyncError.identityChanged }
                 chapters = state.chapters
                 do {
                     let saved = try await cloud.cloudCreative(listingID: sid, orgID: org)
-                    guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified else { throw CloudSyncError.identityChanged }
+                    guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified,
+                      hasCurrentMediaContext(captured, localID: current.id, listingID: sid) else { throw CloudSyncError.identityChanged }
                     creative = saved
                 } catch {
-                    if auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified {
+                    if auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified,
+                       hasCurrentMediaContext(captured, localID: current.id, listingID: sid) {
                         creativeError = "Studio scripts and narration couldn't be loaded. Refresh to try again."
                     }
                 }
@@ -180,62 +205,84 @@ struct CloudMediaView: View {
         guard importing == nil, let org = current.serverOrgID, let sid = current.serverID,
               let originalURL = photo.original_url ?? (photo.is_altered == false ? photo.url : nil) else { return }
         let localID = current.id, actor = auth.userID, revision = auth.syncSessionRevision
+        guard let captured = try? CloudMediaAccessContext.capture(orgID: org),
+              hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { return }
+        let generation = UUID(); importGeneration = generation
         importing = photo.id; error = nil; notice = nil
         importTask = Task {
-            defer { importing = nil; importTask = nil }
+            defer { if importGeneration == generation { importing = nil; importTask = nil } }
             var temporary: [URL] = []
             defer { for url in temporary { try? FileManager.default.removeItem(at: url) } }
             do {
-                try CloudListingMerge.validateMedia(originalURL, expiry: photo.expires_at, listingID: sid, orgID: org, now: Date())
+                guard hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
+                try CloudListingMerge.validateMedia(originalURL, expiry: photo.expires_at, listingID: sid, orgID: org, now: Date(), actorID: captured.actorID)
+                try CloudListingMerge.validateMedia(photo.url, expiry: photo.expires_at, listingID: sid, orgID: org, now: Date(), actorID: captured.actorID)
                 let original = try await CloudFileDownload.fetch(originalURL, kind: .photo); temporary.append(original.url)
+                guard hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
                 let enhanced = photo.url == originalURL ? original : try await CloudFileDownload.fetch(photo.url, kind: .photo)
                 if enhanced.url != original.url { temporary.append(enhanced.url) }
                 try Task.checkCancellation()
                 guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified,
-                      model.listings.contains(where: { $0.id == localID && $0.serverID == sid }) else { throw CloudSyncError.identityChanged }
+                      hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
                 let directory = EnhancedPhoto.directory(for: localID)
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 let name = "cloud-\(photo.id.uuidString)"
                 let originalDest = directory.appendingPathComponent("orig-\(name).\(original.ext)")
-                let enhancedDest = directory.appendingPathComponent("enh-\(name).\(enhanced.ext)")
+                // An interrupted metadata commit must not expose staged bytes
+                // through the legacy enh-* scanner as an ordinary photo.
+                let enhancedDest = directory.appendingPathComponent("cloud-photo-\(name).\(enhanced.ext)")
                 if !FileManager.default.fileExists(atPath: originalDest.path) { try FileManager.default.copyItem(at: original.url, to: originalDest) }
                 if !FileManager.default.fileExists(atPath: enhancedDest.path) { try FileManager.default.copyItem(at: enhanced.url, to: enhancedDest) }
+                try PhotoVersionHistory.registerImport(id: name, imageFile: enhancedDest.lastPathComponent,
+                    originalFile: originalDest.lastPathComponent, staged: photo.is_staged,
+                    altered: photo.is_altered != false, directory: directory)
                 guard let ownerID = actor.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
                 // Bind the response's genuine ID to the imported bytes, never to
                 // a filename that happens to contain a UUID.
                 try await CloudPhotoReferences.shared.save(sourceID: photo.id, fileURL: enhanced.url,
                     ownerID: ownerID, orgID: org, listingID: sid)
-                guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified else { throw CloudSyncError.identityChanged }
-                if current.mainPhotoURL == nil { model.modify(localID, sync: false) { $0.mainPhotoRelPath = FileStore.relativePath(for: enhancedDest) } }
+                guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified,
+                      hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
+                if current.mainPhotoURL == nil,
+                   let cover = try PhotoVersionHistory.availableCoverVersion(directory: directory) {
+                    model.modify(localID, sync: false) {
+                        $0.mainPhotoRelPath = FileStore.relativePath(for: directory.appendingPathComponent(cover.imageFile))
+                    }
+                }
                 imported.insert(photo.id); notice = "Photo and its original are available in this listing's Photo Studio."
             } catch is CancellationError { return }
-            catch { if auth.userID == actor { self.error = error is CloudSyncError ? error.localizedDescription : "The photo couldn't be saved. Refresh its private link and try again." } }
+            catch { if hasCurrentMediaContext(captured, localID: localID, listingID: sid) { self.error = error is CloudSyncError ? error.localizedDescription : "The photo couldn't be saved. Refresh its private link and try again." } }
         }
     }
 
     @MainActor private func importVideo(_ video: CloudMediaPage.Video) {
         guard importing == nil, let org = current.serverOrgID, let sid = current.serverID else { return }
         let localID = current.id, actor = auth.userID, revision = auth.syncSessionRevision
+        guard let captured = try? CloudMediaAccessContext.capture(orgID: org),
+              hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { return }
+        let generation = UUID(); importGeneration = generation
         importing = video.id; error = nil; notice = nil
         importTask = Task {
-            defer { importing = nil; importTask = nil }
+            defer { if importGeneration == generation { importing = nil; importTask = nil } }
             var temp: URL?, saved: URL?
             defer { if let temp { try? FileManager.default.removeItem(at: temp) } }
             do {
-                try CloudListingMerge.validateMedia(video.url, expiry: video.expires_at, listingID: sid, orgID: org, now: Date())
+                guard hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
+                try CloudListingMerge.validateMedia(video.url, expiry: video.expires_at, listingID: sid, orgID: org, now: Date(), actorID: captured.actorID)
                 let file = try await CloudFileDownload.fetch(video.url, kind: .video); temp = file.url
+                guard hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
                 let destination = FileStore.importsDir.appendingPathComponent("cloud-\(video.id.uuidString)-\(UUID().uuidString).\(file.ext)")
                 try FileManager.default.copyItem(at: file.url, to: destination); saved = destination
                 var asset = try await MediaImporter.makeAsset(from: destination, isDrone: nil)
                 asset.roomTags = chapters.filter { $0.asset_id == video.id }.sorted { $0.sort < $1.sort }.map { RoomTag(name: $0.label, tMs: $0.t_ms) }
                 try Task.checkCancellation()
                 guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified,
-                      model.listings.contains(where: { $0.id == localID && $0.serverID == sid }) else { throw CloudSyncError.identityChanged }
+                      hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
                 model.assets[localID] = asset; imported.insert(video.id)
                 notice = "Video saved. Open the listing and choose Create tour to edit it on your iPhone."
                 saved = nil
             } catch is CancellationError { if let saved { try? FileManager.default.removeItem(at: saved) }; return }
-            catch { if let saved { try? FileManager.default.removeItem(at: saved) }; if auth.userID == actor { self.error = error is CloudSyncError ? error.localizedDescription : "The video couldn't be saved. Check free space, refresh its link and try again." } }
+            catch { if let saved { try? FileManager.default.removeItem(at: saved) }; if hasCurrentMediaContext(captured, localID: localID, listingID: sid) { self.error = error is CloudSyncError ? error.localizedDescription : "The video couldn't be saved. Check free space, refresh its link and try again." } }
         }
     }
 
@@ -243,21 +290,25 @@ struct CloudMediaView: View {
         guard importing == nil, auth.isIdentified, let org = current.serverOrgID, let sid = current.serverID,
               let url = voice.url, let expiry = voice.expires_at, voice.state == "completed", voice.kind == "voice" else { return }
         let localID = current.id, actor = auth.userID, revision = auth.syncSessionRevision
+        guard let captured = try? CloudMediaAccessContext.capture(orgID: org),
+              hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { return }
+        let generation = UUID(); importGeneration = generation
         importing = voice.id; error = nil; notice = nil
         importTask = Task {
-            defer { importing = nil; importTask = nil }
+            defer { if importGeneration == generation { importing = nil; importTask = nil } }
             var temporary: URL?
             defer { if let temporary { try? FileManager.default.removeItem(at: temporary) } }
             do {
-                try CloudListingMerge.validateMedia(url, expiry: expiry, listingID: sid, orgID: org, now: Date(), voice: true)
+                guard hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
+                try CloudListingMerge.validateMedia(url, expiry: expiry, listingID: sid, orgID: org, now: Date(), voice: true, actorID: captured.actorID)
                 let file = try await CloudFileDownload.fetch(url, kind: .audio); temporary = file.url
                 try Task.checkCancellation()
                 guard auth.userID == actor, auth.syncSessionRevision == revision, auth.isIdentified,
-                      model.listings.contains(where: { $0.id == localID && $0.serverID == sid }) else { throw CloudSyncError.identityChanged }
+                      hasCurrentMediaContext(captured, localID: localID, listingID: sid) else { throw CloudSyncError.identityChanged }
                 try CloudVoiceStore.saveVoice(voice, file: file.url, ext: file.ext, listingID: localID)
                 imported.insert(voice.id); notice = "Narration saved. Open Reel Studio on this listing to use it."
             } catch is CancellationError { return }
-            catch { if auth.userID == actor { self.error = error is CloudSyncError ? error.localizedDescription : "The narration couldn't be saved. Refresh its link and try again." } }
+            catch { if hasCurrentMediaContext(captured, localID: localID, listingID: sid) { self.error = error is CloudSyncError ? error.localizedDescription : "The narration couldn't be saved. Refresh its link and try again." } }
         }
     }
 }
@@ -317,5 +368,28 @@ private enum CloudFileDownload {
             try FileManager.default.moveItem(at: temporary, to: owned)
             return File(url: owned, ext: ext)
         } catch { try? FileManager.default.removeItem(at: temporary); throw error }
+    }
+}
+
+/// Private object identities never become browser links. Resolve only the exact
+/// attached asset from the already checked account-scoped, expiring media page.
+enum CloudFloorPlanLink {
+    static func resolve(details: [String: String]?, photos: [CloudMediaPage.Photo],
+                        listingID: UUID, orgID: UUID, now: Date, actorID: UUID? = nil) -> URL? {
+        if let rawID = details?["floorplan_asset_id"] {
+            guard let id = UUID(uuidString: rawID), let photo = photos.first(where: { $0.id == id && $0.listing_id == listingID }),
+                  (try? CloudListingMerge.validateMedia(photo.url, expiry: photo.expires_at,
+                      listingID: listingID, orgID: orgID, now: now, actorID: actorID)) != nil else { return nil }
+            return photo.url
+        }
+        // Preserve a user's external plan attachment, never an old R2 alias.
+        guard let raw = details?["floorplan_url"], let url = URL(string: raw),
+              url.scheme == "https", url.user == nil, url.password == nil,
+              let host = url.host?.lowercased(), !host.hasSuffix(".r2.cloudflarestorage.com"),
+              !host.hasSuffix(".r2.dev"),
+              !["rendprop.com", "www.rendprop.com", "cdn.rendprop.com", "media.rendprop.com", "renders.rendprop.com"].contains(host),
+              !url.path.split(separator: "/").contains(where: { ["renders", "uploads"].contains(String($0)) }),
+              !raw.contains("X-Amz-") else { return nil }
+        return url
     }
 }

@@ -108,6 +108,27 @@ struct AdoptionLocalBindingsTests {
         check(!journal.blocks(original.id, currentUserID: source), "failed optional sign-in leaves source usable")
         check(!journal.blocks(UUID(), currentUserID: destination), "unrelated new listings remain usable")
 
+        let offline = try await fresh()
+        var offlineListing = listing(); offlineListing.serverID = nil
+        offline.listings = [offlineListing]
+        let offlineTransfer = pending()
+        let offlineDraft = ProductionPlanCache.Draft(plan: .starter(listingID: offlineListing.id), revision: 0, dirty: true)
+        try ProductionPlanCache.save(offlineDraft, owner: source.uuidString.lowercased(), listingID: offlineListing.id)
+        defer { ProductionPlanCache.remove(listingID: offlineListing.id) }
+        ProductionVideoLibrary.shared.busy = true
+        check(!offline.prepareLocalAdoption(offlineTransfer), "in-flight picker blocks session replacement before its import is indexed")
+        ProductionVideoLibrary.shared.busy = false
+        check(offline.prepareLocalAdoption(offlineTransfer), "offline-only property enters receipt-bound production transfer")
+        AuthStore.shared.userID = destination.uuidString
+        offline.forgetServerIdentities(for: destination)
+        do { _ = try await offline.ensureServerListing(offline.listings[0]); check(false, "offline pending transfer must not create a duplicate") }
+        catch { check(offline.api.calls == 0, "offline draft waits for verified receipt before cloud create") }
+        check(offline.confirmLocalAdoption(offlineTransfer, orgID: org), "verified receipt also recovers offline-only production draft")
+        let transferredDraft = try ProductionPlanCache.load(owner: destination.uuidString.lowercased(), listingID: offlineListing.id)
+        check(transferredDraft?.plan == offlineDraft.plan && transferredDraft?.adoptedOperationID == offlineTransfer.operationID,
+              "actual AppModel confirm calls production transfer before clearing recovery")
+        check(offline.adoptionBindings?.productionTransferred == true, "local metadata commits production transfer completion")
+
         let busy = try await fresh(); busy.listings = [original]
         for kind in 0..<3 {
             busy.syncInFlight = kind == 0 ? [original.id] : []
@@ -123,10 +144,17 @@ struct AdoptionLocalBindingsTests {
         check(busy.adoptionBindings?.entries[0].shareSlug == "updated-before-activation", "latest source link preserved")
         AuthStore.shared.userID = destination.uuidString; busy.forgetServerIdentities(for: destination)
         let path = FileStore.documents, snapshot = try Data(contentsOf: path.appendingPathComponent("rendprop-state.json"))
-        FileStore.documents = path.appendingPathComponent("does-not-exist")
+        // Keep the valid media parent so the new profile preflight reaches the
+        // actual PersistentStore failure. Occupy its exact JSON path with a
+        // directory; a missing parent would now fail at an earlier guard.
+        let stateFile = path.appendingPathComponent("rendprop-state.json")
+        let savedState = path.appendingPathComponent("synthetic-state-before-failure.json")
+        try FileManager.default.moveItem(at:stateFile,to:savedState)
+        try FileManager.default.createDirectory(at:stateFile,withIntermediateDirectories:false)
         check(!busy.confirmLocalAdoption(transfer, orgID: org), "real atomic file-write failure refuses completion")
         check(busy.adoptionBindings?.confirmedOrgID == nil && busy.listings[0].serverID == nil, "write failure rolls back in-memory marker and IDs")
-        FileStore.documents = path
+        try FileManager.default.removeItem(at:stateFile)
+        try FileManager.default.moveItem(at:savedState,to:stateFile)
         check(try Data(contentsOf: path.appendingPathComponent("rendprop-state.json")) == snapshot, "write failure leaves previous durable bytes unchanged")
         check(busy.confirmLocalAdoption(transfer, orgID: org), "same receipt can retry after write failure")
 
@@ -142,6 +170,35 @@ struct AdoptionLocalBindingsTests {
         finishCreate?.resume(); _ = try await firstCreate.value
         check(racing.prepareLocalAdoption(transfer), "finished create participates in source snapshot")
         check(racing.adoptionBindings?.entries.first?.serverID == racing.listings[0].serverID, "actual returned server identity captured")
+
+        let pinned = try await fresh()
+        var localA = original; localA.serverID = nil; localA.cloudDraftOrgID = org
+        pinned.listings = [localA]
+        _ = try await pinned.ensureServerListing(localA)
+        check(pinned.listings[0].serverOrgID == org, "Actual create binds returned row to the saved intended workspace")
+        check(PersistentStore.load().listings[0].cloudDraftOrgID == org, "Workspace intent survives process-style disk reload")
+        var savedWrongWorkspace = false
+        do {
+            _ = try await CloudDraftCreation.ensure(snapshot: localA, identity: .init(userID: source.uuidString, revision: 0),
+                create: { value in var wrong = value; wrong.serverID = UUID(); wrong.serverOrgID = UUID(); return wrong },
+                current: { localA }, activeIdentity: { .init(userID: source.uuidString, revision: 0) },
+                save: { _ in savedWrongWorkspace = true }, deleteRemoved: { _ in })
+            check(false, "Wrong-workspace create must fail")
+        } catch { check(!savedWrongWorkspace, "Different-org create response cannot rebind saved local draft") }
+        let switchDrafts = try await fresh()
+        var unassigned = original; unassigned.serverID = nil; unassigned.serverOrgID = nil; unassigned.cloudDraftOrgID = nil
+        switchDrafts.listings = [unassigned]
+        WorkspaceContext.selectedOrgID = org
+        check(switchDrafts.prepareWorkspaceSwitch(), "Workspace switch persists older draft ownership before changing selection")
+        check(PersistentStore.load().listings[0].cloudDraftOrgID == org, "Older draft remains pinned to outgoing workspace across restart")
+        ProductionVideoLibrary.shared.busy = true
+        check(!switchDrafts.prepareWorkspaceSwitch(), "Workspace switch waits for active media import")
+        ProductionVideoLibrary.shared.busy = false
+        switchDrafts.clientContactSyncInFlight = [original.id]
+        check(!switchDrafts.prepareWorkspaceSwitch(), "Workspace switch waits for a client-contact save or photo upload")
+        switchDrafts.clientContactSyncInFlight = []
+        check(switchDrafts.prepareWorkspaceSwitch(), "Workspace switch resumes after client-contact work settles")
+        WorkspaceContext.selectedOrgID = nil
 
         let empty = try await fresh()
         empty.listings = []

@@ -1,0 +1,343 @@
+import Foundation
+import CryptoKit
+
+// No real documents, credentials, networking or camera APIs exist in this fixture.
+enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/\(path)") } }
+enum APIError: Error { case decoding, server(Int); var isConflict: Bool { if case .server(409) = self { return true }; return false } }
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
+enum FixtureError: Error { case failed }
+struct AssertionFailure: Error { let message: String }
+func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+
+@MainActor final class WireClient {
+    enum Idempotency { case none, key(String) }
+    var requests: [URLRequest] = []
+    var response = Data()
+    var beforeExecution: (() -> Void)?
+    func url(_ pieces: [String]) -> URL { URL(string: "https://fixture.invalid/" + pieces.joined(separator: "/"))! }
+    func makeRequest(url: URL, method: String, json: [String: Any], idempotency: Idempotency = .none) -> URLRequest {
+        var request = URLRequest(url: url); request.httpMethod = method
+        request.httpBody = try! JSONSerialization.data(withJSONObject: json)
+        if case .key(let key) = idempotency { request.setValue(key, forHTTPHeaderField: "Idempotency-Key") }
+        return request
+    }
+    func execute(_ request: URLRequest, beforeSend: (() throws -> Void)? = nil) async throws -> Data { beforeExecution?(); try beforeSend?(); requests.append(request); return response }
+    func body(_ listing: Listing, patch: Bool) throws -> [String: Any] { try listingBody(listing, forPatch: patch) }
+    func mapped(_ data: Data) throws -> Listing { mapListing(try decode(data)) }
+__CREATE__
+__UPDATE__
+__UPDATE_MEASUREMENTS__
+__LISTING_BODY__
+__MAP_LISTING__
+__LISTING_DTO__
+__TOLERANT_MAP__
+__DECODE__
+__PARSE_DATE__
+__ISO_STRING__
+__WIRE_STATUS__
+__LOCAL_STATUS__
+}
+
+@MainActor final class HeldBoundary {
+    var arrivals = 0
+    private var continuation: CheckedContinuation<Void, Never>?
+    func hold() async {
+        arrivals += 1
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func release() { let saved = continuation; continuation = nil; saved?.resume() }
+}
+@MainActor final class SyncAPI: WorkspaceSyncAPI {
+    var snapshots: [Listing] = []
+    var measurementSnapshots: [Listing] = []
+    var measurementUpdate: (Listing) async throws -> Listing = { $0 }
+    func updateMeasurements(_ listing: Listing) async throws -> Listing { measurementSnapshots.append(listing); return try await measurementUpdate(listing) }
+    var update: (Listing) async throws -> Listing = { $0 }
+    func updateListing(_ listing: Listing) async throws -> Listing { snapshots.append(listing); return try await update(listing) }
+    var cloudRead: () async throws -> [Listing] = { [] }
+    var cloudReads = 0
+    func cloudListings() async throws -> [Listing] { cloudReads += 1; return try await cloudRead() }
+    func cloudListingState(listingID: UUID, orgID: UUID, offset: Int) async throws -> CloudListingState { throw FixtureError.failed }
+    func cloudMedia(listingID: UUID, orgID: UUID, offset: Int) async throws -> CloudMediaPage { throw FixtureError.failed }
+    func cloudBrand() async throws -> CloudBrand { throw FixtureError.failed }
+    func cloudCreative(listingID: UUID, orgID: UUID) async throws -> CloudCreative { throw FixtureError.failed }
+    func cloudNativeReel(listingID: UUID, orgID: UUID) async throws -> CloudNativeReelDocument? { throw FixtureError.failed }
+    func saveCloudNativeReel(_ draft: NativeReelDraft, listingID: UUID, orgID: UUID, revision: Int) async throws -> CloudNativeReelDocument { throw FixtureError.failed }
+}
+enum Config { static let useLiveBackend = true; static let enableAuth = true }
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var isIdentified = true
+    var isSignedIn = true
+    var userID: String? = "22222222-2222-4222-8222-222222222222"
+    var syncSessionRevision: UInt64 = 1
+}
+@MainActor final class SyncModel {
+    var listings: [Listing]
+    var syncInFlight = Set<UUID>()
+    let api = SyncAPI()
+    init(_ listing: Listing) { listings = [listing] }
+    func index(of id: UUID) -> Int? { listings.firstIndex(where: { $0.id == id }) }
+    var galleryWrites = 0
+    func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async { galleryWrites += 1 }
+    func setLastError(_ message: String?, for id: UUID) { if let i = index(of:id) { listings[i].lastError = message } }
+    func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool { false }
+    func ensureServerListing(_ draft: Listing) async throws -> UUID { throw FixtureError.failed }
+__MODIFY__
+__SAVE_MEASUREMENTS__
+__RELOAD_SHARED__
+__CONFIRM_LOCAL__
+__FACTS_REVIEW_LOAD__
+__FACTS_REVIEW_RESOLVE__
+__SET_SOLD__
+__SET_PHOTO__
+__SET_COORDINATE__
+__MARK_DIRTY__
+__SYNC_LISTING__
+}
+
+
+@main struct ListingFactsSyncChecks {
+ @MainActor static func main() async {
+  do { try await run() } catch { print("FAIL: \(error)"); exit(1) }
+ }
+ @MainActor static func run() async throws {
+  var count=0
+  func check(_ ok:Bool,_ name:String) throws { if !ok {throw AssertionFailure(message:name)};count+=1 }
+  func wait(_ predicate:()->Bool) async throws {
+   let end=Date().addingTimeInterval(5)
+   while !predicate() {if Date()>end {throw AssertionFailure(message:"Timed out")}; await Task.yield()}
+  }
+  let org=WorkspaceContext.selectedOrgID!,sid=UUID(),localID=UUID()
+  let client=WireClient()
+  func response(_ sqft:Int=900)->[String:Any] {
+   ["id":sid.uuidString,"org_id":org.uuidString,"address":"Phone property","space_type":"real_estate",
+    "beds":2,"baths":1,"sqft":sqft,"price_cents":10000000,"tagline":"Old tagline","lat":35.001,"lng": -80.001,
+    "status":"ready","details":["floorplan_asset_id":"studio-plan","year_built":"2001","allow_indexing":"false"]]
+  }
+  var base=try client.mapped(JSONSerialization.data(withJSONObject:response()))
+  base.id=localID; base.cloudSyncOwnerID=UUID(uuidString:AuthStore.shared.userID!)
+  base.mainPhotoRelPath="fixture/old.jpg"
+  let photoModel=SyncModel(base)
+  photoModel.setMainPhoto("fixture/new.jpg",for:localID)
+  for _ in 0..<10 {await Task.yield()}
+  try check(photoModel.api.snapshots.isEmpty,"Choosing a photo never submits ordinary listing facts")
+  try check(photoModel.listings[0].needsServerSync != true,"Photo filename does not mark facts dirty")
+  try check(photoModel.listings[0].mainPhotoRelPath=="fixture/new.jpg","Photo choice remains local")
+  var coordinate=base; coordinate.latitude=35.23451; coordinate.longitude = -80.34559
+  ListingFactsSync.stage(from:base,in:&coordinate)
+  let body=try ListingFactsSync.body(coordinate)
+  let changes=body["changes"] as! [String:Any]
+  try check(Set(changes.keys)==Set(["lat","lng"]),"Coordinates send only the paired location edit")
+  try check(changes["lat"] as? Double==35.235 && changes["lng"] as? Double == -80.346,"Coordinates remain coarse")
+  try check((body["details_changes"] as! [String:Any]).isEmpty,"Coordinate edits cannot replace a Studio plan or details")
+  client.response=try JSONSerialization.data(withJSONObject:response(2345))
+  _=try await client.updateListing(coordinate)
+  let req=client.requests.last!
+  try check(req.httpMethod=="PUT" && req.url!.path.hasSuffix("/facts"),"Actual client uses the atomic facts route")
+  try check(req.value(forHTTPHeaderField:"X-Org-Id")==org.uuidString.lowercased(),"Actual facts write is workspace-bound")
+  let actualBody=try JSONSerialization.jsonObject(with:req.httpBody!) as! [String:Any]
+  try check(NSDictionary(dictionary:actualBody).isEqual(to:body),"Actual wire contains only explicit intent")
+  let persisted=try JSONDecoder().decode(Listing.self,from:JSONEncoder().encode(coordinate))
+  try check(persisted.factsSync==coordinate.factsSync,"Edit intent and expected values survive relaunch")
+  var rawRow=response(2345)
+  rawRow["sold_at"]="2026-10-04T12:00:00.123456+00:00"
+  rawRow["details"]=["capacitySeated":20,"is247":false,"hours":NSNull(),"floorplan_asset_id":"office-plan"] as [String:Any]
+  let rawMapped=try client.mapped(JSONSerialization.data(withJSONObject:rawRow))
+  try check(rawMapped.factsSync?.baseline["sold_at"] == .text("2026-10-04T12:00:00.123456+00:00"),"Sold timestamp retains exact server precision")
+  var rawEdited=rawMapped;rawEdited.details?["capacitySeated"]="25";rawEdited.details?["is247"]="true";rawEdited.details?["hours"]="9-5";rawEdited.details?["website"]="https://fixture.invalid"
+  ListingFactsSync.stage(from:rawMapped,in:&rawEdited)
+  let rawBody=try ListingFactsSync.body(rawEdited),rawExpected=rawBody["details_expected"] as! [String:[String:Any]]
+  try check(rawExpected["capacitySeated"]?["value"] as? Double == 20 && rawExpected["capacitySeated"]?["present"] as? Bool == true,"Numeric detail keeps raw typed baseline")
+  try check(rawExpected["is247"]?["value"] as? Bool == false && rawExpected["is247"]?["present"] as? Bool == true,"Boolean detail keeps raw typed baseline")
+  try check(rawExpected["hours"]?["value"] is NSNull && rawExpected["hours"]?["present"] as? Bool == true,"Existing JSON null retains its presence")
+  try check(rawExpected["website"]?["present"] as? Bool == false,"New detail records absence separately")
+  for archivedKind in ["sold-and-archived","archived-only"] {
+   var archivedRow=rawRow;archivedRow["status"]="archived"
+   if archivedKind=="archived-only" {archivedRow["sold_at"]=NSNull()}
+   var archived=try client.mapped(JSONSerialization.data(withJSONObject:archivedRow))
+   archived.id=localID;archived.cloudSyncOwnerID=base.cloudSyncOwnerID
+   try check(archived.cloudArchived==true && archived.isInactive,"Actual DTO preserves independent Studio archive state")
+   var metadataOnly=archived;metadataOnly.soldAt=nil
+   ListingFactsSync.stage(from:archived,in:&metadataOnly)
+   try check(metadataOnly.isArchived && metadataOnly.factsSync?.fields["status"]==nil,"Clearing only a sold timestamp must not invent archive restoration intent")
+   var restoredRow=archivedRow;restoredRow["status"]="ready";restoredRow["sold_at"]=NSNull()
+   client.response=try JSONSerialization.data(withJSONObject:restoredRow)
+   let restoreModel=SyncModel(archived)
+   restoreModel.api.update={sent in try await client.updateListing(sent)}
+   // Exercise the actual user action and actual modify/stage path. A manual
+   // soldAt assignment deliberately does not restore cloudArchived=true.
+   restoreModel.setSold(false,for:localID)
+   let available=restoreModel.listings[0]
+   try check(available.factsSync?.fields["status"]?.expected == .text("archived") && available.factsSync?.fields["status"]?.value == .text("ready"),"Clearing sold restores a Studio-archived listing explicitly")
+   try check(available.soldAt==nil && available.cloudArchived==false && !available.isInactive,"Restore action clears both independent inactive markers")
+   let restorationBody=try ListingFactsSync.body(available)
+   let restoredExpected=restorationBody["expected"] as! [String:Any]
+   let restoredChanges=restorationBody["changes"] as! [String:Any]
+   let keys=archivedKind=="sold-and-archived" ? Set(["status","sold_at"]) : Set(["status"])
+   try check(Set(restoredExpected.keys)==keys && Set(restoredChanges.keys)==keys,"Archive restoration sends only explicit status and sold-marker intent")
+   try check(restoredExpected["status"] as? String=="archived" && restoredChanges["status"] as? String=="ready","Archive restoration retains exact archived-to-ready CAS")
+   if archivedKind=="sold-and-archived" {
+    try check(restoredExpected["sold_at"] as? String=="2026-10-04T12:00:00.123456+00:00" && restoredChanges["sold_at"] is NSNull,"Restore sold0 keeps raw sold timestamp as CAS and clears it with JSON null")
+   }
+   var oldCloud=archived;oldCloud.id=sid
+   let pendingRestore=try CloudListingMerge.merge(local:[available],remote:[oldCloud],protected:[])[0]
+   try check(pendingRestore.cloudArchived==false && !pendingRestore.isInactive && pendingRestore.factsSync?.fields["status"]?.value == .text("ready"),"Old archived cloud snapshot cannot erase pending restoration intent")
+   try await wait {restoreModel.listings[0].needsServerSync==false}
+   try check(restoreModel.api.snapshots.count==1,"Archive restoration dispatches one actual scoped facts write")
+   let restorationWire=try JSONSerialization.jsonObject(with:client.requests.last!.httpBody!) as! [String:Any]
+   try check(NSDictionary(dictionary:restorationWire).isEqual(to:restorationBody),"Actual restoration wire keeps status and sold0 intent exactly")
+   try check(restoreModel.listings[0].serverID==sid && restoreModel.listings[0].serverOrgID==org && !restoreModel.listings[0].isInactive && restoreModel.listings[0].factsSync?.fields.isEmpty==true,"Scoped ready receipt acknowledges restoration without losing binding")
+  }
+  var pipeline=base;pipeline.status = .processing
+  ListingFactsSync.stage(from:base,in:&pipeline)
+  try check(pipeline.factsSync?.fields["status"] == nil,"Local render status is never ordinary listing intent")
+  let coordinateModel=SyncModel(base)
+  var office=try client.mapped(JSONSerialization.data(withJSONObject:response(2345)))
+  office.price=Money(cents:80000000);office.soldAt=Date(timeIntervalSince1970:1700000000);office.status = .ready
+  office.details?["floorplan_asset_id"]="new-studio-plan"
+  coordinateModel.api.update={ sent in
+   try check(Set(sent.factsSync!.fields.keys)==Set(["lat","lng"]),"AppModel stages only location intent")
+   var receipt=office;receipt.latitude=35.235;receipt.longitude = -80.346
+   receipt.factsSync!.baseline=ListingFactsSync.values(receipt)
+   return receipt
+  }
+  coordinateModel.setCoordinate(lat:35.23451,lon: -80.34559,for:localID)
+  try await wait {coordinateModel.listings[0].needsServerSync==false}
+  let saved=coordinateModel.listings[0]
+  try check(saved.sqft==2345 && saved.price.cents==80000000,"Acknowledgement adopts untouched office price and area")
+  try check(saved.soldAt==office.soldAt && saved.details?["floorplan_asset_id"]=="new-studio-plan","Office sold state and plan attachment survive")
+  try check(saved.mainPhotoRelPath==base.mainPhotoRelPath,"Facts receipts preserve device photo paths")
+  var form=base;form.address="New phone address";form.details=nil
+  ListingFactsSync.stage(from:base,in:&form)
+  try check(form.factsSync!.details.isEmpty,"Saving real-estate form cannot delete unknown server metadata")
+  try check(Set(form.factsSync!.fields.keys)==Set(["address"]),"Form captures changed facts only")
+  var indexing=base;indexing.allowSearchIndexing=true
+  ListingFactsSync.stage(from:base,in:&indexing)
+  try check(Set(indexing.factsSync!.details.keys)==Set(["allow_indexing"]),"Search indexing is a dedicated detail-key edit")
+  var unbound=base;unbound.serverID=nil
+  do {_=try await client.updateListing(unbound);throw AssertionFailure(message:"Unbound write sent")}catch is CloudSyncError {count+=1}
+  var legacy=base;legacy.factsSync=nil;legacy.needsServerSync=true
+  let sentBefore=client.requests.count
+  do {_=try await client.updateListing(legacy);throw AssertionFailure(message:"Legacy broad write sent")}catch is ListingFactsSyncError {count+=1}
+  try check(client.requests.count==sentBefore,"Older ambiguous dirty snapshots do not send a request")
+  let legacyModel=SyncModel(legacy);legacyModel.api.cloudRead={ [office] }
+  let review=try await legacyModel.loadListingFactsReview(localID)
+  try legacyModel.resolveListingFacts(review,keepLocal:false)
+  try check(legacyModel.listings[0].sqft==2345 && legacyModel.listings[0].needsServerSync==false,"Explicit shared choice resolves older facts safely")
+  let conflictModel=SyncModel(base);conflictModel.api.update={_ in throw APIError.server(409)}
+  conflictModel.modify(localID) {$0.tagline="My correction"}
+  try await wait {conflictModel.listings[0].factsSync?.conflict==true}
+  try check(conflictModel.listings[0].tagline=="My correction" && conflictModel.listings[0].needsServerSync==true,"Conflict retains phone edits and pending intent")
+  conflictModel.api.cloudRead={ [office] }
+  let comparison=try await conflictModel.loadListingFactsReview(localID)
+  conflictModel.api.update={sent in
+   var receipt=office;receipt.tagline=sent.tagline;receipt.factsSync!.baseline=ListingFactsSync.values(receipt);return receipt
+  }
+  try conflictModel.resolveListingFacts(comparison,keepLocal:true)
+  try check(Set(conflictModel.listings[0].factsSync!.fields.keys)==Set(["tagline"]),"Keep edits rebases only recorded fields, never stale untouched facts")
+  try await wait {conflictModel.listings[0].needsServerSync==false}
+  try check(conflictModel.listings[0].sqft==2345,"Conflict resolution retains untouched office facts")
+  let reviewModel=SyncModel(base);reviewModel.api.cloudRead={ [office] }
+  let staleReview=try await reviewModel.loadListingFactsReview(localID)
+  reviewModel.modify(localID,sync:false) {$0.address="Typed after review"}
+  do {try reviewModel.resolveListingFacts(staleReview,keepLocal:false);throw AssertionFailure(message:"Stale review erased typing")}catch is CloudSyncError {count+=1}
+  let held=HeldBoundary(),editModel=SyncModel(base)
+  editModel.api.update={sent in
+   if editModel.api.snapshots.count==1 {await held.hold()}
+   var receipt=office;receipt.tagline=sent.tagline;receipt.factsSync!.baseline=ListingFactsSync.values(receipt);return receipt
+  }
+  editModel.modify(localID) {$0.tagline="First edit"}
+  try await wait {held.arrivals==1}
+  editModel.modify(localID) {$0.tagline="Newer edit"}
+  held.release()
+  try await wait {editModel.listings[0].needsServerSync==false}
+  try check(editModel.api.snapshots.count==2,"Edit while saving gets a second write")
+  try check(editModel.api.snapshots[1].factsSync!.fields["tagline"]!.expected == .text("First edit"),"Late acknowledgement advances only the base of newer intent")
+  try check(editModel.listings[0].tagline=="Newer edit","Late acknowledgement never erases newer typing")
+  let lateFailure=HeldBoundary(),discardModel=SyncModel(base)
+  discardModel.api.update={_ in await lateFailure.hold();throw APIError.server(409)}
+  discardModel.api.cloudRead={ [office] }
+  discardModel.modify(localID) {$0.tagline="Discarded local edit"}
+  try await wait {lateFailure.arrivals==1}
+  let discardReview=try await discardModel.loadListingFactsReview(localID)
+  try discardModel.resolveListingFacts(discardReview,keepLocal:false)
+  lateFailure.release()
+  try await wait {discardModel.syncInFlight.isEmpty}
+  try check(discardModel.listings[0].factsSync?.conflict != true && discardModel.listings[0].lastError == nil,
+            "Late conflict cannot poison an explicitly adopted shared version")
+  let paired=HeldBoundary(),locationModel=SyncModel(base)
+  locationModel.api.update={sent in
+   if locationModel.api.snapshots.count==1 {await paired.hold()}
+   var receipt=office;receipt.latitude=sent.latitude;receipt.longitude=sent.longitude;receipt.factsSync!.baseline=ListingFactsSync.values(receipt);return receipt
+  }
+  locationModel.setCoordinate(lat:36,lon: -81,for:localID)
+  try await wait {paired.arrivals==1}
+  locationModel.setCoordinate(lat:36,lon: -82,for:localID)
+  paired.release()
+  try await wait {locationModel.listings[0].needsServerSync==false}
+  try check(Set(locationModel.api.snapshots[1].factsSync!.fields.keys)==Set(["lat","lng"]),"Mid-request single-coordinate change retains its location pair")
+  let switched=HeldBoundary(),identityModel=SyncModel(base)
+  identityModel.api.update={ sent in await switched.hold();return sent }
+  identityModel.modify(localID) {$0.tagline="Retain on session change"}
+  try await wait {switched.arrivals==1}
+  AuthStore.shared.syncSessionRevision+=1;switched.release()
+  try await wait {identityModel.syncInFlight.isEmpty}
+  try check(identityModel.listings[0].needsServerSync==true,"Changed-session reply cannot acknowledge a local edit")
+  AuthStore.shared.syncSessionRevision-=1
+  client.beforeExecution={WorkspaceContext.selectedOrgID=UUID()}
+  do {_=try await client.updateListing(coordinate);throw AssertionFailure(message:"Foreign workspace sent")}catch is CloudSyncError {count+=1}
+  try check(client.requests.count==sentBefore,"Workspace change at send boundary rejects the actual request")
+  WorkspaceContext.selectedOrgID=org
+  client.beforeExecution=nil
+  let otherSID=UUID(),otherOrg=UUID()
+  let room=FloorMeasurementRoom(name:"Owned synthetic room",widthMeters:3,lengthMeters:4)
+  let plan=FloorMeasurementPlan(unit:.meters,rooms:[room],updatedAt:Date(timeIntervalSinceReferenceDate:1000))
+  var pendingMeasurements=base
+  try FloorMeasurementSync.stage(plan,in:&pendingMeasurements)
+  let planWire=try plan.encodedWireValue()
+  for method in ["facts","measurements"] {
+   for defect in ["wrong-listing","wrong-org","missing-id","missing-org","malformed-id","malformed-org"] {
+    var malformed=response()
+    malformed["tagline"]="Submitted headline"
+    malformed["address"]="Foreign receipt address";malformed["price_cents"]=7654321
+    malformed["details"]=[FloorMeasurementPlan.wireKey:planWire,"floorplan_asset_id":"foreign-plan"]
+    switch defect {
+     case "wrong-listing":malformed["id"]=otherSID.uuidString
+     case "wrong-org":malformed["org_id"]=otherOrg.uuidString
+     case "missing-id":malformed.removeValue(forKey:"id")
+     case "missing-org":malformed.removeValue(forKey:"org_id")
+     case "malformed-id":malformed["id"]="invalid-id"
+     default:malformed["org_id"]="invalid-org"
+    }
+    client.response=try JSONSerialization.data(withJSONObject:malformed)
+    let rejection=method=="facts" ? "Ordinary facts receipt must match submitted listing and workspace" : "Measurement receipt must match submitted listing and workspace"
+    do {
+     if method=="facts" {_=try await client.updateListing(coordinate)}
+     else {_=try await client.updateMeasurements(pendingMeasurements)}
+     throw AssertionFailure(message:rejection)
+    } catch CloudSyncError.invalidResponse {count+=1}
+    if defect=="wrong-listing" || defect=="wrong-org" {
+     var dirty=base
+     if method=="facts" {dirty.tagline="Submitted headline";ListingFactsSync.stage(from:base,in:&dirty)}
+     else {try FloorMeasurementSync.stage(plan,in:&dirty)}
+     let malformedModel=SyncModel(dirty)
+     malformedModel.api.update={sent in try await client.updateListing(sent)}
+     malformedModel.api.measurementUpdate={sent in try await client.updateMeasurements(sent)}
+     await malformedModel.syncListing(localID)
+     let retained=malformedModel.listings[0]
+     try check(retained.serverID==sid && retained.serverOrgID==org,"Malformed receipt preserves original binding")
+     try check(retained.address==base.address && retained.price==base.price,"Malformed receipt cannot adopt unrelated ordinary facts")
+     if method=="facts" {try check(retained.needsServerSync==true && retained.factsSync?.fields["tagline"]?.value == .text("Submitted headline"),"Malformed receipt keeps ordinary intent for retry")}
+     else {try check(retained.measurementSync?.pending==true && retained.floorMeasurements==plan,"Malformed receipt keeps local measurement intent for retry")}
+    }
+   }
+  }
+  var validMeasurementRow=response()
+  validMeasurementRow["details"]=[FloorMeasurementPlan.wireKey:planWire]
+  client.response=try JSONSerialization.data(withJSONObject:validMeasurementRow)
+  let acceptedMeasurements=try await client.updateMeasurements(pendingMeasurements)
+  try check(acceptedMeasurements.serverID==sid && acceptedMeasurements.serverOrgID==org && acceptedMeasurements.floorMeasurements==plan,"Matching measurement receipt retains valid scoped success")
+  print("PASS: \(count) assertions")
+ }
+}

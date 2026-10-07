@@ -38,16 +38,36 @@
 //     "very useful" vs virtual tours 38%, NAR 2025).
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts";
+import { assert, HttpError, json, pathSegments, respondError, readJsonLimited } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
 import { assertMediaVisible, mediaVisibility, type MediaSourceRefs } from "../_shared/media-source-access.ts";
 import { bucketForKey } from "../studio/handler.ts";
-import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
-import { buildAgentCard } from "../_shared/agentcard.ts";
+import { propertyGalleryKey, publicMainPhoto } from "../_shared/property-cover.ts";
+import { publicProvenanceDisclosure } from "../_shared/provenance.ts";
+import { publicR2Url, publishedR2Url, publishedStreamUrl, PUBLIC_MEDIA_PROXY } from "../_shared/r2.ts";
+import { assertHostingAvailable } from "../_shared/hosting-retention.ts";
+import { requireMediaGateway, deliveryBytes, admitMediaRead } from "../_shared/media-delivery-admission.ts";
+import { privateMediaAuthority } from "../_shared/private-media.ts";
+import { admittedFloorplan, admittedBusinessLogo, deliveryEnvelope, businessLogoDelivery, publishedListingDetails } from "./delivery.ts";
+import { buildPersonalListingCard } from "../_shared/agentcard.ts";
+import { resolveContactPhoto } from "../listings/client-contact.ts";
 import { buildCta } from "./cta.ts";
 import { bindSpatialChapters, type SpatialChapter } from "../spatial/chapters.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
+
+// deno-lint-ignore no-explicit-any
+async function listingAgentIdentity(admin: any, listing: string): Promise<Record<string,unknown>> {
+  const {data,error}=await admin.rpc("public_listing_agent_identity",{p_listing:listing});
+  if (error || !data || typeof data!=="object" || Array.isArray(data) ||
+      typeof data.legacy_owned_single_member!=="boolean" ||
+      !(data.personal_card===null || (typeof data.personal_card==="object" && !Array.isArray(data.personal_card))) ||
+      !(data.profile_name===null || typeof data.profile_name==="string")) {
+    if (error?.message?.startsWith("RP404:")) throw new HttpError(404,"Tour not found or not published");
+    throw new HttpError(503,"The listing agent could not be verified. Please refresh.");
+  }
+  return data;
+}
 
 /** Branded link — agent card, CTA, lead form. The agent's own channels. */
 const brandedUrl = (slug: string) => `${TOUR_BASE}/f/${slug}`;
@@ -57,6 +77,18 @@ const unbrandedUrl = (slug: string) => `${TOUR_BASE}/u/${slug}`;
 // How many disclosure lines a single tour will ever print. A listing is capped
 // at 500 provenance rows by the RPC; the page shows the most recent 40.
 const MAX_ALTERED_MEDIA = 40;
+
+/** Measurement drafts sync with the owner's listing, independently of public
+ * plan export. Keep their versioned metadata out of every public tour payload;
+ * public property facts and owner-selected floor-plan media remain unchanged. */
+function publicListingDetails(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(([key]) =>
+      !key.toLowerCase().replaceAll("_", "").startsWith("floormeasurements")
+    ),
+  );
+}
 
 /** The model family in plain words — the public page never names a vendor model. */
 function modelFamily(kind: string): string {
@@ -80,30 +112,35 @@ interface AlteredMedium {
  * disclosure — but only the public subset leaves this function.
  */
 // deno-lint-ignore no-explicit-any
-async function alteredMediaFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }): Promise<AlteredMedium[]> {
+async function alteredMediaFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selectedKeys: ReadonlySet<string> | null, slug: string): Promise<AlteredMedium[]> {
   const { data, error } = await admin
     .from("media_provenance")
-    .select("kind, label, disclosure, original_key, altered_key, created_at")
+    .select("kind, edit, label, disclosure, original_key, altered_key, created_at")
     .eq("listing_id", listingId)
     .order("created_at", { ascending: false })
-    .limit(MAX_ALTERED_MEDIA);
+    // The private log is capped at 500. Filter before the public 40-item cap
+    // so recent retired edits cannot crowd out a currently selected version.
+    .limit(selectedKeys===null?MAX_ALTERED_MEDIA:500);
   // A disclosure lookup must never take the tour down: log and serve the tour
   // without the block rather than 500 the whole page.
   if (error) {
     console.error("altered_media lookup failed:", error.message);
     return [];
   }
-  const scopedKeys = (data ?? []).flatMap((r: Record<string, unknown>) => [r.original_key, r.altered_key]).filter((key: unknown): key is string => bucketForKey(key, { orgId, listingId }) !== null);
+  const current=(data??[]).filter((r:Record<string,unknown>)=>selectedKeys===null ||
+    ["aerial","reel","video_reflection_removal"].includes(String(r.kind)) ||
+    (typeof r.altered_key==="string" && selectedKeys.has(r.altered_key))).slice(0,MAX_ALTERED_MEDIA);
+  const scopedKeys = current.flatMap((r: Record<string, unknown>) => [r.original_key, r.altered_key]).filter((key: unknown): key is string => bucketForKey(key, { orgId, listingId }) !== null);
   const visible = await mediaVisibility(admin, listingId, { keys: scopedKeys });
-  return (data ?? []).filter((r: Record<string, unknown>) => [r.original_key, r.altered_key].every(key => !key || (typeof key === "string" && visible.keys[key] === true))).map((r: Record<string, unknown>) => {
+  return current.filter((r: Record<string, unknown>) => [r.original_key, r.altered_key].every(key => !key || (typeof key === "string" && visible.keys[key] === true))).map((r: Record<string, unknown>) => {
     for (const key of [r.original_key, r.altered_key]) if (typeof key === "string") refs.keys.push(key);
     return ({
     label: (r.label as string | null) ?? null,
     kind: r.kind as string,
-    disclosure: r.disclosure as string,
+    disclosure: publicProvenanceDisclosure(r.kind as string,(r.edit as string|null)??null,r.disclosure as string),
     model: modelFamily(r.kind as string),
-    original_url: publicR2Url(r.original_key as string | null),
-    altered_url: publicR2Url(r.altered_key as string | null),
+    original_url: publishedR2Url(slug,r.original_key as string | null),
+    altered_url: publishedR2Url(slug,r.altered_key as string | null),
     created_at: (r.created_at as string | null) ?? null,
   }); });
 }
@@ -128,27 +165,30 @@ const MAX_GALLERY = 40;
  * Never fatal: a gallery lookup must not take the tour down.
  */
 // deno-lint-ignore no-explicit-any
-async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }): Promise<Array<{ url: string }>> {
-  const { data, error } = await admin
+async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selection: string[] | null, slug: string): Promise<Array<{ url: string }>> {
+  if(selection?.length===0)return [];
+  let query = admin
     .from("capture_assets")
     .select("id, storage_key, created_at")
     .eq("listing_id", listingId)
     .eq("kind", "photo")
     .eq("bucket", "renders")
     .eq("uploaded", true)
-    .like("storage_key", "%/gallery-%")
-    .order("created_at", { ascending: true })
-    .limit(MAX_GALLERY);
+    .like("storage_key", "%/gallery-%");
+  if(selection!==null)query=query.in("id",selection);
+  const { data, error } = await query.order("created_at", { ascending: true }).order("id",{ascending:true}).limit(MAX_GALLERY);
   if (error) {
     console.error("gallery lookup failed:", error.message);
     return [];
   }
-  const eligible = (data ?? []).filter((r: Record<string, unknown>) => bucketForKey(r.storage_key, { orgId, listingId }) !== null);
+  const eligible = (data ?? []).filter((r: Record<string, unknown>) => propertyGalleryKey(r.storage_key, { orgId, listingId }) &&
+    (selection===null || selection.includes(r.id as string)));
+  if(selection!==null)eligible.sort((a: {id:string},b: {id:string})=>selection.indexOf(a.id)-selection.indexOf(b.id));
   const visible = await mediaVisibility(admin, listingId, { assets: eligible.map((r: { id: string }) => r.id), keys: eligible.map((r: { storage_key: string }) => r.storage_key) });
   const out: Array<{ url: string }> = [];
   for (const r of eligible) {
     if (visible.assets[r.id] !== true || visible.keys[r.storage_key] !== true) continue;
-    const url = publicR2Url((r as Record<string, unknown>).storage_key as string | null);
+    const url = publishedR2Url(slug,(r as Record<string, unknown>).storage_key as string | null);
     if (url) { out.push({ url }); refs.assets.push(r.id); refs.keys.push(r.storage_key); }
   }
   return out;
@@ -174,8 +214,8 @@ function floorplanUrl(details: unknown): string | null {
 
 const STAGED_DISCLOSURE =
   "Some imagery in this tour has been virtually staged or digitally decluttered. " +
-  "Furniture and decor may be digitally added, removed, or restyled; the architecture, " +
-  "layout, dimensions, and views are unchanged.";
+  "Furniture and decor may be digitally added, removed, or restyled with AI. " +
+  "Compare with the original to check fixed features, layout and access.";
 
 function formatUSD(cents: number | null | undefined): string | null {
   if (cents == null) return null;
@@ -288,7 +328,7 @@ function demoTour(): Record<string, unknown> {
         label: "Great room — virtually staged",
         kind: "virtual_stage",
         disclosure:
-          "This photo was virtually staged with AI: furniture and decor were digitally added or restyled. The architecture, dimensions, and views are unchanged.",
+          publicProvenanceDisclosure("virtual_stage",null,""),
         model: "AI image edit",
         original_url: asset("/assets/example-staging-before.webp"),
         altered_url: asset("/assets/example-staging-after.webp"),
@@ -322,10 +362,25 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
   try {
-    if (req.method !== "GET") throw new HttpError(405, "Only GET is supported");
     const seg = pathSegments(req, "tours");
+    if (seg.length===1&&seg[0]==="private-media") {
+      await requireMediaGateway(req);
+      assert(req.method==="POST",405,"Media gateway request required.");
+      const body=await readJsonLimited(req,8192);
+      assert(typeof body.cap==="string"&&typeof body.bytes==="number"&&Number.isSafeInteger(body.bytes)&&body.bytes>=0&&body.bytes<=268435456,400,"Invalid media gateway request.");
+      return json(await privateMediaAuthority(adminClient(),body.cap,body.bytes),200,{"Cache-Control":"no-store"});
+    }
+    if (req.method !== "GET") throw new HttpError(405, "Only GET is supported");
     const slug = seg[0];
+    if(seg[0]==="business-logo"&&seg.length===2&&/^[a-f0-9-]{36}$/.test(seg[1])) {
+      await requireMediaGateway(req);
+      const admin=adminClient();
+      await admitMediaRead(admin,seg[1],deliveryBytes(req));
+      return json(await businessLogoDelivery(admin,seg[1],new URL(req.url).searchParams.get("key")),200,{"Cache-Control":"no-store"});
+    }
+    if (seg.length > 2 || seg.length === 2 && seg[1] !== "delivery") throw new HttpError(404,"Tour not found");
     if (!slug) throw new HttpError(400, "slug is required: GET /tours/:slug");
+    if (seg[1] === "delivery") await requireMediaGateway(req);
 
     // The hardcoded sample tour — answered before any DB access (see above).
     if (DEMO_SLUGS.has(slug)) return json(demoTour());
@@ -345,24 +400,24 @@ Deno.serve(async (req) => {
     // 2. Listing (public subset) + its org. A deleted listing has no public tour.
     const { data: listing, error: lErr } = await admin
       .from("listings")
-      .select("id, org_id, agent_id, space_type, address, tagline, details, beds, baths, sqft, price_cents, zillow_url, lat, lng, status, sold_at, deleted_at")
+      .select("id, org_id, agent_id, space_type, address, tagline, details, beds, baths, sqft, price_cents, zillow_url, main_photo_key, gallery_asset_ids, lat, lng, status, sold_at, deleted_at")
       .eq("id", render.listing_id)
       .maybeSingle();
     if (lErr) throw new HttpError(500, `Listing lookup failed: ${lErr.message}`);
     if (!listing || listing.deleted_at) throw new HttpError(404, "Tour not found or not published");
+    await assertHostingAvailable(admin, listing.org_id);
+    if (seg[1] === "delivery") await admitMediaRead(admin,listing.org_id,deliveryBytes(req));
 
     const visibleRefs: MediaSourceRefs & { keys: string[]; assets: string[] } = { renders: [render.id], assets: [], keys: [] };
     await assertMediaVisible(admin, listing.id, visibleRefs);
-    const [{ data: org }, { data: agentProfile }] = await Promise.all([
-      admin.from("orgs").select("handle, space_type, brand_kit").eq("id", listing.org_id).maybeSingle(),
-      listing.agent_id
-        ? admin.from("profiles").select("name").eq("id", listing.agent_id).maybeSingle()
-        : Promise.resolve({ data: null }),
-    ]);
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
-    const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs);
-    const gallery = await galleryFor(admin, listing.org_id, listing.id as string, visibleRefs);
+    const selectedPhotos=listing.gallery_asset_ids??null;
+    const gallery = await galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos,slug);
+    const cover_url = await publicMainPhoto(admin,{orgId:listing.org_id,listingId:listing.id},
+      listing.main_photo_key,key=>publishedR2Url(slug,key),visibleRefs,selectedPhotos);
+    const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
+      selectedPhotos===null?null:new Set(visibleRefs.keys),slug);
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: SpatialChapter[] = [];
@@ -398,22 +453,36 @@ Deno.serve(async (req) => {
       if (!spatialError && scenes) chapters = bindSpatialChapters(chapters, scenes);
     }
 
-    // 4. Assemble the safe agent card from the org's brand kit (allow-listed
-    //    fields; name never falls back to the org name — see _shared/agentcard.ts).
-    const agent_card = buildAgentCard(org?.brand_kit, {
-      profileName: agentProfile?.name,
-      orgHandle: org?.handle ?? null,
-    });
+    // 4. Explicit client delivery stays first. Otherwise resolve only the
+    // listing's current member's reviewed personal identity under DB locks.
+    const { data: clientRow, error: clientError }=await admin.from("listing_client_contacts")
+      .select("listing_id,org_id,enabled,public_card,hide_rendprop_branding,photo_asset_id,revision").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
+    if(clientError)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
+    const clientMode=clientRow?.enabled===true;
+    const client=clientMode?await resolveContactPhoto(admin,clientRow,visibleRefs,key=>publishedR2Url(slug,key)):null;
+    const identity = clientMode ? null : await listingAgentIdentity(admin,listing.id);
+    const portrait=identity?.legacy_portrait as {asset_id?:unknown;storage_key?:unknown;url?:unknown}|null;
+    const portraitURL=portrait && typeof portrait.asset_id==="string" && typeof portrait.storage_key==="string" && typeof portrait.url==="string" &&
+      portrait.url===publicR2Url(portrait.storage_key) ? publishedR2Url(slug,portrait.storage_key) ?? undefined : undefined;
+    if (portraitURL) {visibleRefs.assets.push(portrait!.asset_id as string);visibleRefs.keys.push(portrait!.storage_key as string);}
+    const agent_card = clientMode ? {...(client?.public_card??{}),handle:null} : buildPersonalListingCard(identity!,portraitURL);
 
     // Scrub fidelity: the scroll-scrub player seeks frame-accurately, which only
     // works on the all-intra mp4 served over HTTP byte-range. Cloudflare Stream
     // (HLS) re-encodes away the all-intra GOP and snaps seeks to keyframes, so it
     // degrades scrubbing to keyframe-stepping. Therefore the R2 mp4 is the PRIMARY
     // scrub source; HLS is exposed separately as an adaptive fallback (long/4K).
-    const scrub_url = publicR2Url(render.video_key as string);
-    const hls_url = streamHlsUrl(render.stream_uid as string);
+    const scrub_url = publishedR2Url(slug,render.video_key as string);
+    const hls_url = publishedStreamUrl(slug,render.stream_uid as string);
     const video_url = scrub_url ?? hls_url;
 
+    const planURL = PUBLIC_MEDIA_PROXY ? await admittedFloorplan(admin,{orgId:listing.org_id,listingId:listing.id},floorplanUrl(listing.details),slug,visibleRefs) : floorplanUrl(listing.details);
+    const logo = PUBLIC_MEDIA_PROXY ? await admittedBusinessLogo(admin,listing.org_id,agent_card.business_logo_url,slug) : null;
+    if (PUBLIC_MEDIA_PROXY) {
+      delete agent_card.business_logo_url;
+      if (logo) agent_card.business_logo_url=logo.url;
+    }
+    for(const key of [render.video_key,render.poster_key])if(typeof key==="string")visibleRefs.keys.push(key);
     const staged = Boolean(render.staged);
     const sold_at = (listing.sold_at as string | null) ?? null;
     const status = (listing.status as string) ?? "ready";
@@ -421,6 +490,30 @@ Deno.serve(async (req) => {
     // These service-role reads bypass RLS; recheck every exposed lineage after
     // assembling the response, so revocation during optional reads cannot leak.
     await assertMediaVisible(admin, listing.id, visibleRefs);
+    const {data:currentPhotos,error:currentPhotosError}=await admin.from("listings")
+      .select("main_photo_key,gallery_asset_ids,deleted_at").eq("id",listing.id).maybeSingle();
+    if(currentPhotosError || !currentPhotos || currentPhotos.deleted_at ||
+       (currentPhotos.main_photo_key??null)!==(listing.main_photo_key??null) ||
+       JSON.stringify(currentPhotos.gallery_asset_ids??null)!==JSON.stringify(selectedPhotos))
+      throw new HttpError(503,"The published photos changed. Please refresh.");
+    const {data: currentClient,error: currentClientError}=await admin.from("listing_client_contacts")
+      .select("revision,enabled").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
+    if(currentClientError || (currentClient?.revision??null)!==(clientRow?.revision??null) || (currentClient?.enabled??false)!==clientMode)
+      throw new HttpError(503,"The listing contact changed. Please refresh.");
+    if (!clientMode && JSON.stringify(await listingAgentIdentity(admin,listing.id))!==JSON.stringify(identity))
+      throw new HttpError(503,"The listing agent changed. Please refresh.");
+    // Byte requests need publication freshness too, not merely lineage approval.
+    if (seg[1] === "delivery") {
+      const {data:currentRender,error:currentRenderError}=await admin.from("renders").select("id,listing_id,slug,video_key,poster_key,stream_uid,published_at").eq("id",render.id).not("published_at","is",null).maybeSingle();
+      if(currentRenderError)throw new HttpError(503,"Published media could not be verified.");
+      if(!currentRender || currentRender.listing_id!==listing.id || currentRender.slug!==slug || !currentRender.published_at || (["video_key","poster_key","stream_uid"] as const).some(k=>currentRender[k]!==render[k]))throw new HttpError(404,"This media is no longer published.");
+      await assertMediaVisible(admin,listing.id,visibleRefs);
+      if(logo && JSON.stringify(await admittedBusinessLogo(admin,listing.org_id,identity?.org_business && (identity.org_business as Record<string,unknown>).business_logo_url,slug))!==JSON.stringify(logo))throw new HttpError(404,"The logo is no longer published.");
+      await assertHostingAvailable(admin, listing.org_id);
+      return json(deliveryEnvelope(slug,{orgId:listing.org_id,listingId:listing.id},visibleRefs.keys,render.stream_uid,logo?.key),200,{"Cache-Control":"no-store"});
+    }
+    const publicDetails = publicListingDetails(listing.details);
+    await assertHostingAvailable(admin, listing.org_id);
     return json({
       slug: render.slug,
       share_url: brandedUrl(render.slug as string),
@@ -434,30 +527,37 @@ Deno.serve(async (req) => {
       listing: {
         address: listing.address,
         tagline: listing.tagline,
-        details: listing.details ?? {},
+        details: PUBLIC_MEDIA_PROXY ? publishedListingDetails(publicDetails,slug,visibleRefs.keys) : publicDetails,
         beds: listing.beds,
         baths: listing.baths,
         sqft: listing.sqft,
         price_cents: listing.price_cents,
         price: formatUSD(listing.price_cents as number | null),
-        lat: listing.lat,
-        lng: listing.lng,
+        // Historical rows can predate the coarse-coordinate write policy.
+        // Public maps must never re-expose their precise device coordinates.
+        lat: typeof listing.lat === "number" && Number.isFinite(listing.lat) && Math.abs(listing.lat) <= 90
+          ? Math.round(listing.lat * 1000) / 1000 : null,
+        lng: typeof listing.lng === "number" && Number.isFinite(listing.lng) && Math.abs(listing.lng) <= 180
+          ? Math.round(listing.lng * 1000) / 1000 : null,
         status,
         sold_at,
       },
       video_url,
       scrub_url,   // all-intra mp4 (byte-range) — use this for frame-accurate scrubbing
       hls_url,     // Cloudflare Stream HLS — adaptive fallback for very long / 4K tours
-      poster: publicR2Url(render.poster_key as string),
+      poster: publishedR2Url(slug,render.poster_key as string),
+      cover_url,
       duration_s: render.duration_s,
       speed_factor: render.speed_factor,
       published_at: render.published_at,
       chapters,
       agent_card,
+      client_mode:clientMode,
+      hide_rendprop_branding:clientMode && clientRow?.hide_rendprop_branding===true,
       cta: buildCta(listing),
       // Floor plan, promoted out of details so the host can render it above the
       // gallery on BOTH pages (it is property information, not branding).
-      floorplan_url: floorplanUrl(listing.details),
+      floorplan_url: planURL,
       // The listing's photos. Same reasoning as floorplan_url: property
       // information, so it goes to the unbranded twin too.
       gallery,

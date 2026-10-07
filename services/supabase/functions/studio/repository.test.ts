@@ -3,7 +3,7 @@ import {
   assertEquals,
   assertRejects,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import {
   createStudioRepository,
   type StudioRepositoryDependencies,
@@ -47,6 +47,7 @@ function fixture() {
           return query;
         },
         in(...args: unknown[]) { operations.push(["in", ...args]); return query; },
+        not(...args: unknown[]) { operations.push(["not", ...args]); return query; },
         limit(...args: unknown[]) { operations.push(["limit", ...args]); return query; },
         order(...args: unknown[]) {
           operations.push(["order", ...args]);
@@ -73,7 +74,8 @@ function fixture() {
           // Model PostgREST ordering/range semantics, so end-to-end adapter tests
           // fail if a persisted gallery order is never included in the query.
           const order = operations.filter(op => op[0] === "order");
-          let data = [...result.data].filter(row => operations.every(op => op[0] !== "in" || (op[2] as unknown[]).includes(row[String(op[1])]))).sort((a, b) => {
+          let data = [...result.data].filter(row => operations.every(op => (op[0] !== "in" || (op[2] as unknown[]).includes(row[String(op[1])])) &&
+            (op[0] !== "not" || op[1] !== "storage_key" || !String(row.storage_key).includes("/contact-")))).sort((a, b) => {
             for (const [, column, options] of order) {
               const field = String(column), direction = (options as { ascending?: boolean }).ascending === false ? -1 : 1;
               if (a[field] !== b[field]) return (a[field] < b[field] ? -1 : 1) * direction;
@@ -286,4 +288,15 @@ Deno.test("a null or failed source is not converted to an empty successful libra
       );
     }
   }
+});
+
+Deno.test("client headshots never consume property media page slots", async () => {
+  const f = fixture();
+  const id = (n: number) => `40000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  f.results.capture_assets.data = [
+    ...Array.from({ length: 60 }, (_, i) => ({ id: id(i), listing_id: listing, kind: "photo", uploaded: true, bucket: "renders", storage_key: `renders/${org}/${listing}/contact-${id(i)}.jpg` })),
+    { id: id(100), listing_id: listing, kind: "photo", uploaded: true, bucket: "renders", storage_key: `renders/${org}/${listing}/gallery-${id(100)}.jpg` },
+  ];
+  const data = await createStudioRepository(req, f.deps).read({ userId: user, orgId: org, listingId: listing }, 0);
+  assertEquals(data.assets.map(row => row.id), [id(100)]);
 });

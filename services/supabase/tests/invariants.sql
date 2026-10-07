@@ -19,6 +19,17 @@
 
 create temp table _inv(seq serial, name text, pass boolean, note text);
 
+-- Publication fixtures explicitly represent a finite, previously sponsored
+-- trial. This does not activate or advertise a trial for a new free account.
+create function pg_temp.inv_hosting_authority(p_org uuid,p_actor uuid)returns void
+language plpgsql as $$declare f uuid;begin
+ insert into serving_funding(org_id,source,collection_ref,actor_id,net_receipts_cents,sponsored_cents,starts_at,ends_at,retention_ends_at,service_months,recurring_reserve_cents,reserve_components,evidence_sha256,created_at)
+ values(p_org,'trial','_inv-hosting-'||p_org,p_actor,0,500,now()-interval '1 day',now()+interval '7 days',now()+interval '97 days',1,7,
+ '{"storage":1,"delivery":1,"compute":1,"email":1,"support":1,"retention":1,"uncertainty":1}',repeat('a',64),(select created_at-interval '1 day'from subscription_trial_config where singleton))returning id into f;
+ insert into serving_funding_slices(funding_id,slice_index,org_id,starts_at,ends_at,total_budget_cents,recurring_reserve_cents)values(f,0,p_org,now()-interval '1 day',now()+interval '7 days',500,7);
+end$$;
+
+
 -- ── P0-3 / P0-7: privileged surface ──────────────────────────────────────────
 
 insert into _inv(name, pass, note)
@@ -128,15 +139,19 @@ select 'listing ownership columns are not tenant-writable',
        not has_column_privilege('authenticated','public.listings','org_id','UPDATE')
        and not has_column_privilege('authenticated','public.listings','agent_id','UPDATE'), '';
 
--- Regression guard: over-tightening this grant silently broke the sold/archive
--- flow once. Every column the listings function may PATCH must stay writable.
+-- Ordinary changes use the service-only per-field CAS; photo/source lifecycle
+-- operations retain their narrower direct grant.
 insert into _inv(name, pass, note)
-select 'every client-writable listing column is still granted',
-       bool_and(has_column_privilege('authenticated','public.listings', c, 'UPDATE')),
-       string_agg(c, ',') filter (where not has_column_privilege('authenticated','public.listings', c, 'UPDATE'))
+select 'ordinary listing columns require explicit intent CAS',
+       bool_and(not has_column_privilege('authenticated','public.listings',c,'UPDATE')),
+       string_agg(c, ',') filter(where has_column_privilege('authenticated','public.listings',c,'UPDATE'))
 from unnest(array['space_type','address','tagline','details','beds','baths','sqft',
-                  'price_cents','zillow_url','main_photo_key','lat','lng','status',
-                  'sold_at','source','mls_ref','deleted_at']) c;
+ 'price_cents','zillow_url','lat','lng','status','sold_at']) c;
+insert into _inv(name, pass, note)
+select 'remaining listing lifecycle columns stay writable',
+       bool_and(has_column_privilege('authenticated','public.listings',c,'UPDATE')),
+       string_agg(c, ',') filter(where not has_column_privilege('authenticated','public.listings',c,'UPDATE'))
+from unnest(array['main_photo_key','source','mls_ref','deleted_at']) c;
 
 insert into _inv(name, pass, note)
 select 'orgs: tenants may edit name/handle/brand_kit but never plan',
@@ -579,7 +594,7 @@ begin
   insert into _inv(name, pass, note)
     values ('signup without a name uses My business, never the email', v_name = 'My business', v_name);
   insert into _inv(name, pass, note)
-    select 'signup starts a 7-day trial', plan = 'trial' and trial_ends_at > now() + interval '6 days', plan
+    select 'signup stays free until a subscription is confirmed', plan = 'free' and trial_ends_at is null and plan_source is null, plan
       from orgs where id = v_org;
 
   -- Act as the first user.
@@ -591,7 +606,11 @@ begin
   insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded)
     values (v_listing, 'photo', 'renders', 'renders/_inv/p.jpg', 100, true) returning id into v_poster;
 
-  -- App publishes do not consume the 0032 signup-trial cloud-render quota.
+  -- Preserve the legacy allowance fixture independently of today's signup policy.
+  update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=v_org;
+  perform pg_temp.inv_hosting_authority(v_org,u);
+
+  -- App publishes do not consume the grandfathered trial cloud-render quota.
   v_job  := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000001', 'app');
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000002', 'app');
   insert into _inv(name, pass, note)
@@ -725,6 +744,7 @@ begin
     values (u3, 'inv-fixture3@example.com', '{"full_name":"Lease Fixture"}');
   select m.org_id into v_org from memberships m where m.user_id = u3;
   update orgs set plan = 'team', trial_ends_at = null where id = v_org;
+  update orgs set plan_source='manual'where id=v_org;
   perform set_config('request.jwt.claims', json_build_object('sub', u3, 'role', 'authenticated')::text, true);
 
   insert into listings (org_id, agent_id, address) values (v_org, u3, '2 Lease Way') returning id into v_listing;
@@ -1024,6 +1044,9 @@ begin
   select mm.org_id into vA from memberships mm where mm.user_id = uA;
   select mm.org_id into vB from memberships mm where mm.user_id = uB;
   select mm.org_id into vC from memberships mm where mm.user_id = uC;
+  -- Pre-existing hosted metadata seeded by the database owner, with explicit
+  -- manual authority rather than a tenant publication identity.
+  update orgs set plan='pro',plan_source='manual'where id in(vA,vC);
 
   insert into listings (org_id, agent_id, address) values (vA, uA, '1 Admin Way')  returning id into lA;
   insert into listings (org_id, agent_id, address) values (vC, uC, '1 Tenant Way') returning id into lC;
@@ -1448,10 +1471,10 @@ where model = 'gpt-6-astra' and params ->> 'effort' = 'none';
 -- The ceiling has to clear the VISIBLE answer the caller asks for, because a
 -- reasoning model spends reasoning tokens out of the same budget: ai-copy asks
 -- for 1,600 tokens of shot list (MAX_SHOTLIST_TOKENS) and 700 of script
--- (MAX_TOKENS), and 700 for agent-reel (MAX_AGENT_REEL_TOKENS). The 0034
--- agent-reel seed currently violates this headroom rule (700 == 700). Keep that
--- failure visible; updating stale route counts is not permission to enlarge
--- a provider budget or weaken > to >=. It must also stay under the code clamp.
+-- (MAX_TOKENS), and 500 for agent-reel (MAX_AGENT_REEL_TOKENS). Agent-reel
+-- enforces its complete compact JSON <=500 UTF-8 bytes before parsing; aliases
+-- and a shared optional-caption budget preserve twelve windows. The seeded
+-- combined cap remains 700. Never enlarge it or weaken > to >= to pass this.
 insert into _inv(name, pass, note)
 select 'each astra ceiling clears its route''s visible answer and stays under the code clamp',
        coalesce(bool_and(ceiling > visible and ceiling <= 8000), false),
@@ -1459,7 +1482,7 @@ select 'each astra ceiling clears its route''s visible answer and stays under th
 from (
   select task,
          (params ->> 'max_output_tokens')::int as ceiling,
-         case task when 'copy.shotlist' then 1600 else 700 end as visible
+         case task when 'copy.shotlist' then 1600 when 'copy.agent_reel' then 500 else 700 end as visible
     from ai_routes
    where model = 'gpt-6-astra' and params ? 'max_output_tokens'
 ) s;
@@ -1754,6 +1777,7 @@ do $ap$
 declare
   oA uuid; oB uuid; oM uuid; oX uuid;
   r jsonb; msg text; ok boolean;
+  previous_role text := current_setting('role',true);
 begin
   insert into orgs (name, plan, plan_source) values ('_inv apple A','trial','trial') returning id into oA;
   insert into orgs (name, plan, plan_source) values ('_inv apple B','trial','trial') returning id into oB;
@@ -1765,14 +1789,14 @@ begin
   -- S1 FINDING 1: one subscription must not entitle two workspaces. Before
   -- 0021 the second call re-pointed the row and set the second org's plan while
   -- the first kept its own — one purchase, two paid workspaces.
-  r := apply_apple_entitlement(oA, null, '_inv-OT-1', 'T1',
+  r := apply_apple_entitlement_v2(oA, null, '_inv-OT-1', 'T1',
         'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
-        now() + interval '30 days', true, null);
+        now() + interval '30 days', true, null, now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   ok := false;
   begin
-    r := apply_apple_entitlement(oB, null, '_inv-OT-1', 'T1',
+    r := apply_apple_entitlement_v2(oB, null, '_inv-OT-1', 'T1',
           'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
-          now() + interval '30 days', true, null);
+          now() + interval '30 days', true, null, now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   exception when others then msg := SQLERRM; ok := msg like 'RP409:%';
   end;
   insert into _inv(name, pass, note)
@@ -1784,41 +1808,41 @@ begin
   -- S1 FINDING 2: a crossgrade inside the group shortens the expiry. Treating
   -- that as stale froze the plan AND the expiry, which then made every later
   -- signal stale too — including the EXPIRED, so the plan never lapsed.
-  r := apply_apple_entitlement(oX, null, '_inv-OT-2', 'T1',
+  r := apply_apple_entitlement_v2(oX, null, '_inv-OT-2', 'T1',
         'com.rendprop.app.pro.annual', 'pro', 'Production', 'active',
-        now() + interval '365 days', true, 'SUBSCRIBED');
-  r := apply_apple_entitlement(oX, null, '_inv-OT-2', 'T2',
+        now() + interval '365 days', true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  r := apply_apple_entitlement_v2(oX, null, '_inv-OT-2', 'T2',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'active',
-        now() + interval '30 days', true, 'DID_CHANGE_RENEWAL_PREF');
+        now() + interval '30 days', true, 'DID_CHANGE_RENEWAL_PREF', now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
   insert into _inv(name, pass, note)
     select 'an upgrade to a shorter-dated product moves the plan',
            plan = 'team' and plan_expires_at < now() + interval '60 days',
            plan || ' until ' || coalesce(plan_expires_at::text, 'null')
       from orgs where id = oX;
-  r := apply_apple_entitlement(oX, null, '_inv-OT-2', 'T3',
+  r := apply_apple_entitlement_v2(oX, null, '_inv-OT-2', 'T2',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'expired',
-        now() + interval '30 days', false, 'EXPIRED');
+        now() + interval '30 days', false, 'EXPIRED', now()+interval '-900 seconds', now()+interval '-790 seconds', now()+interval '-790 seconds', now()+interval '-790 seconds');
   insert into _inv(name, pass, note)
     select 'and the eventual lapse still downgrades it to free',
            plan = 'free' and effective_plan(id) = 'free', plan from orgs where id = oX;
 
   -- …and the guard that DID hold oA back is itself worth asserting: an org with
   -- a second live subscription is not dropped to free by an old one expiring.
-  r := apply_apple_entitlement(oA, null, '_inv-OT-1b', 'T9',
+  r := apply_apple_entitlement_v2(oA, null, '_inv-OT-1b', 'T9',
         'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired',
-        now() - interval '1 day', false, 'EXPIRED');
+        now() - interval '1 day', false, 'EXPIRED', now()+interval '-2000 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds');
   insert into _inv(name, pass, note)
     values ('a lapse does not downgrade an org that still has a live subscription',
             r->>'reason' = 'another_subscription_active', r::text);
 
   -- The behaviour the stale guard exists for is unchanged: a late signal about
   -- the SAME product with an older expiry is news we already have.
-  r := apply_apple_entitlement(oB, null, '_inv-OT-3', 'T1',
+  r := apply_apple_entitlement_v2(oB, null, '_inv-OT-3', 'T1',
         'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active',
-        now() + interval '30 days', true, 'DID_RENEW');
-  r := apply_apple_entitlement(oB, null, '_inv-OT-3', 'T0',
+        now() + interval '30 days', true, 'DID_RENEW', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  r := apply_apple_entitlement_v2(oB, null, '_inv-OT-3', 'T0',
         'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired',
-        now() - interval '1 day', false, 'EXPIRED');
+        now() - interval '1 day', false, 'EXPIRED', now()+interval '-2000 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds', now()+interval '-1990 seconds');
   insert into _inv(name, pass, note)
     values ('an out-of-order EXPIRED for the same product is still stale',
             r->>'reason' = 'stale_notification', r::text);
@@ -1826,28 +1850,36 @@ begin
     select 'and it does not take the plan away', plan = 'pro', plan from orgs where id = oB;
 
   -- S1 FINDING 3: Sandbox and Production may never overwrite each other.
-  r := apply_apple_entitlement(oB, null, '_inv-OT-4', 'T1',
+  r := apply_apple_entitlement_v2(oB, null, '_inv-OT-4', 'T1',
         'com.rendprop.app.team.annual', 'team', 'Production', 'active',
-        now() + interval '365 days', true, 'SUBSCRIBED');
-  r := apply_apple_entitlement(oB, null, '_inv-OT-4', 'T2',
-        'com.rendprop.app.team.annual', 'team', 'Sandbox', 'active',
-        now() + interval '400 days', true, null);
+        now() + interval '365 days', true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  ok := false;
+  begin
+    -- Exercise the actual service writer. A denial caused only by this
+    -- auditor's postgres role would never reach the Sandbox authority fence.
+    perform set_config('role','service_role',true);
+    r := apply_apple_entitlement_v2(oB, null, '_inv-OT-4', 'T2',
+          'com.rendprop.app.team.annual', 'team', 'Sandbox', 'active',
+          now() + interval '400 days', true, null, now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
+  exception when others then msg := SQLERRM; ok := msg like 'RP403:%';
+  end;
+  perform set_config('role',previous_role,true);
   insert into _inv(name, pass, note)
     values ('a Sandbox write cannot move a Production subscription',
-            r->>'reason' = 'environment_mismatch', r::text);
+            ok, coalesce(msg,'NO ERROR RAISED'));
   insert into _inv(name, pass, note)
     select 'and the stored environment is untouched', environment = 'Production', environment
       from apple_subscriptions where original_transaction_id = '_inv-OT-4';
 
   -- 0019 RULE 2: an owner-granted plan is Apple-proof in both directions.
-  r := apply_apple_entitlement(oM, null, '_inv-OT-5', 'T1',
+  r := apply_apple_entitlement_v2(oM, null, '_inv-OT-5', 'T1',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'active',
-        now() + interval '30 days', true, 'SUBSCRIBED');
+        now() + interval '30 days', true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   insert into _inv(name, pass, note)
     values ('Apple cannot RAISE a manual plan', r->>'reason' = 'manual_plan', r::text);
-  r := apply_apple_entitlement(oM, null, '_inv-OT-5', 'T2',
+  r := apply_apple_entitlement_v2(oM, null, '_inv-OT-5', 'T1',
         'com.rendprop.app.team.monthly', 'team', 'Production', 'expired',
-        now() + interval '31 days', false, 'EXPIRED');
+        now() + interval '31 days', false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
   insert into _inv(name, pass, note)
     select 'and Apple cannot LOWER one either', plan = 'pro' and plan_source = 'manual',
            plan || '/' || plan_source from orgs where id = oM;
@@ -2057,7 +2089,9 @@ begin
   insert into auth.users (id, email, raw_user_meta_data)
     values (u4, 'inv-fixture4@example.com', '{"full_name":"Gym Fixture"}');
   select m.org_id into v_org from memberships m where m.user_id = u4;
-  update orgs set space_type = 'fitness' where id = v_org;
+  -- This tests a grandfathered industry trial, not a new signup grant.
+  update orgs set space_type = 'fitness', plan='trial', plan_source='trial', trial_ends_at=now()+interval '7 days' where id = v_org;
+  perform pg_temp.inv_hosting_authority(v_org,u4);
   perform set_config('request.jwt.claims', json_build_object('sub', u4, 'role', 'authenticated')::text, true);
 
   insert into listings (org_id, agent_id, address) values (v_org, u4, '1 Gym Way') returning id into v_listing;
@@ -2140,11 +2174,37 @@ where proname in ('publish_render', 'publish_worker_render')
   and prosrc like '%first_tour_published_at%';
 
 insert into _inv(name, pass, note)
-select 'apply_apple_entitlement records the cancellation and clears it on a win-back',
+select 'the private Apple snapshot writer records cancellation and clears it on a win-back',
        count(*) = 1, ''
 from pg_proc
-where proname = 'apply_apple_entitlement'
+where pronamespace = 'public'::regnamespace
+  and proname = '_apply_apple_entitlement_snapshot'
   and prosrc like '%cancelled_at%' and prosrc like '%cancel_reason%';
+
+insert into _inv(name, pass, note)
+select 'both Apple entry points delegate to the private cancellation writer',
+       count(*) = 2, coalesce(string_agg(proname, ', '), '(missing)')
+from pg_proc
+where pronamespace = 'public'::regnamespace
+  and proname in ('apply_apple_entitlement','apply_apple_entitlement_v2')
+  and prosrc like '%public._apply_apple_entitlement_snapshot(%';
+
+insert into _inv(name, pass, note)
+select 'the private Apple snapshot writer cannot bypass chronology through any client role',
+       count(*) = 1 and coalesce(bool_and(
+         not has_function_privilege('anon',oid,'execute')
+         and not has_function_privilege('authenticated',oid,'execute')
+         and not has_function_privilege('service_role',oid,'execute')),false), ''
+from pg_proc
+where pronamespace = 'public'::regnamespace and proname = '_apply_apple_entitlement_snapshot';
+
+insert into _inv(name, pass, note)
+select 'Apple signed chronology columns exist while historical chronology can remain unknown',
+       count(*) = 4 and coalesce(bool_and(data_type='timestamp with time zone' and is_nullable='YES'),false),
+       coalesce(string_agg(column_name, ', '), '(missing)')
+from information_schema.columns
+where table_schema='public' and table_name='apple_subscriptions'
+  and column_name in ('transaction_purchased_at','transaction_signed_at','entitlement_signed_at','renewal_signed_at');
 
 insert into _inv(name, pass, note)
 select 'admin_cohorts / admin_churn / org_is_real are service_role-only definers',
@@ -2209,6 +2269,7 @@ begin
   select m.org_id into oA      from memberships m where m.user_id = u5;
   select m.org_id into oB      from memberships m where m.user_id = u6;
   select m.org_id into oOrphan from memberships m where m.user_id = u7;
+  perform pg_temp.inv_hosting_authority(oA,u5);
 
   -- (a) a REAL publish stamps the activation fact, and a second one cannot move it.
   perform set_config('request.jwt.claims', json_build_object('sub', u5, 'role', 'authenticated')::text, true);
@@ -2252,17 +2313,17 @@ begin
             format('A=%s B=%s upload-only=%s', org_is_real(oA), org_is_real(oB), org_is_real(oUP)));
 
   -- (c) the cancellation fact. oA buys and keeps paying; oB buys and lapses.
-  r := apply_apple_entitlement(oA, null, '_inv-CO-1', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
-  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
+  r := apply_apple_entitlement_v2(oA, null, '_inv-CO-1', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   insert into _inv(name, pass, note)
     values ('an active subscription carries no cancelled_at', s.cancelled_at is null, coalesce(s.cancelled_at::text, '<null>'));
 
   -- Same expiry, so this is a genuine second delivery and not the stale arm.
-  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T2',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'EXPIRED');
+  r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   v_cancel := s.cancelled_at;
   insert into _inv(name, pass, note)
@@ -2273,8 +2334,8 @@ begin
   -- The REASON is the discriminator here, not the clock: now() is transaction
   -- time, so a re-stamp inside this fixture would keep the same timestamp but
   -- would carry GRACE_PERIOD_EXPIRED instead of the EXPIRED that got there first.
-  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T3',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'GRACE_PERIOD_EXPIRED');
+  r := apply_apple_entitlement_v2(oB, null, '_inv-CO-2', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'GRACE_PERIOD_EXPIRED', now()+interval '-1000 seconds', now()+interval '-970 seconds', now()+interval '-970 seconds', now()+interval '-970 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
   insert into _inv(name, pass, note)
     values ('a later terminal signal does NOT move cancelled_at',
@@ -2285,9 +2346,9 @@ begin
   -- retention effort needs before the subscription actually ends.
   insert into orgs (name, plan, plan_source) values ('_inv cohort renew-off', 'trial', 'trial')
     returning id into oRN;
-  r := apply_apple_entitlement(oRN, null, '_inv-CO-4', 'T1',
+  r := apply_apple_entitlement_v2(oRN, null, '_inv-CO-4', 'T1',
         'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, false,
-        'DID_CHANGE_RENEWAL_STATUS');
+        'DID_CHANGE_RENEWAL_STATUS', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-4';
   insert into _inv(name, pass, note)
     values ('auto_renew turned off is a cancellation even while the status is still active',
@@ -2296,18 +2357,18 @@ begin
             format('%s / %s / %s', s.status, coalesce(s.cancelled_at::text, '<null>'),
                    coalesce(s.cancel_reason, '<null>')));
   -- A second subscription in billing grace, for admin_churn's in_grace count.
-  r := apply_apple_entitlement(oRN, null, '_inv-CO-5', 'T1',
-        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'grace', v_exp, true, 'DID_FAIL_TO_RENEW');
+  r := apply_apple_entitlement_v2(oRN, null, '_inv-CO-5', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'grace', v_exp, true, 'DID_FAIL_TO_RENEW', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
 
   -- A win-back clears both columns, so they always describe the CURRENT state.
-  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T1',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
-  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T2',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired', v_exp, false, 'EXPIRED');
+  r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED', now()+interval '-1000 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds', now()+interval '-990 seconds');
+  r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired', v_exp, false, 'EXPIRED', now()+interval '-1000 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds', now()+interval '-980 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
   ok := s.cancelled_at is not null;
-  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T3',
-        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp + interval '30 days', true, 'DID_RENEW');
+  r := apply_apple_entitlement_v2(oA, null, '_inv-CO-3', 'T3',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp + interval '30 days', true, 'DID_RENEW', now()+interval '-900 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds', now()+interval '-890 seconds');
   select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
   insert into _inv(name, pass, note)
     values ('a win-back clears cancelled_at and cancel_reason',
@@ -2445,7 +2506,9 @@ begin
   select org_id into oAdmOwn from memberships where user_id = uAdm;
   select org_id into oOut    from memberships where user_id = uOut;
   select org_id into oSeat   from memberships where user_id = uSeat;
-  update orgs set plan = 'team', plan_source = 'apple' where id in (oBrk, oOut, oSeat);
+  -- Brokerage metadata/seat behavior uses explicit manual authority; this
+  -- fixture does not claim that a raw Apple plan has verified funding.
+  update orgs set plan = 'team', plan_source = 'manual' where id in (oBrk, oOut, oSeat);
 
   insert into memberships (user_id, org_id, role) values (uAdm, oBrk, 'admin'), (uAg, oBrk, 'agent');
 
@@ -2717,11 +2780,12 @@ begin
                                  where user_id in (uNO, uNA, uNM, uCL));
   delete from auth.users where id in (uNO, uNA, uNM, uCL);
 
-  insert into auth.users (id, email, raw_user_meta_data) values
-    (uNO, 'inv-notify-owner@example.com',     '{"full_name":"Ned Owner"}'),
-    (uNA, 'inv-notify-admin@example.com',     '{"full_name":"Ana Admin"}'),
-    (uNM, 'inv-notify-marketing@example.com', '{"full_name":"Mo Marketing"}');
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data) values
+    (uNO, 'inv-notify-owner@example.com',     now(), '{"full_name":"Ned Owner"}'),
+    (uNA, 'inv-notify-admin@example.com',     now(), '{"full_name":"Ana Admin"}'),
+    (uNM, 'inv-notify-marketing@example.com', now(), '{"full_name":"Mo Marketing"}');
   select org_id into oNO from memberships where user_id = uNO;
+  perform pg_temp.inv_hosting_authority(oNO,uNO);
   insert into memberships (user_id, org_id, role) values (uNA, oNO, 'admin'), (uNM, oNO, 'marketing');
 
   -- ── (a) posture ───────────────────────────────────────────────────────────
@@ -2753,7 +2817,7 @@ begin
             -- Callable RPCs and trigger functions have different privilege models.
             -- Redaction is deliberately SECURITY INVOKER; it can only be fired
             -- through its terminal-state outbox trigger, never called as an RPC.
-            (select count(*)=11 and bool_and(p.prosecdef
+            (select count(*)=12 and bool_and(p.prosecdef
                     and not has_function_privilege('authenticated',p.oid,'EXECUTE')
                     and not has_function_privilege('anon',p.oid,'EXECUTE')
                     and has_function_privilege('service_role',p.oid,'EXECUTE'))
@@ -3027,13 +3091,13 @@ begin
   r := notification_tick();
   select count(*) into n from notification_outbox
    where category = 'free_week_ending' and org_id = oNO;
-  ok := (r->>'free_week_ending')::int >= 1;
+  ok := (r->>'free_week_ending')::int = 0;
   r := notification_tick();
   select count(*) into n2 from notification_outbox
    where category = 'free_week_ending' and org_id = oNO;
   insert into _inv(name, pass, note)
-    values ('the trial-ending tick queues one message per owner/admin and a second run queues none',
-            ok and n = 2 and n2 = 2 and (r->>'free_week_ending')::int = 0,
+    values ('the trial-ending tick cannot queue promotional email without the consent workflow',
+            ok and n = 0 and n2 = 0 and (r->>'free_week_ending')::int = 0,
             format('first run queued %s rows, second run added %s (tick said %s)',
                    n, n2 - n, r->>'free_week_ending'));
 
@@ -3055,14 +3119,14 @@ begin
   select count(*) into n2 from notification_outbox where org_id = oNO
      and category in ('allowance_low','first_tour_nudge','upload_stuck');
   insert into _inv(name, pass, note)
-    values ('allowance_low, first_tour_nudge and upload_stuck each queue once and are not re-sent on the next tick',
-            -- 5: allowance_low and first_tour_nudge go to both the owner and the
-            -- admin; upload_stuck goes only to the person who started the upload.
-            n = 5 and n2 = n
+    values ('transactional allowance and upload notices queue once while promotional nudges remain blocked',
+            -- 3: allowance_low goes to the owner and admin; upload_stuck goes
+            -- only to its actor. The promotional email nudge stays disabled.
+            n = 3 and n2 = n
               and exists (select 1 from notification_outbox where org_id = oNO and category = 'allowance_low'
                            and payload -> 'data' ->> 'feature' = 'photo_edits'
                            and (payload -> 'data' ->> 'used')::int = (payload -> 'data' ->> 'cap')::int)
-              and exists (select 1 from notification_outbox where org_id = oNO and category = 'first_tour_nudge')
+              and not exists (select 1 from notification_outbox where org_id = oNO and category = 'first_tour_nudge')
               and exists (select 1 from notification_outbox where org_id = oNO and category = 'upload_stuck'),
             format('%s rows after the first tick, %s after the second', n, n2));
 
@@ -3090,6 +3154,10 @@ begin
   delete from orgs where id in (oNO, oCL);
   delete from auth.users where id in (uNO, uNA, uNM, uCL);
 end $notif$;
+
+-- Remove only these fixture sponsor records; no lifecycle reset is tested here.
+delete from serving_funding_slices where funding_id in(select id from serving_funding where collection_ref like '\_inv-hosting-%');
+delete from serving_funding where collection_ref like '\_inv-hosting-%';
 
 drop table if exists _inv_tasks;
 

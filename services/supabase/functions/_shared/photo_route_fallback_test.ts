@@ -248,7 +248,12 @@ for (const flag of [false, true]) {
         seen: string[] = [],
         charges: string[] = [],
         refunds: string[] = [];
+      const operations: string[] = [];
       const unexpected: string[] = [];
+      const receiptCharges: Record<string, unknown>[] = [];
+      const receiptRefunds: Record<string, unknown>[] = [];
+      const burstWindow = "2026-10-07T00:00:00.123456Z";
+      const monthlyWindow = "2026-10-07T00:00:00.234567Z";
       globalThis.fetch =
         (async (input: string | URL | Request, init?: RequestInit) => {
           const url = new URL(
@@ -258,7 +263,7 @@ for (const flag of [false, true]) {
           seen.push(url.pathname);
           let answer: unknown;
           if (url.pathname.endsWith("/auth/v1/user")) {
-            answer = { id: "fixture-user", aud: "authenticated" };
+            answer = { id: "fixture-user", aud: "authenticated", is_anonymous: false };
           } else if (url.pathname.endsWith("/rpc/active_org_for_user")) {
             answer = "fixture-org";
           } else if (url.pathname.endsWith("/memberships")) {
@@ -275,11 +280,19 @@ for (const flag of [false, true]) {
               cogs_ceiling_cents: 2000,
               price_cents: 7900,
             };
-          } else if (url.pathname.endsWith("/rpc/bump_rate")) {
+          } else if (url.pathname.endsWith("/rpc/serving_operation_begin")) {
+            operations.push("begin");
+            answer = { begun: true };
+          } else if (url.pathname.endsWith("/rpc/serving_operation_no_dispatch")) {
+            operations.push("no_dispatch");
+            answer = { retryable: true };
+          } else if (url.pathname.endsWith("/rpc/bump_rate_receipt")) {
             charges.push(body.p_key);
-            answer = true;
-          } else if (url.pathname.endsWith("/rpc/refund_rate")) {
+            receiptCharges.push(body);
+            answer = { accepted: true, window_start: body.p_key === "aiphotomo:fixture-org" ? monthlyWindow : burstWindow };
+          } else if (url.pathname.endsWith("/rpc/refund_rate_receipt")) {
             refunds.push(body.p_key);
+            receiptRefunds.push(body);
             answer = true;
           } else if (url.pathname.endsWith("/app_config")) {
             answer = { value: { enabled: flag } };
@@ -300,10 +313,11 @@ for (const flag of [false, true]) {
             headers: {
               "Authorization": "Bearer fixture-user-token",
               "Content-Type": "application/json",
+              "Idempotency-Key": "photo-fixture-key",
             },
             body: JSON.stringify({
               edit,
-              image_b64: "c3ludGhldGlj",
+              image_b64: btoa(String.fromCharCode(...[255,216,255,192,0,11,8,0,1,0,1,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217])),
               mime: "image/jpeg",
             }),
           }),
@@ -319,7 +333,18 @@ for (const flag of [false, true]) {
             ? ["aiphoto:fixture-org", "aiphotomo:fixture-org"]
             : [],
         );
-        assertEquals(refunds.sort(), charges);
+        // Permanent admission precedes quota, and the zero-provider route
+        // refusal explicitly aborts it. Burst/monthly charges are refunded.
+        assertEquals(operations, edit === "sky" ? ["begin", "no_dispatch"] : []);
+        assertEquals(refunds.sort(), edit === "sky" ? ["aiphoto:fixture-org", "aiphotomo:fixture-org"] : []);
+        assertEquals(receiptCharges, edit === "sky" ? [
+          { p_key: "aiphoto:fixture-org", p_max: 40, p_window_seconds: 300, p_cost: 1 },
+          { p_key: "aiphotomo:fixture-org", p_max: 100, p_window_seconds: 2592000, p_cost: 1 },
+        ] : []);
+        assertEquals(receiptRefunds, edit === "sky" ? [
+          { p_key: "aiphotomo:fixture-org", p_window_seconds: 2592000, p_window_start: monthlyWindow, p_cost: 1 },
+          { p_key: "aiphoto:fixture-org", p_window_seconds: 300, p_window_start: burstWindow, p_cost: 1 },
+        ] : []);
         assertEquals(
           unexpected,
           [],

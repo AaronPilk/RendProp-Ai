@@ -1,6 +1,15 @@
+import {isPrivateMediaURL,privateMediaCapability} from "./private-media";
 import { StudioError } from "./config";
+import { decodePhotoPackage, type PhotoPackage } from "./photo-package";
+import { decodeServingActivation, decodeTrialOffer, decodeTrialUsage, type ServingActivation, type TrialOffer, type TrialUsage } from "./trial";
 
 export type Role = "owner" | "admin" | "agent" | "marketing";
+export type RealEstateRole = "agent" | "photographer_videographer";
+export function decodeRealEstateRole(value: unknown): RealEstateRole | null {
+  if (value === undefined || value === null) return null;
+  if (value !== "agent" && value !== "photographer_videographer") throw new Error("Your real estate work preference could not be read. Refresh your account.");
+  return value;
+}
 export type Membership = {
   orgId: string;
   role: Role;
@@ -13,6 +22,7 @@ export type Workspace = {
     email: string | null;
     name: string | null;
     avatarUrl: string | null;
+    realEstateRole?: RealEstateRole | null;
   };
   org: { id: string; name: string; handle: string | null; spaceType: string };
   plan: string;
@@ -20,12 +30,17 @@ export type Workspace = {
   /** The server could not verify the effective entitlement; do not display its fallback as a downgrade. */
   planDegraded: boolean;
   trialEndsAt: string | null;
+  trialUsage?: TrialUsage | null;
+  trialOffer?: TrialOffer | null;
+  servingActivation?: ServingActivation | null;
+  servingPhotoPackage?: PhotoPackage | null;
   planExpiresAt: string | null;
   memberships: Membership[];
   usage: { listings: number; leads: number; leadsNew: number; renders: number };
 };
 export type Listing = {
   id: string;
+  agentId?: string;
   orgId: string;
   spaceType: string;
   address: string | null;
@@ -82,11 +97,16 @@ export type MeDTO = {
     email?: string | null;
     name?: string | null;
     avatar_url?: string | null;
+    real_estate_role?: RealEstateRole | null;
   };
   org: { id: string; name: string; handle: string | null; space_type: string };
   plan: string;
   plan_raw: string | null;
   trial_ends_at: string | null;
+  trial_usage?: unknown;
+  trial_offer?: unknown;
+  serving_activation?: unknown;
+  serving_photo_package?: unknown;
   plan_expires_at?: string | null;
   entitlement?: { degraded?: boolean };
   usage: {
@@ -270,12 +290,14 @@ export function decodeWorkspace(
   const entitlement = row.entitlement === undefined ? undefined : record(row.entitlement, "entitlement");
   if (entitlement?.degraded !== undefined && typeof entitlement.degraded !== "boolean")
     invalid("entitlement degraded state");
+  const servingActivation = decodeServingActivation(row.serving_activation, orgId);
   return {
     user: {
       id: userId,
       email: nullableString(user.email, "user email", true),
       name: nullableString(user.name, "user name", true),
       avatarUrl: nullableString(user.avatar_url, "user avatar_url", true),
+      realEstateRole: decodeRealEstateRole(user.real_estate_role),
     },
     org: {
       id: orgId,
@@ -285,8 +307,12 @@ export function decodeWorkspace(
     },
     plan: str(row.plan, "plan"),
     planRaw: nullableString(row.plan_raw, "plan_raw"),
-    planDegraded: entitlement?.degraded === true,
+    planDegraded: entitlement?.degraded === true || servingActivation?.available === false,
     trialEndsAt: nullableDate(row.trial_ends_at, "trial_ends_at"),
+    trialUsage: decodeTrialUsage(row.trial_usage, orgId),
+    trialOffer: decodeTrialOffer(row.trial_offer),
+    servingActivation,
+    servingPhotoPackage: decodePhotoPackage(row.serving_photo_package, orgId),
     planExpiresAt: nullableDate(row.plan_expires_at, "plan_expires_at", true),
     memberships,
     usage: {
@@ -353,6 +379,7 @@ export function decodeListings(
     }
     return {
       id: uuid(row.id, "listing id"),
+      ...(row.agent_id == null ? {} : { agentId: uuid(row.agent_id, "listing agent_id") }),
       orgId: rowOrg,
       spaceType: str(row.space_type, "listing space_type"),
       address: nullableString(row.address, "listing address"),
@@ -381,8 +408,10 @@ export function mediaURL(
   listingId: string,
   expiresAt: string,
   now: number,
+  actor?: string,
 ): string {
   const s = str(value, "media URL");
+  if(isPrivateMediaURL(s)){const c=privateMediaCapability(s,{actor:actor??"",org:orgId,listing:listingId},now);if(!Number.isFinite(Date.parse(expiresAt))||Date.parse(expiresAt)>c.exp*1000+1000)invalid("media expiry mismatch");return s;}
   let url: URL;
   try {
     url = new URL(s);
@@ -414,7 +443,7 @@ export function mediaURL(
   // This validates the literal route contract, not the cryptographic signature.
   if (
     segments.length < 5 || !["uploads", "renders"].includes(segments[1]!) ||
-    segments[2] !== orgId || segments[3] !== listingId ||
+    !(segments[2] === orgId && segments[3] === listingId || segments[1] === "renders" && segments[2] === listingId) ||
     segments.some((segment) =>
       !segment || segment === "." || segment === ".." ||
       /[\\/%?#\u0000-\u001f]/.test(segment)
@@ -472,6 +501,7 @@ export function decodeMedia(
   orgId: string,
   listingId: string,
   offset = 0,
+  actor?: string,
 ): ListingMedia {
   const row = record(value, "listing media");
   const now = Date.now();
@@ -492,7 +522,7 @@ export function decodeMedia(
       item,
       id: uuid(item.id, "media id"),
       listingId,
-      url: mediaURL(item.url, orgId, listingId, expiresAt, now),
+      url: mediaURL(item.url, orgId, listingId, expiresAt, now, actor),
       expiresAt,
     };
   }
@@ -519,7 +549,7 @@ export function decodeMedia(
       caption: nullableString(item.caption, "photo caption"),
       isStaged: item.is_staged,
       ...(item.is_altered === undefined ? {} : { isAltered: item.is_altered === true }),
-      ...(item.original_url === undefined ? {} : { originalUrl: item.original_url === null ? null : mediaURL(item.original_url, orgId, listingId, base.expiresAt, now) }),
+      ...(item.original_url === undefined ? {} : { originalUrl: item.original_url === null ? null : mediaURL(item.original_url, orgId, listingId, base.expiresAt, now, actor) }),
       sort: integer(item.sort, "photo sort"),
     };
   });
@@ -535,5 +565,8 @@ export function decodeMedia(
   });
   unique(photos, "duplicate photo");
   unique(videos, "duplicate video");
-  return { orgId, listingId, photos, videos, nextOffset, unavailableCount };
+  const propertyPhotos = photos.filter(photo => {
+    try { return !decodeURIComponent(new URL(photo.url).pathname).split("/").at(-1)?.startsWith("contact-"); } catch { return false; }
+  });
+  return { orgId, listingId, photos: propertyPhotos, videos, nextOffset, unavailableCount };
 }

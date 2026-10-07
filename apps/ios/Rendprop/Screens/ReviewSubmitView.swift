@@ -26,6 +26,27 @@ struct ReviewSubmitView: View {
     @State private var entitlementTask: Task<Void, Never>?
     @State private var reflection: ReflectionRemoval?
     @State private var showReflectionRemoval = false
+    @State private var reviewContext: ReviewContext?
+    @State private var submitError: String?
+
+    /// A confirmation queued before an account/workspace change cannot submit
+    /// footage from the earlier review screen into the new context.
+    private struct ReviewContext: Equatable {
+        let owner: String?
+        let revision: UInt64
+        let org: UUID?
+    }
+
+    private var currentReviewContext: ReviewContext {
+        ReviewContext(owner: auth.userID, revision: auth.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+    }
+
+    private var reviewContextIsCurrent: Bool {
+        guard reviewContext == currentReviewContext,
+              let live = model.listings.first(where: { $0.id == listing.id }),
+              model.isInSelectedWorkspace(live), live.cloudUnavailable != true else { return false }
+        return true
+    }
 
     /// Explicit footage type (decision A8). Prefilled by a metadata heuristic,
     /// always correctable — it decides stabilization + the retime factor.
@@ -66,6 +87,13 @@ struct ReviewSubmitView: View {
                 reflectionSection
                 roomTags
                 tierPicker
+                ListingClientContactSummary(listing: model.listings.first(where: { $0.id == listing.id }) ?? listing)
+                if let submitError {
+                    Label(submitError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("review.submitError")
+                }
                 submitSection
             }
             .padding()
@@ -74,7 +102,7 @@ struct ReviewSubmitView: View {
         .navigationTitle("Review & Submit")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showRoomTagger) {
-            RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags)
+            RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags, listingID: listing.id)
         }
         .sheet(isPresented: $showReflectionRemoval) {
             if let reflection {
@@ -93,16 +121,18 @@ struct ReviewSubmitView: View {
             Button("Render again") { start() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This replaces the current tour with a new render using these settings. A published link keeps working until the new tour is published.")
+            Text("This replaces the tour on this phone after the new render succeeds. Publishing creates a new sharing link. Previously shared links keep the earlier video.")
         }
         .task { await loadEntitlements() }
         .onDisappear { entitlementTask?.cancel(); entitlementTask = nil }
         .sessionConnectionNotice()
         .onAppear {
+            if reviewContext == nil { reviewContext = currentReviewContext }
             detectSourceIfNeeded()
             reflection = ReflectionRemoval.controller(listingID: listing.id, asset: asset)
         }
         .aiConsentGate()
+        .paywallHost(managesLifecycle: false)
     }
 
     // MARK: - Sections
@@ -135,7 +165,7 @@ struct ReviewSubmitView: View {
                     .frame(width: 44, height: 44)
                     .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(Formatters.duration(asset.durationS)) · \(asset.resolutionLabel) · \(Int(asset.fps.rounded())) fps")
+                    Text("\(Formatters.duration(asset.durationS)) · \(asset.resolutionLabel) · \(Formatters.frameRate(asset.fps))")
                         .font(.rpHeadline)
                         .foregroundStyle(Theme.ink)
                     // Size only. The "Gyro sidecar" chip that used to sit here
@@ -160,8 +190,8 @@ struct ReviewSubmitView: View {
             .accessibilityLabel(Text("Footage type"))
 
             Text(sourceKind == .drone
-                 ? "Drone clips are already smooth: no stabilization, a gentle 1.25× glide."
-                 : "Handheld walks get stabilized and retimed to a 2× glide.")
+                 ? "Drone footage uses light motion correction and a 1.25× glide. The result depends on the original clip."
+                 : "Handheld walks use motion correction and a 2× glide. Steady footage gives the best result.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -244,7 +274,11 @@ struct ReviewSubmitView: View {
         let selected = tier == t
         return Button {
             if locked {
-                guard entitlements == nil, entitlementTask == nil else { return }
+                if entitlements != nil {
+                    PaywallRouter.shared.present(reason: .featureLocked(t.displayName))
+                    return
+                }
+                guard entitlementTask == nil else { return }
                 // Remember the selected tier while connection/plan lookup
                 // is pending. Never ask for an identity to resolve an outage.
                 entitlementTask = Task { @MainActor in
@@ -308,7 +342,6 @@ struct ReviewSubmitView: View {
             .opacity(locked ? 0.55 : 1)
         }
         .buttonStyle(.plain)
-        .disabled(locked && entitlements != nil)
         .accessibilityLabel(Text(locked ? "\(t.displayName). Team plan." : t.displayName))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
@@ -364,14 +397,19 @@ struct ReviewSubmitView: View {
 
     private func loadEntitlements() async {
         guard Config.useLiveBackend else { return }
+        if reviewContext == nil { reviewContext = currentReviewContext }
+        let context = currentReviewContext
         entitlementsChecked = false
-        guard await auth.ensureSession(), !Task.isCancelled else {
+        let connected = await auth.ensureSession()
+        guard !Task.isCancelled, context == currentReviewContext, reviewContextIsCurrent else { return }
+        guard connected else {
             entitlements = nil
             entitlementsChecked = true
             if tier != .smooth { tier = .smooth }
             return
         }
         let summary = try? await model.api.me()
+        guard !Task.isCancelled, context == currentReviewContext, reviewContextIsCurrent else { return }
         entitlements = summary?.entitlements
         entitlementsChecked = true
         if aiTiersLocked && tier != .smooth { tier = .smooth }
@@ -398,6 +436,19 @@ struct ReviewSubmitView: View {
     /// settings, and hand the work to the coordinator — it owns the task, so
     /// navigation can't cancel or restart it. Then show progress.
     private func start() {
+        guard reviewContextIsCurrent else {
+            submitError = "Your account or workspace changed. Return to the listing and open the render settings again. Your current tour is saved."
+            return
+        }
+        guard !isRendering else {
+            submitError = "This tour is already rendering. Open its progress to continue."
+            return
+        }
+        guard asset.localURL.isFileURL, FileManager.default.fileExists(atPath: asset.localURL.path) else {
+            submitError = "The source video is missing from this phone. Download it from Cloud files or add it again. Your current tour is saved."
+            return
+        }
+        submitError = nil
         var a = asset
         a.isDrone = (sourceKind == .drone)
         asset = a
@@ -461,6 +512,7 @@ struct RoomTaggerView: View {
     @Binding var tags: [RoomTag]
     /// nil = no "Suggest room names" anywhere on this screen.
     let suggest: RoomTagSuggestSource?
+    let listingID: UUID?
     @Environment(\.dismiss) private var dismiss
 
     @State private var player: AVPlayer
@@ -469,6 +521,7 @@ struct RoomTaggerView: View {
     @State private var isPlaying = false
     @State private var scrubbing = false
     @State private var customName = ""
+    @FocusState private var customNameFocused: Bool
     @State private var observer: Any?
 
     // Auto room chapters
@@ -481,10 +534,11 @@ struct RoomTaggerView: View {
     @State private var suggestNote: String?
     @State private var didAutoRun = false
 
-    init(videoURL: URL, tags: Binding<[RoomTag]>, suggest: RoomTagSuggestSource? = nil) {
+    init(videoURL: URL, tags: Binding<[RoomTag]>, suggest: RoomTagSuggestSource? = nil, listingID: UUID? = nil) {
         self.videoURL = videoURL
         self._tags = tags
         self.suggest = suggest
+        self.listingID = listingID
         _player = State(initialValue: AVPlayer(url: videoURL))
     }
 
@@ -500,21 +554,25 @@ struct RoomTaggerView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 14) {
-                playerCard
-                scrubberBlock
-                hintText
-                suggestionBlock
-                quickTagStrip
-                customNameRow
-                Divider()
-                tagListBlock
+            ScrollView {
+                VStack(spacing: 14) {
+                    playerCard
+                    scrubberBlock
+                    hintText
+                    suggestionBlock
+                    quickTagStrip
+                    Divider().padding(.horizontal)
+                    tagListBlock
+                }.padding(.top, 12).padding(.bottom, 14)
             }
-            .padding(.top)
             .background(Theme.bg)
+            .scrollDismissesKeyboard(.interactively)
+            .safeAreaInset(edge: .bottom, spacing: 0) { customNameBar }
             .navigationTitle("Tag \(areaNounPlural)")
             .navigationBarTitleDisplayMode(.inline)
-            .askAI(.roomTagger)
+            .toolbarBackground(Theme.bg, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .askAI(.roomTagger, listingID: listingID)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     // Discard BEFORE `dismiss()`, not only in `onDisappear`:
@@ -523,8 +581,16 @@ struct RoomTaggerView: View {
                     // runs before it. Doing it here makes the binding already
                     // clean on the Done path regardless of that order.
                     Button("Done") {
+                        customNameFocused = false
                         discardUnconfirmedAITags()
                         dismiss()
+                    }.accessibilityIdentifier("roomTagger.done")
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    if customNameFocused {
+                        Spacer()
+                        Button("Hide keyboard") { customNameFocused = false }
+                            .accessibilityIdentifier("roomTagger.keyboardDone")
                     }
                 }
             }
@@ -542,10 +608,11 @@ struct RoomTaggerView: View {
     private var playerCard: some View {
         PlayerLayerView(player: player)
             .frame(maxWidth: .infinity)
-            .frame(height: 240)
+            .frame(height: customNameFocused ? 120 : 240)
             .background(Color.black)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .padding(.horizontal)
+            .accessibilityIdentifier("roomTagger.player")
     }
 
     private var scrubberBlock: some View {
@@ -695,23 +762,43 @@ struct RoomTaggerView: View {
     }
 
     private var customNameRow: some View {
-        HStack {
+        HStack(spacing: 12) {
             TextField("Custom \(areaNoun) name", text: $customName)
-                .textFieldStyle(.roundedBorder)
-            Button { addTag(customName); customName = "" } label: {
-                Image(systemName: "plus.circle.fill").font(.title3)
+                .font(.rpBody).focused($customNameFocused)
+                .submitLabel(.done).onSubmit { addCustomTag() }
+                .padding(12).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
+                .accessibilityLabel(Text("Custom \(areaNoun) name"))
+                .accessibilityIdentifier("roomTagger.customName")
+            Button(action: addCustomTag) {
+                Image(systemName: "plus.circle.fill").font(.title2)
+                    .frame(width: 44, height: 44)
             }
             .disabled(customName.trimmingCharacters(in: .whitespaces).isEmpty)
             .accessibilityLabel(Text("Add custom \(areaNoun) tag"))
+            .accessibilityIdentifier("roomTagger.addCustom")
         }
-        .padding(.horizontal)
+    }
+
+    private var customNameBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Add a \(areaNoun) at \(timeLabel(current))").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.inkDim)
+            customNameRow
+        }.padding(.horizontal).padding(.top, 10).padding(.bottom, 8)
+            .background(Theme.bg)
+            .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+    }
+
+    private func addCustomTag() {
+        guard !customName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        addTag(customName)
+        customName = ""
+        customNameFocused = false
     }
 
     // MARK: The tag list
 
     private var tagListBlock: some View {
-        ScrollView {
-            VStack(spacing: 6) {
+        VStack(spacing: 6) {
                 if sortedTags.isEmpty {
                     Text("No \(areaNounPlural) tagged yet.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -720,7 +807,6 @@ struct RoomTaggerView: View {
                 ForEach(sortedTags) { tag in
                     tagRow(tag)
                 }
-            }
         }
     }
 
@@ -879,9 +965,8 @@ struct RoomTaggerView: View {
     }
 
     private func timeLabel(_ s: Double) -> String {
-        guard s.isFinite, s >= 0 else { return "0:00" }
-        let total = Int(s.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
+        if s.isFinite, s < 0 { return "0:00" }
+        return Formatters.duration(s)
     }
 
     // MARK: Auto room chapters

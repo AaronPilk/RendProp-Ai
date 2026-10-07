@@ -18,6 +18,7 @@ export type ErrorCode =
   | "not_found"
   | "conflict"
   | "plan_required"
+  | "sandbox_testing_required"
   | "quota_exceeded"
   | "rate_limited"
   | "payload_too_large"
@@ -103,14 +104,24 @@ export function json(
  * `error` is human copy the app may show verbatim; `code` is what it branches on.
  */
 export function respondError(err: unknown): Response {
+  if (err instanceof HttpError && "saved_response" in err && err.saved_response && typeof err.saved_response === "object") {
+    return json(err.saved_response);
+  }
   if (err instanceof HttpError) {
+    if (err.status >= 500) logServerError(err.status, err.code, "handled");
     return json({ ...(err.details ?? {}), error: err.message, code: err.code }, err.status);
   }
-  // The message of an UNEXPECTED error is logged, never returned: on a public
-  // route it can name an upstream, an env var, or a table. Every deliberate
-  // failure is an HttpError and keeps its own copy.
-  console.error("Unhandled error:", err);
+  // Both messages and stacks can contain customer media, prompts, signed URLs,
+  // database rows or keys. Log only bounded classification facts, including
+  // deliberate upstream failures that previously produced no operator signal.
+  logServerError(500, "internal", "unexpected");
   return json({ error: "Something went wrong on our side — try again in a moment.", code: "internal" }, 500);
+}
+
+function logServerError(status: number, code: ErrorCode, kind: "handled" | "unexpected"): void {
+  const safeStatus = Number.isInteger(status) && status >= 500 && status <= 599 ? status : 500;
+  const safeCode = code === "upstream" ? "upstream" : "internal";
+  console.error(JSON.stringify({ event: "http_server_error", status: safeStatus, code: safeCode, kind }));
 }
 
 /** Parse a JSON request body, or throw a 400. */
@@ -225,7 +236,9 @@ export function round4(n: number): number {
 export function throwRpc(message: string | undefined): never {
   const msg = message ?? "request failed";
   const m = /RP(\d{3}):\s*([\s\S]*)/.exec(msg);
-  if (!m) throw new HttpError(400, msg);
+  // Only deliberate RP errors are safe customer copy. Database exceptions
+  // can contain table names, constraints and the caller's private data.
+  if (!m) throw new HttpError(503, "This action is temporarily unavailable. Please try again.");
   const status = Number(m[1]);
   const text = m[2].trim() || msg;
   let code: ErrorCode | undefined;

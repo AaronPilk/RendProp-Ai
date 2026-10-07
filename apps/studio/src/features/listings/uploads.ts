@@ -1,7 +1,7 @@
 import type { StudioServices } from "../../data/services";
 import { uuid } from "../../data/contracts";
 
-export type UploadRole = "capture" | "render" | "original" | "gallery";
+export type UploadRole = "capture" | "render" | "original" | "gallery" | "contact_photo";
 export type UploadJournal = {
   version: 1; userId: string; orgId: string; listingId: string; filename: string;
   bytes: number; contentType: string; role: UploadRole; fingerprint: string;
@@ -29,9 +29,9 @@ export function validateUpload(file: Pick<File, "name" | "size" | "type">, role:
   const contentType = VIDEO.get(ext) ?? PHOTO.get(ext);
   if (!contentType) throw new Error("Choose a JPG, PNG, WebP, HEIC, MP4, MOV, or M4V file.");
   const kind = VIDEO.has(ext) ? "video" as const : "photo" as const;
-  if (kind === "video" && ["original", "gallery"].includes(role)) throw new Error("Choose a photo for this action.");
+  if (kind === "video" && ["original", "gallery", "contact_photo"].includes(role)) throw new Error("Choose a photo for this action.");
   if (kind === "photo" && role !== "capture" && ["image/heic", "image/heif"].includes(contentType)) throw new Error("Export this photo as JPG, PNG, or WebP before publishing it.");
-  const maximum = kind === "video" ? 2 * 1024 ** 3 : role === "render" || role === "gallery" ? 10 * 1024 ** 2 : 50 * 1024 ** 2;
+  const maximum = kind === "video" ? 2 * 1024 ** 3 : ["render", "gallery", "contact_photo"].includes(role) ? 10 * 1024 ** 2 : 50 * 1024 ** 2;
   if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > maximum) throw new Error(`Choose a file smaller than ${kind === "video" ? "2 GB" : maximum === 10 * 1024 ** 2 ? "10 MB" : "50 MB"}.`);
   if (file.type && file.type !== contentType && !(contentType === "video/x-m4v" && file.type === "video/mp4")) throw new Error("The filename and media type disagree. Export the file again before uploading.");
   return { kind, contentType };

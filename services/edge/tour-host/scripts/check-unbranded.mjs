@@ -342,13 +342,13 @@ async function main() {
   // required property content survives
   mustContain(reUn, "real_estate /u/", "address", "1180 Crestline Ridge");
   mustContain(reUn, "real_estate /u/", "price", "$4,250,000");
-  mustContain(reUn, "real_estate /u/", "player video element", 'id="scrub"');
-  mustContain(reUn, "real_estate /u/", "chapter rail", 'id="rail"');
+  mustContain(reUn, "real_estate /u/", "optional player video element", 'id="flythrough-video"');
+  mustContain(reUn, "real_estate /u/", "chapter controls", 'id="flythrough-chapters"');
   mustContain(reUn, "real_estate /u/", "chapter label", "Chef&#39;s kitchen");
   mustContain(reUn, "real_estate /u/", "gallery", "https://cdn.example.com/g1.jpg");
   // A2 — disclosure block
   mustContain(reUn, "real_estate /u/", "disclosure section", 'id="disclosure"');
-  mustContain(reUn, "real_estate /u/", "disclosure chip", 'id="staged"');
+  mustContain(reUn, "real_estate /u/", "video disclosure", '<p class="video-disclosure">');
   mustContain(reUn, "real_estate /u/", "staging sentence", "virtually staged or digitally decluttered");
   mustContain(reUn, "real_estate /u/", "per-asset label", "Living room — virtually staged");
   mustContain(reUn, "real_estate /u/", "model family (image)", "AI image edit");
@@ -383,8 +383,9 @@ async function main() {
     // surface AND the slug, so a download can be traced to the page that
     // produced it. `pt` is absent on purpose — the owner has to supply it.
     ["App Store campaign token", "?ct=tour-sentinelqx7&amp;mt=8"],
-    // Outbound attribution on the two "Made with Rendprop" links.
-    ["watermark ref param", '<a class="chrome" id="wm" href="https://rendprop.com/?ref=tour"'],
+    // Optional video no longer has an overlaid watermark. The listing's
+    // attribution remains in its visible footer and retains the campaign ref.
+    ["listing attribution ref param", '<div class="lp-madeby"><a href="https://rendprop.com/?ref=tour"'],
     ["footer ref param", '<a href="https://rendprop.com/?ref=tour"'],
     // Share affordance.
     ["share control", '<button type="button" class="chrome" id="share"'],
@@ -529,45 +530,31 @@ async function main() {
     }
   }
 
-  // ---- F-H-17: the house promotions are the owner's call ------------------
-  // Default: NO lender CTA on someone else's listing page (RESPA exposure is
-  // theirs, not ours), but the neutral payment estimate still renders.
-  mustContain(reBr, "real_estate /f/", "payment estimate", 'id="financing"');
-  const finDefault = sectionOf(reBr, "financing");
-  checks++;
-  if (!finDefault.includes("Estimated from")) fail("[real_estate /f/] the neutral payment estimate must still render");
-  for (const [what, needle] of [
-    ["lender CTA", "Get pre-approved"],
-    ["lender link", "wsmlending.com"],
-  ]) mustNotContain(finDefault, "real_estate /f/ financing (promo default)", what, needle);
-  // Opting in brings it back, labelled.
+  // No invented mortgage rate or unrequested third-party promotions.
+  mustNotContain(reBr, "real_estate default /f/", "invented payment", 'id="financing"');
+  mustNotContain(reBr, "real_estate default /f/", "default partner cards", 'class="lp-partner"');
   const fin = realEstateTour();
   fin.listing.details.show_financing = true;
-  const finBr = sectionOf(player.renderTourPage(fin, FN, "anon", "site-key", {}), "financing");
-  mustContain(finBr, "financing opt-in /f/", "lender CTA", "Get pre-approved");
-  mustContain(finBr, "financing opt-in /f/", "promo disclosure", "Lender promotion from Rendprop");
-  // An owner-supplied lender opts in on its own and is labelled as theirs.
+  mustNotContain(player.renderTourPage(fin, FN, "anon", "site-key", {}), "flag alone /f/", "house lender", 'id="financing"');
   const own = realEstateTour();
   own.listing.details.lender_name = "Sentinel Qx7 Mortgage";
   own.listing.details.lender_url = "https://sentinel-lender-qx7.example.com/";
   const ownFin = sectionOf(player.renderTourPage(own, FN, "anon", "site-key", {}), "financing");
   mustContain(ownFin, "own-lender /f/", "owner's lender", "https://sentinel-lender-qx7.example.com/");
   mustContain(ownFin, "own-lender /f/", "owner's lender label", "Lender chosen by the listing owner");
-  mustNotContain(ownFin, "own-lender /f/ financing", "our lender", "wsmlending.com");
-  // …and an owner-supplied lender must not leak onto the MLS page.
+  mustNotContain(ownFin, "own-lender /f/", "invented rate", "6.5%");
   const ownUn = player.renderTourPage(own, FN, "anon", "site-key", { unbranded: true });
   mustNotContain(ownUn, "own-lender /u/", "owner's lender", "sentinel-lender-qx7");
-  // Partner strip: on by default but LABELLED, and switchable off.
-  mustContain(reBr, "real_estate /f/", "partner strip label", "Promoted by Rendprop");
-  mustContain(reBr, "real_estate /f/", "partner strip disclosure", "not endorsements by the owner");
+  const opted = realEstateTour();
+  opted.listing.details.show_partners = true;
+  const optBr = player.renderTourPage(opted, FN, "anon", "site-key", {});
+  mustContain(optBr, "explicit partners /f/", "partner strip label", "Promoted by Rendprop");
+  mustContain(optBr, "explicit partners /f/", "partner disclosure", "not endorsements by the owner");
   const noPartners = realEstateTour();
   noPartners.listing.details.show_partners = false;
   const npBr = player.renderTourPage(noPartners, FN, "anon", "site-key", {});
-  for (const [what, needle] of [
-    ["partner card", "tractrealestate.com"],
-    ["partner strip label", "Promoted by Rendprop"],
-  ]) mustNotContain(npBr, "partners off /f/", what, needle);
-  // The Rendprop attribution is not a promotion and always stays.
+  for (const [what, needle] of [["partner card", "tractrealestate.com"], ["partner strip label", "Promoted by Rendprop"]])
+    mustNotContain(npBr, "partners off /f/", what, needle);
   mustContain(npBr, "partners off /f/", "made-with attribution", "Made with <b>Rendprop</b>");
 
   // ---- CA AB 723: the unaltered original is INCLUDED, not just linked -----
@@ -607,7 +594,7 @@ async function main() {
   const lgBr = player.renderTourPage(legacyTour(), FN, "anon", "site-key", { origin: "https://rendprop.com" });
   auditUnbranded(lgUn, "legacy /u/", lg, player);
   mustContain(lgUn, "legacy /u/", "address still renders", "1180 Crestline Ridge");
-  mustContain(lgUn, "legacy /u/", "player still renders", 'id="scrub"');
+  mustContain(lgUn, "legacy /u/", "optional player still renders", 'id="flythrough-video"');
   checks++;
   if (lgUn.includes('id="disclosure"')) fail("[legacy /u/] disclosure section must not render with nothing to disclose");
   checks++;

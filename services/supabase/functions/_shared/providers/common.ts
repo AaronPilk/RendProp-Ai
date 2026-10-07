@@ -2,13 +2,13 @@
 // router's `error_class` is derived from, SSRF-safe fetching, an in-process
 // semaphore, and the R2 side of persist().
 //
-// Nothing in here ever logs a credential or a signed URL. Vendor bodies are
-// truncated before they reach a log line, and presigned URLs are used and
+// Nothing in here ever logs a credential or a signed URL. Vendor bodies never
+// enter fetch errors; classifier-only snippets redact presigned URLs, used and
 // dropped — they are never returned, logged, or put in a JobRef.
 
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { HttpError } from "../http.ts";
-import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS, headObject, presignPut, publicR2Url } from "../r2.ts";
+import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS, headObject, presignPut } from "../r2.ts";
 import type { DoneState, ErrorClass, JobRef, JobState, ProviderAdapter } from "./types.ts";
 
 // ── Time budgets (hard rule: every adapter call is bounded) ───────────────────
@@ -44,12 +44,15 @@ export class ProviderError extends Error {
   readonly error_class: ErrorClass;
   readonly provider: string;
   readonly status?: number;
-  constructor(provider: string, error_class: ErrorClass, message: string, status?: number) {
+  /** Set only by a submit boundary that received a definitive non-allocation. */
+  readonly dispatch_rejected: boolean;
+  constructor(provider: string, error_class: ErrorClass, message: string, status?: number, dispatchRejected = false) {
     super(message);
     this.name = "ProviderError";
     this.provider = provider;
     this.error_class = error_class;
     this.status = status;
+    this.dispatch_rejected = dispatchRejected;
   }
   /** The HTTP status this failure should surface as when the chain is exhausted. */
   get httpStatus(): number {
@@ -66,15 +69,34 @@ export class ProviderError extends Error {
   }
 }
 
+/** No timeout/conflict/early-data/5xx response proves that a POST was not accepted. */
+export function definitiveSubmitRejection(status: number, body: unknown): boolean {
+  const rejected = [400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(status);
+  if (!rejected) return false;
+  // Ambiguous receipt-shaped data anywhere in a bounded response is enough
+  // to keep the hold. Do not assume every vendor uses the same envelope.
+  let examined = 0;
+  const hasReceipt = (value: unknown, depth = 0): boolean => {
+    if (++examined > 100 || depth > 8) return true;
+    if (!value || typeof value !== "object") return false;
+    return Object.entries(value).some(([key, entry]) =>
+      (/^(request_?id|job_?id|task_?id|id)$/i.test(key) && entry != null && entry !== "") ||
+      (typeof entry === "object" && hasReceipt(entry, depth + 1)));
+  };
+  return !hasReceipt(body);
+}
+
 /** Default HTTP-status → error_class mapping. Adapters override per vendor. */
 export function classifyStatus(status: number): ErrorClass {
   if (status === 429) return "rate_limit";
   if (status === 408 || status === 504) return "timeout";
-  if (status === 400 || status === 402 || status === 413 || status === 422) return "validation";
+  if (status === 400 || status === 413 || status === 422) return "validation";
   if (status >= 500) return "upstream";
-  // 401/403 is OUR misconfiguration, never the caller's session — `upstream`
+  // 401/402/403 concern OUR provider account, never the caller's session or
+  // Rendprop credits. In particular, an empty vendor balance is not bad media.
+  // `upstream`
   // keeps the app from signing the user out (same rule as ai-voice).
-  if (status === 401 || status === 403) return "upstream";
+  if (status === 401 || status === 402 || status === 403) return "upstream";
   return "other";
 }
 
@@ -158,7 +180,7 @@ export async function fetchBounded(
     if (name === "TimeoutError" || name === "AbortError") {
       throw new ProviderError(provider, "timeout", `${provider} did not answer within ${Math.round(timeoutMs / 1000)}s`);
     }
-    throw new ProviderError(provider, "upstream", `${provider} request failed: ${snippet(e instanceof Error ? e.message : e, 120)}`);
+    throw new ProviderError(provider, "upstream", `${provider} request could not be reached`);
   }
 }
 
@@ -182,8 +204,9 @@ export async function fetchJson<T = Record<string, unknown>>(
     throw new ProviderError(
       provider,
       classify(res.status, body),
-      `${provider} HTTP ${res.status}: ${snippet(body)}`,
+      `${provider} request failed (HTTP ${res.status})`,
       res.status,
+      init.method?.toUpperCase() === "POST" && definitiveSubmitRejection(res.status, body),
     );
   }
   return (body ?? {}) as T;
@@ -397,14 +420,16 @@ export async function putBytes(
   key: string,
   bytes: BodyInit,
   mime: string,
+  immutable = false,
 ): Promise<{ key: string; bytes: number }> {
   const putUrl = await presignPut({ bucket, key, expiresIn: 600, contentType: mime });
   const put = await fetchBounded("r2", putUrl, {
     method: "PUT",
-    headers: { "content-type": mime },
+    redirect: "error",
+    headers: { "content-type": mime, ...(immutable ? { "if-none-match": "*" } : {}) },
     body: bytes,
   }, BUDGETS.transferMs);
-  if (!put.ok) {
+  if (!put.ok && !(immutable && put.status === 412)) {
     // The presigned URL is a credential — never in the message.
     const detail = await put.text().catch(() => "");
     throw new ProviderError("r2", "upstream", `Storing the result failed (R2 ${put.status}): ${snippet(detail, 160)}`);
@@ -423,10 +448,13 @@ export async function persistResult(
   provider: string,
   state: DoneState,
   r2Key: string,
+  beforeWrite?: (intent: { key: string; bytes: number }) => Promise<void>,
+  immutable = false,
 ): Promise<{ key: string; bytes: number }> {
   const inlineData = decodeDataUrl(state.result_url);
   if (inlineData) {
-    return await putBytes(R2_BUCKET_RENDERS, r2Key, inlineData.bytes, inlineData.mime || state.mime);
+    await beforeWrite?.({ key: r2Key, bytes: inlineData.bytes.byteLength });
+    return await putBytes(R2_BUCKET_RENDERS, r2Key, inlineData.bytes, inlineData.mime || state.mime, immutable);
   }
   const res = await fetchBounded(provider, state.result_url, { method: "GET" }, BUDGETS.transferMs);
   if (!res.ok) {
@@ -446,34 +474,32 @@ export async function persistResult(
     throw new ProviderError(provider, "upstream", `${provider} result exceeds the ${Math.round(MAX_PERSIST_BYTES / 1e6)} MB edge limit`);
   }
   const mime = res.headers.get("content-type")?.split(";")[0].trim() || state.mime;
-  return await putBytes(R2_BUCKET_RENDERS, r2Key, buf, mime);
+  await beforeWrite?.({ key: r2Key, bytes: buf.byteLength });
+  return await putBytes(R2_BUCKET_RENDERS, r2Key, buf, mime, immutable);
 }
 
-/** Public https URL for a persisted key, or null when no public base is set. */
-export function persistedUrl(key: string): string | null {
-  return publicR2Url(key);
+/** Private completed-result capability. Header-free native/Studio downloads,
+ * with the existing build-44 maximum 600-second lifetime. */
+export async function persistedUrl(key: string): Promise<string> {
+  return await presignGet(R2_BUCKET_RENDERS, key, 600);
 }
 
 /**
- * Put a caller's inline image into OUR storage and hand back a short-lived
- * presigned GET. Used by vendors that will only fetch a public URL (Kie,
- * Higgsfield): customer media stays on our storage, never on a vendor's upload
- * host, and the link dies with the job.
+ * Inline staging has no actor/org cleanup journal. Fail before any write until
+ * a caller-owned input registration protocol is implemented. Providers that
+ * require a URL can use an already authorized owned source capability instead.
  */
 export async function stageInputImage(
-  b64: string,
-  mime: string,
-  ttlSeconds = 900,
+  _b64: string,
+  _mime: string,
+  _ttlSeconds = 600,
 ): Promise<{ key: string; url: string }> {
-  const bytes = b64Bytes(b64);
-  const key = `ai-router/input/${crypto.randomUUID()}.${extFor(mime)}`;
-  await putBytes(R2_BUCKET_UPLOADS, key, bytes, mime);
-  return { key, url: await presignGet(R2_BUCKET_UPLOADS, key, ttlSeconds) };
+  throw new ProviderError("r2", "validation", "This provider needs an owned image URL. Inline image staging is unavailable until its cleanup ownership can be verified.", 0, true);
 }
 
 /**
- * The public image URL a vendor can actually fetch. Prefers a URL the caller
- * already has; falls back to staging inline base64 into our uploads bucket.
+ * A URL the vendor can fetch. The caller must resolve current source ownership
+ * and provider consent before invoking an adapter. Inline staging fails closed.
  */
 export async function publicImageUrlFor(
   input: { image_url?: string; image_b64?: string; extra?: Record<string, unknown> },

@@ -512,7 +512,7 @@ Deno.test("ticket budget still charges exactly once and completion adds no charg
     const ticket = await response.json();
     assertEquals(f.charges.length, 1); // one atomic reservation, no separate/refundable counters
     assertEquals((f.charges[0].p_assets as Row[])[0].bytes, 4);
-    // Route lookup stays by the fixture id, but its row uses the minted id for CAS.
+    // Follow the returned immutable asset identity for completion and read admission.
     f.objects.set(`_staging/${ticket.storage_key}`, object());
     const result = await f.request("complete");
     assertEquals(result.status, 200, await result.clone().text());
@@ -541,6 +541,14 @@ for (
     {
       name: "public gallery photo",
       key: "renders/org/listing/gallery-asset.jpg",
+      bucket: "renders",
+      kind: "photo",
+      type: "image/jpeg",
+      bytes: 4,
+    },
+    {
+      name: "separate client headshot",
+      key: "renders/org/listing/contact-asset.jpg",
       bucket: "renders",
       kind: "photo",
       type: "image/jpeg",
@@ -625,3 +633,17 @@ Deno.test("batch photo ticket also completes to a DB-selected immutable key", ()
     assertEquals(row.id, assets[0].asset_id);
     assertEquals(f.charges.length, 1);
   }));
+
+Deno.test("contact photo ticket creates only a bounded separate public headshot",()=>fixture(async f=>{
+  f.asset=null;
+  const response=await f.request("ticket",{listing_id:"fixture-listing",role:"contact_photo",kind:"photo",filename:"headshot.jpg",content_type:"image/jpeg",bytes:4});
+  assertEquals(response.status,201,await response.clone().text());
+  const ticket=await response.json();assert(String(ticket.storage_key).includes("/contact-"));
+  assertEquals(f.asset!.kind,"photo");assertEquals(f.asset!.bucket,"renders");
+}));
+Deno.test("contact photo tickets reject video kind and poster oversize before reservation",()=>fixture(async f=>{
+  for(const patch of [{kind:"video",bytes:4},{kind:"photo",bytes:11*1024**2}]){
+    const r=await f.request("ticket",{listing_id:"fixture-listing",role:"contact_photo",filename:"headshot.jpg",content_type:"image/jpeg",...patch});
+    assertEquals(r.status,400);assertEquals(f.charges.length,0);
+  }
+}));

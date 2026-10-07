@@ -44,6 +44,20 @@ Deno.test("invalid later batch item causes no reservation or partial asset inser
     assertEquals(f.charges, []);
     assertEquals(f.asset, null);
   }));
+Deno.test("completion admission outage preserves custody before any object HEAD or promotion", () =>
+  fixture(async (f) => {
+    const before = [...f.objects.entries()].map(([key, value]) => [key, { ...value }]);
+    let heads = 0;
+    f.afterHead = async () => { heads++; };
+    f.rpcFailures.add("media_upload_read_admit");
+    const response = await f.request("complete");
+    assertEquals(response.status, 503);
+    assertEquals(heads, 0);
+    assertEquals(f.copies, []);
+    assertEquals(f.deletes, []);
+    assertEquals(f.asset!.uploaded, false);
+    assertEquals([...f.objects.entries()], before);
+  }));
 Deno.test("lost copy receipt recovers its existing immutable candidate without a second copy", () =>
   fixture(async (f) => {
     f.rpcFailures.add("finish_upload_operation");

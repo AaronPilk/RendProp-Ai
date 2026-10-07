@@ -19,17 +19,52 @@
 
 import { ACTION_TYPES } from "./actions.ts";
 import { knowledgeBlock } from "./knowledge.ts";
+import type { CoachAccount } from "./context.ts";
 
 // ── Space-type vocabulary (mirror of Models/Listing.swift SpaceType) ────────
 
-export const SPACE_TYPES = ["real_estate", "venue", "restaurant", "retail", "fitness", "other"] as const;
+export const SPACE_TYPES = [
+  "real_estate",
+  "venue",
+  "restaurant",
+  "retail",
+  "fitness",
+  "other",
+] as const;
 export type SpaceType = typeof SPACE_TYPES[number];
+
+/** Matches the native AskAIScreen raw values. Unknown free text is never put
+ * into a prompt or a durable ledger screen field. */
+export const COACH_SCREENS = [
+  "home",
+  "settings",
+  "listing",
+  "photos",
+  "photo_studio",
+  "reel_studio",
+  "floor_plan",
+  "aerial",
+  "tour_capture",
+  "room_tagger",
+  "agent_card",
+  "files",
+  "compliance",
+  "plan",
+] as const;
+
+export function screenOf(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const screen = raw.trim().toLowerCase();
+  return (COACH_SCREENS as readonly string[]).includes(screen) ? screen : null;
+}
 
 /** Coerce a client-sent space_type into a known one. Unknown/missing → real_estate,
  *  the same default `SpaceType.current` uses on the client (Listing.swift). */
 export function spaceTypeOf(raw: unknown): SpaceType {
   const s = String(raw ?? "").trim().toLowerCase();
-  return (SPACE_TYPES as readonly string[]).includes(s) ? (s as SpaceType) : "real_estate";
+  return (SPACE_TYPES as readonly string[]).includes(s)
+    ? (s as SpaceType)
+    : "real_estate";
 }
 
 interface SpaceVocab {
@@ -45,12 +80,42 @@ interface SpaceVocab {
 }
 
 const VOCAB: Record<SpaceType, SpaceVocab> = {
-  real_estate: { noun: "home", customer: "buyers", area: "room", cta: "Book a showing" },
-  venue: { noun: "venue", customer: "planners", area: "area", cta: "Plan your event" },
-  restaurant: { noun: "place", customer: "guests", area: "area", cta: "Book a table" },
-  retail: { noun: "store", customer: "shoppers", area: "area", cta: "Visit us" },
-  fitness: { noun: "studio", customer: "members", area: "area", cta: "Book a session" },
-  other: { noun: "space", customer: "customers", area: "area", cta: "Get in touch" },
+  real_estate: {
+    noun: "home",
+    customer: "buyers",
+    area: "room",
+    cta: "Book a showing",
+  },
+  venue: {
+    noun: "venue",
+    customer: "planners",
+    area: "area",
+    cta: "Plan your event",
+  },
+  restaurant: {
+    noun: "place",
+    customer: "guests",
+    area: "area",
+    cta: "Book a table",
+  },
+  retail: {
+    noun: "store",
+    customer: "shoppers",
+    area: "area",
+    cta: "Visit us",
+  },
+  fitness: {
+    noun: "studio",
+    customer: "members",
+    area: "area",
+    cta: "Book a session",
+  },
+  other: {
+    noun: "space",
+    customer: "customers",
+    area: "area",
+    cta: "Get in touch",
+  },
 };
 
 export function vocabFor(space: SpaceType): SpaceVocab {
@@ -60,15 +125,16 @@ export function vocabFor(space: SpaceType): SpaceVocab {
 // ── Context (what AppModel already knows, no photo/video ever included) ────
 
 /**
- * One of the user's own projects, as CoachModel.swift builds it from AppModel
- * — never from the server's own listings table (the coach never queries the
- * DB for this; see docs/COACH-CONTRACT.md "no round trip"). All counts, no
- * media: this is the whole reason the feature can be TEXT ONLY.
+ * Bounded device progress hints, with a cloud row id checked against the selected
+ * workspace by context.ts. Counts and closed states only; no media is included.
  */
 export interface CoachListingCtx {
   id: string;
-  /** The user's own project name/address, e.g. "123 Main St". Plain text the
-   *  user chose, not customer media — safe to send and to quote back. */
+  /** Device route id can differ from its authorized cloud row id. */
+  serverID?: string | null;
+  localDraft?: boolean;
+  /** A street-name-only label supplied by the native privacy boundary.
+   * Never automatically populate this with a full cached postal address. */
   title: string;
   hasVideo: boolean;
   /** Count of tagged rooms/areas — never the tag text itself. */
@@ -78,30 +144,40 @@ export interface CoachListingCtx {
   photos: number;
   edits: number;
   reels: number;
+  /** Device-reported categorical recovery hint, never a raw error. */
+  attention?: string | null;
+  /** Closed server state, only for a listing verified in the chosen workspace. */
+  status?: string | null;
 }
 
 export interface CoachContext {
   listings: CoachListingCtx[];
-  /** Client-reported plan name ("free" | "starter" | "solo" | "pro" | "team" |
-   *  "trial"). Used only to word plan-aware copy — never to gate anything;
-   *  coach is free on every plan by product rule (see 0023's own header). */
+  /** Effective database plan; client plan hints never select a route. */
   plan: string;
   /** Optional current screen name, e.g. "home" | "settings" | "photo_studio" —
    *  a hint only, never load-bearing. */
   screen: string | null;
+  selectedListingId?: string | null;
+  account?: CoachAccount;
 }
 
 // ── The action protocol embedded in the prompt ──────────────────────────────
 
 const ACTION_MEANINGS: Record<string, string> = {
-  start_project: "begin a brand-new project (the user will name it, then land on adding a walkthrough video). No listing_id.",
-  open_tour: "open the tour flow for an EXISTING project — records/uploads the walkthrough, or opens its finished tour. Needs listing_id.",
-  open_photos: "open that project's AI Photo Studio (sky, twilight, lawn, tidy, virtual staging). Needs listing_id.",
+  start_project:
+    "begin a brand-new project (the user will name it, then land on adding a walkthrough video). No listing_id.",
+  open_tour:
+    "open the tour flow for an EXISTING project — records/uploads the walkthrough, or opens its finished tour. Needs listing_id.",
+  open_photos:
+    "open that project's AI Photo Studio (sky, twilight, lawn, tidy, virtual staging). Needs listing_id.",
   open_reel: "open that project's reel maker. Needs listing_id.",
-  open_floor_plan: "open that project's floor plan tool (3D scan or upload a plan). Needs listing_id.",
+  open_floor_plan:
+    "open that project's Measurements card (manual wall outlines, room dimensions, area worksheet, or upload an existing plan). Automatic 3D generation is Coming soon. Needs listing_id.",
   open_aerial: "open that project's AI aerial intro tool. Needs listing_id.",
-  share_tour: "open that project's finished tour, where both the branded and unbranded share links live. Needs listing_id.",
-  open_plan_usage: "open the app's Plan & usage screen — the ONLY place that shows the real plan, usage and prices. No listing_id.",
+  share_tour:
+    "open that project's finished tour, where both the branded and unbranded share links live. Needs listing_id.",
+  open_plan_usage:
+    "open the app's Plan & usage screen — the ONLY place that shows the real plan, usage and prices. No listing_id.",
   open_support: "open a way to reach a human at support. No listing_id.",
   open_home: "go back to the Home tab. No listing_id.",
 };
@@ -128,49 +204,55 @@ export function systemInstruction(space: SpaceType): string {
   const v = vocabFor(space);
   return [
     "You are Coach, the assistant built into the Rendprop iPhone app. Rendprop turns a phone " +
-      "walkthrough into a shareable, drone-style property tour. You have two jobs, and you " +
-      "always know which one you're doing from what the user just said:",
+    "walkthrough into a shareable, drone-style property tour. You have two jobs, and you " +
+    "always know which one you're doing from what the user just said:",
+    "Use the selected project when one is supplied. Device progress is a hint; server status and account snapshot are verified in the chosen workspace. " +
+    "For account questions, use only that snapshot and say when a value is unavailable. It does not contain all account history, media, billing receipts, credentials or private contacts. " +
+    "Never claim you changed a subscription, retried a job or repaired a provider. A button opens the relevant screen for the user to review and act. " +
+    "Renewal off means the workspace subscription will not renew; current paid access can remain until its end date. It is not proof of expired access or a broken API key. " +
+    "For Needs attention, give a safe review action. Never repeat or invent a raw upstream error. Cloud access or facts review: open Home, then review the project's details or Measurements; upload/render/publish: open the tour to review and retry. " +
+    "A retry can incur normal feature usage; do not promise a free retry, immediate repair or automatic publication.",
     "",
     "JOB 1 — ONBOARDING. Guide the user through their first (or next) project, one step at a " +
-      "time. Never dump the whole plan on them. Give exactly ONE next step and exactly ONE " +
-      "action to take it. If you are missing something you genuinely need (which project, or " +
-      "which tool) ask exactly ONE short question — never more than one at a time, and never " +
-      "ask something the project list below already answers.",
+    "time. Never dump the whole plan on them. Give exactly ONE next step and exactly ONE " +
+    "action to take it. If you are missing something you genuinely need (which project, or " +
+    "which tool) ask exactly ONE short question — never more than one at a time, and never " +
+    "ask something the project list below already answers.",
     "",
     "The step ladder, in order — pick the FIRST one that applies to what the user is asking " +
-      "about right now:",
+    "about right now:",
     "  1. No project matches what they described exists yet → action start_project.",
     "  2. Their project has no video yet (has_video is false) → action open_tour (this is where " +
-      "recording or uploading the walkthrough happens — nothing else can start before it).",
+    "recording or uploading the walkthrough happens — nothing else can start before it).",
     "  3. It has a video but no finished tour yet (has_tour is false) → action open_tour (this " +
-      "finishes building the tour).",
+    "finishes building the tour).",
     "  4. They asked about photos/staging and photos is 0 → action open_photos.",
     "  5. They asked for a reel and reels is 0 → action open_reel.",
     "  6. They asked for a floor plan → action open_floor_plan.",
     "  7. They asked for an aerial shot → action open_aerial.",
     "  8. Everything they asked for already exists → congratulate them briefly and offer " +
-      "share_tour (to get the link) or open_home — never propose redoing a finished step.",
+    "share_tour (to get the link) or open_home — never propose redoing a finished step.",
     "",
     "JOB 2 — CUSTOMER SERVICE, and it is the higher priority of the two. Answer questions about " +
-      "publishing, the unbranded MLS link, how AI content is disclosed, what each tool does, " +
-      "filming tips, deleting an account, and managing a subscription, using ONLY the knowledge " +
-      "given to you below. This job must never fail: if a question is outside that knowledge, " +
-      "say so plainly and offer action open_support — never guess, and never invent a feature, " +
-      "a screen, a policy or a number that isn't in the knowledge.",
+    "publishing, the unbranded MLS link, how AI content is disclosed, what each tool does, " +
+    "filming tips, deleting an account, and managing a subscription, using ONLY the knowledge " +
+    "given to you below. This job must never fail: if a question is outside that knowledge, " +
+    "say so plainly and offer action open_support — never guess, and never invent a feature, " +
+    "a screen, a policy or a number that isn't in the knowledge.",
     "",
     "HARD RULES, always:",
     `  • Business type right now: ${v.noun} (industry: ${space}). Call one project "a ${v.noun}", ` +
-      `its customers "${v.customer}", a tagged section "a ${v.area}", and its main tour action ` +
-      `"${v.cta}" — never a different industry's words.`,
+    `its customers "${v.customer}", a tagged section "a ${v.area}", and its main tour action ` +
+    `"${v.cta}" — never a different industry's words.`,
     "  • NEVER state a price. Prices exist only in the App Store via StoreKit and can change or " +
-      "differ by region — say what a plan INCLUDES (from the knowledge below) and use action " +
-      "open_plan_usage for the current plan, usage or the real price.",
+    "differ by region — say what a plan INCLUDES (from the knowledge below) and use action " +
+    "open_plan_usage for the current plan, usage or the real price.",
     "  • NEVER write marketing copy, a listing description, or ad text for the user's project — " +
-      "that runs through Rendprop's own fair-housing-checked tools (AI Photo Studio, Reels), " +
-      "never through this chat. Point to the right tool with an action instead of writing it " +
-      "yourself.",
+    "that runs through Rendprop's own fair-housing-checked tools (AI Photo Studio, Reels), " +
+    "never through this chat. Point to the right tool with an action instead of writing it " +
+    "yourself.",
     "  • NEVER claim a feature, screen or setting that isn't in the knowledge below or in the " +
-      "project data you're given. If you don't know, say so and offer open_support.",
+    "project data you're given. If you don't know, say so and offer open_support.",
     "  • This chat is TEXT ONLY — no photo or video is ever part of it, and you never ask for one.",
     "  • Warm and plain, never salesy or robotic. One idea per reply. 80 words or fewer.",
     "",
@@ -202,6 +284,8 @@ function describeListing(l: CoachListingCtx, space: SpaceType): string {
     `photos=${l.photos}`,
     `photo_edits=${l.edits}`,
     `reels=${l.reels}`,
+    `server_status=${l.status ?? "unavailable"}`,
+    `device_attention=${l.attention ?? "none"}`,
   ];
   return `  - ${bits.join(", ")}`;
 }
@@ -224,7 +308,15 @@ export function buildUserTurn(args: UserTurnArgs): string {
 
   return [
     `The user's current plan: ${context.plan}.` +
-      (context.screen ? ` They are currently on the "${context.screen}" screen.` : ""),
+    (context.screen
+      ? ` They are currently on the "${context.screen}" screen.`
+      : ""),
+    context.account
+      ? `Verified selected-workspace account snapshot (null means unavailable; renders use the UTC calendar month, other meters use their own rolling window): ${JSON.stringify(context.account)}`
+      : "Account details are unavailable. Open Plan & usage to verify current billing and usage.",
+    context.selectedListingId
+      ? `Selected project id: ${context.selectedListingId}. Use this project unless the user explicitly chooses another.`
+      : "No project is selected. Ask which project when the question needs one and multiple projects exist.",
     "Their projects right now (this is the ONLY source of listing ids you may use):",
     listingLines,
     "",

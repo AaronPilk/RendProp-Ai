@@ -3,7 +3,8 @@ import StoreKit
 
 // MARK: - Presenting the paywall from anywhere
 //
-// One sheet, mounted once at the app root (`.paywallHost()` in RendpropApp).
+// One elected sheet host. Root owns the StoreKit lifecycle; visible AI
+// screens register a local host so their existing modal can present the paywall.
 // Every CTA in the app — Settings, the three 402 "Upgrade plan" buttons — calls
 // `PaywallRouter.shared.present(reason:)` instead of pushing its own sheet, so
 // there is exactly one paywall, one place it can be styled, and no chance of
@@ -14,7 +15,7 @@ import StoreKit
 enum PaywallReason: Equatable, Sendable {
     /// The user asked for it (Settings → Upgrade plan).
     case upgrade
-    /// A 402 from the server: this month's allowance for `feature` is used up.
+    /// A 402 from the server: this feature's included allowance is used up.
     /// `feature` is one of the `plan_entitlements` keys — renders, photo_edits,
     /// reels, aerials, drone, seats — or a plain noun the caller passes.
     case quota(feature: String)
@@ -45,9 +46,9 @@ enum PaywallReason: Equatable, Sendable {
             // would promise a reset that never comes (Team/TeamView.swift).
             return "Every seat on your plan is taken. Pick a plan with more seats."
         case .quota(let feature):
-            return "You've used all your \(PaywallReason.featureNoun(feature)) this month. Pick a plan to keep going."
+            return "You've used your included \(PaywallReason.featureNoun(feature)). Your saved work remains available. Review your plan and usage below."
         case .trialEnded:
-            return "Your free week has ended. Pick a plan to keep making tours."
+            return "Your trial access has ended. Choose a subscription and confirm it with Apple to continue."
         case .featureLocked(let name):
             return "\(name) isn't in your current plan. Pick a plan that includes it."
         }
@@ -63,7 +64,7 @@ enum PaywallReason: Equatable, Sendable {
         case "aerials", "aerial":         return "aerial intros"
         case "drone", "topaz":            return "drone-glide upscales"
         case "seats", "seat":             return "seats"
-        case "":                          return "monthly allowance"
+        case "":                          return "allowance"
         default:                          return raw.replacingOccurrences(of: "_", with: " ")
         }
     }
@@ -83,7 +84,23 @@ final class PaywallRouter: ObservableObject {
     /// Why it's up. Read by `PaywallView`; set only through `present(reason:)`.
     @Published private(set) var reason: PaywallReason?
 
+    private var hosts: [UUID] = []
+    @Published private(set) var activeHost: UUID?
+
     private init() {}
+
+    func registerHost(_ id: UUID) {
+        hosts.removeAll { $0 == id }
+        hosts.append(id)
+        activeHost = hosts.last
+    }
+
+    func removeHost(_ id: UUID) {
+        hosts.removeAll { $0 == id }
+        activeHost = hosts.last
+    }
+
+    func ownsPresentation(_ id: UUID) -> Bool { activeHost == id && isPresented }
 
     func present(reason: PaywallReason) {
         self.reason = reason
@@ -145,30 +162,35 @@ extension Notification.Name {
 struct PaywallHostModifier: ViewModifier {
     @ObservedObject private var router = PaywallRouter.shared
     @Environment(\.scenePhase) private var scenePhase
+    @State private var hostID = UUID()
+    var managesLifecycle = true
 
     func body(content: Content) -> some View {
         content
             .task {
                 // Idempotent: starts the Transaction.updates listener once and
                 // does the first entitlement check.
-                PurchaseManager.shared.start()
+                if managesLifecycle { PurchaseManager.shared.start() }
             }
             .onChange(of: scenePhase) { phase in
-                guard phase == .active else { return }
+                guard managesLifecycle, phase == .active else { return }
                 // Re-check entitlements and retry any purchase the server
                 // hasn't accepted yet (rule 2 in PurchaseManager).
                 PurchaseManager.shared.refreshOnForeground()
             }
-            .sheet(isPresented: $router.isPresented) {
+            .onAppear { router.registerHost(hostID) }
+            .onDisappear { router.removeHost(hostID) }
+            .sheet(isPresented: Binding(get: { router.ownsPresentation(hostID) },
+                                       set: { if !$0, router.activeHost == hostID { router.dismiss() } })) {
                 PaywallView(reason: router.reason ?? .upgrade)
             }
     }
 }
 
 extension View {
-    /// Mount the one paywall sheet + the StoreKit lifecycle. Apply ONCE, at the
-    /// app root.
-    func paywallHost() -> some View {
-        modifier(PaywallHostModifier())
+    /// Root owns the StoreKit lifecycle. Modal feature screens opt out of it
+    /// while registering a visible host for the same authoritative router.
+    func paywallHost(managesLifecycle: Bool = true) -> some View {
+        modifier(PaywallHostModifier(managesLifecycle: managesLifecycle))
     }
 }

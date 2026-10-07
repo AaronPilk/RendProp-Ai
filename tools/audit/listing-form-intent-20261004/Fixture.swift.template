@@ -1,0 +1,121 @@
+__HARNESS__
+// Primitive UI stubs. Form, edit-sheet init/save, AppModel.modify, DTO map and
+// facts intent are extracted from product source; no SwiftUI or phone I/O runs.
+struct CLLocationCoordinate2D { var latitude: Double; var longitude: Double }
+__UNIT_ADDRESS__
+__FORM__
+enum Haptics { static func success() {} }
+@MainActor final class EditSheetFixture {
+    let model: SyncModel
+    let listing: Listing
+    var form: ListingFormData
+    private let original: ListingFormData
+    private let originalListing: Listing
+    private let ownerID: String?
+    private let sessionRevision: UInt64
+    private let workspaceID: UUID?
+    var dismissed = false
+    func dismiss() { dismissed = true }
+__SHEET_INIT__
+__CAN_SAVE__
+__SHEET_SAVE__
+    func saveNow() { save() }
+}
+@MainActor final class ReuseFormFixture {
+    let model: SyncModel
+    var form: ListingFormData
+    var pendingCoord: CLLocationCoordinate2D?
+    let formOwnerID = AuthStore.shared.userID
+    let formSessionRevision = AuthStore.shared.syncSessionRevision
+    let formWorkspaceID = WorkspaceContext.selectedOrgID
+    init(model: SyncModel, form: ListingFormData) { self.model = model; self.form = form }
+__REUSE_SAVE__
+    func saveNow(_ listing: Listing) -> Bool { applyExistingEdits(listing) }
+}
+@main struct ListingFormIntentChecks {
+ @MainActor static func main() async { do { try await run() } catch { print("FAIL: \(error)"); exit(1) } }
+ @MainActor static func run() async throws {
+    var count = 0
+    func check(_ ok: Bool, _ name: String) throws { if !ok { throw AssertionFailure(message: name) }; count += 1 }
+    func wait(_ predicate: () -> Bool) async throws { let end = Date().addingTimeInterval(5); while !predicate() { if Date() > end { throw AssertionFailure(message: "Timed out") }; await Task.yield() } }
+    let org = WorkspaceContext.selectedOrgID!, server = UUID(), local = UUID(), client = WireClient()
+    func response() -> [String: Any] { ["id":server.uuidString,"org_id":org.uuidString,"space_type":"real_estate","address":"Phone original address","beds":2,"baths":1.5,"sqft":900,"price_cents":12999995,"tagline":"Hidden shared headline","status":"ready","details":["floorplan_asset_id":"original-plan","year_built":1998,"allow_indexing":false]] }
+    var base = try client.mapped(JSONSerialization.data(withJSONObject: response())); base.id = local
+    let original = ListingFormData(listing: base)
+    try check(original.priceDollars == "129999.95", "Opened form preserves exact price cents")
+    var changed = original; changed.address = "Only address deliberately edited"
+    var office = base; office.sqft = 2345; office.price = Money(cents: 8800123); office.tagline = "Current office headline"; office.details?["floorplan_asset_id"] = "new-office-plan"
+    office.factsSync!.baseline = ListingFactsSync.values(office)
+    let model = SyncModel(base), sheet = EditSheetFixture(listing: base, model: model)
+    sheet.form = changed; model.listings[0] = office; sheet.saveNow()
+    let intent = model.listings[0].factsSync!.fields
+    try check(Set(intent.keys) == Set(["address"]), "Stale sheet stages only deliberately edited form fields")
+    try check(model.listings[0].sqft == 2345 && model.listings[0].price.cents == 8800123, "Untouched remote area and exact price survive the stale sheet")
+    try check(model.listings[0].tagline == "Current office headline", "Home edit cannot clear the unexposed shared headline")
+    try check(model.listings[0].details?["floorplan_asset_id"] == "new-office-plan", "Home edit preserves the fresh office plan attachment")
+    try check(intent["address"]!.expected == .text("Phone original address"), "Edited field expects the value when the sheet opened")
+    try check(sheet.dismissed, "Accepted current-session save closes its sheet")
+    try await wait { model.syncInFlight.isEmpty }
+
+    var sameFieldOffice = office; sameFieldOffice.address = "New office address"; sameFieldOffice.factsSync!.baseline = ListingFactsSync.values(sameFieldOffice)
+    let sameModel = SyncModel(base), sameSheet = EditSheetFixture(listing: base, model: sameModel)
+    sameSheet.form.address = "My losing phone address"; sameModel.listings[0] = sameFieldOffice
+    sameModel.api.update = { sent in
+        try check(sent.factsSync!.fields["address"]!.expected == .text("Phone original address"), "Same-field save keeps the opened baseline rather than current remote facts")
+        throw APIError.server(409)
+    }
+    sameSheet.saveNow()
+    try check(sameModel.listings[0].factsSync!.fields["address"]!.expected == .text("Phone original address"), "Same-field save keeps the opened baseline rather than current remote facts")
+    try await wait { sameModel.listings[0].factsSync?.conflict == true }
+    try check(sameModel.listings[0].address == "My losing phone address" && sameModel.listings[0].needsServerSync == true, "Same-field conflict retains explicit phone edits")
+
+    var priceEdit = original; priceEdit.priceDollars = "$123,456.78"
+    var priced = office; priceEdit.applyEdits(from: original, to: &priced)
+    try check(priced.price.cents == 12345678, "Explicit price edit parses decimal cents without floating point")
+    try check(priced.sqft == 2345 && priced.tagline == "Current office headline", "Price edit leaves unrelated remote facts alone")
+    var cleared = original; cleared.priceDollars = ""; var clearListing = base; cleared.applyEdits(from: original, to: &clearListing)
+    try check(clearListing.price.cents == 0, "Explicit empty price clears the local optional amount")
+
+    var venue = base; venue.spaceTypeRaw = "venue"; venue.details = ["capacitySeated":"20","bookingUrl":"https://old.example.invalid","floorplan_asset_id":"old-plan","future_metadata":"private-original"]
+    let originalVenue = ListingFormData(listing: venue); var venueEdit = originalVenue; venueEdit.details["capacitySeated"] = "25"
+    var latestVenue = venue; latestVenue.details?["bookingUrl"] = "https://fresh.example.invalid"; latestVenue.details?["floorplan_asset_id"] = "new-plan"; latestVenue.details?["future_metadata"] = "private-fresh"
+    venueEdit.applyEdits(from: originalVenue, to: &latestVenue)
+    try check(latestVenue.details?["capacitySeated"] == "25", "Business form applies the changed exposed detail")
+    try check(latestVenue.details?["bookingUrl"] == "https://fresh.example.invalid", "Untouched business input adopts current remote value")
+    try check(latestVenue.details?["floorplan_asset_id"] == "new-plan" && latestVenue.details?["future_metadata"] == "private-fresh", "Business edit preserves unknown metadata and plan attachment")
+    var deleteDetail = originalVenue; deleteDetail.details["capacitySeated"] = ""; var removed = latestVenue; deleteDetail.applyEdits(from: originalVenue, to: &removed)
+    try check(removed.details?["capacitySeated"] == nil && removed.details?["future_metadata"] == "private-fresh", "Explicit cleared business input deletes only that key")
+
+    var nearbyForm = original; nearbyForm.details["nearbyAttractions"] = "Apple Maps: Synthetic park · approx. 0.5 mi"
+    var nearbyListing = office; nearbyForm.applyEdits(from: original, to: &nearbyListing)
+    try check(nearbyListing.details?["nearbyAttractions"] == "Apple Maps: Synthetic park · approx. 0.5 mi", "Real estate form applies only the deliberately reviewed nearby note")
+    try check(nearbyListing.sqft == office.sqft && nearbyListing.details?["floorplan_asset_id"] == office.details?["floorplan_asset_id"], "Nearby form edit preserves untouched property facts and plan")
+    let nearbyOriginal = ListingFormData(listing: nearbyListing)
+    var nearbyClear = nearbyOriginal; nearbyClear.details["nearbyAttractions"] = ""
+    nearbyClear.applyEdits(from: nearbyOriginal, to: &nearbyListing)
+    try check(nearbyListing.details?["nearbyAttractions"] == nil, "Deliberate nearby clear removes the note")
+
+    let identityModel = SyncModel(base), identitySheet = EditSheetFixture(listing: base, model: identityModel); identitySheet.form.address = "Should remain unsubmitted"
+    let oldActor = AuthStore.shared.userID; AuthStore.shared.userID = UUID().uuidString; identitySheet.saveNow(); AuthStore.shared.userID = oldActor
+    try check(identityModel.listings[0] == base && !identitySheet.dismissed, "Account replacement rejects an old sheet save")
+    AuthStore.shared.syncSessionRevision += 1; identitySheet.saveNow(); AuthStore.shared.syncSessionRevision -= 1
+    try check(identityModel.listings[0] == base && !identitySheet.dismissed, "Session replacement rejects an old sheet save")
+    WorkspaceContext.selectedOrgID = UUID(); identitySheet.saveNow(); WorkspaceContext.selectedOrgID = org
+    try check(identityModel.listings[0] == base && !identitySheet.dismissed, "Workspace replacement rejects an old sheet save")
+    var fresh = original; fresh.address = "New local creation"; fresh.priceDollars = "100.05"; let created = fresh.makeListing(coordinate: nil)
+    try check(created.address == "New local creation" && created.price.cents == 10005, "Existing full create path retains exact cents and complete form application")
+    let reuseModel = SyncModel(office), reuse = ReuseFormFixture(model: reuseModel, form: changed)
+    try check(reuse.saveNow(base), "Existing create-screen draft reuse is accepted in its original scope")
+    try check(Set(reuseModel.listings[0].factsSync!.fields.keys) == Set(["address"]) && reuseModel.listings[0].price.cents == office.price.cents, "Reused draft form preserves untouched current remote facts")
+    let reuseIdentityModel = SyncModel(office), reuseIdentity = ReuseFormFixture(model: reuseIdentityModel, form: changed)
+    AuthStore.shared.syncSessionRevision += 1
+    try check(!reuseIdentity.saveNow(base) && reuseIdentityModel.listings[0] == office, "Reused draft rejects changed account-session context")
+    AuthStore.shared.syncSessionRevision -= 1
+    var unbound = base; unbound.serverID = nil; unbound.serverOrgID = nil; unbound.cloudDraftOrgID = org; unbound.cloudSyncOwnerID = UUID(uuidString: AuthStore.shared.userID!)
+    var firstBound = office; firstBound.cloudSyncOwnerID = unbound.cloudSyncOwnerID
+    let bindingModel = SyncModel(firstBound), binding = ReuseFormFixture(model: bindingModel, form: changed)
+    try check(binding.saveNow(unbound), "Same-owner first binding allows the original form snapshot")
+    try check(bindingModel.listings[0].address == changed.formattedAddress && Set(bindingModel.listings[0].factsSync!.fields.keys) == Set(["address"]), "An edit after first binding remains explicit intent")
+    print("PASS: \(count) assertions")
+ }
+}

@@ -1,108 +1,30 @@
-# App Review Information — Rendprop 1.0.1 (build 22)
+# App Review notes — regular 1.0.3 (42)
 
-Everything App Store Connect asks for on the "App Review Information" panel, as of
-**2026-09-12** (first written 2026-09-05 for 1.0; reworked for build 22 with the new plan
-allowances and the per-industry free week). This supersedes the template in
-`docs/APP-STORE-CHECKLIST.md` §7, which was written before subscriptions shipped and still
-said *"nothing is charged in this version"*. **That sentence must not be pasted into App
-Store Connect** — the app sells auto-renewable subscriptions and saying otherwise is a 3.1.2
-rejection waiting to happen.
+Reconciled on 2 October 2026. The text below matches the machine-uploaded
+[review notes](metadata/en-US/review_notes.txt). Submission and approval are
+separate states recorded by the [release receipt](../releases/APPSTORE-42-20261002.json).
+Build 42 was submitted on 2 October 2026 and is **Waiting for Review**, with
+automatic release after approval. Approved reviewer contact
+fields are retained in App Store Connect; no demo account is required.
 
----
+Rendprop creates shareable listing pages from phone walkthroughs and photos, with photo editing, reels and client contact cards. Walkthrough output is the user's recorded video, not captured drone footage or a production 3D walkthrough.
 
-## Sign-in required?
+ACCESS: exploring, capturing/importing, on-device rendering and individual publishing use an automatic anonymous workspace, without email/password registration. Cloud tools need network access and the relevant plan allowance. Sign in with Apple in Settings connects account recovery, cross-device/Studio sync and shared team membership. Team membership needs an identified account. There is no separate password login or external purchase link.
 
-**No.** Answer "Sign-in required: No" and leave the demo-account fields empty. Everything —
-capture, rendering, the AI tools, publishing a tour and buying a subscription — works with no
-account: the app opens an anonymous session for itself. Sign in with Apple is optional
-(Settings → Account; it carries a workspace to a new device). The one screen behind it is
-Settings → Team, because a seat belongs to a person, and nothing a reviewer needs is there.
-If the reviewer prefers an account anyway, any Apple ID works via Sign in with Apple — there
-is no invite list and no allow-list.
+NEW IN 1.0.3: real-estate onboarding offers Agent or Photographer/videographer. Per-listing client contact cards can replace the account card. Enquiry emails route to the saved client address; Leads shows delivery and explicit send/resend. Cover and current-gallery selections reach the published page. Pages start with photos/details; Watch fly-through opens Explore and Play modes. Photo batches continue across app screens; completed images stay saved. iOS background time is limited and unfinished work does not auto-resume after force-quit. Listing-toolbox crashes, room tags, detail forms and disclosures have been corrected. Optional enquiry, render and local photo-completion notifications respect preferences.
 
-## Notes field — copy-paste
+SPATIAL: experimental guided room tours and spatial walkthrough capture are TestFlight-only and are not exposed in this App Store build. The separate Floor plan tool remains: Apple RoomPlan requires a LiDAR-supported iPhone, with PDF/image import on other devices. It is not the experimental photorealistic spatial walkthrough.
 
-> The text Apple actually receives lives in `metadata/en-US/review_notes.txt` (≤ 4000 characters; `asc.py review apply` uploads that file, never this one). Keep the two in step — the block below is a verbatim copy.
+REVIEW: Home > See it in action opens the hosted sample. Watch fly-through opens Explore (scroll inside the viewer); Play uses normal playback. To create: Home > Add a home > enter an address > import a video or record > tag rooms > Create tour. Standard rendering is on-device. Import photos, open Photo Studio, review/export the current version and preview the contact card/gallery before publishing. Camera and LiDAR need a physical supported device.
 
-> Rendprop turns an iPhone walkthrough into a smooth "drone-style" property tour, hosted as a web link the user shares with clients.
->
-> NO ACCOUNT IS REQUIRED (the 5.1.1(v) fix). Every feature, publishing and the subscription purchase included, works on first launch with no registration. The app opens a session for itself in the background: no email, phone or password is asked for or stored. There is no sign-in screen in the normal flow.
->
-> NEW IN THIS BUILD (22): (a) Plan allowances changed; prices did not. Starter $49: 4 tour renders, 100 AI photo edits, 6 reel clips, 2 aerial intros, 1 seat. Pro $99: 10 renders, 200 edits, 12 clips, 4 aerial intros, 1 seat. Team $249: 25 renders, 400 edits, 25 clips, 8 aerial intros, 2 seats (was 3). (b) The free week is sized to the business type chosen at setup: real estate 3 tour renders, single-location businesses 1 (below). (c) An upload interrupted mid-way recovers on its own or offers "Start over". (d) Sign in with Apple after signing out works every time. (e) Nothing new needs an account. (f) A 3D room-scanning feature exists in the code but is switched off server-side and does not appear in the app.
->
-> Sign in with Apple is offered only as an option in Settings > Account, to carry a workspace to a new device. That screen says so and offers "Not now". It is never required to reach a feature or to buy.
->
-> THE ONE EXCEPTION, and nothing a reviewer needs is behind it: Settings > Team. A seat belongs to a person, so starting or joining a team asks for Sign in with Apple. Seats are not sold there: the Team plan is an ordinary auto-renewable subscription bought through StoreKit like the other four, and no link in the app leaves it to buy anything.
->
-> FREE WEEK: a new install gets seven days with a larger allowance, then drops to the free plan (1 tour render a month). Real estate: 3 tour renders, 60 photo edits, 4 reel clips, 2 aerial intros. Event venue, restaurant/bar, retail/grocery, gym/studio or other business: 1 tour render, 60 photo edits, 4 reel clips, 1 aerial intro. Automatic, no card, no account; the last intro screen says so. It is deliberately NOT called a "free trial" in the UI, so it is not confused with the 7-day StoreKit introductory offer on the paid plans.
->
-> DEMO FLOW: Home > "See it in action" plays a live sample tour - scroll inside the video to move through the space. To build one: Home > "Add a home" > paste a listing link or an address > "Upload a video" or "Record a walkthrough" > tag rooms > "Create tour". The flythrough renders on the device.
->
-> SUBSCRIPTIONS: auto-renewable, StoreKit 2, five products in one group (rendprop_plans) - Starter and Pro monthly or yearly, Team monthly - each with a 7-day free introductory offer. They unlock the monthly allowances above. Settings > "Plan & usage" > "Upgrade plan" reaches the paywall from a cold launch with no account; "Manage subscription" opens Apple's own sheet. Every price comes from StoreKit's Product.displayPrice; there is no other way to pay in the app. If the paywall says "Plans aren't available right now", StoreKit returned no products, i.e. they are not yet approved.
->
-> ACCOUNT DELETION (5.1.1(v)): Settings > "Your data" > "Delete account", always visible. It deletes the server-side account, published tours, uploaded media and leads, then wipes local data. It works for a session that never signed in with Apple, since the app created that account silently.
->
-> AI-GENERATED CONTENT: the AI photo edits (sky, twilight, lawn, tidying, virtual staging) and the AI aerial intro alter imagery. Every altered asset carries an in-app disclosure, the tour page shows a persistent "Virtually staged" label, and the unaltered original is published beside the edit. A listing's Compliance section lists every AI asset and exports the audit log.
->
-> USER CONTENT: users record their own spaces (the app says "Only record spaces you have the right to record and publish"). No in-app feed, no way to browse another user's content.
->
-> Contact: aaron@pilk.ai
+SUBSCRIPTIONS: StoreKit 2, five approved products in rendprop_plans: Starter/Pro monthly or yearly; Team monthly. Home and Settings expose plans; Settings > Plan & usage offers upgrade/change plan, Restore purchases and Manage subscription. Apple handles changes/cancellation. Restore/management remain available if products fail to load. Prices use Product.displayPrice. Purchases identify the billing workspace and require its owner/admin permission.
 
-## What changed for build 22 (the facts behind the notes)
+TRIAL: new accounts start on free without an automatic grant. A trial starts only after Apple confirms a subscription and Rendprop verifies its signed transaction. Seven days free is offered only for that exact StoreKit offer and eligibility; otherwise Subscribe. Renewal price, period and cancellation are disclosed. Cancelling the purchase sheet grants no access. Existing legacy grants retain their expiry.
 
-- **Plan allowances** (prices unchanged: Starter $49/mo or $490/yr, Pro $99/mo or $990/yr,
-  Team $249/mo): Starter 4 tour renders, 100 AI photo edits, 6 reel clips, 2 aerial intros,
-  1 seat; Pro 10 / 200 / 12 / 4, 1 seat; Team 25 / 400 / 25 / 8, **2 seats** (was 3).
-- **Free week, per business type**: real estate 3 tour renders, 60 photo edits, 4 reel clips,
-  2 aerial intros; single-location businesses (event venue, restaurant/bar, retail/grocery,
-  gym/studio, other) 1 tour render, 60 photo edits, 4 reel clips, 1 aerial intro. Then the
-  free plan: 1 tour render a month.
-- **Uploads** interrupted mid-way recover on their own or offer "Start over".
-- **Sign in with Apple after sign-out** works every time.
-- **Nothing new needs an account.**
-- A **3D room-scanning** feature exists in the code but is switched off server-side and does
-  not appear in the app — it is mentioned so a reviewer reading the binary is not surprised.
+DELETION: Settings > Your data > Delete account covers anonymous and identified accounts and their sole-member workspaces. Shared workspace content can remain for other members. Failures/pending cleanup are reported. Removing local data is separate; deleting the app does not cancel an Apple subscription.
 
-## What is NOT part of review
+AI: explicit consent names providers and media/text uses, including quality checks/fallback. Settings > Your data > AI processing revokes permission. Altered media carries disclosure; original comparison requires a verified untouched original. Geometry is not guaranteed unchanged. Compliance exports disclosure/audit information.
 
-The **owner console** (Settings → "Spend & providers", AI routing, provider key health,
-funnel) is a first-party admin surface. It renders only when the signed-in account is
-flagged `isAdmin` by our server, which no reviewer account will be. Do not describe it in
-the review notes, do not supply credentials for it, and do not ask the reviewer to look at
-it — it is not a feature of the app under review, and mentioning it only invites questions
-about an area the reviewer cannot reach.
+USER CONTENT: shared listing/portfolio links can open inside the app; team members access shared workspaces. No public discovery feed, comment thread or user-to-user chat. Publish only content you have permission to use.
 
-Likewise, do not mention TestFlight, "early access", a roadmap, or any unreleased feature
-in the notes. (2.3.1) The one deliberate exception is item (f) in the build-22 paragraph: it
-discloses that dormant room-scanning code ships switched off, so a reviewer who finds it in
-the binary is not surprised — it promises nothing.
-
-## Contact fields
-
-| Field | Value |
-|---|---|
-| First / last name | Aaron (owner) |
-| Phone number | **required — fill this in**; App Review will not accept an empty phone field |
-| Email | aaron@pilk.ai |
-
-## Attachment
-
-Attach the IAP review screenshot described in `docs/appstore/iap-review/README.md` to the
-**subscription group's** review information (not the app's) if App Store Connect asks for
-one. The five products themselves each need a review screenshot showing the paywall with
-that plan visible. (`com.rendprop.app.team.annual` is **not sold at launch** — see
-`docs/handoff/launch-P1.md` §5.3 — so it needs neither a product nor a screenshot yet.)
-
-## Pre-submission truths a reviewer will test
-
-These are not copy — they are the four things that must actually be live, or the notes
-above become false:
-
-1. `https://rendprop.com/privacy` and `https://rendprop.com/terms` resolve (the paywall,
-   Settings, and the App Store listing all link to them).
-2. `DELETE /me` is deployed, so "Delete account" succeeds for anonymous sessions and
-   signed-in accounts alike.
-3. Sign in with Apple completes against the live Supabase Auth project.
-4. A tour published from a device opens on another device from its share link.
-
-`docs/APP-STORE-CHECKLIST.md` §1 tracks these as blockers.
+Contact: aaron@pilk.ai

@@ -118,6 +118,8 @@ enum ProductionPlanCache {
         var revision: Int
         var dirty: Bool
         var pendingWrite: PendingWrite? = nil
+        /// Receipt-bound local handoff marker; retained through subsequent edits.
+        var adoptedOperationID: UUID? = nil
     }
     private static func key(owner: String, listingID: UUID) -> String {
         "production-plan.\(owner).\(listingID.uuidString.lowercased())"
@@ -143,6 +145,31 @@ enum ProductionPlanCache {
         let data = try JSONEncoder().encode(draft)
         defaults.set(data, forKey: key(owner: owner, listingID: listingID))
     }
+    /// Anonymous plans cannot have a server revision: Studio accepts named
+    /// accounts only. Copy once after the exact verified handoff; preserve the
+    /// guest copy and any destination edits made after a successful copy.
+    static func adopt(sourceOwner: String, destinationOwner: String, listingID: UUID,
+                      operationID: UUID, defaults: UserDefaults = .standard) throws {
+        guard sourceOwner != destinationOwner else { throw ProductionPlanError.invalidDocument }
+        guard var source = try load(owner: sourceOwner, listingID: listingID, defaults: defaults) else { return }
+        if let destination = try load(owner: destinationOwner, listingID: listingID, defaults: defaults) {
+            guard destination.adoptedOperationID == operationID else { throw ProductionPlanError.invalidDocument }
+            return
+        }
+        guard source.revision == 0, source.pendingWrite == nil else { throw ProductionPlanError.invalidDocument }
+        source.adoptedOperationID = operationID
+        // Mark as dirty even when a guest only selected the initial recipe.
+        // This keeps loading a new account's empty cloud slot from hiding it.
+        source.dirty = true
+        try save(source, owner: destinationOwner, listingID: listingID, defaults: defaults)
+        // The adoption journal may be committed immediately after this call;
+        // flush this one-time handoff before that separate durable commit.
+        guard defaults.synchronize() else { throw ProductionPlanError.invalidDocument }
+        guard try load(owner: destinationOwner, listingID: listingID, defaults: defaults) == source else {
+            throw ProductionPlanError.invalidDocument
+        }
+    }
+
     static func remove(listingID: UUID, defaults: UserDefaults = .standard) {
         let suffix = ".\(listingID.uuidString.lowercased())"
         for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("production-plan.") && key.hasSuffix(suffix) {
@@ -163,7 +190,8 @@ enum ProductionPlanAcknowledgement {
                       current: ProductionPlanCache.Draft) throws -> ProductionPlanCache.Draft {
         guard accepts(document, attempt: attempt), current.revision == attempt.revision,
               current.plan.listingId == attempt.plan.listingId else { throw ProductionPlanError.invalidDocument }
-        return .init(plan: current.plan, revision: document.revision, dirty: current.plan != attempt.plan)
+        return .init(plan: current.plan, revision: document.revision, dirty: current.plan != attempt.plan,
+                     adoptedOperationID: current.adoptedOperationID)
     }
 }
 

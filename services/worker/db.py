@@ -89,18 +89,19 @@ def _headers(prefer: str | None = None) -> dict:
     key = SETTINGS.supabase_service_role_key
     h = {
         "apikey": key,
-        "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "Accept-Profile": SETTINGS.db_schema,   # reads
         "Content-Profile": SETTINGS.db_schema,  # writes
     }
+    if not key.startswith("sb_secret_"):
+        h["Authorization"] = f"Bearer {key}"
     if prefer:
         h["Prefer"] = prefer
     return h
 
 
 def _check(resp: requests.Response) -> None:
-    if not resp.ok:
+    if not resp.ok or not 200 <= resp.status_code < 300:
         try:
             error = resp.json()
         except ValueError:
@@ -124,6 +125,8 @@ def _json(resp: requests.Response):
 def _request(method: str, table: str, **kw) -> requests.Response:
     """One place that talks HTTP. Maps transport failures onto DBError."""
     kw.setdefault("timeout", 30)
+    # Redirects cannot forward the privileged custom apikey to another origin.
+    kw["allow_redirects"] = False
     try:
         return requests.request(method, _url(table), **kw)
     except requests.RequestException as e:
@@ -146,6 +149,29 @@ def insert(table: str, row: dict, *, prefer: str = "return=representation") -> l
     r = _request("POST", table, headers=_headers(prefer), json=row)
     _check(r)
     return _json(r)
+
+
+def reserve_media_storage(org_id: str, bucket: str, key: str, size: int) -> None:
+    """Prewrite custody/byte hold; an ambiguous PUT never releases this hold."""
+    try:
+        UUID(org_id)
+    except (ValueError, TypeError, AttributeError):
+        raise DBError("Storage admission requires an exact workspace") from None
+    if bucket == SETTINGS.r2_bucket_renders:
+        logical_bucket = "renders"
+    elif bucket == SETTINGS.r2_bucket_uploads:
+        logical_bucket = "uploads"
+    else:
+        raise DBError("Storage admission requires a configured bucket")
+    if not isinstance(size, int) or isinstance(size, bool) or not 1 <= size <= 12 * 1024 ** 3:
+        raise DBError("Generated object exceeds the storage admission limit")
+    response = _request("POST", "rpc/media_storage_reserve", headers=_headers(), json={
+        "p_org": org_id, "p_bucket": logical_bucket, "p_key": key, "p_bytes": size,
+    })
+    _check(response)
+    payload = _json(response)
+    if not isinstance(payload, dict) or payload.get("reserved") is not True:
+        raise DBError("Storage admission could not be confirmed")
 
 
 def patch(table: str, filters: dict, values: dict, *, prefer: str = "return=minimal") -> list:

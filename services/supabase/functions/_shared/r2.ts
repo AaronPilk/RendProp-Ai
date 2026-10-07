@@ -91,6 +91,24 @@ export async function inspectStudioChunk(key:string):Promise<{bytes:number;sha25
   return {bytes:Number(response.headers.get("content-length")),sha256:response.headers.get("x-amz-meta-sha256")??""};
 }
 
+/** One service-journaled logo dispatch, with immutable destination and bounded
+ * raster bytes. No reusable URL, redirect, SDK retry or overwrite of a prior logo. */
+export async function writeBrandLogo(key: string, bytes: Uint8Array<ArrayBuffer>, type: string, sha256: string): Promise<void> {
+  if (!/^renders\/[a-f0-9-]{36}\/brand\/[a-f0-9-]{36}\.(?:jpg|png)$/.test(key) || bytes.length < 1 || bytes.length > 524288 || !["image/jpeg", "image/png"].includes(type) || !/^[a-f0-9]{64}$/.test(sha256)) throw new HttpError(400, "Invalid logo upload.");
+  const response = await uploadDispatch(`${endpoint()}/${R2_BUCKET_RENDERS}/${encodeKey(key)}`, {
+    method: "PUT", headers: { "content-type": type, "content-length": String(bytes.length), "if-none-match": "*", "x-amz-meta-sha256": sha256 }, body: bytes, aws: { allHeaders: true },
+  }, 15_000);
+  void response.body?.cancel().catch(() => {});
+  if (!response.ok) throw new HttpError(503, "Logo upload could not be confirmed. Reload your brand card before retrying.", "upstream");
+}
+export async function inspectBrandLogo(key: string): Promise<{ bytes: number; type: string; sha256: string; etag: string } | null> {
+  if (!/^renders\/[a-f0-9-]{36}\/brand\/[a-f0-9-]{36}\.(?:jpg|png)$/.test(key)) throw new HttpError(400, "Invalid logo key.");
+  const response = await uploadDispatch(`${endpoint()}/${R2_BUCKET_RENDERS}/${encodeKey(key)}`, { method: "HEAD" }, 10_000);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new HttpError(503, "Logo upload could not be checked. Reload your brand card before retrying.", "upstream");
+  return { bytes: Number(response.headers.get("content-length")), type: response.headers.get("content-type") ?? "", sha256: response.headers.get("x-amz-meta-sha256") ?? "", etag: response.headers.get("etag") ?? "" };
+}
+
 export interface PresignArgs {
   bucket: string;
   key: string;
@@ -120,6 +138,23 @@ export async function presignPut(args: PresignArgs): Promise<string> {
 export function publicR2Url(key: string | null | undefined): string | null {
   if (!key || !R2_PUBLIC_BASE_URL) return null;
   return `${R2_PUBLIC_BASE_URL}/${encodeKey(key)}`;
+}
+
+/** Roll out only after the bound Worker passes byte/Range/legacy-ingress checks.
+ * This switch preserves old clients while deploying the replacement boundary. */
+export const PUBLIC_MEDIA_PROXY = trimmedEnv("PUBLIC_MEDIA_DELIVERY") === "proxy-v1";
+const MEDIA_BASE = (trimmedEnv("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
+export function publishedR2Url(slug: string, key: string | null | undefined): string | null {
+  if (!key) return null;
+  return PUBLIC_MEDIA_PROXY ? `${MEDIA_BASE}/media/${encodeURIComponent(slug)}/r2/${encodeURIComponent(key)}` : publicR2Url(key);
+}
+export function publishedBrandLogoUrl(key: string): string | null {
+  return PUBLIC_MEDIA_PROXY ? `${MEDIA_BASE}/media-brand/${encodeKey(key)}` : publicR2Url(key);
+}
+export function publishedStreamUrl(slug: string, uid: string | null | undefined): string | null {
+  if (!uid) return null;
+  if (PUBLIC_MEDIA_PROXY && trimmedEnv("STREAM_PRIVATE_PLAYBACK") !== "1") return null;
+  return PUBLIC_MEDIA_PROXY ? `${MEDIA_BASE}/media/${encodeURIComponent(slug)}/stream/${encodeURIComponent(uid)}/manifest%2Fvideo.m3u8` : streamHlsUrl(uid);
 }
 
 /** Cloudflare Stream HLS manifest URL for a Stream UID, or null if not configured. */
@@ -363,9 +398,13 @@ export interface HeadResult {
 }
 
 /** HEAD one object — signed server-side. 404 → { exists: false }. */
-export async function headObject(bucket: string, key: string): Promise<HeadResult> {
+export async function headObject(bucket: string, key: string, signal?: AbortSignal): Promise<HeadResult> {
   const url = `${endpoint()}/${bucket}/${encodeKey(key)}`;
-  const resp = await client().fetch(url, { method: "HEAD" });
+  // Preserve existing callers. Bounded attestation reads use one signed native
+  // dispatch, so the SDK cannot retry beyond this observation's abort budget.
+  const resp = signal
+    ? await fetch(await client().sign(url, { method: "HEAD", signal, redirect: "error" }))
+    : await client().fetch(url, { method: "HEAD" });
   if (resp.status === 404) return { exists: false, bytes: null, contentType: null, etag: null };
   if (!resp.ok) throw new HttpError(502, `R2 HEAD ${bucket}/${key} failed (${resp.status})`);
   const len = resp.headers.get("content-length");
@@ -377,13 +416,49 @@ export async function headObject(bucket: string, key: string): Promise<HeadResul
   };
 }
 
-/** Delete one object. Returns true if gone (204 or already absent). */
+/** Delete one object. S3 returns success even when the key is already absent.
+ * A 404 can be a missing bucket, so it never confirms this target was erased. */
 export async function deleteObject(bucket: string, key: string): Promise<boolean> {
   const url = `${endpoint()}/${bucket}/${encodeKey(key)}`;
-  const resp = await client().fetch(url, { method: "DELETE" });
-  // R2/S3 returns 204 on delete; 404 means it was never there / already gone.
-  if (resp.ok || resp.status === 404) return true;
+  const resp = await uploadDispatch(url, { method: "DELETE" }, 10_000);
+  // R2/S3 returns204 for an absent key too. Missing-bucket404 stays queued.
+  if (resp.ok) { await resp.body?.cancel().catch(() => {}); return true; }
+  await resp.body?.cancel().catch(() => {});
   throw new Error(`R2 DELETE ${bucket}/${key} -> ${resp.status}`);
+}
+
+export interface OwnedCleanupPrefix { bucket: string; prefix: string; org_id: string; removed_count: number }
+export function validateOwnedCleanupPrefix(target: OwnedCleanupPrefix): void {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (Object.keys(target).some(key => !["bucket", "prefix", "org_id", "removed_count"].includes(key)) || !uuid.test(target.org_id) ||
+    !((target.bucket === R2_BUCKET_RENDERS && target.prefix === `ai-router/${target.org_id}/`) ||
+      (target.bucket === R2_BUCKET_UPLOADS && target.prefix === `presenter-private/${target.org_id}/`)) ||
+    !Number.isSafeInteger(target.removed_count) || target.removed_count < 0) throw new HttpError(502, "Owned storage cleanup scope could not be verified.");
+}
+
+/** Frozen solely-owned account namespaces only. Delete the first small page,
+ * then recheck it; deleting while using continuation markers can skip keys. */
+export async function deleteOwnedPrefixPage(target: OwnedCleanupPrefix): Promise<{ complete: boolean; deleted: number }> {
+  validateOwnedCleanupPrefix(target);
+  const list = async (limit: number): Promise<string[]> => {
+    const url = new URL(`${endpoint()}/${target.bucket}`);
+    url.searchParams.set("list-type", "2"); url.searchParams.set("prefix", target.prefix); url.searchParams.set("max-keys", String(limit));
+    const text = await boundedXML(url, 10_000);
+    if (text === null || (!/<ListBucketResult(?:\s|>)/.test(text) || !/<\/ListBucketResult>\s*$/.test(text))) throw new HttpError(503, "Owned storage inventory could not be confirmed.");
+    const truncated = firstTag(text, "IsTruncated");
+    if (!["true", "false"].includes(truncated ?? "")) throw new HttpError(503, "Owned storage inventory is incomplete.");
+    const keys = Array.from(text.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g), entry => xmlValue(firstTag(entry[1], "Key") ?? ""));
+    const countText = firstTag(text, "KeyCount"), count = Number(countText);
+    if (countText === null || !/^\d+$/.test(countText) || !Number.isSafeInteger(count) || count !== keys.length || keys.length > limit ||
+      keys.some(key => !key.startsWith(target.prefix) || key.length <= target.prefix.length || key.length > 4096 || /[\u0000-\u001f]/.test(key) || /(^|\/)\.{1,2}(\/|$)/.test(key)) ||
+      new Set(keys).size !== keys.length || (!keys.length && truncated === "true")) throw new HttpError(503, "Owned storage inventory scope is invalid.");
+    return keys;
+  };
+  const keys = await list(32);
+  if (!keys.length) return { complete: true, deleted: 0 };
+  const result = await deleteObjects(keys.map(key => ({ bucket: target.bucket, key })), 4, 32);
+  if (result.errors.length || result.deleted !== keys.length) throw new HttpError(503, "Owned storage cleanup still has unconfirmed objects.");
+  return { complete: (await list(1)).length === 0, deleted: result.deleted };
 }
 
 /**

@@ -1,257 +1,59 @@
-# App Store screenshots — 6.9-inch set
+# App Store screenshots — current 1.0.3 set
 
-This repository's capture/composition workflow uses a **6.9-inch** set at
-**1320 × 2868 portrait**. The current `plan.json` contains **nine frames**.
-[Apple's screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications)
-accept this size. The app is iPhone-only
-(`TARGETED_DEVICE_FAMILY = 1`), so **there is no iPad set**.
+The 2 October 2026 plan contains **five representative native screenshots**, at
+**1320 × 2868 portrait**, RGB, each below 8 MiB. These use Apple's
+`APP_IPHONE_67` display type. Rendprop is iPhone-only; no iPad set is required.
+[Apple screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications).
 
-Reviewed against source on 24 September 2026. The 6 September submission record
-at the end is historical; this README refresh did not recapture or upload any
-images. The current Studio release did not ship a new iOS binary. Before any
-owner-run upload, reconcile the intended version with
-[the legacy ASC tool's release target](../../../tools/asc/README.md#release-target-caution).
+| Order | Frame | Headline |
+| --- | --- | --- |
+| 1 | `02-every-tool.png` | Listing content in one place |
+| 2 | `03-every-business.png` | Venues, gyms and restaurants too |
+| 3 | `05-one-link.png` | One link. Leads land in the app. |
+| 4 | `08-social-reel.png` | Photos become a social reel |
+| 5 | `09-start-in-a-minute.png` | Add the home. Film it. Share it. |
 
-The workflow has four stages. The chapter capture needs a retained or manual
-input, as detailed below:
+The retained native pixels came from actual approved screenshots, checked
+against App Store Connect's original checksums. Captions were recomposed from
+[plan.json](plan.json). No camera capture, generation, purchase or publishing
+was performed for the composition. The listing and leads are fictional samples.
+The five final files and their order, hashes and dimensions are recorded in the
+private 1.0.3 release manifest. Apple readback verified all five assets in this
+order with matching checksums, dimensions and `COMPLETE` delivery states. They
+are attached to the submitted 1.0.3 (42) version; released 1.0.1's nine assets
+were verified unchanged. See the [release receipt](../../releases/APPSTORE-42-20261002.json).
 
-| Step | Where | Command | Output |
-|---|---|---|---|
-| 1. Capture | Mac bridge | `bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-storeshots.sh"` | `~/Rendprop AI/_bridge/out/storeshots/s01-… s15-….png` — raw simulator captures |
-| 2. Stage | Mac | copy the raw captures into `docs/appstore/screenshots/6.9/` (optional, see below) | the committed raw set |
-| 3. Compose | Mac or container | `python3 tools/screenshots/compose.py --src <captures> --plan docs/appstore/screenshots/plan.json --out docs/appstore/screenshots/6.9-framed` then `--check` | `6.9-framed/*.png` + `sheet.jpg` |
-| 4. Upload | Mac | `python3 tools/asc/asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace` | the APP_IPHONE_67 set in App Store Connect |
+The old nine-frame 1.0.1 set is historical. Three hosted-page captures and the
+old Photo Studio capture are omitted because their UI/disclosures no longer
+represent the release. Never upload the old paywall review screenshot as a
+marketing frame: its allowances are outdated. Approved subscription assets are
+not changed in this release.
 
-A raw capture is a plain screenshot. What the store shows is the **framed** version: the
-capture with rounded corners on a brand background under a one-line benefit headline — the
-format defined by this project's composer. `plan.json` is the set: which captures,
-in which order, with which words.
+## Capture and composition
 
-## The set (`plan.json`)
+Native capture uses [StoreShots.swift](../../../apps/ios/RendpropUITests/StoreShots.swift).
+The bridge script historically targeted `~/Rendprop AI/repo`; inspect the actual
+checkout, simulator, generated project and scheme before invoking it. Test-only
+sample fixtures are simulator UI aids, not evidence of physical camera quality.
+Do not replace missing screenshots with mock product UI.
 
-| # | Frame | Headline | Raw capture(s) |
-| --- | --- | --- | --- |
-| 1 | `01-cinematic-tour.png` | Walk it once. A cinematic tour. | `01-published-tour` (`s08`) |
-| 2 | `02-every-tool.png` | Every tool in one place | `02-home-showroom` (`s01`) |
-| 3 | `03-every-business.png` | Venues, gyms and restaurants too | `s09-venue-home`, `s10-restaurant-home`, `s11-gym-home`; column layout |
-| 4 | `04-photo-fixes.png` | Photos fixed in one tap | `04-photo-studio` (`s04`) |
-| 5 | `05-one-link.png` | One link. Leads land in the app. | `s14-leads` |
-| 6 | `06-tap-a-room.png` | Tap a room. Fly straight there. | `s16-tour-chapters` |
-| 7 | `07-book-from-the-tour.png` | Buyers book from the tour | `s15-share-link` |
-| 8 | `08-social-reel.png` | Photos become a social reel | `s05-reel-studio` |
-| 9 | `09-start-in-a-minute.png` | Add the home. Film it. Share it. | `05-new-home` (`s03`) |
-
-The first three are what people see in search results; the real-estate hero is first and the
-industry frame is third on purpose. Every headline is a benefit in plain English, at most 32
-characters, no hype words, no emoji, and nothing a fair-housing reviewer could read as a claim
-about people or neighbourhoods. Rules the composer enforces: ≤ 2 lines, ≥ 4.5:1 contrast,
-1320 × 2868, RGB, under 8 MB.
-
-`s13-floor-plan`, `s07-plan-usage`, `s06-aerial-intro` and `s12-reel-studio`
-are not selected by the current plan. `s14-leads` **is** selected and uses
-explicit sample leads under the store-shot flags. The plan requires
-`s16-tour-chapters`, but the current `StoreShots.swift` does not emit that
-attachment: preserve its existing approved raw capture or obtain a new real UI
-capture. Do not claim the automatic walk regenerates all nine frames on its own.
-A missing frame must be resolved before describing a generated set as complete.
-
-## Step 1 — capture (Mac bridge)
+Compose retained actual captures with the repository tool:
 
 ```bash
-bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-storeshots.sh"
+python3 tools/screenshots/compose.py --src <actual-captures> --plan docs/appstore/screenshots/plan.json --out <private-final-set>
+python3 tools/screenshots/compose.py --src <actual-captures> --plan docs/appstore/screenshots/plan.json --out <private-final-set> --check
 ```
 
-The bridge script targets `~/Rendprop AI/repo`, not necessarily the checkout
-from which it was invoked. Inspect that path and the selected simulator first.
-It reports individual stage exit codes and performs:
+Review every final image visually and verify RGB dimensions, byte size, readable
+copy and representative native pixels. The first frame shows Home and tools.
+Keep the explicit plan order; gaps in historical filenames do not create
+missing frames.
 
-1. `xcodegen generate` from the bridge checkout's current `project.yml`. The
-   committed project now includes the UI target; regeneration keeps membership aligned.
-2. Finds or creates a simulator called **"Store 6.9"** — `iPhone 17 Pro Max` on the newest
-   installed iOS runtime, falling back to `iPhone 16 Pro Max`. Both are 1320 × 2868.
-3. Freezes the status bar: `simctl status_bar … --time 9:41 --batteryState charged
-   --batteryLevel 100 --wifiBars 3 --cellularBars 4`.
-4. Seeds the simulator's photo library (see below).
-5. `xcodebuild test -only-testing:RendpropUITests/StoreShots`.
-6. Exports the attachments from the `.xcresult` and renames them by the names the test gave
-   them, exactly like `bridge-cmd-uiwalk.sh` does.
-7. **Rejects anything that is not exactly 1320 × 2868** (`sips -g pixelWidth -g pixelHeight`).
-   A wrong size means the test ran on the wrong simulator; nothing wrong-sized is copied.
+## Upload boundary
 
-Output: `~/Rendprop AI/_bridge/out/storeshots/s01-….png` … `s15-….png` (each with
-xcresulttool's `_0_<id>` suffix, which the composer ignores). What the test captures:
-
-| Attachment | Screen | Notes |
-|---|---|---|
-| `s01-home-showroom` | Home, top | The hero card, the home step 04 created, the first tool tiles. |
-| `s02-sample-tour` | Home, scrolled to "See it in action" | The tool grid, the leads banner, the hosted demo player scrubbed a few seconds in. |
-| `s03-new-home` | New Home | The form with an address typed in. |
-| `s04-photo-studio` | AI Photo Studio | The one-tap edits on offer. **No edit is ever run** — see below. |
-| `s05-reel-studio` | Reel Studio | Needs ≥ 2 photos on the home, else it skips itself. |
-| `s06-aerial-intro` | Aerial intro sheet | Time of day, camera move, the AI disclosure. |
-| `s07-plan-usage` | Settings → Plan & usage | What a plan gets you, in the app's own words. |
-| `s08-published-tour` | The hosted demo listing page | What the person on the other end of the link sees. Needs network. |
-| `s09-venue-home` | Home as an event venue | The app relaunched without `-space.type`, then the top-left switcher driven to Event venue. |
-| `s10-restaurant-home` | Home as a restaurant / bar | Same, Restaurant / Bar. |
-| `s11-gym-home` | Home as a gym / studio | Same, Gym / Studio. |
-| `s12-reel-studio` | Reel entry | The real home's toolbox → "Make a reel": the studio with the reel card ringed. With two photos on the home it opens Reel Studio itself. |
-| `s13-floor-plan` | Floor plan | The upload path — a simulator has no LiDAR and the screen says so. |
-| `s14-leads` | Leads | Sample inbox under the store-shot-only `-ui.sampleLeads` flag; not customer enquiries. |
-| `s15-share-link` | The share surface | A share action on the sample if one exists (it never does — samples never publish), else the hosted demo page scrolled to its agent card and lead form, else the Profile card. |
-
-Why s09–s11 relaunch: a `-key value` launch argument lands in UserDefaults' argument domain,
-which wins over anything the switcher persists, so under `-space.type real_estate` the menu
-could never re-theme Home. The test drops the pin, drives the menu like a user, and takes the
-hero headline changing as proof. If the menu cannot be driven it relaunches pinned to that
-type and says so in the activity notes.
-
-### Seed real photos first — this is the one thing worth doing by hand
-
-`s04`, `s05` and `s12` show the photo studio and reel maker with the media
-seeded into the test property. Put your own listing photos — interiors and
-exteriors you would genuinely publish — in:
-
-```
-~/Rendprop AI/_bridge/in/storeshot-photos/
-```
-
-The script converts up to six to PNG, seeds the simulator library and exports
-`TEST_RUNNER_STORESHOT_PHOTOS`. `StoreShots` passes the seed folder to the app
-through `-ui.seedPhotosDir`; the app imports up to four into an empty test
-property. This avoids depending on the out-of-process system picker.
-With nothing there it falls back to a macOS desktop picture, and with nothing at all the
-studio is captured showing its own showcase of the six one-tap edits — honest, but a much
-weaker image, and `s05` skips itself because the reel card stays disabled below two photos.
-(The test never drives the system photo picker itself — that is a separate process and the
-first run captured the picker instead of the studio.)
-
-### Two rules the test enforces, and why
-
-**Why no before/after in `s04`.** The test runs with `-uiTesting`, which swaps in
-`MockAPIClient`, whose `aiPhotoEdit` **echoes the submitted image straight back**. A
-"before and after" built from that is two identical photos presented as an AI result — a
-misleading screenshot and a 2.3.3 rejection. If you want a genuine before/after in the set,
-capture it on a real device against the live backend and add it by hand.
-
-**Why the paywall is not in this set.** `StoreShots` attaches no StoreKit configuration, so
-under `xcodebuild test` `Product.products(for:)` returns an empty array and the paywall
-correctly renders "Plans aren't available right now". That empty state must never reach the
-App Store. The IAP review screenshot is produced by `PaywallShot` (an `SKTestSession` supplies
-local fixture prices) — `docs/appstore/iap-review/README.md`.
-
-The test also never taps a purchase button, never confirms a deletion, never runs an AI job
-and never publishes.
-
-### Reading a missing shot
-
-Every step that could not be reached writes its reason into the result bundle as an
-activity name:
-
-```bash
-xcrun xcresulttool get test-results activities \
-  --path ~/"Rendprop AI"/_bridge/out/storeshots-<stamp>.xcresult \
-  --test-id 'StoreShots/testStoreShots()'
-```
-
-Look for an activity beginning `SKIPPED:` — it names the exact control that was not found —
-or `FALLBACK:` for a step that got its image another way.
-
-## Step 2 — stage (optional)
-
-The composer reads the bridge output directly, so staging is only about keeping the raw set
-in the repo. The integrator copies the captures into `docs/appstore/screenshots/6.9/` — the
-five from the first set keep the numbered names they were committed under, the rest keep
-their attachment names:
-
-```bash
-S=~/"Rendprop AI"/_bridge/out/storeshots; D=~/"Rendprop AI"/repo/docs/appstore/screenshots/6.9
-mkdir -p "$D"
-for key in s09-venue-home s10-restaurant-home s11-gym-home s05-reel-studio s12-reel-studio s13-floor-plan s14-leads s15-share-link; do
-  f=$(ls "$S"/${key}_*.png 2>/dev/null | head -1); [ -n "$f" ] && cp "$f" "$D/$key.png"
-done
-# the first five, under the names the plan and App Store Connect already know
-for pair in s08-published-tour:01-published-tour s01-home-showroom:02-home-showroom s02-sample-tour:03-sample-tour s04-photo-studio:04-photo-studio s03-new-home:05-new-home; do
-  f=$(ls "$S"/${pair%%:*}_*.png 2>/dev/null | head -1); [ -n "$f" ] && cp "$f" "$D/${pair##*:}.png"
-done
-```
-
-`compose.py` resolves either spelling (`01-published-tour.png` ≡ `s08-published-tour.png`)
-and the `_0_<id>` suffix, so `--src` can point at `6.9/` or straight at the bridge output.
-
-## Step 3 — compose and check
-
-```bash
-# on the Mac, straight from the bridge output:
-python3 tools/screenshots/compose.py \
-  --src ~/"Rendprop AI"/_bridge/out/storeshots \
-  --plan docs/appstore/screenshots/plan.json \
-  --out docs/appstore/screenshots/6.9-framed --skip-missing
-python3 tools/screenshots/compose.py --check --out docs/appstore/screenshots/6.9-framed
-```
-
-`--skip-missing` leaves out any frame whose capture the run did not produce and says so;
-without it a missing capture is an error. `--check` re-reads every output and fails on
-anything that is not 1320 × 2868, not RGB/RGBA PNG, 8 MB or over, or carries a fully
-transparent pixel, and writes `sheet.jpg` next to the frames — **open it and look at every
-frame before uploading**: headline wording, wrap, nothing clipped, the right capture under
-the right words. The composer prints the font it used (Inter or SF Pro when installed,
-Poppins in the container, DejaVu as the last resort — it says so) and the contrast ratio of
-every frame.
-
-Plan fields, per frame: `src` (a capture, or a list of 2–3 for the fanned "stack"), `out`,
-`headline`, optional `subline`, `bg` (`violet`, `grape`, `indigo`, `ink`, `mist`, `#rrggbb`,
-or `[#top, #bottom]`), `fit` (`bleed`, the classic bottom-cropped look, or `inset`),
-`radius`, and `layout` / `crop_height` / `crop_top` for the column frame. Stdlib + Pillow only (`python3 -m pip install pillow`). Tests:
-`python3 -m pytest tools/screenshots -q`.
-
-## Step 4 — upload
-
-```bash
-python3 tools/asc/asc.py screenshots plan  --dir docs/appstore/screenshots/6.9-framed --replace   # look first
-python3 tools/asc/asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace
-```
-
-`--replace` deletes every screenshot already in the APP_IPHONE_67 set (`DELETE
-/v1/appScreenshots/{id}`) before uploading, then uploads in filename order and orders the
-set. It is needed once after a re-frame: the raw set is still in there, and a set holds at
-most 10. Without `--replace` the command only adds what is missing by checksum, so re-running
-the bridge (`bash tools/asc/bridge-610-asc-apply.sh`) afterwards changes nothing. The bridge
-uses the framed directory automatically when it has PNGs; `bash
-tools/asc/bridge-610-asc-apply.sh --replace-screenshots` is the same rebuild from there.
-
-Then check the intended App Store Connect version → iPhone 6.9" Display: nine images, in order,
-each with its headline readable at thumbnail size.
-
-## Fair housing
-
-Nothing in a Rendprop screenshot may mention people, neighbourhoods, schools, or
-demographics — not in a typed address, not in a listing description, not in a headline over
-the image. The test types one street address and nothing else for exactly this reason, and
-the headlines in `plan.json` describe what the app does, never who a space is for. The
-hosted demo page (`s08`, `s15`) carries the demo's agent card — a business card, which is
-fine; check it still reads as one after a re-capture.
-
-## What is committed, what is generated
-
-`plan.json` and this README are the recipe and are committed. `6.9/` (raw captures) and
-`6.9-framed/` (the composed set plus `sheet.jpg`) are generated on the Mac by the steps
-above; keep them out of text patches (binary), and regenerate `6.9-framed/` from `plan.json`
-rather than editing a frame by hand — the next run would overwrite it.
-
-`apps/ios/project.yml` already excludes `bridge-cmd-*.sh` and `README.md` from the
-`RendpropUITests` sources, so nothing here rides into the test bundle.
-
-## Historical receipt: 6 September 2026 set, submitted with build 5
-
-The recorded submission used nine frames from `plan.json`, composed with `tools/screenshots/compose.py` and uploaded with
-`asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace`. Two things the walk
-needs that the system photo picker cannot give it: `bridge-cmd-storeshots.sh` exports
-`TEST_RUNNER_STORESHOT_PHOTOS` (a folder of seed photos — put real listing photos in
-`_bridge/in/storeshot-photos/`, they show up in the studio and reel frames), and `StoreShots` launches
-the app with `-ui.sampleLeads` so the Leads frame shows an inbox. Both are read only under
-`-uiTesting`. The hosted page's end card (frame 07) is ~100 swipes down the scroll-scrub page — the
-test scrolls that far and stops at "Book a showing". A version that has been "added for review" is
-locked; `asc.py` takes it out of the draft submission around the replace and puts it back.
-
-This receipt describes that submission, not a fresh read of App Store Connect.
-No current store-state or newer build claim follows from the files being present.
+The launch-era `asc.py screenshots apply` can select another editable version
+and alter review staging. The current release uses an exact-version helper for
+only the new 1.0.3 en-US set. It protects released 1.0.1 asset IDs, journals every
+mutation, stops on uncertain results and verifies five ordered checksums and
+`COMPLETE` delivery states. Do not run the broad launch bridge to refresh these
+screenshots. See [release target caution](../../../tools/asc/README.md#release-target-caution).

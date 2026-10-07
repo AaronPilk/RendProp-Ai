@@ -53,7 +53,7 @@ const DEFAULT_LABEL: Record<ActionType, string> = {
   open_tour: "Open the tour",
   open_photos: "Open Photo Studio",
   open_reel: "Make a reel",
-  open_floor_plan: "Open floor plan",
+  open_floor_plan: "Open Measurements",
   open_aerial: "Make an aerial shot",
   share_tour: "Share the tour",
   open_plan_usage: "Open Plan & usage",
