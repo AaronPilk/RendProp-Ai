@@ -1104,10 +1104,14 @@ jobs:
       # libzimg's zscale+tonemap) — installed explicitly rather than trusting
       # whatever the runner image happens to preinstall; Ubuntu's package
       # includes libzimg.
-      - name: Install worker deps (pinned) + ffmpeg
+      - name: Install pinned worker Python dependencies
+        timeout-minutes: 10
+        run: pip install --disable-pip-version-check -r services/worker/requirements.txt
+      - name: Install worker ffmpeg
+        timeout-minutes: 10
         run: |
-          pip install --disable-pip-version-check -r services/worker/requirements.txt
-          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
 
       # Both hermetic: no live Supabase, no real R2, no network beyond
       # localhost. test_job_lease.py runs a stdlib-only fake PostgREST on

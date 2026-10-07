@@ -21,6 +21,7 @@ enum UserFacingError { static func message(_ error: Error, fallback: String) -> 
 extension Notification.Name { static let rendpropCloudBrandUpdated = Notification.Name("isolated.profile.updated") }
 @MainActor final class AuthStore {
     static let shared = AuthStore()
+    var isIdentified = true
     var userID: String? = "b3710000-0000-4000-8000-000000000001"
     var syncSessionRevision: UInt64 = 1
 }

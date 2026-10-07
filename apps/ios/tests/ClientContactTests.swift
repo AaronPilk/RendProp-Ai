@@ -2,6 +2,15 @@ import Foundation
 
 enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/" + path) } }
 
+// State doubles only: the actual WorkspaceSync context owns every admission check.
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var isIdentified = false
+    var userID: String?
+    var syncSessionRevision: UInt64 = 0
+}
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? }
+
 @main enum ClientContactTests {
     static var checks = 0
     enum Failure: Error { case assertion(String) }
@@ -10,11 +19,55 @@ enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fil
         do { try await operation() } catch { checks += 1; return }
         throw Failure.assertion(label)
     }
+    @MainActor static func rejectsIdentity(_ label: String, _ operation: () throws -> Void) throws {
+        do { try operation() }
+        catch CloudSyncError.identityChanged { checks += 1; return }
+        throw Failure.assertion(label)
+    }
+    @MainActor static func checkMediaContext(owner: String, otherOwner: String, org: UUID) throws {
+        func reset() {
+            AuthStore.shared.isIdentified = true
+            AuthStore.shared.userID = owner
+            AuthStore.shared.syncSessionRevision = 7
+            WorkspaceContext.selectedOrgID = org
+        }
+        reset()
+        let context = try CloudMediaAccessContext.capture(orgID: org)
+        try expect(context.actorID == UUID(uuidString: owner) && context.orgID == org && context.revision == 7,
+                   "Media context captures the actual actor, workspace and session revision")
+        try context.check()
+        try expect(true, "Unchanged media context remains admitted")
+        AuthStore.shared.isIdentified = false
+        try rejectsIdentity("Unidentified account cannot capture media context") { _ = try CloudMediaAccessContext.capture(orgID: org) }
+        reset(); AuthStore.shared.userID = nil
+        try rejectsIdentity("Missing actor cannot capture media context") { _ = try CloudMediaAccessContext.capture(orgID: org) }
+        reset(); AuthStore.shared.userID = "not-a-uuid"
+        try rejectsIdentity("Malformed actor cannot capture media context") { _ = try CloudMediaAccessContext.capture(orgID: org) }
+        reset(); WorkspaceContext.selectedOrgID = UUID(uuidString: otherOwner)
+        try rejectsIdentity("Foreign workspace cannot capture media context") { _ = try CloudMediaAccessContext.capture(orgID: org) }
+        reset(); WorkspaceContext.selectedOrgID = nil
+        try rejectsIdentity("Unselected workspace cannot capture media context") { _ = try CloudMediaAccessContext.capture(orgID: org) }
+        reset(); AuthStore.shared.isIdentified = false
+        try rejectsIdentity("Unidentified account cannot consume captured media") { try context.check() }
+        reset(); AuthStore.shared.userID = otherOwner
+        try rejectsIdentity("Changed actor cannot consume captured media") { try context.check() }
+        reset(); AuthStore.shared.syncSessionRevision += 1
+        try rejectsIdentity("Changed session cannot consume captured media") { try context.check() }
+        reset(); AuthStore.shared.userID = otherOwner; AuthStore.shared.syncSessionRevision += 1
+        AuthStore.shared.userID = owner; AuthStore.shared.syncSessionRevision += 1
+        try rejectsIdentity("Returning to the same actor cannot revive an old media context") { try context.check() }
+        reset(); WorkspaceContext.selectedOrgID = UUID(uuidString: otherOwner)
+        try rejectsIdentity("Changed workspace cannot consume captured media") { try context.check() }
+        reset(); WorkspaceContext.selectedOrgID = nil
+        try rejectsIdentity("Cleared workspace cannot consume captured media") { try context.check() }
+        reset()
+    }
     @MainActor static func main() async throws {
         let listingID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
         let org = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
         let photoID = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
         let ownerA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ownerB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        try checkMediaContext(owner: ownerA, otherOwner: ownerB, org: org)
         let suite = "synthetic.client.contact." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
