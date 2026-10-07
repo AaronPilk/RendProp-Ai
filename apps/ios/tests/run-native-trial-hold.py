@@ -15,7 +15,7 @@ out = (args.out or Path(tempfile.mkdtemp(prefix='rendprop-native-trial-hold-')))
 out.mkdir(parents=True, exist_ok=True)
 paths = [root/'apps/ios/Rendprop/Purchases'/name for name in
          ['SubscriptionBillingContext.swift', 'PurchasesAPI.swift', 'PurchaseManager.swift', 'PaywallView.swift']]
-paths += [root/'apps/ios/tests/TrialPurchaseHoldTests.swift', Path(__file__).resolve()]
+paths += [root/'apps/ios/Rendprop/Auth/AuthStore.swift', root/'apps/ios/tests/TrialPurchaseHoldTests.swift', Path(__file__).resolve()]
 digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 hashes = lambda: {str(p.relative_to(root)): digest(p) for p in paths}
 start = hashes()
@@ -169,6 +169,8 @@ enum SheetError: Error { case cancelled, timeout }
     static func message(for error: Error, fallback: String) -> String { fallback }
 '''
 
+auth_source=paths[-3].read_text()
+interfaces=interfaces.replace('func forceRefresh() async -> Bool { refreshes += 1; return true }', 'func forceRefresh() async -> Bool { refreshes += 1; return true }\n'+block(auth_source,'static func jwtSubject('))
 def generated(b, a, m):
     source = interfaces + '\n}\n' + b + '\n'
     source += '@MainActor extension LiveAPIClient {\n' + block(a, prepare_needle) + '\n}\n'

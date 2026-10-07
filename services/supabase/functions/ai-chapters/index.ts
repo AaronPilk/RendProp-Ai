@@ -350,7 +350,13 @@ async function guardChapters(user: PaidAiCaller, req: Request, orgId: string): P
     throw new HttpError(429, "AI room-suggestion limit reached for now — try again in a few minutes.", "rate_limited");
   }
   const monthlyKey = `chaptersmo:${orgId}`;
-  const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  let monthly: Awaited<ReturnType<typeof chargeRateReceipt>>;
+  try {
+    monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  } catch (error) {
+    await refundRateReceipt(burst.receipt);
+    throw error;
+  }
   if (!monthly.accepted) {
     await refundRateReceipt(burst.receipt);
     throw quotaError("AI room suggestions", monthlyCap, monthlyCap, ent.plan);
@@ -522,23 +528,23 @@ Deno.serve(async (req) => {
 
     const space = spaceTypeOf(asset.spaceType);
     const labels = allowedLabels(space);
-    const { router, chain } = await chooseChain(charge.plan);
-
-    const sourceUrl = await presignGet(asset.bucket, asset.storageKey, SOURCE_URL_TTL_SECONDS);
-    const prompt = chaptersPrompt({
-      space,
-      labels,
-      videoSeconds: asset.durationS,
-      maxChapters,
-      language,
-    });
-    const system = systemInstruction();
-
     const startedAt = Date.now();
     let uploadedName: string | null = null;
-    let route: ChosenRoute = chain[0];
+    let route: ChosenRoute = LEGACY_ROUTE;
     let raw: { text: string; promptTokens: number | null; outputTokens: number | null; finishReason: string | null };
     try {
+      // Route selection and signing can fail before any provider dispatch.
+      // They belong to the same quota rollback boundary as generation.
+      const { router, chain } = await chooseChain(charge.plan);
+      const sourceUrl = await presignGet(asset.bucket, asset.storageKey, SOURCE_URL_TTL_SECONDS);
+      const prompt = chaptersPrompt({
+        space,
+        labels,
+        videoSeconds: asset.durationS,
+        maxChapters,
+        language,
+      });
+      const system = systemInstruction();
       // The upload is the expensive, slow half and it is model-independent, so
       // it happens ONCE outside the chain loop — a fallback step costs only
       // another generateContent against the file already sitting in ACTIVE.
@@ -588,9 +594,10 @@ Deno.serve(async (req) => {
       if (!result) throw lastError ?? new HttpError(502, "The video model returned nothing.", "upstream");
       raw = result;
     } catch (e) {
-      // Nothing was produced, so nothing is owed. Hand the allowance back before
-      // the error surfaces (F-E-16).
+      // Return feature counters, not an incurred or uncertain provider bill.
+      // SQL closes only an operation with no admitted provider attempts.
       await refundCharge(charge);
+      await abortFundingOperationBeforeDispatch(funding);
       throw e;
     } finally {
       // Customer media does not sit on a third party's disk for 48 hours.

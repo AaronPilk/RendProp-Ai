@@ -1776,7 +1776,7 @@ const ENGINE_LEADFORM_JS = `
   var EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
   var PHONE_RE = /^[+()\\d\\s.-]{7,40}$/;
   var leadHeaders = { 'Content-Type': 'application/json' };
-  if (CFG.anonKey){ leadHeaders['apikey'] = CFG.anonKey; leadHeaders['Authorization'] = 'Bearer ' + CFG.anonKey; }
+  if (CFG.anonKey){ leadHeaders['apikey'] = CFG.anonKey; if (CFG.anonKey.split('.').length === 3 && CFG.anonKey.split('.').every(function(part){ return /^[A-Za-z0-9_-]+$/.test(part); })) leadHeaders['Authorization'] = 'Bearer ' + CFG.anonKey; }
   var form = document.getElementById('leadform');
   var msgEl = document.getElementById('leadmsg');
   function fieldEl(name){ return form ? form.querySelector('[name="' + name + '"]') : null; }

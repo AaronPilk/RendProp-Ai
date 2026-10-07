@@ -1,4 +1,6 @@
+import {isPrivateMediaURL,privateMediaCapability} from "./private-media";
 import { StudioError } from "./config";
+import { decodePhotoPackage, type PhotoPackage } from "./photo-package";
 import { decodeServingActivation, decodeTrialOffer, decodeTrialUsage, type ServingActivation, type TrialOffer, type TrialUsage } from "./trial";
 
 export type Role = "owner" | "admin" | "agent" | "marketing";
@@ -31,6 +33,7 @@ export type Workspace = {
   trialUsage?: TrialUsage | null;
   trialOffer?: TrialOffer | null;
   servingActivation?: ServingActivation | null;
+  servingPhotoPackage?: PhotoPackage | null;
   planExpiresAt: string | null;
   memberships: Membership[];
   usage: { listings: number; leads: number; leadsNew: number; renders: number };
@@ -103,6 +106,7 @@ export type MeDTO = {
   trial_usage?: unknown;
   trial_offer?: unknown;
   serving_activation?: unknown;
+  serving_photo_package?: unknown;
   plan_expires_at?: string | null;
   entitlement?: { degraded?: boolean };
   usage: {
@@ -308,6 +312,7 @@ export function decodeWorkspace(
     trialUsage: decodeTrialUsage(row.trial_usage, orgId),
     trialOffer: decodeTrialOffer(row.trial_offer),
     servingActivation,
+    servingPhotoPackage: decodePhotoPackage(row.serving_photo_package, orgId),
     planExpiresAt: nullableDate(row.plan_expires_at, "plan_expires_at", true),
     memberships,
     usage: {
@@ -403,8 +408,10 @@ export function mediaURL(
   listingId: string,
   expiresAt: string,
   now: number,
+  actor?: string,
 ): string {
   const s = str(value, "media URL");
+  if(isPrivateMediaURL(s)){const c=privateMediaCapability(s,{actor:actor??"",org:orgId,listing:listingId},now);if(!Number.isFinite(Date.parse(expiresAt))||Date.parse(expiresAt)>c.exp*1000+1000)invalid("media expiry mismatch");return s;}
   let url: URL;
   try {
     url = new URL(s);
@@ -436,7 +443,7 @@ export function mediaURL(
   // This validates the literal route contract, not the cryptographic signature.
   if (
     segments.length < 5 || !["uploads", "renders"].includes(segments[1]!) ||
-    segments[2] !== orgId || segments[3] !== listingId ||
+    !(segments[2] === orgId && segments[3] === listingId || segments[1] === "renders" && segments[2] === listingId) ||
     segments.some((segment) =>
       !segment || segment === "." || segment === ".." ||
       /[\\/%?#\u0000-\u001f]/.test(segment)
@@ -494,6 +501,7 @@ export function decodeMedia(
   orgId: string,
   listingId: string,
   offset = 0,
+  actor?: string,
 ): ListingMedia {
   const row = record(value, "listing media");
   const now = Date.now();
@@ -514,7 +522,7 @@ export function decodeMedia(
       item,
       id: uuid(item.id, "media id"),
       listingId,
-      url: mediaURL(item.url, orgId, listingId, expiresAt, now),
+      url: mediaURL(item.url, orgId, listingId, expiresAt, now, actor),
       expiresAt,
     };
   }
@@ -541,7 +549,7 @@ export function decodeMedia(
       caption: nullableString(item.caption, "photo caption"),
       isStaged: item.is_staged,
       ...(item.is_altered === undefined ? {} : { isAltered: item.is_altered === true }),
-      ...(item.original_url === undefined ? {} : { originalUrl: item.original_url === null ? null : mediaURL(item.original_url, orgId, listingId, base.expiresAt, now) }),
+      ...(item.original_url === undefined ? {} : { originalUrl: item.original_url === null ? null : mediaURL(item.original_url, orgId, listingId, base.expiresAt, now, actor) }),
       sort: integer(item.sort, "photo sort"),
     };
   });

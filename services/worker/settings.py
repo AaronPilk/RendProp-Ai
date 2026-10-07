@@ -265,7 +265,7 @@ class Settings:
         )
         return cls(
             supabase_url=os.environ.get("SUPABASE_URL", "").rstrip("/"),
-            supabase_service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
+            supabase_service_role_key=os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
             db_schema=DB_SCHEMA,
             cloudflare_account_id=account,
             r2_access_key_id=os.environ.get("R2_ACCESS_KEY_ID", ""),

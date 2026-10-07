@@ -12,12 +12,7 @@ for (const [name, value] of Object.entries({
 const USER = "da100103-0000-4000-8000-000000000001";
 const ORG = "da100103-0000-4000-8000-000000000002";
 const OTHER = "da100103-0000-4000-8000-000000000003";
-type Options = {
-  anonymous?: unknown; authError?: boolean; source?: unknown; plan?: unknown;
-  deleted?: unknown; missingOrg?: boolean; missingSubscription?: boolean;
-  subscriptionOrg?: string; subscriptionUser?: string; subscriptionPlan?: string;
-  subscriptionStatus?: string; expiry?: unknown; errorTable?: string;
-};
+type Options = { anonymous?: unknown; authError?: boolean; retailGuest?: unknown; errorTable?: string };
 type Fixture = { options: Options; calls: Request[]; meters: string[] };
 let active: Fixture | null = null;
 const originalFetch = globalThis.fetch;
@@ -39,13 +34,7 @@ globalThis.fetch = (input, init) => {
   });
   if (table === "active_org_for_user") return json(ORG);
   if (table === "memberships") return row({ org_id: ORG, role: "owner" });
-  if (table === "orgs") return row(o.missingOrg ? null : { plan_source: o.source ?? null, deleted_at: o.deleted ?? null });
-  if (table === "effective_plan") return json(o.plan ?? "free");
-  if (table === "apple_subscriptions") return row(o.missingSubscription ? null : {
-    org_id: o.subscriptionOrg ?? ORG, user_id: o.subscriptionUser ?? USER,
-    plan: o.subscriptionPlan ?? o.plan ?? "starter", status: o.subscriptionStatus ?? "active",
-    expires_at: o.expiry ?? new Date(Date.now() + 86400_000).toISOString(),
-  });
+  if (table === "org_has_verified_retail_guest") return json(o.retailGuest ?? false);
   throw new Error("Unmodeled synthetic database request");
 };
 const auth = await import("./supabase.ts");
@@ -82,24 +71,15 @@ Deno.test("general getUser still accepts anonymous sessions for local work and a
 }));
 Deno.test("invalid Auth result cannot reach subscription authorization", () => denied({ authError: true }));
 for (const value of [undefined, null, "false", 0]) Deno.test(`unknown Auth identity flag ${String(value)} fails closed`, () => denied({ anonymous: value }));
-for (const source of [null, "trial", "manual"]) Deno.test(`anonymous ${String(source)} source cannot farm a free or legacy trial allowance`, () => denied({ anonymous: true, source, plan: "trial" }));
-Deno.test("client metadata cannot turn anonymous free Auth user into a paid identity", () => denied({ anonymous: true }));
-for (const plan of ["free", "trial", "brokerage", null]) Deno.test(`anonymous Apple org with effective plan ${String(plan)} is denied`, () => denied({ anonymous: true, source: "apple", plan }));
-for (const status of ["active", "grace"]) Deno.test(`guest Apple ${status} subscription remains usable on its exact user and workspace`, () => fixture({ anonymous: true, source: "apple", plan: "starter", subscriptionStatus: status }, async (f) => {
+Deno.test("client metadata cannot turn anonymous Auth into a funded retail identity", () => denied({ anonymous: true }));
+Deno.test("exact service-owned retail guest predicate admits an anonymous purchase", () => fixture({ anonymous: true, retailGuest: true }, async (f) => {
   await authorize();
-  const query = new URL(f.calls.find((r) => r.url.includes("apple_subscriptions"))!.url);
-  assertEquals(query.searchParams.get("org_id"), "eq." + ORG);
-  assertEquals(query.searchParams.get("user_id"), "eq." + USER);
-  assertEquals(query.searchParams.get("plan"), "eq.starter");
-  assertEquals(query.searchParams.get("status"), "in.(active,grace)");
+  const req = f.calls.find((r) => r.url.includes("org_has_verified_retail_guest"))!;
+  assertEquals(await req.json(), { p_actor: USER, p_org: ORG });
+  assertEquals(f.calls.length, 2);
 }));
-for (const patch of [
-  { missingOrg: true }, { deleted: "2026-01-01T00:00:00Z" }, { missingSubscription: true },
-  { subscriptionOrg: OTHER }, { subscriptionUser: OTHER }, { subscriptionPlan: "pro" },
-  { subscriptionStatus: "revoked" }, { subscriptionStatus: "expired" },
-  { expiry: "invalid" }, { expiry: "2020-01-01T00:00:00Z" },
-]) Deno.test(`guest subscription refuses missing, revoked, expired or mismatched binding ${JSON.stringify(patch)}`, () => denied({ anonymous: true, source: "apple", plan: "starter", ...patch }));
-for (const errorTable of ["orgs", "effective_plan", "apple_subscriptions"]) Deno.test(`subscription lookup ${errorTable} failure is 503 before paid dispatch`, () => denied({ anonymous: true, source: "apple", plan: "starter", errorTable }, 503));
+for (const retailGuest of [false, null, 0, 1, "true", {}, []]) Deno.test(`guest admission requires exact boolean true: ${JSON.stringify(retailGuest)}`, () => denied({ anonymous: true, retailGuest }));
+Deno.test("funded guest reader failure stops before dispatch", () => denied({ anonymous: true, errorTable: "org_has_verified_retail_guest" }, 503));
 
 // Compile the actual guard functions, without importing provider entrypoints.
 // Only their nonauthorization dependencies are fixture boundaries. Removing the
@@ -148,7 +128,7 @@ for (const spec of routeSpecs) Deno.test(`actual ${spec.route}/${spec.guard} aut
   await fixture({ anonymous: true }, async (f) => {
     await assertRejects(invoke, HttpError); assertEquals(f.meters, []);
   });
-  await fixture({ anonymous: true, source: "apple", plan: "starter" }, async (f) => {
+  await fixture({ anonymous: true, retailGuest: true }, async (f) => {
     const result = await invoke(); assert(f.meters.length > 0);
     if (spec.guard === "guardGenerate") {
       const charge = result as {monthlyReceipt:unknown;burstReceipt:unknown};

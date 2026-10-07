@@ -88,6 +88,45 @@ async function unlimitedSponsored(context: FundingContext): Promise<boolean> {
  return false;
 }
 
+/** Route eligibility/privacy/capability filtering happens first. A finite
+ * package permits one pinned primary and at most one priced fallback, while
+ * private unlimited QA retains its existing operator chain. */
+export async function boundedPhotoChain(context: FundingContext, steps: RouteStep[], input: GenerateInput): Promise<RouteStep[]> {
+ if(await unlimitedSponsored(context))return steps;
+ const priced=steps.filter(step=>step.task===input.task && (
+  (step.provider==="gemini" && step.model==="gemini-3.1-flash-image" && !input.mask_url) ||
+  (step.provider==="fal" && step.model.replace(/^fal-ai\//,"")==="flux-pro/kontext" && !input.mask_url)
+ ));
+ const primary=priced.filter(step=>step.provider==="gemini"),fallback=priced.filter(step=>step.provider==="fal");
+ if(primary.length!==1 || fallback.length>1 || priced.some(step=>{
+  const quote=mediaAttemptQuote(step,input);
+  return !quote || Math.ceil(quote.cents*10000)!==(step.provider==="gemini"?311296:40000);
+ }))
+  throw new FundingAdmissionError(503,"This photo tool has no complete bounded serving route. No edit was sent.","upstream");
+ return [...primary,...fallback];
+}
+
+/** The bounded trial's cash belongs to its five image admissions. Paid
+ * accounts retain separately metered helpers through the shared funded wallet;
+ * private unlimited QA retains its existing sponsorship. */
+export async function assertPhotoHelperSponsorship(context: FundingContext): Promise<void> {
+ if(await unlimitedSponsored(context))return;
+ let trial;
+ try { trial=await context.rpc("subscription_trial_context",{p_actor:context.actorId,p_org:context.orgId}); }
+ catch {await abortFundingOperationBeforeDispatch(context);throw new FundingAdmissionError(503,"Trial helper availability could not be checked. No generation was submitted.","upstream");}
+ const data=trial.data as Record<string,unknown>|null;
+ if(trial.error || !data || typeof data!=="object" || Array.isArray(data) || !("trial_usage" in data)){
+  await abortFundingOperationBeforeDispatch(context);
+  throw new FundingAdmissionError(503,"Trial helper availability could not be checked. No generation was submitted.","upstream");
+ }
+ if(data.trial_usage===null)return;
+ const usage=data.trial_usage as Record<string,unknown>|null;
+ await abortFundingOperationBeforeDispatch(context);
+ if(!usage || typeof usage!=="object" || Array.isArray(usage) || usage.org_id!==context.orgId || !["active","expired","exhausted"].includes(String(usage.status)))
+  throw new FundingAdmissionError(503,"Trial helper availability could not be checked. No generation was submitted.","upstream");
+ throw new FundingAdmissionError(503,"Photo suggestions and prompt rewriting are not included in this subscription trial. Choose an edit or write your own instructions; no generation was submitted.","upstream");
+}
+
 export async function fundedAttempt<T>(context: FundingContext,stage: string,step: Pick<RouteStep,"provider"|"model">,
  input: unknown,quote: AttemptQuote|null,attempt:()=>Promise<T>): Promise<T> {
  try{

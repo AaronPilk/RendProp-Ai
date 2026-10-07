@@ -1,3 +1,4 @@
+import {privateMediaUrl} from "../_shared/private-media.ts";
 import { fundedAttempt, type FundingContext } from "../_shared/funded-serving.ts";
 import type { StudioContext } from "./context.ts";
 import { assert, HttpError } from "../_shared/http.ts";
@@ -35,6 +36,7 @@ export function presenterProduction(req?: Request, context?: StudioContext): Pre
     worker(job, action, payload = {}) { return rpc("studio_presenter_execution_worker", { p_job_id: job, p_action: action, p_payload: payload }); },
     liveConfigured: presenterLiveConfigured,
     sign: (key, seconds) => presignGet(R2_BUCKET_UPLOADS, key, seconds),
+    previewSign: async(key,seconds,listing)=>{assert(context,403,"A signed-in workspace is required.");return await privateMediaUrl({actor:context.userId,org:context.orgId,listing,bucket:"uploads",key},seconds);},
     fetch: (url, init) => fetch(url, init),
     estimate: estimateHfMotionTransfer,
     async submit(input, job) {

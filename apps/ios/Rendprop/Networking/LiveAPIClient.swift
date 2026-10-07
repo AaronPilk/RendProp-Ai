@@ -461,11 +461,13 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
     func cloudMedia(listingID: UUID, orgID: UUID, offset: Int = 0) async throws -> CloudMediaPage {
         guard offset >= 0, offset <= 10000, offset % 50 == 0 else { throw CloudSyncError.invalidResponse }
+        let context = try await CloudMediaAccessContext.capture(orgID: orgID)
         var request = makeRequest(url: url(["studio", "media"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()), URLQueryItem(name: "org_id", value: orgID.uuidString.lowercased()), URLQueryItem(name: "offset", value: String(offset))]))
         request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
-        let data = try await execute(request)
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try await context.check()
         let decoded: CloudMediaPage = try decodeExact(data)
-        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset)
+        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset, actorID: context.actorID)
     }
     func exportAccountData() async throws -> Data {
         let data = try await execute(makeRequest(url: url(["me", "export"])))
@@ -489,14 +491,16 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         return CloudBrand(userID: userID, orgID: orgID, spaceType: type, fields: fields, personalCard: personal)
     }
     func cloudCreative(listingID: UUID, orgID: UUID) async throws -> CloudCreative {
+        let context = try await CloudMediaAccessContext.capture(orgID: orgID)
         var resultRequest = makeRequest(url: url(["studio", "creative-results"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased())]))
         resultRequest.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         struct Results: Decodable { let results: [CloudCreative.Result] }
-        let results: Results = try decodeExact(try await execute(resultRequest))
+        let results: Results = try decodeExact(try await execute(resultRequest, beforeSend: { try context.check() }))
+        try await context.check()
         guard results.results.count <= 100, Set(results.results.map(\.id)).count == results.results.count,
               results.results.allSatisfy({ $0.listing_id == listingID && ["voice", "video"].contains($0.kind) && $0.words.count <= 20_000 && $0.words.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end >= $0.start && $0.text.count <= 1000 }) }) else { throw CloudSyncError.invalidResponse }
         for result in results.results {
-            if let media = result.url, let expiry = result.expires_at { try CloudListingMerge.validateMedia(media, expiry: expiry, listingID: listingID, orgID: orgID, now: Date(), voice: result.kind == "voice") }
+            if let media = result.url, let expiry = result.expires_at { try CloudListingMerge.validateMedia(media, expiry: expiry, listingID: listingID, orgID: orgID, now: Date(), voice: result.kind == "voice", actorID: context.actorID) }
             else if result.url != nil { throw CloudSyncError.invalidResponse }
         }
         var documentRequest = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "creative:\(listingID.uuidString.lowercased())")]))
@@ -505,7 +509,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             struct Document: Decodable { struct Payload: Decodable { let script: String }; let listing_id: UUID; let payload: Payload }
             let document: Document?
         }
-        let document: DocumentEnvelope = try decodeExact(try await execute(documentRequest))
+        let document: DocumentEnvelope = try decodeExact(try await execute(documentRequest, beforeSend: { try context.check() }))
+        try await context.check()
         if let document = document.document { guard document.listing_id == listingID, document.payload.script.count <= 100_000 else { throw CloudSyncError.invalidResponse } }
         return CloudCreative(script: document.document?.payload.script ?? "", results: results.results)
     }
@@ -1771,12 +1776,18 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // listings, by_feature{…}}` — see services/supabase/functions/me/index.ts.
         // cost_cents can be fractional (round4) → round to whole cents for Money.
         let usage = dto.usage
-        if dto.trialUsage != nil || dto.trialOffer != nil || dto.servingActivation != nil {
+        if dto.trialUsage != nil || dto.trialOffer != nil || dto.servingActivation != nil || dto.servingPhotoPackage != nil {
             guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
                   org == selectedOrg, WorkspaceContext.selectedOrgID == selectedOrg,
                   dto.trialUsage.map({ $0.checked(org: org) != nil }) ?? true,
                   dto.trialOffer.map({ $0.checked() != nil }) ?? true,
                   dto.servingActivation.map({ $0.checked(org: org) != nil }) ?? true else { throw CloudSyncError.invalidResponse }
+        }
+        if let package = dto.servingPhotoPackage {
+            guard let org = selectedOrg, package.checked(org: org) != nil,
+                  let owner = actor.flatMap(UUID.init(uuidString:)),
+                  dto.user?.id.flatMap(UUID.init(uuidString:)) == owner,
+                  dto.servingActivation?.available != false else { throw CloudSyncError.invalidResponse }
         }
         var hosting: HostingRetentionSummary?
         if let receipt = dto.hostingRetention {
@@ -1832,7 +1843,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             hostingRetention: hosting,
             trialUsage: dto.trialUsage,
             trialOffer: dto.trialOffer,
-            servingActivation: dto.servingActivation)
+            servingActivation: dto.servingActivation,
+            servingPhotoPackage: dto.servingPhotoPackage)
         // Let the Account row show the server-side name (never an email).
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
               WorkspaceContext.selectedOrgID == selectedOrg else { throw CloudSyncError.identityChanged }
@@ -2461,6 +2473,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let trialUsage: TrialUsageSummary?
         let trialOffer: TrialOfferSummary?
         let servingActivation: ServingActivationSummary?
+        let servingPhotoPackage: ServingPhotoPackageSummary?
         let trialEndsAt: String?
         let entitlement: Entitlement?
         let usage: Usage?

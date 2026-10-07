@@ -223,6 +223,7 @@ import { persistResult, persistedUrl, putBytes, presignGet } from "../_shared/pr
 import { R2_BUCKET_RENDERS, headObject } from "../_shared/r2.ts";
 import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
 import { renewEraseOutput } from "./erase-output.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 import { createRoutedOutput } from "./routed-output.ts";
 import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
@@ -943,7 +944,7 @@ const eraseHandler = createEraseHandler({
     return `urn:rendprop:r2:renders:${key}`;
   },
   completedURL: (job) => renewEraseOutput(job, {
-    sign: (key, expires) => presignGet(R2_BUCKET_RENDERS, key, expires),
+    sign: (key, expires) => privateMediaUrl({actor:String(job.user_id),org:String(job.org_id),listing:null,bucket:"renders",key},expires),
     read: async (args) => await adminClient().rpc("video_erase_get", args),
   }),
 });
@@ -1832,7 +1833,7 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
       },
       head: key => headObject(R2_BUCKET_RENDERS,key),
       persist: (state,key,beforeWrite) => persistResult(job.p,state,key,beforeWrite,true),
-      sign: persistedUrl,
+      sign: key=>privateMediaUrl({actor:job.usr,org:orgId,listing:listingId,bucket:"renders",key},600),
     });
     const saved = await output.existing();
     if(saved) return completed(saved);

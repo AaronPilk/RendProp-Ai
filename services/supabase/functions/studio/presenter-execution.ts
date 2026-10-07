@@ -10,6 +10,7 @@ export interface PresenterExecutionDeps {
   worker(job: string, action: string, payload?: PresenterObject): Promise<PresenterObject>;
   liveConfigured(): boolean;
   sign: MediaSign;
+  previewSign?: (key:string,seconds:number,listing:string)=>Promise<string>;
   fetch: MediaFetch;
   estimate(input: GenerateInput): Promise<HfMotionTransferEstimate>;
   submit(input: GenerateInput, job?: PresenterObject): Promise<HfMotionTransferRef>;
@@ -202,7 +203,7 @@ export function createPresenterExecution(deps: PresenterExecutionDeps) {
       if (permissions.can_preview === true) {
         const before = await deps.user("preview", listing, { job_id: id(job.id) });
         const key = privateOutputKey(id(data.org_id), id(job.id), before.output_key);
-        const preview_url = await deps.sign(key, 300);
+        const preview_url = await (deps.previewSign?deps.previewSign(key,300,listing):deps.sign(key,300));
         const after = await deps.user("preview", listing, { job_id: job.id });
         assert(JSON.stringify(before) === JSON.stringify(after), 409, "Presenter approval changed. Reload before reviewing.");
         Object.assign(dto, { output: { sha256: before.sha256, bytes: before.bytes, duration_s: before.duration_s, preview_url, preview_expires_at: new Date(now() + 300_000).toISOString() } });

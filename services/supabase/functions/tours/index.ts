@@ -38,7 +38,7 @@
 //     "very useful" vs virtual tours 38%, NAR 2025).
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts";
+import { assert, HttpError, json, pathSegments, respondError, readJsonLimited } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
 import { assertMediaVisible, mediaVisibility, type MediaSourceRefs } from "../_shared/media-source-access.ts";
 import { bucketForKey } from "../studio/handler.ts";
@@ -46,6 +46,8 @@ import { propertyGalleryKey, publicMainPhoto } from "../_shared/property-cover.t
 import { publicProvenanceDisclosure } from "../_shared/provenance.ts";
 import { publicR2Url, publishedR2Url, publishedStreamUrl, PUBLIC_MEDIA_PROXY } from "../_shared/r2.ts";
 import { assertHostingAvailable } from "../_shared/hosting-retention.ts";
+import { requireMediaGateway, deliveryBytes, admitMediaRead } from "../_shared/media-delivery-admission.ts";
+import { privateMediaAuthority } from "../_shared/private-media.ts";
 import { admittedFloorplan, admittedBusinessLogo, deliveryEnvelope, businessLogoDelivery, publishedListingDetails } from "./delivery.ts";
 import { buildPersonalListingCard } from "../_shared/agentcard.ts";
 import { resolveContactPhoto } from "../listings/client-contact.ts";
@@ -360,12 +362,25 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
   try {
-    if (req.method !== "GET") throw new HttpError(405, "Only GET is supported");
     const seg = pathSegments(req, "tours");
+    if (seg.length===1&&seg[0]==="private-media") {
+      await requireMediaGateway(req);
+      assert(req.method==="POST",405,"Media gateway request required.");
+      const body=await readJsonLimited(req,8192);
+      assert(typeof body.cap==="string"&&typeof body.bytes==="number"&&Number.isSafeInteger(body.bytes)&&body.bytes>=0&&body.bytes<=268435456,400,"Invalid media gateway request.");
+      return json(await privateMediaAuthority(adminClient(),body.cap,body.bytes),200,{"Cache-Control":"no-store"});
+    }
+    if (req.method !== "GET") throw new HttpError(405, "Only GET is supported");
     const slug = seg[0];
-    if(seg[0]==="business-logo"&&seg.length===2&&/^[a-f0-9-]{36}$/.test(seg[1]))return json(await businessLogoDelivery(adminClient(),seg[1],new URL(req.url).searchParams.get("key")),200,{"Cache-Control":"no-store"});
+    if(seg[0]==="business-logo"&&seg.length===2&&/^[a-f0-9-]{36}$/.test(seg[1])) {
+      await requireMediaGateway(req);
+      const admin=adminClient();
+      await admitMediaRead(admin,seg[1],deliveryBytes(req));
+      return json(await businessLogoDelivery(admin,seg[1],new URL(req.url).searchParams.get("key")),200,{"Cache-Control":"no-store"});
+    }
     if (seg.length > 2 || seg.length === 2 && seg[1] !== "delivery") throw new HttpError(404,"Tour not found");
     if (!slug) throw new HttpError(400, "slug is required: GET /tours/:slug");
+    if (seg[1] === "delivery") await requireMediaGateway(req);
 
     // The hardcoded sample tour — answered before any DB access (see above).
     if (DEMO_SLUGS.has(slug)) return json(demoTour());
@@ -391,6 +406,7 @@ Deno.serve(async (req) => {
     if (lErr) throw new HttpError(500, `Listing lookup failed: ${lErr.message}`);
     if (!listing || listing.deleted_at) throw new HttpError(404, "Tour not found or not published");
     await assertHostingAvailable(admin, listing.org_id);
+    if (seg[1] === "delivery") await admitMediaRead(admin,listing.org_id,deliveryBytes(req));
 
     const visibleRefs: MediaSourceRefs & { keys: string[]; assets: string[] } = { renders: [render.id], assets: [], keys: [] };
     await assertMediaVisible(admin, listing.id, visibleRefs);

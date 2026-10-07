@@ -5,7 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 // @ts-ignore Release helpers are plain ESM, executed without tsx in production.
-import { parseDeploymentArgs, selectedPolicy, verifyLivePolicy, sourceImports, sourceClosure, stageDeployment, verifyStagedSnapshot, verifyDownloadedSources } from "../scripts/backend-deploy-lib.mjs";
+import { parseDeploymentArgs, selectedPolicy, verifyLivePolicy, verifyModernServiceTransition, MODERN_SERVICE_FUNCTIONS, sourceImports, sourceClosure, stageDeployment, verifyStagedSnapshot, verifyDownloadedSources } from "../scripts/backend-deploy-lib.mjs";
 // @ts-ignore Release helpers are plain ESM, executed without tsx in production.
 import { connectedProductionConfig, verifyConnectedBundle, manifestClosure, releaseAssetGroups, PROXY_ENTRY } from "../scripts/dist-policy.mjs";
 async function fixture(run: (root: string) => Promise<void>) {
@@ -18,6 +18,18 @@ test("explicit safe selection only; no default all, prune, JWT override or dupli
   assert.deepEqual(parseDeploymentArgs(["--functions", "studio,portfolio"]), { functions: ["studio", "portfolio"], run: false });
   assert.deepEqual(parseDeploymentArgs(["--run", "--functions", "studio"]), { functions: ["studio"], run: true });
   for (const args of [[], ["--run"], ["--functions"], ["--functions", "../studio"], ["--functions", "studio,studio"], ["--functions", "studio", "--prune"], ["--functions", "studio", "--no-verify-jwt"]]) assert.throws(() => parseDeploymentArgs(args));
+});
+test("explicit modern service transition accepts only the five scoped policies and preserves other JWT guards", () => {
+  const functions = [...MODERN_SERVICE_FUNCTIONS, "studio"];
+  assert.equal(parseDeploymentArgs(["--functions", functions.join(","), "--modern-service-transport"]).modernServiceTransport, true);
+  assert.throws(() => parseDeploymentArgs(["--functions", "studio", "--modern-service-transport"]));
+  const policy = Object.fromEntries(functions.map((name) => [name, name === "studio"]));
+  const inventory = functions.map((name) => ({ name, verify_jwt: true, status: "ACTIVE", import_map: false }));
+  assert.equal(verifyModernServiceTransition(inventory, policy).me.verifyJwt, true);
+  assert.equal(verifyModernServiceTransition(inventory.map((row) => ({ ...row, verify_jwt: policy[row.name] })), policy).me.verifyJwt, false);
+  assert.throws(() => verifyModernServiceTransition(inventory.map((row) => row.name === "studio" ? { ...row, verify_jwt: false } : row), policy), /drift/);
+  assert.throws(() => verifyModernServiceTransition(inventory, { ...policy, me: true }));
+  assert.throws(() => verifyModernServiceTransition(inventory.filter((row) => row.name !== "uploads"), policy));
 });
 test("mixed JWT preserved; live drift, missing/duplicate functions and undeclared policy fail closed", () => {
   const policy = selectedPolicy({ studio: true, portfolio: false }, ["studio", "portfolio"]);

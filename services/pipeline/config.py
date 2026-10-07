@@ -181,7 +181,7 @@ class Settings:
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
             kie_api_key=os.environ.get("KIE_API_KEY", ""),
             supabase_url=os.environ.get("SUPABASE_URL", "").rstrip("/"),
-            supabase_service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
+            supabase_service_role_key=os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
             gemini_image_model=os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image"),
             fal_declutter_model=os.environ.get("FAL_DECLUTTER_MODEL", "fal-ai/flux-pro/v1/fill"),
             fal_restage_fallback_model=os.environ.get("FAL_RESTAGE_FALLBACK_MODEL", "fal-ai/flux-pro/kontext"),

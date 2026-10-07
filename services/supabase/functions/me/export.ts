@@ -28,6 +28,7 @@ const specs: Spec[] = [
   own("studio_production_reviews", "document_user_id,org_id,document_key,listing_id,revision,document_revision,status,submitted_at,updated_at", "document_user_id", ["org_id", "document_key"]),
   own("studio_project_media", "id,actor_id,org_id,sha256,bytes,mime,filename,modified,parts,created_at", "actor_id"),
   own("serving_operation_results", "org_id,actor_id,request_key,result,created_at", "actor_id", ["org_id", "request_key"]),
+  own("serving_photo_admissions", "funding_id,slice_index,org_id,actor_id,request_key,task,created_at", "actor_id", ["funding_id", "slice_index", "actor_id", "request_key"]),
   own("subscription_trial_purchase_reservations", "id,actor_id,org_id,product_id,walkthrough_cap,photo_cap,listing_cap,max_days,max_video_seconds,upload_budget_bytes,held_at,converted_at", "actor_id"),
   own("subscription_trial_grants", "id,actor_id,org_id,starts_at,ends_at,walkthrough_cap,photo_cap,listing_cap,upload_budget_bytes,max_video_seconds,created_at", "actor_id"),
   own("subscription_trial_actions", "grant_id,kind,identity,actor_id,org_id,held_bytes,created_at", "actor_id", ["grant_id", "kind", "identity"]),
@@ -44,6 +45,7 @@ const omissions = [
   { collection: "credentials_and_media_capabilities", reason: "Authentication, device, verification and provider tokens, signed/private media URLs, storage keys, and delivery leases are excluded." },
   { collection: "server_diagnostics_and_provider_payloads", reason: "Operational logs, raw provider requests/errors, notification delivery payloads and cleanup payloads are excluded." },
   { collection: "workspace_cost_and_usage_ledger", reason: "The shared ledger has no reliable account ownership column. Assigned render costs and actor-owned presenter charges are included; they are not a complete billing ledger." },
+  { collection: "serving_photo_partitions_and_startup_funding", reason: "These immutable workspace and operator accounting records have no account ownership column. Your own photo admission records are included; another member's usage, operator funding evidence and private receipt identities are excluded." },
   { collection: "reviewer_and_presenter_subject_private_data", reason: "Other members' private profiles, presenter snapshots, and review events are excluded." },
   { collection: "consent_acceptance_evidence", reason: "Account-wide legal acceptance evidence is not available in the current export schema; presenter consent timestamps are included." },
   { collection: "spatial_experiment_and_transient_jobs", reason: "Experimental spatial jobs, quotes, upload reservations and transient AI requests are excluded; saved listing details and authored Studio documents are included." },
@@ -53,6 +55,7 @@ const secretKey = /(?:token|secret|authorization|password|credential|api.?key|ac
 function privateURL(raw: string): boolean {
   try {
     const u = new URL(raw);
+    if (["rendprop.com", "www.rendprop.com"].includes(u.hostname) && u.pathname.startsWith("/private-media/")) return true;
     return u.protocol === "data:" || u.protocol === "blob:" || u.hostname.endsWith(".r2.cloudflarestorage.com") || u.hostname.endsWith(".r2.dev") || u.hostname.endsWith(".videodelivery.net") || u.hostname === "videodelivery.net" || u.hostname.endsWith(".cloudflarestream.com") || ["renders.rendprop.com", "cdn.rendprop.com", "media.rendprop.com"].includes(u.hostname) || /(?:x-amz-|token|signature|credential)/i.test(u.search) || /(?:presenter-private|studio-project|private-ai)\//i.test(u.pathname) || (["rendprop.com", "www.rendprop.com"].includes(u.hostname) && /^\/media\/[^/]+\/(?:r2|stream)\//.test(u.pathname));
   } catch { return false; }
 }

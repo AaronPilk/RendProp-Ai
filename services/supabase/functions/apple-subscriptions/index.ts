@@ -1,3 +1,4 @@
+import { inputHash } from "../_shared/funded-serving.ts";
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 import { reservedTrialWorkspace } from "../_shared/trial-purchase.ts";
 // apple-subscriptions — App Store Server Notifications V2, verified and applied.
@@ -35,9 +36,9 @@ import { reservedTrialWorkspace } from "../_shared/trial-purchase.ts";
 //
 // 2. A RETRY IS A NO-OP. Apple resends with the SAME notificationUUID, so the
 //    uuid is the primary key of apple_notifications and the insert happens
-//    BEFORE any entitlement write. A unique violation answers
-//    `{ ok: true, duplicate: true }` and stops. If the entitlement write then
-//    fails, the ledger row is removed again so Apple's retry can do real work.
+//    BEFORE any entitlement write. Only an acknowledged identical receipt is
+//    a no-op. Failed work remains durable and identical redelivery resumes it;
+//    different verified facts cannot replace the original UUID.
 //
 // 3. A NOTIFICATION CAN ARRIVE BEFORE THE APP DOES. StoreKit hands the device a
 //    transaction and Apple posts here at roughly the same moment; either can
@@ -252,38 +253,57 @@ async function handleNotify(req: Request): Promise<Response> {
   const pending = entitlementRelevant && orgId === null && facts.environment === "Production";
   const entitlement = entitlementRelevant ? computeEntitlement(facts, verdictKind) : null;
 
-  // Header note 2: the ledger row goes in FIRST, so a retry is a no-op.
+  const receiptPayload = {
+    notification: summariseNotification(outer, facts), transaction: facts.transaction,
+    renewal: facts.renewal, verdict: verdictKind, entitlement,
+  };
+  const receiptHash = await notificationReceiptHash(receiptPayload);
+  // Persist before applying, and resume an identical unprocessed receipt after
+  // an outage. The signed chronology and funding RPCs remain idempotent.
   const { error: insertError } = await admin.from("apple_notifications").insert({
-    notification_uuid: facts.uuid,
-    original_transaction_id: originalTransactionId,
-    org_id: orgId,
-    notification_type: facts.type,
-    subtype: facts.subtype,
-    environment: facts.environment,
-    pending,
-    payload: {
-      notification: summariseNotification(outer, facts),
-      transaction: facts.transaction,
-      renewal: facts.renewal,
-      verdict: verdictKind,
-      // The exact RPC arguments a replay will re-use (see PendingEntitlement).
-      entitlement,
-    },
+    notification_uuid: facts.uuid, original_transaction_id: originalTransactionId,
+    org_id: orgId, notification_type: facts.type, subtype: facts.subtype,
+    environment: facts.environment, pending, payload: receiptPayload,
+    verified_payload_sha256: receiptHash,
   });
+  let resumed = false;
   if (insertError) {
     const code = (insertError as { code?: string }).code;
-    if (code === "23505" || /duplicate key/i.test(insertError.message)) {
+    if (code !== "23505" && !/duplicate key/i.test(insertError.message)) {
+      throw new HttpError(503, "Could not record the notification — retry", "upstream");
+    }
+    const { data: prior, error } = await admin.from("apple_notifications")
+      .select("original_transaction_id,environment,payload,verified_payload_sha256,processed_at")
+      .eq("notification_uuid", facts.uuid).maybeSingle();
+    if (error || !prior) throw new HttpError(503, "Recorded notification could not be recovered — retry", "upstream");
+    // Older rows have no fingerprint. Derive it from their retained verified
+    // facts, never trust a caller to replace a notification's previous payload.
+    const priorHash = await notificationReceiptHash(prior.payload);
+    assert(prior.original_transaction_id === originalTransactionId && prior.environment === facts.environment &&
+      priorHash === receiptHash && (prior.verified_payload_sha256 === null || prior.verified_payload_sha256 === receiptHash),
+      409, "Notification identity cannot change its verified facts", "conflict");
+    if (prior.processed_at !== null) {
+      assert(typeof prior.processed_at === "string" && Number.isFinite(Date.parse(prior.processed_at)),
+        503, "Recorded notification acknowledgement is unavailable — retry", "upstream");
       return json({ ok: true, duplicate: true });
     }
-    // Our failure, not Apple's — 5xx so the retry is worth something.
-    throw new HttpError(503, "Could not record the notification — retry", "upstream");
+    resumed = true;
   }
+  const acknowledge = async (outcome: "applied" | "refused" | "pending" | "ignored", response: Record<string, unknown>) => {
+    const { data, error } = await admin.from("apple_notifications").update({
+      processed_at: new Date().toISOString(), processing_outcome: outcome,
+    }).eq("notification_uuid", facts.uuid).select("notification_uuid").maybeSingle();
+    if (error || data?.notification_uuid !== facts.uuid) {
+      throw new HttpError(503, "Notification acknowledgement could not be recorded — retry", "upstream");
+    }
+    return json({ ...response, ...(resumed ? { resumed: true } : {}) });
+  };
 
   if (environmentMismatch) {
-    return json({ ok: true, applied: false, ignored: "environment_mismatch" });
+    return acknowledge("ignored", { ok: true, applied: false, ignored: "environment_mismatch" });
   }
   if (!entitlementRelevant) {
-    return json({
+    return acknowledge("ignored", {
       ok: true,
       applied: false,
       ignored: unknownProduct
@@ -291,26 +311,30 @@ async function handleNotify(req: Request): Promise<Response> {
         : (verdictKind === "ignore" ? "no_entitlement_change" : "no_transaction"),
     });
   }
-  let applied: boolean;
-  try {
-    // Order the verified snapshot even before a workspace is linked. An older
-    // device receipt then binds this stored state atomically rather than briefly
-    // granting the old plan before pending refunds replay.
-    applied = await applyEntitlement(entitlement!, orgId);
-    if (applied && orgId && facts.transaction) await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,facts.transaction);
-  } catch (err) {
-    // The ledger row would otherwise dedupe Apple's retry into a no-op and the
-    // entitlement would never land. Best effort; a failure here just means the
-    // retry answers `duplicate: true` and the owner sees it in the console.
-    await admin.from("apple_notifications").delete().eq("notification_uuid", facts.uuid);
-    throw err;
-  }
+  // A failed application/funding/ack leaves the exact durable row unprocessed.
+  // Concurrent identical deliveries may both run these idempotent RPCs; their
+  // chain locks and unique collection refs permit only one financial grant.
+  const applied = await applyEntitlement(entitlement!, orgId);
+  if (applied && orgId && facts.transaction) await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,facts.transaction);
+  if (pending) return acknowledge("pending", { ok: true, applied: false, pending: true });
+  return applied
+    ? acknowledge("applied", { ok: true, applied: true })
+    : acknowledge("refused", { ok: true, applied: false, ignored: "refused" });
+}
 
-  if (pending) return json({ ok: true, applied: false, pending: true });
-
-  // `applied: false` here is a deterministic refusal, not an outage — the row
-  // stays, so Apple's retry is a `duplicate: true` no-op instead of a loop.
-  return applied ? json({ ok: true, applied: true }) : json({ ok: true, applied: false, ignored: "refused" });
+// JSONB may reorder object keys when a recorded notification is reread. Bind
+// exact values recursively, so an outage recovery works for old rows as well
+// as new fingerprints without permitting a changed verified payload.
+async function notificationReceiptHash(payload: unknown): Promise<string> {
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+        .map(([key, child]) => [key, canonical(child)]));
+    }
+    return value;
+  };
+  return inputHash(canonical(payload));
 }
 
 /** Verify the two nested JWS blobs and pull out everything the handler branches on. */

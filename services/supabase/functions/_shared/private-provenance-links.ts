@@ -5,7 +5,7 @@ import { presignGet } from "./providers/common.ts";
 /** Private audit exports are download capabilities, not claims that advertising
  * originals are publicly reachable. Exact provenance rows are already actor/org
  * authorized by the caller; key scope and current revocation are checked here. */
-export async function privateProvenanceLinks(db:MediaAccessClient,org:string,rows:readonly Record<string,unknown>[],sign=presignGet){
+export async function privateProvenanceLinks(db:MediaAccessClient,org:string,rows:readonly Record<string,unknown>[],sign:(bucket:string,key:string,seconds:number,listing:string)=>Promise<string>=presignGet){
   const groups=new Map<string,Set<string>>();
   for(const row of rows){if(typeof row.listing_id!=="string")continue;for(const value of [row.original_key,row.altered_key])if(typeof value==="string"&&bucketForKey(value,{orgId:org,listingId:row.listing_id})){let keys=groups.get(row.listing_id);if(!keys){keys=new Set();groups.set(row.listing_id,keys);}keys.add(value);}}
   const available=new Map<string,Map<string,string>>();
@@ -13,7 +13,7 @@ export async function privateProvenanceLinks(db:MediaAccessClient,org:string,row
     const keys=[...selected],links=new Map<string,string>();available.set(listing,links);
     for(let index=0;index<keys.length;index+=200){
       const batch=keys.slice(index,index+200),visible=await mediaVisibility(db,listing,{keys:batch});
-      for(const key of batch){if(visible.keys[key]!==true)continue;const bucket=bucketForKey(key,{orgId:org,listingId:listing})!;links.set(key,await sign(bucket==="uploads"?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,key,600));}
+      for(const key of batch){if(visible.keys[key]!==true)continue;const bucket=bucketForKey(key,{orgId:org,listingId:listing})!;links.set(key,await sign(bucket==="uploads"?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,key,600,listing));}
       // Discard capabilities withdrawn during local signing before any response.
       const current=await mediaVisibility(db,listing,{keys:batch});
       for(const key of batch)if(current.keys[key]!==true)links.delete(key);

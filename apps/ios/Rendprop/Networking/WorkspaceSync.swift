@@ -282,6 +282,27 @@ enum ListingWireDetails {
     }
 }
 
+/// A media response and its later import keep the original signed-in account,
+/// session and selected workspace. URL parsing alone never authorizes a read.
+struct CloudMediaAccessContext: Equatable {
+    let actorID: UUID
+    let revision: UInt64
+    let orgID: UUID
+    @MainActor static func capture(orgID: UUID) throws -> Self {
+        guard AuthStore.shared.isIdentified, let raw = AuthStore.shared.userID,
+              let actor = UUID(uuidString: raw), WorkspaceContext.selectedOrgID == orgID else {
+            throw CloudSyncError.identityChanged
+        }
+        return Self(actorID: actor, revision: AuthStore.shared.syncSessionRevision, orgID: orgID)
+    }
+    @MainActor func check() throws {
+        guard AuthStore.shared.isIdentified,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == actorID,
+              AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+    }
+}
+
 struct CloudCreative {
     struct Result: Decodable, Identifiable {
         struct Word: Codable { let text: String; let start: Double; let end: Double }
@@ -362,18 +383,18 @@ struct CloudMediaPage: Decodable {
     let next_offset: Int?
     let unavailable_count: Int
 
-    func checked(listingID: UUID, orgID: UUID, offset: Int, now: Date = Date()) throws -> Self {
+    func checked(listingID: UUID, orgID: UUID, offset: Int, now: Date = Date(), actorID: UUID? = nil) throws -> Self {
         guard org_id == orgID, listing_id == listingID, photos.count <= 100, videos.count <= 100,
               unavailable_count >= 0, next_offset == nil || (next_offset == offset + 50 && offset < 10000),
               Set(photos.map(\.id)).count == photos.count, Set(videos.map(\.id)).count == videos.count else { throw CloudSyncError.invalidResponse }
         for photo in photos {
             guard photo.listing_id == listingID else { throw CloudSyncError.invalidResponse }
-            try CloudListingMerge.validateMedia(photo.url, expiry: photo.expires_at, listingID: listingID, orgID: orgID, now: now)
-            if let original = photo.original_url { try CloudListingMerge.validateMedia(original, expiry: photo.expires_at, listingID: listingID, orgID: orgID, now: now) }
+            try CloudListingMerge.validateMedia(photo.url, expiry: photo.expires_at, listingID: listingID, orgID: orgID, now: now, actorID: actorID)
+            if let original = photo.original_url { try CloudListingMerge.validateMedia(original, expiry: photo.expires_at, listingID: listingID, orgID: orgID, now: now, actorID: actorID) }
         }
         for video in videos {
             guard video.listing_id == listingID else { throw CloudSyncError.invalidResponse }
-            try CloudListingMerge.validateMedia(video.url, expiry: video.expires_at, listingID: listingID, orgID: orgID, now: now)
+            try CloudListingMerge.validateMedia(video.url, expiry: video.expires_at, listingID: listingID, orgID: orgID, now: now, actorID: actorID)
         }
         return self
     }
@@ -472,8 +493,64 @@ enum CloudListingMerge {
         let fractional = ISO8601DateFormatter(); fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
     }
-    static func validateMedia(_ url: URL, expiry: String, listingID: UUID, orgID: UUID, now: Date, voice: Bool = false) throws {
+    static func validateMedia(_ url: URL, expiry: String, listingID: UUID, orgID: UUID, now: Date, voice: Bool = false, actorID: UUID? = nil) throws {
         guard let expires = date(expiry), expires > now else { throw CloudSyncError.expired }
+        // URL shape and envelope bindings are local preflight only. The gateway
+        // verifies HMAC, current membership, exact object custody and budget on
+        // every read. Its decoded bearer payload is not proof of ownership.
+        if url.host == "rendprop.com" {
+            guard url.scheme == "https", url.user == nil, url.password == nil, url.port == nil,
+                  url.query == nil, url.fragment == nil,
+                  let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  components.percentEncodedPath == components.path,
+                  components.path.hasPrefix("/private-media/") else { throw CloudSyncError.invalidResponse }
+            let token = String(components.path.dropFirst("/private-media/".count))
+            let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+            guard parts.count == 2, token.utf8.count <= 4096,
+                  parts[0].range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil,
+                  parts[1].range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw CloudSyncError.invalidResponse }
+            let encoded = String(parts[0]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            guard let data = Data(base64Encoded: encoded.padding(toLength: ((encoded.count + 3) / 4) * 4, withPad: "=", startingAt: 0)),
+                  data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") == String(parts[0]),
+                  let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw CloudSyncError.invalidResponse }
+            var expected: Set<String> = ["v", "actor", "org", "listing", "bucket", "key", "exp"]
+            if payload["review"] != nil { expected.insert("review") }
+            guard Set(payload.keys) == expected, let version = payload["v"] as? NSNumber,
+                  String(cString: version.objCType) != "c", version.stringValue == "1",
+                  let actorRaw = payload["actor"] as? String, let actor = UUID(uuidString: actorRaw), actorRaw == actor.uuidString.lowercased(),
+                  actorID == nil || actorID == actor,
+                  let orgRaw = payload["org"] as? String, UUID(uuidString: orgRaw) == orgID, orgRaw == orgID.uuidString.lowercased(),
+                  let bucket = payload["bucket"] as? String, ["uploads", "renders"].contains(bucket),
+                  let key = payload["key"] as? String, !key.isEmpty, key.utf8.count <= 1024,
+                  let exp = payload["exp"] as? NSNumber, String(cString: exp.objCType) != "c",
+                  exp.doubleValue.isFinite, exp.doubleValue.rounded(.towardZero) == exp.doubleValue else { throw CloudSyncError.invalidResponse }
+            let deadline = Date(timeIntervalSince1970: exp.doubleValue)
+            guard deadline > now, deadline.timeIntervalSince(now) <= 601, expires <= deadline.addingTimeInterval(1) else { throw CloudSyncError.expired }
+            if let review = payload["review"] {
+                guard payload["listing"] is String,
+                      let value = review as? [String: Any], Set(value.keys) == ["owner", "result", "revision"],
+                      let owner = value["owner"] as? String, let ownerID = UUID(uuidString: owner), owner == ownerID.uuidString.lowercased(),
+                      let result = value["result"] as? String, let resultID = UUID(uuidString: result), result == resultID.uuidString.lowercased(),
+                      let revision = value["revision"] as? NSNumber, String(cString: revision.objCType) != "c",
+                      revision.doubleValue.isFinite, revision.doubleValue > 0,
+                      revision.doubleValue < 2_147_483_647, revision.doubleValue.rounded(.towardZero) == revision.doubleValue else { throw CloudSyncError.invalidResponse }
+            }
+            let pieces = key.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+            guard pieces.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && $0.rangeOfCharacter(from: CharacterSet(charactersIn: "\\%?#").union(.controlCharacters)) == nil }),
+                  !(pieces.last?.lowercased().hasPrefix("contact-") ?? false) else { throw CloudSyncError.invalidResponse }
+            if voice {
+                guard ["uploads", "renders"].contains(bucket), pieces.count == 3, pieces[0] == "ai-voice",
+                      UUID(uuidString: pieces[1]) == orgID, pieces[2].hasSuffix(".mp3"),
+                      UUID(uuidString: String(pieces[2].dropLast(4))) != nil,
+                      payload["listing"] is NSNull || (payload["listing"] as? String).flatMap(UUID.init(uuidString:)) == listingID else { throw CloudSyncError.invalidResponse }
+            } else {
+                guard let listing = payload["listing"] as? String, UUID(uuidString: listing) == listingID, listing == listingID.uuidString.lowercased(),
+                      pieces[0] == bucket,
+                      (pieces.count >= 4 && UUID(uuidString: pieces[1]) == orgID && UUID(uuidString: pieces[2]) == listingID)
+                        || (bucket == "renders" && pieces.count == 3 && UUID(uuidString: pieces[1]) == listingID) else { throw CloudSyncError.invalidResponse }
+            }
+            return
+        }
         guard url.scheme == "https", url.user == nil, url.password == nil, url.port == nil,
               url.fragment == nil, let host = url.host,
               host.range(of: "^[a-f0-9]{32}\\.r2\\.cloudflarestorage\\.com$", options: .regularExpression) != nil,

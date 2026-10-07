@@ -1,6 +1,7 @@
 import { assert, HttpError, throwRpc } from "../_shared/http.ts";
 import { R2_BUCKET_RENDERS } from "../_shared/r2.ts";
 import { presignGet } from "../_shared/providers/common.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 import { mediaVisibility } from "../_shared/media-source-access.ts";
 
 export const CONTACT_FIELDS = [
@@ -201,7 +202,7 @@ export async function clientContact(
     p_listing: listing,
   });
   if (error) rpcError(error);
-  return resolveContactPhoto(admin, data);
+  return resolveContactPhoto(admin, data, undefined, key=>privateMediaUrl({actor:user,org,listing,bucket:"renders",key},600));
 }
 // deno-lint-ignore no-explicit-any
 export async function saveClientContact(
@@ -224,5 +225,5 @@ export async function saveClientContact(
     p_photo_asset: body.photo_asset_id,
   });
   if (error) rpcError(error);
-  return resolveContactPhoto(admin, data);
+  return resolveContactPhoto(admin, data, undefined, key=>privateMediaUrl({actor:user,org,listing,bucket:"renders",key},600));
 }

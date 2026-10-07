@@ -21,6 +21,22 @@ Ownership is `profiles.id=actor`; `memberships.user_id=actor`; `member_portfolio
 
 Binary media, on-device-only unsynced files, removed-workspace data, another member's private data, server operational/security secrets and third-party data outside the actor's authority must be named as omissions. If supported, point to the separate original-media download flow; do not put long-lived or raw R2 links into the export. Audit every table's actual actor column before adding it; the table list above is a category inventory, not authorization by name.
 
+### October 7 candidate additions
+
+`serving_photo_admissions` exports only the caller's operation/task/timing and
+funding-interval metadata within current workspaces. Input fingerprints are
+excluded from the projection; another actor's admission is refused independently
+of database filters. These retained accounting tombstones have no cascading Auth
+foreign key and do not restore media after deletion or replenish usage.
+`serving_photo_partitions` and the pooled startup funding journal are omitted by
+name/category because their authority is workspace/operator accounting, without
+a reliable personal owner column. An assisted privacy request is the route for
+those retained records; the JSON does not pretend to export them.
+
+The export redactor also recognizes `rendprop.com/private-media/` capabilities,
+including links embedded in authored text. Thirteen focused export tests pass.
+This is candidate source verification, not proof of deployed capability revocation.
+
 Native entry should live in Settings' authenticated account section. Production `LiveAPIClient` already owns bounded authenticated request execution; introduce a dedicated account-export response method rather than reusing compliance or portfolio exporters. The download/share action must retain `AuthStore.userID` and `syncSessionRevision`, recheck them before creating/presenting a temporary file, write only the verified attachment to owned scratch storage, and remove stale/cancelled files. Use the established `UIActivityViewController` share wrapper with a new dedicated account-export state; never surface a prior actor's result after sign-out/account switch. Preserve user-visible failure/retry and do not claim a request succeeded until the manifest and actor match.
 
 Minimum verification before wiring the final UI: actual handler Auth/method/actor tests; deterministic multi-page completion and explicit size overflow; foreign actor/workspace/listing and omitted-field fixtures; compiled negative controls removing actor filter or final authority fence; sign-out/deletion/removal/assignment withdrawal during assembly; native current-context vs stale download receipt and temp-file cleanup; and full platform build/real Files share acceptance. Source manifests must include the new handler, its imports, migration/RPC definitions if introduced, fixtures and native consumers.

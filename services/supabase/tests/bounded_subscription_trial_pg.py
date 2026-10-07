@@ -94,7 +94,21 @@ try:
     run("replay-trial", [*psql, "-q", "-f", MIGRATION])
     run("restore-purchase-overlay", [*psql,"-q","-f",SQL / "migrations/20261006212900_subscription_trial_purchase_reservations.sql"])
     run("restore-duration-overlay", [*psql,"-q","-f",SQL / "migrations/20261006213000_subscription_trial_video_duration.sql"])
+    run("restore-photo-package-overlay", [*psql,"-q","-f",SQL / "migrations/20261007141725_bounded_photo_package.sql"])
     receipt["replay"] = run("trial-replay", [*psql, "-Atq", "-f", SQL / "tests/bounded_subscription_trial.sql"]).strip()
+    # Restore the exact pre-fence function ONLY inside an owned rollback
+    # fixture. Its formerly permitted helper must fail the unchanged early
+    # refusal oracle, proving the new fence changes actual cost admission.
+    import re
+    canonical = MIGRATION.read_text()
+    old_guard = re.search(r"create or replace function public.subscription_trial_cost_guard\(\)returns trigger.*?end\$\$;",canonical,re.S)
+    assert old_guard
+    fixture = (SQL / "tests/bounded_subscription_trial.sql").read_text()
+    assert fixture.count("\nbegin;\n") == 1
+    mutant = OUT / "trial-helper-stage-fence-removed.sql"
+    mutant.write_text(fixture.replace("\nbegin;\n","\nbegin;\n" + old_guard.group(0) + "\n",1))
+    run("trial-helper-stage-fence-removed",[*psql,"-Atq","-f",mutant],refuses="TRIAL FAIL expected RP402: trial suggestion refused before any photo credit or cash is spent")
+    receipt["helperFenceNegativeControl"] = {"positiveOracleRejected":True,"sourceCopy":str(mutant),"sha256":hashlib.sha256(mutant.read_bytes()).hexdigest(),"exit":receipt["commands"][-1]["exit"]}
     # Existing actual lifecycle/quota fixtures also run with the new trigger.
     # Require the exact complete inventory, successful SQL exit and all-green footer.
     spec = importlib.util.spec_from_file_location("database_contract", ROOT / "tools/audit/run_database_regression.py")
@@ -189,5 +203,7 @@ try:
 finally:
     if started:
         run("stop", [TOOLS["pg_ctl"], "-D", DATA, "-m", "fast", "-w", "stop"])
+    receipt["sourceUnchanged"] = all(hashlib.sha256((ROOT/p).read_bytes()).hexdigest()==h for p,h in receipt["sourceHashes"].items())
+    receipt["passed"] = receipt.get("passed", False) and receipt["sourceUnchanged"]
     (OUT / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
     print(str(OUT / "receipt.json"), flush=True)

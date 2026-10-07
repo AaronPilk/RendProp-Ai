@@ -147,6 +147,7 @@ import { R2_BUCKET_UPLOADS, presignPut } from "../_shared/r2.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { saveSharedVoice } from "./shared-result.ts";
 import { assertVoiceWriteWindow, reserveVoiceStorage } from "./storage-reservation.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 
 // Denial-of-wallet guard: every TTS call bills ElevenLabs per character.
 const TTS_MAX_PER_WINDOW = 20;
@@ -700,6 +701,7 @@ Deno.serve(async (req) => {
         } catch {
           throw new HttpError(502, "ElevenLabs returned audio that is not valid base64", "upstream");
         }
+        assert(audioBuf.byteLength <= 20 * 1024 * 1024, 502, "The narration exceeds its reserved storage limit.");
         if (audioBuf.byteLength === 0) {
           throw new HttpError(502, "ElevenLabs returned an empty audio file", "upstream");
         }
@@ -739,7 +741,7 @@ Deno.serve(async (req) => {
           const detail = await put.text().catch(() => "");
           throw new HttpError(502, `Storing the voiceover failed (R2 ${put.status}): ${detail.slice(0, 200)}`, "upstream");
         }
-        const audioUrl = await presignGet(R2_BUCKET_UPLOADS, key, AUDIO_URL_TTL_SECONDS);
+        const audioUrl = await privateMediaUrl({actor:user.id,org:charge.orgId,listing:body.listing_id??null,bucket:"uploads",key},AUDIO_URL_TTL_SECONDS);
 
         // ── DURATION ── measured, estimated or absent, and always labelled.
         let durationS = 0;

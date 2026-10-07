@@ -11,14 +11,17 @@ const MAX_EMPTY_CHUNKS = 64;
 type UpstreamJSON =
   | { kind: "ok"; value: unknown }
   | { kind: "not-found" }
-  | { kind: "error"; status: 502 | 503 };
+  | { kind: "error"; status: 429 | 502 | 503 };
 
 const unavailable: UpstreamJSON = { kind: "error", status: 503 };
 const malformed: UpstreamJSON = { kind: "error", status: 502 };
 
 /** One deadline covers headers AND the decoded response stream. No retries,
  * raw upstream error messages, response bodies or credentials escape to callers. */
-export async function fetchUpstreamJSON(path: string, env: Env): Promise<UpstreamJSON> {
+export async function fetchUpstreamJSON(path: string, env: Env, gateway = false, payload?: Record<string, unknown>): Promise<UpstreamJSON> {
+  // This secret is only used by the server-to-server delivery path. Never
+  // attach it to ordinary tour/portfolio JSON or serialize it into HTML.
+  if (gateway && !/^[a-f0-9]{64}$/.test(env.MEDIA_GATEWAY_SECRET || "")) return unavailable;
   const controller = new AbortController();
   let response: Response | undefined;
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -41,8 +44,12 @@ export async function fetchUpstreamJSON(path: string, env: Env): Promise<Upstrea
     const key = env.SUPABASE_ANON_KEY || "";
     const base = String(env.SUPABASE_FUNCTIONS_URL || "").replace(/\/+$/, "");
     response = await fetch(`${base}${path}`, {
-      method: "GET",
-      headers: { apikey: key, Authorization: `Bearer ${key}`, Accept: "application/json" },
+      method: payload ? "POST" : "GET",
+      headers: { apikey: key, ...(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(key)?{Authorization:`Bearer ${key}`}:{ }), Accept: "application/json",
+        ...(gateway ? { "X-Rendprop-Media-Gateway": env.MEDIA_GATEWAY_SECRET! } : {}),
+        ...(payload ? { "Content-Type": "application/json" } : {}) },
+      ...(payload ? {body:JSON.stringify(payload)} : {}),
+      cache: "no-store",
       signal: controller.signal,
       // The fixed API route should not redirect. Never forward its auth headers
       // to a Location selected by a bad upstream response.
@@ -53,7 +60,8 @@ export async function fetchUpstreamJSON(path: string, env: Env): Promise<Upstrea
     // A nonconforming fetch may resolve after its abort. Do not read late data.
     if (controller.signal.aborted) { cancelBody(); return unavailable; }
     if (response.status === 404) return { kind: "not-found" };
-    if (response.status === 429 || response.status >= 500) return unavailable;
+    if (response.status === 429) return gateway ? {kind:"error",status:429} : unavailable;
+    if (response.status >= 500) return unavailable;
     if (!response.ok || !response.body) return malformed;
 
     reader = response.body.getReader();

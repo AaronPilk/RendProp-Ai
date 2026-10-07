@@ -1,5 +1,5 @@
 import {assert,assertEquals,assertRejects} from "https://deno.land/std@0.224.0/assert/mod.ts";
-import {fundedAttempt,fundingContext,mediaAttemptQuote,geminiImageGenerationQuote,textAttemptQuote,TARIFF_VERSION,completeFundingOperation,SavedFundingResponse,type FundingContext} from "./funded-serving.ts";
+import {fundedAttempt,fundingContext,mediaAttemptQuote,geminiImageGenerationQuote,textAttemptQuote,TARIFF_VERSION,completeFundingOperation,SavedFundingResponse,boundedPhotoChain,assertPhotoHelperSponsorship,type FundingContext} from "./funded-serving.ts";
 import {HttpError,respondError} from "./http.ts";
 import {ProviderError} from "./providers/common.ts";
 import {runChain} from "./providers/chain.ts";
@@ -18,6 +18,49 @@ function fixture(options:{reserveError?:string;reserveShape?:unknown;finishError
  }};
  return {calls,context};
 }
+Deno.test("finite photo route retains one eligible primary and one priced task-correct fallback",async()=>{
+ const primary={...step,task:"photo.stage",provider:"gemini",model:"gemini-3.1-flash-image"};
+ const fallback={...primary,provider:"fal",model:"fal-ai/flux-pro/kontext"};
+ const unpriced={...primary,provider:"openai",model:"gpt-image-2"};
+ const input={task:primary.task,prompt:"synthetic"};
+ assertEquals(await boundedPhotoChain(fixture().context,[unpriced,fallback,primary],input),[primary,fallback]);
+ for(const chain of [[unpriced],[fallback],[primary,primary],[primary,fallback,fallback],[{...primary,task:"photo.custom"}]])
+  await assertRejects(()=>boundedPhotoChain(fixture().context,chain,input),HttpError,"bounded serving route");
+ await assertRejects(()=>boundedPhotoChain(fixture().context,[primary,fallback],{...input,mask_url:"data:image/png;base64,AAA="}),HttpError);
+ const qa=fixture({qa:true});assertEquals(await boundedPhotoChain(qa.context,[unpriced,fallback,primary],input),[unpriced,fallback,primary]);
+ await assertRejects(()=>boundedPhotoChain(fixture({qaError:true}).context,[primary],input),HttpError);
+});
+Deno.test("bounded photo fallback holds at most35.1296c and uncertain primary is never treated as free",async()=>{
+ const primary={...step,task:"photo.custom",provider:"gemini",model:"gemini-3.1-flash-image"};
+ const fallback={...primary,provider:"fal",model:"flux-pro/kontext"};
+ const input={task:primary.task,prompt:"synthetic"},f=fixture(),calls:string[]=[];
+ const old=globalThis.fetch;globalThis.fetch=async()=>Response.json(null);
+ try {
+  const chain=await boundedPhotoChain(f.context,[primary,fallback,{...primary,provider:"openai",model:"gpt-image-2"}],input);
+  const result=await runChain(input.task,chain,async(s)=>fundedAttempt(f.context,`photo:${chain.indexOf(s)}`,s,input,mediaAttemptQuote(s,input),async()=>{
+   calls.push(s.provider);if(s.provider==="gemini")throw new ProviderError("gemini","timeout","synthetic uncertain acceptance");return "fallback output";
+  }));
+  assertEquals(result.value,"fallback output");assertEquals(calls,["gemini","fal"]);
+  const reserves=f.calls.filter(c=>c.name==="serving_cost_reserve");assertEquals(reserves.map(c=>c.args.p_hold_cents),[31.1296,4]);
+  assertEquals(reserves.reduce((n,c)=>n+Math.round(Number(c.args.p_hold_cents)*10000),0),351296);
+  assertEquals(f.calls.filter(c=>c.name==="serving_cost_finish").map(c=>c.args.p_state),["uncertain","succeeded"]);
+ }finally{globalThis.fetch=old;}
+});
+Deno.test("trial helper denial fences dispatch; paid metered helpers and private QA remain available",async()=>{
+ let paid=0,noDispatch=0,usage:unknown={org_id:"org",status:"active"},error=false;
+ const context:FundingContext={actorId:"actor",orgId:"org",requestKey:"key",operationBegun:true,rpc:async(name)=>{
+  if(name.startsWith("org_has_"))return{data:false,error:null};
+  if(name==="subscription_trial_context")return{data:{trial_usage:usage,trial_offer:null},error:error?{message:"unavailable"}:null};
+  if(name==="serving_operation_no_dispatch"){noDispatch++;return{data:{retryable:true},error:null};}
+  paid++;return{data:{reserved:true},error:null};
+ }};
+ await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"not included");assertEquals(paid,0);assertEquals(noDispatch,1);
+ for(const bad of [{org_id:"foreign",status:"active"},[],false,{},undefined]){usage=bad;await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"could not be checked");}
+ usage=null;error=true;await assertRejects(()=>assertPhotoHelperSponsorship(context),HttpError,"could not be checked");
+ error=false;await assertPhotoHelperSponsorship(context);assertEquals(paid,0);
+ await assertPhotoHelperSponsorship(fixture({qa:true}).context);
+});
+
 Deno.test("every priced paid attempt reserves before dispatch and retains success liability",async()=>{
  const f=fixture();let dispatched=0;
  const value=await fundedAttempt(f.context,"copy.initial:0",step,{prompt:"private text"},{cents:2.00001,version:TARIFF_VERSION},async()=>{assertEquals(f.calls.at(-1)?.name,"serving_cost_reserve");dispatched++;return "result";});

@@ -984,6 +984,9 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let pending = false, unlinked = false, sandboxGranted = false;
   let subscriptionStatus = "refunded";
+  const ledger = new Map<string, Record<string, any>>();
+  let failApply = false, failAck = false, failFunding = false;
+
   const storedExpiry = new Date(now - 60_000).toISOString();
   const admin = {
     rpc: (name: string, args: Record<string, unknown>) => {
@@ -992,24 +995,42 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
         ? { data: { ok: true, test_only: true, environment: "Sandbox", plan: "team", source: "manual", org_id: org, product_id: args.p_product, original_transaction_id: args.p_original }, error: null }
         : { data: null, error: { message: "RP403: Sandbox testing requires explicit authorized test access" } });
       if (name === "effective_plan") return Promise.resolve({ data: "free", error: null });
-      if(name === "fund_verified_apple_transaction"||name === "fund_reserved_subscription_trial")return Promise.resolve({data:{funded:false,reason:"stale_or_unbound"},error:null});
+      if(name === "fund_verified_apple_transaction"||name === "fund_reserved_subscription_trial"||name === "fund_verified_retail_apple_transaction") {
+        if(failFunding){failFunding=false;return Promise.resolve({data:null,error:{message:"synthetic funding unavailable"}});}
+        return Promise.resolve({data:{funded:false,reason:"stale_or_unbound"},error:null});
+      }
       if(name === "subscription_trial_reserved_workspace")return Promise.resolve({data:null,error:null});
       if(name === "subscription_serving_activation")return Promise.resolve({data:{org_id:org,available:false,funded:false,authority:"subscription_activation_unavailable"},error:null});
       assertEquals(name, "apply_apple_entitlement_v2");
+      if (failApply) { failApply = false; return Promise.resolve({data:null,error:{message:"synthetic database unavailable"}}); }
       return Promise.resolve({ data: { status: "refunded", expires_at: storedExpiry }, error: null });
     },
     from: (table: string) => {
-      let selection = "";
+      let selection = "", notificationID = "", updating = false;
+      let patch: Record<string, unknown> = {};
       const query = {
         select: (columns: string) => { selection = columns; return query; },
-        insert: () => Promise.resolve({ data: null, error: null }),
-        eq: () => query, order: () => query, limit: () => query,
-        update: () => query,
-        maybeSingle: () => Promise.resolve({ data: table === "memberships" ? { role: "owner" } :
+        insert: (row: Record<string, any>) => {
+          if (table !== "apple_notifications") return Promise.resolve({data:null,error:null});
+          const id = row.notification_uuid;
+          if (ledger.has(id)) return Promise.resolve({data:null,error:{code:"23505",message:"duplicate key"}});
+          ledger.set(id, {...structuredClone(row),processed_at:null});
+          return Promise.resolve({data:null,error:null});
+        },
+        eq: (column: string, value: string) => { if (column === "notification_uuid") notificationID = value; return query; }, order: () => query, limit: () => query,
+        update: (value: Record<string,unknown>) => { updating = true; patch = value; return query; },
+        maybeSingle: () => {
+          if (table === "apple_notifications") {
+            if (updating && failAck) { failAck = false; return Promise.resolve({data:null,error:{message:"synthetic ack unavailable"}}); }
+            const row = ledger.get(notificationID);
+            if (row && updating) Object.assign(row, patch);
+            return Promise.resolve({data:row ?? null,error:null});
+          }
+          return Promise.resolve({ data: table === "memberships" ? { role: "owner" } :
           table === "orgs" ? { plan: "free", plan_source: "apple", plan_expires_at: storedExpiry } :
           table === "apple_sandbox_receipts" ? { org_id: org } :
           selection === "org_id, environment" ? { org_id: unlinked ? null : org, environment: "Production" } :
-          { status: subscriptionStatus, auto_renew: false, product_id: "com.rendprop.app.team.monthly", expires_at: storedExpiry }, error: null }),
+          { status: subscriptionStatus, auto_renew: false, product_id: "com.rendprop.app.team.monthly", expires_at: storedExpiry }, error: null }); },
         then: (resolve: (value: unknown) => unknown) => resolve({ data: table === "apple_notifications" && pending ? [{
           notification_uuid: "chronology-pending", payload: {
             transaction: decodeTransaction(transactionPayload({ purchaseDate: purchase, signedDate: signed })),
@@ -1027,6 +1048,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     import {assert,HttpError,json,readJsonLimited,throwRpc} from ${JSON.stringify(new URL("./http.ts", import.meta.url).href)};
     import {reservedTrialWorkspace} from ${JSON.stringify(new URL("./trial-purchase.ts",import.meta.url).href)};
     import {fundVerifiedAppleTransaction} from ${JSON.stringify(new URL("./apple-funding.ts",import.meta.url).href)};
+    import {inputHash} from ${JSON.stringify(new URL("./funded-serving.ts",import.meta.url).href)};
     import {subscriptionServingActivation,trialServingActivationForSync} from ${JSON.stringify(new URL("./bounded-trial.ts",import.meta.url).href)};
     import {decodeTransaction,decodeRenewalInfo,deriveEntitlement,productToPlan,type AppleTransaction,type AppleRenewalInfo} from ${JSON.stringify(new URL("./applejws.ts", import.meta.url).href)};
     import {assertExpectedSubscriptionWorkspace,assertVerifiedPurchaseOwner} from ${JSON.stringify(new URL("../me/billing.ts", import.meta.url).href)};
@@ -1038,6 +1060,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     const ENTITLEMENT_ROLES=new Set(["owner","admin"]);
     ${actual(apple, "readFacts")}
     ${actual(apple, "applyEntitlement")}
+    ${actual(apple, "notificationReceiptHash")}
     ${actual(apple, "handleNotify")}
     ${actual(me, "handleEntitlement")}
     ${actual(me, "replayPendingNotifications")}
@@ -1109,6 +1132,45 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     calls.length = 0;
     await methods.handleNotify(new Request("https://fixture.invalid/apple-subscriptions/notify", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ signedPayload: sandboxOuter }) }));
     assertEquals(calls[0].name, "apply_apple_entitlement_v2"); assertEquals(calls[0].args.p_environment, "Sandbox");
+    const notify = (jws: string) => methods.handleNotify(new Request("https://fixture.invalid/apple-subscriptions/notify", {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({signedPayload:jws})}));
+    calls.length = 0;
+    assertEquals((await (await notify(oldReversal)).json()).duplicate, true);
+    assertEquals(calls.length, 0, "processed duplicate cannot reapply or fund");
+    const eventJWS = async (id:string, type="DID_RENEW", transaction=signedTx, environment="Production") => signJws(chain, {notificationUUID:id,notificationType:type,signedDate:event,data:{bundleId:"com.rendprop.app",environment,signedTransactionInfo:transaction}});
+    const recovery = await eventJWS("failed-then-resumed");
+    failApply = true;
+    assertEquals((await assertRejects(()=>notify(recovery),HttpError)).status,503);
+    assertEquals(ledger.get("failed-then-resumed")!.processed_at,null);
+    // JSONB returns objects in another key order. Legacy rows have no new hash.
+    const stored = ledger.get("failed-then-resumed")!;
+    stored.payload = JSON.parse(JSON.stringify(stored.payload), (_key,value)=>value && typeof value === "object" && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).reverse()) : value);
+    stored.verified_payload_sha256 = null;
+    assertEquals((await (await notify(recovery)).json()).resumed,true);
+    assert(typeof ledger.get("failed-then-resumed")!.processed_at === "string");
+    const fundRecovery = await eventJWS("fund-failed-resume");
+    failFunding = true;
+    assertEquals((await assertRejects(()=>notify(fundRecovery),HttpError)).status,503);
+    assertEquals(ledger.get("fund-failed-resume")!.processed_at,null);
+    assertEquals((await (await notify(fundRecovery)).json()).resumed,true);
+    const ackRecovery = await eventJWS("ack-failed-resume");
+    failAck = true;
+    assertEquals((await assertRejects(()=>notify(ackRecovery),HttpError)).status,503);
+    assertEquals(ledger.get("ack-failed-resume")!.processed_at,null);
+    assertEquals((await (await notify(ackRecovery)).json()).resumed,true);
+    const concurrent = await eventJWS("concurrent-identical");
+    const pair = await Promise.all([notify(concurrent),notify(concurrent)]);
+    assert(pair.every(response=>response.status===200));
+    assertEquals([...ledger.keys()].filter(id=>id==="concurrent-identical").length,1);
+    const altered = await eventJWS("failed-then-resumed","REFUND");
+    assertEquals((await assertRejects(()=>notify(altered),HttpError)).status,409);
+    const wrongChannel = await eventJWS("wrong-channel","DID_RENEW",sandboxTx,"Production");
+    const beforeWrong = ledger.size;
+    assertEquals((await assertRejects(()=>notify(wrongChannel),HttpError)).status,400);
+    assertEquals(ledger.size,beforeWrong);
+    const testAlias = await eventJWS("test-event","TEST");
+    calls.length=0;
+    assertEquals((await (await notify(testAlias)).json()).applied,false);
+    assertEquals(calls.length,0,"TEST never aliases a paid renewal");
     const mismatched = await signJws(chain, { originalTransactionId: "different-subscription", signedDate: event });
     await assertRejects(() => methods.readFacts({ ...outer, data: { ...(outer.data as object), signedRenewalInfo: mismatched } }), HttpError);
   } finally { Reflect.deleteProperty(globalThis, "__appleChronologyFixture"); }

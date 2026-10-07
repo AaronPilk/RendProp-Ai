@@ -2,6 +2,8 @@ import { assert, HttpError } from "../_shared/http.ts";
 import { R2_BUCKET_RENDERS, headObject } from "../_shared/r2.ts";
 import { MAX_INLINE_IMAGE_BYTES, persistResult, presignGet, bytesToB64 } from "../_shared/providers/common.ts";
 import type { DoneState } from "../_shared/providers/types.ts";
+import { admitMediaRead } from "../_shared/media-delivery-admission.ts";
+import { assertHostingAvailable } from "../_shared/hosting-retention.ts";
 
 type Row = Record<string, unknown>;
 export interface PhotoResultIdentity { actorId:string; orgId:string; requestKey:string; listingId:string|null }
@@ -35,27 +37,37 @@ async function receipt(admin:any,identity:PhotoResultIdentity,keys:Record<string
  assert(mime&&row.org_id===identity.orgId&&row.user_id===identity.actorId&&row.listing_id===identity.listingId&&row.bucket==="renders"&&Number.isSafeInteger(bytes)&&bytes>0&&bytes<=MAX_INLINE_IMAGE_BYTES&&(!pointer||pointer.key===row.storage_key),403,"The saved photo identity could not be verified.");
  return {key:String(row.storage_key),mime,bytes};
 }
-async function boundedBytes(response:Response,expected:number):Promise<Uint8Array<ArrayBuffer>> {
+export async function boundedPhotoResultBytes(response:Response,expected:number):Promise<Uint8Array<ArrayBuffer>> {
  assert(response.status===200&&response.body,503,"The saved photo could not be downloaded.");
  const declared=response.headers.get("content-length");
  assert(declared===null||Number(declared)===expected,503,"The saved photo size changed.");
- const reader=response.body.getReader(),parts:Uint8Array[]=[];let length=0;
- try{while(true){const {value,done}=await reader.read();if(done)break;length+=value.byteLength;assert(length<=expected&&length<=MAX_INLINE_IMAGE_BYTES,503,"The saved photo size changed.");parts.push(value);}}
- catch(error){await reader.cancel().catch(()=>{});throw error;}
+ const reader=response.body.getReader(),bytes=new Uint8Array(expected);let length=0,empty=0;
+ let expired=false,timer:ReturnType<typeof setTimeout>|undefined;
+ const timeout=new Promise<never>((_,reject)=>{timer=setTimeout(()=>{expired=true;void reader.cancel().catch(()=>{});reject(new HttpError(503,"The saved photo download timed out."));},30_000);});
+ const read=async()=>{while(true){const {value,done}=await reader.read();assert(!expired,503,"The saved photo download timed out.");if(done)break;
+  assert(value instanceof Uint8Array&&value.byteLength<=expected-length,503,"The saved photo size changed.");
+  if(!value.byteLength){assert(++empty<=64,503,"The saved photo download made no progress.");continue;}empty=0;
+  bytes.set(value,length);length+=value.byteLength;
+ }};
+ try{await Promise.race([read(),timeout]);}
+ catch(error){void reader.cancel().catch(()=>{});throw error;}
+ finally{clearTimeout(timer);}
  assert(length===expected,503,"The saved photo size changed.");
- const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}return bytes;
+ return bytes;
 }
 /** Replay reads one exact actor-owned journal object. No provider transport,
  * saved capability, prefix authorization, redirect or extra GET headers. */
 export async function restorePhotoResult(admin:any,identity:PhotoResultIdentity,pointer?:PhotoResultPointer,deps=actual):Promise<{key:string;mime:string;image_b64:string}|null> {
  const keys=await photoResultKeys(identity),saved=await receipt(admin,identity,keys,pointer);if(!saved)return null;
  await authority(admin,identity,saved.key,saved.bytes);
+ await assertHostingAvailable(admin,identity.orgId);
+ await admitMediaRead(admin,identity.orgId,saved.bytes,false);
  const head=await deps.head(saved.key);assert(head.exists&&head.bytes===saved.bytes,503,"The saved photo could not be verified.");
  const url=await deps.sign(saved.key);
  await authority(admin,identity,saved.key,saved.bytes);
  const response=await deps.read(url),type=response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
  if(type&&type!==saved.mime){void response.body?.cancel().catch(()=>{});throw new HttpError(503,"The saved photo format changed.");}
- const bytes=await boundedBytes(response,saved.bytes);
+ const bytes=await boundedPhotoResultBytes(response,saved.bytes);
  await authority(admin,identity,saved.key,saved.bytes);
  return{key:saved.key,mime:saved.mime,image_b64:bytesToB64(bytes)};
 }

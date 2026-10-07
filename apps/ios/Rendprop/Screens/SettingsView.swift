@@ -536,6 +536,8 @@ struct SettingsView: View {
         .onChange(of: auth.syncSessionRevision) { _ in
             accountDeletionContext = nil; showDeleteConfirm = false; showDeleteError = false
             deleteErrorMessage = nil
+            usage = nil; usageError = nil
+            Task { await loadUsage() }
         }
         .sheet(isPresented: $showSignIn) {
             // Apple's own wording in the 5.1.1(v) rejection: "You may explain to
@@ -583,6 +585,11 @@ struct SettingsView: View {
         .alert("Couldn't delete account", isPresented: $showDeleteError) {
             let context = accountDeletionContext
             Button("Retry") { scheduleAccountDeletion(context: context) }
+            Button("Contact support") {
+                if let url = URL(string: "mailto:aaron@pilk.ai?subject=Rendprop%20account%20deletion%20assistance") {
+                    UIApplication.shared.open(url)
+                }
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(deleteErrorMessage ?? "Check your connection and try again.")
@@ -862,7 +869,7 @@ struct SettingsView: View {
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text(usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
+            Text(usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -923,6 +930,7 @@ struct SettingsView: View {
         }
         if let trial = usage.trialUsage, trial.status != .active {
             trialUsageRows(trial)
+            if let package = usage.servingPhotoPackage { photoPackageRows(package) }
         } else if usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
             LabeledContent("Service", value: ServingActivationSummary.pendingTitle)
             if let plan = usage.entitlements {
@@ -932,6 +940,11 @@ struct SettingsView: View {
             if let trial = usage.trialUsage { trialUsageRows(trial) }
         } else if let trial = usage.trialUsage {
             trialUsageRows(trial)
+            if let package = usage.servingPhotoPackage { photoPackageRows(package) }
+        } else if let package = usage.servingPhotoPackage {
+            if let e = usage.entitlements { LabeledContent("Plan", value: Self.planLabel(e)) }
+            photoPackageRows(package)
+            if let leads = usage.leadCount { LabeledContent("Leads this month", value: "\(leads)") }
         } else if let e = usage.entitlements {
             LabeledContent("Plan", value: Self.planLabel(e))
             if e.plan.lowercased() == "trial", let ends = e.trialEndsAt, ends > Date() {
@@ -960,6 +973,16 @@ struct SettingsView: View {
             if let leads = usage.leadCount {
                 LabeledContent("Leads this month", value: "\(leads)")
             }
+        }
+    }
+
+    @ViewBuilder
+    private func photoPackageRows(_ package: ServingPhotoPackageSummary) -> some View {
+        ForEach(package.rows, id: \.title) { row in
+            LabeledContent(row.title, value: row.value)
+        }
+        if let end = TrialUsageSummary.date(package.endsAt) {
+            LabeledContent("Allowance interval ends", value: end.formatted(date: .abbreviated, time: .shortened))
         }
     }
 
@@ -1086,7 +1109,28 @@ struct SettingsView: View {
 
     private struct AccountDeleteError: LocalizedError {
         let status: Int
-        var errorDescription: String? { "The server responded with status \(status)." }
+        var assistance: String? = nil
+        var errorDescription: String? { assistance ?? "The server responded with status \(status)." }
+
+        static func response(status: Int, data: Data) -> AccountDeleteError {
+            // Only known custody refusals become UI text. Arbitrary database or
+            // provider errors must not reveal their response bodies here.
+            guard status == 409, data.count <= 4096,
+                  let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let error = body["error"] as? String else { return .init(status: status) }
+            let message: String?
+            switch error {
+            case "A former workspace still has listings assigned to this account. Ask its owner to reassign them before retrying account deletion.":
+                message = "A former workspace still has listings assigned to you. Ask its owner to reassign them, then retry. Contact support if you need help. Your account and saved files have been kept."
+            case "Transfer ownership of the shared workspace before deleting this account. Contact support if an ownership transfer needs assistance.":
+                message = "Transfer your shared workspace to another owner before deleting your account. Contact support for help with the transfer. Your account and saved files have been kept."
+            case "This account has retained work or likeness records in a shared or former workspace. Contact support for workspace-preserving cleanup before retrying account deletion.":
+                message = "Your account has work saved in a shared or former workspace. Contact support so we can remove your account while preserving your team's work. Your account and saved files have been kept."
+            default:
+                message = nil
+            }
+            return .init(status: status, assistance: message)
+        }
     }
 
     /// Confirmation belongs to one session, including A → B → A and workspace
@@ -1160,7 +1204,7 @@ struct SettingsView: View {
                 && (try? JSONDecoder().decode(ServerDeleteResponse.self, from: data))?.ok == true
             throw AccountDeletionContextError.changedAfterDispatch(deletionConfirmed: confirmed)
         }
-        guard (200..<300).contains(status) else { throw AccountDeleteError(status: status) }
+        guard (200..<300).contains(status) else { throw AccountDeleteError.response(status: status, data: data) }
         guard let decoded = try? JSONDecoder().decode(ServerDeleteResponse.self, from: data),
               decoded.ok else {
             throw AccountDeleteError(status: status)

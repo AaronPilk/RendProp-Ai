@@ -116,6 +116,8 @@ export async function recoverRecordedOperation(
   admin: UploadAdmin,
   op: UploadRow,
 ): Promise<UploadRow> {
+  const admission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:op.asset_id}));
+  if(admission.admitted!==true||typeof admission.legacy_unbudgeted!=="boolean")throw new HttpError(503,"Bounded upload recovery activation pending");
   const bucket = op.bucket === "renders"
     ? R2_BUCKET_RENDERS
     : R2_BUCKET_UPLOADS;

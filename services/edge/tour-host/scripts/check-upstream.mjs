@@ -71,6 +71,7 @@ async function run(path, label, expectedStatus, factory, verify = () => {}) {
     expect(response.headers.get("cache-control") === "no-store", `[${path} ${label}] no-store`);
     expect(fetches === 1, `[${path} ${label}] exactly one upstream request, no retries`);
     expect(requestInit.signal instanceof AbortSignal, `[${path} ${label}] real abort signal passed to fetch`);
+    expect(requestInit.cache === "no-store", `[${path} ${label}] explicit origin cache bypass`);
     expect(requestInit.redirect === "manual", `[${path} ${label}] never forward auth through upstream redirects`);
     expect(delays.length === 1 && delays[0] === 8000, `[${path} ${label}] one 8000ms header+body deadline`);
     expect(timers.size === 0, `[${path} ${label}] deadline timer cleared`);

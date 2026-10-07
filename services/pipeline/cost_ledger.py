@@ -31,8 +31,8 @@ Local ledger mode tallies estimates without writes. It does not authorize paid
 generations: providers/base.py independently requires a current funded worker
 session before any generation POST. A keyed-but-DB-less CLI cannot spend.
 
-Auth: PostgREST needs BOTH `apikey` and `Authorization: Bearer` set to the
-service-role key. Never ship this key to the app (see BACKEND-ARCHITECTURE §4).
+Auth: modern secret keys are sent only in `apikey`; the explicit legacy
+compatibility path also sends a Bearer JWT. Never ship either server key to the app.
 """
 
 from __future__ import annotations
@@ -94,11 +94,13 @@ class CostLedger:
 
     # ── headers ───────────────────────────────────────────────────────────────
     def _headers(self, prefer: str = "return=representation") -> dict:
-        return {
+        headers = {
             "apikey": self.service_key,
-            "Authorization": f"Bearer {self.service_key}",
             "Prefer": prefer,
         }
+        if not self.service_key.startswith("sb_secret_"):
+            headers["Authorization"] = f"Bearer {self.service_key}"
+        return headers
 
     # ── public API ────────────────────────────────────────────────────────────
     def record(
@@ -170,7 +172,7 @@ class CostLedger:
             return self.running_cents
         rows = request_json(
             f"{self.supabase_url}/rest/v1/cost_ledger?select=total_cents&job_id=eq.{job_id}",
-            method="GET", headers=self._headers(), timeout=30,
+            method="GET", headers=self._headers(), timeout=30, follow_redirects=False,
         )
         if isinstance(rows, list):
             return round(sum(float(r.get("total_cents", 0)) for r in rows), 4)
@@ -203,7 +205,7 @@ class CostLedger:
             request_json(
                 f"{self.supabase_url}/rest/v1/cost_ledger",
                 method="POST", payload=row, headers=self._headers("return=minimal"),
-                timeout=30,
+                timeout=30, follow_redirects=False,
             )
         except ProviderError as e:
             if _is_duplicate_key_error(e):
@@ -249,7 +251,7 @@ class CostLedger:
             request_json(
                 f"{self.supabase_url}/rest/v1/render_jobs?id=eq.{job_id}",
                 method="PATCH", payload={"cost_cents": int(round(total))},
-                headers=self._headers("return=minimal"), timeout=30,
+                headers=self._headers("return=minimal"), timeout=30, follow_redirects=False,
             )
         except ProviderError as e:
             # The authoritative rows are in cost_ledger; the rollup can be

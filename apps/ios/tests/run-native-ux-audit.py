@@ -58,7 +58,8 @@ assert 'isInactive' in block(src['Screens/HomeListingsView.swift'],'private var 
 assert 'l.cloudArchived = dto.status == "archived"' in src['Networking/LiveAPIClient.swift']
 assert '"beds": number(dto.beds.map(Double.init))' in src['Networking/LiveAPIClient.swift']
 assert 'current.cloudArchived = receipt.cloudArchived' in src['Models/Listing.swift']
-assert 'sandbox_testing_required' in block(src['Purchases/PurchaseManager.swift'], 'private func sync(')
+assert 'PurchaseFulfilmentRecovery.message(error)' in block(src['Purchases/PurchaseManager.swift'], 'private func sync(')
+assert 'sandbox_testing_required' in block(src['Purchases/PurchaseManager.swift'], 'enum PurchaseFulfilmentRecovery')
 floor_view = src['Screens/CloudMediaView.swift']
 assert 'mediaContext == context(org: org, listingID: sid)' in block(floor_view, 'private var floorPlanURL:')
 assert 'CloudFloorPlanLink.resolve' in block(floor_view, 'private var floorPlanURL:')

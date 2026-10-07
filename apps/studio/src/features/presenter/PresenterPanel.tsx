@@ -66,7 +66,7 @@ export default function PresenterPanel({ services, workspace, listing, onChanged
     if (candidateKey) {
       const ids = candidateKey.split(",");
       void api("/media", { asset_ids: ids }).then(raw => {
-        const found = decodePreviews(raw, org, listingId, { ids });
+        const found = decodePreviews(raw, org, listingId, { ids, actor:user });
         if (active && scopeCurrent()) setPreviews(found);
       }).catch(e => { if (active && scopeCurrent()) setPreviewError(message(e)); });
     }
@@ -77,7 +77,7 @@ export default function PresenterPanel({ services, workspace, listing, onChanged
     if (selectedProfile && !selectedProfile.invalid_reason) {
       const profile = selectedProfile;
       void api("/media", { profile_id: profile.id, expected_profile_revision: profile.revision }).then(raw => {
-        const found = decodePreviews(raw, org, listingId, { profile });
+        const found = decodePreviews(raw, org, listingId, { profile, actor:user });
         if (active && scopeCurrent()) setProfilePreviews(found);
       }).catch(e => { if (active && scopeCurrent()) setPreviewError(message(e)); });
     }
@@ -90,7 +90,7 @@ export default function PresenterPanel({ services, workspace, listing, onChanged
     if (source) {
       const asset = source.asset_id;
       void api("/media", { source_asset_id: asset }).then(raw => {
-        const found = decodePreviews(raw, org, listingId, { source: asset });
+        const found = decodePreviews(raw, org, listingId, { source: asset, actor:user });
         if (found[0].duration_s !== source.duration_s) throw new Error("Video details changed. Refresh saved status before continuing.");
         if (active && scopeCurrent()) setSourcePreview(found[0]);
       }).catch(e => { if (active && scopeCurrent()) setPreviewError(message(e)); });

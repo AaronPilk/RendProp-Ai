@@ -65,7 +65,7 @@ export function decodePresenter(raw: unknown, org: string, listing: string): Pre
   return { truncated: data.truncated ? Object.values(permissions(data.truncated, ["profiles", "drafts", "reference_candidates", "source_candidates"])).some(Boolean) : false, profiles, drafts, reference_candidates: candidates("reference_candidates", false), source_candidates: candidates("source_candidates", true),
     permissions: permissions(data.permissions, ["can_save_profile", "can_create_draft"]), runtime: { available: runtime.available, code: str(runtime.code, 100), reason: str(runtime.reason, 500) } };
 }
-export function decodePreviews(raw: unknown, org: string, listing: string, request: { ids?: string[]; profile?: Profile; source?: string }): Preview[] {
+export function decodePreviews(raw: unknown, org: string, listing: string, request: { ids?: string[]; profile?: Profile; source?: string; actor?:string }): Preview[] {
   const data = row(raw); scope(data, org, listing);
   if (request.profile && (data.profile_id !== request.profile.id || data.profile_revision !== request.profile.revision)) invalid();
   const values = request.source ? [data.source] : list(data.references, 8);
@@ -73,7 +73,7 @@ export function decodePreviews(raw: unknown, org: string, listing: string, reque
   const found = values.map(value => { const p = row(value), asset_id = uuid(p.asset_id), expires_at = str(p.expires_at, 80);
     if (!expected.includes(asset_id)) invalid();
     if (request.source && (typeof p.duration_s !== "number" || !Number.isFinite(p.duration_s) || p.duration_s < 4 || p.duration_s > 30)) invalid();
-    return { asset_id, expires_at, url: mediaURL(p.url, org, request.profile?.source_listing_id ?? listing, expires_at, Date.now()), ...(request.source ? { duration_s: Number(p.duration_s) } : {}) };
+    return { asset_id, expires_at, url: mediaURL(p.url, org, request.profile?.source_listing_id ?? listing, expires_at, Date.now(), request.actor), ...(request.source ? { duration_s: Number(p.duration_s) } : {}) };
   });
   unique(found.map(p => p.asset_id)); if (found.length !== expected.length) invalid(); return found;
 }

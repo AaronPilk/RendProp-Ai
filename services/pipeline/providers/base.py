@@ -91,6 +91,11 @@ def _retry_sleep(attempt: int, retry_after: str | None) -> float:
     return min(MAX_RETRY_SLEEP_S, 1.0 * (2 ** attempt))
 
 
+class _NoCredentialRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def request_json(
     url: str,
     *,
@@ -99,6 +104,7 @@ def request_json(
     headers: dict | None = None,
     timeout: int = 120,
     retries: int = 0,
+    follow_redirects: bool = True,
 ) -> dict:
     """POST/GET JSON and parse a JSON response. Raises ProviderError on non-2xx.
 
@@ -124,7 +130,8 @@ def request_json(
         for k, v in (headers or {}).items():
             req.add_header(k, v)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            opener = urllib.request.urlopen if follow_redirects else urllib.request.build_opener(_NoCredentialRedirect()).open
+            with opener(req, timeout=timeout) as resp:
                 body = resp.read().decode()
                 result = json.loads(body) if body else {}
                 if funding:

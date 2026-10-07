@@ -130,6 +130,23 @@ enum Haptics { static func success() {} }
             try check(h.wipeCalls == 0 && h.auth.signOutCalls == 0 && h.uploads.cancelCalls == 0, "Refused or unverified deletion preserves local data")
             try check(h.showDeleteError && !h.showAccountDeleted, "Current refusal retains actionable retry UI")
         }
+        let custodyRefusals = [
+            "A former workspace still has listings assigned to this account. Ask its owner to reassign them before retrying account deletion.",
+            "Transfer ownership of the shared workspace before deleting this account. Contact support if an ownership transfer needs assistance.",
+            "This account has retained work or likeness records in a shared or former workspace. Contact support for workspace-preserving cleanup before retrying account deletion.",
+        ]
+        for refusal in custodyRefusals {
+            let h = host(); h.deleteTapped(); let task = h.scheduleAccountDeletion(context: h.accountDeletionContext)
+            try await wait("custody assistance", until: { URLSession.shared.pending != nil })
+            let body = String(data: try JSONSerialization.data(withJSONObject: ["error": refusal]), encoding: .utf8)!
+            URLSession.shared.finish(status: 409, body: body); await task.value
+            try check(h.wipeCalls == 0 && h.auth.signOutCalls == 0 && h.uploads.cancelCalls == 0, "Assisted custody refusal preserves account and files")
+            try check(h.deleteErrorMessage?.contains("Contact support") == true && h.deleteErrorMessage?.contains("have been kept") == true, "Canonical custody refusal offers human recovery")
+        }
+        for (status, data) in [(500, Data(#"{"error":"Transfer ownership of the shared workspace before deleting this account. Contact support if an ownership transfer needs assistance."}"#.utf8)), (409, Data(#"{"error":"private database diagnostic"}"#.utf8)), (409, Data(repeating: 65, count: 4097))] {
+            let error = DeletionHarness.AccountDeleteError.response(status: status, data: data)
+            try check(error.assistance == nil && !error.localizedDescription.contains("diagnostic"), "Unknown or oversized refusal does not expose response text")
+        }
         for mode in ["actor", "actor-without-revision", "aba", "workspace", "reauth", "signed-out"] {
             let h = host(); h.deleteTapped(); switchSession(h, mode: mode)
             let captured = h.accountDeletionContext

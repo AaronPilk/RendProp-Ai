@@ -22,6 +22,49 @@ import UIKit
 // `Product.purchase(options:)` and `AppStore.showManageSubscriptions(in:)` are
 // `@MainActor` anyway.
 
+/// Only recoverable transport failures are retried automatically. A refusal
+/// requires an explicit Restore/Retry or support; neither outcome finishes Apple.
+enum PurchaseFulfilmentRecovery {
+    static func automaticallyRetry(_ error: Error) -> Bool {
+        guard let api = error as? APIError else {
+            guard let transport = error as? URLError else { return false }
+            return transport.code != .cancelled
+        }
+        if let status = api.status { return status == 408 || status == 429 || status >= 500 }
+        return false
+    }
+    static func message(_ error: Error) -> String {
+        let api = error as? APIError
+        if api?.isUnauthorized == true {
+            return "Sign in to the original Rendprop account, select its workspace, then tap Restore purchases. Your Apple transaction is retained; it is not retried automatically."
+        }
+        if api?.code == "sandbox_testing_required" {
+            return "Your test purchase is retained. Ask support to authorize this testing workspace, then tap Restore purchases. It is not retried automatically."
+        }
+        if automaticallyRetry(error) {
+            return "Your Apple purchase is retained while Rendprop is temporarily unavailable. It will retry when you reopen the app, or you can tap Restore purchases."
+        }
+        return "Your Apple purchase is retained, but Rendprop could not fulfill it. Return to its original account and workspace, then tap Restore purchases. If it is still refused, contact support in Settings → Legal & support. Manage or cancel the subscription with Apple if needed. It is not retried automatically."
+    }
+}
+
+/// Store only an opaque receipt fingerprint. StoreKit retains the actual signed
+/// transaction; a refusal survives relaunch without saving a JWS or token here.
+enum PurchaseFulfilmentRefusals {
+    static func key(actor: String?, org: UUID?, transaction: UInt64) -> String {
+        "purchase-refusal.v1." + DirectUploader.sha256Hex("\(actor ?? "none"):\(org?.uuidString ?? "none"):\(transaction)")
+    }
+    static func blocked(actor: String?, org: UUID?, transaction: UInt64, receipt: String) -> Bool {
+        UserDefaults.standard.string(forKey: key(actor: actor, org: org, transaction: transaction)) == DirectUploader.sha256Hex(receipt)
+    }
+    static func retain(actor: String?, org: UUID?, transaction: UInt64, receipt: String) {
+        UserDefaults.standard.set(DirectUploader.sha256Hex(receipt), forKey: key(actor: actor, org: org, transaction: transaction))
+    }
+    static func clear(actor: String?, org: UUID?, transaction: UInt64) {
+        UserDefaults.standard.removeObject(forKey: key(actor: actor, org: org, transaction: transaction))
+    }
+}
+
 @MainActor
 final class PurchaseManager: ObservableObject {
     static let shared = PurchaseManager()
@@ -112,6 +155,9 @@ final class PurchaseManager: ObservableObject {
         let signedTransaction: String
         let signedRenewalInfo: String?
         let expectedOrgID: UUID?
+        let actor: String?
+        let revision: UInt64
+        let selectedOrgID: UUID?
     }
 
     private init() {
@@ -150,7 +196,7 @@ final class PurchaseManager: ObservableObject {
         refreshTask = Task { [weak self] in
             guard let self else { return }
             if self.products.isEmpty { await self.loadProducts() }
-            await self.retryUnsynced()
+            await self.retryUnsynced(automatically: true)
             await self.refreshEntitlements()
             await self.refreshIntroEligibility()
             self.refreshTask = nil
@@ -586,7 +632,7 @@ final class PurchaseManager: ObservableObject {
             return
         }
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
-        let confirmed = await refreshEntitlements()
+        let confirmed = await refreshEntitlements(event: "restore")
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
         if activePlan == nil {
             notice = "No subscription found on this Apple ID."
@@ -634,7 +680,7 @@ final class PurchaseManager: ObservableObject {
 
     /// Walk `Transaction.currentEntitlements` and sync anything that is ours.
     /// Runs at launch, on foreground, and after a restore.
-    @discardableResult func refreshEntitlements() async -> Bool {
+    @discardableResult func refreshEntitlements(event: String = "entitlement") async -> Bool {
         let identity = "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)"
         var found: [VerificationResult<Transaction>] = []
         for await entitlement in Transaction.currentEntitlements {
@@ -666,7 +712,7 @@ final class PurchaseManager: ObservableObject {
             guard case .verified(let transaction) = entitlement else { continue }
             // A different app account or session must reconfirm with the server.
             if syncedThisSession.contains("\(identity):\(transaction.id)"), unsynced[transaction.id] == nil { continue }
-            if !(await handle(entitlement, event: "entitlement")) { confirmed = false }
+            if !(await handle(entitlement, event: event)) { confirmed = false }
         }
         return confirmed && identity == "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)"
     }
@@ -701,18 +747,20 @@ final class PurchaseManager: ObservableObject {
         }
         // 2. Ours?
         guard RendpropProducts.plan(for: transaction.productID) != nil else {
-            // Something we don't sell (a leftover from an older build). Finish
-            // it so StoreKit stops redelivering it forever.
-            await transaction.finish()
+            // A verified product this build does not recognize may still be
+            // paid. Never discard it merely to stop StoreKit redelivery.
+            lastError = "This build cannot fulfill that Apple product. The transaction is retained. Update Rendprop or contact support in Settings → Legal & support; Manage subscription remains available."
             return false
         }
         // 3. Revoked/refunded: let the server hear about it too — it is what
         //    turns the plan back to free — then finish.
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let selectedOrgID = WorkspaceContext.selectedOrgID
         let signedTransaction = verification.jwsRepresentation
         let signedRenewalInfo = await renewalInfoJWS(forProductID: transaction.productID)
 
-        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == selectedOrgID else { return false }
         let bindingOwner = transaction.appAccountToken
         var expectedOrgID: UUID?
         do {
@@ -721,7 +769,8 @@ final class PurchaseManager: ObservableObject {
             if expectedOrgID == nil, Config.useLiveBackend && !Config.isUITesting {
                 guard let api else { throw APIError.notConfigured }
                 let context = try await api.billingContext()
-                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                      WorkspaceContext.selectedOrgID == selectedOrgID else { return false }
                 guard context.originalTransactionIDs?.contains(String(transaction.originalID)) == true else {
                     lastError = "This Apple subscription is not linked to the selected workspace. Choose its original workspace and restore. If the purchase is still pending on your other device, open Rendprop there first."
                     return false
@@ -729,18 +778,40 @@ final class PurchaseManager: ObservableObject {
                 expectedOrgID = context.orgID
             }
         } catch {
-            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == selectedOrgID else { return false }
             lastError = "Your purchase’s saved workspace needs recovery. It has not been discarded. Contact support before changing accounts."
             return false
         }
         let pending = PendingSync(transaction: transaction,
                                   signedTransaction: signedTransaction,
-                                  signedRenewalInfo: signedRenewalInfo, expectedOrgID: expectedOrgID)
+                                  signedRenewalInfo: signedRenewalInfo, expectedOrgID: expectedOrgID,
+                                  actor: actor, revision: revision, selectedOrgID: selectedOrgID)
+        remember(pending)
+        if Config.useLiveBackend && !Config.isUITesting, expectedOrgID != selectedOrgID {
+            lastError = "This Apple purchase belongs to its saved workspace. Select that workspace and tap Restore purchases. Your transaction is retained; contact support in Settings → Legal & support if the workspace is unavailable."
+            return false
+        }
+        let explicitRecovery = event == "restore" || event == "retry" || event == "purchase"
+        if !explicitRecovery, PurchaseFulfilmentRefusals.blocked(actor: actor, org: expectedOrgID,
+                transaction: transaction.id, receipt: signedTransaction) {
+            lastError = PurchaseFulfilmentRecovery.message(APIError.server(status: 409, code: "fulfilment_refused", message: ""))
+            return false
+        }
         return await sync(pending, event: event)
+    }
+
+    private func hasCurrentFulfilmentContext(_ pending: PendingSync) -> Bool {
+        AuthStore.shared.isSignedIn && AuthStore.shared.userID == pending.actor &&
+        AuthStore.shared.syncSessionRevision == pending.revision &&
+        WorkspaceContext.selectedOrgID == pending.selectedOrgID &&
+        (!Config.useLiveBackend || Config.isUITesting ||
+         (pending.actor.flatMap(UUID.init(uuidString:)) != nil && pending.expectedOrgID != nil && pending.expectedOrgID == pending.selectedOrgID))
     }
 
     /// POST the signed transaction; finish it only on success.
     private func sync(_ pending: PendingSync, event: String) async -> Bool {
+        guard hasCurrentFulfilmentContext(pending) else { return false }
         guard let api else {
             // No client at all (misconfigured build). Keep the transaction
             // unfinished so a fixed build can still claim it.
@@ -761,8 +832,16 @@ final class PurchaseManager: ObservableObject {
             let result = try await api.syncEntitlement(signedTransaction: pending.signedTransaction,
                                                        signedRenewalInfo: pending.signedRenewalInfo,
                                                        expectedOrgID: pending.expectedOrgID)
-            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else {
-                remember(pending)
+            guard hasCurrentFulfilmentContext(pending) else { return false }
+            guard result.originalTransactionId.map({ $0 == String(pending.transaction.originalID) }) ?? true else {
+                throw CloudSyncError.invalidResponse
+            }
+            if result.servingActivation?.available == false, pending.transaction.revocationDate == nil,
+               pending.transaction.expirationDate.map({ $0 > Date() }) ?? true {
+                PurchaseFulfilmentRefusals.retain(actor: pending.actor, org: pending.expectedOrgID,
+                    transaction: pending.transaction.id, receipt: pending.signedTransaction)
+                notice = ServingActivationSummary.pendingExplanation
+                lastError = "Apple's subscription is recorded, but service activation is pending. Your transaction is retained. Contact support in Settings → Legal & support, then explicitly Restore purchases; Manage or cancel with Apple if needed."
                 return false
             }
             applyServerPlan(result, productID: pending.transaction.productID)
@@ -772,25 +851,21 @@ final class PurchaseManager: ObservableObject {
             // ONLY now. Before this line, a crash or a dead network leaves the
             // transaction with StoreKit, which is exactly what we want.
             await pending.transaction.finish()
-            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
+            guard hasCurrentFulfilmentContext(pending) else { return false }
+            PurchaseFulfilmentRefusals.clear(actor: pending.actor, org: pending.expectedOrgID, transaction: pending.transaction.id)
             syncedThisSession.insert("\(actor ?? "none"):\(revision):\(pending.transaction.id)")
             forget(pending.transaction.id)
             lastError = nil
             NotificationCenter.default.post(name: .rendpropPlanChanged, object: nil)
             return true
         } catch {
+            guard hasCurrentFulfilmentContext(pending) else { return false }
             remember(pending)
-            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
-            let apiError = error as? APIError
-            if apiError?.isUnauthorized == true {
-                lastError = "Sign in to finish turning on your plan. Your purchase is safe — nothing is lost."
-            } else if apiError?.code == "sandbox_testing_required" {
-                lastError = "Your test purchase is saved. This workspace needs authorized testing access before it can activate a test subscription. Once access is enabled, tap Restore purchases."
-            } else if let apiError, case .server(let status, _, _) = apiError, status == 409 || status == 403 {
-                lastError = "Your Apple purchase is saved, but this workspace cannot activate it. Return to the workspace you selected when subscribing, then tap Restore purchases. Manage or cancel the subscription with Apple if needed."
-            } else {
-                lastError = "Your purchase went through. We couldn't reach Rendprop to switch your plan on yet — it retries by itself, or pull down to refresh in Settings."
+            if !PurchaseFulfilmentRecovery.automaticallyRetry(error) {
+                PurchaseFulfilmentRefusals.retain(actor: pending.actor, org: pending.expectedOrgID,
+                    transaction: pending.transaction.id, receipt: pending.signedTransaction)
             }
+            lastError = PurchaseFulfilmentRecovery.message(error)
             _ = event
             return false
         }
@@ -822,11 +897,15 @@ final class PurchaseManager: ObservableObject {
 
     /// Retry every transaction the server hasn't accepted. Called on foreground
     /// and by the paywall's Retry button.
-    func retryUnsynced() async {
+    func retryUnsynced(automatically: Bool = false) async {
         guard !unsynced.isEmpty else { return }
-        // Snapshot: `sync` mutates `unsynced` as it succeeds or fails.
+        // Snapshot: sync mutates the queue. Foreign/older sessions never borrow
+        // the current bearer; StoreKit can redeliver under a fresh context.
         for pending in Array(unsynced.values) {
-            _ = await sync(pending, event: "retry")
+            guard hasCurrentFulfilmentContext(pending) else { continue }
+            if automatically, PurchaseFulfilmentRefusals.blocked(actor: pending.actor, org: pending.expectedOrgID,
+                transaction: pending.transaction.id, receipt: pending.signedTransaction) { continue }
+            _ = await sync(pending, event: automatically ? "automatic-retry" : "retry")
         }
     }
 

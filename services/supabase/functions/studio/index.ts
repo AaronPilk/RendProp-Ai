@@ -10,8 +10,7 @@ import {
   userClient,
 } from "../_shared/supabase.ts";
 import { assert, HttpError, json, pathSegments } from "../_shared/http.ts";
-import { presignGet } from "../_shared/providers/common.ts";
-import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 
 import { handleOptions } from "../_shared/cors.ts";
 import { handleProjectMedia } from "./project-media.ts";
@@ -59,12 +58,9 @@ export async function handleStudio(req: Request): Promise<Response> {
       }
       return data === true;
     },
-    sign: (bucket, key, seconds) =>
-      presignGet(
-        bucket === "uploads" ? R2_BUCKET_UPLOADS : R2_BUCKET_RENDERS,
-        key,
-        seconds,
-      ),
+    sign: (bucket, key, seconds, scope) => privateMediaUrl({
+      actor:scope.userId,org:scope.orgId,listing:scope.listingId,bucket,key,
+    },seconds),
     now: () => Date.now(),
   })(req);
   try {

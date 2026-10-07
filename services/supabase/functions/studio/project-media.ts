@@ -1,6 +1,6 @@
 import {assert,HttpError,json,pathSegments,readJsonLimited} from "../_shared/http.ts";
 import {R2_BUCKET_UPLOADS,writeStudioChunk,inspectStudioChunk} from "../_shared/r2.ts";
-import {presignGet} from "../_shared/providers/common.ts";
+import {privateMediaUrl} from "../_shared/private-media.ts";
 import type {StudioContext} from "./context.ts";
 export const PROJECT_CHUNK_BYTES=8*1024*1024;
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -17,7 +17,7 @@ export function projectMediaInput(input:Record<string,unknown>){
 export function projectMediaComplete(row:ProjectMediaRow):boolean{return row.parts>0&&row.parts===Math.ceil(row.bytes/PROJECT_CHUNK_BYTES)&&Array.from({length:row.parts},(_,i)=>row.receipts[String(i)]).every((p,i)=>p?.state==="complete"&&HASH.test(p.sha256)&&p.bytes===Math.min(PROJECT_CHUNK_BYTES,row.bytes-i*PROJECT_CHUNK_BYTES));}
 export function projectChunkKey(row:ProjectMediaRow,part:number):string{return `studio-project/${row.org_id}/${row.actor_id}/${row.id}/${part}`;}
 /** The caller must authorize this row; this helper never accepts client keys. */
-export async function projectMediaManifest(row:ProjectMediaRow,sign=presignGet){
+export async function projectMediaManifest(row:ProjectMediaRow,sign=(_bucket:string,key:string,seconds:number)=>privateMediaUrl({actor:row.actor_id,org:row.org_id,listing:null,bucket:"uploads",key},seconds)){
  const complete=projectMediaComplete(row);
  return {id:row.id,sha256:row.sha256,bytes:row.bytes,mime:row.mime,filename:row.filename,modified:row.modified,complete,parts:await Promise.all(Array.from({length:row.parts},async(_,index)=>{const p=row.receipts[String(index)];return {index,bytes:Math.min(PROJECT_CHUNK_BYTES,row.bytes-index*PROJECT_CHUNK_BYTES),sha256:p?.sha256??null,complete:p?.state==="complete",...(complete?{url:await sign(R2_BUCKET_UPLOADS,projectChunkKey(row,index),120)}:{})};}))};
 }
@@ -43,7 +43,10 @@ export async function settleProjectPart(context:StudioContext,id:string,part:num
  if(previous&&!verified){const found=await storage.inspect(projectChunkKey(checked.media,part));signal.throwIfAborted();if(found){assert(found.bytes===bytes.byteLength&&found.sha256===hash,409,"Stored media does not match this upload part.");verified=true;}}
  if(!verified){
   const claimed=await write(context,id,"claim",input,signal);
-  if(claimed.dispatch){signal.throwIfAborted();assert(Date.parse(claimed.media.write_deadline)>Date.now(),409,"This media upload expired.");await storage.write(projectChunkKey(claimed.media,part),bytes,hash);}
+  if(claimed.dispatch){signal.throwIfAborted();assert(Date.parse(claimed.media.write_deadline)>Date.now(),409,"This media upload expired.");
+   const key=projectChunkKey(claimed.media,part),reserved=await context.admin.rpc("media_storage_reserve",{p_org:context.orgId,p_bucket:"uploads",p_key:key,p_bytes:bytes.byteLength}).abortSignal(signal);
+   assert(!reserved.error&&reserved.data?.reserved===true,503,"Project storage activation pending. No media part was sent.");
+   signal.throwIfAborted();await storage.write(key,bytes,hash);}
  }
  return (await write(context,id,"finish",input,signal)).media as ProjectMediaRow;
 }

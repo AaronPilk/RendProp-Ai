@@ -14,9 +14,9 @@
 //                service, a gym gets equipment, a store gets merchandised — not
 //                a sofa and coffee table (audit F-A-07 / F-supabase-10).
 //
-// Two cheap text/vision helper modes. They are NOT charged against the monthly
-// photo-edit allowance (they generate no image); they have their own burst
-// limiter (aiphotohelp:<org>, 120 / 5 min) and the same role gate:
+// Text/vision helper modes use separately priced shared-wallet holds on paid
+// accounts and preserve private QA sponsorship. They do not use a photo credit,
+// are excluded from the bounded trial, and have their own burst limiter:
 //
 //   edit:"suggest"         { image_b64, mime?, space_type? }  ->  { suggestions: [{ edit, reason, confidence }] }
 //       Looks at the photo and recommends up to 3 edits (from the 5 canned ones)
@@ -89,7 +89,7 @@ import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
-import { fundingContext, fundedAttempt, mediaAttemptQuote, textAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, type FundingContext } from "../_shared/funded-serving.ts";
+import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { supportsStagingReference } from "../_shared/providers/gemini.ts";
 import {
@@ -108,12 +108,16 @@ import type { DoneState, GenerateInput } from "../_shared/providers/types.ts";
 // See ai-copy/prompt.ts's header and improvePrompt() below.
 import { MAX_PROMPT_INPUT, MAX_PROMPT_OUTPUT, editPromptInstruction } from "../ai-copy/prompt.ts";
 import { persistOwnedPhotoResult, restorePhotoResult, type PhotoResultPointer } from "./photo-result.ts";
+import { validatePhotoInputs, validatePhotoPrompt } from "./input-policy.ts";
+import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from "./helper-policy.ts";
 
-// Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
+// Money admission uses the actual conservative payload hold independently of
+// these burst/monthly feature counters.
 const EDIT_MAX_PER_WINDOW = 40;
 const EDIT_WINDOW_SECONDS = 300; // 40 photo edits / 5 min / org
 const MONTH_SECONDS = 30 * 86400;
-// Helper modes are ~0.1¢ of text tokens: burst-limited only.
+// Paid helpers spend the shared funded wallet separately from photo credits.
+// Trial helper stages are fenced so their five image admissions retain cash.
 const HELP_MAX_PER_WINDOW = 120;
 const HELP_WINDOW_SECONDS = 300; // 120 suggest/improve calls / 5 min / org
 
@@ -655,28 +659,36 @@ Deno.serve(async (req) => {
       const helperCharge = await guardHelper(user, req);
       try {
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        await assertPhotoHelperSponsorship(funding);
+        try { validatePhotoInputs(body.image_b64,mime); }
+        catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
         const step = legacyPhotoStep("photo.suggest");
         step.provider = "gemini"; step.model = TEXT_MODEL;
-        return json(await completeFundingOperation(funding, { suggestions: await fundedAttempt(funding, "photo.suggest", step, body, textAttemptQuote(step, suggestInstruction(profile), "", 1024, true), () => suggestEdits(body.image_b64!, mime, profile)), space_type: space }));
+        const payload=photoHelperPayload([{text:suggestInstruction(profile)},{inline_data:{mime_type:mime,data:body.image_b64!}}]);
+        return json(await completeFundingOperation(funding, { suggestions: await fundedAttempt(funding, "photo.suggest", step, body, photoHelperQuote(step.model,payload), () => suggestEdits(payload)), space_type: space }));
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
       }
     }
     if (edit === "improve_prompt") {
+      assert(body.prompt === undefined || typeof body.prompt === "string", 400, "Photo instructions must be text.");
       const rough = (body.prompt ?? "").trim();
       assert(rough.length > 0, 400, "edit:'improve_prompt' requires a non-empty `prompt`");
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
              `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
+      validatePhotoPrompt(rough, true);
       // Refuse before spending tokens polishing something we would never run.
       const promptSpace = await gateSpace();
       assertFairHousing(rough, "That idea", promptSpace);
       const helperCharge = await guardHelper(user, req);
       try {
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        await assertPhotoHelperSponsorship(funding);
         const step = legacyPhotoStep("photo.improve_prompt");
         step.provider = "gemini"; step.model = TEXT_MODEL;
-        const improved = await fundedAttempt(funding, "photo.improve_prompt", step, body, textAttemptQuote(step, editPromptInstruction(space), rough, 1024), () => improvePrompt(rough, space));
+        const payload=photoHelperPayload([{text:editPromptInstruction(space)+"\n\nUser's idea: "+rough}]);
+        const improved = await fundedAttempt(funding, "photo.improve_prompt", step, body, photoHelperQuote(step.model,payload), () => improvePrompt(payload));
         // A safe request can still produce an unsafe suggestion. Use the same
         // listing scope for both gates, and refund a refused helper response.
         assertFairHousing(improved, "The suggested edit", promptSpace);
@@ -714,6 +726,7 @@ Deno.serve(async (req) => {
           "is uncertain, make a smaller change and leave the target's fixed features and access clear. ";
       }
     } else if (edit === "custom") {
+      assert(body.prompt === undefined || typeof body.prompt === "string", 400, "Photo instructions must be text.");
       const userText = (body.prompt ?? "").trim();
       assert(userText.length > 0, 400, "edit:'custom' requires a non-empty `prompt`");
       assert(userText.length <= MAX_CUSTOM_PROMPT, 400,
@@ -755,6 +768,14 @@ Deno.serve(async (req) => {
       }
       throw error;
     }
+    // Saved results above retain their original request/history. The new
+    // still-image and UTF-8 policy governs prospective dispatch only.
+    try {
+      validatePhotoInputs(body.image_b64,mime,body.mask_b64,
+        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());
+      if(edit==="custom" || edit==="stage")validatePhotoPrompt(String(body.prompt??"").trim(),true);
+      validatePhotoPrompt(prompt);
+    }catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
     let charge: EditCharge;
     try { charge = await guardEdit(user, req); }
     catch (error) { await abortFundingOperationBeforeDispatch(funding); throw error; }
@@ -822,6 +843,13 @@ Deno.serve(async (req) => {
         throw new HttpError(503, "Same-room furniture references are unavailable on the active photo route. No edit was sent. Try staging without a reference or wait until the route supports it.", "upstream");
       }
       genInput.extra = { ...genInput.extra, staging_reference_b64: referenceB64, staging_reference_mime: referenceMime };
+    }
+
+    try { chain = await boundedPhotoChain(funding, chain, genInput); }
+    catch(error) {
+      await refundEditCharge(charge);
+      await abortFundingOperationBeforeDispatch(funding);
+      throw error;
     }
 
     // The chain throwing means every step failed (or a validation/nsfw refusal
@@ -948,14 +976,8 @@ function suggestInstruction(p: Profile): string {
 }
 
 /** edit:"suggest" — analyze the photo and pick up to 3 genuinely useful edits. */
-async function suggestEdits(imageB64: string, mime: string, profile: Profile): Promise<Suggestion[]> {
-  const raw = await geminiText(
-    [
-      { text: suggestInstruction(profile) },
-      { inline_data: { mime_type: mime, data: imageB64 } },
-    ],
-    true,
-  );
+async function suggestEdits(payload:PhotoHelperPayload): Promise<Suggestion[]> {
+  const raw = await geminiText(payload);
 
   const parsed = parseJsonLoose(raw);
   const list = Array.isArray((parsed as Record<string, unknown>)?.suggestions)
@@ -998,14 +1020,11 @@ async function suggestEdits(imageB64: string, mime: string, profile: Profile): P
  * NOTHING THE CLIENT SEES MOVES. Shipped app builds still call
  * `edit:"improve_prompt"` on THIS function; the request body, the response
  * shape ({ prompt, space_type }), the caps (300 in / 400 out), the gate order,
- * the model (TEXT_MODEL) and the helper limiter are all unchanged. Only the
- * words inside the prompt changed.
+ * the model (TEXT_MODEL) and helper limiter remain unchanged. Paid helpers use
+ * their separately priced shared wallet; bounded trial helpers are excluded.
  */
-async function improvePrompt(rough: string, space: SpaceType): Promise<string> {
-  const raw = await geminiText(
-    [{ text: editPromptInstruction(space) + "\n\nUser's idea: " + rough }],
-    true,
-  );
+async function improvePrompt(payload:PhotoHelperPayload): Promise<string> {
+  const raw = await geminiText(payload);
 
   const parsed = parseJsonLoose(raw);
   let improved = "";
@@ -1020,17 +1039,8 @@ async function improvePrompt(rough: string, space: SpaceType): Promise<string> {
 }
 
 /** One text/vision generateContent call on the cheap flash model → first text part. */
-async function geminiText(parts: unknown[], wantJson: boolean): Promise<string> {
+async function geminiText(payload:PhotoHelperPayload): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`;
-  const payload = {
-    contents: [{ role: "user", parts }],
-    generationConfig: {
-      candidateCount: 1,
-      maxOutputTokens: 1024,
-      temperature: 0.4,
-      ...(wantJson ? { responseMimeType: "application/json" } : {}),
-    },
-  };
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY! },

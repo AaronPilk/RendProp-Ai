@@ -1,3 +1,4 @@
+import {isPrivateMediaURL,privateMediaCapability} from "../../data/private-media";
 import { mediaURL, uuid } from "../../data/contracts";
 import type { Listing, ListingMedia, Workspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
@@ -55,7 +56,7 @@ export async function loadKit(services: StudioServices, workspace: Workspace, li
     for (;;) {
       const page = record(await services.api(`/functions/v1/studio/creative-results?listing_id=${listingId}&offset=${offset}`, { orgId, signal })); check();
       if (!Array.isArray(page.results) || page.results.length > 100) throw new Error("Saved video results could not be checked.");
-      for (const raw of page.results) { if (record(raw).listing_id !== listingId) throw new Error("A video result belongs to another property."); all.push(decodeResult(raw)); }
+      for (const raw of page.results) { if (record(raw).listing_id !== listingId) throw new Error("A video result belongs to another property."); all.push(decodeResult(raw,{actor:workspace.user.id,org:orgId,listing:listingId})); }
       if (all.length > 1000) throw new Error("This property has too many saved results for one kit.");
       if (page.next_offset === null) return all;
       if (page.next_offset !== offset + 100) throw new Error("Saved video results could not be loaded completely."); offset = page.next_offset as number;
@@ -68,8 +69,8 @@ export async function loadKit(services: StudioServices, workspace: Workspace, li
   })();
   const [listing, state, media, creative, script] = await Promise.all([listingPromise, statePromise, mediaPromise, creativePromise, scriptPromise]); check();
   const items: KitItem[] = [], excluded: string[] = [], seen = new Set<string>();
-  const scoped = (url: string, expires: string) => mediaURL(url, orgId, listingId, expires, Date.now());
-  const storageKey = (url: string) => new URL(url).pathname.split("/").slice(2).map(decodeURIComponent).join("/");
+  const scoped = (url: string, expires: string) => mediaURL(url, orgId, listingId, expires, Date.now(), workspace.user.id);
+  const storageKey = (url: string) => isPrivateMediaURL(url)?privateMediaCapability(url,{actor:workspace.user.id,org:orgId,listing:listingId}).key:new URL(url).pathname.split("/").slice(2).map(decodeURIComponent).join("/");
   for (const [index, gallery] of orderedGallery(state.photos).entries()) {
     const photo = media.photos.find(row => row.id === gallery.id);
     const label = `Photo ${index + 1}`;
@@ -102,7 +103,7 @@ export async function loadKit(services: StudioServices, workspace: Workspace, li
 
 export function kitText(value: string): string {
   return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").replace(/https?:\/\/[^\s<>"']+/gi, raw => {
-    try { const url = new URL(raw); return url.hostname === "uploads.rendprop.com" || /\.r2\.cloudflarestorage\.com$/.test(url.hostname) || [...url.searchParams.keys()].some(key => /^(x-amz-|token$|access_token$|refresh_token$|apikey$|signature$|sig$)/i.test(key)) ? "[private link omitted]" : raw; } catch { return raw; }
+    try { const url = new URL(raw); return url.hostname === "uploads.rendprop.com" || url.hostname === "rendprop.com" && url.pathname.startsWith("/private-media/") || /\.r2\.cloudflarestorage\.com$/.test(url.hostname) || [...url.searchParams.keys()].some(key => /^(x-amz-|token$|access_token$|refresh_token$|apikey$|signature$|sig$)/i.test(key)) ? "[private link omitted]" : raw; } catch { return raw; }
   });
 }
 const escapeHTML = (value: string) => kitText(value).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
@@ -124,7 +125,7 @@ export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], opt
   const entries: ZipEntry[] = [], files: Record<string, unknown>[] = []; let bytesRead = 0, done = 0;
   const total = selected.reduce((sum, item) => sum + (item.originalUrl ? 2 : 1), 0);
   const read = async (url: string, expiresAt: string, label: string, kind: "photo" | "video") => {
-    check(); const verified = mediaURL(url, workspace.org.id, snapshot.listing.id, expiresAt, Date.now());
+    check(); const verified = mediaURL(url, workspace.org.id, snapshot.listing.id, expiresAt, Date.now(), workspace.user.id);
     const response = await (options.fetcher ?? fetch)(verified, { credentials: "omit", referrerPolicy: "no-referrer", redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(90_000)]) }); check();
     if (!response.ok || !response.body) throw new Error(`${label} could not download. Refresh the kit and try again. No incomplete kit was downloaded.`);
     const available = Math.min(KIT_MAX_FILE_BYTES, KIT_MAX_BYTES - 1024 * 1024 - bytesRead), length = response.headers.get("content-length");

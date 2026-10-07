@@ -12,6 +12,8 @@ export interface Env extends Partial<Pick<TourHostBindings, "ASSETS" | "MEDIA_RE
   CLOUDFLARE_STREAM_TOKEN?: string;
   CLOUDFLARE_STREAM_CUSTOMER_CODE?: string;
   STREAM_PRIVATE_PLAYBACK?: string;
+  /** Private Worker→API delivery credential. Never sent to viewers. */
+  MEDIA_GATEWAY_SECRET?: string;
   /** Base URL of the Supabase Edge Functions, e.g. https://<ref>.supabase.co/functions/v1 */
   SUPABASE_FUNCTIONS_URL: string;
   /** Supabase anon key — public by design (RLS enforces access). Used as the

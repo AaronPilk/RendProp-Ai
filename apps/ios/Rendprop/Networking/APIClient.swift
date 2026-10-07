@@ -174,6 +174,7 @@ struct UsageSummary: Codable, Hashable {
     var trialUsage: TrialUsageSummary? = nil
     var trialOffer: TrialOfferSummary? = nil
     var servingActivation: ServingActivationSummary? = nil
+    var servingPhotoPackage: ServingPhotoPackageSummary? = nil
 
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }

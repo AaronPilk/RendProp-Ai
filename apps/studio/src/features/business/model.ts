@@ -1,6 +1,7 @@
 import type { Role, Workspace } from "../../data/contracts";
 import { uuid } from "../../data/contracts";
 import { decodeServingActivation, decodeTrialUsage, type ServingActivation, type TrialUsage } from "../../data/trial";
+import { decodePhotoPackage, type PhotoPackage } from "../../data/photo-package";
 
 export const leadStatuses = ["new", "contacted", "won", "lost"] as const;
 export type LeadStatus = typeof leadStatuses[number];
@@ -18,7 +19,7 @@ export type Team = { canManage: boolean; used: number; allowed: number; members:
 export type InviteResult = { email: string; outcome: string; code: string | null; expiresAt: string | null };
 export const brandFields = ["name", "title", "brokerage", "phone", "email", "website", "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent"] as const;
 export type Brand = Record<typeof brandFields[number], string> & { org_name: string; handle: string; space_type: string };
-export type Account = { brand: Brand; notifications: Notifications; portfolioUrl: string | null; planSource: string; plan: string | null; planExpiresAt: string | null; trialEndsAt: string | null; degraded: boolean; trialUsage?: TrialUsage | null; servingActivation?: ServingActivation | null; meters: { key: string; title: string; used: number; cap: number; resetsAt: string | null }[] };
+export type Account = { brand: Brand; notifications: Notifications; portfolioUrl: string | null; planSource: string; plan: string | null; planExpiresAt: string | null; trialEndsAt: string | null; degraded: boolean; trialUsage?: TrialUsage | null; servingActivation?: ServingActivation | null; servingPhotoPackage?: PhotoPackage | null; meters: { key: string; title: string; used: number; cap: number; resetsAt: string | null }[] };
 export function serviceActivationPending(account: Account, now = Date.now()): boolean {
   if (account.servingActivation?.available !== false) return false;
   if (account.trialUsage) return account.trialUsage.status === "active";
@@ -125,7 +126,7 @@ export function decodeAccount(value: unknown, workspace: Workspace): Account {
     const cap = count(caps[key]);
     return { key, title, used: count(used[key]), cap: servingActivation?.available === false ? 0 : cap, resetsAt: windows[key] === null ? null : date(record(windows[key]).resets_at) };
   });
-  return { brand, notifications: decodeNotifications(r.notifications), portfolioUrl: safeHTTPS(r.portfolio_url), planSource: text(r.plan_source), plan: r.plan == null ? null : text(r.plan), planExpiresAt: r.plan_expires_at == null ? null : date(r.plan_expires_at), trialEndsAt: r.trial_ends_at == null ? null : date(r.trial_ends_at), degraded, trialUsage: decodeTrialUsage(r.trial_usage, workspace.org.id), servingActivation, meters };
+  return { brand, notifications: decodeNotifications(r.notifications), portfolioUrl: safeHTTPS(r.portfolio_url), planSource: text(r.plan_source), plan: r.plan == null ? null : text(r.plan), planExpiresAt: r.plan_expires_at == null ? null : date(r.plan_expires_at), trialEndsAt: r.trial_ends_at == null ? null : date(r.trial_ends_at), degraded, trialUsage: decodeTrialUsage(r.trial_usage, workspace.org.id), servingActivation, servingPhotoPackage: decodePhotoPackage(r.serving_photo_package, workspace.org.id), meters };
 }
 export function brandPayload(brand: Brand): Record<string, string | null> {
   if (!brand.org_name.trim() || brand.org_name.length > 120 || brand.org_name.includes("@")) throw new Error("Enter a business name up to 120 characters.");

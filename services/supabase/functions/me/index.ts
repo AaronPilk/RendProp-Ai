@@ -84,6 +84,7 @@ import { personalCard } from "./card.ts";
 import { memberPortfolio } from "./portfolio.ts";
 import { accountDataExport } from "./export.ts";
 import { hostingRetention } from "../_shared/hosting-retention.ts";
+import { photoPackageContext } from "../_shared/photo-package-context.ts";
 import { boundedTrialContext, subscriptionServingActivation, trialServingActivationForSync } from "../_shared/bounded-trial.ts";
 import { heldTrialPurchase, prepareTrialPurchase } from "../_shared/trial-purchase.ts";
 import { brandLogo } from "./brand-logo.ts";
@@ -102,6 +103,7 @@ import {
   throwRpc,
 } from "../_shared/http.ts";
 import { privateProvenanceLinks } from "../_shared/private-provenance-links.ts";
+import { privateMediaUrl } from "../_shared/private-media.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import { cleanupLegacyGhlTarget } from "../_shared/legacy-ghl-cleanup.ts";
 import { sweepPrivacyCleanup } from "../_shared/privacy-cleanup.ts";
@@ -351,6 +353,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     (ledgerRes.data ?? []).reduce((s, r) => s + Number(r.total_cents ?? 0), 0),
   );
   const servingActivation = await subscriptionServingActivation(admin, userId, orgId);
+  const photoPackage = await photoPackageContext(admin, userId, orgId);
   const visibleEntitlement = org.plan_source === "apple" && !servingActivation.available
     ? { ...entitlement, renders_per_month:0, photo_edits_per_month:0, reels_per_month:0, aerials_per_month:0, topaz_per_month:0, degraded:true }
     : entitlement;
@@ -402,6 +405,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     trial_offer: heldPurchase?.trial_offer ?? null,
     trial_reservation: heldPurchase,
     serving_activation: servingActivation,
+    serving_photo_package: photoPackage,
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
     plan_source: testingAccess ? "manual" : org.plan_source ?? null,
@@ -834,7 +838,7 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
 
   const all = (data ?? []) as unknown as Array<Record<string, unknown>>;
   const truncated = all.length > limit;
-  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,all.slice(0,limit));
+  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,all.slice(0,limit),(bucket,key,seconds,listing)=>privateMediaUrl({actor:userId,org:orgId,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
   const rows = all.slice(0, limit).map((r,index) => {
     const l = (Array.isArray(r.listings) ? r.listings[0] : r.listings) as
       | { address: string | null; space_type: string | null }
@@ -912,7 +916,7 @@ async function handleComplianceOrg(
   // one renderer serves both and a diff between the two exports is only ever
   // the attribution. Private links retain exact source identity and the same
   // current permission checks as the individual export.
-  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,scoped.slice(0,opts.limit));
+  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,scoped.slice(0,opts.limit),(bucket,key,seconds,listing)=>privateMediaUrl({actor:userId,org:orgId,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
   const rows = scoped.slice(0, opts.limit).map((r,index) => ({
     id: r.id as string,
     created_at: r.created_at as string,
@@ -991,7 +995,7 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
 
   const row = (data ?? {}) as Record<string, unknown>;
   const orgId=await orgForUser(userId,preferredOrg(req));
-  const [privateLinks]=await privateProvenanceLinks(adminClient(),orgId,[row]);
+  const [privateLinks]=await privateProvenanceLinks(adminClient(),orgId,[row],(bucket,key,seconds,listing)=>privateMediaUrl({actor:userId,org:orgId,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
   return json({
     ok: true,
     provenance: {

@@ -1,5 +1,54 @@
 import Foundation
 
+/// Current funded photo admissions and a separate balance for other AI work.
+/// An absent package preserves legacy and private-testing displays. These
+/// counters describe the server's interval; they never authorize a purchase.
+struct ServingPhotoPackageSummary: Codable, Hashable, Sendable {
+    struct Admissions: Codable, Hashable, Sendable {
+        let cap: Int
+        let used: Int
+        let remaining: Int
+        var isValid: Bool {
+            (0...10_000).contains(cap) && (0...cap).contains(used) && remaining == cap - used
+        }
+    }
+    struct OtherAI: Codable, Hashable, Sendable {
+        let capCents: Int
+        let usedCents: Int
+        let remainingCents: Int
+        var isValid: Bool {
+            (0...100_000_000).contains(capCents) && (0...capCents).contains(usedCents)
+                && remainingCents == capCents - usedCents
+        }
+    }
+    let orgId: UUID
+    let startsAt: String
+    let endsAt: String
+    let policy: String
+    let tariffVersion: String
+    let photoAdmissions: Admissions
+    let photoHoldCents: Double
+    let protectedPhotoCents: Int
+    let otherAi: OtherAI
+
+    func checked(org: UUID, now: Date = Date()) -> Self? {
+        guard orgId == org,
+              policy == "one-gemini-1k-4096-plus-one-kontext-20261007",
+              tariffVersion == "published-standard-20261006",
+              let start = TrialUsageSummary.date(startsAt), let end = TrialUsageSummary.date(endsAt),
+              start <= now, end > now, end > start,
+              photoAdmissions.isValid, otherAi.isValid,
+              photoHoldCents == 35.1296,
+              protectedPhotoCents == Int(ceil(Double(photoAdmissions.cap) * 35.1296)) else { return nil }
+        return self
+    }
+    var rows: [(title: String, value: String)] {
+        [("AI photo edits", "\(photoAdmissions.used) of \(photoAdmissions.cap) used · \(photoAdmissions.remaining) remaining"),
+         ("Other AI tools", otherAi.capCents == 0 ? "Not included" : "\(otherAi.remainingCents * 100 / otherAi.capCents)% available")]
+    }
+    static let explanation = "Photo edits and the budget for other AI tools are separate. These are the workspace's actual configured limits for this interval, shared on iPhone and Studio. An accepted photo edit uses an admission even if generation fails. Work is admitted by the server. Pull down to refresh."
+}
+
 /// Recorded Apple subscription identity and usable service are separate.
 /// This is fresh workspace-scoped serving authority, not a locally chosen plan.
 struct ServingActivationSummary: Codable, Hashable, Sendable {

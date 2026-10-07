@@ -135,7 +135,7 @@ extension LiveAPIClient: PurchasesAPI {
         if let signedRenewalInfo, !signedRenewalInfo.isEmpty {
             body["signed_renewal_info"] = signedRenewalInfo
         }
-        let data = try await PurchasesRequest.post(path: ["me", "entitlement"], json: body)
+        let data = try await PurchasesRequest.post(path: ["me", "entitlement"], json: body, requiredCurrentOrg: expectedOrgID)
         let decoder = JSONDecoder()   // EntitlementSync decodes its own snake_case keys
         do {
             let result = try decoder.decode(EntitlementSync.self, from: data)
@@ -165,7 +165,8 @@ extension LiveAPIClient: PurchasesAPI {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         guard let org = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
         guard let base = Config.apiBaseURL, let token = await AuthStore.validAccessToken() else { throw APIError.notConfigured }
-        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == org, AuthStore.jwtSubject(token) == actor else { throw CloudSyncError.identityChanged }
         var request = URLRequest(url: base.appendingPathComponent("me"))
         request.timeoutInterval = 20
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -208,6 +209,7 @@ extension LiveAPIClient: PurchasesAPI {
         // Owner route: refresh the JWT right before sending, never send one we
         // know is stale.
         if Config.enableAuth, let token = await AuthStore.validAccessToken() {
+            guard AuthStore.jwtSubject(token) == actor else { throw CloudSyncError.identityChanged }
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         if requiredCurrentOrg != nil, req.value(forHTTPHeaderField: "Authorization") == nil {
@@ -234,9 +236,13 @@ extension LiveAPIClient: PurchasesAPI {
             guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
             let refreshed = await AuthStore.shared.forceRefresh()
             if refreshed, let fresh = AuthStore.storedAccessToken() {
-                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                      AuthStore.jwtSubject(fresh) == actor,
+                      requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
                 req.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
                 let (data2, resp2) = try await URLSession.shared.data(for: req)
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                      requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
                 guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
                 if (200..<300).contains(http2.statusCode) { return data2 }
                 throw LiveAPIClient.serverError(status: http2.statusCode, data: data2)

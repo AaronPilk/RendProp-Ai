@@ -12,10 +12,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError } from "./http.ts";
+import { runtimeApiKey, serviceKeyMatches } from "./api-key-config.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY");
+const LEGACY_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+const SERVICE_ROLE_KEY = runtimeApiKey(Deno.env.get("SUPABASE_SECRET_KEYS"), Deno.env.get("RENDPROP_SECRET_KEY_NAME") ?? "default", "secret", LEGACY_SERVICE_ROLE_KEY);
+const ANON_KEY = runtimeApiKey(Deno.env.get("SUPABASE_PUBLISHABLE_KEYS"), Deno.env.get("RENDPROP_PUBLISHABLE_KEY_NAME") ?? "default", "publishable", Deno.env.get("SUPABASE_ANON_KEY"));
 
 function requireEnv(name: string, value: string | undefined): string {
   if (!value) throw new HttpError(500, `Missing required env var: ${name}`);
@@ -29,7 +31,7 @@ export function adminClient(): SupabaseClient {
   if (_admin) return _admin;
   _admin = createClient(
     requireEnv("SUPABASE_URL", SUPABASE_URL),
-    requireEnv("SUPABASE_SERVICE_ROLE_KEY", SERVICE_ROLE_KEY),
+    requireEnv("SUPABASE_SECRET_KEYS", SERVICE_ROLE_KEY),
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
   return _admin;
@@ -40,7 +42,7 @@ export function userClient(req: Request): SupabaseClient {
   const authHeader = req.headers.get("Authorization") ?? "";
   return createClient(
     requireEnv("SUPABASE_URL", SUPABASE_URL),
-    requireEnv("SUPABASE_ANON_KEY", ANON_KEY),
+    publicApiKey(),
     {
       global: { headers: { Authorization: authHeader } },
       auth: { persistSession: false, autoRefreshToken: false },
@@ -57,10 +59,11 @@ export function getBearer(req: Request): string | null {
   return token.trim();
 }
 
-/** True when the caller presented the service-role key as its bearer (worker path). */
+export function publicApiKey(): string { return requireEnv("SUPABASE_PUBLISHABLE_KEYS", ANON_KEY); }
+
+/** Exact server credential, never a caller's unverified JWT role claim. */
 export function isServiceRole(req: Request): boolean {
-  const token = getBearer(req);
-  return !!token && !!SERVICE_ROLE_KEY && token === SERVICE_ROLE_KEY;
+  return serviceKeyMatches(req, SERVICE_ROLE_KEY, LEGACY_SERVICE_ROLE_KEY, Deno.env.get("RENDPROP_LEGACY_SERVICE_AUTH"));
 }
 
 /** Validate the bearer JWT against Supabase Auth and return the auth user, or 401. */
@@ -86,25 +89,13 @@ export async function assertPaidAiIdentity(user: PaidAiCaller, orgId: string): P
   const denied = () => new HttpError(401, "Sign in to use AI tools, or restore your active subscription.", "unauthorized");
   if (user.is_anonymous !== true) throw denied();
   const unavailable = () => new HttpError(503, "Subscription access could not be verified. Please retry.", "upstream");
-  const admin = adminClient();
-  const { data: org, error: orgError } = await admin.from("orgs")
-    .select("plan_source,deleted_at").eq("id", orgId).maybeSingle();
-  if (orgError) throw unavailable();
-  if (!org || org.deleted_at !== null || org.plan_source !== "apple") throw denied();
-  const { data: plan, error: planError } = await admin.rpc("effective_plan", { p_org: orgId });
-  if (planError) throw unavailable();
-  if (!["starter", "pro", "team"].includes(plan)) throw denied();
-  const { data: subscription, error: subscriptionError } = await admin.from("apple_subscriptions")
-    .select("org_id,user_id,plan,status,expires_at")
-    .eq("org_id", orgId).eq("user_id", user.id).eq("plan", plan)
-    .in("status", ["active", "grace"]).limit(1).maybeSingle();
-  if (subscriptionError) throw unavailable();
-  // Match effective_plan's existing maximum Apple billing-retry grace. A stale
-  // active row for this guest cannot borrow another subscriber's newer expiry.
-  if (!subscription || subscription.org_id !== orgId || subscription.user_id !== user.id ||
-    subscription.plan !== plan || !["active", "grace"].includes(subscription.status) ||
-    typeof subscription.expires_at !== "string" || !Number.isFinite(Date.parse(subscription.expires_at)) ||
-    Date.parse(subscription.expires_at) < Date.now() - 16 * 86400_000) throw denied();
+  // The SQL operation/reservation/result readers use this identical retail
+  // predicate. A loose active/grace row cannot admit an unfunded guest first.
+  const { data, error } = await adminClient().rpc("org_has_verified_retail_guest", {
+    p_actor: user.id, p_org: orgId,
+  });
+  if (error) throw unavailable();
+  if (data !== true) throw denied();
 }
 
 // Prefer owner > admin > agent > marketing when a user has multiple memberships.

@@ -13,15 +13,15 @@
   "events": true,
   "leads": false,
   "listings": true,
-  "me": true,
-  "notify": true,
+  "me": false,
+  "notify": false,
   "portfolio": false,
-  "presenter-drain": true,
+  "presenter-drain": false,
   "property": true,
   "renders": true,
   "spatial": false,
   "studio": true,
   "team": true,
-  "tours": true,
-  "uploads": true
+  "tours": false,
+  "uploads": false
 }

@@ -425,7 +425,7 @@ function ListingCreative(
           })}`,
         ),
       );
-      found.push(...rows(result.results, 100).map(decodeResult));
+      found.push(...rows(result.results, 100).map(value=>decodeResult(value,{actor:workspace.user.id,org:orgId,listing:listingId})));
       if (result.next_offset === null || result.next_offset === undefined) {
         break;
       }
@@ -509,7 +509,7 @@ function ListingCreative(
               }),
             );
             if (!cancelled) {
-              const updated = decodeResult(result.result);
+              const updated = decodeResult(result.result,{actor:workspace.user.id,org:orgId,listing:listingId});
               setResults((old) => old.map((r) => r.id === id ? updated : r));
             }
           }
@@ -816,7 +816,7 @@ function ListingCreative(
         label: "Property voiceover",
       }, { idempotencyKey: crypto.randomUUID(), timeoutMs: 360_000 }),
     );
-    setResults((old) => [decodeResult(raw.result), ...old]);
+    setResults((old) => [decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId}), ...old]);
     setNotice(
       "Your narration is saved with this property and can be opened again on another device.",
     );
@@ -859,7 +859,7 @@ function ListingCreative(
         timeoutMs: 360_000,
       }),
     );
-    setResults((old) => [decodeResult(raw.result), ...old]);
+    setResults((old) => [decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId}), ...old]);
     setNotice(
       "Generation started. You can leave this page and return to this property's saved results.",
     );
@@ -867,6 +867,7 @@ function ListingCreative(
   async function reviewVideo(result: CreativeResult) {
     const signed = decodeResult(
       record(await api("studio/sign-media", { result_id: result.id })).result,
+      {actor:workspace.user.id,org:orgId,listing:listingId},
     );
     if (!signed.url || !signed.sourceUrl || !signed.requestId) {
       throw new Error(
@@ -2025,7 +2026,7 @@ function ListingCreative(
                             setResults((old) =>
                               old.map((r) =>
                                 r.id === result.id
-                                  ? decodeResult(raw.result)
+                                  ? decodeResult(raw.result,{actor:workspace.user.id,org:orgId,listing:listingId})
                                   : r
                               )
                             );

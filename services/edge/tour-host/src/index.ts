@@ -116,6 +116,9 @@ function htmlResponse(
       "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
       "Content-Security-Policy": csp.join("; "),
       ...extraHeaders,
+      ...(extraHeaders["Cache-Control"]?.startsWith("no-store") ? {
+        "CDN-Cache-Control": "no-store", "Cloudflare-CDN-Cache-Control": "no-store",
+      } : {}),
     },
   });
 }
@@ -329,7 +332,7 @@ async function handleTour(
       // "temporarily unavailable" page is the safe failure, a leak is not.
       const violations = unbrandedSelfCheck(html, tour);
       if (violations.length) {
-        console.error(`tour-host UNBRANDED SELF-CHECK FAILED slug=${slug} violations=${violations.join(",")}`);
+        console.error(JSON.stringify({ event: "unbranded_self_check_failed", count: violations.length }));
         return htmlResponse(unbrandedFallback("blocked"), 503, { ...base, "Cache-Control": "no-store" }, { unbranded });
       }
     }
@@ -455,7 +458,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (canonical) return canonical;
 
   const path = rawPath;
-  if (path.startsWith("/media/") || path.startsWith("/media-brand/")) return handleMediaDelivery(req,env);
+  if (path.startsWith("/media/") || path.startsWith("/media-brand/") || path.startsWith("/private-media/")) return handleMediaDelivery(req,env);
 
   // Keep the discoverable apex entry pointed at the deployed browser app.
   // The destination is fixed; query strings do not cross into the app.
@@ -572,7 +575,8 @@ export default {
     } catch (err) {
       // Last line of defence: never let an exception escape as an unbranded
       // Cloudflare error page. no-store so a transient bug isn't cached.
-      console.error("tour-host unhandled error", err instanceof Error ? err.stack || err.message : String(err));
+      // Exceptions may contain upstream URLs, signed capabilities or headers.
+      console.error(JSON.stringify({ event: "tour_host_unhandled_error", kind: err instanceof Error ? "error" : "unknown" }));
       let kind: "tour" | "page" = "page";
       let unbranded = false;
       try {

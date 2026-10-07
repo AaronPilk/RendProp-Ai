@@ -446,6 +446,8 @@ Deno.serve(async (req) => {
             uploadId: String(asset.upload_id),
             parts: actual.map((p) => ({ partNumber: p.number, etag: p.etag })),
           });
+          const readAdmission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:assetId}));
+          assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Bounded upload completion activation pending");
           const head = await headObject(bucket, String(asset.storage_key));
           assert(
             head.exists && head.bytes === Number(asset.bytes) && head.etag &&
@@ -458,6 +460,8 @@ Deno.serve(async (req) => {
         },
       );
     } else {
+      const readAdmission=row(await uploadRPC(admin,"media_upload_read_admit",{p_asset:assetId}));
+      assert(readAdmission.admitted===true&&typeof readAdmission.legacy_unbudgeted==="boolean",503,"Bounded upload completion activation pending");
       const transfer = transfers[0],
         head = await headObject(bucket, String(transfer.object_key));
       const type = baseMediaType(head.contentType),

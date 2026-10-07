@@ -317,7 +317,7 @@ for (const flag of [false, true]) {
             },
             body: JSON.stringify({
               edit,
-              image_b64: "c3ludGhldGlj",
+              image_b64: btoa(String.fromCharCode(...[255,216,255,192,0,11,8,0,1,0,1,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217])),
               mime: "image/jpeg",
             }),
           }),

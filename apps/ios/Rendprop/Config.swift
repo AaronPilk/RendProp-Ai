@@ -58,8 +58,8 @@ enum Config {
         if isSessionNetworkTesting { return "local-fixture-public-key" }
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_ANON_KEY") as? String,
            !s.isEmpty { return s }
-        // Supabase anon key (public by design; RLS enforces access).
-        return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltZ3FwYm5qcHp0d2pzeXZjZWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMzk5OTAsImV4cCI6MjEwMjgxNTk5MH0.oUknRmqxoRGWPaYJCaOudGaXwe5w4tfKqqZ9cAPbfW0"
+        // Independently revocable publishable key (public; RLS enforces access).
+        return "sb_publishable_ZAhq8ZAh5DXRTpuSussRbg_Nkbg1mwu"
     }()
 
     /// Master switch. false = MockAPIClient (fully offline dev — believable

@@ -6,7 +6,7 @@ import {
   R2_BUCKET_RENDERS,
   R2_BUCKET_UPLOADS,
 } from "../_shared/r2.ts";
-import { presignGet } from "../_shared/providers/common.ts";
+import { privateMediaIdentity, privateMediaUrl } from "../_shared/private-media.ts";
 import type { StudioContext } from "./context.ts";
 import {
   editQualityProjection,
@@ -94,7 +94,7 @@ export function completedVideoKey(
   }
   return key;
 }
-export function voiceStorageKey(value: unknown, orgId: string): string {
+export function voiceStorageKey(value: unknown, orgId: string, userId?:string): string {
   if (typeof value !== "string") {
     throw new HttpError(
       502,
@@ -102,6 +102,8 @@ export function voiceStorageKey(value: unknown, orgId: string): string {
     );
   }
   let url: URL;
+  const cap=privateMediaIdentity(value);
+  if(cap&&cap.org===orgId&&(userId===undefined||cap.actor===userId)&&cap.bucket==="uploads"&&!cap.review&&new RegExp(`^ai-voice/${orgId}/${ID.source.slice(1,-1)}\\.mp3$`,"i").test(cap.key))return cap.key;
   try {
     url = new URL(value);
   } catch {
@@ -129,7 +131,7 @@ export function voiceStorageKey(value: unknown, orgId: string): string {
 export function downloadURL(
   value: unknown,
   ownPublicBase?: string | null,
-  scope?: {orgId:string;storageKey?:unknown},
+  scope?: {orgId:string;storageKey?:unknown;userId?:string},
 ): string {
   if (typeof value !== "string" || value.length > 8192) {
     throw new HttpError(502, "The generated clip has no downloadable file.");
@@ -162,7 +164,11 @@ export function downloadURL(
     /^[1-9]\d{0,2}$/.test(url.searchParams.get("X-Amz-Expires") ?? "") &&
     Number(url.searchParams.get("X-Amz-Expires")) <= 600 &&
     [...url.searchParams.keys()].every(name => name.startsWith("X-Amz-")));
-  const approved = privateR2 || (own && url.origin === own.origin &&
+  const cap=privateMediaIdentity(value);
+  const privateGateway=Boolean(cap&&scope&&cap.org===scope.orgId&&(scope.userId===undefined||cap.actor===scope.userId)&&cap.bucket==="renders"&&!cap.review&&
+    (cap.key.startsWith(`ai-router/${scope.orgId}/`)||cap.key.startsWith(`renders/${scope.orgId}/`))&&
+    (scope.storageKey===undefined||scope.storageKey===cap.key));
+  const approved = privateGateway || privateR2 || (own && url.origin === own.origin &&
     url.pathname.startsWith(own.pathname)) ||
     url.hostname === "fal.media" || url.hostname.endsWith(".fal.media") ||
     url.hostname === "v3.fal.media" ||
@@ -334,11 +340,7 @@ async function buildPublicResult(context: StudioContext, row: any) {
   };
   // No upstream job URLs or upload capabilities ever leave this trusted store.
   if (row.storage_key && ["uploads", "renders"].includes(row.bucket)) {
-    result.url = await presignGet(
-      row.bucket === "uploads" ? R2_BUCKET_UPLOADS : R2_BUCKET_RENDERS,
-      row.storage_key,
-      600,
-    );
+    result.url = await privateMediaUrl({actor:context.userId,org:context.orgId,listing:row.listing_id,bucket:row.bucket,key:row.storage_key},600);
     result.expires_at = new Date(Date.now() + 600_000).toISOString();
   }
   let sourceProof: Record<string, unknown> | null = null;
@@ -356,11 +358,7 @@ async function buildPublicResult(context: StudioContext, row: any) {
         `renders/${context.orgId}/${row.listing_id}/`,
       )
     ) {
-      result.source_url = await presignGet(
-        R2_BUCKET_RENDERS,
-        source.storage_key,
-        600,
-      );
+      result.source_url = await privateMediaUrl({actor:context.userId,org:context.orgId,listing:row.listing_id,bucket:"renders",key:source.storage_key},600);
     }
   }
   if (row.kind === "video") {
@@ -567,7 +565,7 @@ export async function handleCreative(
       const source = downloadURL(
         state.video_url,
         Deno.env.get("R2_PUBLIC_BASE_URL"),
-        {orgId:context.orgId,storageKey:state.asset_key},
+        {orgId:context.orgId,userId:context.userId,storageKey:state.asset_key},
       );
       const response = await fetch(source, {
         credentials: "omit",
@@ -756,7 +754,7 @@ export async function handleCreative(
         voice_id: body.voice_id,
         label: clean(body.label, 80),
       }, requestKey);
-      const storageKey = voiceStorageKey(output.audio_url, context.orgId);
+      const storageKey = voiceStorageKey(output.audio_url, context.orgId, context.userId);
       const head = await headObject(R2_BUCKET_UPLOADS, storageKey);
       if (!head.exists || !head.bytes || head.bytes > 20 * 1024 * 1024) {
         throw new HttpError(

@@ -165,6 +165,7 @@ export class Fixture {
     if (this.rpcFailures.has(name)) {
       return reject(503, "synthetic durable state unavailable");
     }
+    if(name==="media_upload_read_admit"){if(args.p_asset!==this.asset?.id)return reject(404,"upload media unavailable");return json({admitted:true,legacy_unbudgeted:true});}
     const op = this.operations.get(String(args.p_operation));
     if (name === "reserve_upload_assets") {
       const assets = args.p_assets as Row[];

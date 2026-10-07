@@ -17,6 +17,7 @@ function fixture() {
     subscription_trial_purchase_reservations: [{id:"own-hold",actor_id:actor,org_id:org,product_id:"com.rendprop.app.starter.monthly",held_at:"2026-10-06T00:00:00Z"},{id:"foreign-hold",actor_id:other,org_id:org}],
     subscription_trial_grants: [{id:"own-trial",actor_id:actor,org_id:org,photo_cap:5},{id:"foreign-trial",actor_id:other,org_id:org,photo_cap:5}],
     subscription_trial_actions: [{grant_id:"own-trial",kind:"upload",identity:"own-attempt",actor_id:actor,org_id:org,listing_id:"deleted-listing",asset_id:"deleted-asset",held_bytes:20},{grant_id:"foreign-trial",kind:"photo",identity:"DO_NOT_EXPORT",actor_id:other,org_id:org}],
+    serving_photo_admissions: [{funding_id:"own-funding",slice_index:0,org_id:org,actor_id:actor,request_key:"own-photo",task:"photo.declutter",created_at:"2026-10-07T00:00:00Z",input_sha256:"DO_NOT_EXPORT"},{funding_id:"foreign-funding",slice_index:0,org_id:org,actor_id:other,request_key:"DO_NOT_EXPORT",task:"photo.stage"}],
   };
   const calls: { table: string; filters: [string, string[]][]; fields: string; start: number; end: number }[] = [];
   let namedCalls = 0; const unavailable = new Set<string>();
@@ -45,9 +46,14 @@ Deno.test("account export includes own data across current membership and names 
   assertEquals(value.data.serving_operation_results.length,1);assertEquals(value.data.serving_operation_results[0].result.copy,"Authored generated copy");assert(!body.includes("urn:rendprop:r2:"));assert(!body.includes("/media/slug/r2/"));
   assertEquals(value.data.subscription_trial_purchase_reservations.length,1);assertEquals(value.data.subscription_trial_grants.length,1);assertEquals(value.data.subscription_trial_actions.length,1);
   assertEquals(value.data.subscription_trial_actions[0].held_bytes,20);assert(!("listing_id"in value.data.subscription_trial_actions[0]));assert(!("asset_id"in value.data.subscription_trial_actions[0]));
+  assertEquals(value.data.serving_photo_admissions.length,1);assertEquals(value.data.serving_photo_admissions[0].task,"photo.declutter");assert(!("input_sha256"in value.data.serving_photo_admissions[0]));
+  assert(f.calls.filter(c=>c.table==="serving_photo_admissions").every(c=>c.filters.some(([key,values])=>key==="actor_id"&&values[0]===actor)));
   for(const name of ["subscription_trial_grants","subscription_trial_actions","subscription_trial_purchase_reservations"])assert(f.calls.filter(c=>c.table===name).every(c=>c.filters.some(([key,values])=>key==="actor_id"&&values[0]===actor)));
   assert(value.manifest.omissions.some((x: Row) => x.collection === "binary_media")); assert(value.manifest.omissions.some((x: Row) => x.collection === "workspace_cost_and_usage_ledger")); assertEquals(f.namedCalls, 3);
   for (const call of f.calls.filter((c) => c.table === "studio_documents")) assert(call.filters.some(([column, values]) => column === "user_id" && values[0] === actor));
+});
+Deno.test("account export redacts private download capabilities embedded in authored text", () => {
+  assertEquals(sanitizeExport({caption:"Download https://rendprop.com/private-media/synthetic.capability now"}), {caption:"Download [private media link omitted] now"});
 });
 Deno.test("account export enumerates multiple active workspaces without the selected org header", async () => {
   const f = fixture(); const second = "ea100601-0000-4000-8000-000000000004";

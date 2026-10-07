@@ -76,7 +76,7 @@ export default function Projects(props:Props){
   const combined=AbortSignal.any([signal,controller.current.signal]);let file=files.current.get(hash)??null;
   if(!file){try{file=await readProjectFile(scope,hash,combined);if(file)stored.current.add(hash);}catch{ /* Cloud restoration remains possible when browser storage is unavailable. */ }}
   if(selectedRef.current&&services&&workspace&&!cloud.current.has(hash)){
-   try{const saved=decodeSavedMedia(await services.api(`/functions/v1/studio/project-media?sha256=${hash}`,{orgId:workspace.org.id,signal:combined}),hash);if(saved?.complete){cloud.current.add(hash);if(!file)file=await downloadSavedMedia(saved,combined);}}
+   try{const saved=decodeSavedMedia(await services.api(`/functions/v1/studio/project-media?sha256=${hash}`,{orgId:workspace.org.id,signal:combined}),hash);if(saved?.complete){cloud.current.add(hash);if(!file)file=await downloadSavedMedia(saved,combined,{actor:workspace.user.id,org:workspace.org.id,listing:null});}}
    catch(error){combined.throwIfAborted();if(!file)throw error;}
   }
   combined.throwIfAborted();if(file)files.current.set(hash,file);return file;

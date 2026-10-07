@@ -25,7 +25,7 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             Config.useLiveBackend = true; Config.isUITesting = false
             AuthStore.shared.userID = actor.uuidString; AuthStore.shared.syncSessionRevision = 1
             AuthStore.shared.isSignedIn = true; AuthStore.shared.isIdentified = true
-            AuthStore.shared.refreshes = 0; AuthStore.token = "synthetic-bearer"
+            AuthStore.shared.refreshes = 0; AuthStore.token = "fixture." + (try! JSONSerialization.data(withJSONObject: ["sub": actor.uuidString])).base64EncodedString().replacingOccurrences(of: "=", with: "") + ".fixture"
             WorkspaceContext.selectedOrgID = org
             UserDefaults.standard.values = [:]
             Storefront.values = ["USA"]; Storefront.reads = 0; Storefront.onRead = nil

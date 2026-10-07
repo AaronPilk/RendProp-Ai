@@ -75,6 +75,11 @@ do $$declare f record;r jsonb;begin select * into f from fixture;
  perform pg_temp.ok((r->>'replay')::boolean and(select count(*)=1 from subscription_trial_grants where actor_id=f.u),'restore never resets lifetime grant');
  perform pg_temp.denied(format('select serving_cost_reserve(%L,%L,''trial-expensive-key'',''video.reel:0'',''fal'',''synthetic'',%L,1,''synthetic'')',f.u,f.o,repeat('a',64)),'RP402','paid video/reel/aerial/upscale/spatial stage is excluded');
  perform pg_temp.ok(not exists(select 1 from serving_cost_reservations where request_key='trial-expensive-key'),'excluded generation has no dispatch hold');
+ -- Helpers have no trial credit and therefore cannot silently consume the
+ -- sponsor cash intended for the five included image admissions.
+ perform pg_temp.denied(format('select serving_cost_reserve(%L,%L,''trial-suggest-early-key'',''photo.suggest'',''gemini'',''synthetic'',%L,1,''synthetic'')',f.u,f.o,repeat('a',64)),'RP402','trial suggestion refused before any photo credit or cash is spent');
+ perform pg_temp.denied(format('select serving_cost_reserve(%L,%L,''trial-prompt-early-key'',''photo.improve_prompt'',''gemini'',''synthetic'',%L,1,''synthetic'')',f.u,f.o,repeat('a',64)),'RP402','trial prompt rewriting refused before any photo credit or cash is spent');
+ perform pg_temp.ok(not exists(select 1 from serving_cost_reservations where org_id=f.o)and not exists(select 1 from subscription_trial_actions where grant_id=(select g from fixture)),'denied trial helpers leave all five photo credits and provider cash untouched');
  perform serving_cost_reserve(f.u,f.o,'trial-photo-key-0','photo.declutter:0','gemini','synthetic',repeat('a',64),1,'synthetic');
  perform serving_cost_finish(f.u,f.o,'trial-photo-key-0','photo.declutter:0','rejected',429);
  perform serving_cost_reserve(f.u,f.o,'trial-photo-key-0','photo.declutter:1','fal','synthetic',repeat('a',64),1,'synthetic');
@@ -165,6 +170,9 @@ do $$declare f record;t timestamptz:=now()-interval '30 seconds';e timestamptz;s
  perform pg_temp.ok((r->>'funded')::boolean and subscription_trial_paid_or_override(f.o),'current paid renewal uses verified retail funding');
  perform pg_temp.ok(subscription_serving_activation(f.u,f.o)->>'authority'='verified_retail','verified paid renewal supersedes trial serving presentation');
  perform pg_temp.ok(subscription_trial_context(f.u,f.o)->'trial_usage'='null'::jsonb,'historical trial does not replace paid meters');
+ perform serving_cost_reserve(f.u,f.o,'paid-helper-after-trial','photo.suggest','gemini','gemini-3.6-flash',repeat('a',64),158.0544,'synthetic-bounded-helper');
+ perform pg_temp.ok(exists(select 1 from serving_cost_reservations where org_id=f.o and request_key='paid-helper-after-trial'and hold_cents=158.0544),'verified paid renewal retains separately metered helper availability');
+
  perform serving_cost_reserve(f.u,f.o,'after-paid-renewal-key','video.reel:0','fal','synthetic',repeat('a',64),1,'synthetic');
 end$$;
 reset role;
