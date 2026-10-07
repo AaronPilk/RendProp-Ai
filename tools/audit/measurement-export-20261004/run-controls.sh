@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 artifacts="$(mktemp -d /tmp/rendprop-measurement-export-controls.XXXXXX)"
 python3 "$script_dir/run.py" | tee "$artifacts/positive.log"
-for fault in ignore-geometry ignore-conflict ignore-facts-review phone-as-manual omit-room-records nonstandard-paper omit-page-transform omit-phone-limitation; do
+for fault in ignore-geometry ignore-conflict ignore-facts-review phone-as-manual omit-room-records nonstandard-paper omit-page-transform omit-phone-limitation ignore-media-actor ignore-media-revision ignore-media-workspace; do
     status=0
     python3 "$script_dir/run.py" --inject-fault "$fault" > "$artifacts/$fault.log" 2>&1 || status=$?
     case "$fault" in
@@ -16,6 +16,9 @@ for fault in ignore-geometry ignore-conflict ignore-facts-review phone-as-manual
         omit-page-transform) expected='FAIL: every actual PDF drawing rectangle fits inside physical paper margins' ;;
         omit-phone-limitation) expected='FAIL: phone ruler note discloses straight 3D distance and same-height tape verification' ;;
         omit-room-records) expected='FAIL: actual PDF loop emits every floor worksheet, room record and outline wall page' ;;
+        ignore-media-actor) expected='FAIL: changed actor invalidates actual media context' ;;
+        ignore-media-revision) expected='FAIL: changed session revision invalidates actual media context' ;;
+        ignore-media-workspace) expected='FAIL: foreign workspace cannot capture media context' ;;
     esac
     if [ "$status" -ne 1 ] || ! grep -F -q "$expected" "$artifacts/$fault.log"; then
         cat "$artifacts/$fault.log" >&2

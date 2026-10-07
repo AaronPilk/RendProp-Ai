@@ -1,6 +1,16 @@
 import Foundation
 import CoreGraphics
 
+// Mutable identity/session boundaries for the real CloudMediaAccessContext in
+// WorkspaceSync.swift. These expose state; they do not replace its admission.
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var userID: String?
+    var syncSessionRevision: UInt64 = 1
+    var isIdentified = true
+}
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? }
+
 // UI/PDF output boundaries only. The admission, source labels, PDF pages and
 // room/wall loops below are extracted unchanged from the production sources.
 enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/synthetic-export-no-customer-files/" + path) } }
@@ -88,7 +98,7 @@ __PDF_WRITE__
     }
 __DRAW_TEXT__
 }
-@main struct ActualMeasurementExportChecks {
+@main @MainActor struct ActualMeasurementExportChecks {
     static func main() {
         do { try run() }
         catch let failure as AssertionFailure { print("FAIL: " + failure.message); exit(1) }
@@ -99,6 +109,39 @@ __DRAW_TEXT__
         func check(_ condition: Bool, _ message: String) throws {
             guard condition else { throw AssertionFailure(message: message) }; assertions += 1
         }
+        func refusesIdentity(_ body: () throws -> Void) -> Bool {
+            do { try body(); return false }
+            catch CloudSyncError.identityChanged { return true }
+            catch { return false }
+        }
+        let actor = UUID(), otherActor = UUID(), org = UUID(), otherOrg = UUID()
+        let auth = AuthStore.shared
+        auth.userID = actor.uuidString; auth.syncSessionRevision = 40
+        WorkspaceContext.selectedOrgID = org
+        let mediaContext = try CloudMediaAccessContext.capture(orgID: org)
+        try check(mediaContext.actorID == actor && mediaContext.orgID == org && mediaContext.revision == 40,
+                  "actual media context captures actor, session revision and workspace")
+        try mediaContext.check()
+        try check(true, "unchanged actual media context remains admitted")
+        auth.isIdentified = false
+        try check(refusesIdentity { _ = try CloudMediaAccessContext.capture(orgID: org) }, "unidentified actor cannot capture media context")
+        try check(refusesIdentity { try mediaContext.check() }, "sign-out invalidates actual media context")
+        auth.isIdentified = true; auth.userID = "not-an-actor-id"
+        try check(refusesIdentity { _ = try CloudMediaAccessContext.capture(orgID: org) }, "malformed actor cannot capture media context")
+        auth.userID = otherActor.uuidString
+        try check(refusesIdentity { try mediaContext.check() }, "changed actor invalidates actual media context")
+        auth.userID = actor.uuidString; auth.syncSessionRevision += 1
+        try check(refusesIdentity { try mediaContext.check() }, "changed session revision invalidates actual media context")
+        auth.syncSessionRevision = 40; WorkspaceContext.selectedOrgID = otherOrg
+        try check(refusesIdentity { _ = try CloudMediaAccessContext.capture(orgID: org) }, "foreign workspace cannot capture media context")
+        try check(refusesIdentity { try mediaContext.check() }, "changed workspace invalidates actual media context")
+        WorkspaceContext.selectedOrgID = org
+        auth.userID = otherActor.uuidString; auth.syncSessionRevision = 41
+        auth.userID = actor.uuidString; auth.syncSessionRevision = 42
+        try check(refusesIdentity { try mediaContext.check() }, "returning to the same actor cannot revive an older media session")
+        let renewedContext = try CloudMediaAccessContext.capture(orgID: org)
+        try renewedContext.check()
+        try check(renewedContext.revision == 42, "a fresh media context admits only the renewed session")
         let main = FloorMeasurementOutline(name: "Main L", vertices: [.init(x: 0, y: 0), .init(x: 6, y: 0), .init(x: 6, y: 4), .init(x: 4, y: 4), .init(x: 4, y: 2), .init(x: 0, y: 2)])
         var opening = FloorMeasurementOutline(name: "Opening", vertices: [.init(x: 1, y: 0.5), .init(x: 2, y: 0.5), .init(x: 2, y: 1.5), .init(x: 1, y: 1.5)])
         opening.category = .openBelow; opening.deductionFromID = main.id; opening.closingWallCalculated = true

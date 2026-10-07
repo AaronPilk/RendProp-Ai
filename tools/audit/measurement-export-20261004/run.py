@@ -20,7 +20,7 @@ def block(source, marker):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--inject-fault', choices=['ignore-geometry', 'ignore-conflict', 'ignore-facts-review', 'phone-as-manual', 'omit-room-records', 'nonstandard-paper', 'omit-page-transform', 'omit-phone-limitation'])
+    p.add_argument('--inject-fault', choices=['ignore-geometry', 'ignore-conflict', 'ignore-facts-review', 'phone-as-manual', 'omit-room-records', 'nonstandard-paper', 'omit-page-transform', 'omit-phone-limitation', 'ignore-media-actor', 'ignore-media-revision', 'ignore-media-workspace'])
     args = p.parse_args()
     source = {q: q.read_text() for q in [EDITOR, WORKSHEET, DETAIL]}
     safety = block(source[EDITOR], 'enum FloorMeasurementExportSafety {')
@@ -86,6 +86,23 @@ def main():
         'Auth/AdoptionLocalBindings.swift', 'Networking/WorkspaceSync.swift']
     models = [ROOT / 'apps/ios/Rendprop' / value for value in model_paths]
     source.update({q: q.read_text() for q in models})
+    wire = models[-1]
+    actual_context = block(source[wire], 'struct CloudMediaAccessContext:')
+    compiled_context = actual_context
+    context_faults = {
+        'ignore-media-actor': 'AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == actorID',
+        'ignore-media-revision': 'AuthStore.shared.syncSessionRevision == revision',
+        'ignore-media-workspace': 'WorkspaceContext.selectedOrgID == orgID else',
+    }
+    if args.inject_fault in context_faults:
+        before = context_faults[args.inject_fault]
+        assert actual_context.count(before) == (2 if args.inject_fault == 'ignore-media-workspace' else 1)
+        after = 'true else' if args.inject_fault == 'ignore-media-workspace' else 'true'
+        compiled_context = actual_context.replace(before, after)
+        modified_wire = out / 'ActualWorkspaceSync.swift'
+        assert source[wire].count(actual_context) == 1
+        modified_wire.write_text(source[wire].replace(actual_context, compiled_context))
+        models = [*models[:-1], modified_wire]
     compile_result = subprocess.run(['xcrun','swiftc','-parse-as-library',*[str(q) for q in models],str(fixture),'-o',str(out/'checks')],text=True,capture_output=True)
     (out/'compile.log').write_text(compile_result.stdout + compile_result.stderr)
     if compile_result.returncode:
@@ -94,6 +111,8 @@ def main():
     (out/'run.log').write_text(result.stdout + result.stderr)
     receipt = {'status':result.returncode,'injectedFault':args.inject_fault,'nativeRender':False,
         'networkCalls':0,'cameraCalls':0,'customerFilesAccessed':0,'productionMutations':0,
+        'actualMediaContextSha256':hashlib.sha256(actual_context.encode()).hexdigest(),
+        'compiledMediaContextSha256':hashlib.sha256(compiled_context.encode()).hexdigest(),
         'sourceHashes':{str(q.relative_to(ROOT)):hashlib.sha256(s.encode()).hexdigest() for q,s in source.items()}}
     (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
     print(result.stdout + result.stderr,end=''); print('Artifacts: '+str(out)); raise SystemExit(result.returncode)
