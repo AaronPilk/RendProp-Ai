@@ -39,6 +39,17 @@ jobs:
         run: python3 tools/audit/test_database_invariant_sources.py
       - name: Native account and workspace presentation privacy
         run: python3 tools/audit/run_native_presentation_privacy.py --out "$RUNNER_TEMP/native-presentation-privacy"
+      - name: Native deletion confirmation and late-response account privacy
+        run: python3 tools/audit/run_native_account_deletion.py --out "$RUNNER_TEMP/native-account-deletion"
+      - name: Retain native deletion admission and guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-account-deletion-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/native-account-deletion/receipt.json
+            ${{ runner.temp }}/native-account-deletion/*.log
+            ${{ runner.temp }}/native-account-deletion/*.swift
       # Every Phase 1 node gate, discovered by glob: consent selector and Ask AI
       # label source contracts, adoption source/mutant/local-binding gates and
       # the consent persistence gate. None of them is a UI runtime test.
