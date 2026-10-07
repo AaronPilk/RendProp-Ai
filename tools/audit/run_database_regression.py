@@ -17,22 +17,12 @@ import subprocess
 import sys
 import tempfile
 
-# Assertions the owner has decided to keep red on purpose. Each entry is the
-# exact `name` string tests/invariants.sql prints for that row, and the
-# assertion's own comment there is the authority on why it stays visible
-# instead of being weakened. A run whose ONLY failing assertions are in this
-# set is accepted (exit 0) and announced loudly; any other failing assertion
-# still exits 1. An entry that starts passing is a stale exception and also
-# exits 1, so the list has to be trimmed in the same change that fixes it.
-KEPT_RED = {
-    # tests/invariants.sql, "each astra ceiling clears its route's visible
-    # answer": the 0034 agent-reel seed sets max_output_tokens to 700, equal
-    # to the visible MAX_AGENT_REEL_TOKENS answer, and that comment says to
-    # keep the failure visible rather than enlarge the provider budget or
-    # weaken > to >=. Owner decision: neither the invariant nor the ceiling
-    # changes.
-    "each astra ceiling clears its route's visible answer and stays under the code clamp",
-}
+# No invariant failure is currently accepted. The historical agent-reel
+# headroom exception was removed only after all270 passed on fresh and replayed
+# schemas with the compact <=500-byte answer and unchanged700 combined cap.
+# Keep classification generic so any future explicit exception must still be
+# named, visible and rejected if it becomes stale.
+KEPT_RED: set[str] = set()
 
 # Exact size of the tests/invariants.sql inventory. A suite that prints fewer
 # rows is rejected even when its footer agrees with itself, so this number has

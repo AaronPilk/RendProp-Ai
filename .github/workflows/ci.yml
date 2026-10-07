@@ -792,24 +792,11 @@ jobs:
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
       # exercises signup → publish → quota → chapters → leads → delete.
-      - name: Invariants (kept-red #155 tolerated by exact name)
+      - name: Invariants (all270 must pass)
         run: |
-          # invariants.sql raises when any assertion is red. Exactly one is red
-          # on purpose — #155, the agent-reel token headroom the owner has not
-          # decided yet (see the comment above that assertion in invariants.sql
-          # and KEPT_RED in tools/audit/run_database_regression.py). Accept that
-          # one by its exact name and nothing else.
-          set +e
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql > /tmp/invariants.out 2>&1
-          status=$?
-          set -e
-          cat /tmp/invariants.out
-          red=$(grep -E '^ *[0-9]+ \|.*\| f +\|' /tmp/invariants.out | grep -vF "each astra ceiling clears its route's visible answer and stays under the code clamp" || true)
-          if [ -n "$red" ]; then echo "::error::unexpected red invariant(s):"; echo "$red"; exit 1; fi
-          if [ "$status" -ne 0 ] && ! grep -q 'INVARIANTS FAILED: 1 assertion' /tmp/invariants.out; then
-            echo "::error::invariants exited $status with something other than the one kept-red assertion"; exit 1
-          fi
-          echo "invariants: green apart from the documented kept-red #155 (agent-reel ceiling)"
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql 2>&1 | tee /tmp/invariants.out
+          grep -q 'All 270 invariants passed.' /tmp/invariants.out
 
       # Replay each historical version before a later migration replaces it.
       #0050's old overload is intentionally superseded by0051; applying0050
@@ -840,26 +827,13 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
 
-      - name: Invariants after the replay (same answers, one overload per RPC)
+      - name: Invariants after the replay (all270 must pass)
         env:
           PGDATABASE: rendprop_replay
         run: |
-          # invariants.sql raises when any assertion is red. Exactly one is red
-          # on purpose — #155, the agent-reel token headroom the owner has not
-          # decided yet (see the comment above that assertion in invariants.sql
-          # and KEPT_RED in tools/audit/run_database_regression.py). Accept that
-          # one by its exact name and nothing else.
-          set +e
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql > /tmp/invariants.out 2>&1
-          status=$?
-          set -e
-          cat /tmp/invariants.out
-          red=$(grep -E '^ *[0-9]+ \|.*\| f +\|' /tmp/invariants.out | grep -vF "each astra ceiling clears its route's visible answer and stays under the code clamp" || true)
-          if [ -n "$red" ]; then echo "::error::unexpected red invariant(s):"; echo "$red"; exit 1; fi
-          if [ "$status" -ne 0 ] && ! grep -q 'INVARIANTS FAILED: 1 assertion' /tmp/invariants.out; then
-            echo "::error::invariants exited $status with something other than the one kept-red assertion"; exit 1
-          fi
-          echo "invariants: green apart from the documented kept-red #155 (agent-reel ceiling)"
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql 2>&1 | tee /tmp/invariants.out
+          grep -q 'All 270 invariants passed.' /tmp/invariants.out
 
   db-publication-regression:
     name: Disposable PostgreSQL publication, invariant and deletion regression
@@ -870,10 +844,8 @@ jobs:
     # Do not reuse db-migrations' TCP service/database. Every runner below
     # owns its own initdb, a private Unix socket and database, verifies
     # identity, discards inherited PG credentials, and stops only its own
-    # cluster. The invariant the owner keeps red on purpose (the agent-reel
-    # ceiling headroom assertion, #155 today) is accepted only because
-    # run_database_regression.py declares it in KEPT_RED, and is printed
-    # loudly; any other red assertion still fails the job.
+    # cluster. Every invariant must pass on fresh and replayed schemas; the
+    # historical agent-reel headroom exception has been removed.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
