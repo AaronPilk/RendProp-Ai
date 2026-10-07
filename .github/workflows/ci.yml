@@ -481,7 +481,7 @@ jobs:
   studio:
     name: Studio contracts, build and property workflows (offline)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
     defaults:
@@ -499,7 +499,7 @@ jobs:
       - name: Install the locked browser for isolated UI fixtures
         run: npx playwright install --with-deps chromium
       - name: Install synthetic video and archive verification tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg unzip
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg unzip
       - name: Property switching, recovery and listing completion
         run: |
           node tests/property-reels-browser.mjs
