@@ -34,6 +34,20 @@ with a bulk push. The delivery snapshots below describe earlier releases; the
 6 October rollout checkpoint and trial handoff distinguish delivered work from
 remaining candidate gates.
 
+**7 October verified follow-up:** `fe0a59c` adds a bounded internal
+agent-reel answer format: complete JSON, at most 500 UTF-8 bytes, all offered
+windows exactly once and request-local photo aliases. The server expands the
+answer to the existing client UUID/time/motion/caption shape. The configured
+provider ceiling stays at 700 tokens and its funded quote is unchanged.
+All twelve hosted CI jobs passed; fresh and replay checks each passed all 270
+invariants with no known-red waiver. One `ai-copy` deployment is **v21 ACTIVE**,
+JWT enabled; all 21 runtime files matched, all 24 other function records and
+all four agent-reel route rows stayed unchanged across the operation.
+See the [actual rollout](../../../docs/handoff/AGENT-REEL-ROLLOUT-20261007.md).
+Native build 46 remains its own immutable checkpoint. Fresh live readback confirms
+trial configuration OFF and no sponsor pools, serving schedules, bounded grants
+or purchase reservations. Funding, phone and protected-media gates remain open.
+
 ## Delivered direct Bria internal beta
 
 The subsequent [audit rollout](../../../docs/handoff/CLAUDE-AUDIT-FOLLOWUP-20261002.md)

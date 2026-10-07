@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib, json, os, re, shutil, subprocess, tempfile, uuid
+from run_database_regression import invariant_rows
 
 ROOT=Path(__file__).resolve().parents[2]
 SQL=ROOT/'services/supabase'
@@ -23,7 +24,7 @@ BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb','deno']};ass
 CONN=['-h',str(SOCK),'-p','55489','-U','postgres']
 PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
 paths=[TARGET,CUTOVER,FACTS,SQL/'tests/ci-bootstrap.sql',SQL/'tests/invariants.sql',SQL/'tests/invariant_astra_paid_gates.sql',SQL/'tests/listing_facts_cas.sql',SQL/'tests/subscription_chronology.sql',SQL/'tests/subscription_confirmed_trial.sql',Path(__file__).resolve(),*sorted((SQL/'functions/apple-subscriptions').glob('*.ts')),SQL/'functions/me/index.ts',SQL/'functions/_shared/applejws.test.ts']
-paths += [STUDIO/'listing-actions.ts',STUDIO/'listing-actions.test.ts',STUDIO/'index.ts',FLOORPLAN,SQL/'tests/studio_floorplan_cas.sql']
+paths += [ROOT/'tools/audit/run_database_regression.py',STUDIO/'listing-actions.ts',STUDIO/'listing-actions.test.ts',STUDIO/'index.ts',FLOORPLAN,SQL/'tests/studio_floorplan_cas.sql']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
 migrations=[(p,p.read_text())for p in sorted((SQL/'migrations').glob('*.sql'))]
 receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'migrationHashes':{p.name:hashlib.sha256(s.encode()).hexdigest()for p,s in migrations},'commands':[],'productionMutations':0,'providerCalls':0,'appleCalls':0,'passed':False}
@@ -34,6 +35,11 @@ def run(name,args,sql=None,expected=0):
  assert p.returncode==expected,f'{name}: {p.stdout[-3000:]}'
  print(name,p.returncode,flush=True);return p.stdout
 def query(name,sql,expected=0):return run(name,PSQL,sql,expected)
+
+def require_all_invariants(output, exit_code):
+ names,failed=invariant_rows(output,exit_code)
+ if exit_code!=0 or failed:raise RuntimeError('Every invariant must pass; no failures are accepted')
+ return names
 started=False
 print('EVIDENCE:',OUT,flush=True)
 try:
@@ -108,10 +114,29 @@ try:
   assert query('allowance-matrix-'+phase,matrix)==before_matrix
  facts_checks=query('facts-integration',(SQL/'tests/listing_facts_cas.sql').read_text())
  receipt['factsSQLAssertions']=json.loads(facts_checks.strip())['assertions']
- invariants=run('all-invariants',PSQL+['-f',SQL/'tests/invariants.sql'],expected=3)
- failures=[line for line in invariants.splitlines()if re.search(r'\|\s*f\s*\|',line)]
- assert len(failures)==1 and 'each astra ceiling clears its route'in failures[0],failures
- receipt['invariants']={'failures':failures,'passed':sum(bool(re.search(r'\|\s*t\s*\|',line))for line in invariants.splitlines()),'expectedFailure':'owner-retained Astra budget ceiling'}
+ # Use the formatted complete inventory for the shared independent parser.
+ invariant_args=[arg for arg in PSQL if arg!='-Atq']+['-f']
+ invariants=run('all-invariants',invariant_args+[SQL/'tests/invariants.sql'])
+ invariant_names=require_all_invariants(invariants,receipt['commands'][-1]['exit'])
+ receipt['invariants']={'passed':len(invariant_names),'failures':[],'total':len(invariant_names)}
+
+ # Restore only the former headroom failure in an owned SQL copy. The same
+ # positive acceptance gate must refuse its complete 270-row/exit3 result.
+ original=(SQL/'tests/invariants.sql').read_text()
+ anchor="when 'copy.agent_reel' then 500"
+ assert original.count(anchor)==1
+ shutil.copyfile(SQL/'tests/invariant_astra_paid_gates.sql',OUT/'invariant_astra_paid_gates.sql')
+ mutant=OUT/'invariants-former-headroom-red.sql'
+ mutant.write_text(original.replace(anchor,"when 'copy.agent_reel' then 700",1))
+ red=run('invariants-former-headroom-red',invariant_args+[mutant],expected=3)
+ red_exit=receipt['commands'][-1]['exit']
+ red_names,red_failures=invariant_rows(red,red_exit)
+ assert red_names==invariant_names
+ assert red_failures==["each astra ceiling clears its route's visible answer and stays under the code clamp"]
+ try:require_all_invariants(red,red_exit)
+ except RuntimeError:pass
+ else:raise RuntimeError('Strict positive invariant gate accepted the former red assertion')
+ receipt['invariantNegativeControl']={'kind':'actual-owned-SQL-former-headroom-red','exit':3,'count':len(red_names),'failed':red_failures,'positiveGateRejected':True,'sourceCopy':str(mutant),'sha256':hashlib.sha256(mutant.read_bytes()).hexdigest()}
  facts_source=query('current-facts-definition',"select pg_get_functiondef('public.save_listing_facts(uuid,uuid,uuid,jsonb,jsonb,jsonb,jsonb)'::regprocedure);")
  omitted=facts_source.replace('if not current_matches and not desired_matches then','if false then',1)
  assert omitted!=facts_source

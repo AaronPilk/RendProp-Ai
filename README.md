@@ -25,6 +25,21 @@ funding, pools or serving schedules seeded. Earlier build-45/CAS/Studio receipts
 remain historical. Protected-media cutover remains pending. No public App Store
 or App Review submission was performed; public **1.0.3 (42)** is unchanged.
 
+**7 October verified follow-up:** `fe0a59c` passed all twelve hosted CI jobs,
+with all 270 database invariants passing fresh and replay checks. One selected
+`ai-copy` deployment is **v21 ACTIVE**, JWT enabled, with all 21 runtime files
+matching the frozen closure. See the [agent-reel rollout](docs/handoff/AGENT-REEL-ROLLOUT-20261007.md).
+The [public legal update](docs/handoff/PUBLIC-LEGAL-ROLLOUT-20261007.md) is also
+delivered: the downloaded Worker matches the tested bundle, Terms/Privacy match
+the authored documents, and the existing listing and site asset checks passed.
+Internal build 46 remains available from its immutable `7f5879e` archive.
+The [pricing decision sheet](docs/handoff/PRICING-DECISIONS-20261007.md) keeps
+trial funding and proposed paid allowances unapproved. Storage, delivery,
+compute, email, support, retention and uncertainty still need complete reserve
+limits. Real-account identity/private-workspace checks, protected-media/cache
+cutover and the phone checklist remain open launch gates. The live trial is OFF;
+no sponsor pool or serving schedule has been created.
+
 Pricing uses the owner's target of **75% after Apple's fee**, with provider
 attempts and ambiguous outcomes charged against the same funded allowance.
 Apple's current USA catalog shows 15% proceeds, but catalog proceeds are not

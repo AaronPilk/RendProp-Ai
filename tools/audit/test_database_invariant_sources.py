@@ -40,6 +40,7 @@ def plan_matrix(sql):
 
 def require_contract(sql):
     assert 'ceiling > visible and ceiling <= 8000' in sql, 'reasoning headroom rule weakened'
+    assert "when 'copy.agent_reel' then 500" in sql, 'agent-reel visible contract drifted'
     matrix = plan_matrix(sql)
     assert re.search(r"\('trial',\s*3,\s*60,\s*4,\s*2,\s*1,\s*1,\s*1200,\s*0\)", matrix)
     assert re.search(r"\('free',\s*1,\s*5,\s*0,\s*0,\s*0,\s*1,\s*300,\s*0\)", matrix)
@@ -83,6 +84,26 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
 
     def test_weakened_headroom_negative_control_is_rejected(self):
         mutant = self.invariants.replace('ceiling > visible', 'ceiling >= visible', 1)
+        self.assertNotEqual(mutant, self.invariants)
+        with self.assertRaises(AssertionError):
+            require_contract(mutant)
+
+    def test_agent_reel_actual_contract_is_bound_to_sql(self):
+        module = (ROOT / 'services/supabase/functions/ai-copy/agentreel.ts').read_text()
+        handler = (ROOT / 'services/supabase/functions/ai-copy/index.ts').read_text()
+        self.assertRegex(module, r'export const MAX_AGENT_REEL_TOKENS = 500;')
+        self.assertRegex(module, r'export const MAX_AGENT_REEL_RESPONSE_BYTES = 500;')
+        self.assertRegex(module, r'export const MAX_AGENT_REEL_CAPTION_BYTES = 240;')
+        self.assertIn('new TextEncoder().encode(raw).byteLength > MAX_AGENT_REEL_RESPONSE_BYTES', module)
+        self.assertIn('JSON.parse(raw)', module)
+        self.assertIn('MAX_AGENT_REEL_TOKENS,', handler)
+        self.assertEqual(handler.count('MAX_AGENT_REEL_TOKENS'), 3,
+                         'one imported contract must feed both quote and adapter')
+        self.assertNotRegex(handler, r'const MAX_AGENT_REEL_TOKENS\s*=')
+
+    def test_stale_agent_reel_visible_expectation_is_rejected(self):
+        mutant = self.invariants.replace("when 'copy.agent_reel' then 500",
+                                          "when 'copy.agent_reel' then 700", 1)
         self.assertNotEqual(mutant, self.invariants)
         with self.assertRaises(AssertionError):
             require_contract(mutant)

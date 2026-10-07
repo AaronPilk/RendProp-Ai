@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Focused logo journal/publication/deletion proof in an owned disposable DB."""
 from datetime import datetime,timezone
-import hashlib,json,os,pathlib,shutil,subprocess,tempfile,time
+import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
+from run_database_regression import invariant_rows
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 SQL=ROOT/'services/supabase'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
@@ -15,20 +16,27 @@ BINS={n:shutil.which(n)for n in ['initdb','pg_ctl','createdb','psql']};assert al
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=5000'}
 CONN=['-h',str(SOCK),'-p','55462','-U','postgres']
 PSQL=[BINS['psql'],'-X','--no-password',*CONN,'-d','rendprop_logo','-v','ON_ERROR_STOP=1']
-tracked=[*MIGRATIONS,TEST,MEDIA_TEST,pathlib.Path(__file__).resolve(),SQL/'tests/ci-bootstrap.sql',SQL/'functions/me/brand-logo.ts',SQL/'functions/me/brand-image.ts',SQL/'functions/me/index.ts',SQL/'functions/_shared/r2.ts']
+tracked=[*MIGRATIONS,TEST,MEDIA_TEST,SQL/'tests/invariants.sql',SQL/'tests/invariant_astra_paid_gates.sql',ROOT/'tools/audit/run_database_regression.py',pathlib.Path(__file__).resolve(),SQL/'tests/ci-bootstrap.sql',SQL/'functions/me/brand-logo.ts',SQL/'functions/me/brand-image.ts',SQL/'functions/me/index.ts',SQL/'functions/_shared/r2.ts']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in tracked}
-receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'limits':['Owned socket-only plain Postgres','Synthetic auth/storage receipts','No hosted DB, provider, Apple or real object writes'],'passed':False}
+receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'commands':[],'limits':['Owned socket-only plain Postgres','Synthetic auth/storage receipts','No hosted DB, provider, Apple or real object writes'],'passed':False}
 started=False
 
 def run(name,args,expected=0,timeout=45):
  result=subprocess.run([str(x)for x in args],env=ENV,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=timeout)
- (OUT/(name+'.log')).write_text(result.stdout)
+ log=OUT/(name+'.log');log.write_text(result.stdout)
+ receipt['commands'].append({'name':name,'exit':result.returncode,'log':str(log),'sha256':hashlib.sha256(log.read_bytes()).hexdigest()})
  assert result.returncode==expected,(name,result.returncode,result.stdout[-2500:])
  return result.stdout
 
 def query(name,sql,expected=0):
  path=OUT/(name+'.sql');path.write_text(sql)
  return run(name,[*PSQL,'-At','-f',path],expected)
+
+
+def require_all_invariants(output, exit_code):
+ names,failed=invariant_rows(output,exit_code)
+ if exit_code!=0 or failed:raise RuntimeError('Every invariant must pass; no failures are accepted')
+ return names
 
 def race(label,first,second,actor,org,operation):
  f1=(OUT/(label+'-first.log')).open('w');f2=(OUT/(label+'-second.log')).open('w')
@@ -105,7 +113,6 @@ try:
   restored=run(name+'-restored',[*PSQL,'-At','-f',MEDIA_TEST]);assert 'PASS: Studio deletion inventory SQL assertions; all fixtures rolled back.'in restored
   media_controls.append(name)
  receipt['negativeControls']+=media_controls
- import re
  check=re.search(r'\n(\d+)\nPASS: Studio deletion inventory',media_positive);assert check,media_positive[-800:]
  receipt['studioDeletionAssertions']=int(check[1])
  races=[]
@@ -119,13 +126,29 @@ try:
   text=f"select merge_org_brand_fields('{actor}','{org}','{{\"title\":\"Concurrent title\"}}','{{}}');"
   races.append(race(label,logo if n==1 else text,text if n==1 else logo,actor,org,operation))
  receipt['races']=races
- # Existing complete invariant contract, with precisely the retained known red.
- invariants=run('invariants',[*PSQL,'-f',SQL/'tests/invariants.sql'],expected=3)
- import re
- failed=[line for line in invariants.splitlines()if re.search(r'\|\s*f\s*\|',line)]
- assert len(failed)==1 and failed[0].split('|',3)[1].strip()=="each astra ceiling clears its route's visible answer and stays under the code clamp",failed
- rows=[line for line in invariants.splitlines()if re.match(r'^\s*\d+\s*\|',line)and re.search(r'\|\s*[tf]\s*\|',line)]
- receipt['invariants']={'passed':len(rows)-1,'knownRed':1,'total':len(rows)}
+ # Require the exact complete inventory, successful SQL exit and all-green footer.
+ invariant_args=[*PSQL,'-f']
+ invariants=run('invariants',invariant_args+[SQL/'tests/invariants.sql'])
+ invariant_names=require_all_invariants(invariants,receipt['commands'][-1]['exit'])
+ receipt['invariants']={'passed':len(invariant_names),'failures':[],'total':len(invariant_names)}
+
+ # Restore only the former headroom failure in an owned SQL copy. The same
+ # positive acceptance gate must refuse its complete 270-row/exit3 result.
+ original=(SQL/'tests/invariants.sql').read_text()
+ anchor="when 'copy.agent_reel' then 500"
+ assert original.count(anchor)==1
+ shutil.copyfile(SQL/'tests/invariant_astra_paid_gates.sql',OUT/'invariant_astra_paid_gates.sql')
+ mutant=OUT/'invariants-former-headroom-red.sql'
+ mutant.write_text(original.replace(anchor,"when 'copy.agent_reel' then 700",1))
+ red=run('invariants-former-headroom-red',invariant_args+[mutant],expected=3)
+ red_exit=receipt['commands'][-1]['exit']
+ red_names,red_failures=invariant_rows(red,red_exit)
+ assert red_names==invariant_names
+ assert red_failures==["each astra ceiling clears its route's visible answer and stays under the code clamp"]
+ try:require_all_invariants(red,red_exit)
+ except RuntimeError:pass
+ else:raise RuntimeError('Strict positive invariant gate accepted the former red assertion')
+ receipt['invariantNegativeControl']={'kind':'actual-owned-SQL-former-headroom-red','exit':3,'count':len(red_names),'failed':red_failures,'positiveGateRejected':True,'sourceCopy':str(mutant),'sha256':hashlib.sha256(mutant.read_bytes()).hexdigest()}
  assert all(hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest for name,digest in hashes.items()),'Source changed during proof'
  check=re.search(r'\n(\d+)\nPASS: org logo lifecycle',positive);assert check,positive[-800:]
  receipt.update(passed=True,sqlAssertions=int(check[1]))
