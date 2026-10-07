@@ -4,9 +4,12 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import os
+import signal
 import subprocess
 import threading
 import tempfile
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 root = Path(__file__).resolve().parents[3]
@@ -33,11 +36,60 @@ def block(s, anchor):
         depth += (s[end] == '{') - (s[end] == '}')
         end += 1
     return s[start:end]
-receipt = {'passed': False, 'start_source_sha256': hashes(), 'runs': [], 'limitations': [
+# Hosted CI exceeded the old 60s compiler cap before a control could execute.
+# Match the existing complex Swift audit cap; runtime assertions still use 120s.
+COMPILE_TIMEOUT_SECONDS = 240
+receipt = {'passed': False, 'start_source_sha256': hashes(), 'compiles': [], 'runs': [], 'limitations': [
     'Actual extracted Swift bodies, Foundation filesystem/preferences and HTTP downloads execute; UIImage and API client are closed doubles.',
     'No vendor, customer media, camera, Photos write or production API.',
     'Unconfirmed submissions retain a scoped durable marker; no server receipt replay or automatic POST retry is claimed.',
     'Nonempty synthetic bytes test retention; video decoding or generation quality is not certified.']}
+
+def compile_variant(name, command):
+    log_path = out / (name + '-compile.log')
+    started = time.monotonic()
+    timed_out = False
+    cleanup_error = None
+    wait_error = None
+    with log_path.open('w') as log:
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        try:
+            process.wait(timeout=COMPILE_TIMEOUT_SECONDS)
+        except BaseException as error:
+            wait_error = error
+            timed_out = isinstance(error, subprocess.TimeoutExpired)
+            errors = []
+            # Always escalate for the originally owned group, even if its
+            # leader exits or the TERM wait itself is interrupted.
+            for sig, seconds in [(signal.SIGTERM, 3), (signal.SIGKILL, 5)]:
+                try:
+                    os.killpg(process.pid, sig)
+                except ProcessLookupError:
+                    pass
+                except BaseException as cleanup:
+                    errors.append(type(cleanup).__name__ + ': ' + str(cleanup))
+                try:
+                    process.wait(timeout=seconds)
+                except subprocess.TimeoutExpired as cleanup:
+                    if sig == signal.SIGKILL:
+                        errors.append(type(cleanup).__name__ + ': ' + str(cleanup))
+                except BaseException as cleanup:
+                    errors.append(type(cleanup).__name__ + ': ' + str(cleanup))
+            cleanup_error = '; '.join(errors) or None
+    output = log_path.read_text()
+    receipt['compiles'].append({
+        'name': name, 'argv': command, 'timeout_seconds': COMPILE_TIMEOUT_SECONDS,
+        'elapsed_seconds': time.monotonic() - started, 'exit_code': process.returncode,
+        'timed_out': timed_out, 'cleanup_error': cleanup_error,
+        'wait_error_type': type(wait_error).__name__ if wait_error is not None else None,
+        'wait_error': str(wait_error) if wait_error is not None else None,
+        'log_path': str(log_path), 'log_sha256': hashlib.sha256(log_path.read_bytes()).hexdigest()})
+    if timed_out:
+        raise subprocess.TimeoutExpired(command, COMPILE_TIMEOUT_SECONDS, output=output)
+    if wait_error is not None:
+        raise wait_error
+    return subprocess.CompletedProcess(command, process.returncode, stdout='', stderr=output)
+
 server = None
 try:
     source, api, live, fixture = source_path.read_text(), api_path.read_text(), live_path.read_text(), fixture_path.read_text()
@@ -105,8 +157,7 @@ try:
         path, binary = out / (name + '.swift'), out / name
         path.write_text(text)
         flags = ['-D', 'SPATIAL_CAPTURE_LAB'] if name == 'actual-lab-dispatch' else []
-        compile_result = subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', *flags, str(path), str(out / 'Fixture.swift'), '-o', str(binary)], capture_output=True, text=True, timeout=60)
-        (out / (name + '-compile.log')).write_text(compile_result.stdout + compile_result.stderr)
+        compile_result = compile_variant(name, ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', *flags, str(path), str(out / 'Fixture.swift'), '-o', str(binary)])
         assert compile_result.returncode == 0, name + ' compile failed: ' + compile_result.stderr
         Handler.calls = 0
         mode = ['--dispatch-only'] if name in ['actual-lab-dispatch', 'negative-dispatch-consent', 'negative-dispatch-workspace', 'negative-401-retry-fence'] else []
@@ -127,7 +178,7 @@ finally:
         server.server_close()
     receipt['end_source_sha256'] = hashes()
     receipt['source_binding_matches'] = receipt['start_source_sha256'] == receipt['end_source_sha256']
-    receipt['passed'] = len(receipt['runs']) == 15 and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches']
+    receipt['passed'] = 'failure' not in receipt and len(receipt['runs']) == 15 and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches']
     (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 assert receipt['passed'], 'Gate source changed during verification or a required run failed'
 print(f'Evidence: {out}')
