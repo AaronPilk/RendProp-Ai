@@ -61,6 +61,12 @@ evidence directory. Do not copy credential or customer evidence into Git.
 These checks establish the scoped changes. They do not prove that every feature,
 customer workflow, provider output or physical capture path works.
 
+The current change scan found no new credentials. Broader historical scans
+identified eight exact test/documentation/public-client entries now precisely
+classified, and one older recorded source checksum whose original bytes cannot
+be reproduced. That checksum remains unignored. Earlier six-commit clean scans
+must not be presented as a clean scan of the whole repository history.
+
 ## Remaining release gates
 
 Paid checkout and AI availability still need certified serving reserves and
