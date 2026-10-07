@@ -308,6 +308,7 @@ jobs:
             ${{ runner.temp }}/rendprop-listing-browser-*/explore-handoff.json
             ${{ runner.temp }}/rendprop-listing-browser-*/chapter-seek.json
             ${{ runner.temp }}/rendprop-listing-browser-*/chapter-observation.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/playback-clock.json
             ${{ runner.temp }}/rendprop-listing-browser-*/decoded-frame.json
             ${{ runner.temp }}/rendprop-listing-browser-*/*.png
             ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4

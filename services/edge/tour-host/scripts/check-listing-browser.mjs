@@ -107,7 +107,7 @@ for (const test of [
   check(html.indexOf('class="listing-cover"') < html.indexOf('id="overview"'), test.name + " property photo appears before listing details");
 }
 
-let browser, server, browserPage;
+let browser, server, browserPage, playbackAnchor = null, savedPlaybackProbe = null;
 try {
   server = createServer((req, res) => {
     const url = new URL(req.url, "http://127.0.0.1");
@@ -176,6 +176,15 @@ try {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: "reduce" });
   await context.addInitScript(() => {
     window.__spatialDraws = 0;
+    window.__listingPlaybackProbe = { events: [], polls: [], phases: [] };
+    addEventListener('DOMContentLoaded', () => {
+      const v = document.querySelector('#flythrough-video'); if (!v) return;
+      const state = (type) => ({ type, at: performance.now(), time: v.currentTime, duration: v.duration, paused: v.paused, ended: v.ended, seeking: v.seeking, ready: v.readyState, rate: v.playbackRate, frames: v.getVideoPlaybackQuality?.().totalVideoFrames });
+      window.__listingPlaybackProbe.state = state;
+      for (const type of ['play', 'playing', 'pause', 'seeking', 'seeked', 'waiting', 'stalled', 'ended', 'timeupdate', 'error']) v.addEventListener(type, () => {
+        const probe = window.__listingPlaybackProbe; if (probe.events.length < 300) probe.events.push(state(type));
+      });
+    });
     if (typeof WebGL2RenderingContext === "undefined") return;
     for (const name of ["drawArraysInstanced", "drawElementsInstanced"]) {
       const original = WebGL2RenderingContext.prototype[name];
@@ -310,8 +319,18 @@ try {
   check((await page.locator("#flythrough-quality").innerText()).includes("1280 × 720"), "Visible quality label reflects actual decoded source dimensions");
   check(!loaded.muted, "Flythrough starts with its real audio track available");
   check(mediaRequests().length === mediaBeforeSwitch, "Switching Explore to Play video reuses the existing source instead of a second decoder");
-  await page.evaluate(() => document.querySelector("#flythrough-video").pause());
-  const pausedAt = (await snapshot()).time; await page.waitForTimeout(350);
+  // The finite fixture may finish while earlier UI observations run. Use a
+  // settled interior position so native replay cannot wrap an EOF anchor to 0.
+  await page.evaluate(() => {
+    const v = document.querySelector("#flythrough-video"), probe = window.__listingPlaybackProbe;
+    probe.phases.push(probe.state('before-interior-pause-seek'));
+    v.pause(); v.currentTime = 1;
+  });
+  await page.waitForFunction(() => {
+    const v = document.querySelector("#flythrough-video");
+    return v.paused && Math.abs(v.currentTime - 1) < .08 && !v.seeking && v.readyState >= 2;
+  });
+  const pausedAt = (await snapshot()).time; playbackAnchor = pausedAt; await page.waitForTimeout(350);
   check(Math.abs((await snapshot()).time - pausedAt) < .08, "Real media pause stops the playhead");
   await video.focus(); await page.keyboard.press("Space");
   await page.waitForFunction(() => !document.querySelector("#flythrough-video").paused);
@@ -320,12 +339,16 @@ try {
   // instead of racing decoder startup against a fixed wall-clock sleep.
   await page.waitForFunction((time) => {
     const v = document.querySelector("#flythrough-video");
+    const probe = window.__listingPlaybackProbe;
+    if (probe.polls.length < 300) probe.polls.push(probe.state('native-play-clock'));
     return !v.paused && v.currentTime > time + .2;
   }, pausedAt, { timeout: 4000 });
   check((await snapshot()).time > pausedAt + .2, "Native keyboard play control advances normal playback independently of page scroll");
   await page.keyboard.press("Space");
   await page.waitForFunction(() => document.querySelector("#flythrough-video").paused, undefined, { timeout: 2000 });
   check((await snapshot()).paused, "Native keyboard pause control works");
+  savedPlaybackProbe = { anchor: playbackAnchor, observation: await page.evaluate(() => window.__listingPlaybackProbe) };
+  writeFileSync(join(evidence, "playback-clock.json"), JSON.stringify(savedPlaybackProbe, null, 2) + "\n");
   await page.evaluate(() => { const v = document.querySelector("#flythrough-video"); v.pause(); v.currentTime = 1; });
   await page.waitForFunction(() => Math.abs(document.querySelector("#flythrough-video").currentTime - 1) < .08 && !document.querySelector("#flythrough-video").seeking);
   // Watch mode resumes playback after a chapter click. Register observers at
@@ -559,7 +582,10 @@ try {
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   console.log(`Listing browser: ${checks.length} assertions passed; real rendered page/720p H.264-AAC/ranges/transfer cancellation. Receipt: ${join(evidence, "receipt.json")}`);
 } catch (error) {
-  const failureState = await browserPage?.evaluate(() => { const v = document.querySelector("#flythrough-video"); return v ? { time: v.currentTime, duration: v.duration, controls: v.controls, muted: v.muted, src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null; }).catch(() => null);
+  const playbackClock = { anchor: playbackAnchor, priorSuccessfulPlayback: savedPlaybackProbe,
+    observation: await browserPage?.evaluate(() => window.__listingPlaybackProbe).catch(() => null) };
+  writeFileSync(join(evidence, "playback-clock.json"), JSON.stringify(playbackClock, null, 2) + "\n");
+  const failureState = await browserPage?.evaluate(() => { const v = document.querySelector("#flythrough-video"); return v ? { time: v.currentTime, duration: v.duration, controls: v.controls, muted: v.muted, src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, ended: v.ended, seeking: v.seeking, rate: v.playbackRate, frames: v.getVideoPlaybackQuality?.().totalVideoFrames, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null; }).catch(() => null);
   await browserPage?.screenshot({ path: join(evidence, "failure.png") }).catch(() => {});
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: false, sourcePlayerSha256: sourceHash, sourceHashes, fault, chapterObservationDelayMs: chapterObservationDelay, error: error.message, checks, navigationMeasurements, requests, mediaState, pageErrors, failureState }, null, 2) + "\n");
   throw error;
