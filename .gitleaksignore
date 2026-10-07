@@ -60,3 +60,7 @@ bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/admin/probe
 bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/admin/probe.test.ts:jwt:275
 # Exact historical client anon JWT; decoded anon role, never service_role. No online validity test.
 4e4776dbdd8bf3e7408e805c2d313e1b46087b76:apps/ios/Rendprop/Config.swift:jwt:33
+# Exact recorded source-digest metadata. The historical producer hashes source
+# bytes, and eight unchanged neighbours reproduce. This classification does not
+# certify the unavailable original APIClient bytes or historical test results.
+98e43b779fcc110a8761b78ad949cf85a33bc4d3:docs/web-client/release-parity-2026-09-14/native-validation.json:generic-api-key:443

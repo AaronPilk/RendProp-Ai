@@ -86,8 +86,8 @@ def main():
             run("migration-" + migration.stem, psql + ["-q", "-f", str(migration)])
         for fixture in fixtures:
             output = run(fixture.stem, psql + ["-f", str(fixture)])
-            if fixture.name == "studio_private_project_media.sql" and not re.search(r"passed\s*\n-+\s*\n\s*51\s*\n", output):
-                raise RuntimeError("Expected all 51 independent project/media SQL checks")
+            if fixture.name == "studio_private_project_media.sql" and not re.search(r"passed\s*\n-+\s*\n\s*57\s*\n", output):
+                raise RuntimeError("Expected all 57 independent project/media SQL checks")
         spec = importlib.util.spec_from_file_location("studio_private_media_concurrency", helper / "concurrency.py")
         concurrency = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(concurrency)
@@ -101,7 +101,7 @@ def main():
         match = re.search(r"ok \| (\d+) passed \| 0 failed", output)
         if not match or int(match[1]) < 31:
             raise RuntimeError("Expected at least 31 transport/document/music assertions with no failures")
-        receipt["checks"] = {"privateProjectSQL": 51, "musicSQLFixtures": 2, "twoConnectionRaces": 2,
+        receipt["checks"] = {"privateProjectSQL": 57, "musicSQLFixtures": 2, "twoConnectionRaces": 2,
                              "typecheckedDenoTests": int(match[1])}
         for name, digest in hashes.items():
             if hashlib.sha256((root / name).read_bytes()).hexdigest() != digest:

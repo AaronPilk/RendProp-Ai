@@ -104,6 +104,19 @@ select pg_temp.logo_denied('cross-account operation retry cannot bind foreign op
 reset role;
 insert into memberships(user_id,org_id,role)select 'b0100501-0000-4000-8000-000000000003',org,'admin'from logo_fixture where actor='b0100501-0000-4000-8000-000000000002';
 set local role service_role;
+select pg_temp.logo_denied('sole shared owner must transfer ownership before account deletion','select prepare_account_deletion(''b0100501-0000-4000-8000-000000000002'',''fixture-uploads'',''fixture-renders'')','RP409: Transfer ownership');
+select pg_temp.logo_ok('refused shared owner deletion preserves custody logo journal and no intent',
+ exists(select 1 from memberships where user_id='b0100501-0000-4000-8000-000000000002'and org_id=(select org from logo_fixture where actor='b0100501-0000-4000-8000-000000000002')and role='owner')
+ and exists(select 1 from memberships where user_id='b0100501-0000-4000-8000-000000000003'and org_id=(select org from logo_fixture where actor='b0100501-0000-4000-8000-000000000002')and role='admin')
+ and exists(select 1 from orgs where id=(select org from logo_fixture where actor='b0100501-0000-4000-8000-000000000002')and brand_kit->>'business_logo_url'like'%000000000001.png')
+ and exists(select 1 from org_brand_assets where id='b0100506-0000-4000-8000-000000000001'and state='published')
+ and exists(select 1 from upload_operations where asset_id='b0100506-0000-4000-8000-000000000001'and state='retained')
+ and not exists(select 1 from deletion_requests where user_id='b0100501-0000-4000-8000-000000000002'));
+-- Explicit synthetic custody transfer: the retained workspace already has a
+-- surviving owner before the deleting owner leaves. No deletion auto-promotion.
+reset role;
+update memberships set role='owner'where user_id='b0100501-0000-4000-8000-000000000003'and org_id=(select org from logo_fixture where actor='b0100501-0000-4000-8000-000000000002');
+set local role service_role;
 select prepare_account_deletion('b0100501-0000-4000-8000-000000000002','fixture-uploads','fixture-renders');
 select pg_temp.logo_ok('shared account deletion retains office logo and its journal',exists(select 1 from orgs where id=(select org from logo_fixture where actor='b0100501-0000-4000-8000-000000000002') and brand_kit->>'business_logo_url'like'%000000000001.png')and exists(select 1 from org_brand_assets where id='b0100506-0000-4000-8000-000000000001'and state='published')and exists(select 1 from upload_operations where asset_id='b0100506-0000-4000-8000-000000000001'and state='retained'));
 select pg_temp.logo_ok('shared account deletion never schedules office objects',(select jsonb_array_length(payload->'r2')=0 from deletion_requests where user_id='b0100501-0000-4000-8000-000000000002'and snapshot_version=2));

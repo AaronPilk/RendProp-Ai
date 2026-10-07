@@ -29,6 +29,31 @@ def run(args, text=None):
     if p.returncode: raise AssertionError(p.stderr[-6000:])
     return p.stdout.strip()
 def query(sql): return run(PSQL, sql)
+def deletion_inventory(actor):
+    # Complete rows in this isolated fixture, including custody and cleanup intent.
+    tables = ['orgs','memberships','listings','capture_assets','render_jobs','renders','media_provenance',
+              'studio_documents','studio_creative_results','studio_presenter_profiles','studio_presenter_drafts',
+              'studio_presenter_jobs','studio_presenter_quotes','studio_property_music_copies','video_erase_jobs',
+              'upload_operations','privacy_cleanup_jobs','deletion_requests',
+              'studio_production_reviews','studio_production_versions','studio_project_media','studio_property_music',
+              'studio_presenter_media_sources','studio_presenter_closed_submissions','voice_storage_reservations',
+              'upload_reservations','video_erase_batches','video_erase_stages','cost_ledger']
+    pairs = [f"'{table}',(select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb) from public.{table} r)" for table in tables]
+    pairs += [f"'actor',(select to_jsonb(u) from auth.users u where id='{actor}')",
+              f"'profile',(select to_jsonb(p) from public.profiles p where id='{actor}')"]
+    return json.loads(query('select jsonb_build_object('+','.join(pairs)+');'))
+def require_shared_deletion_refusal(actor, label):
+    before = deletion_inventory(actor)
+    assert any(m['user_id']==actor and m['org_id']==ORG for m in before['memberships']), label+' fixture actor/workspace'
+    assert len({m['user_id'] for m in before['memberships'] if m['org_id']==ORG})>1, label+' shared fixture'
+    error(f"set role service_role;select prepare_account_deletion('{actor}','fixture-uploads','fixture-renders');", 'RP409: This account has retained work or likeness records in a shared or former workspace.')
+    after = deletion_inventory(actor)
+    ok(label+' normal account deletion refuses retained shared work without changing complete records or scheduling cleanup',
+       after==before and not any(r['user_id']==actor for r in after['deletion_requests']))
+def operator_auth_delete(actor):
+    # Synthetic operator invalidator only, not a successful app-delete workflow.
+    heir = B if actor==A else A
+    return f"reset role;update public.listings set agent_id='{heir}' where org_id='{ORG}' and agent_id='{actor}';delete from auth.users where id='{actor}';"
 def ok(name, check=True):
     assert check, name
     passed.append(name)
@@ -256,8 +281,9 @@ try:
  error(f"set role authenticated;set request.jwt.claim.sub='{X}';select studio_presenter_media_visibility('{LIST}',array['{ASSET}'::uuid]);",'RP404')
  same_org=json.loads(query(f"set role authenticated;set request.jwt.claim.sub='{B}';select studio_presenter_media_visibility('{L2}',array['{ASSET}'::uuid],array['{NATIVE_RENDER['id']}'::uuid],array['{EDIT_KEY}']);"))
  ok('batch visibility rejects foreign workspace and same-workspace foreign property identities',not any(same_org['assets'].values()) and not any(same_org['renders'].values()) and not any(same_org['keys'].values()))
- deletion=query(f"begin;set role service_role;select prepare_account_deletion('{C}','fixture-uploads','fixture-renders');reset role;delete from auth.users where id='{C}';"+rpc(action='revoke_profile',payload={'profile_id':PROFILE,'expected_revision':2})+f"select json_build_array((select count(*) from studio_creative_results where metadata->>'asset_id'='{EDIT}'),studio_presenter_media_access('{EDIT}'),studio_presenter_render_access('{EDIT_RENDER['id']}'),studio_presenter_key_access('{LIST}','{EDIT_KEY}'));rollback;").splitlines()
- ok('deleting edit author cannot detach retained shared media from revoked Presenter ancestry',json.loads(deletion[-1])==[0,False,False,False])
+ require_shared_deletion_refusal(C, 'edited-result author')
+ deletion=query('begin;'+operator_auth_delete(C)+rpc(action='revoke_profile',payload={'profile_id':PROFILE,'expected_revision':2})+f"select json_build_array((select count(*) from studio_creative_results where metadata->>'asset_id'='{EDIT}'),studio_presenter_media_access('{EDIT}'),studio_presenter_render_access('{EDIT_RENDER['id']}'),studio_presenter_key_access('{LIST}','{EDIT_KEY}'));rollback;").splitlines()
+ ok('synthetic operator edit-author invalidation cannot detach retained shared media from revoked Presenter ancestry',json.loads(deletion[-1])==[0,False,False,False])
  detached=query(revoke_prefix+f"reset role;delete from video_erase_batches where id='{BATCH}';delete from studio_creative_results where metadata->>'asset_id' in ('{EDIT}','{CLIP}');delete from capture_assets where id='{CLIP}';set role service_role;select json_build_array(studio_presenter_media_access('{REFLECT}'),studio_presenter_key_access('{LIST}','{REFLECT_KEY}'),studio_presenter_media_access('{EDIT}'));rollback;").splitlines()
  ok('deleted reflection history and missing intermediate source keep durable ancestry denial',json.loads(detached[-1])==[False,False,False])
  error(revoke_prefix+f"select assert_studio_edit_quality('{REFLECT}');",'RP409')
@@ -285,7 +311,9 @@ try:
  worker(R,'cleanup_done',{'cleanup_token':cleanup['cleanup_token'],'objects_deleted':True});ok('object cleanup never silently refunds a possibly paid request',query(f"select held_cents from studio_presenter_jobs where id='{R}';")=='100')
  # Identity deletion must preserve accounting while erasing personal snapshots.
  pending=fresh();P=pending['id'];cl=worker(P,'dispatch_claim');worker(P,'ambiguous',{'dispatch_token':cl['dispatch_token']});quote_only=quote()
- for name,mutation in [('subject',f"set role service_role;select prepare_account_deletion('{A}','fixture-uploads','fixture-renders');reset role;delete from auth.users where id='{A}'"),('author',f"set role service_role;select prepare_account_deletion('{B}','fixture-uploads','fixture-renders');reset role;delete from auth.users where id='{B}'"),('profile',f"delete from studio_presenter_profiles where id='{PROFILE}'"),('source property',f"delete from listings where id='{LIST}'"),('workspace',f"delete from orgs where id='{ORG}'")]:
+ require_shared_deletion_refusal(A, 'likeness subject')
+ require_shared_deletion_refusal(B, 'Presenter author')
+ for name,mutation in [('synthetic operator subject',operator_auth_delete(A)),('synthetic operator author',operator_auth_delete(B)),('profile',f"delete from studio_presenter_profiles where id='{PROFILE}'"),('source property',f"delete from listings where id='{LIST}'"),('workspace',f"delete from orgs where id='{ORG}'")]:
   data=query(f"begin;{mutation};reset role;set role service_role;select json_build_array((select held_cents from studio_presenter_jobs where id='{P}'),(select state from studio_presenter_jobs where id='{P}'),(select snapshot is null from studio_presenter_jobs where id='{P}'),(select count(*) from studio_presenter_quotes where id='{quote_only['id']}'));rollback;").splitlines()
   ok(name+' hard deletion preserves uncertain spend and deletes quote-only personal snapshot',json.loads(data[-1])==[100,'invalidated',True,0])
  for role in ['anon','authenticated']:

@@ -62,10 +62,19 @@ These checks establish the scoped changes. They do not prove that every feature,
 customer workflow, provider output or physical capture path works.
 
 The current change scan found no new credentials. Broader historical scans
-identified eight exact test/documentation/public-client entries now precisely
-classified, and one older recorded source checksum whose original bytes cannot
-be reproduced. That checksum remains unignored. Earlier six-commit clean scans
-must not be presented as a clean scan of the whole repository history.
+identified eight exact test/documentation/public-client entries and one older
+recorded source checksum. The historical producer, schema and eight reproducible
+neighbouring digests establish that the last entry is source-hash metadata, so
+only its exact finding is classified. Its original APIClient bytes and historical
+test correctness remain unverified. Earlier six-commit clean scans must not be
+presented as a clean scan of the whole repository history.
+
+The first exact-source CI runs exposed older deletion fixtures that assumed a
+shared owner could leave without custody transfer, or that retained shared Studio
+work could be erased through ordinary account deletion. Fixture corrections
+exercise the actual refusal before any intent, preserve the original media and
+cascade checks, and label low-level synthetic operator cleanup separately.
+They do not relax the product guards or certify an assisted-cleanup UI.
 
 ## Remaining release gates
 
@@ -80,3 +89,9 @@ deletion support and permanent purchase-fulfilment error handling remain separat
 work. Existing media protections and cost fences must stay enabled. Real-phone,
 client-email and provider-quality acceptance remain outstanding. Spatial stays
 experimental. Public App Review submission is outside this batch.
+
+For the next internal build, retain every unchecked physical item in the build-46
+phone checklist. Additionally test a rejected upload admission stops retrying,
+a real short burst remains retryable, and switching account/workspace from an
+open listing closes stale content and exports. A compile or green CI does not
+accept these phone behaviours.

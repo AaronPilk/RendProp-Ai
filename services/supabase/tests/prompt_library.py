@@ -16,6 +16,18 @@ def run(args,sql=None):
  if p.returncode:raise AssertionError(p.stderr[-6000:])
  return p.stdout.strip()
 def query(sql):return run(PSQL,sql)
+def deletion_inventory(actor):
+ # Complete rows in this isolated fixture, including custody and cleanup intent.
+ tables=['orgs','memberships','listings','capture_assets','render_jobs','renders','media_provenance',
+         'studio_documents','studio_creative_results','studio_presenter_profiles','studio_presenter_drafts',
+         'studio_presenter_jobs','studio_presenter_quotes','studio_property_music_copies','video_erase_jobs',
+         'upload_operations','privacy_cleanup_jobs','deletion_requests',
+              'studio_production_reviews','studio_production_versions','studio_project_media','studio_property_music',
+              'studio_presenter_media_sources','studio_presenter_closed_submissions','voice_storage_reservations',
+              'upload_reservations','video_erase_batches','video_erase_stages','cost_ledger']
+ pairs=[f"'{table}',(select coalesce(jsonb_agg(to_jsonb(r) order by to_jsonb(r)::text),'[]'::jsonb) from public.{table} r)" for table in tables]
+ pairs += [f"'actor',(select to_jsonb(u) from auth.users u where id='{actor}')",f"'profile',(select to_jsonb(p) from public.profiles p where id='{actor}')"]
+ return json.loads(query('select jsonb_build_object('+','.join(pairs)+');'))
 def error(sql,match):
  try:query(sql)
  except AssertionError as e:assert match in str(e),str(e)
@@ -52,8 +64,15 @@ try:
  ok('two device revision predicates cannot both overwrite the same revision',updated=='1' and stale=='0')
  query(f"delete from memberships where user_id='{A}' and org_id='{OTHER}';")
  ok('removed workspace membership loses library access',read(A)==A+':'+ORG)
- query(f"set role service_role;select prepare_account_deletion('{B}','fixture-uploads','fixture-renders');reset role;delete from auth.users where id='{B}';")
- ok('account deletion removes personal prompt content',query(f"select count(*) from studio_documents where user_id='{B}';")=='0')
+ before=deletion_inventory(B)
+ assert any(m['user_id']==B and m['org_id']==ORG for m in before['memberships']) and len({m['user_id'] for m in before['memberships'] if m['org_id']==ORG})>1
+ error(f"set role service_role;select prepare_account_deletion('{B}','fixture-uploads','fixture-renders');",'RP409: This account has retained work or likeness records in a shared or former workspace.')
+ after=deletion_inventory(B)
+ ok('normal account deletion refuses retained shared prompt work without changing complete records or scheduling cleanup',after==before and not any(r['user_id']==B for r in after['deletion_requests']))
+ # Synthetic operator Auth invalidation is a separate low-level FK control,
+ # not successful admission through the app account-deletion workflow.
+ query(f"delete from auth.users where id='{B}';")
+ ok('synthetic operator Auth invalidation removes personal prompt content',query(f"select count(*) from studio_documents where user_id='{B}';")=='0')
  complete=True
 finally:
  failure=str(sys.exc_info()[1]) if sys.exc_info()[1] else None
