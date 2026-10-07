@@ -115,3 +115,16 @@ catalogue readback passed 180 checks: exact function bodies and permissions,
 eight triggers, five empty protected tables and the six exact migration records.
 Funding remains zero and trial activation remains off. Backend/web deployment,
 complete final-source CI and signed TestFlight 49 availability remain pending.
+
+The `31e6ecb` hosted run passed ten jobs; native stopped before UIKit compilation
+because CoreSimulator's read-only inventory exceeded its initial 30-second
+deadline. Studio was cancelled by the workflow after that failure. The runner
+now permits one additional inventory read only after that timeout, within a
+120-second overall deadline, and strictly validates the returned available
+iPhone identity. Four positive cases, eighteen refusal cases and four actual
+guard-removal controls pass under normal and optimized Python without calling
+a simulator. The seven UIKit rendering removal controls, compilation and
+post-discovery boot behavior are unchanged. All 143 compiled Swift inputs remain
+unchanged; the broader 254-file native snapshot has one explicit test-runner
+delta. Fresh complete hosted CI remains required. The owner freed about 15 GiB
+on the Mac, resolving the disk-space prerequisite without further cleanup.
