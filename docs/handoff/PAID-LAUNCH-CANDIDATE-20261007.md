@@ -70,3 +70,12 @@ cap below physically retained media. Actual local PostgreSQL tests, overlapping
 transactions and removed-guard controls pass. The complete iOS Release simulator
 SDK compile passes after preserving main-actor isolation on the pre-dispatch
 callback. These local results require fresh clean-source hosted CI before rollout.
+
+The next CI run for `7a0b3f8` passed ten jobs and found one remaining workspace
+runner mismatch while the native audit was still running. The billing inventory
+now includes the new selected-workspace photo-package case (21 registrations).
+The compiled request-drift control copies its four unchanged Studio dependencies
+so it reaches the expected runtime assertion. Actual local verification passes
+28 SQL assertions, 34 handler cases, both overlapping selection races and both
+removed-guard controls. The inventory/parser refusal checks also pass. Fresh
+complete hosted CI is still required; this is not a deployment or launch result.

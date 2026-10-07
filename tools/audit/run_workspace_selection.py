@@ -9,18 +9,19 @@ import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261001145730_workspace_selection.sql'
 UPLOAD_SUPPORT=['transport.ts','gateway_contract.ts','content_type.ts']
+STUDIO_SUPPORT=['handler.ts','property-music.ts','project-media.ts','context.ts']
 # Exact audited registration inventory, including current trial reservation and
-# service activation billing cases.
+# service activation billing cases and the selected-workspace photo package.
 # Keep file-level counts and individual pass results, not just a total that can
 # hide an omitted file, an ignored/filtered case or duplicate case output.
-HANDLER_INVENTORY={'me/workspaces.test.ts':9,'me/billing.test.ts':20,'listings/create.test.ts':4}
+HANDLER_INVENTORY={'me/workspaces.test.ts':9,'me/billing.test.ts':21,'listings/create.test.ts':4}
 HANDLER_TESTS=sum(HANDLER_INVENTORY.values())
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-workspace-selection-',dir='/tmp'));SOCK,DATA=OUT/'socket',OUT/'cluster';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','NO_COLOR':'1','DENO_NO_PROMPT':'1'}
 BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb','deno']};assert all(BIN.values())
 ENV['DENO_DIR']=json.loads(subprocess.check_output([BIN['deno'],'info','--no-config','--json'],text=True))['denoDir']
 CONN=['-h',str(SOCK),'-p','55453','-U','postgres'];PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
-paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/workspace_selection.sql',pathlib.Path(__file__).resolve(),*sorted((SQL/'functions/me').glob('*.ts')),*sorted((SQL/'functions/listings').glob('*.ts')),*sorted((SQL/'functions/_shared').glob('*.ts')),SQL/'functions/studio/handler.ts',*[SQL/'functions/uploads'/name for name in UPLOAD_SUPPORT]]
+paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/workspace_selection.sql',pathlib.Path(__file__).resolve(),*sorted((SQL/'functions/me').glob('*.ts')),*sorted((SQL/'functions/listings').glob('*.ts')),*sorted((SQL/'functions/_shared').glob('*.ts')),*[SQL/'functions/studio'/name for name in STUDIO_SUPPORT],*[SQL/'functions/uploads'/name for name in UPLOAD_SUPPORT]]
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
 receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'commands':[],'passed':False,'productionMutations':0,'limits':['Synthetic auth schema and transport; no real phone or cross-device interaction']}
 def run(name,args,stdin=None,expected=0):
@@ -94,10 +95,11 @@ try:
  # Removing explicit scope must create a second row and fail the handler test.
  mutant=OUT/'request-drift-control';mutant.mkdir();(mutant/'_shared').symlink_to(SQL/'functions/_shared',target_is_directory=True)
  shutil.copytree(SQL/'functions/me',mutant/'me');shutil.copytree(SQL/'functions/listings',mutant/'listings')
- # The real listings handler now imports property-cover, whose ownership
- # validator is shared with Studio. Preserve that unchanged dependency so
- # the negative control reaches its assertion, not a missing-module error.
- (mutant/'studio').mkdir();shutil.copy2(SQL/'functions/studio/handler.ts',mutant/'studio/handler.ts')
+ # Listings property-cover and /me private-media use these unchanged Studio
+ # dependencies. Preserve them so the negative control reaches its runtime
+ # assertion, not a missing-module or typecheck failure.
+ (mutant/'studio').mkdir()
+ for name in STUDIO_SUPPORT:shutil.copy2(SQL/'functions/studio'/name,mutant/'studio'/name)
  # /me imports the logo handler, which uses the real upload transport helper.
  # Its local dependencies must also be present while Deno checks the mutant.
  # Copy them unchanged so a missing module cannot masquerade as guard detection.
