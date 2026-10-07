@@ -1,4 +1,4 @@
-import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { mediaVisibility } from "../_shared/media-source-access.ts";
 import { HttpError } from "../_shared/http.ts";
 import { PAGE_SIZE, type StudioDependencies } from "./handler.ts";

@@ -61,7 +61,7 @@ import type { RouteStep } from "../_shared/router.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
+import { chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
@@ -316,6 +316,8 @@ interface Charge {
   plan: string;
   monthlyKey: string;
   burstKey: string;
+  monthlyReceipt: RateChargeReceipt;
+  burstReceipt: RateChargeReceipt;
 }
 
 /**
@@ -343,20 +345,23 @@ async function guardChapters(user: PaidAiCaller, req: Request, orgId: string): P
   requiredIdempotencyKey(req); // Permanent serving-operation authority owns replay.
 
   const burstKey = `aichapters:${orgId}`;
-  if (!(await durableRateLimit(burstKey, BURST_MAX_PER_WINDOW, BURST_WINDOW_SECONDS))) {
+  const burst = await chargeRateReceipt(burstKey, BURST_MAX_PER_WINDOW, BURST_WINDOW_SECONDS);
+  if (!burst.accepted) {
     throw new HttpError(429, "AI room-suggestion limit reached for now — try again in a few minutes.", "rate_limited");
   }
   const monthlyKey = `chaptersmo:${orgId}`;
-  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
+  const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
+  if (!monthly.accepted) {
+    await refundRateReceipt(burst.receipt);
     throw quotaError("AI room suggestions", monthlyCap, monthlyCap, ent.plan);
   }
-  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey, monthlyReceipt: monthly.receipt, burstReceipt: burst.receipt };
 }
 
 /** Hand back everything a FAILED analysis charged. Never throws. */
 async function refundCharge(charge: Charge): Promise<void> {
-  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
-  await refundRateLimit(charge.burstKey, BURST_WINDOW_SECONDS, 1);
+  await refundRateReceipt(charge.monthlyReceipt);
+  await refundRateReceipt(charge.burstReceipt);
 }
 
 // ── Asset resolution ─────────────────────────────────────────────────────────

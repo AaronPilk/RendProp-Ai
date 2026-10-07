@@ -10,6 +10,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / "apps/ios/Rendprop/Screens/FlythroughDetailView.swift"
+APP_SOURCE = ROOT / "apps/ios/Rendprop/RendpropApp.swift"
 
 
 def block(source, marker):
@@ -27,11 +28,17 @@ def block(source, marker):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--inject-fault", choices=["drop-permission-context", "drop-listing-binding", "drop-csv-context", "drop-completion-context"])
+    parser.add_argument("--inject-fault", choices=["drop-permission-context", "drop-listing-binding", "drop-csv-context", "drop-completion-context", "drop-presentation-actor", "drop-presentation-workspace"])
     args = parser.parse_args()
     raw = SOURCE.read_bytes()
     source = raw.decode()
+    app = APP_SOURCE.read_text()
+    state_marker = "    @State private var presentationScope = NativePresentationScope(\n        actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)"
+    assert source.count(state_marker) == 1
     bodies = {
+        "__SCOPE__": block(app, "struct NativePresentationScope:"),
+        "__PRESENTATION_STATE__": state_marker.replace("@State ", ""),
+        "__PRESENTATION__": block(source, "    private var hasCurrentPresentationContext:"),
         "__CONTEXT__": block(source, "@MainActor private struct NativeMediaExportContext"),
         "__SAVER__": block(source, "private enum PhotosLibrarySaver"),
         "__ADMISSION__": block(source, "    @MainActor private func mediaExportAdmission("),
@@ -63,6 +70,12 @@ def main():
         assert bodies["__LOCAL__"].count(needle) == 2
         bodies["__LOCAL__"] = bodies["__LOCAL__"].replace(needle, "                // injected stale Photos success", 1)
         expected = "already begun Photos completion cannot mark replacement session saved"
+    elif args.inject_fault in ("drop-presentation-actor", "drop-presentation-workspace"):
+        needle = "self.actorID == actorID && self.orgID == orgID"
+        assert bodies["__SCOPE__"].count(needle) == 1
+        replacement = "self.orgID == orgID" if args.inject_fault == "drop-presentation-actor" else "self.actorID == actorID"
+        bodies["__SCOPE__"] = bodies["__SCOPE__"].replace(needle, replacement)
+        expected = "old presentation cannot schedule provenance for replacement actor or workspace"
     fixture = Path(__file__).with_name("Fixture.swift.template").read_text()
     for key, body in bodies.items():
         assert fixture.count(key) == 1, key
@@ -75,6 +88,8 @@ def main():
     files = out / "isolated-files"
     files.mkdir(exist_ok=True)
     receipt = {"source": str(SOURCE.relative_to(ROOT)), "sourceSHA256": hashlib.sha256(raw).hexdigest(),
+               "sourceHashes": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
+                                for path in [SOURCE, APP_SOURCE, Path(__file__).resolve(), Path(__file__).with_name("Fixture.swift.template")]},
                "actualBodyHashes": hashes, "compiledBodyHashes": {key: hashlib.sha256(body.encode()).hexdigest() for key, body in bodies.items()},
                "injectedFault": args.inject_fault, "networkCalls": 0, "realPhotosCalls": 0, "cameraCalls": 0,
                "customerFilesAccessed": 0, "commands": []}

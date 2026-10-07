@@ -78,6 +78,9 @@ try:
  for name,definition,anchor,replacement,reason in [
   ('drop-publish-authority','public.publish_org_brand_logo(uuid,uuid,uuid,text)','o:=public.lock_org_brand_authority(p_actor,p_org);','select * into o from public.orgs where id=p_org;','role revoked after storage blocks publication'),
   ('omit-logo-deletion-inventory','public.prepare_account_deletion(uuid,text,text)',"select object_targets||coalesce(jsonb_agg(jsonb_build_object('bucket',p_render_bucket,'key',b.object_key,'valid',", "select object_targets||coalesce(jsonb_agg(jsonb_build_object('bucket',p_render_bucket,'key',b.object_key,'valid',",'deletion inventories current and staged immutable logos'),
+  ('omit-owner-transfer-preflight','public.account_deletion_integrity_preflight(uuid)',
+   "  if exists(select 1 from public.memberships owner where owner.user_id=p_user and owner.role='owner'\n    and exists(select 1 from public.memberships peer where peer.org_id=owner.org_id and peer.user_id<>p_user)\n    and not exists(select 1 from public.memberships heir where heir.org_id=owner.org_id and heir.user_id<>p_user and heir.role='owner'))then\n    raise exception 'RP409: Transfer ownership of the shared workspace before deleting this account. Contact support if an ownership transfer needs assistance.';\n  end if;",'',
+   'sole shared owner must transfer ownership before account deletion'),
  ]:
   body=query(name+'-definition',f"select pg_get_functiondef('{definition}'::regprocedure);")
   if name=='omit-logo-deletion-inventory':
@@ -88,10 +91,12 @@ try:
   query(name+'-apply',mutant)
   failed=run(name+'-negative',[*PSQL,'-At','-f',TEST],expected=3)
   assert 'LOGO FAIL: '+reason in failed,failed[-2000:]
-  run(name+'-restore',[*PSQL,'-q','-1','-f',TARGET])
-  run(name+'-restore-studio-deletion',[*PSQL,'-q','-1','-f',DELETION_REPAIR])
+  # Restore the exact pristine current function, not the historical logo
+  # migration's older deletion body that would erase later safety overlays.
+  query(name+'-restore-exact-current',body)
+  assert query(name+'-restored-definition',f"select pg_get_functiondef('{definition}'::regprocedure);")==body
   restored=run(name+'-restored',[*PSQL,'-At','-f',TEST]);assert 'PASS: org logo lifecycle SQL assertions; all fixtures rolled back.'in restored
- receipt['negativeControls']=['drop-publish-authority','omit-logo-deletion-inventory']
+ receipt['negativeControls']=['drop-publish-authority','omit-logo-deletion-inventory','omit-owner-transfer-preflight']
  media_positive=run('studio-deletion-positive',[*PSQL,'-At','-f',MEDIA_TEST])
  assert 'PASS: Studio deletion inventory SQL assertions; all fixtures rolled back.'in media_positive
  definition=query('studio-deletion-definition',"select pg_get_functiondef('public.prepare_account_deletion(uuid,text,text)'::regprocedure);")

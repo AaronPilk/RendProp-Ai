@@ -202,8 +202,38 @@ import Foundation
               "Original media remains byte-identical after every recovery")
         try await multipartRuntimeTests(root: root)
         try await boundedRecoveryTests(root: root)
+        try await admissionFailureTests(root: root)
         try await photoReferenceTests(root: root)
         print("PASS UploadRecoveryTests \(assertions) assertions")
+    }
+
+    @MainActor static func admissionFailureTests(root: URL) async throws {
+        FileStore.documents = root
+        let source = root.appendingPathComponent("admission.mov")
+        let original = Data("synthetic admission original".utf8)
+        try original.write(to: source)
+        let cases: [(APIError, Bool, String)] = [
+            (.server(status: 401, code: "unauthorized", message: "Sign in to upload media"), true, "Sign-in refusal is terminal"),
+            (.server(status: 402, code: "plan_required", message: "Trial upload allowance used"), true, "Allowance refusal is terminal"),
+            (.server(status: 429, code: "quota_exceeded", message: "Monthly upload limit reached"), true, "Monthly upload ceiling is terminal"),
+            (.server(status: 429, code: "rate_limited", message: "Too many requests"), false, "Burst upload limit stays retryable"),
+            (.server(status: 503, code: "upstream", message: "Retry later"), false, "Upload outage stays retryable"),
+        ]
+        for (index, item) in cases.enumerated() {
+            let api = RecoveryAPI(); api.admissionFailure = item.0
+            let initial = UploadManager.State(filePath: "admission.mov", bytesTotal: Int64(original.count),
+                status: .paused, mode: "pending")
+            let session = URLSession(configuration: .ephemeral)
+            let manager = UploadManager(api: api, session: session, recovering: initial, persistState: { _ in true })
+            manager.resume()
+            await until("Admission failure completes \(index)") { manager.state?.status == .failed }
+            check((manager.state?.terminalError != nil) == item.1, item.2)
+            check(manager.state?.isAutoResumable == !item.1, "Only transient admission failures can automatically resume")
+            check(api.creates == 1 && api.physicalWrites == 0 && api.cancels == 0,
+                  "Admission refusal does not send bytes or cancel an existing receipt")
+            session.invalidateAndCancel()
+        }
+        check(try Data(contentsOf: source) == original, "Admission refusals preserve the saved original")
     }
 
     @MainActor static func photoReferenceTests(root: URL) async throws {

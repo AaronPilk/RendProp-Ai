@@ -47,6 +47,37 @@ export function falEndpoint(model: string): string {
   return PASSTHROUGH_NAMESPACES.some((p) => m.startsWith(p)) ? m : `fal-ai/${m}`;
 }
 
+export type FalLegacyReceipt = { endpoint: string; requestId: string };
+
+/** Parse only the paired, credential-free queue URLs used by older jobs. */
+export function falLegacyReceipt(status: string, response: string): FalLegacyReceipt | null {
+  try {
+    const statusURL = new URL(status), responseURL = new URL(response);
+    for (const url of [statusURL, responseURL]) {
+      if (url.origin !== FAL_QUEUE_BASE || url.username || url.password || url.search || url.hash) return null;
+    }
+    const match = /^\/([A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)+)\/requests\/([A-Za-z0-9_-]{1,256})\/status$/.exec(statusURL.pathname);
+    if (!match || responseURL.pathname !== `/${match[1]}/requests/${match[2]}`) return null;
+    return { endpoint: match[1], requestId: match[2] };
+  } catch {
+    return null;
+  }
+}
+
+/** The complete model comes from our owned durable receipt, never the caller.
+ * fal's SDK status/result methods use owner/alias and omit the endpoint subpath:
+ * https://github.com/fal-ai/fal-js/blob/main/libs/client/src/queue.ts
+ * The REST docs also show complete endpoint URLs, so preserve that exact form.
+ * No other prefix or sibling endpoint is an equivalent receipt. */
+export function falLegacyReceiptMatchesModel(model: unknown, requestId: unknown, receipt: FalLegacyReceipt): boolean {
+  if (typeof model !== "string" || requestId !== receipt.requestId) return false;
+  const endpoint = falEndpoint(model);
+  const parts = endpoint.split("/");
+  if (parts.length < 2 || parts.some((p) => !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(p))) return false;
+  const applicationRoot = parts.slice(0, 2).join("/");
+  return receipt.endpoint === endpoint || receipt.endpoint === applicationRoot;
+}
+
 function falKey(): string {
   const key = Deno.env.get("FAL_KEY")?.trim();
   if (!key) throw new ProviderError(PROVIDER, "upstream", "FAL_KEY function secret is not set");

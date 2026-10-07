@@ -14,6 +14,13 @@ export class SavedFundingResponse extends HttpError {
  constructor(readonly saved_response:Record<string,unknown>){super(200,"Restored generated result.");}
 }
 function fundingRpcError(message:string):never {
+ // Missing activation is an operator-side availability boundary. Buying a
+ // bigger plan cannot repair it. An exhausted funded interval remains quota;
+ // neither case permits another provider attempt or loosens the spending gate.
+ if (/RP402:\s*(?:This workspace has no funded serving allowance|This paid service interval is not funded)\s*$/.test(message))
+  throw new FundingAdmissionError(503,"AI generation is not available for this workspace yet. Please contact support.","upstream");
+ if (/RP402:\s*This attempt exceeds the shared funded serving allowance\s*$/.test(message))
+  throw new FundingAdmissionError(402,"This workspace's shared AI usage limit has been reached. Wait for its next funded billing interval.","quota_exceeded");
  try { throwRpc(message); } catch(error) {
   if(error instanceof HttpError)throw new FundingAdmissionError(error.status,error.message,error.code,/This operation already started/.test(message)?{funding_operation_replay:true}:undefined);
   throw error;

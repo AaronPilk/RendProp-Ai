@@ -42,7 +42,7 @@
 // nothing provides, everything retired). Callers should surface that as a clear
 // 503 rather than silently doing nothing.
 
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { adminClient } from "./supabase.ts";
 
 // ── The contract types (docs/AI-ROUTER-CONTRACT.md §1) ──────────────────────

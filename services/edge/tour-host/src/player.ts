@@ -802,6 +802,12 @@ function renderLeadForm(tour: Tour, turnstileSiteKey = "", opts: LeadFormOpts = 
 interface CtaBlock { html: string; handoffUrl: string; }
 
 function renderCtaBlock(tour: Tour, turnstileSiteKey = ""): CtaBlock {
+  // Fictional demos have no real recipient. Never invite visitors to type
+  // personal information into a form the public API must refuse.
+  if (tour.slug === "estate-demo" || tour.slug === "demo") return {
+    handoffUrl: "",
+    html: '<h2>Sample listing</h2><p class="sub">This is a demonstration. Open a published property listing to contact its agent or business.</p>',
+  };
   const cta = tour.cta;
   const sold = isSoldOrArchived(tour) && isRealEstate(tour);
   // Scheme-allowlist the publisher-supplied deeplink (audit P1: javascript:

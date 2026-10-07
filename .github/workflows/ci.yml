@@ -10,6 +10,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Jobs may read source/artifacts; no default repository write token.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -33,6 +37,19 @@ jobs:
         run: python3 tools/audit/test_database_runner.py
       - name: Invariant source registration contracts
         run: python3 tools/audit/test_database_invariant_sources.py
+      - name: Native account and workspace presentation privacy
+        run: python3 tools/audit/run_native_presentation_privacy.py --out "$RUNNER_TEMP/native-presentation-privacy"
+      - name: Native deletion confirmation and late-response account privacy
+        run: python3 tools/audit/run_native_account_deletion.py --out "$RUNNER_TEMP/native-account-deletion"
+      - name: Retain native deletion admission and guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-account-deletion-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/native-account-deletion/receipt.json
+            ${{ runner.temp }}/native-account-deletion/*.log
+            ${{ runner.temp }}/native-account-deletion/*.swift
       # Every Phase 1 node gate, discovered by glob: consent selector and Ask AI
       # label source contracts, adoption source/mutant/local-binding gates and
       # the consent persistence gate. None of them is a UI runtime test.
@@ -121,7 +138,7 @@ jobs:
             python3 tools/audit/apple-code-session-20261004/run.py --inject-fault "$fault"
           done
           python3 tools/audit/native-media-export-20261004/run.py
-          for fault in drop-permission-context drop-listing-binding drop-csv-context drop-completion-context; do
+          for fault in drop-permission-context drop-listing-binding drop-csv-context drop-completion-context drop-presentation-actor drop-presentation-workspace; do
             python3 tools/audit/native-media-export-20261004/run.py --inject-fault "$fault"
           done
       - name: Ordinary listing intent and shared-version review
@@ -927,6 +944,7 @@ jobs:
           set -euo pipefail
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
           python3 tools/audit/test_privacy_receipt_fail_closed.py
+          python3 tools/audit/run_deletion_integrity.py
           python3 tools/audit/run_deletion_regression.py --provider-commit "$GITHUB_SHA"
           python3 tools/audit/run_adoption_regression.py
           python3 tools/audit/run_team_readiness.py
@@ -1066,7 +1084,7 @@ jobs:
       # GPU), Pillow for the JPEG decode, numpy + tyro for the trainer CLI
       # parsing. Nothing here contacts Modal, a GPU or any provider.
       - name: Install spatial worker + training adapter deps (pinned)
-        run: pip install --disable-pip-version-check modal==1.5.3 Pillow==12.1.1 numpy==1.26.4 tyro==0.9.35
+        run: pip install --disable-pip-version-check modal==1.5.3 Pillow==12.3.0 numpy==1.26.4 tyro==0.9.35
 
       - name: Run spatial worker tests (unittest discovery)
         run: python3 -m unittest discover -s services/spatial-worker -p 'test_*.py'

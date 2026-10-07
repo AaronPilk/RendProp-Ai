@@ -108,13 +108,20 @@ export function respondError(err: unknown): Response {
     return json(err.saved_response);
   }
   if (err instanceof HttpError) {
+    if (err.status >= 500) logServerError(err.status, err.code, "handled");
     return json({ ...(err.details ?? {}), error: err.message, code: err.code }, err.status);
   }
-  // The message of an UNEXPECTED error is logged, never returned: on a public
-  // route it can name an upstream, an env var, or a table. Every deliberate
-  // failure is an HttpError and keeps its own copy.
-  console.error("Unhandled error:", err);
+  // Both messages and stacks can contain customer media, prompts, signed URLs,
+  // database rows or keys. Log only bounded classification facts, including
+  // deliberate upstream failures that previously produced no operator signal.
+  logServerError(500, "internal", "unexpected");
   return json({ error: "Something went wrong on our side — try again in a moment.", code: "internal" }, 500);
+}
+
+function logServerError(status: number, code: ErrorCode, kind: "handled" | "unexpected"): void {
+  const safeStatus = Number.isInteger(status) && status >= 500 && status <= 599 ? status : 500;
+  const safeCode = code === "upstream" ? "upstream" : "internal";
+  console.error(JSON.stringify({ event: "http_server_error", status: safeStatus, code: safeCode, kind }));
 }
 
 /** Parse a JSON request body, or throw a 400. */

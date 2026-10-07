@@ -85,7 +85,7 @@ import { adminClient, getUser } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { APP_AI_UNIT_CENTS } from "../_shared/ledger.ts";
 import { probeAll } from "./probe.ts";
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient } from "npm:@supabase/supabase-js@2.116.0";
 import { handleFunnel } from "./funnel.ts";
 
 // A console refresh is a handful of aggregate queries; 60/min per admin is

@@ -90,11 +90,13 @@ export function definitiveSubmitRejection(status: number, body: unknown): boolea
 export function classifyStatus(status: number): ErrorClass {
   if (status === 429) return "rate_limit";
   if (status === 408 || status === 504) return "timeout";
-  if (status === 400 || status === 402 || status === 413 || status === 422) return "validation";
+  if (status === 400 || status === 413 || status === 422) return "validation";
   if (status >= 500) return "upstream";
-  // 401/403 is OUR misconfiguration, never the caller's session — `upstream`
+  // 401/402/403 concern OUR provider account, never the caller's session or
+  // Rendprop credits. In particular, an empty vendor balance is not bad media.
+  // `upstream`
   // keeps the app from signing the user out (same rule as ai-voice).
-  if (status === 401 || status === 403) return "upstream";
+  if (status === 401 || status === 402 || status === 403) return "upstream";
   return "other";
 }
 

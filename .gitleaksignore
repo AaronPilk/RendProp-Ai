@@ -42,3 +42,25 @@ c0a3e9838116c5330fa25edef85401e13d7629fb:services/supabase/functions/me/export.t
 # a SHA-256 receipt checksum, recomputed from the retained GET/401 receipt.
 # That request supplied no Authorization header. Keep all other findings active.
 0842c9f36b70b49e276c5a623049efaba4f08554:docs/handoff/AGENT-REEL-ROLLOUT-20261007.md:generic-api-key:141
+
+# Exact independently reviewed historical non-secret findings (2026-10-07).
+# Processor/privacy disclosure prose; no credential value.
+28be80480788b2dfc31775cc2b76834ee157e4fd:docs/audits/AUDIT-2026-10-05-FULL-SYSTEM.md:generic-api-key:159
+# 32hex DeviceRow test literal and forbidden-fetch fixture; no production device receipt.
+519bd2e9d4097760c7d0330d54586a5e10c50a54:services/supabase/functions/notify/notify.test.ts:generic-api-key:84
+# Documented invalid bearer string with expected401; not a JWT or service credential.
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:docs/handoff/launch-P2.md:curl-auth-header:517
+# Apple JWS test appAccountToken UUID; not authentication secret.
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/_shared/applejws.test.ts:generic-api-key:924
+# Notification summary test appAccountToken UUID; not authentication secret.
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/apple-subscriptions/notify.test.ts:generic-api-key:293
+# Runtime WebCrypto-generated test key PEM template; no stored private key material.
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/admin/probe.test.ts:private-key:178
+# jwtish sanitizer test literal; only test sub claim, no issuer/audience/role/expiry authority.
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/admin/probe.test.ts:jwt:275
+# Exact historical client anon JWT; decoded anon role, never service_role. No online validity test.
+4e4776dbdd8bf3e7408e805c2d313e1b46087b76:apps/ios/Rendprop/Config.swift:jwt:33
+# Exact recorded source-digest metadata. The historical producer hashes source
+# bytes, and eight unchanged neighbours reproduce. This classification does not
+# certify the unavailable original APIClient bytes or historical test results.
+98e43b779fcc110a8761b78ad949cf85a33bc4d3:docs/web-client/release-parity-2026-09-14/native-validation.json:generic-api-key:443

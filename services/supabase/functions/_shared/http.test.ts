@@ -13,7 +13,35 @@
 // gets tests.
 
 import { assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { HttpError, readJsonLimited, throwRpc } from "./http.ts";
+import { HttpError, readJsonLimited, respondError, throwRpc } from "./http.ts";
+
+Deno.test("handled and unexpected server errors emit classification without private error contents", async () => {
+  const original = console.error;
+  const logs: unknown[][] = [];
+  console.error = (...args: unknown[]) => { logs.push(args); };
+  const privateValue = "buyer@fixture.invalid https://private.invalid/source?token=synthetic-secret customer prompt";
+  try {
+    const unexpected = new Error(privateValue);
+    unexpected.stack = privateValue;
+    const answer = respondError(unexpected);
+    assertEquals(answer.status, 500);
+    assertEquals((await answer.json()).code, "internal");
+    respondError(new HttpError(503, privateValue, "upstream", { token: privateValue }));
+    const malformed = new HttpError(502, "Safe response");
+    malformed.code = privateValue as typeof malformed.code;
+    respondError(malformed);
+    assertEquals(logs.map(args => JSON.parse(String(args[0]))), [
+      { event: "http_server_error", status: 500, code: "internal", kind: "unexpected" },
+      { event: "http_server_error", status: 503, code: "upstream", kind: "handled" },
+      { event: "http_server_error", status: 502, code: "internal", kind: "handled" },
+    ]);
+    assertEquals(JSON.stringify(logs).includes("fixture.invalid"), false);
+    assertEquals(logs.every(args => args.length === 1), true);
+    respondError(new HttpError(401, "Sign in"));
+    respondError(new HttpError(402, "Quota reached", "quota_exceeded"));
+    assertEquals(logs.length, 3);
+  } finally { console.error = original; }
+});
 
 Deno.test("unexpected SQL errors are unavailable responses, with no private SQL or row data", () => {
   const secret = 'duplicate key on private_buyers: buyer@fixture.invalid';

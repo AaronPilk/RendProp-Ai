@@ -61,6 +61,7 @@ final class RecoveryAPI: APIClient {
     var rollback = false
     var failAbortOnce = false
     var completionFailure: APIError?
+    var admissionFailure: APIError?
     /// `/renew` keeps answering "cannot plan a transfer" (503) even though the
     /// PUT itself would go through — the rejected-transfer shape.
     var refuseRenewal = false
@@ -79,6 +80,7 @@ final class RecoveryAPI: APIClient {
     func requestUpload(filename: String, bytes: Int64, listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?, idempotencyKey: String?) async throws -> UploadTicket {
         log.append("create"); creates += 1; keys.append(idempotencyKey ?? "missing")
+        if let admissionFailure { throw admissionFailure }
         var result = ticket((aborted || missing) ? newID : oldID)
         result.replayed = legacy
         return result

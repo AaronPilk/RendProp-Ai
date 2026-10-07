@@ -9,8 +9,8 @@
 //                     user. Use for every owner route so a user can only ever
 //                     touch their own org's rows.
 
-import { createClient } from "npm:@supabase/supabase-js@2";
-import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2.116.0";
+import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError } from "./http.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");

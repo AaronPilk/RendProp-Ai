@@ -103,19 +103,24 @@ struct ListingMediaItem { let url: URL; var isVideo: Bool; var title = "Syntheti
     func release() { waiting = false; let saved = continuation; continuation = nil; hold = false; saved?.resume() }
 }
 @MainActor final class API {
+    var provenanceCalls = 0
+    var csvCalls = 0
     var waiting = false
     var hold = false
     var continuation: CheckedContinuation<Void, Never>?
     func provenance(listingServerID: UUID) async throws -> [ProvenanceRecord] {
-        [ProvenanceRecord(originalURL: URL(string: "https://synthetic.invalid/A-original.jpg"))]
+        provenanceCalls += 1
+        return [ProvenanceRecord(originalURL: URL(string: "https://synthetic.invalid/A-original.jpg"))]
     }
     func complianceCSV(listingServerID: UUID) async throws -> Data {
+        csvCalls += 1
         if hold { waiting = true; await withCheckedContinuation { continuation = $0 } }
         return Data("Synthetic A private audit".utf8)
     }
     func release() { waiting = false; let saved = continuation; continuation = nil; hold = false; saved?.resume() }
 }
 @MainActor final class AppModel { var listings: [Listing]; let api = API(); init(_ listing: Listing) { listings = [listing] } }
+__SCOPE__
 __CONTEXT__
 __SAVER__
 @MainActor final class Harness {
@@ -123,6 +128,8 @@ __SAVER__
     let model: AppModel
     var currentListing: Listing { model.listings.first { $0.id == listing.id } ?? listing }
     var auth: AuthStore { .shared }
+__PRESENTATION_STATE__
+__PRESENTATION__
     var provenance: [ProvenanceRecord] = []
     var provenanceCanExport: (() -> Bool)?
     var isLoadingProvenance = false
@@ -188,6 +195,20 @@ __FILENAME__
         URLSession.shared.root = root
         original = root.appendingPathComponent("source-original.jpg")
         try Data("synthetic-private-original".utf8).write(to: original)
+
+        for mode in ["account", "workspace"] {
+            reset(); let previous = Harness(); change(mode, previous)
+            await previous.load()
+            check(previous.model.api.provenanceCalls == 0 && previous.provenance.isEmpty,
+                  "old presentation cannot schedule provenance for replacement actor or workspace")
+            previous.csv()
+            check(previous.model.api.csvCalls == 0 && previous.auditExport == nil,
+                  "old presentation cannot schedule CSV for replacement actor or workspace")
+            previous.local(original)
+            check(boundary.writeAttempts == 0 && previous.savedFiles.isEmpty,
+                  "old presentation cannot schedule Photos for replacement actor or workspace")
+            try sourceSafe()
+        }
 
         reset(); let normal = Harness(); await normal.load(); normal.originals()
         await until("normal original") { !normal.isSavingOriginals }

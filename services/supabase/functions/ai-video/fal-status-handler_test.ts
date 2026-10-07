@@ -15,7 +15,7 @@ const functionBody = (source: string, name: string) => {
   assert(start >= 0 && end > start);
   return source.slice(start, end + 3);
 };
-async function fixture(skipTerminalCheck = false, enforceReceipt = false, skipReceipt = false) {
+async function fixture(skipTerminalCheck = false, enforceReceipt = false, skipReceipt = false, storedModel: string | null = null) {
   const source = await Deno.readTextFile(
     new URL("./index.ts", import.meta.url),
   );
@@ -45,13 +45,13 @@ async function fixture(skipTerminalCheck = false, enforceReceipt = false, skipRe
       new URL("../_shared/providers/common.ts", import.meta.url).href,
     )
   };
-  import {falCompletedFailure} from ${
+  import {falCompletedFailure,falLegacyReceipt,falLegacyReceiptMatchesModel} from ${
     JSON.stringify(new URL("../_shared/providers/fal.ts", import.meta.url).href)
   };
   const extractJobToken=()=>null, falHeaders=()=>({Authorization:"Key synthetic-test-placeholder"});
   const uncheckedDriftBlock=()=>({status:"unchecked",publishable:false});
   const orgForUser=async()=>"synthetic-org";
-  const adminClient=()=>({from:()=>{const q:any={select:()=>q,eq:()=>q,limit:async()=>({data:[],error:null})};return q;}});
+  const adminClient=()=>({from:()=>{const filters:Record<string,unknown>={};const q:any={select:()=>q,eq:(k:string,v:unknown)=>{filters[k]=v;return q;},limit:async()=>{const row={id:"owned",actor_id:"synthetic",org_id:"synthetic-org",provider:"fal",model:${JSON.stringify(storedModel)},provider_request_id:"synthetic-job"};return {data:row.model&&Object.entries(filters).every(([k,v])=>(row as any)[k]===v)?[row]:[],error:null};}};return q;}});
   ${enforceReceipt ? "async "+functionBody(source,"assertLegacyVideoReceipt") : "const assertLegacyVideoReceipt=async()=>{};"}
   const preferredOrg=()=>undefined, verifyJobToken=orgForUser,routedStatus=orgForUser;
   ${functionBody(source, "requireFalUrl")}
@@ -236,22 +236,97 @@ Deno.test("actual legacy terminal-check removal is caught by the same no-result-
 });
 
 Deno.test("legacy URL possession requires an exact actor workspace provider model and paid receipt mapping", async () => {
-  const source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
-  const module = await import(encode(`
-    import {HttpError,assert} from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
-    export const state:any={exists:true,calls:[]};
-    const adminClient=()=>({from:(table:string)=>{state.calls.push([table]);const q:any={select:(v:any)=>{state.calls.push(["select",v]);return q;},eq:(k:any,v:any)=>{state.calls.push([k,v]);return q;},limit:async()=>({data:state.exists?[{id:"owned"}]:[],error:null})};return q;}});
-    async ${functionBody(source,"assertLegacyVideoReceipt")}
-    export {assertLegacyVideoReceipt};
-  `));
+  const module = await ownedLegacyFixture();
   await module.assertLegacyVideoReceipt("actor", "org", statusURL, resultURL);
-  assertEquals(module.state.calls, [["app_video_cost_reservations"],["select","id"],["org_id","org"],["actor_id","actor"],["provider","fal"],["model","fal-ai/synthetic"],["provider_request_id","synthetic-job"]]);
-  module.state.exists=false;
+  assertEquals(module.state.calls, [["app_video_cost_reservations"],["select","id, model, provider_request_id"],["org_id","org"],["actor_id","actor"],["provider","fal"],["provider_request_id","synthetic-job"],["limit",2]]);
   await assertRejects(()=>module.assertLegacyVideoReceipt("foreign-actor", "org", statusURL, resultURL), Error, "verified account recovery");
+  await assertRejects(()=>module.assertLegacyVideoReceipt("actor", "foreign-org", statusURL, resultURL), Error, "verified account recovery");
   module.state.calls=[];
   await assertRejects(()=>module.assertLegacyVideoReceipt("actor", "org", statusURL, resultURL.replace("synthetic-job","another-job")), Error, "verified account recovery");
   assertEquals(module.state.calls.length,0);
 });
+
+async function ownedLegacyFixture(mutation?: "old-model-filter" | "omit-actor" | "omit-org" | "ignore-model") {
+  const source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  let guard = functionBody(source,"assertLegacyVideoReceipt");
+  if (mutation === "old-model-filter") guard = guard.replace('.eq("provider", "fal")', '.eq("provider", "fal").eq("model", receipt.endpoint)');
+  if (mutation === "omit-actor") guard = guard.replace('.eq("actor_id", actorId)', '');
+  if (mutation === "omit-org") guard = guard.replace('.eq("org_id", orgId)', '');
+  if (mutation === "ignore-model") guard = guard.replace('falLegacyReceiptMatchesModel(data[0].model, data[0].provider_request_id, receipt)', 'true');
+  return await import(encode(`
+    // ${crypto.randomUUID()}
+    import {HttpError,assert} from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
+    import {falLegacyReceipt,falLegacyReceiptMatchesModel} from ${JSON.stringify(new URL("../_shared/providers/fal.ts",import.meta.url).href)};
+    export const state:any={calls:[],error:null,rows:[{id:"owned",actor_id:"actor",org_id:"org",provider:"fal",model:"fal-ai/synthetic",provider_request_id:"synthetic-job"}]};
+    const adminClient=()=>({from:(table:string)=>{state.calls.push([table]);const filters:Record<string,unknown>={};const q:any={select:(v:any)=>{state.calls.push(["select",v]);return q;},eq:(k:string,v:unknown)=>{filters[k]=v;state.calls.push([k,v]);return q;},limit:async(n:number)=>{state.calls.push(["limit",n]);return {data:state.rows.filter((row:any)=>Object.entries(filters).every(([k,v])=>row[k]===v)).slice(0,n),error:state.error};}};return q;}});
+    async ${guard}
+    export {assertLegacyVideoReceipt};
+  `));
+}
+
+const legacyPair = (endpoint: string, requestId="synthetic-job") => [
+  `https://queue.fal.run/${endpoint}/requests/${requestId}/status`,
+  `https://queue.fal.run/${endpoint}/requests/${requestId}`,
+] as const;
+Deno.test("actual status route reads an owned multi-segment saved job without any submission or spend", async()=>{
+  const f=await fixture(false,true,false,"fal-ai/topaz/upscale/video"),before=globalThis.fetch;
+  const calls:{method:string,url:string}[]=[];
+  globalThis.fetch=((url:string|URL|Request,init?:RequestInit)=>{
+    const method=init?.method??"GET";calls.push({method,url:String(url)});
+    assertEquals(method,"GET","Saved job recovery must never resubmit");
+    return Promise.resolve(Response.json(String(url).includes("/status")?{status:"COMPLETED"}:{video:{url:"https://cdn.invalid/synthetic.mp4"}}));
+  }) as typeof fetch;
+  try {
+    const [status,response]=legacyPair("fal-ai/topaz");
+    const req=new Request(`https://fixture.invalid/ai-video/status?status_url=${encodeURIComponent(status)}&response_url=${encodeURIComponent(response)}`);
+    const result=await f.handler(req),body=await result.json();
+    assertEquals(result.status,200);assertEquals(body.status,"completed");
+    assertEquals(calls,[{method:"GET",url:`${status}?logs=1`},{method:"GET",url:response}]);
+  }finally{globalThis.fetch=before;}
+});
+for (const [model, endpoint] of [
+  ["fal-ai/topaz/upscale/video", "fal-ai/topaz"],
+  ["fal-ai/topaz/upscale/video", "fal-ai/topaz/upscale/video"],
+  ["fal-ai/veo3.1/fast/image-to-video", "fal-ai/veo3.1"],
+  ["bytedance/seedance/v1/pro/fast/image-to-video", "fal-ai/bytedance"],
+  ["bria/video/erase/prompt", "bria/video"],
+]) {
+  Deno.test(`actual owned legacy ${model} receipt admits only its documented ${endpoint} queue path`, async()=>{
+    const m=await ownedLegacyFixture();m.state.rows[0].model=model;
+    await m.assertLegacyVideoReceipt("actor","org",...legacyPair(endpoint));
+    const old=await ownedLegacyFixture("old-model-filter");old.state.rows[0].model=model;
+    if(model===endpoint) await old.assertLegacyVideoReceipt("actor","org",...legacyPair(endpoint));
+    else await assertRejects(()=>old.assertLegacyVideoReceipt("actor","org",...legacyPair(endpoint)),Error,"verified account recovery");
+  });
+}
+for(const change of ["actor","org","provider","request","model","ambiguous","missing-model","database-error"]){
+  Deno.test(`actual legacy durable receipt rejects ${change} without provider transport`,async()=>{
+    const m=await ownedLegacyFixture();m.state.rows[0].model="fal-ai/topaz/upscale/video";
+    if(change==="actor")m.state.rows[0].actor_id="another-actor";
+    if(change==="org")m.state.rows[0].org_id="another-org";
+    if(change==="provider")m.state.rows[0].provider="another-provider";
+    if(change==="request")m.state.rows[0].provider_request_id="another-job";
+    if(change==="model")m.state.rows[0].model="fal-ai/veo3.1/fast";
+    if(change==="missing-model")delete m.state.rows[0].model;
+    if(change==="ambiguous")m.state.rows.push({...m.state.rows[0],id:"another-row"});
+    if(change==="database-error")m.state.error={message:"synthetic-private-db-failure"};
+    const original=globalThis.fetch;let fetches=0;
+    globalThis.fetch=(()=>{fetches++;throw Error("No provider transport permitted");}) as typeof fetch;
+    try{
+      await assertRejects(()=>m.assertLegacyVideoReceipt("actor","org",...legacyPair("fal-ai/topaz")),Error,change==="database-error"?"could not be checked":"verified account recovery");
+      assertEquals(fetches,0);
+    }finally{globalThis.fetch=original;}
+  });
+}
+for (const mutation of ["omit-actor","omit-org","ignore-model"] as const) {
+  Deno.test(`compiled legacy ${mutation} removal violates the same durable ownership boundary`, async()=>{
+    const m=await ownedLegacyFixture(mutation);
+    const actor=mutation==="omit-actor"?"foreign-actor":"actor",org=mutation==="omit-org"?"foreign-org":"org";
+    if(mutation==="ignore-model")m.state.rows[0].model="fal-ai/topaz/upscale/video";
+    // A rejection assertion must fail against this deliberately compiled bypass.
+    await assertRejects(()=>assertRejects(()=>m.assertLegacyVideoReceipt(actor,org,statusURL,resultURL),Error,"verified account recovery"));
+  });
+}
 
 async function legacyDenialBoundary(skipReceipt=false){
   const m=await fixture(false,true,skipReceipt),before=globalThis.fetch;let fetches=0;

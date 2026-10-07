@@ -216,7 +216,7 @@ Deno.test("kie: never trust the echo — a substituted duration/resolution is fl
 });
 
 Deno.test("kie status codes map to the router's vocabulary", () => {
-  assertEquals(classifyKie(402), "validation"); // out of credits
+  assertEquals(classifyKie(402), "upstream"); // our vendor account is out of credits
   assertEquals(classifyKie(429), "rate_limit");
   assertEquals(classifyKie(408), "upstream");
   assertEquals(classifyKie(455), "upstream");

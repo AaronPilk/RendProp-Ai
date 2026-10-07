@@ -3,7 +3,7 @@ import {
   assertEquals,
   assertRejects,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2";
+import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import {
   createStudioRepository,
   type StudioRepositoryDependencies,

@@ -65,6 +65,7 @@ struct SettingsView: View {
     // Account deletion flow (App Store Guideline 5.1.1(v) — in-app deletion).
     @State private var showDeleteConfirm = false
     @State private var showDeleteNeedsSignIn = false
+    @State private var accountDeletionContext: AccountDeletionContext?
     @State private var isDeletingAccount = false
     @State private var deleteErrorMessage: String?
     @State private var showDeleteError = false
@@ -496,6 +497,7 @@ struct SettingsView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
             usage = nil; usageError = nil
+            accountDeletionContext = nil; showDeleteConfirm = false; showDeleteError = false
             Task { await loadUsage() }
         }
         .refreshable {
@@ -527,8 +529,13 @@ struct SettingsView: View {
         }
         .onChange(of: auth.userID) { _ in
             usage = nil; usageError = nil; notificationPrefs = nil; notificationSaveError = nil
+            accountDeletionContext = nil; showDeleteConfirm = false; showDeleteError = false
             showAdminConsole = false; adminProbeDone = false
             Task { await loadUsage(); await loadNotificationPrefs() }
+        }
+        .onChange(of: auth.syncSessionRevision) { _ in
+            accountDeletionContext = nil; showDeleteConfirm = false; showDeleteError = false
+            deleteErrorMessage = nil
         }
         .sheet(isPresented: $showSignIn) {
             // Apple's own wording in the 5.1.1(v) rejection: "You may explain to
@@ -558,7 +565,8 @@ struct SettingsView: View {
             Text("A video is uploading. It keeps going in the background, but you'll lose the progress screen.")
         }
         .alert("Delete account?", isPresented: $showDeleteConfirm) {
-            Button("Delete", role: .destructive) { Task { await deleteAccount() } }
+            let context = accountDeletionContext
+            Button("Delete", role: .destructive) { scheduleAccountDeletion(context: context) }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(serverAccountsEnabled
@@ -573,7 +581,8 @@ struct SettingsView: View {
             Text("Your published tours and leads belong to your Rendprop account. Sign in with Apple first so we can delete them — or clear just this phone.")
         }
         .alert("Couldn't delete account", isPresented: $showDeleteError) {
-            Button("Retry") { Task { await deleteAccount() } }
+            let context = accountDeletionContext
+            Button("Retry") { scheduleAccountDeletion(context: context) }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(deleteErrorMessage ?? "Check your connection and try again.")
@@ -1080,6 +1089,31 @@ struct SettingsView: View {
         var errorDescription: String? { "The server responded with status \(status)." }
     }
 
+    /// Confirmation belongs to one session, including A → B → A and workspace
+    /// changes. Token refreshes within that session preserve this revision.
+    private struct AccountDeletionContext {
+        let owner: String
+        let revision: UInt64
+        func matches(owner: String?, revision: UInt64, signedIn: Bool) -> Bool {
+            signedIn && self.owner == owner && self.revision == revision
+        }
+    }
+
+    private enum AccountDeletionContextError: LocalizedError {
+        case changedBeforeDispatch
+        case changedAfterDispatch(deletionConfirmed: Bool)
+        var errorDescription: String? {
+            switch self {
+            case .changedBeforeDispatch:
+                return "Your account or workspace changed. Start a new deletion from the current account's Settings."
+            case .changedAfterDispatch(let confirmed):
+                return confirmed
+                    ? "Deletion was confirmed for the earlier account. Your current session and its files were kept."
+                    : "Deletion may have completed for the earlier account. Your current session and its files were kept."
+            }
+        }
+    }
+
     /// Decoded shape of DELETE /me — the app must not treat a bare 2xx as
     /// success (audit P0-4): `ok` is authoritative, and `cleanup_complete`
     /// reports whether media/CRM cleanup finished inline or is queued.
@@ -1095,13 +1129,24 @@ struct SettingsView: View {
     /// Server-side erasure per the backend contract: `DELETE {base}/me` with the
     /// bearer JWT + apikey. Returns whether external cleanup fully completed
     /// inline (false = queued, retried server-side until done).
-    private func requestServerAccountDeletion() async throws -> Bool {
+    @MainActor private func requestServerAccountDeletion(context: AccountDeletionContext) async throws -> Bool {
+        guard context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else {
+            throw AccountDeletionContextError.changedBeforeDispatch
+        }
         guard let url = Config.apiBaseURL?.appendingPathComponent("me") else {
             throw URLError(.badURL)
         }
         // Freshness-guaranteed accessor — refreshes the JWT first if it's stale.
         guard let token = await AuthStore.validAccessToken() else {
             throw URLError(.userAuthenticationRequired)
+        }
+        // validAccessToken awaits refresh, then reads the current Keychain. A
+        // replacement account's token must never authenticate this old intent.
+        guard context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else {
+            throw AccountDeletionContextError.changedBeforeDispatch
+        }
+        guard AuthStore.jwtSubject(token) == context.owner else {
+            throw AccountDeletionContextError.changedBeforeDispatch
         }
         var req = URLRequest(url: url)
         req.httpMethod = "DELETE"
@@ -1110,6 +1155,11 @@ struct SettingsView: View {
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let (data, resp) = try await URLSession.shared.data(for: req)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        if !context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) {
+            let confirmed = (200..<300).contains(status)
+                && (try? JSONDecoder().decode(ServerDeleteResponse.self, from: data))?.ok == true
+            throw AccountDeletionContextError.changedAfterDispatch(deletionConfirmed: confirmed)
+        }
         guard (200..<300).contains(status) else { throw AccountDeleteError(status: status) }
         guard let decoded = try? JSONDecoder().decode(ServerDeleteResponse.self, from: data),
               decoded.ok else {
@@ -1129,31 +1179,44 @@ struct SettingsView: View {
     /// on the server, so they must sign in first — or choose the honest
     /// "Clear this phone only".
     private func deleteTapped() {
-        if serverAccountsEnabled && !auth.isSignedIn {
-            showDeleteNeedsSignIn = true
-        } else {
-            showDeleteConfirm = true
+        accountDeletionContext = nil
+        if serverAccountsEnabled {
+            guard auth.isSignedIn, let owner = auth.userID else {
+                showDeleteNeedsSignIn = true
+                return
+            }
+            accountDeletionContext = .init(owner: owner, revision: auth.syncSessionRevision)
         }
+        showDeleteConfirm = true
     }
 
     @MainActor
-    private func deleteAccount() async {
+    @discardableResult private func scheduleAccountDeletion(context: AccountDeletionContext?) -> Task<Void, Never> {
+        Task { await deleteAccount(context: context) }
+    }
+
+    @MainActor
+    private func deleteAccount(context: AccountDeletionContext?) async {
         guard !isDeletingAccount else { return }
+        if serverAccountsEnabled {
+            // A queued old confirmation must not open a Retry dialog backed
+            // by a replacement account's newly prepared confirmation.
+            guard let context, context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else { return }
+        }
         isDeletingAccount = true
         defer { isDeletingAccount = false }
 
         if serverAccountsEnabled {
-            // The session may have expired between the tap and the confirm.
-            guard auth.isSignedIn else {
-                showDeleteNeedsSignIn = true
-                return
-            }
+            guard let context else { return }
             // 1. Server-side erasure first (account, published tours, uploads).
             //    If it fails, STOP — local data stays intact and the alert offers
             //    Retry, so nothing is half-deleted.
             do {
-                deletionPendingCleanup = !(try await requestServerAccountDeletion())
+                deletionPendingCleanup = !(try await requestServerAccountDeletion(context: context))
             } catch {
+                // An older view's task can outlive its navigation stack. Its
+                // error and retry must not become the replacement account's UI.
+                guard context.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) else { return }
                 deleteErrorMessage = "Your account was NOT deleted. \(UserFacingError.message(error))"
                 showDeleteError = true
                 return
@@ -1163,6 +1226,8 @@ struct SettingsView: View {
             // the confirmation copy said exactly that.
             deletionPendingCleanup = false
         }
+
+        guard !serverAccountsEnabled || context?.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) == true else { return }
 
         // 2. Local erasure: session, listings + videos + tours, profile cards.
         //    signOut() also drops any saved workspace-transfer handoff (and the

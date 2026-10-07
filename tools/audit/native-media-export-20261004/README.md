@@ -6,14 +6,16 @@ Run on macOS with Xcode command-line tools:
 python3 tools/audit/native-media-export-20261004/run.py
 ```
 
-This compiles the unchanged production media-admission context, listing binding
-resolver, compliance loader, original download caller, local photo/video caller,
+This compiles the unchanged production presentation scope and context gate,
+media-admission context, listing binding resolver, compliance loader, original download caller, local photo/video caller,
 CSV export caller and Photos permission/save helpers. Only transport, Photos,
-view state and unrelated app types are offline doubles. Source and extracted-body
+view state and unrelated app types are offline doubles; the real scope initializer
+is copied with only its SwiftUI `@State` wrapper removed. Source and extracted-body
 hashes, compiler/runtime logs and receipts are retained. The only filesystem
 operations use synthetic source files and the operation's own temporary outputs.
 
-The 102 assertions check valid original/photo/video/CSV exports; account,
+The 110 assertions check valid original/photo/video/CSV exports; rejection of a
+previous screen scheduling new requests after an account or workspace change; account,
 session and workspace changes during a download or permission prompt; exact
 listing/server/workspace binding changes; deletion and lost listing access;
 cancellation; permission denial; unchanged original source bytes; removal of
@@ -28,6 +30,8 @@ python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-perm
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-listing-binding
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-csv-context
 python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-completion-context
+python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-presentation-actor
+python3 tools/audit/native-media-export-20261004/run.py --inject-fault drop-presentation-workspace
 ```
 
 Passing these offline checks does not certify real Files/Photos delivery or

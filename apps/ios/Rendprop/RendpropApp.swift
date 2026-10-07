@@ -3089,6 +3089,17 @@ struct RendpropApp: App {
 // Stores/Studios/Spaces + matching icon) and re-renders live on type change.
 // This is the ONE place samples are re-derived when the business type changes
 // (Home menu, Settings, or a re-pick in the intro all land here).
+/// Presentation identity excludes token/session refreshes. Actual account or
+/// workspace changes discard navigation state without cancelling shared jobs.
+struct NativePresentationScope: Hashable {
+    let actorID: String?
+    let orgID: UUID?
+
+    func matches(actorID: String?, orgID: UUID?) -> Bool {
+        self.actorID == actorID && self.orgID == orgID
+    }
+}
+
 struct RootTabView: View {
     @ObservedObject private var workspace = WorkspaceStore.shared
     @ObservedObject private var workspaceAuth = AuthStore.shared
@@ -3119,7 +3130,8 @@ struct RootTabView: View {
     var body: some View {
         VStack(spacing: 0) {
             PhotoWorkBanner()
-            tabs
+            tabs.id(NativePresentationScope(actorID: workspaceAuth.userID,
+                                            orgID: workspace.snapshot?.selectedOrgID))
         }
         .task {
             await model.load()        // idempotent
