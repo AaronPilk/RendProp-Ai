@@ -32,6 +32,7 @@ ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",
 PORT = "55486"
 SOURCES = [*sorted((SQL / "migrations").glob("*.sql")), SQL / "tests/ci-bootstrap.sql",
            SQL / "tests/bounded_subscription_trial.sql", SQL / "tests/invariants.sql",
+           SQL / "tests/invariant_astra_paid_gates.sql",
            ROOT / "tools/audit/run_database_regression.py", Path(__file__).resolve()]
 receipt = {"kind": "owned disposable local PostgreSQL; no providers or hosted calls", "output": str(OUT),
            "commands": [], "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
@@ -69,6 +70,13 @@ def race(name, statements):
         return list(executor.map(invoke, enumerate(statements)))
 
 
+def require_all_invariants(output, exit_code):
+    names, failed = contracts.invariant_rows(output, exit_code)
+    if exit_code != 0 or failed:
+        raise RuntimeError("Every invariant must pass; no failures are accepted")
+    return names
+
+
 started = False
 try:
     receipt["postgresVersion"] = run("version", [TOOLS["psql"], "--version"]).strip()
@@ -88,16 +96,35 @@ try:
     run("restore-duration-overlay", [*psql,"-q","-f",SQL / "migrations/20261006213000_subscription_trial_video_duration.sql"])
     receipt["replay"] = run("trial-replay", [*psql, "-Atq", "-f", SQL / "tests/bounded_subscription_trial.sql"]).strip()
     # Existing actual lifecycle/quota fixtures also run with the new trigger.
-    # Preserve their exact 270 assertions and the single documented kept-red
-    # answer-ceiling assertion; no clean-tree deployment readiness is inferred.
+    # Require the exact complete inventory, successful SQL exit and all-green footer.
     spec = importlib.util.spec_from_file_location("database_contract", ROOT / "tools/audit/run_database_regression.py")
     contracts = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(contracts)
-    invariant_output = run("existing-invariants", [*psql, "-f", SQL / "tests/invariants.sql"], refuses="INVARIANTS FAILED: 1 assertion")
-    names, failed = contracts.invariant_rows(invariant_output, 3)
-    kept, unexpected, stale = contracts.classify_failures(names, failed)
-    assert not unexpected and not stale and set(kept) == contracts.KEPT_RED
-    receipt["existingInvariants"] = {"assertions": len(names), "acceptedKeptRed": kept, "unexpected": unexpected}
+    invariant_output = run("existing-invariants", [*psql, "-f", SQL / "tests/invariants.sql"])
+    names = require_all_invariants(invariant_output, receipt["commands"][-1]["exit"])
+    receipt["existingInvariants"] = {"assertions": len(names), "passed": len(names), "failures": []}
+    # Restore only the former headroom failure in an owned SQL copy and prove
+    # that the same positive acceptance gate refuses its complete red inventory.
+    original = (SQL / "tests/invariants.sql").read_text()
+    anchor = "when 'copy.agent_reel' then 500"
+    assert original.count(anchor) == 1
+    shutil.copyfile(SQL / "tests/invariant_astra_paid_gates.sql", OUT / "invariant_astra_paid_gates.sql")
+    mutant = OUT / "invariants-former-headroom-red.sql"
+    mutant.write_text(original.replace(anchor, "when 'copy.agent_reel' then 700", 1))
+    red = run("invariants-former-headroom-red", [*psql, "-f", mutant], refuses="INVARIANTS FAILED: 1 assertion")
+    red_exit = receipt["commands"][-1]["exit"]
+    red_names, red_failures = contracts.invariant_rows(red, red_exit)
+    assert red_names == names
+    assert red_failures == ["each astra ceiling clears its route's visible answer and stays under the code clamp"]
+    try:
+        require_all_invariants(red, red_exit)
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Strict positive invariant gate accepted the former red assertion")
+    receipt["invariantNegativeControl"] = {"kind": "actual-owned-SQL-former-headroom-red", "exit": red_exit,
+        "count": len(red_names), "failed": red_failures, "positiveGateRejected": True,
+        "sourceCopy": str(mutant), "sha256": hashlib.sha256(mutant.read_bytes()).hexdigest()}
     actor="d1000000-0000-4000-8000-000000000001"
     org="d2000000-0000-4000-8000-000000000001"
     run("race-fixture",[*psql,"-q"],f"""

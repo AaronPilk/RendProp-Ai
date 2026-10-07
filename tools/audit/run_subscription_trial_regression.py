@@ -7,6 +7,7 @@ with the existing offline synthetic-chain suite, separately from SQL adapters.
 """
 from datetime import datetime, timezone
 import hashlib, json, os, pathlib, re, shutil, subprocess, tempfile
+from run_database_regression import invariant_rows
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261001143615_subscription_confirmed_trial_start.sql'
@@ -18,7 +19,7 @@ ENV['DENO_DIR']=json.loads(subprocess.check_output([BIN['deno'],'info','--no-con
 CONN=['-h',str(SOCK),'-p','55451','-U','postgres']
 PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
 paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/invariants.sql',SQL/'tests/subscription_confirmed_trial.sql',pathlib.Path(__file__).resolve(),*sorted((SQL/'functions/me').glob('*.ts')),*sorted((SQL/'functions/apple-subscriptions').glob('*.ts')),SQL/'functions/_shared/applejws.ts',SQL/'functions/_shared/applejws.test.ts',SQL/'functions/coach/knowledge.ts',SQL/'functions/coach/knowledge_test.ts']
-paths.append(SQL/'tests/invariant_astra_paid_gates.sql')
+paths += [SQL/'tests/invariant_astra_paid_gates.sql',ROOT/'tools/audit/run_database_regression.py']
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
 receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'commands':[],'passed':False,'productionMutations':0,'purchases':0,'limits':['Synthetic auth schema and transactions; not App Store offer eligibility','No real purchase, restore or StoreKit sheet tested']}
 def run(name,args,stdin=None,expected=0):
@@ -28,6 +29,11 @@ def run(name,args,stdin=None,expected=0):
  print(name,p.returncode,flush=True);return p.stdout
 
 def query(name,sql,expected=0):return run(name,PSQL,sql,expected)
+
+def require_all_invariants(output, exit_code):
+ names,failed=invariant_rows(output,exit_code)
+ if exit_code!=0 or failed:raise RuntimeError('Every invariant must pass; no failures are accepted')
+ return names
 started=False
 print('EVIDENCE:',OUT,flush=True)
 try:
@@ -50,20 +56,34 @@ try:
   result=query('signup-'+label,(SQL/'tests/subscription_confirmed_trial.sql').read_text())
   assert '\n26\n' in result and result.count('|t')==26
  assert query('legacy-after-replay',snapshot)==before,'Migration replay changed existing grants'
- # Keep the full inventory and the single owner-retained Astra budget failure.
- inv=run('all-invariants',[*PSQL[:-1],'-f',SQL/'tests/invariants.sql'],expected=3)
- failures=[line for line in inv.splitlines()if re.search(r'\|\s*f\s*\|',line)]
- assert len(failures)==1 and 'each astra ceiling clears its route' in failures[0],failures
- rows=[line for line in inv.splitlines()if re.match(r'^\s*\d+\s*\|',line)and re.search(r'\|\s*[tf]\s*\|',line)]
- kept_red="each astra ceiling clears its route's visible answer and stays under the code clamp"
- assert failures[0].split('|',3)[1].strip()==kept_red,failures
- passed_rows=sum(bool(re.search(r'\|\s*t\s*\|',line))for line in rows)
- assert rows and passed_rows+len(failures)==len(rows),rows
+ # Require the exact complete inventory, successful SQL exit and all-green footer.
+ invariant_args=[*PSQL[:-1],'-f']
+ inv=run('all-invariants',invariant_args+[SQL/'tests/invariants.sql'])
+ invariant_names=require_all_invariants(inv,receipt['commands'][-1]['exit'])
+ receipt['invariants']={'passed':len(invariant_names),'failures':[],'total':len(invariant_names)}
+
+ # Restore only the former headroom failure in an owned SQL copy. The same
+ # positive acceptance gate must refuse its complete 270-row/exit3 result.
+ original=(SQL/'tests/invariants.sql').read_text()
+ anchor="when 'copy.agent_reel' then 500"
+ assert original.count(anchor)==1
+ shutil.copyfile(SQL/'tests/invariant_astra_paid_gates.sql',OUT/'invariant_astra_paid_gates.sql')
+ mutant=OUT/'invariants-former-headroom-red.sql'
+ mutant.write_text(original.replace(anchor,"when 'copy.agent_reel' then 700",1))
+ red=run('invariants-former-headroom-red',invariant_args+[mutant],expected=3)
+ red_exit=receipt['commands'][-1]['exit']
+ red_names,red_failures=invariant_rows(red,red_exit)
+ assert red_names==invariant_names
+ assert red_failures==["each astra ceiling clears its route's visible answer and stays under the code clamp"]
+ try:require_all_invariants(red,red_exit)
+ except RuntimeError:pass
+ else:raise RuntimeError('Strict positive invariant gate accepted the former red assertion')
+ receipt['invariantNegativeControl']={'kind':'actual-owned-SQL-former-headroom-red','exit':3,'count':len(red_names),'failed':red_failures,'positiveGateRejected':True,'sourceCopy':str(mutant),'sha256':hashlib.sha256(mutant.read_bytes()).hexdigest()}
  deno=[BIN['deno'],'test','--cached-only','--no-config','--no-lock','--node-modules-dir=none','--allow-read','--allow-env','--deny-net','--deny-write','--deny-run']
  result=run('apple-jws-notifications-billing',deno+[SQL/'functions/_shared/applejws.test.ts',SQL/'functions/apple-subscriptions/notify.test.ts',SQL/'functions/me/billing.test.ts',SQL/'functions/coach/knowledge_test.ts'])
  summary=re.findall(r'ok \| (\d+) passed \| 0 failed',result);assert len(summary)==1 and int(summary[0])>=50
  assert all(hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest for name,digest in hashes.items()),'Source changed during verification'
- receipt.update(passed=True,sqlAssertions=26,existingGrantSnapshotsUnchanged=True,signatureNotificationBillingTests=int(summary[0]),invariants={'passed':passed_rows,'expectedFailure':1,'expectedFailureName':kept_red,'total':len(rows)})
+ receipt.update(passed=True,sqlAssertions=26,existingGrantSnapshotsUnchanged=True,signatureNotificationBillingTests=int(summary[0]))
 finally:
  if started and (DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
