@@ -241,7 +241,7 @@ jobs:
             python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault" >"$sync_log_dir/$fault.log" 2>&1 &
             sync_pids+=("$!")
             sync_faults+=("$fault")
-            if [ "${#sync_pids[@]}" -eq 2 ]; then wait_sync_batch; fi
+            if [ "${#sync_pids[@]}" -eq 1 ]; then wait_sync_batch; fi
           done
           if [ "${#sync_pids[@]}" -gt 0 ]; then wait_sync_batch; fi
           [ "$sync_failed" -eq 0 ]
