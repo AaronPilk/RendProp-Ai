@@ -76,6 +76,13 @@ exercise the actual refusal before any intent, preserve the original media and
 cascade checks, and label low-level synthetic operator cleanup separately.
 They do not relax the product guards or certify an assisted-cleanup UI.
 
+A subsequent CI run exposed an older privacy migration replay against a newer
+guarded definition. The test now proves 61 assertions in a fresh database and
+61 in a separate database replayed in chronological order. It also confirms that
+the older rewrite is refused against the final schema, with definitions, ACLs
+and policies unchanged; 61 post-refusal assertions and all nine original
+compiled controls pass. Production migrations and safeguards are unchanged.
+
 ## Remaining release gates
 
 Paid checkout and AI availability still need certified serving reserves and
