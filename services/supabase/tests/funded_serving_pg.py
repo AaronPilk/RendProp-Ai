@@ -82,6 +82,11 @@ try:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("funded-fresh", [*psql, "-Atq", "-f", SQL / "tests/funded_serving.sql"]).strip()
     run("replay-funded", [*psql, "-q", "-f", MIGRATION])
+    # Replaying an earlier overlay restores its earlier function body. Restore
+    # the latest additive trial overlay before checking current-source behavior.
+    run("restore-current-trial-overlay", [*psql, "-q", "-f", SQL / "migrations/20261006202500_bounded_subscription_trial.sql"])
+    run("restore-purchase-overlay", [*psql,"-q","-f",SQL / "migrations/20261006212900_subscription_trial_purchase_reservations.sql"])
+    run("restore-duration-overlay", [*psql,"-q","-f",SQL / "migrations/20261006213000_subscription_trial_video_duration.sql"])
     receipt["replay"] = run("funded-replay", [*psql, "-Atq", "-f", SQL / "tests/funded_serving.sql"]).strip()
 
     actor = "b1000000-0000-4000-8000-000000000001"

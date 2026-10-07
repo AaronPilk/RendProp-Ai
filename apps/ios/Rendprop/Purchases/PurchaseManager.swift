@@ -77,7 +77,10 @@ final class PurchaseManager: ObservableObject {
     /// Shown nowhere; drives the "still syncing" line and the foreground retry.
     @Published private(set) var unsyncedCount = 0
     @Published private(set) var billingContext: SubscriptionBillingContext?
+    private var billingRefreshGeneration: UInt64 = 0
     @Published private(set) var billingError: String?
+    @Published private(set) var preparedTrialReservation: TrialPurchaseReservation?
+    private var preparedTrialSnapshot: TrialPurchaseSnapshot?
 
     // MARK: Dependencies
 
@@ -205,6 +208,24 @@ final class PurchaseManager: ObservableObject {
     /// product: the customer is eligible AND the product really carries an
     /// introductory offer.
     func showsIntroOffer(for product: Product) -> Bool {
+        trialEligibility(for: product) == true && heldTrialOffer(for: product) != nil
+    }
+
+    /// nil means StoreKit has not confirmed eligibility for a configured
+    /// seven-day offer. It cannot authorize an introductory purchase.
+    func trialEligibility(for product: Product) -> Bool? {
+        guard hasFreeIntroductoryOffer(for: product) else { return false }
+        guard hasSevenDayTrial(for: product) else {
+            return introOfferEligible[product.id] == false ? false : nil
+        }
+        return introOfferEligible[product.id]
+    }
+
+    private func hasFreeIntroductoryOffer(for product: Product) -> Bool {
+        product.subscription?.introductoryOffer?.paymentMode == .freeTrial
+    }
+
+    private func hasSevenDayTrial(for product: Product) -> Bool {
         guard let offer = product.subscription?.introductoryOffer else { return false }
         let unit: SubscriptionOfferPolicy.PeriodUnit
         switch offer.period.unit {
@@ -214,19 +235,142 @@ final class PurchaseManager: ObservableObject {
         case .year: unit = .year
         @unknown default: unit = .unknown
         }
-        return SubscriptionOfferPolicy.isSevenDayFreeTrial(eligible: introOfferEligible[product.id] == true,
+        return SubscriptionOfferPolicy.isSevenDayFreeTrial(eligible: true,
             free: offer.paymentMode == .freeTrial, value: offer.period.value, unit: unit, count: offer.periodCount)
+    }
+
+    func canStartNewPurchase(for product: Product) -> Bool {
+        guard Config.useLiveBackend && !Config.isUITesting else { return true }
+        let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        guard trialEligibility(for: product) == true, heldTrialOffer(for: product) != nil else { return false }
+        return TrialPurchaseAdmission.allows(eligibleIntro: true,
+            billing: billingContext, captured: current, current: current)
+    }
+
+    func heldTrialOffer(for product: Product) -> TrialOfferSummary? {
+        let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        guard let captured = preparedTrialSnapshot,
+              TrialPurchaseAdmission.allowsHeld(preparedTrialReservation, product: product.id,
+                captured: captured, current: current) else { return nil }
+        return preparedTrialReservation?.trialOffer
+    }
+
+    func canCheckTrialAvailability(for product: Product) -> Bool {
+        guard Config.useLiveBackend && !Config.isUITesting else { return false }
+        return trialEligibility(for: product) != false && AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
+            && AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil
+            && billingContext?.orgID == WorkspaceContext.selectedOrgID
+            && billingContext?.role == "owner" && billingContext?.canManageSubscription == true
+    }
+
+    private func trialRegionSupported(for product: Product, captured: TrialPurchaseSnapshot) async -> Bool {
+        let storefront = await Storefront.current
+        let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        return captured == current && TrialPurchaseAdmission.supportsTrialRegion(
+            country: storefront?.countryCode, currency: product.priceFormatStyle.currencyCode)
+    }
+
+    private func validateHeldTrialPurchase(productID: String, captured: TrialPurchaseSnapshot,
+                                          expectedReservationID: UUID?) async throws -> TrialPurchaseReservation {
+        guard let api, let owner = captured.actor.flatMap(UUID.init(uuidString:)), let org = captured.org else { throw APIError.notConfigured }
+        let before = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        guard before == captured else { throw CloudSyncError.identityChanged }
+        let held = try await api.prepareTrialPurchase(orgID: org, productID: productID, appAccountToken: owner)
+        let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        guard TrialPurchaseAdmission.allowsHeld(held, product: productID, captured: captured, current: current),
+              expectedReservationID.map({ held.reservationId == $0 }) ?? true else { throw CloudSyncError.identityChanged }
+        return held
+    }
+
+    private func validateCurrentHeldTrialPurchase(_ held: TrialPurchaseReservation,
+                                                  captured: TrialPurchaseSnapshot) async throws -> Bool {
+        guard let api else { throw APIError.notConfigured }
+        let fresh = try await api.billingContext()
+        let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        return TrialPurchaseAdmission.matchesFreshHold(held, billing: fresh, captured: captured, current: current)
+    }
+
+    /// Explicit user action only. A failed/uncertain response is never retried
+    /// here, and the original workspace intent is kept for receipt recovery.
+    func checkTrialAvailability(_ product: Product, expectedOrgID: UUID?) async {
+        guard !isPurchasing, !isRestoring else { return }
+        isPurchasing = true; lastError = nil; notice = nil
+        defer { isPurchasing = false }
+        let captured = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: expectedOrgID)
+        do {
+            guard let owner = captured.actor.flatMap(UUID.init(uuidString:)), let org = expectedOrgID,
+                  AuthStore.shared.isSignedIn, AuthStore.shared.isIdentified, let api else { throw APIError.notConfigured }
+            let fresh = try await api.billingContext()
+            let eligible = await product.subscription?.isEligibleForIntroOffer
+            let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            guard current == captured, fresh.orgID == org, fresh.role == "owner", fresh.canManageSubscription else {
+                throw CloudSyncError.identityChanged
+            }
+            billingContext = fresh; billingError = nil
+            if let eligible { introOfferEligible[product.id] = eligible }
+            else { introOfferEligible.removeValue(forKey: product.id) }
+            guard eligible == true, hasSevenDayTrial(for: product) else {
+                lastError = eligible == false
+                    ? "Apple does not confirm trial eligibility for this account. No reservation or purchase has started. Paid subscriptions are temporarily unavailable. You can restore purchases or manage an existing subscription below."
+                    : "Apple trial eligibility could not be confirmed. No reservation or purchase has started. Refresh or Restore before checking again."
+                return
+            }
+            guard await trialRegionSupported(for: product, captured: captured) else {
+                lastError = TrialPurchaseAdmission.unsupportedRegionMessage; return
+            }
+            _ = try PurchaseWorkspaceBindingStore.prepare(owner: owner, productID: product.id, orgID: org)
+            let held = try await validateHeldTrialPurchase(productID: product.id, captured: captured,
+                expectedReservationID: heldTrialOffer(for: product) == nil ? nil : preparedTrialReservation?.reservationId)
+            preparedTrialReservation = held; preparedTrialSnapshot = captured
+            introOfferEligible[product.id] = true
+            await refreshBillingContext()
+            let finished = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            guard finished == captured else { return }
+            notice = "Trial availability is reserved for this plan and workspace. Review the included usage and Apple's confirmation before continuing. No Apple billing has started."
+        } catch {
+            let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            guard current == captured else { return }
+            lastError = Self.message(for: error, fallback: "Trial availability could not be confirmed. A reservation may still be pending. No Apple billing has started. Restore or explicitly check this same plan again; no reservation is automatically released or restarted.")
+        }
+    }
+
+    private func validateTrialPurchase(eligibleIntro: Bool?, captured: TrialPurchaseSnapshot) async throws -> Bool {
+        guard let api else { throw APIError.notConfigured }
+        let fresh = try await api.billingContext()
+        let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+        return TrialPurchaseAdmission.allows(eligibleIntro: eligibleIntro, billing: fresh,
+            captured: captured, current: current)
     }
 
     func refreshBillingContext() async {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let selectedOrg = WorkspaceContext.selectedOrgID
+        billingRefreshGeneration &+= 1
+        let generation = billingRefreshGeneration
+        billingContext = nil
+        billingError = nil
         do {
             guard let api else { throw APIError.notConfigured }
             let value = try await api.billingContext()
-            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == selectedOrg,
+                  billingRefreshGeneration == generation else { return }
             billingContext = value; billingError = nil
         } catch {
-            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == selectedOrg,
+                  billingRefreshGeneration == generation else { return }
             billingContext = nil
             billingError = "We couldn’t confirm this workspace’s billing permissions. Refresh before subscribing. Restore and Apple subscription management remain available."
         }
@@ -234,7 +378,7 @@ final class PurchaseManager: ObservableObject {
 
     // MARK: - Buying
 
-    func purchase(_ product: Product, expectedOrgID: UUID?) async {
+    func purchase(_ product: Product, expectedOrgID: UUID?, continuingHeldTrial: Bool = false) async {
         guard !isPurchasing else { return }
         let operationActor = AuthStore.shared.userID, operationRevision = AuthStore.shared.syncSessionRevision
         isPurchasing = true
@@ -263,12 +407,17 @@ final class PurchaseManager: ObservableObject {
         let actor = operationActor, identityRevision = operationRevision
         var preparedBinding: PurchaseWorkspaceBindingStore.Binding?
         var createdBinding = false
+        // Captured before any await: a button offering a held trial cannot
+        // silently become a paid purchase when Apple's eligibility changes.
+        let heldAtTap = continuingHeldTrial ? preparedTrialReservation : nil
+        var retainTrialBinding = continuingHeldTrial
+        var verifiedHeldTrialForDispatch = false
         if Config.useLiveBackend && !Config.isUITesting {
             guard let owner = actor.flatMap(UUID.init(uuidString:)), let api else { return }
             do {
                 let context = try await api.billingContext()
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
-                      let expectedOrgID, context.orgID == expectedOrgID else {
+                      let expectedOrgID, WorkspaceContext.selectedOrgID == expectedOrgID, context.orgID == expectedOrgID else {
                     lastError = "Your workspace changed. Refresh the plan screen before subscribing. Nothing has been purchased."
                     return
                 }
@@ -289,21 +438,98 @@ final class PurchaseManager: ObservableObject {
                 return
             }
         }
-        PaywallEvents.track("purchase_started", product: product)
-
+        // Eligibility may have changed since the paywall loaded. Recheck it
+        // with Apple, then fetch fresh server authority before Apple's sheet.
+        if Config.useLiveBackend && !Config.isUITesting, hasFreeIntroductoryOffer(for: product) {
+            let captured = TrialPurchaseSnapshot(actor: actor, revision: identityRevision, org: expectedOrgID)
+            let storeEligibility = await product.subscription?.isEligibleForIntroOffer
+            let eligible: Bool? = storeEligibility == true && !hasSevenDayTrial(for: product) ? nil : storeEligibility
+            let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
+                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            guard captured == current else {
+                lastError = "Your account or workspace changed. Refresh before subscribing. No Apple billing has started."
+                return
+            }
+            do {
+                if continuingHeldTrial || eligible == true {
+                    retainTrialBinding = true
+                    guard eligible == true, let heldAtTap,
+                          TrialPurchaseAdmission.allowsHeld(heldAtTap, product: product.id,
+                            captured: preparedTrialSnapshot ?? captured, current: current) else {
+                        lastError = "Trial eligibility changed or the reservation is not confirmed. No Apple billing has started. Refresh or Restore, then explicitly check trial availability. Paid subscriptions are temporarily unavailable."
+                        return
+                    }
+                    guard await trialRegionSupported(for: product, captured: captured) else {
+                        lastError = TrialPurchaseAdmission.unsupportedRegionMessage; return
+                    }
+                    // A replay confirms the same durable hold; it cannot
+                    // release, replace, or mint another reservation.
+                    let held = try await validateHeldTrialPurchase(productID: product.id, captured: captured,
+                        expectedReservationID: heldAtTap.reservationId)
+                    guard held == heldAtTap else { throw SubscriptionBillingContext.TrialPresentationError.invalidResponse }
+                    let finalEligibility = await product.subscription?.isEligibleForIntroOffer
+                    guard finalEligibility == true, hasSevenDayTrial(for: product) else {
+                        lastError = "Apple no longer confirms this trial. No purchase has started. Refresh or Restore before checking trial availability again. Your reservation is retained. Paid subscriptions are temporarily unavailable."
+                        return
+                    }
+                    guard await trialRegionSupported(for: product, captured: captured) else {
+                        lastError = TrialPurchaseAdmission.unsupportedRegionMessage; return
+                    }
+                    // Last await before the sheet: a converted hold or changed
+                    // owner authority cannot be replaced by cached terms.
+                    // Apple and server state remain independent observations.
+                    guard try await validateCurrentHeldTrialPurchase(held, captured: captured) else {
+                        throw SubscriptionBillingContext.TrialPresentationError.invalidResponse
+                    }
+                    verifiedHeldTrialForDispatch = true
+                } else {
+                    guard try await validateTrialPurchase(eligibleIntro: eligible, captured: captured) else {
+                        throw SubscriptionBillingContext.TrialPresentationError.invalidResponse
+                    }
+                }
+            } catch {
+                if !retainTrialBinding, createdBinding, let binding = preparedBinding {
+                    PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
+                }
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
+                      WorkspaceContext.selectedOrgID == expectedOrgID else { return }
+                lastError = retainTrialBinding ? "The same trial reservation could not be confirmed. No Apple purchase has started. The reservation is retained; Restore or explicitly check this same plan again." : TrialPurchaseAdmission.unavailableMessage
+                return
+            }
+        }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
+              (!Config.useLiveBackend || Config.isUITesting || WorkspaceContext.selectedOrgID == expectedOrgID) else { return }
         let result: Product.PurchaseResult
         do {
-            result = try await product.purchase(options: Self.accountBinding())
+            let options: Set<Product.PurchaseOption> = actor.flatMap(UUID.init(uuidString:)).map { [.appAccountToken($0)] } ?? []
+            // Covers ordinary products, ineligible introductory products and
+            // direct calls that bypass the paywall. No current plan, manual
+            // grant, cached eligibility or existing retail receipt funds a
+            // new SKU charge. Only the exact freshly rechecked hold above may
+            // dispatch in live mode; there is no await after this check.
+            guard PurchaseDispatchAdmission.allows(liveBackend: Config.useLiveBackend,
+                    uiTesting: Config.isUITesting, verifiedHeldTrial: verifiedHeldTrialForDispatch,
+                    captured: .init(actor: actor, revision: identityRevision, org: expectedOrgID),
+                    current: .init(actor: AuthStore.shared.userID,
+                        revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)) else {
+                if !retainTrialBinding, createdBinding, let binding = preparedBinding {
+                    PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
+                }
+                lastError = PurchaseDispatchAdmission.paidUnavailableMessage
+                return
+            }
+            PaywallEvents.track("purchase_started", product: product)
+            result = try await product.purchase(options: options)
         } catch {
             // `.userCancelled` can also arrive as a thrown StoreKitError.
             if Self.isCancellation(error) {
-                if createdBinding, let binding = preparedBinding {
+                if !retainTrialBinding, createdBinding, let binding = preparedBinding {
                     PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
                 }
                 return
             }
             guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision else { return }
-            let message = Self.message(for: error, fallback: "That purchase didn't go through. Please try again.")
+            let message = Self.message(for: error, fallback: retainTrialBinding ? "Apple's purchase result could not be confirmed. Your reservation and workspace binding are retained. Restore purchases before explicitly continuing; no reservation is automatically released or restarted." : "That purchase didn't go through. Please try again.")
             lastError = message
             PaywallEvents.track("purchase_failed", product: product, extra: ["reason": "storekit"])
             return
@@ -316,7 +542,7 @@ final class PurchaseManager: ObservableObject {
             if ok {
                 await refreshIntroEligibility()
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision else { return }
-                notice = "Your plan is active. Manage or cancel it in Settings → Plan & usage."
+                if notice == nil { notice = "Your plan is active. Manage or cancel it in Settings → Plan & usage." }
                 PaywallEvents.track("purchase_completed", product: product)
             } else {
                 PaywallEvents.track("purchase_failed", product: product, extra: ["reason": "sync"])
@@ -325,15 +551,15 @@ final class PurchaseManager: ObservableObject {
             // Ask to Buy / Strong Customer Authentication. Nothing failed —
             // somebody else has to approve it, and it will arrive through
             // `Transaction.updates`.
-            notice = "Your request was sent for approval. Your plan turns on as soon as it's approved — you can close this."
+            notice = "Your request is awaiting Apple's approval. Service activates after Apple and Rendprop verify it. Any trial reservation and its workspace binding are retained; you can close this."
             PaywallEvents.track("purchase_failed", product: product, extra: ["reason": "pending"])
         case .userCancelled:
-            if createdBinding, let binding = preparedBinding {
+            if !retainTrialBinding, createdBinding, let binding = preparedBinding {
                 PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
             }
             break
         @unknown default:
-            lastError = "That purchase didn't finish. Please try again."
+            lastError = retainTrialBinding ? "Apple's purchase result is unresolved. Your trial reservation is retained. Restore purchases before explicitly continuing; it is not automatically released or restarted." : "That purchase didn't finish. Please try again."
             PaywallEvents.track("purchase_failed", product: product, extra: ["reason": "unknown"])
         }
     }
@@ -364,7 +590,7 @@ final class PurchaseManager: ObservableObject {
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
         if activePlan == nil {
             notice = "No subscription found on this Apple ID."
-        } else if confirmed && unsyncedCount == 0 {
+        } else if confirmed && unsyncedCount == 0 && notice == nil {
             notice = "Your subscription is restored."
         }
         await refreshIntroEligibility()
@@ -540,6 +766,9 @@ final class PurchaseManager: ObservableObject {
                 return false
             }
             applyServerPlan(result, productID: pending.transaction.productID)
+            if result.servingActivation?.available == false {
+                notice = ServingActivationSummary.pendingExplanation
+            }
             // ONLY now. Before this line, a crash or a dead network leaves the
             // transaction with StoreKit, which is exactly what we want.
             await pending.transaction.finish()

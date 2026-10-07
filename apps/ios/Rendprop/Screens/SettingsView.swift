@@ -33,6 +33,7 @@ struct SettingsView: View {
     // Live-backend plan/usage (contract: GET /me). Loaded only when signed in.
     @State private var usage: UsageSummary?
     @State private var usageError: String?
+    @State private var usageLoadGeneration: UInt64 = 0
     @State private var isLoadingUsage = false
 
     // MARK: Notifications (Push/PushManager.swift)
@@ -852,7 +853,7 @@ struct SettingsView: View {
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text("Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
+            Text(usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -911,7 +912,18 @@ struct SettingsView: View {
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
             }
         }
-        if let e = usage.entitlements {
+        if let trial = usage.trialUsage, trial.status != .active {
+            trialUsageRows(trial)
+        } else if usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
+            LabeledContent("Service", value: ServingActivationSummary.pendingTitle)
+            if let plan = usage.entitlements {
+                LabeledContent("Recorded subscription", value: Self.planLabel(plan))
+            }
+            Text(ServingActivationSummary.pendingExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if let trial = usage.trialUsage { trialUsageRows(trial) }
+        } else if let trial = usage.trialUsage {
+            trialUsageRows(trial)
+        } else if let e = usage.entitlements {
             LabeledContent("Plan", value: Self.planLabel(e))
             if e.plan.lowercased() == "trial", let ends = e.trialEndsAt, ends > Date() {
                 // "Free week", never "trial": the paywall's StoreKit
@@ -942,6 +954,27 @@ struct SettingsView: View {
         }
     }
 
+    @ViewBuilder
+    private func trialUsageRows(_ trial: TrialUsageSummary) -> some View {
+        LabeledContent("Access", value: trial.statusLabel)
+        if let end = trial.endDate {
+            LabeledContent("Trial access ends", value: end.formatted(date: .abbreviated, time: .shortened))
+        }
+        ForEach(trial.rows, id: \.title) { row in
+            LabeledContent(row.title, value: row.value)
+        }
+        if trial.status == .expired {
+            Text("New trial work has ended. Your saved walkthroughs, photo versions and downloads remain available under your workspace's access and retention terms.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        } else if trial.status == .exhausted {
+            Text("The included trial usage is used up. Your saved work remains available under your workspace's access and retention terms. Apple keeps the renewal date you confirmed.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        } else {
+            Text("Using your walkthrough does not use your photo credits or first listing. Each counter is checked separately when you start new work.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+    }
+
     /// "7 of 150", the verified testing marker's "Unlimited", or "Not included".
     /// Never a price: every price the app shows comes from StoreKit's
     /// `Product.displayPrice` on the paywall (App Store 3.1).
@@ -961,22 +994,29 @@ struct SettingsView: View {
 
     @MainActor
     private func loadUsage() async {
+        usageLoadGeneration &+= 1
+        let generation = usageLoadGeneration
+        usage = nil
         guard Config.useLiveBackend, auth.isSignedIn else {
             usage = nil
             return
         }
         isLoadingUsage = true
-        defer { isLoadingUsage = false }
+        defer { if usageLoadGeneration == generation { isLoadingUsage = false } }
         _ = await AuthStore.validAccessToken()
         let actor = auth.userID, revision = auth.syncSessionRevision
+        let org = WorkspaceContext.selectedOrgID
         do {
             let fetched = try await model.api.me()
-            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == org, usageLoadGeneration == generation else { return }
             usage = fetched
             usageError = nil
         } catch {
             if error is CancellationError { return }
-            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            guard auth.userID == actor, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == org, usageLoadGeneration == generation else { return }
+            usage = nil
             usageError = UserFacingError.message(error, fallback: "Couldn't load usage. Pull down to refresh.")
         }
         await resolveAdminAccess()

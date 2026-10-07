@@ -2551,7 +2551,7 @@ struct AIFailure: Identifiable {
 
     /// One-line next step for the status class (empty when there is none).
     var actionHint: String {
-        if isQuota { return "This month's allowance for this feature is used up." }
+        if isQuota { return "This feature's included allowance is used up. Your saved work is still here." }
         if isUnauthorized { return "The connection to your workspace needs to be restored. Your work is still here." }
         if isRateLimited { return "Try again in a few minutes." }
         return ""

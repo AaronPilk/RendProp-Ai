@@ -84,6 +84,8 @@ import { personalCard } from "./card.ts";
 import { memberPortfolio } from "./portfolio.ts";
 import { accountDataExport } from "./export.ts";
 import { hostingRetention } from "../_shared/hosting-retention.ts";
+import { boundedTrialContext, subscriptionServingActivation, trialServingActivationForSync } from "../_shared/bounded-trial.ts";
+import { heldTrialPurchase, prepareTrialPurchase } from "../_shared/trial-purchase.ts";
 import { brandLogo } from "./brand-logo.ts";
 import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
 import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
@@ -213,6 +215,10 @@ Deno.serve(async (req) => {
       return await handleCompliancePatch(req, user.id, seg[1]);
     }
 
+    if (req.method === "POST" && seg.length === 2 && seg[0] === "trial" && seg[1] === "prepare") {
+      const directory = await workspaceDirectory(adminClient(), user.id, requestedWorkspace(req));
+      return json(await prepareTrialPurchase(adminClient(), user.id, directory.active_org_id, await readJsonLimited(req, 2048)));
+    }
     if (req.method === "GET") return await handleGet(req, user.id, user.email ?? null);
     if (req.method === "PATCH") {
       if (seg.length === 1 && seg[0] === "profile") return json(await saveProfileRole(adminClient(), user.id, await readJsonLimited(req, 1024)));
@@ -344,6 +350,10 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const costCents = round4(
     (ledgerRes.data ?? []).reduce((s, r) => s + Number(r.total_cents ?? 0), 0),
   );
+  const servingActivation = await subscriptionServingActivation(admin, userId, orgId);
+  const visibleEntitlement = org.plan_source === "apple" && !servingActivation.available
+    ? { ...entitlement, renders_per_month:0, photo_edits_per_month:0, reels_per_month:0, aerials_per_month:0, topaz_per_month:0, degraded:true }
+    : entitlement;
 
   // Meter rows → used/resets_at. bump_rate still increments past the cap, so
   // clamp what we show; an expired window counts as 0 (it resets on next use).
@@ -354,11 +364,11 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     resets_at: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString(),
   } };
   const caps: Record<string, number> = {
-    renders: entitlement.renders_per_month,
-    photo_edits: entitlement.photo_edits_per_month,
-    reels: entitlement.reels_per_month,
-    aerials: entitlement.aerials_per_month,
-    drone: entitlement.topaz_per_month,
+    renders: visibleEntitlement.renders_per_month,
+    photo_edits: visibleEntitlement.photo_edits_per_month,
+    reels: visibleEntitlement.reels_per_month,
+    aerials: visibleEntitlement.aerials_per_month,
+    drone: visibleEntitlement.topaz_per_month,
   };
   const rows = (metersRes.data ?? []) as Array<{ key: string; count: number; window_start: string; window_seconds: number }>;
   for (const [feature, prefix] of Object.entries(METERS)) {
@@ -375,6 +385,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   byFeature.renders = Math.max(0, byFeature.renders);
 
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
+  const trial = await boundedTrialContext(admin, userId, orgId);
+  const heldPurchase = await heldTrialPurchase(admin, userId, orgId);
 
   return json({
     user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
@@ -386,6 +398,10 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     plan_raw: org.plan ?? null,
     hosting_retention: await hostingRetention(admin, orgId),
     trial_ends_at: org.trial_ends_at ?? null,
+    ...trial,
+    trial_offer: heldPurchase?.trial_offer ?? null,
+    trial_reservation: heldPurchase,
+    serving_activation: servingActivation,
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
     plan_source: testingAccess ? "manual" : org.plan_source ?? null,
@@ -405,13 +421,13 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     },
     entitlement: {
       plan: entitlement.plan,
-      renders_per_month: entitlement.renders_per_month,
-      photo_edits_per_month: entitlement.photo_edits_per_month,
-      reels_per_month: entitlement.reels_per_month,
-      aerials_per_month: entitlement.aerials_per_month,
-      topaz_per_month: entitlement.topaz_per_month,
+      renders_per_month: visibleEntitlement.renders_per_month,
+      photo_edits_per_month: visibleEntitlement.photo_edits_per_month,
+      reels_per_month: visibleEntitlement.reels_per_month,
+      aerials_per_month: visibleEntitlement.aerials_per_month,
+      topaz_per_month: visibleEntitlement.topaz_per_month,
       seats: entitlement.seats,
-      ...(entitlement.degraded ? { degraded: true } : {}),
+      ...(visibleEntitlement.degraded ? { degraded: true } : {}),
     },
     usage: {
       month,
@@ -1289,9 +1305,9 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
   await fundVerifiedAppleTransaction((name,args)=>admin.rpc(name,args),orgId,tx);
   const replayed = await replayPendingNotifications(tx.originalTransactionId, orgId);
 
-  // Answer with what the server now ENFORCES, read back after every write —
-  // effective_plan() is the same function the charge paths call, so the app can
-  // never be told it has a plan the next AI request will refuse.
+  // Signed subscription state and financial serving admission are separate.
+  // Preserve accepted Apple chronology; an unfunded new active trial must not
+  // be answered as usable included service merely because raw plan is paid.
   const [{ data: effective, error: effectiveError }, { data: org, error: orgError }, { data: subscription, error: subscriptionError }] = await Promise.all([
     admin.rpc("effective_plan", { p_org: orgId }),
     admin.from("orgs").select("plan, plan_source, plan_expires_at, apple_product_id").eq("id", orgId).maybeSingle(),
@@ -1301,6 +1317,8 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
   if (effectiveError || orgError || subscriptionError || !org || !subscription) {
     throw new HttpError(503, "Subscription state could not be confirmed. Please retry.", "upstream");
   }
+  const servingActivation = await subscriptionServingActivation(admin, userId, orgId);
+  trialServingActivationForSync(servingActivation, tx, subscription.status);
 
   return json({
     plan: String(effective ?? org?.plan ?? "free"),
@@ -1309,6 +1327,7 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
     product_id: subscription.product_id,
     original_transaction_id: tx.originalTransactionId,
     environment: tx.environment,
+    serving_activation: servingActivation,
     // Additive extras the app may ignore.
     status: subscription.status,
     auto_renew: subscription.auto_renew,

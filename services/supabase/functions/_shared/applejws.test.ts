@@ -983,6 +983,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   }
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let pending = false, unlinked = false, sandboxGranted = false;
+  let subscriptionStatus = "refunded";
   const storedExpiry = new Date(now - 60_000).toISOString();
   const admin = {
     rpc: (name: string, args: Record<string, unknown>) => {
@@ -991,7 +992,9 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
         ? { data: { ok: true, test_only: true, environment: "Sandbox", plan: "team", source: "manual", org_id: org, product_id: args.p_product, original_transaction_id: args.p_original }, error: null }
         : { data: null, error: { message: "RP403: Sandbox testing requires explicit authorized test access" } });
       if (name === "effective_plan") return Promise.resolve({ data: "free", error: null });
-      if(name === "fund_verified_apple_transaction")return Promise.resolve({data:{funded:false,reason:"stale_or_unbound"},error:null});
+      if(name === "fund_verified_apple_transaction"||name === "fund_reserved_subscription_trial")return Promise.resolve({data:{funded:false,reason:"stale_or_unbound"},error:null});
+      if(name === "subscription_trial_reserved_workspace")return Promise.resolve({data:null,error:null});
+      if(name === "subscription_serving_activation")return Promise.resolve({data:{org_id:org,available:false,funded:false,authority:"subscription_activation_unavailable"},error:null});
       assertEquals(name, "apply_apple_entitlement_v2");
       return Promise.resolve({ data: { status: "refunded", expires_at: storedExpiry }, error: null });
     },
@@ -1006,7 +1009,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
           table === "orgs" ? { plan: "free", plan_source: "apple", plan_expires_at: storedExpiry } :
           table === "apple_sandbox_receipts" ? { org_id: org } :
           selection === "org_id, environment" ? { org_id: unlinked ? null : org, environment: "Production" } :
-          { status: "refunded", auto_renew: false, product_id: "com.rendprop.app.team.monthly", expires_at: storedExpiry }, error: null }),
+          { status: subscriptionStatus, auto_renew: false, product_id: "com.rendprop.app.team.monthly", expires_at: storedExpiry }, error: null }),
         then: (resolve: (value: unknown) => unknown) => resolve({ data: table === "apple_notifications" && pending ? [{
           notification_uuid: "chronology-pending", payload: {
             transaction: decodeTransaction(transactionPayload({ purchaseDate: purchase, signedDate: signed })),
@@ -1022,7 +1025,9 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   Object.assign(globalThis, { __appleChronologyFixture: fixture });
   const program = `
     import {assert,HttpError,json,readJsonLimited,throwRpc} from ${JSON.stringify(new URL("./http.ts", import.meta.url).href)};
+    import {reservedTrialWorkspace} from ${JSON.stringify(new URL("./trial-purchase.ts",import.meta.url).href)};
     import {fundVerifiedAppleTransaction} from ${JSON.stringify(new URL("./apple-funding.ts",import.meta.url).href)};
+    import {subscriptionServingActivation,trialServingActivationForSync} from ${JSON.stringify(new URL("./bounded-trial.ts",import.meta.url).href)};
     import {decodeTransaction,decodeRenewalInfo,deriveEntitlement,productToPlan,type AppleTransaction,type AppleRenewalInfo} from ${JSON.stringify(new URL("./applejws.ts", import.meta.url).href)};
     import {assertExpectedSubscriptionWorkspace,assertVerifiedPurchaseOwner} from ${JSON.stringify(new URL("../me/billing.ts", import.meta.url).href)};
     import {computeEntitlement,resolveVerdict,lookupVerdict,summariseNotification,type NotificationFacts,type PendingEntitlement} from ${JSON.stringify(new URL("../apple-subscriptions/logic.ts", import.meta.url).href)};
@@ -1058,6 +1063,11 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     assertEquals(restore.args.p_transaction_purchased_at, new Date(purchase).toISOString());
     assertEquals(restore.args.p_transaction_signed_at, new Date(signed).toISOString());
     assertEquals(restore.args.p_event_signed_at, null);
+    subscriptionStatus = "active";
+    const freeTrial = await signJws(chain,transactionPayload({environment:"Production",purchaseDate:purchase,signedDate:signed,expiresDate:now+86400_000,appAccountToken:user,price:0,currency:"USD",storefront:"USA",offerType:1,offerDiscountType:"FREE_TRIAL"}));
+    const unfundedTrial = await assertRejects(()=>methods.handleEntitlement(new Request("https://fixture.invalid/me/entitlement",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({signed_transaction:freeTrial})}),user),HttpError);
+    assertEquals(unfundedTrial.status,503);assert(calls.some(call=>call.name==="apply_apple_entitlement_v2"));
+    subscriptionStatus = "refunded";
     pending = true; calls.length = 0;
     assertEquals(await methods.replayPendingNotifications("2000000700000000", org), 1);
     assertEquals(calls[0].args.p_transaction_purchased_at, new Date(purchase).toISOString());

@@ -28,12 +28,16 @@ const specs: Spec[] = [
   own("studio_production_reviews", "document_user_id,org_id,document_key,listing_id,revision,document_revision,status,submitted_at,updated_at", "document_user_id", ["org_id", "document_key"]),
   own("studio_project_media", "id,actor_id,org_id,sha256,bytes,mime,filename,modified,parts,created_at", "actor_id"),
   own("serving_operation_results", "org_id,actor_id,request_key,result,created_at", "actor_id", ["org_id", "request_key"]),
+  own("subscription_trial_purchase_reservations", "id,actor_id,org_id,product_id,walkthrough_cap,photo_cap,listing_cap,max_days,max_video_seconds,upload_budget_bytes,held_at,converted_at", "actor_id"),
+  own("subscription_trial_grants", "id,actor_id,org_id,starts_at,ends_at,walkthrough_cap,photo_cap,listing_cap,upload_budget_bytes,max_video_seconds,created_at", "actor_id"),
+  own("subscription_trial_actions", "grant_id,kind,identity,actor_id,org_id,held_bytes,created_at", "actor_id", ["grant_id", "kind", "identity"]),
   own("notification_preferences", "user_id,lead_received,render_ready,upload_stuck,free_week_ending,allowance_low,first_tour_nudge,muted_until,created_at,updated_at", "user_id", ["user_id"], false),
   own("notification_devices", "id,user_id,bundle_id,environment,locale,app_version,created_at,last_seen_at,disabled_at", "user_id", ["id"], false),
   own("apple_subscriptions", "original_transaction_id,org_id,user_id,product_id,plan,environment,status,expires_at,auto_renew,last_transaction_id,created_at,updated_at", "user_id", ["original_transaction_id"], false),
   own("deletion_requests", "id,user_id,status,requested_at,completed_at", "user_id", ["id"], false),
 ];
 const omissions = [
+  { collection: "subscription_trial_video_attestations", reason: "Technical object validation evidence contains private storage identities and is excluded; saved media metadata and account-owned trial admission metadata are included." },
   { collection: "binary_media", reason: "Use the separate media download flow for original files; this JSON contains metadata only." },
   { collection: "on_device_unsynced_data", reason: "Local-only files and changes have not reached this service." },
   { collection: "removed_workspaces_and_other_members", reason: "Only current workspace access and the caller's assigned listings or authored records are exported." },
@@ -164,6 +168,10 @@ export async function accountDataExport(admin: any, actor: string, limits = EXPO
     const items = await read(spec, scopes, true);
     if (items === null) continue;
     for (const item of items) {
+      // Lifetime trial admissions are accounting metadata. Deleted listing or
+      // asset references are intentionally omitted from the export projection;
+      // they are not current private media authority or required live drafts.
+      if (spec.name === "subscription_trial_actions") { delete item.listing_id; delete item.asset_id; }
       if (item.org_id != null && spec.workspace) assert(first.orgIDs.includes(String(item.org_id)), 403, "A workspace is unavailable.");
       if (item.org_id != null && spec.listingColumn) assert(first.listings.some((l) => l.id === item.listing_id && l.org_id === item.org_id), 403, "A listing is unavailable.");
       if (spec.workspace) for (const field of ["listing_id", "source_listing_id"]) if (item[field]) referenced.set(String(item[field]), String(item.org_id));

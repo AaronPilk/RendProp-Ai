@@ -1,5 +1,19 @@
 # apple-subscriptions — App Store Server Notifications V2
 
+**6 October delivery:** the coordinated 25-function backend deployment includes
+this webhook and `me`, from reviewed `5eeb783`, with signature authentication
+and `me` JWT verification preserved. See
+[the actual rollout](../../../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md).
+The older source-only labels below belong to the earlier review checkpoint.
+No retail, trial or App Review funds were seeded. The newer atomic limited-trial
+reservation/converter candidate is separate, disabled and not deployed. Neither
+deployment nor local tests establish an actual Apple purchase/restore/renewal.
+The separate native candidate also closes new ordinary paid checkout pending an
+exact-product funding admission. Only a freshly validated held seven-day trial
+can authorize its new live purchase call; Restore, Manage and this notification
+handler continue to process existing subscriptions. This safeguard is not in
+available build 45 and does not change App Store product availability.
+
 Apple tells this endpoint when a subscription starts, renews, lapses, is
 refunded or is revoked. It verifies Apple's signature itself, then applies the
 result through the service-only `apply_apple_entitlement_v2()` chronology writer.
@@ -190,7 +204,7 @@ observe renewal-status change and eventual expiry. Cancelling renewal does not
 immediately end the already-paid period; verify the signed dates and resulting
 notification types instead of expecting an instant lapse.
 
-### Sandbox authority fence — source only
+### Sandbox authority fence — deployed contract
 
 `record_apple_sandbox_receipt` verifies current named-account and workspace
 owner/admin authority, and requires an existing service-owned internal/private
@@ -217,6 +231,19 @@ service-only; the migrations create no review account or funding allocation.
 schema/handlers and complete purchase/restore acceptance before claiming reviewer
 readiness. Existing internal grants are separate from this finite review authority;
 rolling allowance windows alone are not a lifetime serving limit.
+
+### Dormant bounded-trial purchase reservation
+
+The [build-46 rollout](../../../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+source-verified apple-subscriptions v25, me v50 and renders v44 after three
+canonical trial migrations. Signed Production FREE_TRIAL conversion requires an
+exact already funded buyer/workspace/product hold; missing or ambiguous holds
+cannot infer a first-owner sponsor. The native hook is in internal build 46.
+Trial configuration and sponsor-pool admission remain disabled/unseeded, and no
+new serving schedule, owner allocation or customer allowance was created.
+Existing receipt/restore processing stays separate from new purchase admission.
+Real StoreKit/notification/restore acceptance and inclusive sponsor cost remain
+activation gates.
 
 ### Pending notifications
 

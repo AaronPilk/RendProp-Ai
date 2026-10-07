@@ -144,7 +144,8 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
   async function refreshAllowance(signal?: AbortSignal) {
     try {
       const account = await businessApi(services, workspace).account(signal);
-      assertScope(); const meter = account.meters.find(m => m.key === "photo_edits");
+      assertScope(); const trial = account.trialUsage;
+      const meter = trial ? { ...trial.photoEdits, cap: trial.status === "active" ? trial.photoEdits.cap : 0 } : account.meters.find(m => m.key === "photo_edits");
       setAllowance(!account.degraded && meter ? { used: meter.used, cap: meter.cap } : null);
     } catch { if (alive.current && !signal?.aborted) setAllowance(null); }
     finally { if (alive.current && !signal?.aborted) setAllowanceRead(true); }

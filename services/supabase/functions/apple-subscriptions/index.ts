@@ -1,4 +1,5 @@
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
+import { reservedTrialWorkspace } from "../_shared/trial-purchase.ts";
 // apple-subscriptions — App Store Server Notifications V2, verified and applied.
 //
 //   POST /apple-subscriptions/notify   -> 200 { ok, duplicate?, applied?, ignored?, pending? }
@@ -215,8 +216,9 @@ async function handleNotify(req: Request): Promise<Response> {
   const admin = adminClient();
   const originalTransactionId = facts.transaction?.originalTransactionId ?? null;
 
-  // Who does this subscription belong to? Set by the app's first
-  // POST /me/entitlement; null until then (see header note 3).
+  // Existing signed chain binding takes precedence. Before the first device
+  // receipt, only the exact signed Production trial buyer/SKU may recover an
+  // already admitted purchase hold; no loose owner membership is inferred.
   let orgId: string | null = null;
   let storedEnvironment: string | null = null;
   if (originalTransactionId) {
@@ -232,6 +234,7 @@ async function handleNotify(req: Request): Promise<Response> {
   }
 
   // Header note 4: sandbox must never move a production subscription.
+  if (orgId === null) orgId = await reservedTrialWorkspace(admin, facts.transaction);
   const environmentMismatch = storedEnvironment !== null &&
     storedEnvironment !== facts.environment;
 

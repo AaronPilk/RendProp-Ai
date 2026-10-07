@@ -18,6 +18,9 @@ create temp table fixture(actor uuid,org uuid,other_actor uuid,other_org uuid,ma
 do $$declare a uuid:=gen_random_uuid();b uuid:=gen_random_uuid();m uuid:=gen_random_uuid();ag uuid:=gen_random_uuid();o uuid;other uuid;l uuid:=gen_random_uuid();ol uuid:=gen_random_uuid();p uuid:=gen_random_uuid();wp uuid:=gen_random_uuid();j uuid:=gen_random_uuid();r uuid:=gen_random_uuid();begin
  insert into auth.users(id,email,is_anonymous)values(a,'photographer@fixture.invalid',false),(b,'other@fixture.invalid',false),(m,'marketing@fixture.invalid',false),(ag,'agent@fixture.invalid',false);
  select org_id into o from memberships where user_id=a;select org_id into other from memberships where user_id=b;
+ -- Recipient delivery fixtures already own hosted media; trial admission is
+ -- covered separately. Explicit manual authority admits these synthetic tours.
+ update orgs set plan='pro',plan_source='manual',plan_expires_at=null where id in(o,other);
  insert into memberships(user_id,org_id,role)values(m,o,'marketing'),(ag,o,'agent');
  insert into listings(id,org_id,agent_id,address)values(l,o,a,'Synthetic client listing'),(ol,other,b,'Other synthetic property');
  insert into capture_assets(id,listing_id,kind,bucket,storage_key,uploaded)values(p,l,'photo','renders','renders/'||o||'/'||l||'/contact-'||p||'.jpg',true),(wp,ol,'photo','renders','renders/'||other||'/'||ol||'/contact-'||wp||'.jpg',true);
@@ -196,6 +199,7 @@ end$$;
 do $$declare a uuid:=gen_random_uuid();o uuid;lid uuid:=gen_random_uuid();rid uuid:=gen_random_uuid();jid uuid:=gen_random_uuid();leadid uuid;leadids uuid[]:='{}';i integer;begin
  insert into auth.users(id,email,is_anonymous)values(a,'rate-owner@fixture.invalid',false);
  select org_id into o from memberships where user_id=a;
+ update orgs set plan='pro',plan_source='manual',plan_expires_at=null where id=o;
  insert into listings(id,org_id,agent_id,address)values(lid,o,a,'Manual forwarding rate fixture');
  insert into render_jobs(id,listing_id,tier,status)values(jid,lid,'smooth','completed');
  insert into renders(id,job_id,listing_id,slug,duration_s,published_at)values(rid,jid,lid,'manual-forwarding-rate-fixture',5,now());

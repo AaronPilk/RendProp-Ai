@@ -16,6 +16,10 @@ const me = { user: { id: user }, org: { id: org, name: "Fixture office", handle:
 let publicCard: Record<string,string> | null = null;
 let portfolioRevision=0, portfolioIds:string[]=[];
 let failPersonal=false, mismatchPersonal=false;
+let trialUsage: unknown = null;
+let servingActivation: unknown = undefined;
+let accountPlan: string | undefined;
+let accountExpiry: string | undefined;
 const services = { api: async (path: string, options: { method?: string; orgId: string; body?: unknown }) => {
   if (options.orgId !== org) throw new Error("Wrong fixture organization");
   const method = options.method ?? "GET"; calls.push({ path, method, body: options.body });
@@ -28,7 +32,7 @@ const services = { api: async (path: string, options: { method?: string; orgId: 
     const {space_type,...card}=publicCard??{};return{ok:true,user_id:user,space_type:space_type??null,public_card:publicCard?card:null};
   }
   if(path.endsWith("me/portfolio")){if(method==="PUT"){const b=options.body as {expected_revision:number;listing_ids:string[]};if(b.expected_revision!==portfolioRevision&&JSON.stringify(b.listing_ids)!==JSON.stringify(portfolioIds))throw new Error("409: Your portfolio changed; reload before saving.");if(JSON.stringify(b.listing_ids)!==JSON.stringify(portfolioIds)||!portfolioRevision)portfolioRevision++;portfolioIds=b.listing_ids;}return{ok:true,user_id:user,org_id:org,id:portfolioRevision?id:null,revision:portfolioRevision,listing_ids:portfolioIds,portfolio_url:portfolioRevision?`https://rendprop.com/a/member-${id}`:null};}
-  if (path === "/functions/v1/me" && method === "GET") return structuredClone(me);
+  if (path === "/functions/v1/me" && method === "GET") return { ...structuredClone(me), plan: accountPlan ?? (trialUsage ? "pro" : workspace.plan), trial_usage: structuredClone(trialUsage), ...(servingActivation === undefined ? {} : { serving_activation: structuredClone(servingActivation) }), plan_expires_at: accountExpiry ?? (trialUsage ? null : "2026-12-05T12:00:00Z"), trial_ends_at: null };
   if (path.endsWith("me/brand") && method === "PATCH") { Object.assign(me.org.brand_kit, options.body); return { ok: true }; }
   if (path.endsWith("me/notifications") && method === "PATCH") { Object.assign(prefs, options.body); return { ok: true, notifications: structuredClone(prefs) }; }
   if (path === "/functions/v1/team" && method === "GET") return { org_id: org, can_manage: true, seats: { used: 1, allowed: 5 }, members: [{ user_id: user, role: "owner", name: "Agent", email: "agent@example.invalid", is_you: true }], invites: [] };
@@ -41,7 +45,7 @@ function Fixture() {
   const [sectionRequest, setSectionRequest] = useState<BusinessSectionRequest>();
   const [version, setVersion] = useState(0);
   const [role, setRole] = useState<"owner" | "marketing">("owner");
-  Object.assign(window, { businessFixture: { calls: () => structuredClone(calls), card: () => structuredClone(publicCard), brand: () => structuredClone(me.org.brand_kit), failPersonal: () => {failPersonal=true;}, mismatchPersonal: () => {mismatchPersonal=true;}, phoneCard: (changes:Record<string,string>) => {publicCard={...publicCard,...changes};}, marketing: () => setRole("marketing"), section: (section: BusinessSectionRequest["section"], id = crypto.randomUUID()) => setSectionRequest({id,section}), refreshWorkspace: () => setVersion(version + 1) } });
+  Object.assign(window, { businessFixture: { calls: () => structuredClone(calls), trial: (value: unknown) => { trialUsage = structuredClone(value); }, activation: (value: unknown, plan?: string, expiresAt?: string) => { servingActivation = structuredClone(value); accountPlan = plan; accountExpiry = expiresAt; }, card: () => structuredClone(publicCard), brand: () => structuredClone(me.org.brand_kit), failPersonal: () => {failPersonal=true;}, mismatchPersonal: () => {mismatchPersonal=true;}, phoneCard: (changes:Record<string,string>) => {publicCard={...publicCard,...changes};}, marketing: () => setRole("marketing"), section: (section: BusinessSectionRequest["section"], id = crypto.randomUUID()) => setSectionRequest({id,section}), refreshWorkspace: () => setVersion(version + 1) } });
   return <div style={{ padding: 30 }}><BusinessWorkspace sectionRequest={sectionRequest} services={services} workspace={{ ...workspace, memberships: [{ ...workspace.memberships[0], role }] }} listings={listings} onChanged={() => {}} /></div>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

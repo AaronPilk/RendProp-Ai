@@ -31,6 +31,20 @@ set local role service_role;
 do $$declare f record;begin select * into f from fixture;perform pg_temp.denied(format('select reserve_upload_assets(%L,%L::jsonb)',f.g,pg_temp.ticket(f.go,f.gl,gen_random_uuid(),'sandbox-guest-idem')),'RP401:','Sandbox receipt cannot fund anonymous upload');end$$;
 reset role;
 update apple_subscriptions set environment='Production'where original_transaction_id='fixture-paid-guest';
+-- The positive paid-guest case needs current serving authority as well as the
+-- Apple receipt. These finite dollars and seven zero reserves are SYNTHETIC
+-- fixture values, not a production price or cost attestation. Keep Sandbox and
+-- buyer checks on the actual upload path; no manual authority bypass is used.
+do $$declare f record;funding jsonb;begin
+ select * into f from fixture;
+ set local role service_role;
+ funding:=provision_serving_funding(f.go,'retail','synthetic-upload-privacy-collection',null,400,0,
+  now(),now()+interval '1 month',1,
+  '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}',repeat('a',64));
+ reset role;
+ update serving_funding set apple_original_transaction_id='fixture-paid-guest'
+  where id=(funding->>'funding_id')::uuid and org_id=f.go and collection_ref='synthetic-upload-privacy-collection';
+end$$;
 set local role service_role;
 do $$declare f record;r jsonb;begin select * into f from fixture;r:=reserve_upload_assets(f.g,pg_temp.ticket(f.go,f.gl,gen_random_uuid(),'production-guest-idem'));perform pg_temp.ok(r#>>'{0,replayed}'='false','server-bound Production paid guest can upload');end$$;
 reset role;

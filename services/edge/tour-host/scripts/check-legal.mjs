@@ -62,6 +62,10 @@ expect(!p.includes("They process data solely"), "No unsupported universal proces
 expect(t.includes("Starter and Pro, billed monthly") && t.includes("Team, billed monthly"), "Payment terms not rewritten");
 expect(t.includes("by confirming an Apple subscription") && t.includes("Downloading or signing in does not activate a trial"), "Trial requires eligible Apple subscription activation");
 expect(t.includes("One introductory") || t.includes("one introductory offer per subscription group"), "Trial eligibility remains Apple subscription-group scoped");
+expect(t.includes("when a funded trial offer is available") && t.includes("does not move Apple's renewal date forward"), "Limited trial availability and Apple billing date are distinct");
+expect(p.includes("one-way digest") && p.includes("still account-related data") && p.includes("remain after listing or account deletion"), "Retained trial eligibility metadata and its deletion limit are disclosed");
+expect(t.includes("account, workspace and plan") && t.includes("does not reset Rendprop's trial reservation") && p.includes("reservation date and funding commitment") && p.includes("does not reset after cancellation or an interrupted purchase"), "Pre-Apple trial reservation and retained account-related commitment are disclosed");
+expect(p.includes("do not keep the deleted photos or videos available"), "Trial tombstones do not promise retained deleted media");
 for (const filename of ["index.html", "pricing.html", "llms.txt"]) {
   const copy = readFileSync(new URL(`../public/${filename}`, import.meta.url), "utf8");
   expect(!/every (?:new install|plan) (?:also gets|starts with)|free week with no card/i.test(copy), `${filename}: no automatic signup-week or universal trial promise`);

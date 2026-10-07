@@ -32,6 +32,9 @@ do $$ declare s uuid; d uuid; o uuid; l uuid; a uuid; p uuid; j uuid; r uuid; pr
     insert into auth.users(id,email,raw_user_meta_data,is_anonymous) values
       (s,'delete-source-'||n||'@fixture.invalid','{}',true),(d,'delete-dest-'||n||'@fixture.invalid','{}',false);
     select org_id into strict o from public.memberships where user_id=s;
+    -- These media rows exercise deletion ownership and receipt inventory,
+    -- not trial admission. Explicit manual authority reaches those guards.
+    update public.orgs set plan='pro',plan_source='manual',plan_expires_at=null where id=o;
     prefix:='renders/'||l||'/'||r;
     insert into public.listings(id,org_id,agent_id,status) values(l,o,s,'ready');
     insert into public.capture_assets(id,listing_id,kind,bucket,storage_key,uploaded,bytes,transport_version)

@@ -171,6 +171,9 @@ struct UsageSummary: Codable, Hashable {
     /// "marketing"). Secondary to `isAdmin`.
     var role: String? = nil
     var hostingRetention: HostingRetentionSummary? = nil
+    var trialUsage: TrialUsageSummary? = nil
+    var trialOffer: TrialOfferSummary? = nil
+    var servingActivation: ServingActivationSummary? = nil
 
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }

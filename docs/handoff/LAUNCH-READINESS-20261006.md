@@ -1,5 +1,22 @@
 # Launch candidate — 6 October 2026
 
+**Latest delivered checkpoint:** internal 1.0.4 (46) is available, three dormant
+trial migrations and three dependent functions are applied/source-verified, and
+Studio's new source and 31 served files are verified. See
+[the build-46 rollout](TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md) and
+[physical acceptance checklist](PHONE-ACCEPTANCE-TESTFLIGHT46-20261006.md).
+Trial funding/activation, paid pricing, protected-media cutover and real phone
+acceptance remain open. No public App Store/App Review submission was performed.
+The older dated checkpoints below remain historical.
+
+**Later delivered checkpoint:** internal 1.0.4 (45) is available. The core stack,
+additive terminal conflict repair, Studio assets and final photo-permission
+contraction are now delivered as recorded in the
+[actual rollout handoff](CAS-AND-STUDIO-ROLLOUT-20261006.md). Protected media,
+financial acceptance and the [separate limited trial](../studio/subscription-trial.md)
+remain gates. The preflight and deployment sequence below are preserved as their
+dated source checkpoint, not a request to repeat completed deployment steps.
+
 Source is isolated on `fix/full-system-audit-20261005`; Claude's shared checkout
 is untouched. This handoff supersedes earlier source dispositions only where
 the new evidence below says so. It is not a delivery receipt. At the latest

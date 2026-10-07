@@ -5,7 +5,7 @@ import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
-type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean};
+type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown};
 async function invoke(o:Options={}) {
  const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon"};
  const previous=new Map(Object.keys(values).map(key=>[key,Deno.env.get(key)]));for(const [key,value]of Object.entries(values))Deno.env.set(key,value);
@@ -32,6 +32,16 @@ async function invoke(o:Options={}) {
     return o.testingError?json({message:"fixture failed"},503):json(o.testingContext??null);
    }
    if(table==="notification_preferences_for")return json({});
+   if(table==="subscription_trial_held_offer")return json(o.heldPurchase??null);
+   if(table==="prepare_subscription_trial_purchase"){assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG,p_product:"com.rendprop.app.starter.monthly"});return json(o.heldPurchase??null);}
+   if(table==="subscription_trial_context") {
+    assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
+    return o.trialError?json({message:"fixture unavailable"},503):json({trial_usage:o.trialUsage??null,trial_offer:null});
+   }
+   if(table==="subscription_serving_activation") {
+    assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
+    return json({org_id:o.selector??ORG,available:!o.servingUnavailable,funded:!o.servingUnavailable,authority:o.servingUnavailable?"subscription_activation_unavailable":"verified_retail"});
+   }
    if(table==="memberships") {
     if(url.searchParams.get("select")==="org_id")return row({org_id:OTHER});
     return o.membershipError?json({message:"fixture denied"},400):row({role:o.role??"owner"});
@@ -45,7 +55,7 @@ async function invoke(o:Options={}) {
   };
   Object.defineProperty(Deno,"serve",{configurable:true,writable:true,value:(fn:Handler)=>{handler=fn;return {};}});
   await import("./index.ts");assert(handler);
-  const response=await handler(new Request("https://edge.invalid/me",{headers:{authorization:"Bearer fixture-token",...(o.selector?{"x-org-id":o.selector}:{})}}));
+  const response=await handler(new Request(o.prepareBody?"https://edge.invalid/me/trial/prepare":"https://edge.invalid/me",{...(o.prepareBody?{method:"POST",body:JSON.stringify(o.prepareBody)}:{}),headers:{authorization:"Bearer fixture-token",...(o.selector?{"x-org-id":o.selector}:{})}}));
   const body=await response.json();assertEquals(unexpected,[]);return {response,body,queries};
  }finally{globalThis.fetch=oldFetch;Object.defineProperty(Deno,"serve",serve);for(const[key,value]of previous)value===undefined?Deno.env.delete(key):Deno.env.set(key,value);}
 }
@@ -54,6 +64,16 @@ Deno.test("billing context belongs to the same selected workspace as entitlement
  assert(r.queries.filter(u=>u.pathname.endsWith("memberships")).every(u=>u.searchParams.get("org_id")==="eq."+OTHER));
 });
 Deno.test("guest owner may explicitly subscribe; membership does not require a named identity",async()=>{const r=await invoke({anonymous:true});assertEquals(r.response.status,200);assertEquals(r.body.billing.can_manage_subscription,true);});
+Deno.test("actual me returns scoped bounded trial usage without advertising a dormant offer",async()=>{
+ const usage={org_id:OTHER,status:"active",starts_at:new Date(Date.now()-1000).toISOString(),ends_at:new Date(Date.now()+86400000).toISOString(),walkthroughs:{used:0,cap:1,remaining:1},photo_edits:{used:1,cap:5,remaining:4},published_listings:{used:0,cap:1,remaining:1},upload_budget_bytes:1073741824,upload_used_bytes:20};
+ const r=await invoke({selector:OTHER,plan:"starter",source:"apple",trialUsage:usage});assertEquals(r.response.status,200);assertEquals(r.body.trial_usage,usage);assertEquals(r.body.trial_offer,null);
+ const paid=await invoke({plan:"starter",source:"apple"});assertEquals(paid.body.trial_usage,null);assertEquals(paid.body.usage.caps.photo_edits,0);
+ const wrong=await invoke({selector:OTHER,trialUsage:{...usage,org_id:ORG}});assertEquals(wrong.response.status,503);assert(!wrong.body.trial_usage);
+ const unavailable=await invoke({trialError:true});assertEquals(unavailable.response.status,503);
+ const unfunded=await invoke({plan:"starter",source:"apple",servingUnavailable:true});
+ assertEquals(unfunded.response.status,200);assertEquals(unfunded.body.plan,"starter");assertEquals(unfunded.body.plan_raw,"starter");assertEquals(unfunded.body.entitlement.degraded,true);
+ assertEquals(unfunded.body.usage.caps,{renders:0,photo_edits:0,reels:0,aerials:0,drone:0});assertEquals(unfunded.body.serving_activation.available,false);assertEquals(unfunded.body.billing.can_manage_subscription,true);
+});
 for(const role of ["agent","marketing"])Deno.test(`billing refuses shared-workspace subscription for ${role}`,async()=>{const r=await invoke({role});assertEquals(r.response.status,200);assertEquals(r.body.billing.can_manage_subscription,false);});
 Deno.test("admin may manage ordinary subscription",async()=>{const r=await invoke({role:"admin",plan:"pro",source:"apple"});assertEquals(r.body.billing.can_manage_subscription,true);});
 Deno.test("contract, manual and degraded entitlement contexts do not invite a new Apple purchase",async()=>{for(const option of [{plan:"brokerage",source:"apple"},{plan:"pro",source:"manual"},{degraded:true}]){const r=await invoke(option);assertEquals(r.response.status,200);assertEquals(r.body.billing.can_manage_subscription,false);}});
@@ -123,4 +143,14 @@ Deno.test("revoked or racing sponsorship never publishes a stale unlimited billi
   {plan:"team",projection:true,testingContext:{...privateContext,beneficiary_user_id:SPONSOR}},
   {plan:"team",projection:true,testingContext:{...privateContext,private_org_id:SPONSOR}}
  ]) {const r=await invoke(o);assertEquals(r.response.status,503);assert(!r.body.billing);}
+});
+
+Deno.test("actual me prepare and fresh GET share exact buyer-token held DTO; foreign wire fails before reservation",async()=>{
+ const held={reservation_id:"e3000000-0000-4000-8000-000000000001",actor_id:USER,app_account_token:USER,org_id:ORG,product_id:"com.rendprop.app.starter.monthly",held_at:new Date().toISOString(),trial_offer:{enabled:true,walkthroughs:1,photo_edits:5,published_listings:1,max_days:7,max_video_seconds:90,upload_budget_bytes:1073741824}};
+ const request={actor_id:USER,app_account_token:USER,org_id:ORG,product_id:held.product_id};
+ const r=await invoke({heldPurchase:held,prepareBody:request});assertEquals(r.response.status,200);assertEquals(r.body,held);
+ const fresh=await invoke({heldPurchase:held});assertEquals(fresh.body.trial_reservation,held);assertEquals(fresh.body.trial_offer,held.trial_offer);
+ const wrong=await invoke({heldPurchase:held,prepareBody:{...request,app_account_token:OTHER}});assertEquals(wrong.response.status,403);assert(!wrong.queries.some(u=>u.pathname.endsWith("prepare_subscription_trial_purchase")));
+ const corrupt=await invoke({heldPurchase:{...held,app_account_token:OTHER}});assertEquals(corrupt.response.status,503);
+ const converted=await invoke();assertEquals(converted.body.trial_reservation,null);assertEquals(converted.body.trial_offer,null);
 });

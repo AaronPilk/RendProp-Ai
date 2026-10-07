@@ -168,6 +168,9 @@ try:
   created=json.loads(query(f"set role authenticated;set request.jwt.claim.sub='{B}';select to_jsonb(create_render_job('{LIST}','{asset}','smooth','{{}}',{val(idem)},'app'));"))
   published=json.loads(query(f"set role authenticated;set request.jwt.claim.sub='{B}';select to_jsonb(publish_render('{created['id']}',12,1));"))
   return created,published
+ # The native publish/revocation fixture has explicit manual service authority;
+ # its assertions concern Presenter consent, not unfunded subscription trials.
+ query(f"update orgs set plan='pro',plan_source='manual',plan_expires_at=null where id='{ORG}';")
  NATIVE,NATIVE_RENDER=native_render(ASSET,'presenter-native-replay')
  EDIT=uid(5201);CLIP=uid(5202);REFLECT=uid(5203)
  def add_edit(asset,duration):

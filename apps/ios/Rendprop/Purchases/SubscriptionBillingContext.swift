@@ -1,5 +1,144 @@
 import Foundation
 
+/// Recorded Apple subscription identity and usable service are separate.
+/// This is fresh workspace-scoped serving authority, not a locally chosen plan.
+struct ServingActivationSummary: Codable, Hashable, Sendable {
+    enum Authority: String, Codable, Sendable {
+        case privateSponsorship = "private_sponsorship", appReview = "app_review"
+        case brokerage, existingNonApple = "existing_non_apple", verifiedRetail = "verified_retail"
+        case fundedTrial = "funded_trial", unavailable = "subscription_activation_unavailable"
+    }
+    let orgId: UUID
+    let available: Bool
+    let funded: Bool
+    let authority: Authority
+    enum CodingKeys: String, CodingKey { case orgId, rawOrgId = "org_id", available, funded, authority }
+    init(orgId: UUID, available: Bool, funded: Bool, authority: Authority) {
+        self.orgId = orgId; self.available = available; self.funded = funded; self.authority = authority
+    }
+    init(from decoder: Decoder) throws {
+        let keys = try decoder.container(keyedBy: CodingKeys.self)
+        orgId = try keys.decodeIfPresent(UUID.self, forKey: .orgId) ?? keys.decode(UUID.self, forKey: .rawOrgId)
+        available = try keys.decode(Bool.self, forKey: .available)
+        funded = try keys.decode(Bool.self, forKey: .funded)
+        authority = try keys.decode(Authority.self, forKey: .authority)
+    }
+    func encode(to encoder: Encoder) throws {
+        var keys = encoder.container(keyedBy: CodingKeys.self)
+        try keys.encode(orgId, forKey: .rawOrgId); try keys.encode(available, forKey: .available)
+        try keys.encode(funded, forKey: .funded); try keys.encode(authority, forKey: .authority)
+    }
+    func checked(org: UUID) -> Self? {
+        guard orgId == org else { return nil }
+        switch authority {
+        case .privateSponsorship, .brokerage, .existingNonApple:
+            return available && !funded ? self : nil
+        case .appReview, .verifiedRetail, .fundedTrial:
+            return available && funded ? self : nil
+        case .unavailable:
+            return !available && !funded ? self : nil
+        }
+    }
+    func shouldShowPending(plan: String?, recordedTrial: TrialUsageSummary?) -> Bool {
+        guard !available else { return false }
+        if let recordedTrial { return recordedTrial.status == .active }
+        return !["free", "trial"].contains((plan ?? "").lowercased())
+    }
+    static let pendingTitle = "Service activation pending"
+    static let pendingExplanation = "Your Apple subscription is recorded. Rendprop service is still waiting for activation. Restore purchases to check again, or manage your subscription with Apple. Your saved work remains available under your workspace's access and retention terms."
+}
+
+/// Server-recorded trial counters. These are a lifetime window, never a paid
+/// plan's monthly allowance, and never a local permission to start paid work.
+struct TrialUsageCounter: Codable, Hashable, Sendable {
+    let used: Int
+    let cap: Int
+    let remaining: Int
+    var isValid: Bool {
+        used >= 0 && cap > 0 && cap <= 5 && used <= cap && remaining == cap - used
+    }
+    var displayValue: String { "\(used) of \(cap) used · \(remaining) remaining" }
+}
+
+struct TrialUsageSummary: Codable, Hashable, Sendable {
+    enum Status: String, Codable, Sendable { case active, exhausted, expired }
+    let orgId: UUID
+    let status: Status
+    let startsAt: String
+    let endsAt: String
+    let walkthroughs: TrialUsageCounter
+    let photoEdits: TrialUsageCounter
+    let publishedListings: TrialUsageCounter
+    let uploadBudgetBytes: Int64
+    let uploadUsedBytes: Int64
+    var endDate: Date? { Self.date(endsAt) }
+    func checked(org: UUID) -> Self? {
+        guard orgId == org, let start = Self.date(startsAt), let end = endDate, end > start,
+              end.timeIntervalSince(start) <= 7 * 24 * 60 * 60,
+              walkthroughs.isValid, photoEdits.isValid, publishedListings.isValid,
+              walkthroughs.cap <= 1, publishedListings.cap <= 1,
+              uploadBudgetBytes > 0, uploadBudgetBytes <= 1_073_741_824,
+              uploadUsedBytes >= 0, uploadUsedBytes <= uploadBudgetBytes else { return nil }
+        return self
+    }
+    static func date(_ raw: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let value = formatter.date(from: raw) { return value }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: raw)
+    }
+    var statusLabel: String {
+        switch status {
+        case .active: return "Trial access"
+        case .exhausted: return "Trial allowance used"
+        case .expired: return "Trial access ended"
+        }
+    }
+    var uploadSpaceValue: String {
+        let remaining = uploadBudgetBytes - uploadUsedBytes
+        let remainingLabel = remaining == 0 ? "0 bytes" : ByteCountFormatter.string(fromByteCount: remaining, countStyle: .binary)
+        return "\(ByteCountFormatter.string(fromByteCount: uploadUsedBytes, countStyle: .binary)) used · \(remainingLabel) remaining of \(ByteCountFormatter.string(fromByteCount: uploadBudgetBytes, countStyle: .binary))"
+    }
+    var rows: [(title: String, value: String)] {
+        [("Hosted walkthroughs", walkthroughs.displayValue),
+         ("AI photo edit credits", photoEdits.displayValue),
+         ("Published listings", publishedListings.displayValue),
+         ("Trial upload space", uploadSpaceValue)]
+    }
+    static let explanation = "These trial allowances belong to the account that started the trial in this workspace. The same counters apply on iPhone and Studio. Each allowance is separate and does not reset. Your saved work stays available to view and download under your workspace's access and retention terms. Using your allowance does not change Apple's renewal date."
+}
+
+/// A numeric trial promise is displayed only from an enabled server offer.
+/// Disabled/absent configuration does not invent a funded trial from StoreKit
+/// eligibility, the selected paid plan, or a saved trial's recorded counters.
+struct TrialOfferSummary: Codable, Hashable, Sendable {
+    let enabled: Bool
+    let walkthroughs: Int?
+    let photoEdits: Int?
+    let publishedListings: Int?
+    let maxDays: Int?
+    let maxVideoSeconds: Int?
+    let uploadBudgetBytes: Int64?
+    func checked() -> Self? {
+        guard enabled else { return self }
+        guard let walkthroughs, let photoEdits, let publishedListings,
+              maxDays == 7, let maxVideoSeconds, let uploadBudgetBytes,
+              walkthroughs == 1, photoEdits > 0, photoEdits <= 5, publishedListings == 1,
+              maxVideoSeconds > 0, maxVideoSeconds <= 90,
+              uploadBudgetBytes > 0, uploadBudgetBytes <= 1_073_741_824 else { return nil }
+        return self
+    }
+    var benefitLines: [String] {
+        guard enabled, checked() != nil, let walkthroughs, let photoEdits,
+              let publishedListings, let maxVideoSeconds else { return [] }
+        return ["\(walkthroughs) hosted walkthrough\(walkthroughs == 1 ? "" : "s") from your captured or imported footage",
+                "\(photoEdits) AI photo edit credit\(photoEdits == 1 ? "" : "s")",
+                "\(publishedListings) distinct published listing\(publishedListings == 1 ? "" : "s")",
+                "Each walkthrough up to \(maxVideoSeconds) seconds"]
+    }
+}
+
 struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     let orgID: UUID
     let orgName: String?
@@ -7,6 +146,15 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     let canManageSubscription: Bool
     let source: String?
     var originalTransactionIDs: [String]? = nil
+    // Additive top-level /me fields, attached only after current-org validation.
+    var trialUsage: TrialUsageSummary? = nil
+    var trialOffer: TrialOfferSummary? = nil
+    var trialReservation: TrialPurchaseReservation? = nil
+    var servingActivation: ServingActivationSummary? = nil
+    var planName: String? = nil
+    var showsServicePending: Bool {
+        servingActivation?.shouldShowPending(plan: planName, recordedTrial: trialUsage) == true
+    }
     enum CodingKeys: String, CodingKey {
         case orgID = "org_id", orgName = "org_name", role
         case canManageSubscription = "can_manage_subscription", source
@@ -17,9 +165,124 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
         if role != "owner" && role != "admin" { return "Your workspace owner or admin manages this plan. You can still manage your own Apple subscriptions below." }
         return "This workspace’s plan is managed separately. Contact your workspace administrator before buying another subscription. Your existing Apple subscriptions can be managed below."
     }
+    enum TrialPresentationError: Error { case invalidResponse }
+    /// Decode the existing explicit billing keys separately from additive
+    /// snake-case trial fields, then bind both to the request's workspace.
+    static func fromMe(_ data: Data, selectedOrg: UUID?) throws -> Self {
+        struct BillingResponse: Decodable { let billing: SubscriptionBillingContext }
+        struct TrialResponse: Decodable {
+            struct Org: Decodable { let id: UUID }
+            let org: Org?
+            let trialUsage: TrialUsageSummary?
+            let trialOffer: TrialOfferSummary?
+            let trialReservation: TrialPurchaseReservation?
+            let servingActivation: ServingActivationSummary?
+            let plan: String?
+        }
+        var value = try JSONDecoder().decode(BillingResponse.self, from: data).billing
+        guard value.orgID == selectedOrg else { throw TrialPresentationError.invalidResponse }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let trial = try decoder.decode(TrialResponse.self, from: data)
+        if trial.trialUsage != nil || trial.trialOffer != nil || trial.trialReservation != nil || trial.servingActivation != nil {
+            guard trial.org?.id == value.orgID,
+                  trial.trialUsage.map({ $0.checked(org: value.orgID) != nil }) ?? true,
+                  trial.trialOffer.map({ $0.checked() != nil }) ?? true,
+                  trial.trialReservation.map({ $0.checked(actor: $0.actorId, org: value.orgID, product: $0.productId) != nil }) ?? true,
+                  trial.servingActivation.map({ $0.checked(org: value.orgID) != nil }) ?? true else { throw TrialPresentationError.invalidResponse }
+        }
+        value.trialUsage = trial.trialUsage
+        value.trialOffer = trial.trialOffer
+        value.trialReservation = trial.trialReservation
+        value.servingActivation = trial.servingActivation
+        value.planName = trial.plan
+        return value
+    }
 }
 
 private extension String { var nonEmpty: String? { isEmpty ? nil : self } }
+
+/// A fresh server offer is necessary before starting Apple's introductory
+/// billing schedule. This gate does not create or reserve sponsor funding.
+struct TrialPurchaseSnapshot: Equatable, Sendable {
+    let actor: String?
+    let revision: UInt64
+    let org: UUID?
+}
+
+/// Cash already committed by the server before Apple's purchase sheet. A hold
+/// has no client expiry or release operation: cancellation and an uncertain
+/// response cannot make it safe to mint another trial.
+struct TrialPurchaseReservation: Codable, Hashable, Sendable {
+    let reservationId: UUID
+    let actorId: UUID
+    let appAccountToken: UUID
+    let orgId: UUID
+    let productId: String
+    let heldAt: String
+    let trialOffer: TrialOfferSummary
+    func checked(actor: UUID, org: UUID, product: String) -> Self? {
+        guard actorId == actor, appAccountToken == actor, orgId == org, productId == product,
+              TrialUsageSummary.date(heldAt) != nil,
+              trialOffer.enabled, trialOffer.checked() != nil,
+              trialOffer.walkthroughs == 1, trialOffer.photoEdits == 5,
+              trialOffer.publishedListings == 1 else { return nil }
+        return self
+    }
+    static func decode(_ data: Data, actor: UUID, org: UUID, product: String) throws -> Self {
+        let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let value = try decoder.decode(Self.self, from: data)
+        guard value.checked(actor: actor, org: org, product: product) != nil else {
+            throw SubscriptionBillingContext.TrialPresentationError.invalidResponse
+        }
+        return value
+    }
+}
+
+/// Temporary release gate: existing subscription/workspace authority cannot
+/// authorize a new charge. A separately admitted held trial is the only live
+/// purchase path until per-SKU paid funding admission is implemented.
+enum PurchaseDispatchAdmission {
+    static let paidUnavailableMessage = "Paid subscriptions are temporarily unavailable. No Apple purchase has started. You can restore purchases or manage an existing subscription below."
+
+    static func allows(liveBackend: Bool, uiTesting: Bool, verifiedHeldTrial: Bool,
+                       captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
+        guard liveBackend && !uiTesting else { return true }
+        guard captured == current, current.actor.flatMap(UUID.init(uuidString:)) != nil,
+              current.org != nil else { return false }
+        return verifiedHeldTrial
+    }
+}
+
+enum TrialPurchaseAdmission {
+    static let unavailableMessage = "Free trials are not available in this workspace yet. No Apple billing has started. Your saved work remains available under your workspace's access and retention terms."
+    static let unsupportedRegionMessage = "Funded trials are currently supported only in the United States with a USD subscription. No Apple purchase has started. Any existing reservation remains retained. Restore and subscription management remain available."
+    static func supportsTrialRegion(country: String?, currency: String) -> Bool {
+        country == "USA" && currency == "USD"
+    }
+    static func allows(eligibleIntro: Bool?, billing: SubscriptionBillingContext?,
+                       captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
+        guard captured == current, current.actor != nil, let org = current.org,
+              let eligibleIntro else { return false }
+        guard let billing, billing.orgID == org, billing.canManageSubscription else { return false }
+        guard eligibleIntro else { return true }
+        guard let offer = billing.trialOffer, offer.enabled, offer.checked() != nil else { return false }
+        return true
+    }
+    static func allowsHeld(_ hold: TrialPurchaseReservation?, product: String,
+                           captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
+        guard captured == current, let actor = current.actor.flatMap(UUID.init(uuidString:)),
+              let org = current.org, let hold else { return false }
+        return hold.checked(actor: actor, org: org, product: product) != nil
+    }
+    static func matchesFreshHold(_ hold: TrialPurchaseReservation, billing: SubscriptionBillingContext?,
+                                 captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
+        guard allowsHeld(hold, product: hold.productId, captured: captured, current: current),
+              let billing, billing.orgID == current.org, billing.role == "owner", billing.canManageSubscription,
+              billing.trialReservation == hold, billing.trialOffer == hold.trialOffer else { return false }
+        return true
+    }
+}
 
 /// Non-secret intent written BEFORE Apple's purchase sheet. StoreKit can
 /// redeliver after a restart, so an active-workspace change must not retarget it.

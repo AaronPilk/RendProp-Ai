@@ -33,10 +33,10 @@ def block(source, needle):
 paths = [IOS / name for name in ['Team/TeamAPI.swift', 'Team/TeamView.swift',
     'Screens/SettingsView.swift', 'Networking/APIClient.swift',
     'Networking/LiveAPIClient.swift', 'Models/Money.swift', 'RendpropApp.swift', 'Screens/HomeListingsView.swift',
-    'Networking/WorkspaceSync.swift']]
+    'Networking/WorkspaceSync.swift', 'Purchases/SubscriptionBillingContext.swift']]
 paths += [Path(__file__).resolve(), ROOT / 'apps/ios/tests/WorkspaceAllowanceDisplayTests.swift']
 hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-team, teamview, settings, api, live, money, app, homes, workspace, runner, test = [path.read_text() for path in paths]
+team, teamview, settings, api, live, money, app, homes, workspace, billing, runner, test = [path.read_text() for path in paths]
 settingsRows = block(settings, 'private func usageRows(')
 calls = re.findall(r'^\s*(usageRow\([^\n]+\))$', settingsRows, re.M)
 assert len(calls) == 5 and all('plan: e.plan, source: e.planSource' in call for call in calls)
@@ -82,6 +82,7 @@ enum APIError: Error { case decoding }
 policy = block(team, 'enum WorkspaceAllowanceDisplay {')
 teamSummary = block(team, 'struct TeamSummary:')
 common = interfaces + '\n' + money + '\n' + block(workspace, 'enum CloudSyncError:')
+common += '\n' + billing
 common += '\n' + policy + '\n' + teamSummary
 common += '\n' + block(team, 'struct TeamJoined:')
 common += '\nenum TeamAPI {\n' + block(team, 'struct Failure:') + '\n' + block(team, 'static func parseTimestamp(')
