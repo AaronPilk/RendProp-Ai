@@ -20,14 +20,15 @@ another editable version; `--build` selects a build, not an App Store version.
 Its broad apply bridge can change prices, territories, subscription screenshots
 and review state. Do not run it for maintenance of the shipped app.
 
-Current internal TestFlight **1.0.4 (45) is AVAILABLE**, verified by Apple at
-**2026-10-06 19:23:12 UTC** from `5eeb783`. The
-[build-45 receipt](../../docs/releases/TESTFLIGHT-45-20261006.json) binds its
-signed package and twelve CI jobs. The
-[actual backend/Studio rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
-records the subsequent terminal-conflict and photo-permission repairs. The
-limited-trial candidate needs its own later build and delivery evidence. No
-public App Store submission was performed for these updates.
+Current internal TestFlight **1.0.4 (46) is AVAILABLE**, verified by Apple at
+**2026-10-07 00:47:51 UTC** (6 October locally) from `7f5879e`. The
+[build-46 record](../../docs/releases/TESTFLIGHT-46-20261006.json) binds the actual
+signed distribution package, one upload and twelve CI jobs with original/rerun
+provenance. The [current rollout](../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+records the dormant trial backend and verified Studio files. Trial config/funding
+remain disabled; new paid checkout in build 46 is closed. Build 45 and the
+[earlier coordinated rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+remain historical. No public App Store/App Review submission was performed.
 
 Previous internal TestFlight **1.0.4 (44) was AVAILABLE** to the existing Rendprop team,
 verified **5 October 2026 at 01:32:22 UTC** (4 October locally). The

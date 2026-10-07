@@ -1,8 +1,12 @@
 # Limited subscription trial — 6 October 2026
 
-This is an implementation candidate, not an activated offer or a deployment
-receipt. The owner approved a trial lasting seven days or until its included
-usage is consumed. The proposed package demonstrates the main listing workflow:
+The owner approved a trial lasting seven days or until its included usage is
+consumed; funding and activation remain unapproved. The implementation is in
+available internal build 46, the dormant backend deployment and verified Studio
+files. See [the delivered checkpoint](../handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md).
+Configuration is OFF, no sponsorship/pools/schedules are seeded, and new trial
+offers are unavailable. The actions below describe dormant policy, not a funded
+signup promise:
 
 | Included action | Lifetime trial allowance |
 | --- | --- |
@@ -70,20 +74,21 @@ The additive purchase-reservation implementation now commits exact buyer/workspa
 Subscription synchronization must also report a refused financial activation,
 while preserving Apple's signed subscription history.
 
-The native candidate blocks every new live purchase without a freshly validated
+Native build 46 blocks every new live purchase without a freshly validated
 held seven-day trial reservation at the actual StoreKit purchase call. This
 includes introductory-offer ineligibility, products without a free offer and
 direct calls that bypass the paywall. Ordinary paid checkout and new paid plan
 changes remain unavailable until a separate admission funds the exact new SKU
 before charging. A current paid receipt, manual plan or private testing grant
 cannot substitute for that admission. Restore, subscription management and
-processing existing Apple transactions remain available. This candidate does
-not change the already available build 45 or App Store product availability.
+processing existing Apple transactions remain available. Historical build 45
+and public build 42 do not include this new-purchase guard; no App Store product
+availability was changed by this internal delivery.
 
-The candidate duration check probes the retained private MP4 object and records
-an attestation bound to that exact object before trial publication. A client
-duration cannot authorize a longer video. Its maximum is 90 seconds; reviewed
-deployment and real retained-object acceptance are required before activation.
+The deployed dormant duration check probes the retained private MP4 object and
+records an attestation bound to that exact object before trial publication. A client
+duration cannot authorize a longer video. Its maximum is 90 seconds; real
+retained-object acceptance is required before activation.
 
 ## Verification
 

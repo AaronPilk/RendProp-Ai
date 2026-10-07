@@ -1,5 +1,12 @@
 # Dormant bounded subscription trial — 2026-10-06
 
+**Delivered dormant checkpoint:** three trial migrations and me v50,
+apple-subscriptions v25 and renders v44 are applied and source-verified. Native
+consumers are in internal TestFlight 1.0.4 (46), available at 00:47:51 UTC on
+7 October 2026 (6 October locally). Studio source and served files are verified.
+See [the actual rollout](TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md).
+Funding, offer activation and real phone/StoreKit acceptance remain separate.
+
 This change implements product limits without activating or funding an offer. The migration inserts `enabled=false`; it seeds no Apple serving schedules, sponsor pools, owner dollars, or customer credits. `/me` returns `trial_offer:null` until the exact owner has acquired a funded pre-purchase hold; no loose availability is advertised. The proposed owner spending limits of $5 per trial and $25 shared remain unapproved.
 
 The immutable trial is registered in the same transaction as accepted, funded Production Apple `FREE_TRIAL` funding. It binds the confirmed account identity, original Apple chain, workspace, and funding receipt. It ends at the earlier verified receipt expiry or seven days. Deletion, another workspace/device, a month boundary, another original chain, or receipt restore cannot replenish it. Minimal account-related actor/workspace UUIDs, Apple chain/funding identifiers, a one-way confirmed-identity digest and admission tombstones survive deletion; raw email, input media, authentication material and signed capabilities are not stored in those tables.
@@ -16,9 +23,9 @@ Owned admission metadata is included in account export without live listing/asse
 
 ## Activation gates
 
-- The additive [purchase reservation](TRIAL-PURCHASE-RESERVATIONS-20261006.md) implements atomic pre-StoreKit cash commitment and exact buyer conversion. Its configuration/pools remain disabled and unseeded; real Apple acceptance and reviewed deployment remain required.
+- The additive [purchase reservation](TRIAL-PURCHASE-RESERVATIONS-20261006.md) implements atomic pre-StoreKit cash commitment and exact buyer conversion. Its dormant deployment is verified; configuration/pools remain disabled and unseeded, and real Apple acceptance remains required.
 - Owner funding, sponsor schedules and all seven non-AI reserve categories must be approved and verified. Five admissions do not certify the cash needed for five successful edits, retries, ambiguous invoices, storage, delivery, compute, email, support, retention and uncertainty.
-- The separately reviewed213000 duration overlay verifies the exact retained MP4 object before trial publication. Its probe/attestation and the funded purchase path must be deployed together before any offer is enabled.
+- The deployed213000 duration overlay verifies the exact retained MP4 object before trial publication. Its probe/attestation and funded purchase path require real retained-object and StoreKit acceptance before any offer is enabled.
 - Existing marketed paid feature bundles remain a separate funding/pricing gate. This trial source does not change prices, Apple SKUs, or claim those bundles are financially certified.
 
 ## Verification and ordering
@@ -27,4 +34,4 @@ Use `bounded_subscription_trial_pg.py` for 61 fresh/replay PostgreSQL assertions
 
 The required PostgreSQL CI jobs run both the SQL fixture and the disposable concurrency runner. Deno tests exercise actual `/me` and signed entitlement-sync methods, strict wire/activation parsing, and export of retained deleted-listing metadata. No paid providers, hosted databases, notification sends, live grants, or account creation are part of these checks.
 
-Apply the additive trial migration after the current funding/CAS migrations and before deploying handlers that call its RPCs. If an earlier funding migration is deliberately replayed, reapply this newest overlay before current-source verification. Keep offer/config/funding disabled until the activation gates are independently satisfied. Native and Studio source consumers require their own build, review and deployment; the earlier frozen release source is unchanged.
+Apply the additive trial migration after the current funding/CAS migrations and before deploying handlers that call its RPCs. If an earlier funding migration is deliberately replayed, reapply this newest overlay before current-source verification. Keep offer/config/funding disabled until the activation gates are independently satisfied. Native and Studio consumers are delivered as recorded in the current rollout; earlier frozen release receipts remain unchanged.

@@ -1,5 +1,14 @@
 # Launch candidate — 6 October 2026
 
+**Latest delivered checkpoint:** internal 1.0.4 (46) is available, three dormant
+trial migrations and three dependent functions are applied/source-verified, and
+Studio's new source and 31 served files are verified. See
+[the build-46 rollout](TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md) and
+[physical acceptance checklist](PHONE-ACCEPTANCE-TESTFLIGHT46-20261006.md).
+Trial funding/activation, paid pricing, protected-media cutover and real phone
+acceptance remain open. No public App Store/App Review submission was performed.
+The older dated checkpoints below remain historical.
+
 **Later delivered checkpoint:** internal 1.0.4 (45) is available. The core stack,
 additive terminal conflict repair, Studio assets and final photo-permission
 contraction are now delivered as recorded in the
