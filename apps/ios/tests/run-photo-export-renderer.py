@@ -76,6 +76,61 @@ def command(name, argv, timeout, check=True):
         assert result.returncode == 0, f'{name} failed: {log}'
     return result
 
+def discover_simulator(run_command, requested_uuid, diagnostics, clock=time.monotonic):
+    """Observe cold CoreSimulator once more only after a timed-out read."""
+    started = clock()
+    deadline = started + 120
+    argv = ['xcrun', 'simctl', 'list', 'devices', 'available', '-j']
+    diagnostics.update(total_deadline_seconds=120, initial_deadline_seconds=30,
+                       reconciliation_cap_seconds=90, initial_timed_out=False,
+                       attempts=[], passed=False)
+    try:
+        diagnostics['attempts'].append('simulator-discovery')
+        try:
+            result = run_command('simulator-discovery', argv, 30)
+        except subprocess.TimeoutExpired:
+            diagnostics['initial_timed_out'] = True
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise TimeoutError('Simulator discovery exhausted its overall deadline before reconciliation')
+            diagnostics['attempts'].append('simulator-discovery-reconciliation')
+            result = run_command('simulator-discovery-reconciliation', argv, min(90, remaining))
+        if clock() >= deadline:
+            raise TimeoutError('Simulator discovery completed after its overall deadline')
+        if type(result.returncode) is not int or result.returncode != 0:
+            raise RuntimeError('Simulator discovery returned a nonzero exit code')
+        inventory = json.loads(result.stdout)
+        if type(inventory) is not dict or type(inventory.get('devices')) is not dict:
+            raise ValueError('Simulator discovery requires a devices object')
+        ios = []
+        available_ids = set()
+        for runtime, rows in inventory['devices'].items():
+            if type(runtime) is not str or type(rows) is not list:
+                raise ValueError('Simulator discovery returned an invalid runtime inventory')
+            for device in rows:
+                if (type(device) is not dict or type(device.get('isAvailable')) is not bool
+                        or any(type(device.get(field)) is not str or not device[field]
+                               for field in ['name', 'udid', 'state'])):
+                    raise ValueError('Simulator discovery returned an invalid device inventory')
+                if device['isAvailable']:
+                    if device['udid'] in available_ids:
+                        raise ValueError('Simulator discovery returned duplicate available device IDs')
+                    available_ids.add(device['udid'])
+                    if 'iOS' in runtime and 'iPhone' in device['name']:
+                        ios.append(device)
+        if not ios:
+            raise RuntimeError('No available iPhone simulator')
+        device = (next((d for d in ios if d['udid'] == requested_uuid), None)
+                  if requested_uuid else next((d for d in ios if d['state'] == 'Booted'), ios[0]))
+        if device is None:
+            raise RuntimeError('Requested simulator is not available')
+        if clock() >= deadline:
+            raise TimeoutError('Simulator discovery validation completed after its overall deadline')
+        diagnostics['passed'] = True
+        return device
+    finally:
+        diagnostics['elapsed_seconds'] = round(clock() - started, 3)
+
 print(f'Evidence: {out}', flush=True)
 try:
     for name, (text, reason) in variants.items():
@@ -87,11 +142,8 @@ try:
         'swift': command('swift-version', ['xcrun', 'swiftc', '--version'], 30).stdout.strip(),
         'xcode': command('xcode-version', ['xcodebuild', '-version'], 30).stdout.strip(),
     }
-    devices = json.loads(command('simulator-discovery', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 30).stdout)['devices']
-    ios = [d for runtime, rows in devices.items() if 'iOS' in runtime for d in rows if d.get('isAvailable') and 'iPhone' in d['name']]
-    assert ios, 'No available iPhone simulator'
-    device = next((d for d in ios if d['udid'] == args.simulator), None) if args.simulator else next((d for d in ios if d['state'] == 'Booted'), ios[0])
-    assert device, 'Requested simulator is not available'
+    receipt['simulator_discovery'] = {}
+    device = discover_simulator(command, args.simulator, receipt['simulator_discovery'])
     receipt['simulator'] = {'uuid': device['udid'], 'name': device['name'], 'sdk': sdk, 'initial_state': device['state']}
     if device['state'] != 'Booted':
         try:

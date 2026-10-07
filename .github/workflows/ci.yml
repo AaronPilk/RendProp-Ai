@@ -147,7 +147,9 @@ jobs:
       - name: Photo versions, retained originals and destination export geometry
         run: bash apps/ios/tests/run-photo-delivery.sh
       - name: Actual UIKit JPEG exports, level crops and original-byte preservation
-        run: python3 apps/ios/tests/run-photo-export-renderer.py
+        run: |
+          python3 tools/audit/test_photo_export_simulator_discovery.py
+          python3 apps/ios/tests/run-photo-export-renderer.py
       - name: Actual gallery sync races, warning recovery and provenance fences
         run: |
           python3 tools/audit/gallery-sync-20261002/run.py
