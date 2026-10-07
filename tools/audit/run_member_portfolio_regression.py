@@ -37,10 +37,14 @@ try:
   source=EXPORT.read_text()
   columns=re.findall(r'(?:own|child)\("([a-z_]+)", "([a-z0-9_,]+)"',source)
   columns+=re.findall(r'name: "([a-z_]+)", fields: "([a-z0-9_,]+)"',source)
-  assert len(columns)==30 and {'profiles','memberships','orgs','listings','capture_chapters','studio_documents','apple_subscriptions','serving_operation_results','subscription_trial_grants','subscription_trial_actions','subscription_trial_purchase_reservations'}.issubset({name for name,_ in columns}),('Unknown export query inventory',columns)
+  assert len(columns)==31 and {'profiles','memberships','orgs','listings','capture_chapters','studio_documents','apple_subscriptions','serving_operation_results','serving_photo_admissions','subscription_trial_grants','subscription_trial_actions','subscription_trial_purchase_reservations'}.issubset({name for name,_ in columns}),('Unknown export query inventory',columns)
+  # Photo admissions expose only this actor's safe accounting metadata, with
+  # stable pagination keys. The immutable raw input hash remains excluded.
+  admissions=re.findall(r'own\("serving_photo_admissions", "([a-z0-9_,]+)", "([a-z_]+)", (\[[^\]]+\])\)',source)
+  assert admissions==[('funding_id,slice_index,org_id,actor_id,request_key,task,created_at','actor_id','["funding_id", "slice_index", "actor_id", "request_key"]')],('Unknown photo admission export contract',admissions)
   statements='set role service_role;'+''.join(f'select {fields} from public.{name} limit 0;' for name,fields in columns)
   query('account-export-schema-'+phase,statements)
-  receipt.setdefault('accountExportSchema',[]).append({'phase':phase,'actualSourceSelects':len(columns),'passed':True})
+  receipt.setdefault('accountExportSchema',[]).append({'phase':phase,'actualSourceSelects':len(columns),'photoAdmissionsActorScoped':True,'rawInputHashExcluded':True,'passed':True})
   retention=run('hosting-retention-'+phase,[*PSQL,'-At','-f',SNAP/RETENTION.name]);assert'PASS hosting retention SQL: 19 assertions'in retention
   receipt.setdefault('hostingRetention',[]).append({'phase':phase,'assertions':19,'passed':True})
  body=query('selection-definition',"select pg_get_functiondef('save_member_portfolio(uuid,uuid,bigint,uuid[])'::regprocedure);")
@@ -71,9 +75,10 @@ try:
    p1.stdin.write('begin;set local role service_role;'+firstSQL+'\n\\echo PORTFOLIO_LOCK_HELD\n');p1.stdin.flush();deadline=time.monotonic()+5
    while 'PORTFOLIO_LOCK_HELD'not in first.read_text():assert p1.poll()is None and time.monotonic()<deadline;time.sleep(.03)
    path=OUT/(name+'-second.sql');path.write_text('set role service_role;'+secondSQL)
-   p2=subprocess.Popen([*PSQL,'-f',path],env={**ENV,'PGAPPNAME':'portfolio-second'},stdout=f2,stderr=subprocess.STDOUT,text=True);deadline=time.monotonic()+5;blocked=False
+   p2=subprocess.Popen([*PSQL,'-f',path],env={**ENV,'PGAPPNAME':'portfolio-second'},stdout=f2,stderr=subprocess.STDOUT,text=True);deadline=time.monotonic()+5;blocked=False;poll=0
    while time.monotonic()<deadline:
-    if query(name+'-lock',"select count(*)from pg_stat_activity where application_name='portfolio-second'and wait_event_type='Lock';").strip()=='1':blocked=True;break
+    poll+=1
+    if query(f'{name}-lock-{poll:03d}',"select count(*)from pg_stat_activity where application_name='portfolio-second'and wait_event_type='Lock';").strip()=='1':blocked=True;break
     assert p2.poll()is None;time.sleep(.03)
    assert blocked,'actual portfolio writer did not wait for profile boundary'
    p1.stdin.write('commit;\n\\q\n');p1.stdin.flush();p1.wait(timeout=10);p2.wait(timeout=10);assert p1.returncode==0 and p2.returncode==expected

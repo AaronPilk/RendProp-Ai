@@ -10,11 +10,11 @@ dependencies=[source,tests,source.with_name('index.ts'),root/'services/supabase/
 dependencies+=list((root/'services/supabase/migrations').glob('*.sql'))
 hashes=lambda:{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in dependencies}
 start=hashes();code=source.read_text();test=tests.read_text()
-cases=[('actual',None,None),('actor-predicate','if (spec.actorColumn) scopes.push({ column: spec.actorColumn, values: [actor] });',''),('final-authority','assert(signature(first) === signature(final),','assert(true,'),('redaction','.filter(([key]) => !secretKey.test(key))',''),('referenced-listing','await checkReferences();','')]
+cases=[('actual',None,None),('actor-predicate','if (spec.actorColumn) scopes.push({ column: spec.actorColumn, values: [actor] });',''),('final-authority','assert(signature(first) === signature(final),','assert(true,'),('redaction','.filter(([key]) => !secretKey.test(key))',''),('referenced-listing','await checkReferences();',''),('photo-admission-projection','own("serving_photo_admissions", "funding_id,slice_index,org_id,actor_id,request_key,task,created_at"','own("serving_photo_admissions", "funding_id,slice_index,org_id,actor_id,request_key,task,created_at,input_sha256"')]
 runs=[]
 for name,old,new in cases:
     modified=code if old is None else code.replace(old,new)
-    assert old is None or modified!=code
+    assert old is None or (code.count(old)==1 and modified!=code)
     folder=out/name;folder.mkdir(exist_ok=True)
     # Copy only owned sources, resolving dependencies back to their real paths.
     def imports(text,base):
@@ -31,7 +31,7 @@ for name,old,new in cases:
     result=subprocess.run(['deno','test','--allow-read',str(copied_test)],capture_output=True,text=True)
     (folder/'run.log').write_text(result.stdout+result.stderr)
     assert (name=='actual')==(result.returncode==0),(name,result.stdout[-2500:]+result.stderr[-2000:])
-    assert 'running 12 tests' in result.stdout
+    assert 'running 13 tests' in result.stdout
     runs.append({'name':name,'compiled':True,'exit':result.returncode,'expectedFailure':name!='actual'})
 end=hashes();receipt={'sourceBoundAtEnd':start==end,'sourceSHA256':start,'runs':runs,'scope':'Actual handler queries and payload assembly with only Auth/DB transport closed; dispatch extracted from actual me entrypoint. No live customer export.'}
 (out/'receipt.json').write_text(json.dumps(receipt,indent=2));assert start==end

@@ -20,9 +20,11 @@ def main():
     out=Path(tempfile.mkdtemp(prefix='rendprop-spatial-edge-',dir='/tmp'))
     functions=root/'services/supabase/functions'
     copy=out/'functions';shutil.copytree(functions/'spatial',copy/'spatial');(copy/'_shared').mkdir()
-    for name in ('http.ts','cors.ts','supabase.ts'):shutil.copy2(functions/'_shared'/name,copy/'_shared'/name)
+    shared=('http.ts','cors.ts','supabase.ts','api-key-config.ts')
+    for name in shared:shutil.copy2(functions/'_shared'/name,copy/'_shared'/name)
     deno=shutil.which('deno');assert deno
-    receipt={'accepted':False,'commands':[],'sourceSha256':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in (functions/'spatial').glob('*.ts')}}
+    sources=[*(functions/'spatial').glob('*.ts'),*[functions/'_shared'/name for name in shared],Path(__file__).resolve()]
+    receipt={'accepted':False,'commands':[],'sourceSha256':{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}}
     def run(name,path,expected):
         command=[deno,'test','--cached-only','--allow-env','--allow-read',
                  '--deny-net','--deny-run','--deny-write',str(path)]
@@ -46,6 +48,7 @@ def main():
         file.write_text(source.replace(needle,'true /* deliberate copied-source negative control */'))
         rejected=run('reject-output-hash-mutant',copy/'spatial',1)
         assert 'actual output bytes hash checked before physical storage' in rejected and 'FAILED' in rejected
+        assert all(hashlib.sha256((root/name).read_bytes()).hexdigest()==h for name,h in receipt['sourceSha256'].items()),'Source changed during proof'
         receipt['accepted']=True
     finally:
         (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')

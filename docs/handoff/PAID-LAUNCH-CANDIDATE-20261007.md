@@ -79,3 +79,19 @@ so it reaches the expected runtime assertion. Actual local verification passes
 28 SQL assertions, 34 handler cases, both overlapping selection races and both
 removed-guard controls. The inventory/parser refusal checks also pass. Fresh
 complete hosted CI is still required; this is not a deployment or launch result.
+
+The `72e64d5` CI pass exposed later stale account-export inventories. Exact
+inventory checks now cover 31 schema selects, 13 export cases and 54 deletion
+handler/logic cases. Export privacy controls include the retained photo-admission
+projection; actual portfolio writer races retain unique observation logs. Spatial
+and Studio fixture controls include their unchanged API-key/storage dependencies
+so failures reach behavioral assertions. The Studio storage-denial case sends
+zero media bytes; its removed-guard control compiles and fails that exact case.
+Local verification of the remaining PostgreSQL job sequence passes after these
+runner/fixture repairs. Production and native inputs are unchanged from `72e64d5`.
+
+Six reviewed database migrations were applied on October 7. Independent live
+catalogue readback passed 180 checks: exact function bodies and permissions,
+eight triggers, five empty protected tables and the six exact migration records.
+Funding remains zero and trial activation remains off. Backend/web deployment,
+complete final-source CI and signed TestFlight 49 availability remain pending.
