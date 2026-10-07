@@ -205,8 +205,10 @@ for (const feature of features) {
         f.state.monthlyUnavailable = true;
         const error = await assertRejects(() => f.run(), HttpError);
         assertEquals(error.status, 503);
-        assertEquals(f.rows.get(keyFor(feature.burst))?.count, 1);
-        assertEquals(f.calls.filter((call) => call.rpc.startsWith("refund")).length, 0);
+        const confirmedBurstReturned = feature.endpoint === "ai-chapters";
+        assertEquals(f.rows.get(keyFor(feature.burst))?.count, confirmedBurstReturned ? 0 : 1);
+        assertEquals(f.calls.filter((call) => call.rpc.startsWith("refund")), confirmedBurstReturned ? [{ rpc: "refund_rate_receipt", args: { p_key: keyFor(feature.burst), p_window_seconds: 300, p_window_start: window1, p_cost: 1 } }] : []);
+        assertEquals(f.rows.get(keyFor(feature.monthly!)), undefined, "An unknown monthly response never authorizes a monthly refund");
       } finally { f.close(); }
     });
   }

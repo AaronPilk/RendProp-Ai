@@ -282,7 +282,7 @@ async function handleTour(
     unbranded
       ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
       : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
-  const upstreamError = (status: 502 | 503 = 502) =>
+  const upstreamError = (status: 429 | 502 | 503 = 502) =>
     unbranded
       ? htmlResponse(unbrandedFallback("error"), status, { ...base, "Cache-Control": "no-store" }, { unbranded })
       : htmlResponse(errorPage(), status, { "Cache-Control": "no-store" });
@@ -393,7 +393,7 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env)
   if (upstream.kind === "not-found") {
     return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
   }
-  const upstreamError = (status: 502 | 503) => htmlResponse(errorPage("page"), status, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
+  const upstreamError = (status: 429 | 502 | 503) => htmlResponse(errorPage("page"), status, { "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" });
   if (upstream.kind === "error") return upstreamError(upstream.status);
   if (!isPortfolio(upstream.value)) return upstreamError(502);
   try {

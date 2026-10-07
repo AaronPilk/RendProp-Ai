@@ -89,6 +89,7 @@ enum Config { static let useLiveBackend = true }
     static let shared = AuthStore()
     var userID: String? = "11111111-1111-4111-8111-111111111111"
     var syncSessionRevision: UInt64 = 1
+    var isIdentified: Bool = true
 }
 __UNIT_ADDRESS__
 __FORM__

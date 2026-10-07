@@ -14,7 +14,7 @@ base=os.environ.get('RENDPROP_MEDIA_AUDIT_ROOT')
 if base: pathlib.Path(base).mkdir(parents=True,exist_ok=True)
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-bounded-media-',dir=base));os.chmod(OUT,0o700);os.umask(0o077)
 DATA=OUT/'data';SOCK=pathlib.Path(tempfile.mkdtemp(prefix='media-socket-',dir='/tmp'));os.chmod(SOCK,0o700);INPUT=OUT/'inputs';INPUT.mkdir()
-paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/bounded_media_delivery.sql',SQL/'tests/modern_service_transport.sql',pathlib.Path(__file__).resolve()]
+paths=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',SQL/'tests/bounded_media_delivery.sql',SQL/'tests/modern_service_transport.sql',SQL/'tests/subscription_trial_video_duration.sql',pathlib.Path(__file__).resolve()]
 hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in paths}
 for p in paths:
  q=INPUT/p.relative_to(ROOT);q.parent.mkdir(parents=True,exist_ok=True);q.write_bytes(p.read_bytes())
@@ -37,7 +37,13 @@ try:
   query('migration-'+p.stem,p.read_text())
   if p.name=='20261007135843_bounded_media_delivery.sql':
    receipt['coreFreshAssertions']=positive('core-fresh');query('core-boundary-replay',p.read_text());receipt['coreReplayAssertions']=positive('core-replay')
+   core=p.read_text();begin=core.index('create or replace function public.provision_media_delivery_budget(');end=core.index('end$$;',begin)+len('end$$;');body=core[begin:end]
+   assert body.count('storage_liability>p_storage')==1
+   denied=query('control-core-storage-floor','begin;'+body.replace('storage_liability>p_storage','false')+'\n'+(INPUT/'services/supabase/tests/bounded_media_delivery.sql').read_text(),3)
+   assert 'MEDIA DENIAL: read-only funding cannot underprice earlier physical custody' in denied
+   receipt['coreStorageFloorRemovalControl']={'compiledActualFunction':True,'oracleRejected':True,'exit':3};receipt['coreRestoredAssertions']=positive('core-floor-restored')
  receipt['freshAssertions']=positive('final-pooled-fresh');query('pooled-replay',(INPUT/'services/supabase/migrations/20261007145000_pooled_media_startup.sql').read_text());receipt['replayAssertions']=positive('final-pooled-replay')
+ duration=query('final-trial-video-duration',(INPUT/'services/supabase/tests/subscription_trial_video_duration.sql').read_text());assert 'TRIAL_VIDEO_CHECKS 31' in duration;receipt['trialVideoDurationAssertions']=31
  modern=query('final-modern-transport',(INPUT/'services/supabase/tests/modern_service_transport.sql').read_text());assert 'modern service transport: 7 checks passed' in modern;receipt['modernTransportAssertions']=7
  # Compile and exercise actual source guard-removal controls in transactions.
  source=(INPUT/'services/supabase/migrations/20261007135843_bounded_media_delivery.sql').read_text()
@@ -47,6 +53,8 @@ try:
  ('storage-scope',function('media_storage_reserve'),"if not ((p_bucket='uploads'", "if false and not ((p_bucket='uploads'"),
  ('metadata-liability',function('media_storage_before_write'),"if tg_op='INSERT'then perform public.media_storage_reserve(new.org_id,new.bucket,new.storage_key,new.bytes);end if;",'null;'),
  ('project-liability',function('media_storage_before_write'),"perform public.media_storage_reserve(new.org_id,'uploads','studio-project/'||new.org_id||'/'||new.actor_id||'/'||new.id||'/'||i,least(8388608,new.bytes-i*8388608));",'null;')]
+ pooled=(INPUT/'services/supabase/migrations/20261007145000_pooled_media_startup.sql').read_text();begin=pooled.index('create or replace function public.provision_media_delivery_budget(');end=pooled.index('end$$;',begin)+len('end$$;')
+ controls.append(('pooled-storage-floor',pooled[begin:end],'storage_liability>p_storage','false'))
  receipt['guardControls']=[]
  for name,body,old,new in controls:
   assert body.count(old)==1,(name,'exact guard missing')

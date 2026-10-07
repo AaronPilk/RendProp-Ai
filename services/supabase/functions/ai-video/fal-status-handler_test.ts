@@ -183,7 +183,7 @@ Deno.test("actual routed signed-result persistence failure retries the same comp
     const R2_BUCKET_RENDERS="rendprop-renders";
     const headObject=async()=>({exists:stored,bytes:stored?10:null});
     const persistResult=async(_provider:any,_state:any,key:any,beforeWrite:any)=>{counts.persists++;await beforeWrite({key,bytes:10});if(counts.persists===1)throw Error(${JSON.stringify(privateMarker)});stored=true;return {key,bytes:10};};
-    const routedR2Key=()=>"synthetic-destination",persistedUrl=()=>"https://public.invalid/retained.mp4",uncheckedDriftBlock=()=>({publishable:false});
+    const routedR2Key=()=>"synthetic-destination",privateMediaUrl=(scope:any,seconds:any)=>{if(scope.actor!=="synthetic-actor"||scope.org!=="synthetic-org"||scope.listing!==null||scope.bucket!=="renders"||scope.key!==row.storage_key||seconds!==600)throw Error("Exact saved video signing scope required");return "https://public.invalid/retained.mp4";},uncheckedDriftBlock=()=>({publishable:false});
     async ${functionBody(source,"routedStatus")}
     export async function run(){try{return await routedStatus("synthetic-org",{p:"fal",m:"synthetic-model",i:"same-job",u:"synthetic-url",t:"now",usr:"synthetic-actor"});}catch(e){return respondError(e);}}
   `));

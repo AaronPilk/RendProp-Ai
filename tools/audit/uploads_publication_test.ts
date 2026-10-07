@@ -512,7 +512,7 @@ Deno.test("ticket budget still charges exactly once and completion adds no charg
     const ticket = await response.json();
     assertEquals(f.charges.length, 1); // one atomic reservation, no separate/refundable counters
     assertEquals((f.charges[0].p_assets as Row[])[0].bytes, 4);
-    // Route lookup stays by the fixture id, but its row uses the minted id for CAS.
+    // Follow the returned immutable asset identity for completion and read admission.
     f.objects.set(`_staging/${ticket.storage_key}`, object());
     const result = await f.request("complete");
     assertEquals(result.status, 200, await result.clone().text());

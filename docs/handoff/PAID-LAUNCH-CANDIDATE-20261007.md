@@ -60,3 +60,13 @@ Spatial reconstruction, LiDAR/camera quality, two-device account acceptance,
 actual StoreKit transactions, customer inbox delivery and provider output
 quality require their own real-device/account evidence. They cannot be certified
 by synthetic fixtures or simulator checks.
+
+The first hosted CI run for commit `a326780` failed five jobs. Its failures are
+retained. The follow-up repairs keep the production admission and authentication
+guards: they update precise fixture RPCs, exercise adoption replay at its real
+migration boundary, and permit the documented 429 response in the tour host's
+TypeScript response helpers. Media budget provisioning now also refuses a storage
+cap below physically retained media. Actual local PostgreSQL tests, overlapping
+transactions and removed-guard controls pass. The complete iOS Release simulator
+SDK compile passes after preserving main-actor isolation on the pre-dispatch
+callback. These local results require fresh clean-source hosted CI before rollout.

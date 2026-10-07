@@ -28,13 +28,19 @@ struct Chapter {let asset_id:UUID;let sort:Int;let label:String;let t_ms:Int}
 @MainActor enum CloudVoiceStore {static var saves=0;static func saveVoice(_ v:CloudCreative.Result,file:URL,ext:String,listingID:UUID)throws{saves+=1}}
 @MainActor enum CloudFileDownload {enum Kind {case photo,video,audio};struct File {let url:URL;let ext:String};static var requests:[URL]=[];static var onFetch:(()async->Void)?
  static func fetch(_ url:URL,kind:Kind)async throws->File{requests.append(url);await onFetch?();let p=FileStore.importsDir.appendingPathComponent(UUID().uuidString+".tmp");try Data("synthetic".utf8).write(to:p);return File(url:p,ext:kind == .audio ? "mp3":"jpg")}}
-@MainActor final class LiveFixture {var responses:[Data]=[];var requests:[URLRequest]=[];var beforeDispatch:(()->Void)?;var afterResponse:(()->Void)?
+final class LiveFixture {var responses:[Data]=[];var requests:[URLRequest]=[];var beforeDispatch:(()->Void)?;var afterResponse:(()->Void)?
  func url(_ p:[String],query:[URLQueryItem]=[])->URL{var c=URLComponents(string:"https://synthetic.invalid/"+p.joined(separator:"/"))!;c.queryItems=query.isEmpty ? nil:query;return c.url!}
  func makeRequest(url:URL)->URLRequest{URLRequest(url:url)}
- func execute(_ req:URLRequest,beforeSend:(()throws->Void)?=nil)async throws->Data{beforeDispatch?();try beforeSend?();requests.append(req);let d=responses.removeFirst();afterResponse?();return d}
+ __EXECUTE_ACTOR__ func execute(_ req:URLRequest,beforeSend:__BEFORE_SEND_TYPE__=nil)async throws->Data{beforeDispatch?();try beforeSend?();requests.append(req);let d=responses.removeFirst();afterResponse?();return d}
  func decodeExact<T:Decodable>(_ data:Data)throws->T{try JSONDecoder().decode(T.self,from:data)}
 '''
-base=interfaces
+# Keep actual nonisolated async callers and the production transport callback's
+# actor contract. A globally isolated fixture previously hid an SDK compile
+# error when these request fences were inferred as nonisolated closures.
+execute_declaration=api[api.index('    @MainActor private func execute('):].split('{',1)[0]
+execute_actor=execute_declaration.split(' private func execute(',1)[0].strip()
+before_send_type=execute_declaration.split('beforeSend: ',1)[1].split(' = nil',1)[0]
+base=interfaces.replace('__EXECUTE_ACTOR__',execute_actor).replace('__BEFORE_SEND_TYPE__',before_send_type)
 base+=block(api,'    func cloudMedia(listingID:')+'\n'+block(api,'    func cloudCreative(listingID:')+'\n}\n'
 base+=block(wire,'struct CloudMediaAccessContext:')+'\n'+block(wire,'struct CloudCreative {')+'\n'+block(wire,'struct CloudMediaPage:')+'\n'+block(wire,'enum CloudSyncError:')+'\n'
 base+='enum CloudListingMerge {\n'+block(wire,'static func date(')+'\n'+block(wire,'static func validateMedia(')+'\n}\n'

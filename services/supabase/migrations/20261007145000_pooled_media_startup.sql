@@ -60,7 +60,7 @@ create or replace function public.provision_media_delivery_budget(p_org uuid,p_r
  p_tariff jsonb,p_reserves jsonb,p_evidence text,p_account_ref text)returns jsonb
 language plpgsql security definer set search_path='' as $$
 declare old public.media_delivery_budgets; f public.serving_funding; a public.media_account_reserves; k text; n numeric;total numeric;
- delivery numeric;compute numeric;storage numeric;budget_id uuid;
+ delivery numeric;compute numeric;storage numeric;storage_liability numeric;budget_id uuid;
 begin
  if current_setting('role',true)is distinct from 'service_role'then raise insufficient_privilege;end if;
  if p_org is null or p_ref is null or length(p_ref)not between 8 and 200 or p_evidence is null or p_evidence!~'^[a-f0-9]{64}$'
@@ -98,6 +98,11 @@ begin
  perform 1 from public.orgs where id=p_org and deleted_at is null for update;
  if not found then raise exception 'RP403: Current workspace required';end if;
  perform pg_advisory_xact_lock(hashtextextended('media-budget:'||p_org,72453));
+ -- Rollover/read-only budgets still owe every unreleased physical byte.
+ -- Lock the current receipts under the same org/advisory order as writes.
+ select coalesce(sum(bytes),0)into storage_liability from
+  (select bytes from public.media_storage_receipts where org_id=p_org and deleted_at is null for update) current_receipts;
+ if storage_liability>p_storage then raise exception 'RP402: Media storage budget is below retained physical liability';end if;
  select * into old from public.media_delivery_budgets where receipt_ref=p_ref;
  if found then
   if row(old.org_id,old.funding_id,old.account_reserve_ref,old.starts_at,old.ends_at,old.request_limit,old.byte_limit,old.storage_limit,old.tariff,old.reserves,old.evidence_sha256)

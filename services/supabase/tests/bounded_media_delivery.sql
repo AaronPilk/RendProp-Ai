@@ -25,7 +25,7 @@ select pg_temp.ok(prosecdef and proconfig=array['search_path=""']::text[],'exact
 set local role service_role;
 do $$declare f record;v jsonb;begin select * into f from fixture;
  if to_regprocedure('public.provision_media_account_reserve(text,text,text,text,timestamptz,timestamptz,bigint,jsonb,jsonb)')is not null then
-  execute 'select provision_media_account_reserve(''synthetic-startup-account'',''9c332c75b96cc642621dad5d86d4bf18'',''owner_paid_cash'',$1,$2,$3,100000,$4,$5)'into v using repeat('d',64),f.start,f.finish,pg_temp.tariff(),'{"storage":0,"delivery":1000,"compute":1000,"email":0,"support":0,"retention":0,"uncertainty":0}'::jsonb;
+  execute 'select provision_media_account_reserve(''synthetic-startup-account'',''9c332c75b96cc642621dad5d86d4bf18'',''owner_paid_cash'',$1,$2,$3,100000,$4,$5)'into v using repeat('d',64),f.start,f.finish+interval '121 days',pg_temp.tariff(),'{"storage":0,"delivery":5000,"compute":5000,"email":0,"support":0,"retention":0,"uncertainty":0}'::jsonb;
   perform pg_temp.ok(v->>'reserved'='true','synthetic paid startup account boundary held once');
   perform pg_temp.ok(to_regprocedure('public.provision_media_delivery_budget(uuid,text,uuid,timestamptz,timestamptz,bigint,bigint,bigint,jsonb,jsonb,text)')is null,'pooled overlay removes old unbound provisioning signature');
  end if;
@@ -56,12 +56,31 @@ do $$declare f record;r jsonb;key text;begin select * into f from fixture;key:='
  r:=media_storage_reserve(f.o,'uploads',key||'new',60);perform pg_temp.ok(r->>'reserved'='true','only acknowledged deletion releases storage');
 end$$;
 reset role;
-do $$declare f record;r jsonb;begin select * into f from fixture;
+do $$declare f record;r jsonb;fund public.serving_funding;budget_id uuid;old_cash bigint;statement text;begin select * into f from fixture;
+ -- Legacy physical bytes remain owed when a later financial budget is issued.
+ set local role service_role;
+ perform media_storage_reserve(f.other,'uploads','uploads/'||f.other||'/prior-deleted',50);
+ perform media_storage_reserve(f.other,'uploads','uploads/'||f.other||'/prior-retained',60);
+ perform media_storage_deletion_ack(f.other,'uploads','uploads/'||f.other||'/prior-deleted',repeat('c',64));
+ reset role;
  -- Synthetic current financial receipt. No production rate or cash claim.
  set local role service_role;
  r:=provision_serving_funding(f.other,'retail','synthetic-media-funded',null,24000,0,now(),now()+interval '1 month',1,'{"storage":50,"delivery":3000,"compute":1500,"email":0,"support":0,"retention":50,"uncertainty":0}',repeat('a',64));
  perform pg_temp.denied(format('select media_delivery_admit(%L,0,false)',f.other),'RP503:','funded missing media budget cannot use legacy exemption');
  perform pg_temp.denied(format('select media_storage_reserve(%L,''uploads'',%L,1)',f.other,'uploads/'||f.other||'/new'),'RP503:','funded storage missing budget refuses before PUT');
+ select * into fund from serving_funding where org_id=f.other and collection_ref='synthetic-media-funded';
+ statement:=format('select public.provision_media_delivery_budget(%L,''synthetic-retained-budget'',%L,%L,%L,20,100,%%s,%L,%L,%L',f.other,fund.id,fund.starts_at,fund.retention_ends_at,pg_temp.tariff()::text,pg_temp.reserves()::text,repeat('e',64));
+ if to_regprocedure('public.provision_media_account_reserve(text,text,text,text,timestamptz,timestamptz,bigint,jsonb,jsonb)')is not null then
+  statement:=statement||',''synthetic-startup-account'')';select allocated_org_cents into old_cash from media_account_reserves where receipt_ref='synthetic-startup-account';
+ else statement:=statement||')';end if;
+ perform pg_temp.denied(format(statement,59),'RP402: Media storage budget is below retained physical liability','read-only funding cannot underprice earlier physical custody');
+ perform pg_temp.ok(not exists(select 1 from media_delivery_budgets where org_id=f.other)and(select count(*)=1 and sum(bytes)=60 from media_storage_receipts where org_id=f.other and deleted_at is null),'refused floor preserves every current physical receipt and creates no budget');
+ if old_cash is not null then perform pg_temp.ok((select allocated_org_cents=old_cash from media_account_reserves where receipt_ref='synthetic-startup-account'),'refused physical floor allocates no startup cash');end if;
+ execute format(statement,60)into r;
+ perform pg_temp.ok(r->>'replay'='false','exact retained-byte floor permits fully funded read budget');
+ execute format(statement,60)into r;
+ perform pg_temp.ok(r->>'replay'='true','physical floor preserves exact immutable funding replay');
+ r:=media_delivery_admit(f.other,1,true);perform pg_temp.ok(r->>'admitted'='true'and r->>'legacy_unbudgeted'='false','existing paid read remains funded only with complete physical floor');
  reset role;
 end$$;
 -- Real writer trigger behavior, not only a seven-name inventory.

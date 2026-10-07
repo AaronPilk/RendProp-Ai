@@ -165,7 +165,7 @@ export class Fixture {
     if (this.rpcFailures.has(name)) {
       return reject(503, "synthetic durable state unavailable");
     }
-    if(name==="media_upload_read_admit"){if(args.p_asset!==this.asset?.id)return reject(404,"upload media unavailable");return json({admitted:true,legacy_unbudgeted:true});}
+    if(name==="media_upload_read_admit"){assertEquals(Object.keys(args),["p_asset"]);if(args.p_asset!==this.asset?.id)return reject(404,"upload media unavailable");return json({admitted:true,legacy_unbudgeted:true});}
     const op = this.operations.get(String(args.p_operation));
     if (name === "reserve_upload_assets") {
       const assets = args.p_assets as Row[];
@@ -371,7 +371,7 @@ export class Fixture {
       ? "uploads/batch"
       : action === "sweep"
       ? "uploads/sweep"
-      : `uploads/fixture-asset/${action}`;
+      : `uploads/${String(this.asset?.id ?? "fixture-asset")}/${action}`;
     return await actualHandler!(
       new Request(`https://edge.invalid/${path}`, {
         method: "POST",
@@ -593,6 +593,7 @@ export async function fixture(run: (f: Fixture) => Promise<void>) {
   const values: Record<string, string> = {
     SUPABASE_URL: "https://upload-fixture.invalid",
     SUPABASE_SERVICE_ROLE_KEY: "fixture-service",
+    RENDPROP_LEGACY_SERVICE_AUTH: "enabled",
     SUPABASE_ANON_KEY: "fixture-anon",
     CLOUDFLARE_ACCOUNT_ID: "fixture",
     R2_ACCESS_KEY_ID: "fixture-key",

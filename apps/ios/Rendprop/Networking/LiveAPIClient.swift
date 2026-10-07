@@ -189,7 +189,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// first (never sends a token we know is expired), and on a 401 forces ONE
     /// refresh + retry; a 401 after that means the session is dead → sign out.
     @MainActor private func execute(_ req: URLRequest, session: URLSession? = nil,
-                                    beforeSend: (() throws -> Void)? = nil) async throws -> Data {
+                                    beforeSend: (@MainActor () throws -> Void)? = nil) async throws -> Data {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         // The request can have been assembled before a hop to this actor. Its
         // old bearer identifies the intended account; refresh may replace an

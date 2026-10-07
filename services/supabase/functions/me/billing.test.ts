@@ -5,7 +5,7 @@ import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
-type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown};
+type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean};
 async function invoke(o:Options={}) {
  const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon"};
  const previous=new Map(Object.keys(values).map(key=>[key,Deno.env.get(key)]));for(const [key,value]of Object.entries(values))Deno.env.set(key,value);
@@ -42,6 +42,11 @@ async function invoke(o:Options={}) {
     assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
     return json({org_id:o.selector??ORG,available:!o.servingUnavailable,funded:!o.servingUnavailable,authority:o.servingUnavailable?"subscription_activation_unavailable":"verified_retail"});
    }
+   if(table==="serving_photo_package_context") {
+    assertEquals(req.method,"POST");
+    assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
+    return o.photoPackageError?json({message:"fixture unavailable"},503):json(o.photoPackage??null);
+   }
    if(table==="memberships") {
     if(url.searchParams.get("select")==="org_id")return row({org_id:OTHER});
     return o.membershipError?json({message:"fixture denied"},400):row({role:o.role??"owner"});
@@ -64,6 +69,13 @@ Deno.test("billing context belongs to the same selected workspace as entitlement
  assert(r.queries.filter(u=>u.pathname.endsWith("memberships")).every(u=>u.searchParams.get("org_id")==="eq."+OTHER));
 });
 Deno.test("guest owner may explicitly subscribe; membership does not require a named identity",async()=>{const r=await invoke({anonymous:true});assertEquals(r.response.status,200);assertEquals(r.body.billing.can_manage_subscription,true);});
+Deno.test("actual me returns only the selected workspace's verified photo allowance",async()=>{
+ const p={org_id:OTHER,policy:"one-gemini-1k-4096-plus-one-kontext-20261007",tariff_version:"published-standard-20261006",starts_at:new Date(Date.now()-1000).toISOString(),ends_at:new Date(Date.now()+86400000).toISOString(),photo_admissions:{cap:20,used:3,remaining:17},photo_hold_cents:35.1296,protected_photo_cents:703,other_ai:{cap_cents:240,used_cents:1,remaining_cents:239}};
+ const r=await invoke({selector:OTHER,photoPackage:{...p,funding_id:"not-public",actor_id:"not-public"}});assertEquals(r.response.status,200);assertEquals(r.body.serving_photo_package,p);
+ const legacy=await invoke();assertEquals(legacy.response.status,200);assertEquals(legacy.body.serving_photo_package,null);
+ for(const photoPackage of [{...p,org_id:ORG},{...p,photo_admissions:{...p.photo_admissions,remaining:18}},{...p,protected_photo_cents:702}]){const bad=await invoke({selector:OTHER,photoPackage});assertEquals(bad.response.status,503);assert(!bad.body.serving_photo_package);}
+ const unavailable=await invoke({photoPackageError:true});assertEquals(unavailable.response.status,503);
+});
 Deno.test("actual me returns scoped bounded trial usage without advertising a dormant offer",async()=>{
  const usage={org_id:OTHER,status:"active",starts_at:new Date(Date.now()-1000).toISOString(),ends_at:new Date(Date.now()+86400000).toISOString(),walkthroughs:{used:0,cap:1,remaining:1},photo_edits:{used:1,cap:5,remaining:4},published_listings:{used:0,cap:1,remaining:1},upload_budget_bytes:1073741824,upload_used_bytes:20};
  const r=await invoke({selector:OTHER,plan:"starter",source:"apple",trialUsage:usage});assertEquals(r.response.status,200);assertEquals(r.body.trial_usage,usage);assertEquals(r.body.trial_offer,null);

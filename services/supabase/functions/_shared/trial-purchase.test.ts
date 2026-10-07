@@ -1,6 +1,7 @@
 import {assertEquals,assertRejects} from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {heldTrialPurchase,prepareTrialPurchase,reservedTrialWorkspace} from "./trial-purchase.ts";
 import {fundVerifiedAppleTransaction} from "./apple-funding.ts";
+import {inputHash} from "./funded-serving.ts";
 import {HttpError} from "./http.ts";
 const actor="e1000000-0000-4000-8000-000000000002",org="e2000000-0000-4000-8000-000000000001",product="com.rendprop.app.starter.monthly";
 const receipt=()=>({reservation_id:"e3000000-0000-4000-8000-000000000001",actor_id:actor,app_account_token:actor,org_id:org,product_id:product,held_at:new Date().toISOString(),trial_offer:{enabled:true,walkthroughs:1,photo_edits:5,published_listings:1,max_days:7,max_video_seconds:90,upload_budget_bytes:1073741824}});
@@ -31,8 +32,11 @@ Deno.test("signed trial notification lookup recovers exact held actor/SKU only, 
 Deno.test("verified free-trial funding dispatch binds signed buyer; paid and Sandbox retain their authority paths",async()=>{
  const calls:{name:string;args:any}[]=[];const rpc=async(name:string,args:any)=>{calls.push({name,args});return {data:{funded:true},error:null};};
  await fundVerifiedAppleTransaction(rpc,org,tx());assertEquals(calls[0].name,"fund_reserved_subscription_trial");assertEquals(calls[0].args.p_actor,actor);
- await fundVerifiedAppleTransaction(rpc,org,{...tx(),priceMilliunits:49000,offerType:undefined,offerDiscountType:undefined});assertEquals(calls[1].name,"fund_verified_apple_transaction");assertEquals("p_actor"in calls[1].args,false);
- await fundVerifiedAppleTransaction(rpc,org,{...tx(),appAccountToken:undefined});assertEquals(calls[2].args.p_actor,null);
- assertEquals(await fundVerifiedAppleTransaction(rpc,org,{...tx(),environment:"Sandbox"}),{funded:false,reason:"sandbox"});assertEquals(calls.length,3);
+ const paid={...tx(),priceMilliunits:49000,offerType:undefined,offerDiscountType:undefined};
+ const paidProof={p_org:org,p_original:paid.originalTransactionId,p_transaction:paid.transactionId,p_product:product,p_price_milliunits:49000,p_currency:"USD",p_storefront:"USA",p_offer_type:null,p_offer_discount_type:null,p_purchased_at:paid.purchaseDate,p_expires_at:paid.expiresDate,p_signed_at:paid.signedDate,p_actor:actor};
+ await fundVerifiedAppleTransaction(rpc,org,paid);assertEquals(calls[1],{name:"fund_verified_retail_apple_transaction",args:{...paidProof,p_evidence_sha256:await inputHash(paidProof)}});
+ await fundVerifiedAppleTransaction(rpc,org,{...tx(),appAccountToken:undefined});assertEquals(calls[2].name,"fund_reserved_subscription_trial");assertEquals(calls[2].args.p_actor,null);
+ await fundVerifiedAppleTransaction(rpc,org,{...paid,appAccountToken:null});assertEquals(calls[3].name,"fund_verified_apple_transaction");assertEquals("p_actor"in calls[3].args,false);
+ assertEquals(await fundVerifiedAppleTransaction(rpc,org,{...tx(),environment:"Sandbox"}),{funded:false,reason:"sandbox"});assertEquals(calls.length,4);
  await assertRejects(()=>fundVerifiedAppleTransaction(async()=>({data:null,error:{message:"fixture"}}),org,tx()),HttpError);
 });

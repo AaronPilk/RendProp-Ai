@@ -65,15 +65,21 @@ def main():
         env['PGOPTIONS'] = '-c statement_timeout=15000 -c lock_timeout=5000'
         run('bootstrap', psql + ['-q', '-f', str(bootstrap)])
         for migration in migrations:
-            if migration != target:
+            if migration == target:
+                # Prove the genuinely missing target at its chronological boundary,
+                # then duplicate it there before later dependent overlays exist.
+                before = run('before', psql + ['-f', str(test)], expected=3)
+                assert 'adoption assertion failed: durable receipt table exists' in before, 'Wrong-reason baseline failure'
+                run('apply-0038', psql + ['-q', '-1', '-f', str(target)])
+                for name in ['boundary-after', 'boundary-replayed']:
+                    if name == 'boundary-replayed': run('replay-0038', psql + ['-q', '-1', '-f', str(target)])
+                    output = run(name, psql + ['-f', str(test)])
+                    assert 'PASS: 35 adoption SQL assertions; all fixtures rolled back.' in output
+            else:
                 run('apply-' + migration.stem, psql + ['-q', '-1', '-f', str(migration)])
-        before = run('before', psql + ['-f', str(test)], expected=3)
-        assert 'adoption assertion failed: durable receipt table exists' in before, 'Wrong-reason baseline failure'
-        run('apply-0038', psql + ['-q', '-1', '-f', str(target)])
-        for name in ['after', 'replayed']:
-            if name == 'replayed': run('replay-0038', psql + ['-q', '-1', '-f', str(target)])
-            output = run(name, psql + ['-f', str(test)])
-            assert 'PASS: 35 adoption SQL assertions; all fixtures rolled back.' in output
+        output = run('after-full-chronology', psql + ['-f', str(test)])
+        assert 'PASS: 35 adoption SQL assertions; all fixtures rolled back.' in output
+        receipt['targetReplayAtChronologicalBoundary'] = True
         definition = run('receipt-definition', psql + ['-Atc', "select pg_get_functiondef('public.adoption_receipt(uuid,uuid,uuid)'::regprocedure);"])
         needle = 'if v.source_user_id <> p_anon_user or v.destination_user_id <> p_user then'
         assert definition.count(needle) == 1, 'Mutation target missing or ambiguous'
@@ -84,7 +90,12 @@ def main():
         run('apply-receipt-mutant', psql + ['-f', str(mutation_file)])
         rejected = run('reject-receipt-mutant', psql + ['-f', str(test)], expected=3)
         assert 'wrong failure for cross-source replay rejected: fixture accepted forbidden operation' in rejected, 'Wrong-reason mutant failure'
-        run('restore-0038', psql + ['-q', '-1', '-f', str(target)])
+        # Restore exactly the changed current receipt function; replaying old
+        # 0038 here would erase later personal-card preservation from adoption.
+        restoration_file = out / 'receipt-current-pristine.sql'
+        restoration_file.write_text(definition)
+        run('restore-current-receipt', psql + ['-q', '-f', str(restoration_file)])
+        assert run('restored-receipt-definition', psql + ['-Atc', "select pg_get_functiondef('public.adoption_receipt(uuid,uuid,uuid)'::regprocedure);"]) == definition
         restored = run('restored', psql + ['-f', str(test)])
         assert 'PASS: 35 adoption SQL assertions; all fixtures rolled back.' in restored
         receipt['concurrentCases'] = []

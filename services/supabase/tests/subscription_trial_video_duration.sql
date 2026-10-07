@@ -19,6 +19,12 @@ insert into auth.users(id,email,is_anonymous,email_confirmed_at)select u,'trial-
 insert into orgs(id,name,plan,plan_source,plan_expires_at)select o,'Synthetic duration test','starter','manual',now()+interval '6 days'from vf;
 insert into memberships(org_id,user_id,role)select o,u,'owner'from vf;
 insert into listings(id,org_id,agent_id,address)select l,o,u,'Synthetic duration property'from vf;
+insert into capture_assets(id,listing_id,kind,bucket,storage_key,bytes,uploaded,transport_version,content_type)
+ select x,l,'video','renders','renders/'||o||'/'||l||'/'||x||'.mp4',100,true,2,'video/mp4'from vf cross join lateral unnest(array[a,b,c])x;
+insert into upload_reservations(asset_id,org_id,listing_id,actor_id,day,spec,held_bytes,state,settled_at)
+ select x,o,l,u,current_date,'{}',0,'completed',clock_timestamp()from vf cross join lateral unnest(array[a,b,c])x;
+insert into upload_operations(asset_id,kind,bucket,object_key,bytes,expected_bytes,content_type,content_type_declared,asset_kind,state,etag)
+ select ca.id,'copy','renders',ca.storage_key,100,ca.bytes,'video/mp4',true,'video','retained','synthetic-etag-'||ca.id from vf join capture_assets ca on ca.id in(vf.a,vf.b,vf.c);
 insert into serving_funding(id,org_id,source,collection_ref,actor_id,net_receipts_cents,sponsored_cents,starts_at,ends_at,retention_ends_at,service_months,recurring_reserve_cents,reserve_components,evidence_sha256,apple_original_transaction_id)
  select f,o,'trial','synthetic-video-trial-funding',u,0,100,now()-interval '1 minute',now()+interval '6 days',now()+interval '96 days',1,0,
  '{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}',repeat('a',64),'synthetic-video-original'from vf;
@@ -26,13 +32,7 @@ insert into serving_funding_slices(funding_id,slice_index,org_id,starts_at,ends_
  select f,0,o,now()-interval '1 minute',now()+interval '6 days',100,0 from vf;
 insert into subscription_trial_grants(id,actor_id,identity_sha256,org_id,original_transaction_id,funding_id,starts_at,ends_at,walkthrough_cap,photo_cap,listing_cap,upload_budget_bytes,max_video_seconds,evidence_sha256)
  select g,u,repeat('b',64),o,'synthetic-video-original',f,now()-interval '1 minute',now()+interval '6 days',1,5,1,1073741824,90,repeat('a',64)from vf;
-insert into capture_assets(id,listing_id,kind,bucket,storage_key,bytes,uploaded,transport_version,content_type)
- select x,l,'video','renders','renders/'||o||'/'||l||'/'||x||'.mp4',100,true,2,'video/mp4'from vf cross join lateral unnest(array[a,b,c])x;
-insert into upload_reservations(asset_id,org_id,listing_id,actor_id,day,spec,held_bytes,state,settled_at)
- select x,o,l,u,current_date,'{}',0,'completed',clock_timestamp()from vf cross join lateral unnest(array[a,b,c])x;
-insert into upload_operations(asset_id,kind,bucket,object_key,bytes,expected_bytes,content_type,content_type_declared,asset_kind,state,etag)
- select ca.id,'copy','renders',ca.storage_key,100,ca.bytes,'video/mp4',true,'video','retained','synthetic-etag-'||ca.id from vf join capture_assets ca on ca.id in(vf.a,vf.b,vf.c);
--- Synthetic pre-trial finalized uploads; all tested admission below uses the
+-- Synthetic pre-trial finalized uploads above predate trial funding. All tested admission below uses the
 -- restored Apple source and current immutable registered trial.
 update orgs set plan_source='apple'where id=(select o from vf);
 select pg_temp.ok(not has_table_privilege(r,'subscription_trial_video_attestations','INSERT,UPDATE,DELETE'),'attestation table is not writable by '||r)from unnest(array['anon','authenticated','service_role'])r;
@@ -81,12 +81,15 @@ do $$declare x record;begin select * into x from vf;
 reset role;
 update upload_operations set etag='synthetic-etag-'||asset_id where asset_id=(select a from vf)and kind='copy';
 do $$begin perform pg_temp.denied('update capture_assets set bytes=101 where id=(select a from vf)','RP409','finalized asset metadata is already immutable');end$$;
-update upload_operations set expected_bytes=101 where asset_id=(select a from vf)and kind='copy';
+-- Privileged synthetic corruption of the private attestation, not a forbidden
+-- rewrite of an immutable finalized upload receipt. A size mismatch still
+-- cannot grant a new render or consume trial credit.
+update subscription_trial_video_attestations set bytes=101 where asset_id=(select a from vf);
 set local role authenticated;
 do $$declare x record;begin select * into x from vf;
  perform pg_temp.denied(format('select create_render_job(%L,%L,''smooth'',''{}'',''trial-video-changed-bytes'',''app'')',x.l,x.a),'RP402','changed size fails direct RPC');end$$;
 reset role;
-update upload_operations set expected_bytes=100 where asset_id=(select a from vf)and kind='copy';
+update subscription_trial_video_attestations set bytes=100 where asset_id=(select a from vf);
 set local role authenticated;
 do $$declare x record;j public.render_jobs;r public.renders;begin select * into x from vf;
  j:=create_render_job(x.l,x.a,'smooth','{}','trial-video-verified-key','app');update vf set j=j.id;
