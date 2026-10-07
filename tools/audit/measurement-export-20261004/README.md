@@ -12,7 +12,7 @@ PDF text draw method, Letter page layout/transform, and legacy scan convex-hull 
 renderer and file-output boundaries are synthetic. It writes no customer files,
 uses no camera, network, credentials, provider or production APIs.
 
-The 71 assertions cover current-vs-stale exported snapshots; source/geometry/unit
+The 82 assertions cover current-vs-stale exported snapshots; source/geometry/unit
 changes; account/workspace context; server/draft/listing identity; address changes;
 CAS conflicts and older-snapshot listing-facts review without discarding pending local revisions; manual/phone source
 labels; plan UTC date; every floor/room/wall record in the actual PDF loop; and
@@ -22,7 +22,9 @@ math verifies every extracted drawing rectangle fits within physical margins,
 with one balanced graphics transform per page. A conditional floor-scoped phone
 ruler note states straight 3D point-to-point distance, same-height endpoints for
 horizontal dimensions, and tape verification. Both PNG construction paths are
-bound to the same production note in source. Eight isolated source
+bound to the same production note in source. Mutable authentication and workspace
+state doubles exercise the real `CloudMediaAccessContext`: sign-out, changed actor,
+session revision and workspace all invalidate a captured context. Eleven isolated source
 mutations must compile and fail their named runtime assertions. Source hashes and
 logs are retained in each `/tmp/rendprop-measurement-export-*` directory.
 

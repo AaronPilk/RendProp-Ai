@@ -48,8 +48,8 @@ declared policies remain unchanged. Three existing database drains preserve
 their behavior while modernizing headers. Python credentialed requests refuse
 redirects; source-bound localhost tests detect removed guards. Current Vault
 credential mismatch, replacement readback and actual negative revocation probes
-remain separate live gates. Provider key replacement must finish through the
-owner's prepared secret handoff.
+remain separate live gates. The owner's FAL secret save was confirmed on October 7;
+consumer acceptance and retirement of the previous key remain separate checks.
 
 Known shared-workspace account-deletion refusals now explain the required
 ownership/reassignment/support step. Unknown server diagnostics remain hidden,
@@ -92,8 +92,23 @@ runner/fixture repairs. The later hosted run reached its last runner and exposed
 a PostgreSQL 17-only version check against CI's PostgreSQL 16 installation.
 That runner now explicitly validates one complete PostgreSQL 16 or 17 toolset
 and records the actual version. Its SQL, guard controls and races are unchanged;
-the local PostgreSQL 17 proof passes. Actual hosted PostgreSQL 16 acceptance is
-still pending. Production and native inputs are unchanged from `72e64d5`.
+the local PostgreSQL 17 proof passes. The `c16cb80` hosted PostgreSQL 16 job also
+passes. Native app and backend inputs remain unchanged from `72e64d5`.
+
+Both `c16cb80` attempts passed eleven jobs. The first native attempt stopped at
+simulator inventory discovery. The second passed photo-save, gallery, reel
+recovery and floor synchronization checks, then found an incomplete measurement
+export fixture. That fixture now compiles the unchanged production media-context
+predicate with mutable authentication/workspace state boundaries. Its 82 local
+assertions and eleven compiled removal controls pass. CI runs all twenty-one
+floor-sync removal controls in batches of two with separate logs and explicit
+aggregate failure; the positive case and existing timeouts remain unchanged.
+Complete hosted CI for the successor remains required.
+
+Studio's content security policy now allows the exact authenticated media origin
+`https://rendprop.com` for images, video and fetch requests. The built-asset gate
+requires that origin and refuses broad replacement sources. This fixes a browser
+policy gap; it does not enable private media or complete its hosted cutover.
 
 Six reviewed database migrations were applied on October 7. Independent live
 catalogue readback passed 180 checks: exact function bodies and permissions,

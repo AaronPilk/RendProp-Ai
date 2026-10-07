@@ -215,9 +215,34 @@ jobs:
             python3 tools/audit/floor-measurement-outline-editor-20261004/run.py --inject-fault "$fault"
           done
           python3 tools/audit/floor-measurement-sync-20261004/run.py
+          sync_failed=0
+          sync_pids=()
+          sync_faults=()
+          sync_log_dir="$(mktemp -d /tmp/rendprop-floor-measurement-sync-launch-XXXXXX)"
+          wait_sync_batch() {
+            for i in "${!sync_pids[@]}"; do
+              if wait "${sync_pids[$i]}"; then
+                printf '%s exit=0\n' "${sync_faults[$i]}"
+              else
+                sync_status=$?
+                printf '%s exit=%s\n' "${sync_faults[$i]}" "$sync_status"
+                sync_failed=1
+              fi
+              if ! cat "$sync_log_dir/${sync_faults[$i]}.log"; then
+                sync_failed=1
+              fi
+            done
+            sync_pids=()
+            sync_faults=()
+          }
           for fault in drop-wire drop-fingerprint ignore-dirty drop-replay-adopt rewrite-raw-keys legacy-ignore-edit discard-outline-only outline-fingerprint legacy-v2-accept drop-local-raw-mirror omit-cas-base ignore-pending-measurements wrong-cas-workspace ignore-cas-conflict omit-facts-fingerprint ignore-facts-review skip-legacy-recovery ignore-cas-lineage overwrite-shared-backup compare-backup-wire-only retain-backup-after-new-edit; do
-            python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault"
+            python3 tools/audit/floor-measurement-sync-20261004/run.py --inject-fault "$fault" >"$sync_log_dir/$fault.log" 2>&1 &
+            sync_pids+=("$!")
+            sync_faults+=("$fault")
+            if [ "${#sync_pids[@]}" -eq 2 ]; then wait_sync_batch; fi
           done
+          if [ "${#sync_pids[@]}" -gt 0 ]; then wait_sync_batch; fi
+          [ "$sync_failed" -eq 0 ]
       - name: Measured-plan Photos export fences permission and context changes
         run: |
           python3 tools/audit/floor-measurement-export-20261004/run.py
