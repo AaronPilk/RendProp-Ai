@@ -38,3 +38,7 @@ f8a6074dbc5ae0965fdb1e0722c4f948778d37a6:tools/audit/floor-measurement-sync-2026
 # public disclosure prose naming credentials/capabilities that are excluded.
 # The matched line contains no token value. Preserve all other secret scanning.
 c0a3e9838116c5330fa25edef85401e13d7629fb:services/supabase/functions/me/export.ts:generic-api-key:40
+# Exact historical false positive: the "Unauthenticated 401" evidence value is
+# a SHA-256 receipt checksum, recomputed from the retained GET/401 receipt.
+# That request supplied no Authorization header. Keep all other findings active.
+0842c9f36b70b49e276c5a623049efaba4f08554:docs/handoff/AGENT-REEL-ROLLOUT-20261007.md:generic-api-key:141
