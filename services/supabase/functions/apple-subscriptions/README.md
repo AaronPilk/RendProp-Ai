@@ -204,7 +204,7 @@ observe renewal-status change and eventual expiry. Cancelling renewal does not
 immediately end the already-paid period; verify the signed dates and resulting
 notification types instead of expecting an instant lapse.
 
-### Sandbox authority fence — source only
+### Sandbox authority fence — deployed contract
 
 `record_apple_sandbox_receipt` verifies current named-account and workspace
 owner/admin authority, and requires an existing service-owned internal/private
@@ -231,6 +231,19 @@ service-only; the migrations create no review account or funding allocation.
 schema/handlers and complete purchase/restore acceptance before claiming reviewer
 readiness. Existing internal grants are separate from this finite review authority;
 rolling allowance windows alone are not a lifetime serving limit.
+
+### Dormant bounded-trial purchase reservation
+
+The [build-46 rollout](../../../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+source-verified apple-subscriptions v25, me v50 and renders v44 after three
+canonical trial migrations. Signed Production FREE_TRIAL conversion requires an
+exact already funded buyer/workspace/product hold; missing or ambiguous holds
+cannot infer a first-owner sponsor. The native hook is in internal build 46.
+Trial configuration and sponsor-pool admission remain disabled/unseeded, and no
+new serving schedule, owner allocation or customer allowance was created.
+Existing receipt/restore processing stays separate from new purchase admission.
+Real StoreKit/notification/restore acceptance and inclusive sponsor cost remain
+activation gates.
 
 ### Pending notifications
 

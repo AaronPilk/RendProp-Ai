@@ -12,16 +12,18 @@ portfolios, industry-specific Studio forms and account-data export. The
 deployment order and remaining acceptance. The
 [beta reconciliation](docs/handoff/LAUNCH-BETA-20261006.md) covers all 52 reports;
 generated-image quality and physical camera tests remain explicitly separate.
-Internal **1.0.4 (45) is available**, verified by Apple on **6 October 2026 at
-19:23:12 UTC**, from source `5eeb783`. Its [delivery receipt](docs/releases/TESTFLIGHT-45-20261006.json)
-binds the signed package and all twelve CI jobs. The additive
-[terminal conflict repair](docs/handoff/CAS-CONFLICT-TERMINAL-20261006.md), Studio
-assets and photo-permission contraction are now live. The
-[actual rollout checkpoint](docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md) records
-twelve passing CI jobs, 39 owned API requests and 35 served-asset requests, preserving
-the earlier failed attempts. Protected-media cutover remains pending. No public
-App Store submission or release was performed; the public **1.0.3 (42)** record
-remains unchanged. The checkpoints below are historical receipts.
+Internal **1.0.4 (46) is available**, verified by Apple on **7 October 2026 at
+00:47:51 UTC** (6 October locally), from source `7f5879e`. Its
+[delivery record](docs/releases/TESTFLIGHT-46-20261006.json) binds the actual
+distribution package, one successful upload and twelve successful CI jobs with
+their original/rerun provenance. The
+[build-46 rollout](docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+records three applied migrations, source-verified me v50, apple-subscriptions v25
+and renders v44, and the new Studio version: all 31 application files matched
+across 35 served-file/routing requests. Trial configuration is OFF, with no new
+funding, pools or serving schedules seeded. Earlier build-45/CAS/Studio receipts
+remain historical. Protected-media cutover remains pending. No public App Store
+or App Review submission was performed; public **1.0.3 (42)** is unchanged.
 
 Pricing uses the owner's target of **75% after Apple's fee**, with provider
 attempts and ambiguous outcomes charged against the same funded allowance.
@@ -32,15 +34,21 @@ New subscriptions have an approved **90-day hosting grace period after expiry**;
 existing testers are preserved. A paid-AI trial sponsorship proposal remains
 unapproved and is not activated.
 
-The [limited trial candidate](docs/studio/subscription-trial.md) adds separate
-server counters for one hosted walkthrough, five AI photo edit credits and one
-published listing, within a verified seven-day window. iPhone and Studio show
-the same remaining usage. This package remains disabled pending backend, billing
-and funding acceptance; it is separate from the available build 45.
-The candidate also blocks new live paid checkout and plan changes until an
-exact-product funding admission exists. Only a freshly validated held trial can
-open a new purchase sheet; Restore and Manage subscription remain available.
-This closes the path that could charge a customer before service funding exists.
+The [limited trial](docs/studio/subscription-trial.md) is delivered as dormant
+behavior: one hosted walkthrough from captured/imported footage, five logical
+photo-edit admissions and one distinct publication, within a verified maximum
+seven-day window, at most 90 seconds and 1 GiB of upload reservations. The action
+counters are independent; photo admissions do not guarantee successful outputs.
+The native consumers and purchase safeguards are in available internal build 46;
+the backend and Studio are deployed. Owner funding and real StoreKit/phone
+acceptance remain separate gates.
+
+Build 46 blocks all new ordinary paid checkout and new plan-change purchases
+until reviewed exact-product funding admission exists. Only a freshly validated
+funded seven-day trial hold can open a new eligible Apple sheet; dormant
+configuration advertises no offer. Existing receipt processing, Restore and
+Manage remain available. Proposed $5/$25 trial funding is unapproved; paid
+100/200/400 bundles and the 75% margin target remain financially uncertified.
 
 Previous internal **TestFlight 1.0.4 (44) was AVAILABLE**, verified **5 October 2026 at
 01:32:22 UTC** (4 October locally) for the existing Rendprop team, from source
@@ -108,7 +116,8 @@ The [full debugging follow-up](docs/handoff/FULL-DEBUGGING-20261004.md) implemen
 those safeguards on isolated source branch `fix/full-debugging-20261004`, with
 retained conflicts, creation-retry protection, account-bound exports/Apple
 codes, Studio draft recovery and ordered Apple subscription events. **These
-follow-up changes are not deployed or uploaded.** Its report records the
+follow-up changes were not deployed or uploaded at that checkpoint.** The later
+build-45/core rollout records their delivery. Its report records the
 required staged billing rollout and older-client upgrade boundary; build 44's
 historical delivery receipt remains unchanged. All twelve
 [CI jobs](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37266689307) passed
@@ -185,15 +194,17 @@ workflow exact-source CI jobs passed; see the
 [release handoff](docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for live
 readbacks and the controlled phone/inbox acceptance still required.
 
-Apple subscription plans are selected, upgraded and changed in the iPhone app
-under **Settings → Plan & usage**. A seven-day trial starts only after confirming
-an eligible Apple subscription offer; installing the app or signing in does not
-activate a trial. Studio uses the same account/workspace subscription.
+Existing Apple subscriptions can be restored or managed in the iPhone app under
+**Settings → Plan & usage**. New paid checkout and plan changes are temporarily
+unavailable in build 46. A new trial requires Apple eligibility and an exact
+funded server reservation; dormant configuration stops before Apple's purchase
+sheet. Signing in does not activate a trial or advance Apple's renewal date.
+Studio uses the same account/workspace subscription and has no separate checkout.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
 [App Store submission receipt](docs/releases/APPSTORE-42-20261002.json) ·
-[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-45-20261006.json) ·
+[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-46-20261006.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -235,8 +246,8 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Internal **1.0.4 (45)** is **AVAILABLE**, verified on 6 October. Public **1.0.3 (42)** last reported **READY_FOR_SALE** at the 5 October read; no new public submission was made. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
-| Internal beta | Build **45** includes Measurements and the full-system audit fixes. The [6 October rollout](docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md) delivered 25 backend functions, the additive listing/Studio conflict repair and photo authority changes. The separate limited trial remains disabled and absent from build 45. Protected-media, financial, provider-quality and phone acceptance remain open. |
+| iOS | Internal **1.0.4 (46)** is **AVAILABLE**, verified on 7 October at 00:47:51 UTC (6 October locally). Public **1.0.3 (42)** last reported **READY_FOR_SALE** at the 5 October read; no new public submission was made. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
+| Internal beta | Build **46** includes Measurements, the full-system audit fixes and dormant trial/purchase safeguards. The [current rollout](docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md) records three trial migrations, three updated functions and verified Studio files. Trial funding/activation, protected-media, financial, provider-quality and phone acceptance remain open. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

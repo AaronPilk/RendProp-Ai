@@ -14,7 +14,7 @@ imports with the new server photo authority and funded AI admission. These
 core changes are now delivered in the
 [6 October rollout](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md), with
 35 actual served-asset requests and matching live API source. Protected media
-cutover and the separate limited trial remain pending. Historical deployment
+cutover remains pending. Historical deployment
 versions below describe their dated releases. The
 [beta handoff](../../docs/handoff/LAUNCH-BETA-20261006.md) records actual browser
 and regression evidence, plus live/device acceptance still required.
@@ -25,13 +25,24 @@ failed attempts need a reviewed funded allowance, rather than a feature count
 alone; no trial sponsorship has been activated. Higgsfield generation remains
 disabled as requested by the owner.
 
-The [limited trial candidate](../../docs/studio/subscription-trial.md) adds a
+The [limited trial](../../docs/studio/subscription-trial.md) adds a
 trial card in **Business → Account & plan** for the same named trial owner using
 iPhone and Studio. It displays the server's
 remaining walkthrough, photo edit and publication allowances, with no monthly
 reset or early Apple charge. Missing trial data keeps the existing plan view;
-disabled offer data does not advertise new quantities. This candidate is not
-deployed and does not activate a trial funding pool.
+disabled offer data does not advertise new quantities. This source is deployed
+with trial configuration OFF and no funded trial pool.
+
+The [current rollout](../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+records Studio version `aef8c5c8-32ab-495b-9ebb-0aa41bd876e4`, verified on
+7 October 2026 at 00:56:59 UTC. One deployment CLI returned exit 0 with empty
+logs; its uncertain original receipt is preserved. Separate read-only evidence
+verified exact source `7f5879e` and all 31 application files across 35 served
+requests. Callback queries survive the 307 redirect; missing paths return 404.
+No second deployment occurred. Native build 46 is available, and three dormant
+backend migrations plus me v50, apple-subscriptions v25 and renders v44 have
+actual acceptance. No pool, serving schedule or trial allowance has been funded.
+These checks do not establish authenticated cross-device or physical acceptance.
 
 The workspace-bound service activation receipt keeps Apple's recorded plan
 separate from usable creation allowances. An unavailable active subscription
@@ -165,12 +176,13 @@ on-device tests. The release verified the existing signed-in browser workspace
 and a synthetic saved-project AI/edit/export path. It did not perform a fresh
 Apple sign-in, second-browser production restoration or phone-to-browser run.
 
-Start, upgrade or change an Apple plan in Rendprop for iPhone under **Settings →
-Plan & usage**. The seven-day introductory trial starts only after the customer
-confirms an eligible Apple subscription offer; downloading or signing in does not
-activate a trial. Apple determines eligibility and displays the renewal price.
-Studio uses that same account/workspace subscription and offers a link to Apple's
-subscription management; it does not run a separate web checkout.
+Restore or manage an existing Apple subscription in Rendprop for iPhone under
+**Settings → Plan & usage**. New paid checkout and plan changes remain closed in
+build 46. A new trial requires Apple eligibility and an exact funded server hold;
+with dormant configuration it cannot open a purchase sheet. Signing in does not
+activate a trial or advance Apple's renewal date. Studio uses the same account
+and workspace subscription and offers existing subscription management; it has
+no separate web checkout.
 
 ## Develop and verify
 

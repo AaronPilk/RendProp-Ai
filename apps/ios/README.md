@@ -1,29 +1,30 @@
 # Rendprop iOS
 
-The [limited subscription trial candidate](../../docs/studio/subscription-trial.md)
+The [limited subscription trial](../../docs/studio/subscription-trial.md)
 adds server-recorded remaining usage to Home, Settings → Plan & usage, and the
 paywall. The proposed walkthrough/photo/publication allowance is separate from
 the selected plan's paid monthly limits. Disabled offers show no new numerical
 promise. Purchase/restore refreshes and account/workspace changes fence stale
-trial responses. This work is not included in available internal build 45 and
-does not activate public trial funding.
+trial responses. This behavior is included in available internal build 46.
+Backend trial configuration is OFF with no approved sponsor allocation.
 
-The candidate adds a separate **Check trial availability** action for a named
+Build 46 includes a separate **Check trial availability** action for a named
 workspace owner. Apple eligibility alone shows no promised trial quantities.
 The server first reserves funding for the exact account UUID, workspace and
 subscription product; only its validated receipt reveals the included usage.
 **Continue with Apple** rechecks the same reservation, fresh `/me` receipt,
 Apple eligibility and account/workspace identity before opening Apple's sheet.
 A held-trial button cannot silently switch to a paid purchase when eligibility
-changes. In this candidate, every new live purchase must have that freshly
+changes. In build 46, every new live purchase must have that freshly
 validated seven-day trial reservation. Ordinary paid checkout and plan changes
 are temporarily unavailable until a separate admission can fund the exact new
 subscription product before Apple's sheet opens. Existing subscriptions, a
 manual plan and private testing access do not authorize a new paid purchase.
-Restore and Manage subscription remain available. This safeguard is candidate
-source; it is not in the available internal build 45.
+Restore and Manage subscription remain available. This safeguard is included in
+available internal build 46. Public build 42 and historical internal build 45 do
+not include this new-purchase guard; real phone/StoreKit acceptance remains open.
 
-The current funded-trial schedule supports **USA / USD** only. The candidate
+The reservation contract supports **USA / USD** only when funded. Build 46
 reads [Storefront.current](https://developer.apple.com/documentation/storekit/storefront/current)
 and its [ISO country code](https://developer.apple.com/documentation/storekit/storefront/countrycode),
 and checks [Product.priceFormatStyle](https://developer.apple.com/documentation/storekit/product/priceformatstyle)
@@ -41,8 +42,8 @@ pre-StoreKit purchase methods against closed HTTP, Storefront and Apple-sheet
 interfaces. Semantic guard controls and the separately source-bound Release
 simulator build do not establish a real purchase, trial funding, storefront
 change on a phone or customer-media acceptance. The earlier native trial
-handoff remains evidence of its earlier source; this hook needs its own later
-build and deployment.
+handoff remains evidence of its earlier source; the hook is now delivered in
+build 46 and the dormant backend deployment.
 
 Native Swift/SwiftUI app for iPhone, targeting iOS 16 and later. The app captures
 and imports property media, creates tours and reels, provides AI photo/video
@@ -50,24 +51,27 @@ workflows, and connects a named account's workspace with
 [Studio](https://studio.rendprop.com/). The normal build uses the live Supabase
 backend; this is no longer an offline-only prototype.
 
-Internal **1.0.4 (45) is available**, verified by Apple on **6 October 2026 at
-19:23:12 UTC** from source `5eeb783`. Its
-[delivery receipt](../../docs/releases/TESTFLIGHT-45-20261006.json) binds the
-signed package and all twelve CI jobs. The
-[6 October handoff](../../docs/handoff/LAUNCH-READINESS-20261006.md) records
-the beta/debugging stack after 44, including
+Internal **1.0.4 (46) is AVAILABLE**, verified by Apple on **7 October 2026 at
+00:47:51 UTC** (6 October locally) from source `7f5879e`. Its
+[delivery record](../../docs/releases/TESTFLIGHT-46-20261006.json) binds the actual
+uploaded distribution IPA, signed source archive and exact CI results. The
+[current rollout](../../docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md)
+records the deployed dormant trial backend and verified Studio follow-on.
+The [6 October beta handoff](../../docs/handoff/LAUNCH-BETA-20261006.md) records
 account-owned profile sharing, changed-field listing saves, retained AI job
-recovery, private media downloads and **Settings → Download account data**.
-The export is an account-owned JSON inventory with stated omissions; photo and
-video binaries still use their separate downloads. See the
-[export contract](../../docs/handoff/ACCOUNT-DATA-EXPORT-CONTRACT-20261006.md) and
-[52-report reconciliation](../../docs/handoff/LAUNCH-BETA-20261006.md).
-Signed archive, final CI, deployed contracts and Apple processing are separate
-release checks. The [actual 6 October backend and Studio checkpoint](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
-records terminal conflicts and final photo permissions. New limited-trial source
-needs a later build and its own receipt.
-Camera, AR, Files/Photos, real purchases and provider-output quality need phone
-acceptance. Spatial and direct Bria experiments remain in the internal lab.
+recovery, private downloads and **Settings → Download account data**. The export
+is an account-owned JSON inventory with stated omissions; photo/video binaries
+still use separate downloads. See the
+[export contract](../../docs/handoff/ACCOUNT-DATA-EXPORT-CONTRACT-20261006.md).
+
+All twelve CI jobs passed, retaining eleven original successes and one native
+rerun. The SQL inventory retains its documented 269/270 answer-ceiling residual;
+current local Deno results are 1648 passed with one existing ignored case.
+Camera, AR, Files/Photos, real purchases and provider output need phone acceptance;
+[all phone checklist items](../../docs/handoff/PHONE-ACCEPTANCE-TESTFLIGHT46-20261006.md)
+remain unchecked. Spatial and direct Bria experiments remain in the internal lab.
+The [earlier build-45/core checkpoint](../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md)
+and older dated receipts below remain historical.
 
 The [Measurements addition](../../docs/floor-plan-measurements.md) is implemented
 in the signed **1.0.4 (44)** source `9d27fb5`: named room dimensions in

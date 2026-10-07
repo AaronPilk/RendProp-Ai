@@ -2,12 +2,15 @@
 
 This directory contains the listing copy, review notes and screenshot recipes.
 Reconciled on 2 October 2026 for the regular 1.0.3 App Store release.
-**6 October checkpoint:** internal TestFlight **1.0.4 (45)** is available to
-the existing internal group; see [its delivery receipt](../releases/TESTFLIGHT-45-20261006.json)
-and [the coordinated rollout](../handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md).
-No newer public version was submitted. The bounded-trial candidate is absent
-from build 45 and remains disabled; current paid photo bundles have an unresolved
-financial delivery gate. Do not submit another release from these notes alone.
+**6 October delivery:** internal TestFlight **1.0.4 (46)** is available to the
+existing internal group, verified by Apple on 7 October at 00:47:51 UTC (6 October
+locally). See [its delivery record](../releases/TESTFLIGHT-46-20261006.json) and
+[the dormant trial rollout](../handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md).
+No newer public version was submitted. Trial code is included in build 46 and
+source-verified in the backend/Studio, but funding/configuration remain disabled.
+New paid checkout is closed in build 46; the old public build 42 lacks that new
+purchase guard. Paid photo bundles, protected media and physical acceptance still
+have unresolved launch gates. Do not submit another release from these notes alone.
 
 **1.0.3 (42) was submitted at 20:17:03 UTC on 2 October and was then Waiting for Review.** Apple
 confirmed the exact version, attached eligible build and one submitted review
@@ -18,7 +21,7 @@ metadata, five screenshots and the review readback.
 
 For experimental spatial testing, the phone delivery receipt records
 [internal TestFlight 1.0.3 (41), available on 2 October](../releases/TESTFLIGHT-41-20261002.json).
-This is the historical build-41 record, superseded for internal testing by 45.
+This is the historical build-41 record, superseded for internal testing by 46.
 The owner authorized that upload and its build-specific testing notes. Apple
 confirmed availability to the existing internal group. This did not attach a
 build to an App Store version or submit an App Review. Physical-phone capture
@@ -82,7 +85,7 @@ before sending fields.
   demographic, school or neighborhood suitability claims.
 - The regular App Store scheme excludes spatial entry points and new spatial
   uploads even when the server capability flag is enabled. The explicit lab
-  scheme remains available in internal TestFlight 45. Neither is a claim that
+  scheme remains available in internal TestFlight 46. Neither is a claim that
   physical capture or reconstruction quality passed.
 - AI consent revocation stops the remaining unsent photo batch. A revoke/regrant
   does not revive the old batch; already dispatched results may still arrive.
