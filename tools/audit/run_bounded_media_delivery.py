@@ -4,12 +4,41 @@ import hashlib,json,os,pathlib,re,subprocess,tempfile,shutil
 from datetime import datetime,timezone
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 # Retain every failed/positive source/log; never connect to a hosted database.
-selected=os.environ.get('PG_BIN')
-if selected: BIN=pathlib.Path(selected).resolve()
-else:
- candidates=[pathlib.Path('/opt/homebrew/opt/postgresql@17/bin'),pathlib.Path('/usr/lib/postgresql/17/bin')]
- BIN=next((p for p in candidates if(p/'initdb').is_file()),pathlib.Path(shutil.which('initdb')or'/missing/initdb').parent)
-assert 'PostgreSQL) 17.' in subprocess.check_output([str(BIN/'postgres'),'--version'],text=True)
+POSTGRES_TOOLS=('postgres','initdb','pg_ctl','psql','createdb')
+def postgres_major(version,tool):
+ if not isinstance(version,str)or len(version)>256:
+  raise RuntimeError('Malformed PostgreSQL tool version: '+tool)
+ match=re.fullmatch(re.escape(tool)+r' \(PostgreSQL\) ([0-9]{1,2})\.[0-9]{1,3}(?: \([A-Za-z0-9][A-Za-z0-9 .+:_~/-]{0,200}\))?\n?',version)
+ if not match:raise RuntimeError('Malformed PostgreSQL tool version: '+tool)
+ major=int(match[1])
+ if major not in(16,17):raise RuntimeError('Supported PostgreSQL versions are 16 and 17: '+tool)
+ return major
+def postgres_tools(directory):
+ directory=pathlib.Path(directory).expanduser().resolve()
+ versions={}
+ for tool in POSTGRES_TOOLS:
+  executable=directory/tool
+  if not executable.is_file()or not os.access(executable,os.X_OK):
+   raise RuntimeError('Complete PostgreSQL tool directory required: '+str(directory))
+  version=subprocess.check_output([str(executable),'--version'],text=True,stderr=subprocess.STDOUT,timeout=10)
+  versions[tool]={'version':version.strip(),'major':postgres_major(version,tool),'resolvedExecutable':str(executable.resolve())}
+ if len({value['major']for value in versions.values()})!=1:
+  raise RuntimeError('PostgreSQL tools must use one supported major version')
+ return directory,versions
+def select_postgres_tools():
+ selected=os.environ.get('PG_BIN')
+ if selected:return postgres_tools(selected)
+ # Respect the workflow's PostgreSQL PATH before platform fallbacks. Resolve
+ # the real binary directory so an older compatibility symlink cannot label
+ # PostgreSQL 16 as 17 or mix client and server tool installations.
+ candidates=[pathlib.Path(p).resolve().parent for name in('postgres','initdb')if(p:=shutil.which(name))]
+ candidates.extend(pathlib.Path(p)for p in('/opt/homebrew/opt/postgresql@16/bin','/usr/lib/postgresql/16/bin',
+  '/opt/homebrew/opt/postgresql@17/bin','/usr/lib/postgresql/17/bin'))
+ for directory in dict.fromkeys(p.resolve()for p in candidates):
+  if all((directory/tool).is_file()and os.access(directory/tool,os.X_OK)for tool in POSTGRES_TOOLS):
+   return postgres_tools(directory)
+ raise RuntimeError('Installed PostgreSQL 16 or 17 tools required; no database URL is accepted')
+BIN,POSTGRES_VERSIONS=select_postgres_tools()
 base=os.environ.get('RENDPROP_MEDIA_AUDIT_ROOT')
 if base: pathlib.Path(base).mkdir(parents=True,exist_ok=True)
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-bounded-media-',dir=base));os.chmod(OUT,0o700);os.umask(0o077)
@@ -19,7 +48,9 @@ hashes={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p
 for p in paths:
  q=INPUT/p.relative_to(ROOT);q.parent.mkdir(parents=True,exist_ok=True);q.write_bytes(p.read_bytes())
 ENV={'PATH':str(BIN)+':/usr/bin:/bin','LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=5000'};CONN=['-h',str(SOCK),'-p','55368','-U','postgres'];PSQL=[str(BIN/'psql'),'-X','--no-password',*CONN,'-d','rendprop_bounded_media_audit','-v','ON_ERROR_STOP=1','-Atq']
-receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'passed':False,'commands':[],'socketDirectory':str(SOCK),'productionMutations':0,'providerCalls':0,'networkCalls':0}
+receipt={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':hashes,'passed':False,'commands':[],'socketDirectory':str(SOCK),'productionMutations':0,'providerCalls':0,'networkCalls':0,
+ 'postgresVersion':POSTGRES_VERSIONS['postgres']['version'],'postgresMajorVersion':POSTGRES_VERSIONS['postgres']['major'],
+ 'postgresToolDirectory':str(BIN),'postgresToolVersions':POSTGRES_VERSIONS}
 def run(name,args,stdin=None,expected=0):
  p=subprocess.run(list(map(str,args)),input=stdin,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=ENV,timeout=120)
  log=OUT/(name+'.log');log.write_text(p.stdout);receipt['commands'].append({'name':name,'exit':p.returncode,'log':str(log),'sha256':hashlib.sha256(log.read_bytes()).hexdigest()})

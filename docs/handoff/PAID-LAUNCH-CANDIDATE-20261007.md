@@ -88,7 +88,12 @@ and Studio fixture controls include their unchanged API-key/storage dependencies
 so failures reach behavioral assertions. The Studio storage-denial case sends
 zero media bytes; its removed-guard control compiles and fails that exact case.
 Local verification of the remaining PostgreSQL job sequence passes after these
-runner/fixture repairs. Production and native inputs are unchanged from `72e64d5`.
+runner/fixture repairs. The later hosted run reached its last runner and exposed
+a PostgreSQL 17-only version check against CI's PostgreSQL 16 installation.
+That runner now explicitly validates one complete PostgreSQL 16 or 17 toolset
+and records the actual version. Its SQL, guard controls and races are unchanged;
+the local PostgreSQL 17 proof passes. Actual hosted PostgreSQL 16 acceptance is
+still pending. Production and native inputs are unchanged from `72e64d5`.
 
 Six reviewed database migrations were applied on October 7. Independent live
 catalogue readback passed 180 checks: exact function bodies and permissions,
