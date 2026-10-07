@@ -1,12 +1,22 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
-**6 October delivery:** Worker `3de4f42e-4b18-4722-8e18-15f3fb1ecad2` serves
-100% traffic, and its downloaded module matches the reviewed `5eeb783` bundle.
+**7 October legal delivery:** Worker `d9232ced-c945-49f6-9ae0-30f958dbfe0d`
+serves 100% traffic from tested `fe0a59c`. Eight actual metadata/content reads
+verified the bundle and configuration; four ordinary public reads verified
+Terms, Privacy, the existing listing and `site.js`. The two Cloudflare route IDs
+were replaced; all other typed route fields remain identical. The first failed
+route-ID comparison is preserved with a separate reconciliation. See the
+[actual legal rollout](../../../docs/handoff/PUBLIC-LEGAL-ROLLOUT-20261007.md).
+Trial funding and protected-media/cache acceptance remain separate open gates.
+
+**6 October delivery:** Worker `3de4f42e-4b18-4722-8e18-15f3fb1ecad2`
+was the preceding 100% version; its downloaded module matches the reviewed
+`5eeb783` bundle.
 See [the actual rollout record](../../../docs/handoff/CAS-AND-STUDIO-ROLLOUT-20261006.md).
 The protected media baseline passed 110 read-only GET/HEADs over two phases.
 Cache-rule acceptance, public-reader flag rollout and denial of the old public
-R2 domain remain incomplete. The newer limited-trial legal copy in this candidate
-has not been deployed. Earlier Worker versions below are dated history.
+R2 domain remain incomplete. At that checkpoint the newer limited-trial legal
+copy had not been deployed. Earlier Worker versions below are dated history.
 
 The [6 October launch candidate](../../../docs/handoff/LAUNCH-READINESS-20261006.md)
 records the current source contracts and staged rollout gates. The new member

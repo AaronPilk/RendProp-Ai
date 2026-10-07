@@ -29,6 +29,9 @@ or App Review submission was performed; public **1.0.3 (42)** is unchanged.
 with all 270 database invariants passing fresh and replay checks. One selected
 `ai-copy` deployment is **v21 ACTIVE**, JWT enabled, with all 21 runtime files
 matching the frozen closure. See the [agent-reel rollout](docs/handoff/AGENT-REEL-ROLLOUT-20261007.md).
+The [public legal update](docs/handoff/PUBLIC-LEGAL-ROLLOUT-20261007.md) is also
+delivered: the downloaded Worker matches the tested bundle, Terms/Privacy match
+the authored documents, and the existing listing and site asset checks passed.
 Internal build 46 remains available from its immutable `7f5879e` archive.
 The [pricing decision sheet](docs/handoff/PRICING-DECISIONS-20261007.md) keeps
 trial funding and proposed paid allowances unapproved. Storage, delivery,

@@ -5,6 +5,9 @@ CI jobs, including strict fresh/replay 270-invariant gates, native recovery,
 measurements, browser playback and synthetic HD/audio exports. The selected
 `ai-copy` update is v21 ACTIVE with JWT enabled and all 21 runtime files verified.
 The [agent-reel rollout](AGENT-REEL-ROLLOUT-20261007.md) records this operation;
+the [public legal rollout](PUBLIC-LEGAL-ROLLOUT-20261007.md) also verifies one
+Worker deployment, its actual bundle/configuration and four served-page/asset
+checks. Trial terms are published without activating or funding a trial;
 the build-46 delivery receipt below remains its immutable native/Studio/dormant
 backend checkpoint. The [pricing decision sheet](PRICING-DECISIONS-20261007.md)
 keeps the seven reserve maxima, funding and paid allowances open. Real-account
