@@ -184,6 +184,30 @@ activate a trial or advance Apple's renewal date. Studio uses the same account
 and workspace subscription and offers existing subscription management; it has
 no separate web checkout.
 
+### Development dependency security — 7 October source checkpoint
+
+Source `fe0a59c` pins Wrangler **4.148.0**, selecting Miniflare
+**5.20261006.0-alpha** and Undici **7.29.1**. A version-scoped override selects
+Sharp **0.35.5** for that exact Miniflare version, overriding the vendor's exact
+**0.35.4** pin. PostCSS's existing `source-map-js` range `^1.2.1` now resolves
+**1.2.2**. Direct application dependency versions and package scripts are unchanged.
+See the maintainer fixes for [Sharp/librsvg](https://github.com/lovell/sharp/security/advisories/GHSA-wq5f-xc86-pv6w),
+[Sharp/libheif](https://github.com/lovell/sharp/security/advisories/GHSA-rgj7-g3m4-5g8c),
+[Undici](https://github.com/nodejs/undici/releases/tag/v7.29.1) and
+[source-map-js](https://github.com/7rulnik/source-map-js/releases/tag/v1.2.2).
+
+Owned local copies passed `npm ci --ignore-scripts`, a full lock audit with zero
+reported vulnerabilities, all **461** tests, typecheck, Vite build and distribution
+checks, plus a native Sharp synthetic SVG-to-JPEG round-trip. The local build had
+no connected production configuration. These local checks used Node 25.9/Darwin arm64. The separate Linux CI
+gate passed on exact `fe0a59c`; see the
+[hosted verification record](../../docs/handoff/AGENT-REEL-ROLLOUT-20261007.md).
+Connected served bytes and the existing Studio deployment retain their separate
+release receipt.
+Remove the override when the selected upstream Miniflare pins/resolves Sharp
+0.35.5 or later and the resulting audit/toolchain checks pass. The actual build-46
+Studio deployment receipt above remains its own immutable checkpoint.
+
 ## Develop and verify
 
 Run from this directory (`apps/studio`). Use Node **22.12+** and the committed

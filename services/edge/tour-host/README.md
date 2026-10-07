@@ -333,6 +333,29 @@ opaque publishable keys are not interchangeable with JWT bearer tokens.
 
 ---
 
+### Development dependency security — 7 October source checkpoint
+
+Source `fe0a59c` pins Wrangler **4.148.0**, which selects Miniflare
+**5.20261006.0-alpha** and Undici **7.29.1**. A version-scoped npm override selects
+Sharp **0.35.5** for that exact Miniflare version; Miniflare's declared dependency
+is exactly **0.35.4**, so this is an explicit override of the vendor pin.
+The relevant maintainer patches cover [Sharp's librsvg issue](https://github.com/lovell/sharp/security/advisories/GHSA-wq5f-xc86-pv6w),
+[Sharp's libheif issues](https://github.com/lovell/sharp/security/advisories/GHSA-rgj7-g3m4-5g8c)
+and the [Undici 7.29.1 security fixes](https://github.com/nodejs/undici/releases/tag/v7.29.1).
+
+Owned local copies passed `npm ci --ignore-scripts`, a full lock audit with zero
+reported vulnerabilities, typecheck, Worker tests, actual Wrangler dry-run bundle
+controls and the existing asset gate. Native Sharp loaded and converted a fixed
+synthetic SVG to a JPEG with verified dimensions; a binding-free Miniflare/workerd
+smoke used loopback only. These local checks used Node 25.9 on Darwin arm64. The separate Linux CI gate
+passed on exact `fe0a59c`; see the
+[hosted verification record](../../../docs/handoff/AGENT-REEL-ROLLOUT-20261007.md).
+The Worker source and configuration are unchanged, and this package update has
+not deployed a new Worker.
+Remove the override once the selected upstream Miniflare pins/resolves Sharp
+0.35.5 or later, after a clean audit and toolchain checks. Historical failed
+candidates remain retained in the private release evidence.
+
 ## Local dev
 
 ```bash

@@ -1,5 +1,17 @@
 # Launch candidate — 6 October 2026
 
+**7 October verified server follow-up:** `fe0a59c` passed all twelve hosted
+CI jobs, including strict fresh/replay 270-invariant gates, native recovery,
+measurements, browser playback and synthetic HD/audio exports. The selected
+`ai-copy` update is v21 ACTIVE with JWT enabled and all 21 runtime files verified.
+The [agent-reel rollout](AGENT-REEL-ROLLOUT-20261007.md) records this operation;
+the build-46 delivery receipt below remains its immutable native/Studio/dormant
+backend checkpoint. The [pricing decision sheet](PRICING-DECISIONS-20261007.md)
+keeps the seven reserve maxima, funding and paid allowances open. Real-account
+sign-in/workspace checks, protected-media/cache cutover and phone acceptance
+remain open. The trial remains OFF; no public release or financial activation
+is implied by this server repair.
+
 **Latest delivered checkpoint:** internal 1.0.4 (46) is available, three dormant
 trial migrations and three dependent functions are applied/source-verified, and
 Studio's new source and 31 served files are verified. See
