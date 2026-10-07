@@ -1471,10 +1471,10 @@ where model = 'gpt-6-astra' and params ->> 'effort' = 'none';
 -- The ceiling has to clear the VISIBLE answer the caller asks for, because a
 -- reasoning model spends reasoning tokens out of the same budget: ai-copy asks
 -- for 1,600 tokens of shot list (MAX_SHOTLIST_TOKENS) and 700 of script
--- (MAX_TOKENS), and 700 for agent-reel (MAX_AGENT_REEL_TOKENS). The 0034
--- agent-reel seed currently violates this headroom rule (700 == 700). Keep that
--- failure visible; updating stale route counts is not permission to enlarge
--- a provider budget or weaken > to >=. It must also stay under the code clamp.
+-- (MAX_TOKENS), and 500 for agent-reel (MAX_AGENT_REEL_TOKENS). Agent-reel
+-- enforces its complete compact JSON <=500 UTF-8 bytes before parsing; aliases
+-- and a shared optional-caption budget preserve twelve windows. The seeded
+-- combined cap remains 700. Never enlarge it or weaken > to >= to pass this.
 insert into _inv(name, pass, note)
 select 'each astra ceiling clears its route''s visible answer and stays under the code clamp',
        coalesce(bool_and(ceiling > visible and ceiling <= 8000), false),
@@ -1482,7 +1482,7 @@ select 'each astra ceiling clears its route''s visible answer and stays under th
 from (
   select task,
          (params ->> 'max_output_tokens')::int as ceiling,
-         case task when 'copy.shotlist' then 1600 else 700 end as visible
+         case task when 'copy.shotlist' then 1600 when 'copy.agent_reel' then 500 else 700 end as visible
     from ai_routes
    where model = 'gpt-6-astra' and params ? 'max_output_tokens'
 ) s;

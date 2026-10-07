@@ -179,6 +179,7 @@ import {
   shotlistInstruction,
 } from "./shotlist.ts";
 import {
+  MAX_AGENT_REEL_TOKENS,
   MAX_CLIP_SECONDS,
   MAX_TRANSCRIPT_PHRASES,
   MIN_CLIP_SECONDS,
@@ -213,12 +214,6 @@ const MAX_TOKENS = 700;
  *  each is ~1,100; the rest is slack, for the same reason MAX_TOKENS is
  *  generous — it stops a runaway generation, it does not shape the answer. */
 const MAX_SHOTLIST_TOKENS = 1600;
-
-/** Bound the /agent-reel reply. It is one short object per cutaway — an id, a
- *  photo id and at most five upper-case words — and MAX_WINDOWS caps it at
- *  twelve of them. Far smaller than a shot list, because this model writes no
- *  narration at all: the agent already spoke. */
-const MAX_AGENT_REEL_TOKENS = 700;
 
 /** Reel photo count. 5 s per clip and the app's own reel ceiling put this well
  *  under 20; the cap only exists so a junk body cannot reach the prompt. */
