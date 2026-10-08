@@ -25,9 +25,9 @@ jobs:
     # production Swift (Foundation + Combine) with /usr/bin/swiftc and assert on
     # the binary, and the glob below is meant to pick up every new gate without
     # anyone editing this file. There is no Linux toolchain for those sources.
-    # The hosted arm64 retry was cancelled before runner acquisition. Keep all
-    # audit checks on the standard macOS 26 Intel image for this capacity retry.
-    runs-on: macos-26-intel
+    # Use the original Apple Silicon runner. The temporary Intel fallback
+    # stalled in CoreSimulator before the UIKit export checks could execute.
+    runs-on: macos-latest
     permissions:
       contents: read
     steps:
