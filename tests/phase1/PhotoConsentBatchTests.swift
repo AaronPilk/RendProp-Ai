@@ -1,18 +1,18 @@
 import Foundation
 import Combine
 
-// Only storage, image decoding, network and UIKit/notification boundaries are
-// doubles. The runner compiles the complete actual service and queue plus the
-// byte-for-byte consent class. No app preferences, files or provider are used.
+// Image preparation/decoding, network and UIKit/notification boundaries are
+// closed doubles. Actual consent, complete service/queue, request contracts,
+// history and capture storage execute against owned disposable files/preferences.
+// No production account, customer file, camera or paid provider is used.
 enum UserDefaults {
     static let standard = Foundation.UserDefaults(suiteName: CommandLine.arguments[1])!
 }
 struct EnhancedPhoto {
     let id: String
-    var originalURL: URL { directory(for: UUID()).appendingPathComponent(id + ".jpg") }
-    var enhancedURL: URL { originalURL }
-    static func directory(for listingID: UUID) -> URL { URL(fileURLWithPath: "/synthetic-photo-consent", isDirectory: true) }
-    private func directory(for listingID: UUID) -> URL { Self.directory(for: listingID) }
+    var originalURL: URL { Self.directory(for: FileStore.listingID).appendingPathComponent("orig-" + id + ".jpg") }
+    var enhancedURL: URL { Self.directory(for: FileStore.listingID).appendingPathComponent("enh-" + id + ".jpg") }
+    static func directory(for listingID: UUID) -> URL { FileStore.documents.appendingPathComponent("Photos/\(listingID.uuidString)", isDirectory: true) }
 }
 struct Listing {
     let id: UUID
@@ -22,28 +22,28 @@ struct Listing {
 }
 enum SpaceType: String { case realEstate = "real_estate" }
 enum CloudSyncError: Error { case identityChanged }
-struct AIPhotoEditRequest {
-    let imageBase64: String
-    let mime: String
-    let edit: String
-    var style: String?; var prompt: String?; var spaceType: String?
-    var stagingReferenceBase64: String?; var stagingReferenceMime: String?
-    var listingServerID: UUID?; var label: String?; var originalAssetID: String?; var idempotencyKey: String?
-}
-struct AIPhotoEditResult {
-    var imageBase64: String
-    var disclosure = "Synthetic AI edit"
-    var provenanceID: String? = "synthetic-provenance"
-    var provenanceRecorded = true
-}
 @MainActor enum PhotoBoundary {
     static var pauseStage: String?
     static var pausePhoto: String?
     static var continuation: CheckedContinuation<Void, Never>?
     static var entered: [String] = []
     static var calls: [String] = []
-    static var saved: [String] = []
-    static var originals: [String: Data] = [:]
+    static var saved: [String] {
+        let directory = EnhancedPhoto.directory(for: FileStore.listingID)
+        guard let index = try? PhotoVersionHistory.load(directory: directory) else { return [] }
+        return index.versions.values.filter { $0.edit == "declutter" }.sorted { $0.createdAt < $1.createdAt }
+            .compactMap { try? String(contentsOf: directory.appendingPathComponent($0.imageFile), encoding: .utf8) }
+    }
+    static var originals: [String: Data] {
+        let directory = EnhancedPhoto.directory(for: FileStore.listingID)
+        return Dictionary(uniqueKeysWithValues: ["one", "two", "three"].compactMap { id in
+            (try? Data(contentsOf: directory.appendingPathComponent("orig-" + id + ".jpg")))
+                .map { (id + ".jpg", $0) }
+        })
+    }
+    static func logicalPhoto(_ name: String) -> String {
+        name.hasPrefix("orig-") ? String(name.dropFirst(5)) : name.hasPrefix("enh-") ? String(name.dropFirst(4)) : name
+    }
     static func suspend(_ stage: String, _ photo: String) async {
         entered.append(stage + ":" + photo)
         if stage == pauseStage && photo == pausePhoto {
@@ -54,9 +54,13 @@ struct AIPhotoEditResult {
     static func reset(stage: String? = nil, photo: String? = nil) {
         precondition(continuation == nil)
         pauseStage = stage; pausePhoto = photo
-        entered = []; calls = []; saved = []
-        originals = ["one.jpg": Data("original-one".utf8), "two.jpg": Data("original-two".utf8),
-                     "three.jpg": Data("original-three".utf8)]
+        entered = []; calls = []
+        FileStore.documents = FileStore.root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let directory = EnhancedPhoto.directory(for: FileStore.listingID)
+        for id in ["one", "two", "three"] {
+            try! PhotoVersionHistory.saveCapture(original: Data(("original-" + id).utf8),
+                enhanced: Data(("enhanced-" + id).utf8), id: id, directory: directory)
+        }
     }
 }
 @MainActor final class ConsentAPI {
@@ -64,7 +68,8 @@ struct AIPhotoEditResult {
         let photo = String(data: Data(base64Encoded: request.imageBase64)!, encoding: .utf8)!
         PhotoBoundary.calls.append(photo)
         await PhotoBoundary.suspend("provider", photo)
-        return .init(imageBase64: Data((photo + ".edited").utf8).base64EncodedString())
+        return .init(imageBase64: Data((photo + ".edited").utf8).base64EncodedString(),
+                     disclosure: "Synthetic AI edit", provenanceID: "synthetic-provenance", provenanceRecorded: true)
     }
 }
 struct NotificationPrefs { var enabled = true; var renders = true }
@@ -79,7 +84,7 @@ protocol NotificationPrefsAPI { func notificationPrefs() async throws -> Notific
         return id
     }
     func publishOriginalForDisclosure(listingServerID: UUID, fileURL: URL) async -> String? {
-        await PhotoBoundary.suspend("original", fileURL.lastPathComponent)
+        await PhotoBoundary.suspend("original", PhotoBoundary.logicalPhoto(fileURL.lastPathComponent))
         return "synthetic-original-asset"
     }
     func attachAlteredPhotoForDisclosure(provenanceID: String, listingServerID: UUID, fileURL: URL) async {
@@ -95,8 +100,10 @@ protocol NotificationPrefsAPI { func notificationPrefs() async throws -> Notific
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
 @MainActor enum AIImagePrep {
     static func jpegBase64(at url: URL, maxDimension: Int, quality: Double) async -> String? {
-        await PhotoBoundary.suspend("image", url.lastPathComponent)
-        return Data(url.lastPathComponent.utf8).base64EncodedString()
+        guard (try? Data(contentsOf: url)) != nil else { return nil }
+        let logical = PhotoBoundary.logicalPhoto(url.lastPathComponent)
+        await PhotoBoundary.suspend("image", logical)
+        return Data(logical.utf8).base64EncodedString()
     }
     nonisolated static func error(_ message: String) -> Error { NSError(domain: "synthetic-photo", code: 1) }
 }
@@ -105,30 +112,15 @@ struct UIImage {
     init?(data: Data) { self.data = data }
     func jpegData(compressionQuality: Double) -> Data? { data }
 }
-@MainActor enum PhotoVersionHistory {
-    enum Failure: Error { case missingImage, changedVersion, reviewRequired }
-    struct Version {
-        var id: String; var imageFile: String; var originalFile: String?; var originalVerified = true
-        var effects: [String] = []
-    }
-    static func trackExisting(id: String, imageFile: String, priorFile: String?, directory: URL) throws -> Version {
-        .init(id: id, imageFile: imageFile, originalFile: priorFile ?? imageFile)
-    }
-    static func source(for parent: String, edit: String, directory: URL) throws -> Version {
-        .init(id: parent, imageFile: parent + ".jpg", originalFile: parent + ".jpg")
-    }
-    static func stagingReference(id: String, directory: URL) throws -> Version {
-        throw Failure.reviewRequired // These consent-only cases never opt in.
-    }
-    static func saveEdit(jpeg: Data, id: String, parentID: String, sourceID: String, edit: String, style: String?,
-                         disclosure: String, provenanceID: String?, provenanceRecorded: Bool, directory: URL,
-                         originalAssetID: String?, serverListingID: String?,
-                         stagingReferenceID: String? = nil, stagingBrief: String? = nil) throws -> Version {
-        PhotoBoundary.saved.append(String(data: jpeg, encoding: .utf8)!)
-        return .init(id: id, imageFile: id + ".jpg", originalFile: parentID + ".jpg", effects: [edit])
+enum FileStore {
+    static var listingID = UUID()
+    static let root = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+    static var documents = root
+    static func relativePath(for url: URL) -> String { url.path }
+    static func fileSize(_ url: URL) -> Int64 {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
     }
 }
-enum FileStore { static func relativePath(for url: URL) -> String { url.path } }
 enum PhotoStudioView {
     static func provenanceLabel(edit: String, style: String?, space: SpaceType) -> String { edit }
 }
@@ -163,7 +155,7 @@ struct UNNotificationRequest { let identifier: String; let content: UNMutableNot
 
 @main struct PhotoConsentBatchTests {
     @MainActor static func main() async {
-        guard CommandLine.arguments.count == 2,
+        guard CommandLine.arguments.count == 3,
               CommandLine.arguments[1].hasPrefix("com.rendprop.offline-photo-consent.") else { exit(2) }
         defer { Foundation.UserDefaults.standard.removePersistentDomain(forName: CommandLine.arguments[1]) }
         var count = 0
@@ -177,11 +169,15 @@ struct UNNotificationRequest { let identifier: String; let content: UNMutableNot
         }
         let listing = Listing(id: UUID())
         let model = AppModel(listing)
+        FileStore.listingID = listing.id
         let photos = [EnhancedPhoto(id: "one"), .init(id: "two"), .init(id: "three")]
         let consent = AIConsent.shared
         let queue = PhotoWorkQueue.shared
         func reset(stage: String? = nil, photo: String? = nil) -> PhotoEditService {
             queue.dismissResult(); PhotoBoundary.reset(stage: stage, photo: photo)
+            AuthStore.shared.userID = "synthetic-owner"
+            AuthStore.shared.syncSessionRevision += 1
+            WorkspaceContext.selectedOrgID = UUID()
             consent.grant()
             return PhotoEditService(model: model, listing: listing, space: .realEstate)
         }
@@ -256,6 +252,26 @@ struct UNNotificationRequest { let identifier: String; let content: UNMutableNot
         check(PhotoBoundary.calls == ["one.jpg", "two.jpg", "three.jpg"], "A fresh service after renewed consent can complete a new batch")
         check(PhotoBoundary.saved.count == 3 && queue.job?.done == 3 && queue.job?.interrupted == false,
               "Unrevoked consent preserves normal sequential edit completion")
-        print("PASS \(count) actual consent/photo batch assertions; platform/image/provider doubles, no camera or paid calls")
+        // A paid response remains owned by the actor/workspace that submitted
+        // it. Real local journals/history let this verify file custody too.
+        for change in ["actor", "revision", "workspace"] {
+            let response = reset(stage: "provider", photo: "one.jpg")
+            let context = PendingPhotoEdit.Context(owner: AuthStore.shared.userID!,
+                workspace: WorkspaceContext.selectedOrgID, listingID: listing.id)
+            let originals = PhotoBoundary.originals
+            start(response); await settle { PhotoBoundary.continuation != nil }
+            check(PendingPhotoEdit.exists(context), "Durable request exists before provider response")
+            if change == "actor" { AuthStore.shared.userID = "replacement-owner" }
+            if change == "revision" { AuthStore.shared.syncSessionRevision += 1 }
+            if change == "workspace" { WorkspaceContext.selectedOrgID = UUID() }
+            PhotoBoundary.release(); await settle { queue.job == nil }
+            check(PhotoBoundary.saved.isEmpty, "Late account/workspace response must not save into replacement context")
+            check(PhotoBoundary.calls == ["one.jpg"], "Identity transition fences every unsent second request")
+            check(PhotoBoundary.originals == originals && originals.count == 3,
+                  "Identity transition preserves real original files")
+            check(PendingPhotoEdit.exists(context), "Unconfirmed old-context request is retained for recovery")
+            check(queue.visibleJob == nil, "Replacement context cannot see another owner's batch")
+        }
+        print("PASS \(count) actual consent/photo batch assertions; actual owned files/history, platform/image/provider doubles, no camera or paid calls")
     }
 }

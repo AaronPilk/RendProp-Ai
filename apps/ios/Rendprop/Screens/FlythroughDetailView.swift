@@ -2579,8 +2579,8 @@ struct AIFailure: Identifiable {
             text.range(of: #"HTTP \d{3}"#, options: .regularExpression) != nil ||
             text.contains("\"detail\"") || text.contains("Traceback")
         guard looksMachine else { return text }
-        return "The AI service refused that request. Nothing was charged for it \u{2014} try again, "
-             + "and if it keeps happening tell us which change you picked."
+        return "The AI service could not finish that request. Its billing outcome could not be confirmed. "
+             + "Recover the saved request before starting another edit, or contact support if it keeps happening."
     }
 
     /// Transport failures that mean "no network", not "the server said no".
@@ -4300,6 +4300,9 @@ struct PhotoStudioView: View {
     @State private var compare: PhotoComparePresentation?
     @State private var exportingPhotos: PhotoExportSelection?
     @State private var photoOwner = AuthStore.shared.userID
+    @State private var photoRequestToForget: PendingPhotoEdit?
+    @State private var photoForgetRevision: UInt64?
+    @State private var showForgetPhotoRequest = false
     @State private var aiFailure: AIFailure?
     @State private var animatedClip: AnimatedClip?   // finished photo→reel clip
     @State private var customEditPhoto: EnhancedPhoto?   // photo awaiting a custom-prompt AI edit
@@ -4365,7 +4368,7 @@ struct PhotoStudioView: View {
         compare != nil || exportingPhotos != nil || stagingSetup != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
             || showLibrary || showCamera
             || showWandDialog || showStageDialog || showPhotoDeleteConfirm
-            || showClipDeleteConfirm
+            || showClipDeleteConfirm || showForgetPhotoRequest
     }
 
     /// Keep the ref-counted idle-timer hold in step with `isProcessing`, and
@@ -4609,6 +4612,7 @@ struct PhotoStudioView: View {
 
     private var studioBody: some View {
         VStack(spacing: Theme.spacing) {
+            pendingPhotoRecovery
             if photos.isEmpty && !isProcessing {
                 studioNeedsPhotos
             } else {
@@ -4630,6 +4634,54 @@ struct PhotoStudioView: View {
             }
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: batchEdit != nil)
+    }
+
+    private var photoRequestContext: PendingPhotoEdit.Context? {
+        guard let owner = auth.userID else { return nil }
+        return .init(owner: owner, workspace: WorkspaceContext.selectedOrgID, listingID: listing.id)
+    }
+
+    @ViewBuilder private var pendingPhotoRecovery: some View {
+        if let context = photoRequestContext, PendingPhotoEdit.exists(context), !isProcessing {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("A photo edit needs recovery").font(.rpHeadline)
+                Text("An earlier edit may have completed. Recover the same request before starting another edit.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                if let pending = try? PendingPhotoEdit.load(context) {
+                    Button("Recover existing photo edit") { recoverPhotoRequest(pending) }
+                    Button("Forget pending request", role: .destructive) {
+                        photoRequestToForget = pending
+                        photoForgetRevision = auth.syncSessionRevision
+                        showForgetPhotoRequest = true
+                    }
+                } else {
+                    Text("The saved request could not be read. Your saved images are kept. Contact support before starting another edit.")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                }
+            }.padding().background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func recoverPhotoRequest(_ pending: PendingPhotoEdit) {
+        guard !isProcessing, photoRequestContext == pending.context else { return }
+        runPhotoAI {
+            guard photoRequestContext == pending.context else { return }
+            do {
+                let directory = EnhancedPhoto.directory(for: listing.id)
+                let history = try PhotoVersionHistory.load(directory: directory)
+                guard let parent = history.versions[pending.source.parentID],
+                      !history.hiddenFamilies.contains(parent.familyID),
+                      history.isVisible(parent.id) || history.versions[pending.versionID] != nil else {
+                    throw PhotoVersionHistory.Failure.changedVersion
+                }
+                let photo = EnhancedPhoto(id: parent.id,
+                    originalURL: directory.appendingPathComponent(parent.reviewSourceFile(in: history)),
+                    enhancedURL: directory.appendingPathComponent(parent.imageFile))
+                startPhotoWork(PendingBatchEdit(edit: pending.source.edit, style: pending.source.style,
+                    title: "Recovering photo edit", multiple: false), targets: [photo],
+                    prompt: pending.source.prompt, stagingReferenceID: pending.source.stagingReferenceID)
+            } catch { aiFailure = AIFailure(error) }
+        }
     }
 
     /// No photos yet. The studio does not pretend it can do anything, and it
@@ -4791,6 +4843,19 @@ struct PhotoStudioView: View {
 
     private var removalDialogs: some View {
         photoActionDialogs
+        .confirmationDialog("Forget this pending photo request?", isPresented: $showForgetPhotoRequest,
+                            titleVisibility: .visible, presenting: photoRequestToForget) { pending in
+            Button("Forget request", role: .destructive) {
+                guard photoRequestContext == pending.context,
+                      auth.syncSessionRevision == photoForgetRevision, !isProcessing else { return }
+                do { try pending.clear() }
+                catch { aiFailure = AIFailure(error) }
+                photoRequestToForget = nil; photoForgetRevision = nil
+            }
+            Button("Cancel", role: .cancel) { photoRequestToForget = nil; photoForgetRevision = nil }
+        } message: { _ in
+            Text("The previous edit may still finish or count against your allowance. This only forgets its request; saved images and originals are not deleted. Starting another edit is a separate action and may count again.")
+        }
         // Removal hides the family; source bytes remain available to earlier
         // versions and existing reels. Imported galleries preserve cloud photos.
         .confirmationDialog("Remove this photo from the gallery?", isPresented: $showPhotoDeleteConfirm,
@@ -7016,37 +7081,49 @@ struct AnimatedClipSheet: View {
 
 // MARK: - Aerial intro (AI establishing shot grounded on THIS property)
 
-/// An in-flight aerial job, persisted under `aerial.pending.<listingID>` so a
-/// swipe-down, Close, or app switch never loses it: reopening the sheet within
-/// two hours resumes polling the same fal job (decision A1 / F-A-05).
+/// An accepted aerial job, persisted under `aerial.pending.<listingID>`.
+/// A local deadline or failed download does not establish provider failure.
+/// Keep the accepted receipt until that same job is saved or definitively fails.
 private struct PendingAerialJob: Codable {
     var job: AIVideoJob
     var listingID: UUID
     var submittedAt: Date
     var grounded: Bool
     var aspect: String
-
-    static let maxAge: TimeInterval = 2 * 60 * 60
+    // Optional only to preserve older, unbound receipts for support. They never
+    // authorize a poll or a replacement generation under a new account.
+    var owner: String?
+    var workspace: UUID?
 
     static func key(_ id: UUID) -> String { "aerial.pending.\(id.uuidString)" }
 
+    static func exists(for id: UUID) -> Bool {
+        UserDefaults.standard.object(forKey: key(id)) != nil
+    }
+
     static func load(for id: UUID) -> PendingAerialJob? {
         guard let data = UserDefaults.standard.data(forKey: key(id)),
-              let pending = try? JSONDecoder().decode(PendingAerialJob.self, from: data) else { return nil }
-        guard Date().timeIntervalSince(pending.submittedAt) < maxAge else {
-            clear(for: id)
-            return nil
-        }
+              let pending = try? JSONDecoder().decode(PendingAerialJob.self, from: data),
+              pending.listingID == id, pending.job.kind == "aerial" else { return nil }
         return pending
     }
 
-    func save() {
-        guard let data = try? JSONEncoder().encode(self) else { return }
-        UserDefaults.standard.set(data, forKey: Self.key(listingID))
+    private func encoded() throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(self)
     }
-
-    static func clear(for id: UUID) {
-        UserDefaults.standard.removeObject(forKey: key(id))
+    func save() throws {
+        guard !Self.exists(for: listingID) else { throw CloudSyncError.identityChanged }
+        UserDefaults.standard.set(try encoded(), forKey: Self.key(listingID))
+        guard let saved = Self.load(for: listingID), try saved.encoded() == encoded() else {
+            throw CloudSyncError.identityChanged
+        }
+    }
+    func clear() throws {
+        guard let saved = Self.load(for: listingID), try saved.encoded() == encoded() else {
+            throw CloudSyncError.identityChanged
+        }
+        UserDefaults.standard.removeObject(forKey: Self.key(listingID))
     }
 }
 
@@ -7069,9 +7146,12 @@ private struct AerialMeta: Codable {
         return try? JSONDecoder().decode(AerialMeta.self, from: data)
     }
 
-    func save(for id: UUID) {
-        guard let data = try? JSONEncoder().encode(self) else { return }
+    func save(for id: UUID) throws {
+        let data = try JSONEncoder().encode(self)
         UserDefaults.standard.set(data, forKey: Self.key(id))
+        guard UserDefaults.standard.data(forKey: Self.key(id)) == data else {
+            throw AIImagePrep.error("The aerial's saved details could not be confirmed. Its request is kept for recovery.")
+        }
     }
 }
 
@@ -7082,9 +7162,9 @@ private struct AerialMeta: Codable {
 /// a generic building of the right space type and the sheet says so.
 ///
 /// The footage is SYNTHETIC — never real drone footage — and the disclosure is
-/// visible in every state. The job cannot be lost: the sheet can't be swiped
+/// visible in every state. An accepted job is retained: the sheet can't be swiped
 /// away while generating, Close asks first, the job ids are persisted and
-/// resumed on the next open (≤ 2 h), and the screen stays awake. The finished
+/// checked on the next open without a second submission, and the screen stays awake. The finished
 /// clip lives at Documents/Aerials/<listingID>-<stamp>.mp4 and is attached to
 /// the listing (`aerialRelPath`); the previous clip is deleted only after the
 /// new one landed. Requires a signed-in account (the job runs on the org).
@@ -7318,7 +7398,7 @@ struct AerialIntroSheet: View {
             }
             Button("Keep waiting", role: .cancel) {}
         } message: {
-            Text("Your aerial keeps generating in the cloud. Reopen Aerial intro within 2 hours and it picks up where it left off.")
+            Text("Your aerial keeps generating in the cloud. Reopen Aerial intro to check the same saved request without starting another generation.")
         }
         // Guideline 5.1.2(i) — the exterior photo (when the shot is grounded)
         // and the city/state region go to Google's video models. Agreed once
@@ -7769,6 +7849,24 @@ struct AerialIntroSheet: View {
 
     private func generateWithSession() {
         guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        guard let owner = AuthStore.shared.userID else { return }
+        let revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID
+        let requireCurrent: @MainActor () throws -> Void = {
+            try Task.checkCancellation()
+            guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == workspace,
+                  model.listings.contains(where: { $0.id == listing.id && $0.cloudUnavailable != true })
+            else { throw CloudSyncError.identityChanged }
+        }
+        if let pending = PendingAerialJob.load(for: listing.id) {
+            resumeWithSession(pending)
+            return
+        }
+        guard !PendingAerialJob.exists(for: listing.id) else {
+            failure = AIFailure(message: "The earlier aerial request could not be read. No new generation was started. Contact support before trying again.")
+            return
+        }
         failure = nil
         statusText = hasPhoto ? "Preparing your photo…" : "Submitting…"
         phase = .generating
@@ -7807,21 +7905,22 @@ struct AerialIntroSheet: View {
                 // Best effort — a missing anchor never blocks the generation.
                 request.listingServerID = await model.serverListingIDForCompliance(listingID)
                 request.label = "Aerial intro"
-                try Task.checkCancellation()
-                await MainActor.run { statusText = "Submitting…" }
+                try requireCurrent()
+                statusText = "Submitting…"
 
                 let job = try await api.aiVideoAerial(request, idempotencyKey: tapKey)
                 let pending = PendingAerialJob(job: job, listingID: listingID, submittedAt: Date(),
                                                grounded: job.grounded ?? (photoURL != nil),
-                                               aspect: aspectValue)
-                pending.save()
+                                               aspect: aspectValue, owner: owner, workspace: workspace)
+                try pending.save() // Retain even if this account changed while submission returned.
+                try requireCurrent()
                 let sentence = job.disclosureText
                 await MainActor.run {
                     grounded = pending.grounded
                     if let sentence, !sentence.isEmpty { disclosureText = sentence }
                     statusText = "Generating aerial…"
                 }
-                try await pollAndStore(pending, api: api)
+                try await pollAndStore(pending, api: api, revision: revision)
             } catch is CancellationError {
                 // Closed mid-generate — the persisted job resumes on the next open.
             } catch {
@@ -7842,6 +7941,12 @@ struct AerialIntroSheet: View {
 
     private func resumeWithSession(_ pending: PendingAerialJob) {
         guard phase != .generating else { return }
+        guard let owner = pending.owner, owner == AuthStore.shared.userID,
+              pending.workspace == WorkspaceContext.selectedOrgID else {
+            failure = AIFailure(message: "The saved aerial belongs to another or unverified account/workspace. No new generation was started. Return to its original account or contact support.")
+            return
+        }
+        let revision = AuthStore.shared.syncSessionRevision
         phase = .generating
         statusText = "Picking up your aerial…"
         grounded = pending.grounded
@@ -7850,9 +7955,9 @@ struct AerialIntroSheet: View {
         let api = model.api
         workTask = Task {
             do {
-                try await pollAndStore(pending, api: api)
+                try await pollAndStore(pending, api: api, revision: revision)
             } catch is CancellationError {
-                // Closed again — still resumable while the record is fresh.
+                // Closed again — keep the accepted receipt for explicit recovery.
             } catch {
                 await MainActor.run {
                     phase = clipURL != nil ? .result : .form
@@ -7865,76 +7970,98 @@ struct AerialIntroSheet: View {
     /// Poll every 6 s, download the finished mp4 into Documents/Aerials, attach it
     /// to the listing, then delete the previous clip — only after the new one is
     /// safely on disk. A definitive failure clears the pending record; a
-    /// cancellation leaves it for the next open.
-    private func pollAndStore(_ pending: PendingAerialJob, api: APIClient) async throws {
+    /// cancellation, local deadline or failed download leaves it for the next open.
+    private func pollAndStore(_ pending: PendingAerialJob, api: APIClient, revision: UInt64) async throws {
+        let requireCurrent: @MainActor () throws -> Void = {
+            try Task.checkCancellation()
+            guard let owner = pending.owner, owner == AuthStore.shared.userID,
+                  AuthStore.shared.syncSessionRevision == revision,
+                  pending.workspace == WorkspaceContext.selectedOrgID,
+                  self.model.listings.contains(where: { $0.id == pending.listingID && $0.cloudUnavailable != true })
+            else { throw CloudSyncError.identityChanged }
+        }
+        try requireCurrent()
         let deadline = max(pending.submittedAt.addingTimeInterval(15 * 60),
                            Date().addingTimeInterval(3 * 60))
         var remoteURL: URL?
         while remoteURL == nil {
+            try requireCurrent()
             guard Date() < deadline else {
-                PendingAerialJob.clear(for: pending.listingID)
-                throw AIImagePrep.error("The aerial took too long. Please generate it again.")
+                throw AIImagePrep.error("The aerial could not be confirmed in time. Its saved request is kept; reopen this aerial to check it without starting another generation.")
             }
             try await Task.sleep(nanoseconds: 6_000_000_000)
-            switch try await api.aiVideoStatus(pending.job) {
+            try requireCurrent()
+            let status = try await api.aiVideoStatus(pending.job)
+            try requireCurrent()
+            switch status {
             case .processing(let queuePosition):
                 let label = queuePosition.flatMap { q in
                     q > 0 ? "Generating aerial… (#\(q) in queue)" : nil
                 } ?? "Generating aerial…"
-                await MainActor.run { statusText = label }
-            case .completed(let videoURL):
-                remoteURL = videoURL
+                statusText = label
+            case .completed(let videoURL): remoteURL = videoURL
             case .failed(let message):
-                PendingAerialJob.clear(for: pending.listingID)
+                try pending.clear()
                 throw AIImagePrep.error(message)
             }
         }
         guard let remoteURL else {
-            PendingAerialJob.clear(for: pending.listingID)
-            throw AIImagePrep.error("The AI didn't return a video. Try again.")
+            throw AIImagePrep.error("The AI did not return a video. Its saved request is kept; reopen this aerial to check the same generation.")
         }
-
-        await MainActor.run { statusText = "Downloading your aerial…" }
+        try requireCurrent()
+        statusText = "Downloading your aerial…"
         let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
-        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            PendingAerialJob.clear(for: pending.listingID)
-            throw AIImagePrep.error("Couldn't download the finished aerial (HTTP \(http.statusCode)). Try again.")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try requireCurrent()
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw AIImagePrep.error("The finished aerial could not be downloaded. Its saved request is kept; reopen it to retry the download.")
         }
-        let dir = FileStore.aerialsDir
-        let dest = dir.appendingPathComponent(
-            "\(pending.listingID.uuidString)-\(Int(Date().timeIntervalSince1970)).mp4")
-        try? FileManager.default.removeItem(at: dest)
+        guard FileStore.fileSize(tmp) > 0 else {
+            throw AIImagePrep.error("The finished aerial was empty. Its saved request is kept for recovery.")
+        }
+        let asset = AVURLAsset(url: tmp)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        try requireCurrent()
+        let duration = try await asset.load(.duration).seconds
+        try requireCurrent()
+        guard !tracks.isEmpty, duration.isFinite, duration > 0 else {
+            throw AIImagePrep.error("The finished aerial could not be read as a video. Its saved request is kept for recovery.")
+        }
+        let dest = FileStore.aerialsDir.appendingPathComponent(
+            "\(pending.listingID.uuidString)-\(UUID().uuidString).mp4")
         try FileManager.default.moveItem(at: tmp, to: dest)
-        PendingAerialJob.clear(for: pending.listingID)
-        // Store the required sentence next to the clip so a later open prints
-        // the server's exact wording, not a fallback.
+        // Keep these bytes if attachment persistence is ambiguous: an autosave
+        // may already reference them. The previous clip and receipt stay intact.
+        try requireCurrent()
         let storedDisclosure = pending.job.disclosureText
-        AerialMeta(grounded: pending.grounded, aspect: pending.aspect, disclosure: storedDisclosure)
+        let previous = model.listings.first(where: { $0.id == pending.listingID })?.aerialURL
+        let previousMeta = UserDefaults.standard.data(forKey: AerialMeta.key(pending.listingID))
+        try AerialMeta(grounded: pending.grounded, aspect: pending.aspect, disclosure: storedDisclosure)
             .save(for: pending.listingID)
-
-        await MainActor.run {
-            let previous = model.listings.first(where: { $0.id == pending.listingID })?.aerialURL
-            model.setAerial(relPath: FileStore.relativePath(for: dest), generatedAt: Date(),
-                            for: pending.listingID)
-            if let previous, previous.standardizedFileURL.path != dest.standardizedFileURL.path {
-                try? FileManager.default.removeItem(at: previous)   // only AFTER the new clip landed
-            }
-            player?.pause()
-            clipURL = dest
-            grounded = pending.grounded
-            if let storedDisclosure, !storedDisclosure.isEmpty { disclosureText = storedDisclosure }
-            resultPortrait = pending.aspect == "9:16"
-            // A new file — drop the previous clip's measurement so the box falls
-            // back to the aspect this job asked for until the new one is read.
-            measuredAspect = nil
-            player = AVPlayer(url: dest)
-            savedToPhotos = false
-            saveError = nil
-            failure = nil
-            phase = .result
-            Haptics.success()
-            Analytics.track("aerial_made", ["ok": "true"])
+        guard model.setAerial(relPath: FileStore.relativePath(for: dest), generatedAt: Date(),
+                              for: pending.listingID) else {
+            if let previousMeta { UserDefaults.standard.set(previousMeta, forKey: AerialMeta.key(pending.listingID)) }
+            else { UserDefaults.standard.removeObject(forKey: AerialMeta.key(pending.listingID)) }
+            throw AIImagePrep.error("The aerial could not be saved to this property. Its request and previous clip are kept; free some space and recover it again.")
         }
+        try requireCurrent()
+        try pending.clear() // Only after video validation, metadata and durable listing attachment.
+        if let previous, previous.standardizedFileURL.path != dest.standardizedFileURL.path {
+            try? FileManager.default.removeItem(at: previous)
+        }
+        player?.pause()
+        clipURL = dest
+        grounded = pending.grounded
+        if let storedDisclosure, !storedDisclosure.isEmpty { disclosureText = storedDisclosure }
+        resultPortrait = pending.aspect == "9:16"
+        measuredAspect = nil
+        player = AVPlayer(url: dest)
+        savedToPhotos = false
+        saveError = nil
+        failure = nil
+        phase = .result
+        Haptics.success()
+        Analytics.track("aerial_made", ["ok": "true"])
     }
 
     private func saveToPhotos(_ url: URL) {

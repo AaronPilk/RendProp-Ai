@@ -127,9 +127,18 @@ export function isHousingSpace(spaceType: string | null | undefined): boolean {
   return !NON_HOUSING_SPACES.has(s);
 }
 
-/** Appended to EVERY generation prompt. Verbatim across photo and video. */
+/** Default generation guard. Canned Declutter has the scoped exception below. */
 export const FAIR_HOUSING_LOCK =
   "Do not add or alter people, pets, religious or cultural objects, flags, or signage.";
+
+/** Declutter removes every visible person; the default ban on altering people
+ * must not contradict that operation. It never permits adding/replacing people
+ * or selecting who stays based on personal traits. Other edits keep the default. */
+export const DECLUTTER_PEOPLE_LOCK =
+  "Remove every visible person and their reflection as requested above. " +
+  "Do not selectively keep or remove people based on appearance or personal traits. " +
+  "Never add or replace a person, or change anyone's appearance. " +
+  "Do not add or alter pets, religious or cultural objects, flags, or signage.";
 
 /** Appended to interior / whole-scene edits alongside FAIR_HOUSING_LOCK. */
 export const PERMANENCE_LOCK =
@@ -156,7 +165,9 @@ const EXTERIOR_EDITS = new Set(["twilight", "sky", "lawn"]);
 
 /** Pick the right guardrail suffix for a canned edit id. */
 export function guardrailsFor(edit: string): string {
-  return EXTERIOR_EDITS.has(edit.trim().toLowerCase()) ? EXTERIOR_GUARDRAILS : GUARDRAILS;
+  const selected = edit.trim().toLowerCase();
+  if (selected === "declutter") return `${DECLUTTER_PEOPLE_LOCK} ${PERMANENCE_LOCK}`;
+  return EXTERIOR_EDITS.has(selected) ? EXTERIOR_GUARDRAILS : GUARDRAILS;
 }
 
 // ── The denylist ─────────────────────────────────────────────────────────────
