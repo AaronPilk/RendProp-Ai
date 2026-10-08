@@ -8,7 +8,9 @@ from pathlib import Path
 import argparse
 import hashlib
 import json
+import os
 import re
+import signal
 import subprocess
 import tempfile
 import time
@@ -23,8 +25,122 @@ EDITOR = ROOT / "apps/ios/Rendprop/Screens/FloorMeasurementsView.swift"
 # then exceeded the old 90-second limit compiling the first copied fault.
 # Allow bounded compiler headroom; executing the proof still has its own
 # unchanged 90-second deadline and exact semantic-rejection requirements.
-COMPILE_TIMEOUT_SECONDS = 240
+# A later serial hosted run exceeded 240 seconds for ignore-facts-review before
+# runtime. Its host cause is unknown; retain failure at a separate 480s bound.
+COMPILE_TIMEOUT_SECONDS = 480
 RUN_TIMEOUT_SECONDS = 90
+
+
+def save_receipt(out, receipt):
+    pending = out / ".receipt.pending"
+    with pending.open("w") as file:
+        json.dump(receipt, file, indent=2)
+        file.write("\n")
+        file.flush()
+        os.fsync(file.fileno())
+    pending.replace(out / "receipt.json")
+    fd = os.open(out, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def stop_owned_group(child):
+    # The leader can exit before its compiler descendants. Always address the
+    # exact session created here, including on normal exit and exceptions.
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    grace_deadline = time.monotonic() + 2
+    while time.monotonic() < grace_deadline:
+        child.poll()
+        try:
+            os.killpg(child.pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(.05)
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        child.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Owned command exit unknown after bounded cleanup") from None
+
+
+def run_command(command, out, label, seconds, receipt, expected_exit):
+    argv = list(map(str, command))
+    stdout_path = out / (label + ".stdout.log")
+    stderr_path = out / (label + ".stderr.log")
+    started = time.monotonic()
+    row = {"name": label, "command": argv, "exit": None,
+           "expectedExit": expected_exit, "timedOut": False,
+           "timeoutSeconds": seconds, "failure": None}
+    receipt["commands"].append(row)
+    save_receipt(out, receipt)
+    child = None
+    try:
+        with stdout_path.open("xb") as stdout, stderr_path.open("xb") as stderr:
+            try:
+                if time.monotonic() - started >= seconds:
+                    raise TimeoutError("Command deadline elapsed before launch")
+                child = subprocess.Popen(argv, cwd=ROOT, stdin=subprocess.DEVNULL,
+                                         stdout=stdout, stderr=stderr,
+                                         start_new_session=True)
+                while child.poll() is None:
+                    if time.monotonic() - started >= seconds:
+                        raise TimeoutError(f"{label} exceeded its {seconds}s bound; no retry")
+                    if stdout_path.stat().st_size + stderr_path.stat().st_size > 16 * 1024 * 1024:
+                        raise RuntimeError("Command output exceeded its 16MiB bound")
+                    time.sleep(.05)
+                row["exit"] = child.returncode
+            finally:
+                if child is not None:
+                    stop_owned_group(child)
+                    row["exit"] = child.returncode
+                stdout.flush()
+                stderr.flush()
+                os.fsync(stdout.fileno())
+                os.fsync(stderr.fileno())
+        if stdout_path.stat().st_size + stderr_path.stat().st_size > 16 * 1024 * 1024:
+            raise RuntimeError("Command output exceeded its 16MiB bound")
+        if time.monotonic() - started >= seconds:
+            raise TimeoutError(f"{label} exceeded its {seconds}s bound; no retry")
+        output = (stdout_path.read_bytes() + stderr_path.read_bytes()).decode("utf-8", errors="replace")
+        if row["exit"] != expected_exit:
+            raise RuntimeError(f"{label} exit {row['exit']} differs from required {expected_exit}")
+        if time.monotonic() - started >= seconds:
+            raise TimeoutError(f"{label} exceeded its {seconds}s bound; no retry")
+        return subprocess.CompletedProcess(argv, row["exit"], stdout=output)
+    except BaseException as error:
+        row["timedOut"] = isinstance(error, TimeoutError)
+        row["failure"] = {"class": type(error).__name__, "reason": str(error)}
+        receipt["passed"] = False
+        receipt["failure"] = {"kind": "timeout" if row["timedOut"] else "command-error",
+                              "stage": label, "timeoutSeconds": seconds,
+                              "class": type(error).__name__, "reason": str(error)}
+        raise
+    finally:
+        row["elapsedSeconds"] = round(time.monotonic() - started, 3)
+        logs = [path for path in [stdout_path, stderr_path] if path.is_file()]
+        row["logs"] = []
+        for path in logs:
+            with path.open("rb") as file:
+                digest = hashlib.file_digest(file, "sha256").hexdigest()
+            row["logs"].append({"path": str(path), "bytes": path.stat().st_size, "sha256": digest})
+        if sum(path.stat().st_size for path in logs) <= 16 * 1024 * 1024:
+            log = out / (label + ".log")
+            with log.open("xb") as file:
+                for path in logs:
+                    file.write(path.read_bytes())
+                file.flush()
+                os.fsync(file.fileno())
+            row["log"] = str(log)
+            row["sha256"] = hashlib.sha256(log.read_bytes()).hexdigest()
+        save_receipt(out, receipt)
 
 
 def block(source, marker):
@@ -40,6 +156,7 @@ def block(source, marker):
 
 
 def main():
+    os.umask(0o077)
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--inject-fault", choices=["drop-wire", "drop-fingerprint", "ignore-dirty", "drop-replay-adopt", "rewrite-raw-keys", "legacy-ignore-edit", "discard-outline-only", "outline-fingerprint", "legacy-v2-accept", "drop-local-raw-mirror", "omit-cas-base", "ignore-pending-measurements", "wrong-cas-workspace", "ignore-cas-conflict", "omit-facts-fingerprint", "ignore-facts-review", "skip-legacy-recovery", "ignore-cas-lineage", "overwrite-shared-backup", "compare-backup-wire-only", "retain-backup-after-new-edit"])
@@ -256,36 +373,23 @@ def main():
                 "retain-backup-after-new-edit": "New pending local geometry replaces the old backup when loading shared measurements"}.get(args.inject_fault)
     for label, command in [("compile", compile_command), ("run", [str(out / "checks")])]:
         timeout_seconds = COMPILE_TIMEOUT_SECONDS if label == "compile" else RUN_TIMEOUT_SECONDS
-        started = time.monotonic()
-        timed_out = False
         try:
-            result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout_seconds)
+            result = run_command(command, out, label, timeout_seconds, receipt,
+                                 0 if label == "compile" or expected is None else 1)
             output = result.stdout
-        except subprocess.TimeoutExpired as error:
-            result = None
-            timed_out = True
-            # TimeoutExpired may retain bytes even when text=True. Preserve
-            # the compiler's partial output rather than losing the only
-            # diagnostic to a traceback or treating it as a rejected fault.
-            partial = error.stdout or ""
-            output = partial.decode("utf-8", errors="replace") if isinstance(partial, bytes) else partial
+        except BaseException:
             receipt["passed"] = False
-            receipt["failure"] = {"kind": "timeout", "stage": label, "timeoutSeconds": timeout_seconds}
-        log = out / (label + ".log")
-        log.write_text(output)
-        receipt["commands"].append({"name": label, "command": command, "exit": None if timed_out else result.returncode,
-                                    "timedOut": timed_out, "timeoutSeconds": timeout_seconds,
-                                    "elapsedSeconds": round(time.monotonic() - started, 3),
-                                    "log": str(log), "sha256": hashlib.sha256(log.read_bytes()).hexdigest()})
+            save_receipt(out, receipt)
+            print(label, "failed; partial diagnostics retained", flush=True)
+            print("Evidence:", out, flush=True)
+            raise
         receipt["sourceHashesAtEnd"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
         receipt["harnessHashesAtEnd"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in harness_bytes}
         receipt["sourceBoundAtEnd"] = receipt["sourceHashes"] == receipt["sourceHashesAtEnd"]
         receipt["harnessBoundAtEnd"] = receipt["harnessHashes"] == receipt["harnessHashesAtEnd"]
         bound = receipt["sourceBoundAtEnd"] and receipt["harnessBoundAtEnd"]
-        if timed_out:
-            receipt["passed"] = False
-        elif label == "run":
-            receipt["passed"] = bound and (result.returncode == 0 if expected is None else result.returncode == 1 and expected in result.stdout)
+        if label == "run":
+            receipt["passed"] = bound and not receipt.get("failure") and (result.returncode == 0 if expected is None else result.returncode == 1 and expected in result.stdout)
             if expected:
                 receipt["expectedRejection"] = expected
             elif receipt["passed"]:
@@ -294,12 +398,9 @@ def main():
                 receipt["assertions"] = int(count[1])
         elif result.returncode or not bound:
             receipt["passed"] = False
-        (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-        if timed_out:
-            print(label, "timed out after", timeout_seconds, "seconds; partial diagnostics retained", flush=True)
-        else:
-            print(label, result.returncode, output[-3500:] if label == "compile" or result.returncode == 0 else "Acceptance rejected the copied regression" if receipt.get("passed") else output[-3500:], flush=True)
-        if timed_out or not bound or (label == "compile" and result.returncode) or (label == "run" and not receipt["passed"]):
+        save_receipt(out, receipt)
+        print(label, result.returncode, output[-3500:] if label == "compile" or result.returncode == 0 else "Acceptance rejected the copied regression" if receipt.get("passed") else output[-3500:], flush=True)
+        if not bound or (label == "compile" and result.returncode) or (label == "run" and not receipt["passed"]):
             print("Evidence:", out, flush=True)
             raise SystemExit(1)
     print("Evidence:", out, flush=True)
