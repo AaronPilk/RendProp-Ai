@@ -49,6 +49,27 @@ if (spatialFixturePath) {
 }
 const spatialManifest = spatialModel ? { schema_version: 1, scene_id: sceneId, artifact_revision: artifactRevision, format: "sog", bytes: spatialModel.length, sha256: createHash("sha256").update(spatialModel).digest("hex"), gaussian_count: 2048, bounds: { min: [-5, -2, -5], max: [5, 4, 5] }, floor_y: -1.6, eye_height: 1.6, floor_source: "capture_estimate", navigation_bounds_source: "capture_estimate", initial_camera: { position: [0, 0, 3], target: [0, 0, 0] }, rooms: [{ id: "synthetic", label: "Synthetic test", position: [1, 0, 3], target: [0, 0, 0] }], provenance: "synthetic", privacy_reviewed: true } : null;
 const requests = [], pageErrors = [], checks = [], navigationMeasurements = [], mediaState = { active: 0, aborted: 0 };
+const externalRequests = [];
+const diagnosticStart = performance.now();
+const lifecycleDiagnostics = { startedAt: new Date().toISOString(), browser: null, phase: "setup", events: [], droppedEvents: 0, initialNavigation: null, failureDiagnostics: [] };
+const diagnosticURL = (value) => {
+  try { const url = new URL(value); return (url.origin + url.pathname).slice(0, 512); }
+  catch { return String(value).slice(0, 512); }
+};
+const lifecycleEvent = (type, details = {}) => {
+  if (lifecycleDiagnostics.events.length >= 400) { lifecycleDiagnostics.droppedEvents++; return; }
+  lifecycleDiagnostics.events.push({ type, elapsedMs: Math.round((performance.now() - diagnosticStart) * 1000) / 1000, at: new Date().toISOString(), phase: lifecycleDiagnostics.phase, ...details });
+};
+// Failure observation must never keep a failed browser test waiting indefinitely.
+const failureDiagnostic = async (label, action, timeoutMs = 2000) => {
+  let timer;
+  try {
+    return await Promise.race([Promise.resolve().then(action), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Diagnostic exceeded " + timeoutMs + "ms")), timeoutMs); })]);
+  } catch (error) {
+    lifecycleDiagnostics.failureDiagnostics.push({ label, error: String(error.message || error).slice(0, 512) });
+    return null;
+  } finally { clearTimeout(timer); }
+};
 let failVideoRequests = true;
 const check = (value, message) => { assert.ok(value, message); checks.push(message); };
 const waitUntil = async (predicate, message, timeout = 5000) => {
@@ -113,6 +134,10 @@ try {
     const url = new URL(req.url, "http://127.0.0.1");
     const record = { path: url.pathname, method: req.method, range: req.headers.range || null, bytes: 0, status: null };
     requests.push(record);
+    const requestId = requests.length;
+    lifecycleEvent("server-request", { requestId, path: url.pathname.slice(0, 512), method: req.method });
+    res.once("finish", () => lifecycleEvent("server-response-finish", { requestId, status: record.status, bytes: record.bytes }));
+    res.once("close", () => lifecycleEvent("server-response-close", { requestId, status: record.status, bytes: record.bytes, writableFinished: res.writableFinished }));
     const send = (status, body, headers = {}) => { record.status = status; record.bytes = Buffer.byteLength(body); res.writeHead(status, { "Cache-Control": "no-store", ...headers }); res.end(body); };
     if (url.pathname === "/spatial-viewer.js") return send(spatialRuntime ? 200 : 503, spatialRuntime || "Synthetic spatial unavailable", { "Content-Type": "text/javascript" });
     if (url.pathname === "/vendor/playcanvas.min.js" && spatialEngine) return send(200, spatialEngine, { "Content-Type": "text/javascript" });
@@ -172,7 +197,10 @@ try {
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = "http://127.0.0.1:" + server.address().port;
+  lifecycleEvent("server-listening", { origin: base });
   browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
+  lifecycleDiagnostics.browser = browser.version();
+  lifecycleEvent("browser-launched");
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, reducedMotion: "reduce" });
   await context.addInitScript(() => {
     window.__spatialDraws = 0;
@@ -191,12 +219,21 @@ try {
       WebGL2RenderingContext.prototype[name] = function (...args) { if (this.getParameter(this.DRAW_FRAMEBUFFER_BINDING) === null && args[1] > 0 && args.at(-1) > 0) window.__spatialDraws++; return original.apply(this, args); };
     }
   });
-  const externalRequests = [];
-  await context.route("**/*", async (route) => { if (new URL(route.request().url()).origin === base) await route.continue(); else { externalRequests.push(route.request().url()); await route.abort(); } });
+  await context.route("**/*", async (route) => { if (new URL(route.request().url()).origin === base) await route.continue(); else { if (externalRequests.length < 400) externalRequests.push(diagnosticURL(route.request().url())); lifecycleEvent("external-request-aborted", { url: diagnosticURL(route.request().url()) }); await route.abort(); } });
   const page = await context.newPage();
   browserPage = page;
   page.setDefaultTimeout(5000);
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  const browserRequests = new WeakMap(); let browserRequestId = 0;
+  page.on("request", (request) => { const requestId = ++browserRequestId; browserRequests.set(request, requestId); lifecycleEvent("browser-request", { requestId, url: diagnosticURL(request.url()), method: request.method(), resourceType: request.resourceType() }); });
+  page.on("response", (response) => lifecycleEvent("browser-response", { requestId: browserRequests.get(response.request()), status: response.status(), url: diagnosticURL(response.url()) }));
+  page.on("requestfinished", (request) => lifecycleEvent("browser-request-finished", { requestId: browserRequests.get(request), url: diagnosticURL(request.url()) }));
+  page.on("requestfailed", (request) => lifecycleEvent("browser-request-failed", { requestId: browserRequests.get(request), url: diagnosticURL(request.url()), error: String(request.failure()?.errorText || "Unknown failure").slice(0, 512) }));
+  page.on("domcontentloaded", () => lifecycleEvent("browser-domcontentloaded", { url: diagnosticURL(page.url()) }));
+  page.on("load", () => lifecycleEvent("browser-load", { url: diagnosticURL(page.url()) }));
+  page.on("framenavigated", (frame) => { if (frame === page.mainFrame()) lifecycleEvent("browser-main-frame-navigated", { url: diagnosticURL(frame.url()) }); });
+  page.on("crash", () => lifecycleEvent("browser-page-crashed"));
+  page.on("close", () => lifecycleEvent("browser-page-closed"));
   const video = page.locator("#flythrough-video");
   const modal = page.locator("#flythrough-modal");
   const entry = page.locator("#open-flythrough");
@@ -221,7 +258,20 @@ try {
     return after;
   };
 
-  await page.goto(base + "/f/synthetic-listing");
+  lifecycleDiagnostics.phase = "initial-navigation";
+  const initialNavigationStart = performance.now();
+  lifecycleDiagnostics.initialNavigation = { timeoutMs: 30000, waitUntil: "load", startedAt: new Date().toISOString(), completed: false, elapsedMs: null };
+  lifecycleEvent("initial-navigation-start");
+  try {
+    // Initial browser/server readiness has its own finite budget. Every later
+    // navigation/action and all real media advancement deadlines stay unchanged.
+    await page.goto(base + "/f/synthetic-listing", { timeout: 30000, waitUntil: "load" });
+    lifecycleDiagnostics.initialNavigation.completed = true;
+    lifecycleEvent("initial-navigation-load-complete");
+  } finally {
+    lifecycleDiagnostics.initialNavigation.elapsedMs = Math.round((performance.now() - initialNavigationStart) * 1000) / 1000;
+  }
+  lifecycleDiagnostics.phase = "product-assertions";
   await page.locator("#overview").waitFor({ state: "visible" });
   await page.waitForTimeout(400);
   check(await modal.isHidden(), "Initial public listing does not present a blocking video modal");
@@ -578,16 +628,21 @@ try {
   check(await entry.count() === 0 || await entry.isDisabled(), "No-media listing does not present a working watch action");
   check(pageErrors.length === 0, "No uncaught JavaScript errors: " + pageErrors.join("; "));
   check(externalRequests.length === 0, "All actual browser requests stayed on isolated loopback");
-  const receipt = { passed: true, assertions: checks.length, sourcePlayerSha256: sourceHash, sourceHashes, fault, chapterObservationDelayMs: chapterObservationDelay, browser: await browser.version(), fixture: { name: "SYNTHETIC-NOT-A-LISTING.mp4", bytes: movie.length, sha256: movieHash, width: 1280, height: 720, seconds: 8, codecs: "H.264/AAC" }, spatial: spatialManifest ? { synthetic: true, actualEngineAndDraw: true, modelBytes: spatialManifest.bytes, sha256: spatialManifest.sha256, count: 2048 } : { synthetic: true, actualModuleFailureReturn: true, actualEngineAndDraw: false }, checks, navigationMeasurements, requests, mediaState, pageErrors, externalRequests, limitation: "Synthetic real Chromium media and renderer. No iPhone/Safari camera, customer listing, production upload resolution, real reconstructed room or HLS proof." };
+  const receipt = { passed: true, assertions: checks.length, sourcePlayerSha256: sourceHash, sourceHashes, fault, chapterObservationDelayMs: chapterObservationDelay, browser: await browser.version(), fixture: { name: "SYNTHETIC-NOT-A-LISTING.mp4", bytes: movie.length, sha256: movieHash, width: 1280, height: 720, seconds: 8, codecs: "H.264/AAC" }, spatial: spatialManifest ? { synthetic: true, actualEngineAndDraw: true, modelBytes: spatialManifest.bytes, sha256: spatialManifest.sha256, count: 2048 } : { synthetic: true, actualModuleFailureReturn: true, actualEngineAndDraw: false }, checks, navigationMeasurements, requests, mediaState, pageErrors, externalRequests, lifecycleDiagnostics, limitation: "Synthetic real Chromium media and renderer. Initial load has a separate 30s readiness budget, not a sub-5s product performance claim. No iPhone/Safari camera, customer listing, production upload resolution, real reconstructed room or HLS proof." };
   writeFileSync(join(evidence, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
   console.log(`Listing browser: ${checks.length} assertions passed; real rendered page/720p H.264-AAC/ranges/transfer cancellation. Receipt: ${join(evidence, "receipt.json")}`);
 } catch (error) {
-  const playbackClock = { anchor: playbackAnchor, priorSuccessfulPlayback: savedPlaybackProbe,
-    observation: await browserPage?.evaluate(() => window.__listingPlaybackProbe).catch(() => null) };
+  lifecycleEvent("test-failed", { error: String(error.message || error).slice(0, 512) });
+  const diagnosticSnapshot = await failureDiagnostic("page-state", () => browserPage?.evaluate(() => {
+    const v = document.querySelector("#flythrough-video");
+    return { playbackProbe: window.__listingPlaybackProbe, document: { readyState: document.readyState, url: location.origin + location.pathname }, failureState: v ? { time: v.currentTime, duration: v.duration, controls: v.controls, muted: v.muted, src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, ended: v.ended, seeking: v.seeking, rate: v.playbackRate, frames: v.getVideoPlaybackQuality?.().totalVideoFrames, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null };
+  }));
+  lifecycleDiagnostics.failureDocument = diagnosticSnapshot?.document || null;
+  const playbackClock = { anchor: playbackAnchor, priorSuccessfulPlayback: savedPlaybackProbe, observation: diagnosticSnapshot?.playbackProbe || null };
   writeFileSync(join(evidence, "playback-clock.json"), JSON.stringify(playbackClock, null, 2) + "\n");
-  const failureState = await browserPage?.evaluate(() => { const v = document.querySelector("#flythrough-video"); return v ? { time: v.currentTime, duration: v.duration, controls: v.controls, muted: v.muted, src: v.getAttribute("src"), currentSrc: v.currentSrc, paused: v.paused, ready: v.readyState, network: v.networkState, error: v.error?.message, ended: v.ended, seeking: v.seeking, rate: v.playbackRate, frames: v.getVideoPlaybackQuality?.().totalVideoFrames, modalOpen: document.querySelector("#flythrough-modal")?.open, focus: document.activeElement?.id, scrollY, expectedScrollY: window.__savedScroll } : null; }).catch(() => null);
-  await browserPage?.screenshot({ path: join(evidence, "failure.png") }).catch(() => {});
-  writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: false, sourcePlayerSha256: sourceHash, sourceHashes, fault, chapterObservationDelayMs: chapterObservationDelay, error: error.message, checks, navigationMeasurements, requests, mediaState, pageErrors, failureState }, null, 2) + "\n");
+  const failureState = diagnosticSnapshot?.failureState || null;
+  await failureDiagnostic("screenshot", () => browserPage?.screenshot({ path: join(evidence, "failure.png"), timeout: 2000 }));
+  writeFileSync(join(evidence, "receipt.json"), JSON.stringify({ passed: false, sourcePlayerSha256: sourceHash, sourceHashes, fault, chapterObservationDelayMs: chapterObservationDelay, error: error.message, checks, navigationMeasurements, requests, mediaState, pageErrors, externalRequests, lifecycleDiagnostics, failureState }, null, 2) + "\n");
   throw error;
 } finally {
   await browser?.close();
