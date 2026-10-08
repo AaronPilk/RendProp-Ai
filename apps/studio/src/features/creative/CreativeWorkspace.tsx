@@ -38,6 +38,7 @@ import BatchPhotoStudio from "./BatchPhotoStudio";
 import PhotoExportPanel from "./PhotoExportPanel";
 import { continuePhoto, importedPhoto, inputForEdit, photoDelivery, propertyPhoto, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
+import { PhotoRequestJournal, PendingPhotoRequestError, readPendingPhotoRequest, type PendingPhotoRequest } from "./photo-request";
 const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
 const PromptLibrary = lazy(() => import("../prompts/PromptLibrary"));
 
@@ -566,6 +567,10 @@ function ListingCreative(
   );
   const agentSeconds = agentBase?.duration_s ?? draft.agentDuration ?? 30;
   const photoIdentityVersion = useRef(services.getSnapshot().identityVersion).current;
+  const photoJournal = useMemo(() => new PhotoRequestJournal(), []);
+  const [pendingPhoto, setPendingPhoto] = useState<PendingPhotoRequest | null>(null);
+  const [photoRecoveryReady, setPhotoRecoveryReady] = useState(false);
+  const photoScope = { actor: workspace.user.id, org: orgId, listing: listingId };
   function assertPhotoScope(editing = true) {
     signal.throwIfAborted();
     const current = services.getSnapshot();
@@ -573,6 +578,19 @@ function ListingCreative(
       current.identity?.userId !== workspace.user.id || current.identity.isAnonymous || listing.orgId !== orgId ||
       !(editing ? ["owner", "admin", "agent"] : ["owner", "admin", "agent", "marketing"]).includes(role ?? "")) throw new Error("Your account or editing access changed. Reopen this property.");
   }
+  useEffect(() => {
+    let cancelled = false;
+    photoJournal.load(photoScope).then(pending => {
+      if (cancelled) return;
+      assertPhotoScope(false);
+      if (pending?.result) showPhoto(pending);
+      else setPendingPhoto(pending);
+      setPhotoRecoveryReady(true);
+    }).catch(error => {
+      if (!cancelled && alive.current && !signal.aborted) setError(message(error));
+    });
+    return () => { cancelled = true; };
+  }, [photoJournal, workspace.user.id, orgId, listingId]);
   async function chooseSource(next: PhotoSource) {
     assertPhotoScope(false);
     setSource(next);
@@ -596,6 +614,8 @@ function ListingCreative(
     return asset.assetId;
   }
   async function generatePhoto() {
+    if (!photoRecoveryReady) throw new Error("Wait for photo recovery data to load before starting an edit.");
+    if (pendingPhoto) throw new Error("Recover the earlier photo request before starting another edit.");
     if (!source) throw new Error("Choose a photo first.");
     if (edit === "custom" && !prompt.trim()) {
       throw new Error("Describe the change you want to make.");
@@ -603,8 +623,10 @@ function ListingCreative(
     const originalAssetId = await ensureOriginal();
     assertPhotoScope();
     const input = inputForEdit(source, edit);
-    const response = record(
-      await api("ai-photo", {
+    const pending: PendingPhotoRequest = {
+      version: 1, scope: photoScope, requestKey: crypto.randomUUID(),
+      source: { ...source, originalAssetId },
+      body: {
         listing_id: listingId,
         original_asset_id: originalAssetId,
         image_b64: input.base64,
@@ -614,8 +636,24 @@ function ListingCreative(
         label: room || "Studio photo",
         ...(edit === "stage" ? { style } : {}),
         ...(edit === "custom" ? { prompt: prompt.trim() } : {}),
-      }, {
-        idempotencyKey: crypto.randomUUID(),
+      },
+    };
+    try { await photoJournal.begin(pending); }
+    catch (error) {
+      assertPhotoScope();
+      if (error instanceof PendingPhotoRequestError) setPendingPhoto(error.pending);
+      throw error;
+    }
+    assertPhotoScope();
+    setPendingPhoto(pending);
+    await dispatchPhoto(pending);
+  }
+  async function dispatchPhoto(value: PendingPhotoRequest) {
+    assertPhotoScope();
+    const pending = readPendingPhotoRequest(value, photoScope), { body, source } = pending;
+    const response = record(pending.result ??
+      await api("ai-photo", body, {
+        idempotencyKey: pending.requestKey,
         timeoutMs: 300_000,
         maxResponseBytes: 32 * 1024 * 1024,
       }),
@@ -624,14 +662,46 @@ function ListingCreative(
     const file = editedImage(
         requiredText(response.image_b64, "an edited photo", 32 * 1024 * 1024),
         text(response.mime, 50) || "image/png",
-      ),
-      preview = `data:${file.type};base64,${String(response.image_b64)}`;
+      );
     const provenance = response.provenance ? record(response.provenance) : {};
     const disclosure = requiredText(response.disclosure, "the photo disclosure", 1000);
-    const delivery = photoDelivery(source, file, edit, disclosure, provenance.recorded === true ? text(provenance.id, 80) || null : null);
+    const result: NonNullable<PendingPhotoRequest["result"]> = {
+      image_b64: String(response.image_b64), mime: file.type, disclosure,
+      provenance: { id: text(provenance.id, 80) || null, recorded: provenance.recorded === true },
+    };
+    // A transport, parser or storage failure leaves the original request
+    // recoverable. Only a verified result retires this browser's pending slot.
+    await photoJournal.complete({ ...pending, result });
+    assertPhotoScope();
+    showPhoto({ ...pending, result });
+  }
+  async function forgetPendingPhoto() {
+    const pending = pendingPhoto;
+    if (!pending) return;
+    assertPhotoScope();
+    if (!window.confirm("The earlier edit may still finish and count against your allowance. Forgetting does not cancel or refund it and does not delete saved photos. Forget this request so you can explicitly start another edit?")) return;
+    assertPhotoScope();
+    await photoJournal.forget(pending);
+    assertPhotoScope();
+    setPendingPhoto(null);
+    setNotice("The local pending request was forgotten. No new edit was started.");
+  }
+  function showPhoto(value: PendingPhotoRequest) {
+    assertPhotoScope(false);
+    const pending = readPendingPhotoRequest(value, photoScope), { body, source, result } = pending;
+    if (!result) throw new Error("The photo request has not returned its preview yet.");
+    const file = editedImage(result.image_b64, result.mime), preview = `data:${file.type};base64,${result.image_b64}`;
+    const edit = body.edit, originalAssetId = body.original_asset_id, disclosure = result.disclosure;
+    const delivery = photoDelivery(source, file, edit, disclosure, result.provenance.recorded ? result.provenance.id : null);
+    setPendingPhoto(null);
+    setSource(source);
+    setEdit(edit);
+    setStyle(body.style ?? "modern");
+    setPrompt(body.prompt ?? "");
+    setRoom(body.label === "Studio photo" ? "" : body.label);
     setPhotoResult({ ...delivery, preview, originalAssetId, disclosure: delivery.disclosures.join("\n"),
       saved: false, edit, source: { ...source, originalAssetId } });
-    if (provenance.recorded !== true) {
+    if (!result.provenance.recorded) {
       setNotice(
         "Your edited photo is ready to review, but its disclosure record could not be saved. Download the result and retry later before adding it to a public gallery.",
       );
@@ -1377,13 +1447,18 @@ function ListingCreative(
               </button>
               <button
                 className="creative-primary"
-                disabled={!source || !source.originalVerified || isBusy || !canCreate}
+                disabled={!source || !source.originalVerified || isBusy || !canCreate || !photoRecoveryReady || !!pendingPhoto}
                 onClick={() => run("Creating your photo", generatePhoto)}
               >
                 Generate preview
               </button>
             </div>
             <small>Uses the same photo allowance as your iPhone app.</small>
+            {pendingPhoto && <div className="creative-alert" role="status">
+              <p>An earlier {pendingPhoto.body.edit} request needs confirmation. Recover its existing preview before starting another edit. Its original photo and settings were kept in this browser.</p>
+              <button disabled={isBusy || !canCreate} onClick={() => run("Recovering your photo", () => dispatchPhoto(pendingPhoto))}>Recover existing preview</button>
+              <button disabled={isBusy || !canCreate} onClick={() => run("Forgetting the pending request", forgetPendingPhoto)}>Forget pending request</button>
+            </div>}
             {suggestions.map((s) => (
               <button
                 className="creative-suggestion"

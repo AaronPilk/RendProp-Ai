@@ -166,6 +166,17 @@ jobs:
         run: bash apps/ios/tests/run-photo-work-queue.sh
       - name: Photo edit lifecycle and background resource cleanup
         run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
+      - name: AI photo recovery and accepted aerial result retention
+        run: python3 apps/ios/tests/run-ai-output-recovery.py --evidence-dir "$RUNNER_TEMP/rendprop-ai-output-recovery-$GITHUB_RUN_ATTEMPT"
+      - name: Retain AI output recovery runtime and negative controls
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ai-output-recovery-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-ai-output-recovery-*/receipt.json
+            ${{ runner.temp }}/rendprop-ai-output-recovery-*/*.log
+            ${{ runner.temp }}/rendprop-ai-output-recovery-*/*.swift
       - name: Owner-bound Apple sign-in code and export admission
         run: |
           python3 tools/audit/apple-code-session-20261004/run.py
@@ -525,6 +536,7 @@ jobs:
           node tests/projects-browser.mjs
           node tests/creative-browser.mjs
           node tests/photo-delivery-browser.mjs
+          node tests/photo-recovery-browser.mjs
           node tests/photographer-browser.mjs
           node tests/business-browser.mjs
           node tests/industry-details-browser.mjs
@@ -655,6 +667,8 @@ jobs:
             /tmp/rendprop-photo-delivery-browser-*/receipt.json
             /tmp/rendprop-photo-delivery-browser-*/*.png
             /tmp/rendprop-photo-delivery-browser-*/*.zip
+            /tmp/rendprop-photo-recovery-browser-*/receipt.json
+            /tmp/rendprop-photo-recovery-browser-*/failure.json
             /tmp/rendprop-photographer-*/receipt.json
             /tmp/rendprop-photographer-*/*.png
           if-no-files-found: warn

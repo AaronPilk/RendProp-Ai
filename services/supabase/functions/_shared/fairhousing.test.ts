@@ -19,7 +19,31 @@ import {
   checkFairHousing,
   checkMarketingCopy,
   isHousingSpace,
+  guardrailsFor,
+  GUARDRAILS,
+  EXTERIOR_GUARDRAILS,
+  PERMANENCE_LOCK,
 } from "./fairhousing.ts";
+
+Deno.test("canned Declutter removes all people without the contradictory default ban or trait selection", () => {
+  const suffix = guardrailsFor("  DECLUTTER ");
+  assertStringIncludes(suffix, "Remove every visible person and their reflection");
+  assertStringIncludes(suffix, "Do not selectively keep or remove people based on appearance or personal traits");
+  assertStringIncludes(suffix, "Never add or replace a person");
+  assertStringIncludes(suffix, "Do not add or alter pets, religious or cultural objects, flags, or signage");
+  assert(suffix.endsWith(PERMANENCE_LOCK));
+  assert(!suffix.includes("Do not add or alter people"));
+  // A canned suffix exception does not relax the custom-prompt input guard.
+  for (const prompt of ["add a family in the living room", "make it racially exclusive"])
+    assertThrows(() => assertFairHousing(prompt, "This edit", "real_estate"), HttpError);
+});
+
+Deno.test("the Declutter exception does not change any other edit or unknown edit guard", () => {
+  for (const edit of ["stage", "custom", "unknown", "", "reflection", " DECLUTTER_custom "])
+    assertEquals(guardrailsFor(edit), GUARDRAILS);
+  for (const edit of ["twilight", "sky", "lawn", " SKY "])
+    assertEquals(guardrailsFor(edit), EXTERIOR_GUARDRAILS);
+});
 
 /** Run a gate and hand back the refusal, or null when it passed. */
 function refusal(fn: () => void): HttpError | null {

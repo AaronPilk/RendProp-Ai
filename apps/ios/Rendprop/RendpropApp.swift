@@ -772,10 +772,19 @@ final class AppModel: ObservableObject {
     }
 
     /// The latest generated aerial clip (Documents-relative) + timestamp. Local only.
-    func setAerial(relPath: String?, generatedAt: Date?, for id: UUID) {
-        guard let i = index(of: id), !listings[i].isSample else { return }
+    @discardableResult
+    func setAerial(relPath: String?, generatedAt: Date?, for id: UUID) -> Bool {
+        guard let i = index(of: id), !listings[i].isSample else { return false }
+        let previousPath = listings[i].aerialRelPath
+        let previousDate = listings[i].aerialGeneratedAt
         listings[i].aerialRelPath = relPath
         listings[i].aerialGeneratedAt = generatedAt
+        guard persist() else {
+            listings[i].aerialRelPath = previousPath
+            listings[i].aerialGeneratedAt = previousDate
+            return false
+        }
+        return true
     }
 
     /// City/State from the geocode (never the street), plus the raw

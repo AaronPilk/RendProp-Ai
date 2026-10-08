@@ -15,6 +15,9 @@ def block(anchor):
             if depth==0: return source[start:position+1]
     raise AssertionError('Unclosed actual lifecycle method')
 header='''import Foundation
+enum PendingPhotoEdit {
+''' + block('    enum Failure: LocalizedError {') + '''
+}
 @MainActor final class PhotoEditService {
 private let model:AppModel
 private let listing:Listing

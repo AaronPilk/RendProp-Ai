@@ -378,11 +378,13 @@ const LOCK =
 const STAGE_LOCK =
   "CRITICAL: keep the room's architecture EXACTLY as photographed — identical walls, " +
   "windows, doors, ceiling, flooring material, trim, built-ins, light fixtures, the view " +
-  "through the windows, camera angle, and perspective. Only ADD furniture and decor; do not " +
+  "through the windows, camera angle, and perspective. Only add or replace movable furniture and decor; do not " +
   "remodel, repaint, resurface, or alter the structure or lighting direction in any way. " +
   "Never invent a window or opening. Do not move, replace or remove refrigerators, ovens, sinks, " +
   "cabinets, counters or other fixed appliances and built-ins. Keep doors, door swings, exits and " +
   "walking routes unobstructed; never put furniture across an opening or into a wall. " +
+  "Decorative lamps may be freestanding floor or table lamps only. Never add, remove, replace " +
+  "or redesign a ceiling-mounted or wall-mounted light, recessed light, pendant or chandelier. " +
   CONDITION_LOCK +
   "Photorealistic materials with shadows and reflections that match the room's existing light.";
 
@@ -407,7 +409,7 @@ const REFLECTION_CLAUSE =
   "or any other glossy surface — rebuild the reflection as the empty surface would " +
   "look, reflecting only the room itself. ";
 
-// The proven real-estate prompt set — VERBATIM from the shipped version (the
+// The existing real-estate prompt set (the
 // industry templates below are for the other space types only).
 const RE_PROMPTS: Record<string, string> = {
   twilight:
@@ -432,11 +434,11 @@ const RE_PROMPTS: Record<string, string> = {
     "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
 };
 
-// Real-estate staging furniture sets (verbatim from the shipped version).
+// Real-estate staging furniture sets; fixed fixtures are never furnishings.
 const RE_STAGE_STYLES: Record<string, string> = {
   modern:
     "modern contemporary furniture: clean-lined sofa and chairs, a low-profile coffee table, " +
-    "a large area rug, tasteful wall art, and designer accent lighting in a neutral palette " +
+    "a large area rug, tasteful wall art, and freestanding floor or table lamps in a neutral palette " +
     "with warm accents",
   rustic:
     "rustic farmhouse furniture: warm natural woods, a comfortable linen-upholstered sofa, " +
@@ -487,7 +489,7 @@ function prompts(p: Profile): Record<string, string> {
 const STAGE_STYLES: Record<string, string> = {
   modern:
     "a modern contemporary style: clean-lined pieces, low-profile tables, tasteful wall art, " +
-    "designer accent lighting, and a neutral palette with warm accents",
+    "freestanding floor or table lamps, and a neutral palette with warm accents",
   rustic:
     "a rustic farmhouse style: warm natural woods, linen upholstery, woven and vintage accents, " +
     "layered cozy textiles, and earthy tones",
