@@ -1225,28 +1225,37 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
 
   if (tx.environment === "Sandbox" && await servingMode() === "ceiling") {
     // Ceiling mode (launch): a Sandbox purchase — only App Review or a Sandbox
-    // tester the owner created can make one — grants a 7-day `trial` plan,
-    // bounded by that plan's meters and 1200¢ monthly ceiling. It never
-    // downgrades a paid workspace and never binds a retail subscription.
+    // tester the owner created can make one — opens a 7-day `trial` plan,
+    // bounded by that plan's meters, the 500¢ trial envelope and the global
+    // sponsor pool. The RPC validates the receipt's status and expiry, persists
+    // the receipt either way, grants once per receipt, replays without
+    // restarting, and never downgrades a paid workspace or binds a retail
+    // subscription. A receipt that grants nothing is a 200 with granted:false.
+    const derivedSandbox = deriveEntitlement(tx, renewal);
     const { data, error } = await admin.rpc("grant_sandbox_trial", {
-      p_org: orgId, p_actor: userId, p_original: tx.originalTransactionId, p_product: tx.productId,
+      p_org: orgId, p_actor: userId, p_original: tx.originalTransactionId, p_transaction: tx.transactionId,
+      p_product: tx.productId, p_status: derivedSandbox.status, p_expires_at: derivedSandbox.expiresAt, p_signed_at: tx.signedDate,
     });
     if (error) {
       if (/RP(?:400|403|409):/.test(error.message)) throwRpc(error.message);
       throw new HttpError(503, "Test purchase could not be confirmed. Please retry.", "upstream");
     }
-    const grant = (data ?? {}) as { plan?: unknown; source?: unknown; expires_at?: unknown };
+    const grant = (data ?? {}) as { plan?: unknown; source?: unknown; expires_at?: unknown; granted?: unknown; replay?: unknown; reason?: unknown };
+    assert(typeof grant.plan === "string" && typeof grant.granted === "boolean", 503, "Test purchase could not be confirmed. Please retry.");
     const servingActivation = await subscriptionServingActivation(admin, userId, orgId);
     return json({
-      plan: String(grant.plan ?? "trial"),
-      source: String(grant.source ?? "trial"),
+      plan: grant.plan,
+      source: typeof grant.source === "string" ? grant.source : null,
       expires_at: typeof grant.expires_at === "string" ? grant.expires_at : null,
       product_id: tx.productId,
       original_transaction_id: tx.originalTransactionId,
       environment: "Sandbox",
       serving_activation: servingActivation,
-      status: deriveEntitlement(tx, renewal).status,
+      status: derivedSandbox.status,
       test_only: true,
+      granted: grant.granted,
+      replay: grant.replay === true,
+      reason: typeof grant.reason === "string" ? grant.reason : null,
     }, 200, { "cache-control": "no-store" });
   }
 

@@ -873,6 +873,11 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
+          # Launch ceiling mode (2026-10-08): money admission, SKU envelopes,
+          # fail-closed configuration, Sandbox trials, free slots, retention.
+          # Runs on the final schema BEFORE the historical replays below restore
+          # the Oct 6 function bodies that migration 20261008220411 rewrote.
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006164721_funded_serving_and_app_review_authority.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006202500_bounded_subscription_trial.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006212900_subscription_trial_purchase_reservations.sql
@@ -1036,6 +1041,7 @@ jobs:
           python3 services/supabase/tests/subscription_trial_purchase_reservations_pg.py
           python3 services/supabase/tests/bounded_subscription_trial_pg.py
           python3 services/supabase/tests/serving_photo_partitions_pg.py
+          python3 services/supabase/tests/launch_blockers_pg.py
           python3 tools/audit/run_listing_gallery_selection.py
           python3 tools/audit/run_listing_measurement_cas.py
           python3 tools/audit/run_listing_facts_cas.py

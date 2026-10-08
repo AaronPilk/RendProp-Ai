@@ -106,7 +106,8 @@ export async function runChain<T>(
       // operation. They never authorize a new fallback paid attempt.
       if (err && typeof err === "object" && "funding_admission" in err && err.funding_admission === true) throw err;
       const error_class = errorClassOf(err);
-      await reportOutcome(step, { ok: false, latency_ms: Date.now() - startedAt, error_class });
+      const status = err instanceof ProviderError && typeof err.status === "number" ? err.status : undefined;
+      await reportOutcome(step, { ok: false, latency_ms: Date.now() - startedAt, error_class, status });
       // The caller's problem, or a refusal about this exact image: stop here.
       if (error_class === "validation" || error_class === "nsfw") throw asHttpError(err);
       console.error(

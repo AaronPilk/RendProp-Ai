@@ -983,6 +983,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   }
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   let pending = false, unlinked = false, sandboxGranted = false;
+  let sandboxGrant: Record<string, unknown> | null = { plan: "trial", source: "trial", expires_at: new Date(now + 7 * 24 * HOUR).toISOString(), granted: true, replay: false, reason: "granted" };
   let subscriptionStatus = "refunded";
   const ledger = new Map<string, Record<string, any>>();
   let failApply = false, failAck = false, failFunding = false;
@@ -991,6 +992,9 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   const admin = {
     rpc: (name: string, args: Record<string, unknown>) => {
       calls.push({ name, args });
+      if (name === "grant_sandbox_trial") return Promise.resolve(sandboxGrant
+        ? { data: { ...sandboxGrant, original_transaction_id: args.p_original, product_id: args.p_product }, error: null }
+        : { data: null, error: { message: "RP409: This test purchase belongs to another account or workspace" } });
       if (name === "record_apple_sandbox_receipt") return Promise.resolve(sandboxGranted
         ? { data: { ok: true, test_only: true, environment: "Sandbox", plan: "team", source: "manual", org_id: org, product_id: args.p_product, original_transaction_id: args.p_original }, error: null }
         : { data: null, error: { message: "RP403: Sandbox testing requires explicit authorized test access" } });
@@ -1048,13 +1052,14 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     import {assert,HttpError,json,readJsonLimited,throwRpc} from ${JSON.stringify(new URL("./http.ts", import.meta.url).href)};
     import {reservedTrialWorkspace} from ${JSON.stringify(new URL("./trial-purchase.ts",import.meta.url).href)};
     import {fundVerifiedAppleTransaction} from ${JSON.stringify(new URL("./apple-funding.ts",import.meta.url).href)};
-    import {inputHash,servingMode} from ${JSON.stringify(new URL("./funded-serving.ts",import.meta.url).href)};
+    import {inputHash} from ${JSON.stringify(new URL("./funded-serving.ts",import.meta.url).href)};
     import {subscriptionServingActivation,trialServingActivationForSync} from ${JSON.stringify(new URL("./bounded-trial.ts",import.meta.url).href)};
     import {decodeTransaction,decodeRenewalInfo,deriveEntitlement,productToPlan,type AppleTransaction,type AppleRenewalInfo} from ${JSON.stringify(new URL("./applejws.ts", import.meta.url).href)};
     import {assertExpectedSubscriptionWorkspace,assertVerifiedPurchaseOwner} from ${JSON.stringify(new URL("../me/billing.ts", import.meta.url).href)};
     import {computeEntitlement,resolveVerdict,lookupVerdict,summariseNotification,type NotificationFacts,type PendingEntitlement} from ${JSON.stringify(new URL("../apple-subscriptions/logic.ts", import.meta.url).href)};
     const f=(globalThis as any).__appleChronologyFixture;
     const verifyAppleJWS=f.verify,adminClient=()=>f.admin,orgForUser=async()=>f.org,preferredOrg=()=>undefined,durableRateLimit=async()=>true;
+    const servingMode=async()=>f.servingMode??"funded";
     const APPLE_BUNDLE_ID="com.rendprop.app",ENTITLEMENT_MAX_PER_WINDOW=30,ENTITLEMENT_WINDOW_SECONDS=60,MAX_JWS_CHARS=64*1024,MAX_ENTITLEMENT_BODY_BYTES=256*1024,MAX_REPLAY=50;
     const NOTIFY_MAX_PER_WINDOW=240,NOTIFY_WINDOW_SECONDS=60,MAX_NOTIFY_BODY_BYTES=128*1024,MAX_SIGNED_PAYLOAD_CHARS=64*1024;
     const ENTITLEMENT_ROLES=new Set(["owner","admin"]);
@@ -1173,6 +1178,36 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     assertEquals(calls.length,0,"TEST never aliases a paid renewal");
     const mismatched = await signJws(chain, { originalTransactionId: "different-subscription", signedDate: event });
     await assertRejects(() => methods.readFacts({ ...outer, data: { ...(outer.data as object), signedRenewalInfo: mismatched } }), HttpError);
+
+    // Ceiling mode (2026-10-08): a Sandbox purchase goes to grant_sandbox_trial
+    // with the whole verified receipt — identity, status, expiry, signature —
+    // and the response carries the RPC's grant verdict.
+    try {
+      (fixture as Record<string, unknown>).servingMode = "ceiling";
+      calls.length = 0;
+      const grant = await (await methods.handleEntitlement(sandboxRequest(), user)).json();
+      assertEquals(calls.map((call) => call.name), ["grant_sandbox_trial", "subscription_serving_activation"]);
+      const args = calls[0].args;
+      assertEquals(args.p_org, org); assertEquals(args.p_actor, user);
+      assertEquals(args.p_original, "2000000700000000"); assertEquals(args.p_transaction, "2000000700000001");
+      assertEquals(args.p_product, "com.rendprop.app.pro.monthly"); assertEquals(args.p_status, "active");
+      assert(typeof args.p_expires_at === "string" && Date.parse(args.p_expires_at) > Date.now());
+      assert(typeof args.p_signed_at === "string" && Number.isFinite(Date.parse(args.p_signed_at)));
+      assertEquals(grant.test_only, true); assertEquals(grant.environment, "Sandbox"); assertEquals(grant.plan, "trial");
+      assertEquals(grant.granted, true); assertEquals(grant.replay, false); assertEquals(grant.reason, "granted");
+      assertEquals(grant.original_transaction_id, "2000000700000000");
+      sandboxGrant = { plan: "free", source: null, expires_at: null, granted: false, replay: false, reason: "receipt_inactive" };
+      calls.length = 0;
+      const inactive = await (await methods.handleEntitlement(sandboxRequest(), user)).json();
+      assertEquals(inactive.granted, false); assertEquals(inactive.plan, "free"); assertEquals(inactive.reason, "receipt_inactive");
+      sandboxGrant = null;
+      calls.length = 0;
+      const refused = await assertRejects(() => methods.handleEntitlement(sandboxRequest(), user), HttpError);
+      assertEquals(refused.status, 409);
+      assertEquals(calls.map((call) => call.name), ["grant_sandbox_trial"]);
+    } finally {
+      delete (fixture as Record<string, unknown>).servingMode;
+    }
   } finally { Reflect.deleteProperty(globalThis, "__appleChronologyFixture"); }
 });
 

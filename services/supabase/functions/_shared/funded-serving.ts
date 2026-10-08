@@ -15,6 +15,13 @@ export class SavedFundingResponse extends HttpError {
  constructor(readonly saved_response:Record<string,unknown>){super(200,"Restored generated result.");}
 }
 function fundingRpcError(message:string):never {
+ // Ceiling mode (2026-10-08): the workspace's serving envelope is spent for
+ // this period, or the global trial sponsor pool is. Both are quota: a bigger
+ // plan or the next period repairs them; no further provider attempt runs.
+ if (/RP402:\s*AI usage limit reached for this workspace/.test(message))
+  throw new FundingAdmissionError(402,"This workspace has used its AI allowance for this period. Upgrade your plan or wait for the next period.","quota_exceeded");
+ if (/RP402:\s*Free-trial AI limit reached/.test(message))
+  throw new FundingAdmissionError(402,"The free trial's AI allowance is used up for this month. Subscribe to keep going.","quota_exceeded");
  // Missing activation is an operator-side availability boundary. Buying a
  // bigger plan cannot repair it. An exhausted funded interval remains quota;
  // neither case permits another provider attempt or loosens the spending gate.
@@ -38,11 +45,13 @@ export interface AttemptQuote { cents: number; version: string }
 export const TARIFF_VERSION = "published-standard-20261006";
 
 /** Launch cost model switch (app_config.serving_mode, 2026-10-08).
- * `ceiling`: the pre-Oct-6 model — per-feature meters plus log_job_cost()'s
- * monthly COGS ceilings — and the funded-serving reservation layer is inert.
- * `funded`: Codex's certified-funding model (serving_funding, schedules, pools).
- * A missing or unreadable setting fails CLOSED to `funded`, which refuses an
- * unfunded workspace rather than spending without any ceiling. */
+ * `ceiling`: per-feature meters plus a per-workspace serving envelope
+ * (plan_serving_ceiling) that serving_cost_reserve enforces atomically before
+ * every paid attempt; holds are priced from the route catalog the ledger bills
+ * against. `funded`: Codex's certified-funding model (serving_funding,
+ * schedules, pools). A missing, malformed or unreadable setting fails CLOSED to
+ * `funded`, which refuses an unfunded workspace rather than spending without a
+ * ceiling (serving_mode() in SQL applies the same rule). */
 export type ServingMode = "ceiling" | "funded";
 let servingModeCache: { mode: ServingMode; at: number } | null = null;
 export async function servingMode(): Promise<ServingMode> {
@@ -113,6 +122,8 @@ async function unlimitedSponsored(context: FundingContext): Promise<boolean> {
  * package permits one pinned primary and at most one priced fallback, while
  * private unlimited QA retains its existing operator chain. */
 export async function boundedPhotoChain(context: FundingContext, steps: RouteStep[], input: GenerateInput): Promise<RouteStep[]> {
+ // Ceiling mode keeps the operator chain: each step is priced from the
+ // catalog and admitted against the workspace envelope in fundedAttempt.
  if(await servingMode()==="ceiling")return steps;
  if(await unlimitedSponsored(context))return steps;
  const priced=steps.filter(step=>step.task===input.task && (
@@ -132,6 +143,7 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
  * accounts retain separately metered helpers through the shared funded wallet;
  * private unlimited QA retains its existing sponsorship. */
 export async function assertPhotoHelperSponsorship(context: FundingContext): Promise<void> {
+ // Ceiling mode: helpers are ordinary priced attempts against the envelope.
  if(await servingMode()==="ceiling")return;
  if(await unlimitedSponsored(context))return;
  let trial;
@@ -150,20 +162,55 @@ export async function assertPhotoHelperSponsorship(context: FundingContext): Pro
  throw new FundingAdmissionError(503,"Photo suggestions and prompt rewriting are not included in this subscription trial. Choose an edit or write your own instructions; no generation was submitted.","upstream");
 }
 
+/** Ceiling mode prices a hold from the route catalog (ai_routes.unit_cents),
+ * the same figure recordRoutedAiCost() bills to the ledger, so a burst of
+ * admitted attempts never double-reserves against the documentation bound the
+ * funded model holds. Units come from the input when it states them and are
+ * otherwise the largest the route can produce. A step that carries no catalog
+ * price (bare provider/model) returns null and keeps the caller's quote. */
+export const ROUTE_CATALOG_TARIFF=`route-catalog-${TARIFF_VERSION}`;
+export function routeCatalogQuote(step:Pick<RouteStep,"provider"|"model">&Partial<Pick<RouteStep,"unit"|"unit_cents">>,input:unknown):AttemptQuote|null {
+ const cents=step.unit_cents;
+ if(typeof cents!=="number"||!Number.isFinite(cents)||cents<0||cents>100000000||typeof step.unit!=="string")return null;
+ const data=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:{};
+ const positive=(value:unknown,max:number)=>typeof value==="number"&&Number.isFinite(value)&&value>0&&value<=max?value:null;
+ let units:number;
+ switch(step.unit){
+  case "call":case "image":case "world":units=1;break;
+  case "second":units=positive(data.seconds,600)??12;break;
+  case "minute":{const seconds=positive(data.seconds,36000);units=seconds?Math.ceil(seconds/60):10;break;}
+  case "1k_chars":{const text=typeof data.text==="string"?data.text:typeof data.script==="string"?data.script:null;units=text?Math.max(1,Math.ceil(text.length/1000)):5;break;}
+  default:return null;
+ }
+ // Round at six decimals before the four-decimal ceiling so 4.86 x 12 is 58.32, not 58.3201.
+ return {cents:Math.ceil(Math.round(cents*units*1000000)/100)/10000,version:ROUTE_CATALOG_TARIFF};
+}
+/** Catalog routes that cost nothing (on-device Apple speech, the fair-housing
+ * regex) have no money to admit; everything else is priced or refused. */
+function freeCatalogRoute(step:Pick<RouteStep,"provider"|"model">&Partial<Pick<RouteStep,"unit_cents">>):boolean {
+ return step.unit_cents===0&&(step.provider==="apple"||step.provider==="rendprop");
+}
+
 export async function fundedAttempt<T>(context: FundingContext,stage: string,step: Pick<RouteStep,"provider"|"model">,
  input: unknown,quote: AttemptQuote|null,attempt:()=>Promise<T>): Promise<T> {
+ let admittedQuote=quote;
  if(await servingMode()==="ceiling"){
-  // Ceiling mode: the route's own meter and log_job_cost()'s monthly ceiling
-  // already bound this attempt; no funded hold is reserved or settled.
-  const result=await attempt();
-  if(result instanceof Response)throw new HttpError(502,"The generation service did not return a validated receipt.","upstream");
-  return result;
+  // Ceiling mode (2026-10-08): every paid attempt — primaries, fallbacks,
+  // helpers, judges — reserves its catalog price against the workspace's
+  // serving envelope before dispatch (serving_cost_reserve, budget 'ceiling').
+  if(freeCatalogRoute(step)){
+   const result=await attempt();
+   if(result instanceof Response)throw new HttpError(502,"The generation service did not return a validated receipt.","upstream");
+   return result;
+  }
+  const catalog=routeCatalogQuote(step,input);
+  if(catalog&&catalog.cents>0)admittedQuote=catalog;
  }
  try{
- if(!quote && !await unlimitedSponsored(context))throw new FundingAdmissionError(503,"This operation's complete price could not be verified. No generation was submitted.","upstream");
+ if(!admittedQuote && !await unlimitedSponsored(context))throw new FundingAdmissionError(503,"This operation's complete price could not be verified. No generation was submitted.","upstream");
  // An unpriced private QA attempt is explicitly sponsor expense and never
  // charged to retail/reviewer/trial funds or described as a reconciled cost.
- const admitted=quote??{cents:1,version:"unpriced-private-sponsorship"};
+ const admitted=admittedQuote??{cents:1,version:"unpriced-private-sponsorship"};
  if(!Number.isFinite(admitted.cents)||admitted.cents<=0||admitted.cents>100000000)
   throw new FundingAdmissionError(503,"This operation could not be priced safely.","upstream");
  const hold=Math.ceil(admitted.cents*10000)/10000;

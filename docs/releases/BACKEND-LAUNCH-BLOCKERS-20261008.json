@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "createdAt": "2026-10-08T22:05:17.297Z",
+  "mode": "run",
+  "status": "verified",
+  "projectRef": "ymgqpbnjpztwjsyvceld",
+  "functions": [
+    "ai-photo",
+    "ai-video",
+    "ai-copy",
+    "ai-chapters",
+    "ai-voice",
+    "coach",
+    "studio",
+    "me"
+  ],
+  "jwtPolicy": {
+    "ai-photo": true,
+    "ai-video": true,
+    "ai-copy": true,
+    "ai-chapters": true,
+    "ai-voice": true,
+    "coach": true,
+    "studio": true,
+    "me": false
+  },
+  "before": {
+    "ai-photo": {
+      "id": "ed6f9fc0-e651-4622-b79a-e752770279be",
+      "version": 59,
+      "verifyJwt": true
+    },
+    "ai-video": {
+      "id": "9dd26656-ea6d-454d-bb29-951a7e03b3dd",
+      "version": 57,
+      "verifyJwt": true
+    },
+    "ai-copy": {
+      "id": "a21425d9-8959-4a6b-9399-c928abd148e6",
+      "version": 26,
+      "verifyJwt": true
+    },
+    "ai-chapters": {
+      "id": "2e627a9e-1f5a-48aa-bf1b-ce1a21318008",
+      "version": 32,
+      "verifyJwt": true
+    },
+    "ai-voice": {
+      "id": "4537778d-5283-484e-a6f5-56038070d525",
+      "version": 41,
+      "verifyJwt": true
+    },
+    "coach": {
+      "id": "2fa42061-bdbb-4231-b651-9a149c4a1b59",
+      "version": 28,
+      "verifyJwt": true
+    },
+    "studio": {
+      "id": "48930645-bb3e-481a-a615-501f300e4dee",
+      "version": 24,
+      "verifyJwt": true
+    },
+    "me": {
+      "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
+      "version": 56,
+      "verifyJwt": false
+    }
+  },
+  "after": {
+    "ai-photo": {
+      "id": "ed6f9fc0-e651-4622-b79a-e752770279be",
+      "version": 60,
+      "verifyJwt": true
+    },
+    "ai-video": {
+      "id": "9dd26656-ea6d-454d-bb29-951a7e03b3dd",
+      "version": 58,
+      "verifyJwt": true
+    },
+    "ai-copy": {
+      "id": "a21425d9-8959-4a6b-9399-c928abd148e6",
+      "version": 27,
+      "verifyJwt": true
+    },
+    "ai-chapters": {
+      "id": "2e627a9e-1f5a-48aa-bf1b-ce1a21318008",
+      "version": 33,
+      "verifyJwt": true
+    },
+    "ai-voice": {
+      "id": "4537778d-5283-484e-a6f5-56038070d525",
+      "version": 42,
+      "verifyJwt": true
+    },
+    "coach": {
+      "id": "2fa42061-bdbb-4231-b651-9a149c4a1b59",
+      "version": 29,
+      "verifyJwt": true
+    },
+    "studio": {
+      "id": "48930645-bb3e-481a-a615-501f300e4dee",
+      "version": 25,
+      "verifyJwt": true
+    },
+    "me": {
+      "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
+      "version": 57,
+      "verifyJwt": false
+    }
+  },
+  "completed": {
+    "ai-photo": "source-verified",
+    "ai-video": "source-verified",
+    "ai-copy": "source-verified",
+    "ai-chapters": "source-verified",
+    "ai-voice": "source-verified",
+    "coach": "source-verified",
+    "studio": "source-verified",
+    "me": "source-verified"
+  },
+  "manifestFiles": 6,
+  "migration": "20261008220411 launch_blockers (applied via Supabase MCP apply_migration before the function deploy)",
+  "note": "Launch blockers 1-7 (Codex review CODEX-CLAUDE-LAUNCH-ALIGNMENT-20261008). Functions deployed with apps/studio/scripts/deploy-backend.mjs --run, Supabase CLI 2.120.0, sources read back and verified."
+}

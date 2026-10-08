@@ -1,4 +1,8 @@
 begin;
+-- Funded-model regression: pin funded serving mode for this transaction. The
+-- live default since 2026-10-08 is ceiling mode (migration 20261008201736);
+-- ceiling-mode admission is covered by launch_blockers.sql.
+update public.app_config set value=value||'{"mode":"funded"}'::jsonb where key='serving_mode';
 do $$
 declare h jsonb; target regprocedure; source text;
 begin

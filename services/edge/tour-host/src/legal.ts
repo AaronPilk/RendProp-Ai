@@ -191,18 +191,15 @@ or yearly, and Team, billed monthly. <b>The app is the source of truth</b>: the 
 allowances, billing periods, and prices you see there come from the App Store in your own currency,
 and they are what you are charged.</p>
 <ul>
-  <li><b>Free trial.</b> Eligible subscribers can start a <b>7-day introductory trial by confirming
-  an Apple subscription</b> in Rendprop when a funded trial offer is available in the app.
-  Downloading or signing in does not activate a trial. Trial usage is separate from paid-plan
-  allowances and can run out before the seven days end. Using an allowance stops new work for
-  that feature; it does not move Apple's renewal date forward.
-  Checking trial availability reserves it for that account, workspace and plan before
-  Apple's confirmation. Cancelling, closing the app or an interrupted connection does
-  not reset Rendprop's trial reservation. No Apple purchase starts until you continue
-  to Apple's confirmation.
-  Apple determines eligibility and shows the offer and renewal price before confirmation.
-  You may redeem one introductory offer per subscription group; changing plans does not create another
-  trial. Cancel at least 24 hours before the trial ends to avoid renewal charges.</li>
+  <li><b>Free trial.</b> Eligible new subscribers can start a <b>7-day introductory trial by confirming
+  an Apple subscription</b> in Rendprop. Apple determines eligibility and shows the offer and
+  renewal price before confirmation; no Apple purchase starts until you continue to Apple's
+  confirmation. Downloading or signing in does not activate a trial. During the trial the plan's
+  allowances apply and AI usage is additionally limited to a trial usage ceiling, so AI tools can
+  stop before the seven days end. Using an allowance stops new work for that feature; it does not
+  move Apple's renewal date forward. You may redeem one introductory offer per subscription group;
+  changing plans, reinstalling, cancelling or changing workspaces does not create another trial.
+  Cancel at least 24 hours before the trial ends to avoid renewal charges.</li>
   <li><b>Auto-renewal.</b> Apple charges the price and billing schedule shown when you confirm,
   with the first charge after any applicable free trial. The
   subscription <b>renews automatically for the same period unless you cancel at least 24 hours
@@ -313,11 +310,11 @@ export function privacyPage(): string {
   your plan. <b>We never see or store your card details</b>, and Apple does not give them to
   us.</li>
   <li><b>Trial eligibility and usage</b> — we record the trial's account and workspace identifiers,
-  selected subscription, reserved allowances, reservation date and funding commitment,
-  Apple subscription-chain identifier when available, trial dates, usage counters and
-  a one-way digest of the confirmed email address. This limited record prevents repeat trials or resets after a workspace change
-  or deletion. The eligibility record contains no photos, videos or email-address text; it is
-  still account-related data.</li>
+  the selected subscription and store environment, the Apple subscription-chain identifier when
+  available, trial dates, AI usage holds and costs, and, where a trial reservation is used, a
+  one-way digest of the confirmed email address. This limited record prevents repeat trials or
+  resets after a workspace change or deletion. The eligibility record contains no photos, videos
+  or email-address text; it is still account-related data.</li>
   <li><b>App analytics and diagnostics</b> — a short, fixed list of in-app events, a device
   identifier we generate ourselves, and crash and performance summaries from Apple. Section 4
   sets out exactly what those are, and what they are not.</li>
@@ -415,8 +412,8 @@ account and private workspaces; content in shared workspaces can remain for othe
 Account deletion and associated cleanup are separate statuses, and the app indicates pending
 cleanup. Analytics events are scheduled for deletion after 180 days (section 4).
 Limited trial-eligibility and usage records remain after listing or account deletion to prevent
-another trial. A reservation does not reset after cancellation or an interrupted purchase.
-Deleting content does not replenish a trial allowance. These records do not keep
+another trial. Trial eligibility does not reset after cancellation, reinstalling or an interrupted
+purchase. Deleting content does not replenish a trial allowance. These records do not keep
 the deleted photos or videos available.
 Limited funded photo-admission records also remain to prevent deleted work, account
 changes or refunds from replenishing usage. They record account, workspace, operation

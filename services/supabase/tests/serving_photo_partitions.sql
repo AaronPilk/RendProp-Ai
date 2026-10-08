@@ -1,5 +1,9 @@
 \set ON_ERROR_STOP on
 begin;
+-- Funded-model regression: pin funded serving mode for this transaction. The
+-- live default since 2026-10-08 is ceiling mode (migration 20261008201736);
+-- ceiling-mode admission is covered by launch_blockers.sql.
+update public.app_config set value=value||'{"mode":"funded"}'::jsonb where key='serving_mode';
 create temporary table package_assertions(n integer not null default 0);
 insert into package_assertions default values;
 grant all on package_assertions to service_role;

@@ -65,6 +65,10 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20260924232058_studio_named_projects.sql",
     "20260924232510_studio_project_media.sql",
     "20260924232803_studio_property_music.sql",
+    # Launch ceiling mode (2026-10-08): exact-anchor rewrites of live function
+    # bodies (pg_temp.rp_patch) refuse a second application by design.
+    "20261008201736_launch_ceiling_mode.sql",
+    "20261008220411_launch_blockers.sql",
 })
 
 

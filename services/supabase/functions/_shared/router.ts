@@ -134,6 +134,9 @@ export interface OutcomeReport {
   ok: boolean;
   latency_ms: number;
   error_class?: ErrorClass;
+  /** Upstream HTTP status of a failed attempt (ProviderError.status), so the
+   * breaker and the hourly alert can tell a dead key from an outage. */
+  status?: number;
 }
 
 // ── Health (the circuit breaker), as orderSteps() consumes it ───────────────
@@ -426,12 +429,14 @@ export async function reportOutcome(step: RouteStep, r: OutcomeReport): Promise<
   try {
     if (!step?.provider || !step?.model) return;
     const latency = Number.isFinite(r?.latency_ms) ? Math.max(0, Math.round(r.latency_ms)) : 0;
+    const status = Number.isInteger(r?.status) && r!.status! >= 100 && r!.status! <= 599 ? r!.status! : null;
     const { error } = await db().rpc("report_provider_outcome", {
       p_provider: step.provider,
       p_model: step.model,
       p_ok: r?.ok === true,
       p_latency_ms: latency,
       p_error_class: r?.error_class ?? null,
+      p_status: r?.ok === true ? null : status,
     });
     if (error) console.error("router: report_provider_outcome failed:", error.message);
   } catch (e) {
