@@ -3606,7 +3606,7 @@ struct HomeDashboardView: View {
 
     private var heroCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("RENDPROP")
+            Text(SpaceType.current.heroEyebrow)
                 .font(.caption.weight(.bold)).kerning(3)
                 .foregroundStyle(Color.white.opacity(0.8))
             Text(SpaceType.current.heroHeadline)

@@ -139,8 +139,8 @@ private struct Industry {
     static let realEstate = Industry(
         raw: "real_estate", tag: "realestate",
         displayName: "Real estate", noun: "home", customer: "buyers", cta: "Book a showing",
-        heroLine1: "Win the listing.", heroLine2: "Skip the film crew.",
-        heroSubline: "One walkthrough becomes a cinematic tour, polished photos and a link buyers can't stop scrolling — in minutes, from your phone.",
+        heroLine1: "List it.", heroLine2: "Launch it. Sell it.",
+        heroSubline: "Be your own crew. Capture and polish photos, create tours, social media content, floor plans, virtual staging, and a shareable property site - all from your phone.",
         emptyStateLine1: "Walk through with your phone.",
         pitch: "Sell homes with cinematic tours",
         archiveVerb: "sold", businessLabel: "Brokerage",

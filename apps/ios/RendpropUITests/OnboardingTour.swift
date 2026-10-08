@@ -238,7 +238,7 @@ final class OnboardingTour: XCTestCase {
             ensureRealEstate()          // before the mark: the switch is not part of the take
             settle(1.0)
             mark("01")
-            beat(2.5)                   // the hero: "Win the listing. Skip the film crew."
+            beat(2.5)                   // the hero: "List it. Launch it. Sell it."
             gentleScroll(down: true)    // reveal "Make something"
             beat(1.5)
             gentleScroll(down: false)   // and back up to the hero
@@ -277,7 +277,7 @@ final class OnboardingTour: XCTestCase {
                 note("The menu did not list \"Real estate\" the second time — closing it.")
                 closeTypeMenu()
             }
-            _ = labelElement(containing: "Win the listing", timeout: 6)
+            _ = labelElement(containing: "List it. Launch it. Sell it.", timeout: 6)
             beat(2.0)
             if currentTypeOnHome()?.raw != "real_estate" {
                 note("Home did not return to real estate — relaunching pinned so the rest of the tour is a home.")
@@ -823,7 +823,7 @@ final class OnboardingTour: XCTestCase {
         capsule.tap()
         settle(0.9)
         if let estate = menuItem("Real estate") { estate.tap() } else { closeTypeMenu() }
-        _ = labelElement(containing: "Win the listing", timeout: 6)
+        _ = labelElement(containing: "List it. Launch it. Sell it.", timeout: 6)
         settle(1.0)
         if currentTypeOnHome()?.raw != "real_estate" { relaunchPinnedToRealEstate() }
     }
