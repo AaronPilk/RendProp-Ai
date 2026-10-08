@@ -1,0 +1,32 @@
+{
+  "checkedAt": "2026-10-08T00:56:04.967716+00:00",
+  "sourceCommit": "37b0c2dbeeddacefbdc294c747ae76a74e699304",
+  "uploadResultSHA256": "21c5b42b958d4ac3aaf2978ec73ce65520e3db1e58c7fdb5db61730c86a415d9",
+  "uploadAttemptSHA256": "d08164302676b3431f6184d4747e2eeb8f9c8811c8ff86a25e72196bf2d0081b",
+  "operation": "GET only",
+  "uploadOutcomeUnresolved": false,
+  "available": true,
+  "builds": [
+    {
+      "id": "7c21baed-5238-4bc3-9050-ff44494c6800",
+      "marketingVersion": "1.0.4",
+      "build": "49",
+      "processingState": "VALID",
+      "buildAudienceType": "INTERNAL_ONLY",
+      "expired": false,
+      "uploadedDate": "2026-10-07T17:54:30-07:00",
+      "usesNonExemptEncryption": false,
+      "minOsVersion": "16.0",
+      "betaDetails": {
+        "autoNotifyEnabled": true,
+        "internalBuildState": "IN_BETA_TESTING",
+        "externalBuildState": "NOT_APPLICABLE"
+      },
+      "group": {
+        "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+        "name": "Rendprop team",
+        "buildIncluded": true
+      }
+    }
+  ]
+}

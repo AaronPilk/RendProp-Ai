@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 // Inert storage, transport and scheduling. All session/code implementations below
 // are extracted unchanged from AuthStore; no host Keychain/defaults/network.
 final class UserDefaults {
@@ -58,8 +59,10 @@ enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malf
     enum SecureStore {
         static var values: [String: String] = [:]
         static var readFailure = false, writeFailure = false
+        static var onRead: ((String) -> Void)?
         static func get(_ key: String) -> String? { values[key] }
         static func getChecked(_ key: String) throws -> String? {
+            onRead?(key)
             if readFailure { throw AnonymousAdoptionRecovery.RecoveryError.storage }; return values[key]
         }
         @discardableResult static func set(_ key: String, _ value: String) -> Bool {
@@ -90,11 +93,11 @@ __METHODS__
         print("FAIL: held boundary timeout: " + message); exit(1)
     }
     static func jwt(_ owner: String) -> String {
-        let bytes = try! JSONSerialization.data(withJSONObject: ["sub": owner, "is_anonymous": false], options: [.sortedKeys])
+        let bytes = try! JSONSerialization.data(withJSONObject: ["sub": owner, "is_anonymous": false, "exp": Int(Date().timeIntervalSince1970) + 3600], options: [.sortedKeys])
         return "synthetic." + bytes.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") + ".signature"
     }
     static func reset() {
-        wire.reset(); AuthStore.SecureStore.values = [:]; AuthStore.SecureStore.readFailure = false; AuthStore.SecureStore.writeFailure = false
+        wire.reset(); AuthStore.SecureStore.values = [:]; AuthStore.SecureStore.readFailure = false; AuthStore.SecureStore.writeFailure = false; AuthStore.SecureStore.onRead = nil
         UserDefaults.standard.values = [:]; AuthStore.onToken = nil; auth.onAdoption = nil
         auth.isSignedIn = false; auth.isIdentified = false; auth.userID = nil; auth.sessionEpoch = 0; auth.syncIdentityEpoch = 0
     }
@@ -191,6 +194,16 @@ __METHODS__
         reset(); wire.status = 400
         do { _ = try await auth.exchangeAppleIdentityToken(idToken: "synthetic-failed-A") } catch {}
         check(pending(a) == nil && AuthStore.SecureStore.values.isEmpty, "failed sign-in never creates a code or session receipt")
+        reset(); _ = auth.signIn(a)
+        let previousAccess = AuthStore.storedAccessToken()
+        let expiringClaims: [String: Any] = ["sub": a, "is_anonymous": false, "exp": Int(ceil(Date().timeIntervalSince1970)) + 1]
+        let payload = try JSONSerialization.data(withJSONObject: expiringClaims).base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        wire.bytes = try JSONSerialization.data(withJSONObject: ["access_token": "synthetic." + payload + ".signature", "refresh_token": "expiring-synthetic", "expires_in": 3600])
+        AuthStore.SecureStore.onRead = { key in if key == "access" { AuthStore.SecureStore.onRead = nil; Thread.sleep(forTimeInterval: 2.1) } }
+        var failedApply = false
+        do { _ = try await auth.exchangeAppleIdentityToken(idToken: "synthetic-expiring-A") } catch { failedApply = true }
+        check(failedApply, "exchange cannot issue a receipt when session application was refused")
+        check(AuthStore.storedAccessToken() == previousAccess && auth.userID == a && pending(a) == nil, "rejected expiring exchange retains the previous account session")
         print("PASS: \(assertions) actual Apple-code owner/session/retry assertions")
     }
 }

@@ -83,6 +83,26 @@ final class RendpropUITests: XCTestCase {
 
     // MARK: - The walk
 
+    func testRequiredAccountGate() throws {
+#if targetEnvironment(simulator)
+        app.terminate()
+        app.launchArguments += ["-ui.requiredAccountGate"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Welcome to Rendprop"].waitForExistence(timeout: screenTimeout))
+        XCTAssertTrue(app.buttons["account.signInApple"].exists)
+        XCTAssertFalse(app.buttons["Not now"].exists)
+        for identifier in ["account.terms", "account.privacy", "account.help"] {
+            XCTAssertTrue(app.descendants(matching: .any)[identifier].exists, identifier)
+        }
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "required-account-gate"; screenshot.lifetime = .keepAlways; add(screenshot)
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = "required-account-accessibility"; tree.lifetime = .keepAlways; add(tree)
+#else
+        throw XCTSkip("Closed account-screen fixtures exist only on the simulator.")
+#endif
+    }
+
     func testWalk() {
         step01Home()
         step02AddHome()

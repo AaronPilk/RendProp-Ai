@@ -25,6 +25,7 @@ function declaration(source, needle) {
 
 const scaffold = String.raw`
 import Foundation
+import CoreFoundation
 
 // Only credential persistence, scheduling and transport are inert. These
 // doubles never read the host's preferences, Keychain or network.
@@ -102,7 +103,7 @@ enum Failure: Error { case assertion(String) }
   guard ok else { print("FAIL: " + message); exit(1) }
  }
  static func jwt(_ owner: String, anonymous: Bool = false) -> String {
-  let bytes = try! JSONSerialization.data(withJSONObject: ["sub": owner, "is_anonymous": anonymous])
+  let bytes = try! JSONSerialization.data(withJSONObject: ["sub": owner, "is_anonymous": anonymous, "exp": Int(Date().timeIntervalSince1970) + 3600])
   return "synthetic." + bytes.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") + ".signature"
  }
  static func reply(_ owner: String, anonymous: Bool = false) {
@@ -147,12 +148,12 @@ enum Failure: Error { case assertion(String) }
   var notified: UUID?
   auth.onAccountChanged = { notified = $0 }
   reply(nextOwner)
-  check(await auth.performRefresh(), "Fixture account-switch refresh should finish")
-  check(auth.syncSessionRevision != restored && auth.userID == nextOwner && notified == UUID(uuidString: nextOwner), "A refresh carrying a different account must invalidate cloud work and rebind local state")
+  check(!(await auth.performRefresh()), "A refresh carrying another account must refuse")
+  check(auth.syncSessionRevision == restored && auth.userID == owner && notified == nil, "A foreign refresh must preserve the active account and local state")
   let identifiedRevision = auth.syncSessionRevision
   reply(nextOwner, anonymous: true)
-  check(await auth.performRefresh(), "Fixture identity-kind refresh should finish")
-  check(auth.syncSessionRevision != identifiedRevision && !auth.isIdentified, "Losing identified status must invalidate cloud work")
+  check(!(await auth.performRefresh()), "A refresh changing identity kind must refuse")
+  check(auth.syncSessionRevision == identifiedRevision && auth.isIdentified, "An anonymous refresh cannot replace an identified session")
 
   auth.applySession(accessToken: jwt(owner), refreshToken: "synthetic", expiresAt: Date())
   reply(owner)
@@ -172,8 +173,9 @@ enum Failure: Error { case assertion(String) }
 
 test('ordinary JWT rotation preserves cloud work while real session boundaries invalidate it', () => {
   const output = mkdtempSync(join(tmpdir(), 'rendprop-auth-sync-'));
-  const names = ['var syncSessionRevision:', 'func applySession(', 'func signOut()', 'func performRefresh()',
-    'static func jwtSubject(', 'static func tokenIsIdentified(', 'struct SupabaseSession:'];
+  const names = ['var syncSessionRevision:', 'func applySession(', 'func signOut(', 'func performRefresh()',
+    'static func jwtSubject(', 'static func tokenIsIdentified(', 'static func tokenPayload(',
+    'static func tokenIdentityClaimIsValid(', 'static func jwtExpiry(', 'struct SupabaseSession:'];
   const methods = names.map(name => declaration(auth, name)).join('\n');
   const generated = scaffold.replace('AUTH_METHODS', methods);
   const files = ['Models/ProductionGuidance.swift', 'Networking/ProductionPlan.swift', 'Networking/ProductionPlanSyncStore.swift']

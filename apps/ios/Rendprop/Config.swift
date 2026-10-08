@@ -6,7 +6,7 @@ enum Config {
     /// Real-network regression tests use a disposable simulator and localhost.
     /// These switches do not exist in Release and cannot point at a remote host.
     static var isSessionNetworkTesting: Bool {
-#if DEBUG
+#if DEBUG && targetEnvironment(simulator)
         ProcessInfo.processInfo.arguments.contains("-sessionNetworkTesting")
 #else
         false
@@ -81,6 +81,13 @@ enum Config {
 #else
         false
 #endif
+    }
+
+    /// Account bypass exists only for explicit, offline simulator fixtures.
+    /// A physical Release launch always requires an identified account.
+    static var isOfflineAccountFixture: Bool {
+        isUITesting && !isSessionNetworkTesting
+            && !ProcessInfo.processInfo.arguments.contains("-ui.requiredAccountGate")
     }
 
     /// Store-screenshot seeding, UI walk only: `-ui.seedPhotosDir <dir>` names a

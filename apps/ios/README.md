@@ -51,6 +51,27 @@ workflows, and connects a named account's workspace with
 [Studio](https://studio.rendprop.com/). The normal build uses the live Supabase
 backend; this is no longer an offline-only prototype.
 
+**Account-first follow-up:** Continue with Apple creates or signs in to an
+account before business setup, Home, capture, publishing or subscription actions.
+There is no guest-skip button. A saved identified account can use its local work
+offline; new sign-in needs connectivity. Previously captured guest work remains
+available to the verified account-transfer flow. Cancelling sign-in stays at the
+entry screen; signing out returns there. Account creation does not activate a
+trial or charge. See the
+[unsubmitted public-review draft](../../docs/appstore/account-first-review-draft-20261008.md)
+and [source audit/phone checklist](../../docs/audit/REQUIRED-ACCOUNT-ONBOARDING-20261008.md).
+The full unsigned Release app and mocked required-screen UI check passed. This
+source follow-up needs its own release.
+
+The latest verified internal delivery is **1.0.4 (49)**, AVAILABLE to the
+existing Rendprop team on **8 October 2026 at 00:56:04 UTC** (7 October locally),
+from `37b0c2d`. Apple reported VALID / INTERNAL_ONLY / IN_BETA_TESTING. Its
+[receipt](../../docs/releases/TESTFLIGHT-49-20261008.json) records the exact
+readback; all twelve jobs in
+[CI run 37699651538](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37699651538)
+passed. Physical-phone acceptance is still required. The following build-46
+and earlier sections are historical checkpoints.
+
 Internal **1.0.4 (46) is AVAILABLE**, verified by Apple on **7 October 2026 at
 00:47:51 UTC** (6 October locally) from source `7f5879e`. Its
 [delivery record](../../docs/releases/TESTFLIGHT-46-20261006.json) binds the actual
@@ -343,7 +364,7 @@ the selected team and device.
 | --- | --- |
 | Capture | Guided still photos with physical lens selection, grid/level, review/retake and acknowledged saves; video recording, room tags, motion sidecars, pause/resume, saved-take recovery and media import. Camera quality, preview-to-photo framing, interruptions, lenses and thermal behavior require a real phone. |
 | Uploads | Live uploads choose the server's single/multipart path, with persistent recovery and a cellular warning. Local originals must finish uploading before another device can use them. There is no current Settings picker for simulate/direct/tus. |
-| Authentication | Sign in with Apple through Supabase; tokens in Keychain. Local capture and editing remain usable offline. Anonymous sessions support eligible server actions; use the same named account and workspace for phone/desktop continuity. |
+| Authentication | Required Sign in with Apple through Supabase before onboarding and app features; tokens in Keychain. A saved identified account can use local work offline. Legacy guest work is preserved for verified transfer; startup no longer creates a new anonymous session. Use the same account and workspace for phone/desktop continuity. |
 | Sync | Property data, uploaded media, supported native reel setup and property documents use the shared backend. This does not mean the native and desktop editors have identical timelines or features. |
 | Creation | AI Photo Studio, reels, aerial intros, reflection workflows, scripts and Coach call server-side APIs. Availability, consent, plans and provider configuration still apply. No provider secret belongs in the app. |
 | Production workflow | Property capture plans, checklist state and separate video clip imports; see the agency guide for review/copy/version behavior on desktop. A checked shot is not a media-quality certificate. |

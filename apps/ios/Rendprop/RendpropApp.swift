@@ -2779,8 +2779,24 @@ enum Appearance: String, CaseIterable, Identifiable {
 
 /// A concrete boundary keeps launch routing out of the scene's modifier type.
 /// Release UI fixtures exist only in the simulator and require the offline test flag.
+enum NativeAccountLaunchAdmission {
+    static func allows(signedIn: Bool, identified: Bool, actorID: String?, offlineFixture: Bool) -> Bool {
+        offlineFixture || (signedIn && identified && actorID.flatMap(UUID.init(uuidString:)) != nil)
+    }
+
+    static func allowsRoutes(accountReady: Bool, hasOnboarded: Bool) -> Bool {
+        accountReady && hasOnboarded
+    }
+}
+
 private struct RendpropLaunchContent: View {
     let hasOnboarded: Bool
+    @ObservedObject private var auth = AuthStore.shared
+
+    private var accountReady: Bool {
+        NativeAccountLaunchAdmission.allows(signedIn: auth.isSignedIn, identified: auth.isIdentified,
+            actorID: auth.userID, offlineFixture: Config.isOfflineAccountFixture)
+    }
 
     var body: some View {
         Group {
@@ -2802,18 +2818,24 @@ private struct RendpropLaunchContent: View {
 #if DEBUG
         if Config.isSessionNetworkTesting {
             PhaseOneFixtureRoot()
-        } else if hasOnboarded {
-            RootTabView()
         } else {
-            OnboardingView()
+            accountContent
         }
 #else
-        if hasOnboarded {
-            RootTabView()
-        } else {
-            OnboardingView()
-        }
+        accountContent
 #endif
+    }
+
+    @ViewBuilder private var accountContent: some View {
+        if accountReady {
+            businessContent.paywallHost()
+        } else {
+            RequiredAccountGate()
+        }
+    }
+
+    @ViewBuilder private var businessContent: some View {
+        if hasOnboarded { RootTabView() } else { OnboardingView() }
     }
 }
 
@@ -2870,7 +2892,6 @@ struct RendpropApp: App {
             // The one paywall sheet + the StoreKit 2 lifecycle (Purchases/).
             // Mounted here so every "Upgrade plan" CTA in the app can call
             // `PaywallRouter.shared.present(reason:)` instead of owning a sheet.
-            .paywallHost()
             .tint(Theme.accent)
             // System / Light / Dark — set in Settings → Appearance. nil = follow iOS.
             .preferredColorScheme((Appearance(rawValue: appearanceRaw) ?? .system).colorScheme)
@@ -2878,11 +2899,6 @@ struct RendpropApp: App {
             // First-party analytics only: our own /events route, no third-party
             // SDK, no IDFA, no ATT prompt. `start` is idempotent.
             .task { await model.load(); Analytics.start(api: model.api as? AnalyticsAPI) }
-            // GUIDELINE 5.1.1(v). A session with NO personal information, minted
-            // silently at launch, is what lets every feature and the paywall
-            // work without anybody registering. Idempotent, and a no-op when a
-            // session already exists — including a real Apple one.
-            .task { AuthStore.shared.signInAnonymouslyIfNeeded() }
 #if SPATIAL_CAPTURE_LAB
             .task { SpatialUploadCoordinator.shared.reconnect() }
 #endif
@@ -2899,10 +2915,7 @@ struct RendpropApp: App {
             // is the most valuable flush there is.
             .onChange(of: scenePhase) { phase in
                 Analytics.sceneChanged(phase)
-                // A launch with no network leaves the device sessionless.
-                // Retry on the way back rather than stranding it.
                 if phase == .active {
-                    AuthStore.shared.signInAnonymouslyIfNeeded()
                     model.refreshSpatialCapability()
                     Task { await model.refreshCloudWorkspace() }
                     // iOS Settings can change the notification permission while
@@ -2925,7 +2938,8 @@ struct RendpropApp: App {
             .onOpenURL { url in
                 enqueueIncomingURL(url)
             }
-            .fullScreenCover(item: $incomingLink) { link in
+            .fullScreenCover(item: Binding(get: { mayPresentIncomingRoutes ? incomingLink : nil },
+                                          set: { incomingLink = $0 })) { link in
                 // A tour and a portfolio are both a page in the viewer. An
                 // invite is not a page at all - it is an action against the
                 // account - so it gets the Join sheet with its code already
@@ -2948,7 +2962,8 @@ struct RendpropApp: App {
             // The one root sheet slot. The permission pre-prompt is presented
             // from HERE so that EVERY publish path reaches it, not just the
             // detail screen's button.
-            .sheet(item: $rootSheet) { sheet in
+            .sheet(item: Binding(get: { mayPresentIncomingRoutes ? rootSheet : nil },
+                                set: { rootSheet = $0 })) { sheet in
                 switch sheet {
                 case .pushPrePrompt:
                     PushPrePromptView()
@@ -2992,7 +3007,8 @@ struct RendpropApp: App {
                     }
                 }
             }
-            .alert("Couldn't open that link", isPresented: $incomingLinkError) {
+            .alert("Couldn't open that link", isPresented: Binding(get: { mayPresentIncomingRoutes && incomingLinkError },
+                                                                  set: { incomingLinkError = $0 })) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("Finish your current screen and open the Rendprop link again. Check that an invite includes the complete code.")
@@ -3014,11 +3030,23 @@ struct RendpropApp: App {
             // A different account (an Apple sign-in after an anonymous week) is
             // a different org, which has not heard the business type yet.
             .onChange(of: analyticsAuth.userID) { _ in
+                incomingLink = nil
+                rootSheet = nil
+                incomingLinkError = false
+                PaywallRouter.shared.dismiss()
                 model.syncSpaceTypeIfNeeded()
                 Task { await model.refreshCloudWorkspace() }
             }
             .onChange(of: analyticsAuth.isIdentified) { identified in
                 if identified { Task { await model.refreshCloudWorkspace() } }
+            }
+            .onChange(of: accountReady) { ready in
+                guard !ready else { return }
+                incomingLink = nil
+                rootSheet = nil
+                incomingLinkError = false
+                incomingQueue = NativeIncomingQueue()
+                PaywallRouter.shared.dismiss()
             }
             // `externalSink` is `nonisolated` and hops to the main actor itself,
             // so the purchase flow keeps knowing nothing about Analytics.
@@ -3054,7 +3082,7 @@ struct RendpropApp: App {
     }
 
     @MainActor private func drainIncomingRoutes() {
-        let canPresent = scenePhase == .active && incomingLink == nil && rootSheet == nil
+        let canPresent = mayPresentIncomingRoutes && scenePhase == .active && incomingLink == nil && rootSheet == nil
             && !incomingLinkError && !PaywallRouter.shared.isPresented
             && !NativePresentationAvailability.hasPresentedController
         guard let next = incomingQueue.takeNext(canPresent: canPresent) else { return }
@@ -3064,6 +3092,15 @@ struct RendpropApp: App {
         case .pushPermission: if push.showPrePrompt { rootSheet = .pushPrePrompt }
         case .invalidLink: incomingLinkError = true
         }
+    }
+
+    private var accountReady: Bool {
+        NativeAccountLaunchAdmission.allows(signedIn: analyticsAuth.isSignedIn, identified: analyticsAuth.isIdentified,
+            actorID: analyticsAuth.userID, offlineFixture: Config.isOfflineAccountFixture)
+    }
+
+    private var mayPresentIncomingRoutes: Bool {
+        NativeAccountLaunchAdmission.allowsRoutes(accountReady: accountReady, hasOnboarded: hasOnboarded)
     }
 
 }
