@@ -3220,6 +3220,7 @@ struct HomeDashboardView: View {
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @AppStorage(RealEstateRoleStore.uiRevisionKey) private var realEstateRoleRevision = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var goToListings: () -> Void = {}
 
     @State private var revealed = false          // staggers the sections in on first appear
@@ -3740,38 +3741,39 @@ struct HomeDashboardView: View {
     }
 
     private var featureGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
-                            GridItem(.flexible(), spacing: 12)], spacing: 12) {
+        HomeFeatureGridLayout(columns: dynamicTypeSize.isAccessibilitySize ? 1 : 2) {
             featureButton(.tour)
-            // Only while the server says the 3D pipeline is on — for everyone,
-            // the same flag. Until a fetch has said so (offline, unknown, or
-            // switched off) there is no tile: a tile that scans a room, uploads
-            // every frame and then fails at /start is a dead feature on Home.
-            if model.isSpatialWalkthroughAvailable {
-                featureButton(.spatial)
-            } else {
-                comingSoonTile("3D walkthrough", "Room-by-room exploration", "rotate.3d")
-            }
             featureButton(.photos)
             featureButton(.photoStudio)
             featureButton(.reel)
-            featureButton(.floorPlan)
-            comingSoonTile("3D floor plan", "Scan and build a room model", "cube.transparent")
             featureButton(.aerial)
-            agentCardTile
+            // Only while the server says the 3D pipeline is on — for everyone,
+            // the same flag. Unknown, offline or disabled stays non-actionable.
+            if model.isSpatialWalkthroughAvailable {
+                featureButton(.spatial)
+            }
+            comingSoonTile("Measurements", "Draw an outline or upload a plan", "ruler", id: "floorPlan")
+            comingSoonTile("3D floor plan", "Scan and build a room model", "cube.transparent", id: "3dFloorPlan")
+            if !model.isSpatialWalkthroughAvailable {
+                comingSoonTile("3D walkthrough", "Room-by-room exploration", "rotate.3d", id: "spatial")
+            }
         }
     }
 
-    private func comingSoonTile(_ title: String, _ description: String, _ icon: String) -> some View {
+    private func comingSoonTile(_ title: String, _ description: String, _ icon: String, id: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: icon).font(.title2).foregroundStyle(Theme.accent)
             Text(title).font(.rpHeadline).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
             Text("Coming soon").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
             Text(description).font(.caption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(14).frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
+        .padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: Theme.radius))
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("\(title). Coming soon. \(description)"))
+        .accessibilityIdentifier("home.comingSoon.\(id)")
     }
 
     /// One gated tile. Tapping never starts loose work — `open` picks the home
@@ -3784,15 +3786,6 @@ struct HomeDashboardView: View {
         .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text("\(feature.actionTitle). \(feature.promise)"))
         .accessibilityIdentifier("home.feature.\(feature.rawValue)")
-    }
-
-    /// The only tile that isn't per-home: your card is the same on every tour.
-    private var agentCardTile: some View {
-        NavigationLink { AgentCardEditorView() } label: {
-            featureTile(SpaceType.current.profileCardName, "You, on every tour you send",
-                        "person.text.rectangle.fill", RPGradient.agent)
-        }
-        .buttonStyle(ScalePressStyle())
     }
 
     /// Wide banner: the payoff — every tour is a share link that captures
@@ -3851,18 +3844,15 @@ struct HomeDashboardView: View {
             Text(title)
                 .font(.rpHeadline)
                 .foregroundStyle(Color.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
             Text(promise)
                 .font(.caption)
                 .foregroundStyle(Color.white.opacity(0.85))
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 128)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(gradient)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
@@ -4075,6 +4065,41 @@ struct HomeDashboardView: View {
         }
         .padding(14)
         .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+/// Measure the wrapped content once per layout pass, then give every Home
+/// feature the same bounds. No stored maximum survives a width or text change.
+private struct HomeFeatureGridLayout: Layout {
+    let columns: Int
+    private let spacing: CGFloat = 12
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let naturalWidth = subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+            ?? (naturalWidth * CGFloat(columns) + spacing * CGFloat(columns - 1))
+        let cell = cellSize(width: width, subviews: subviews)
+        let rows = (subviews.count + columns - 1) / columns
+        return CGSize(width: width, height: cell.height * CGFloat(rows) + spacing * CGFloat(rows - 1))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        let cell = cellSize(width: bounds.width, subviews: subviews)
+        for (index, subview) in subviews.enumerated() {
+            let origin = CGPoint(x: bounds.minX + CGFloat(index % columns) * (cell.width + spacing),
+                                 y: bounds.minY + CGFloat(index / columns) * (cell.height + spacing))
+            subview.place(at: origin, anchor: .topLeading,
+                          proposal: ProposedViewSize(width: cell.width, height: cell.height))
+        }
+    }
+
+    private func cellSize(width: CGFloat, subviews: Subviews) -> CGSize {
+        let cellWidth = max(0, (width - spacing * CGFloat(columns - 1)) / CGFloat(columns))
+        let fittedHeight = subviews.map {
+            $0.sizeThatFits(ProposedViewSize(width: cellWidth, height: nil)).height
+        }.max() ?? 0
+        return CGSize(width: cellWidth, height: max(128, fittedHeight))
     }
 }
 

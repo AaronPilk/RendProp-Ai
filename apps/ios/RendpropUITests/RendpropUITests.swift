@@ -103,6 +103,73 @@ final class RendpropUITests: XCTestCase {
 #endif
     }
 
+    /// Closed Home-only render: no listing creation, capture or paid action.
+    /// The same test can run at the simulator's default and accessibility sizes.
+    func testHomeShowroomCards() throws {
+#if targetEnvironment(simulator)
+        XCTAssertTrue(waitForHome(timeout: screenTimeout))
+        let activeIDs = ["tour", "photos", "photoStudio", "reel", "aerial"]
+            .map { "home.feature.\($0)" }
+        var identifiers = activeIDs
+        let spatial = app.buttons["home.feature.spatial"]
+        let spatialAvailable = spatial.exists
+        if spatialAvailable { identifiers.append("home.feature.spatial") }
+        let activeCount = identifiers.count
+        identifiers += ["home.comingSoon.floorPlan", "home.comingSoon.3dFloorPlan"]
+        if !spatialAvailable { identifiers.append("home.comingSoon.spatial") }
+        let cards = identifiers.map { app.descendants(matching: .any).matching(identifier: $0).firstMatch }
+        for card in cards { XCTAssertTrue(card.exists, card.identifier) }
+        for _ in 0..<8 where !cards[0].isHittable { app.swipeUp() }
+
+        let frames = cards.map(\.frame)
+        let first = frames[0]
+        XCTAssertGreaterThan(first.height, 0)
+        XCTAssertGreaterThan(first.width, 0)
+        for (index, frame) in frames.enumerated() {
+            XCTAssertEqual(frame.height, first.height, accuracy: 1, identifiers[index])
+            XCTAssertEqual(frame.width, first.width, accuracy: 1, identifiers[index])
+            if index > 0 {
+                let previous = frames[index - 1]
+                XCTAssertTrue(frame.minY > previous.minY + 1
+                    || (abs(frame.minY - previous.minY) <= 1 && frame.minX > previous.minX),
+                    "Active cards must precede Coming soon cards: \(identifiers[index])")
+            }
+        }
+        for identifier in identifiers where identifier.hasPrefix("home.comingSoon.") {
+            XCTAssertFalse(app.buttons[identifier].exists, "Coming soon must not open a feature")
+        }
+        XCTAssertFalse(app.buttons["home.feature.floorPlan"].exists)
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label CONTAINS %@",
+            "You, on every tour you send")).count, 0)
+        XCTAssertTrue(app.tabBars.buttons["Profile"].exists)
+
+        let frameRows = zip(identifiers, frames).map { identifier, frame in
+            ["id": identifier, "x": Double(frame.minX), "y": Double(frame.minY),
+             "width": Double(frame.width), "height": Double(frame.height)] as [String: Any]
+        }
+        let frameData = try JSONSerialization.data(withJSONObject: frameRows, options: [.prettyPrinted, .sortedKeys])
+        let frameAttachment = XCTAttachment(string: String(decoding: frameData, as: UTF8.self))
+        frameAttachment.name = "home-showroom-frames.json"; frameAttachment.lifetime = .keepAlways; add(frameAttachment)
+        let firstActiveScreenshot = XCTAttachment(screenshot: app.screenshot())
+        firstActiveScreenshot.name = "home-showroom-active-start"; firstActiveScreenshot.lifetime = .keepAlways; add(firstActiveScreenshot)
+
+        func retainSection(endingAt card: XCUIElement, name: String) {
+            let visibleBottom = app.tabBars.firstMatch.frame.minY
+            for _ in 0..<8 where !card.isHittable || card.frame.maxY > visibleBottom { app.swipeUp() }
+            XCTAssertTrue(card.isHittable, "Could not reach \(card.identifier) within the bounded Home scroll")
+            XCTAssertLessThanOrEqual(card.frame.maxY, visibleBottom + 1, "The retained card must not be hidden behind the tab bar")
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = name; screenshot.lifetime = .keepAlways; add(screenshot)
+        }
+        retainSection(endingAt: cards[activeCount - 1], name: "home-showroom-active-cards")
+        retainSection(endingAt: cards[cards.count - 1], name: "home-showroom-coming-soon-cards")
+        let tree = XCTAttachment(string: app.debugDescription)
+        tree.name = "home-showroom-accessibility"; tree.lifetime = .keepAlways; add(tree)
+#else
+        throw XCTSkip("Closed Home fixtures exist only on the simulator.")
+#endif
+    }
+
     func testWalk() {
         step01Home()
         step02AddHome()
