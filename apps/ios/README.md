@@ -61,16 +61,22 @@ trial or charge. See the
 [unsubmitted public-review draft](../../docs/appstore/account-first-review-draft-20261008.md)
 and [source audit/phone checklist](../../docs/audit/REQUIRED-ACCOUNT-ONBOARDING-20261008.md).
 The full unsigned Release app and mocked required-screen UI check passed. This
-source follow-up needs its own release.
+behavior is delivered in internal build 50; real Apple sign-in remains a phone
+acceptance check.
 
-The latest verified internal delivery is **1.0.4 (49)**, AVAILABLE to the
-existing Rendprop team on **8 October 2026 at 00:56:04 UTC** (7 October locally),
-from `37b0c2d`. Apple reported VALID / INTERNAL_ONLY / IN_BETA_TESTING. Its
-[receipt](../../docs/releases/TESTFLIGHT-49-20261008.json) records the exact
-readback; all twelve jobs in
-[CI run 37699651538](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37699651538)
-passed. Physical-phone acceptance is still required. The following build-46
-and earlier sections are historical checkpoints.
+The latest verified internal delivery is **1.0.4 (50)**, AVAILABLE to the
+existing Rendprop team on **8 October 2026 at 10:30:56 UTC**, from
+`c9cf64e2e34cf6c00bcc7752e4b5569c7258906a`. Apple reported VALID /
+INTERNAL_ONLY / IN_BETA_TESTING. Its
+[receipt](../../docs/releases/TESTFLIGHT-50-20261008.json) records the exact
+readback, one upload and actual Distribution package verification. All twelve
+jobs and 178 official steps in
+[CI run 37753249069](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37753249069)
+passed with execution checkouts matching that source tree. Later documentation
+updates are not the compiled payload. The
+[build-50 phone checklist](../../docs/handoff/PHONE-ACCEPTANCE-TESTFLIGHT50-20261008.md)
+is still unchecked. The build-49 receipt and following build-46 and earlier
+sections remain historical checkpoints; the public build is unchanged.
 
 Internal **1.0.4 (46) is AVAILABLE**, verified by Apple on **7 October 2026 at
 00:47:51 UTC** (6 October locally) from source `7f5879e`. Its

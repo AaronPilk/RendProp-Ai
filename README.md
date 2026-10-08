@@ -8,22 +8,28 @@ Real estate is the primary workflow; the app also supports other space types.
 **Account-first follow-up:** new and signed-out users must create or sign in to
 an account with Apple before business setup or the dashboard. Saved guest work
 remains available to the verified account-transfer flow. Signing in does not
-start a subscription or a trial. This source change needs its own release;
-internal **1.0.4 (49)** remains the last verified delivered build. The
+start a subscription or a trial. This behavior is delivered in internal
+**1.0.4 (50)**. The
 [source audit and phone checklist](docs/audit/REQUIRED-ACCOUNT-ONBOARDING-20261008.md)
 records the account/session controls, successful Release compilation and mocked
 rendered-screen check. The
 [next public-review draft](docs/appstore/account-first-review-draft-20261008.md)
 is unsubmitted and preserves the historical build-42 review record.
 
-**Latest verified internal delivery:** **1.0.4 (49)** was AVAILABLE to the
-existing Rendprop team on **8 October 2026 at 00:56:04 UTC** (7 October locally),
-from `37b0c2d`. Apple reported VALID / INTERNAL_ONLY / IN_BETA_TESTING. The
-[delivery receipt](docs/releases/TESTFLIGHT-49-20261008.json) records that exact
-readback. All twelve jobs in
-[CI run 37699651538](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37699651538)
-passed. This was an internal release; physical-phone acceptance and the
-funding, supplier-quality and privacy launch gates remain separate.
+**Latest verified internal delivery:** **1.0.4 (50)** was AVAILABLE to the
+existing Rendprop team on **8 October 2026 at 10:30:56 UTC**, from
+`c9cf64e2e34cf6c00bcc7752e4b5569c7258906a`. Apple reported VALID /
+INTERNAL_ONLY / IN_BETA_TESTING. The
+[delivery receipt](docs/releases/TESTFLIGHT-50-20261008.json) binds that exact
+readback to the retained uploaded Distribution package. All twelve jobs and
+178 official steps in
+[CI run 37753249069](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37753249069)
+passed; every execution checkout matched the released source tree. Later
+documentation updates are not the compiled payload. Follow the
+[build-50 phone checklist](docs/handoff/PHONE-ACCEPTANCE-TESTFLIGHT50-20261008.md)
+for real Apple sign-in and saved-work checks. Funding, supplier-quality and
+privacy launch gates remain separate. The
+[build-49 receipt](docs/releases/TESTFLIGHT-49-20261008.json) remains historical.
 
 The **6 October release candidate** adds the remaining beta fixes, private media
 delivery, a shared budget before paid AI requests, deliberate per-member hosted
@@ -239,7 +245,7 @@ Studio uses the same account/workspace subscription and has no separate checkout
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
 [App Store submission receipt](docs/releases/APPSTORE-42-20261002.json) ·
-[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-49-20261008.json) ·
+[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-50-20261008.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -281,7 +287,7 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Internal **1.0.4 (49)** was **AVAILABLE**, verified on 8 October at 00:56:04 UTC (7 October locally). The account-first follow-up requires its own release. Public **1.0.3 (42)** last reported **READY_FOR_SALE** at the 5 October read; no new public submission was made. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
+| iOS | Internal **1.0.4 (50)** was **AVAILABLE**, verified on 8 October at 10:30:56 UTC, with account creation/sign-in required before setup and app access. Public **1.0.3 (42)** last reported **READY_FOR_SALE** at the 5 October read; no new public submission was made. Real Apple sign-in, camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
 | Internal beta | Build **46** includes Measurements, the full-system audit fixes and dormant trial/purchase safeguards. The [current rollout](docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md) records three trial migrations, three updated functions and verified Studio files. Trial funding/activation, protected-media, financial, provider-quality and phone acceptance remain open. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 

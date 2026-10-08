@@ -1,6 +1,6 @@
 # Account-first access — next public review draft
 
-This is an unsubmitted draft for the account-first source follow-up. It does not change the published build 42 metadata, the submitted build 42 review notes, subscription products or an Apple review state. Internal build 49 remains the last verified delivered source at this checkpoint. Populate the next public version/build and its validation evidence before submission.
+This is an unsubmitted draft for the account-first source follow-up. It does not change the published build 42 metadata, the submitted build 42 review notes, subscription products or an Apple review state. Internal **1.0.4 (50)** is available to the existing Rendprop team, verified on 8 October 2026 at 10:30:56 UTC; see the [delivery receipt](../releases/TESTFLIGHT-50-20261008.json). Internal availability does not select or submit a public build. Populate the next public version/build and its physical-phone validation evidence before submission.
 
 ## Proposed access explanation
 
