@@ -64,19 +64,21 @@ The full unsigned Release app and mocked required-screen UI check passed. This
 behavior is delivered in internal build 50; real Apple sign-in remains a phone
 acceptance check.
 
-The latest verified internal delivery is **1.0.4 (50)**, AVAILABLE to the
-existing Rendprop team on **8 October 2026 at 10:30:56 UTC**, from
-`c9cf64e2e34cf6c00bcc7752e4b5569c7258906a`. Apple reported VALID /
-INTERNAL_ONLY / IN_BETA_TESTING. Its
-[receipt](../../docs/releases/TESTFLIGHT-50-20261008.json) records the exact
-readback, one upload and actual Distribution package verification. All twelve
-jobs and 178 official steps in
-[CI run 37753249069](https://github.com/AaronPilk/RendProp-Ai/actions/runs/37753249069)
-passed with execution checkouts matching that source tree. Later documentation
-updates are not the compiled payload. The
-[build-50 phone checklist](../../docs/handoff/PHONE-ACCEPTANCE-TESTFLIGHT50-20261008.md)
-is still unchecked. The build-49 receipt and following build-46 and earlier
-sections remain historical checkpoints; the public build is unchanged.
+The latest verified internal delivery is **1.0.4 (51)**, **AVAILABLE** to the
+existing Rendprop team, verified on **8 October 2026 at 19:10:54 UTC**, from
+`2c567a543c9b16cbd29702cc5762cfb56f6891fc`. Apple reported VALID /
+INTERNAL_ONLY / IN_BETA_TESTING. Home now uses equal card sizes, places active
+tools first, marks Measurements Coming soon and keeps the Agent card in Profile.
+The [delivery receipt](../../docs/releases/TESTFLIGHT-51-20261008.json) records the
+actual uploaded Distribution package and an explicit internal qualification:
+eleven current successful CI jobs plus prior successful native checks on
+identical inputs, with the reproduced test-fixture timing defect separately
+resolved. Full current CI remains failed 11/12; details are in the
+[Home audit](../../docs/audit/HOME-BETA-20261008.md). Follow the
+[build-51 phone checklist](../../docs/handoff/PHONE-ACCEPTANCE-TESTFLIGHT51-20261008.md).
+Later documentation/test-fixture changes are not the compiled payload. The
+[build-50 receipt](../../docs/releases/TESTFLIGHT-50-20261008.json) remains historical.
+Physical-phone and separate paid-launch acceptance remain pending.
 
 Internal **1.0.4 (46) is AVAILABLE**, verified by Apple on **7 October 2026 at
 00:47:51 UTC** (6 October locally) from source `7f5879e`. Its

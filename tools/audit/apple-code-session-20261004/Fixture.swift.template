@@ -108,12 +108,13 @@ __METHODS__
     }
     static func main() async throws {
         reset(); let first = auth.signIn(a)
+        let signedInAccessToken = AuthStore.storedAccessToken()!
         AuthStore.SecureStore.values["legacy"] = "synthetic-unscoped-A"
         await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded()
         check(wire.requests.isEmpty && AuthStore.SecureStore.values["legacy"] == "synthetic-unscoped-A", "legacy unscoped code is preserved without transport")
         await AuthStore.submitAppleAuthorizationCode("synthetic-code-A", for: first)
         check(wire.requests.count == 1 && body(wire.requests[0])["authorization_code"] == "synthetic-code-A", "confirmed sign-in posts its exact code once")
-        check(wire.requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer " + jwt(a) && pending(a) == nil, "confirmed owned receipt clears exact record")
+        check(wire.requests[0].value(forHTTPHeaderField: "Authorization") == "Bearer " + signedInAccessToken && pending(a) == nil, "confirmed owned receipt clears exact record")
         check(AuthStore.SecureStore.values["legacy"] != nil, "new successful exchange preserves legacy slot")
 
         reset(); let switched = auth.signIn(a)
