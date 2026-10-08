@@ -363,6 +363,7 @@ jobs:
           node tests/export-resume-browser.mjs
           node tests/cloud-editor-browser.mjs
           node tests/conversation-browser.mjs
+          node tests/finishing-audio-probe-controls.mjs
           node tests/finishing-browser.mjs
       - name: Retain media export receipts and browser evidence
         if: always()
