@@ -149,6 +149,41 @@ import Foundation
         }
         if let priorIndustry { UserDefaults.standard.set(priorIndustry, forKey: "space.type") }
         else { UserDefaults.standard.removeObject(forKey: "space.type") }
+        // Compile and execute the actual root admission and drain bodies. These
+        // mutable closed UI/session states never create credentials or a user.
+        let routes = RootRouteFixture()
+        AuthStore.shared.userID = nil; AuthStore.shared.isSignedIn = false; AuthStore.shared.isIdentified = false
+        routes.hasOnboarded = true
+        for route in [NativeIncomingRoute.link(link), .leads, .pushPermission, .invalidLink] { routes.incomingQueue.enqueue(route) }
+        routes.drainIncomingRoutes()
+        expect(routes.incomingQueue.routes.count == 4 && routes.incomingLink == nil && routes.rootSheet == nil && !routes.incomingLinkError, "required account keeps queued private routes unpresented")
+        AuthStore.shared.userID = UUID().uuidString; AuthStore.shared.isSignedIn = true
+        routes.drainIncomingRoutes()
+        expect(routes.incomingQueue.routes.count == 4 && routes.incomingLink == nil, "legacy guest keeps queued private routes unpresented")
+        AuthStore.shared.isIdentified = true; routes.hasOnboarded = false
+        routes.drainIncomingRoutes()
+        expect(routes.incomingQueue.routes.count == 4 && routes.incomingLink == nil, "business onboarding keeps queued private routes unpresented")
+        routes.hasOnboarded = true; routes.scenePhase = .background
+        routes.drainIncomingRoutes()
+        expect(routes.incomingQueue.routes.count == 4, "background cannot cover required account or business screens")
+        routes.scenePhase = .active; NativePresentationAvailability.hasPresentedController = true
+        routes.drainIncomingRoutes()
+        expect(routes.incomingQueue.routes.count == 4, "actual root drain preserves link behind a feature modal")
+        NativePresentationAvailability.hasPresentedController = false; PaywallRouter.shared.present(reason: .upgrade)
+        routes.drainIncomingRoutes()
+        expect(routes.incomingQueue.routes.count == 4, "actual root drain preserves link behind purchase presentation")
+        PaywallRouter.shared.dismiss(); routes.drainIncomingRoutes()
+        expect(routes.incomingLink == link && routes.incomingQueue.routes.count == 3, "identified onboarded account receives retained link once")
+        routes.incomingLink = nil; routes.drainIncomingRoutes()
+        expect(routes.rootSheet == .leadsInbox && routes.incomingQueue.routes.count == 2, "identified account receives retained lead after link")
+        routes.rootSheet = nil; routes.drainIncomingRoutes()
+        expect(routes.rootSheet == .pushPrePrompt && routes.incomingQueue.routes.count == 1, "identified account receives retained permission after lead")
+        routes.rootSheet = nil; routes.drainIncomingRoutes()
+        expect(routes.incomingLinkError && !routes.incomingQueue.hasPending, "identified account sees retained invalid-link error once")
+        routes.incomingLinkError = false; routes.incomingQueue.enqueue(.leads); AuthStore.shared.isSignedIn = false
+        routes.drainIncomingRoutes()
+        expect(routes.incomingQueue.hasPending && routes.rootSheet == nil, "signout regates subsequent root routes")
+
         print("Native UX actual bodies: \(assertions) assertions passed")
     }
     @MainActor static func settle() async { for _ in 0..<20 { await Task.yield() } }
