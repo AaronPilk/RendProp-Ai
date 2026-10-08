@@ -272,131 +272,12 @@ jobs:
         run: bash tools/spatial-spike/capture-ios/verify-room-guidance.sh
       - name: Saved panorama cache freshness, corruption and cancellation
         run: bash apps/ios/tests/verify-guided-panorama-preview-store.sh
-      # Playwright's Linux Chromium lacks the H.264/AAC encoder combination
-      # required by this real MP4 export gate. Keep those assertions intact and
-      # run them in official Chrome on macOS, where the codecs are supported.
-      - name: Install locked Studio dependencies for the media export gate
-        working-directory: apps/studio
-        run: npm ci --ignore-scripts
-      - name: Verify official Chrome and synthetic media tools
-        working-directory: apps/studio
-        shell: bash
-        run: |
-          set -euo pipefail
-          chrome_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-          if [ ! -x "$chrome_path" ]; then
-            npx playwright install chrome
-          fi
-          test -x "$chrome_path"
-          "$chrome_path" --version
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
-            brew install ffmpeg
-          fi
-          ffmpeg -version
-          ffprobe -version
-      - name: Published listing navigation and opt-in video delivery
-        timeout-minutes: 5
-        env:
-          STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-          TMPDIR: ${{ runner.temp }}
-        run: |
-          npm ci --ignore-scripts --prefix services/edge/tour-host
-          node services/edge/tour-host/scripts/check-listing-browser.mjs
-          node services/edge/tour-host/scripts/check-listing-browser.mjs --chapter-observation-delay-ms=350 --evidence="$RUNNER_TEMP/rendprop-listing-browser-delayed-chapter"
-      - name: Chapter seek and Explore handoff reject missing seek, stale timing and rewind
-        timeout-minutes: 5
-        env:
-          STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-          TMPDIR: ${{ runner.temp }}
-        run: |
-          set -euo pipefail
-          for control in chapter-no-seek stale-explore-reference explore-rewind; do
-            evidence_dir="$RUNNER_TEMP/rendprop-listing-browser-$control"
-            set +e
-            node services/edge/tour-host/scripts/check-listing-browser.mjs --fault="$control" --evidence="$evidence_dir"
-            status=$?
-            set -e
-            test "$status" -eq 1
-            LISTING_CONTROL="$control" LISTING_EVIDENCE="$evidence_dir" node --input-type=module <<'JS'
-          import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
-          const read = name => JSON.parse(readFileSync(process.env.LISTING_EVIDENCE + '/' + name));
-          const receipt = read('receipt.json');
-          assert.equal(receipt.fault, process.env.LISTING_CONTROL);
-          assert.equal(receipt.passed, false);
-          assert.deepEqual(receipt.pageErrors, []);
-          if (receipt.fault === 'chapter-no-seek') {
-            const chapter = read('chapter-observation.json');
-            assert.equal(receipt.error, 'Room chapter seeks the actual media timeline');
-            assert.ok(receipt.checks.includes('Native keyboard pause control works'));
-            assert.equal(chapter.error, 'No chapter seek and decoded frame within 4000ms');
-            assert.equal(chapter.seek, null);
-            assert.equal(chapter.presented, null);
-          } else {
-            const handoff = read('explore-handoff.json');
-            assert.equal(receipt.error, 'Returning to Explore pauses at the current playback position without losing the tour');
-            assert.ok(receipt.checks.includes('Seeking yields a real nonempty decoded test-pattern frame'));
-            assert.ok(handoff.afterExplore.paused && !handoff.afterExplore.controls && handoff.afterExplore.muted);
-            assert.equal(handoff.afterExplore.currentSrc, handoff.handoff.currentSrc);
-            if (receipt.fault === 'stale-explore-reference') {
-              assert.ok(handoff.staleDelta > .2);
-              assert.ok(Math.abs(handoff.handoffDelta) < handoff.toleranceSeconds);
-            } else {
-              assert.ok(Math.abs(handoff.handoffDelta) > 1);
-            }
-          }
-          console.log('Browser negative control rejected at its intended assertion:', receipt.fault);
-          JS
-          done
-      - name: Actual native and worker HD master encoding
-        timeout-minutes: 10
-        env:
-          TMPDIR: ${{ runner.temp }}
-        run: |
-          python3 tools/audit/run_render_quality.py
-          python3 tools/audit/run_render_review_fences.py
-      - name: Studio MP4 export, AAC narration and continuous agent audio
-        working-directory: apps/studio
-        timeout-minutes: 10
-        env:
-          STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-          TMPDIR: ${{ runner.temp }}
-        run: |
-          node tests/export-resume-browser.mjs
-          node tests/cloud-editor-browser.mjs
-          node tests/conversation-browser.mjs
-          node tests/finishing-audio-probe-controls.mjs
-          node tests/finishing-browser.mjs
-      - name: Retain media export receipts and browser evidence
+      - name: Retain native audit receipts and control logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: studio-macos-media-export-${{ github.run_attempt }}
+          name: native-audit-evidence-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
-            ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
-            ${{ runner.temp }}/rendprop-cloud-editor-*/*.mp4
-            ${{ runner.temp }}/rendprop-conversation-*/receipt.json
-            ${{ runner.temp }}/rendprop-conversation-*/*.png
-            ${{ runner.temp }}/rendprop-conversation-*/*.mp4
-            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
-            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
-            ${{ runner.temp }}/rendprop-finishing-*/receipt.json
-            ${{ runner.temp }}/rendprop-finishing-*/*.png
-            ${{ runner.temp }}/rendprop-finishing-*/*.mp4
-            ${{ runner.temp }}/rendprop-listing-browser-*/receipt.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/explore-handoff.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-seek.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-observation.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/playback-clock.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/decoded-frame.json
-            ${{ runner.temp }}/rendprop-listing-browser-*/*.png
-            ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4
-            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json
-            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/*.log
-            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
-            ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
-            ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
             ${{ runner.temp }}/rendprop-reel-request-recovery-*/receipt.json
             ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.log
             ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.swift
@@ -664,7 +545,7 @@ jobs:
 
   worker-edge:
     name: Cloudflare Worker (tour-host)
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: services/edge/tour-host
@@ -702,6 +583,132 @@ jobs:
       # sharp, ws) don't ship in the Worker bundle, so they don't fail the build.
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
+
+      # Run real H.264/AAC gates in the full browser bundled with the locked
+      # Playwright version, rather than an independently installed system Chrome.
+      - name: Install locked Studio dependencies for the media export gate
+        working-directory: apps/studio
+        run: npm ci --ignore-scripts
+      - name: Verify locked full Chromium and synthetic media tools
+        working-directory: apps/studio
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright install chromium --no-shell
+          browser_path="$(node --input-type=module -e "import { chromium } from '@playwright/test'; console.log(chromium.executablePath());")"
+          test -x "$browser_path"
+          "$browser_path" --version
+          printf 'STUDIO_BROWSER_EXECUTABLE=%s\n' "$browser_path" >> "$GITHUB_ENV"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+      - name: Published listing navigation and opt-in video delivery
+        working-directory: .
+        timeout-minutes: 5
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          npm ci --ignore-scripts --prefix services/edge/tour-host
+          node services/edge/tour-host/scripts/check-listing-browser.mjs
+          node services/edge/tour-host/scripts/check-listing-browser.mjs --chapter-observation-delay-ms=350 --evidence="$RUNNER_TEMP/rendprop-listing-browser-delayed-chapter"
+      - name: Chapter seek and Explore handoff reject missing seek, stale timing and rewind
+        working-directory: .
+        timeout-minutes: 5
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          for control in chapter-no-seek stale-explore-reference explore-rewind; do
+            evidence_dir="$RUNNER_TEMP/rendprop-listing-browser-$control"
+            set +e
+            node services/edge/tour-host/scripts/check-listing-browser.mjs --fault="$control" --evidence="$evidence_dir"
+            status=$?
+            set -e
+            test "$status" -eq 1
+            LISTING_CONTROL="$control" LISTING_EVIDENCE="$evidence_dir" node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const read = name => JSON.parse(readFileSync(process.env.LISTING_EVIDENCE + '/' + name));
+          const receipt = read('receipt.json');
+          assert.equal(receipt.fault, process.env.LISTING_CONTROL);
+          assert.equal(receipt.passed, false);
+          assert.deepEqual(receipt.pageErrors, []);
+          if (receipt.fault === 'chapter-no-seek') {
+            const chapter = read('chapter-observation.json');
+            assert.equal(receipt.error, 'Room chapter seeks the actual media timeline');
+            assert.ok(receipt.checks.includes('Native keyboard pause control works'));
+            assert.equal(chapter.error, 'No chapter seek and decoded frame within 4000ms');
+            assert.equal(chapter.seek, null);
+            assert.equal(chapter.presented, null);
+          } else {
+            const handoff = read('explore-handoff.json');
+            assert.equal(receipt.error, 'Returning to Explore pauses at the current playback position without losing the tour');
+            assert.ok(receipt.checks.includes('Seeking yields a real nonempty decoded test-pattern frame'));
+            assert.ok(handoff.afterExplore.paused && !handoff.afterExplore.controls && handoff.afterExplore.muted);
+            assert.equal(handoff.afterExplore.currentSrc, handoff.handoff.currentSrc);
+            if (receipt.fault === 'stale-explore-reference') {
+              assert.ok(handoff.staleDelta > .2);
+              assert.ok(Math.abs(handoff.handoffDelta) < handoff.toleranceSeconds);
+            } else {
+              assert.ok(Math.abs(handoff.handoffDelta) > 1);
+            }
+          }
+          console.log('Browser negative control rejected at its intended assertion:', receipt.fault);
+          JS
+          done
+      - name: Actual native and worker HD master encoding
+        working-directory: .
+        timeout-minutes: 10
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          python3 tools/audit/run_render_quality.py
+          python3 tools/audit/run_render_review_fences.py
+      - name: Studio MP4 export, AAC narration and continuous agent audio
+        working-directory: apps/studio
+        timeout-minutes: 10
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          node tests/export-resume-browser.mjs
+          node tests/cloud-editor-browser.mjs
+          node tests/conversation-browser.mjs
+          node tests/finishing-audio-probe-controls.mjs
+          node tests/finishing-browser.mjs
+      - name: Retain media export receipts and browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: studio-macos-media-export-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
+            ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
+            ${{ runner.temp }}/rendprop-cloud-editor-*/*.mp4
+            ${{ runner.temp }}/rendprop-conversation-*/receipt.json
+            ${{ runner.temp }}/rendprop-conversation-*/*.png
+            ${{ runner.temp }}/rendprop-conversation-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-finishing-*/receipt.json
+            ${{ runner.temp }}/rendprop-finishing-*/*.png
+            ${{ runner.temp }}/rendprop-finishing-*/*.mp4
+            ${{ runner.temp }}/rendprop-listing-browser-*/receipt.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/explore-handoff.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-seek.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/chapter-observation.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/playback-clock.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/decoded-frame.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/*.png
+            ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/*.log
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
+            ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
+          retention-days: 7
+          if-no-files-found: warn
 
   upload-gateway:
     name: Cloudflare Worker (upload-gateway, deno check + tests)
