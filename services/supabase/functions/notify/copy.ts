@@ -34,7 +34,8 @@ export type NotificationCategory =
   | "allowance_low"
   | "first_tour_nudge"
   | "team_invite"
-  | "client_lead_received";
+  | "client_lead_received"
+  | "ops_alert";
 
 export interface RenderedMessage {
   /** Push alert title; e-mail subject. */
@@ -237,6 +238,10 @@ export function emailText(
   // offering to turn it off would be a lie.
   if (category === "team_invite") {
     lines.push("You received this because someone added you to their team. If you were not expecting it, ignore this email — the invite expires on its own.");
+  } else if (category === "ops_alert") {
+    // Operator alert (migration 20261008204500): sent to admins only, at most
+    // once per finding per day, and deliberately not suppressible.
+    lines.push("Operational alert for Rendprop admins. One message per finding per day; it stops when the finding clears.");
   } else {
     lines.push("You can turn any of these off in the app under Settings → Notifications.");
   }

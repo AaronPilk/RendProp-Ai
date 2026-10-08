@@ -1,4 +1,5 @@
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
+import { servingMode } from "../_shared/funded-serving.ts";
 // me — the signed-in user, their org, plan, and account lifecycle (owner).
 //
 //   GET    /me                  -> { user, org, plan, plan_raw, trial_ends_at, entitlement,
@@ -1217,6 +1218,33 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
       "Only the workspace owner or an admin can add a subscription",
       "forbidden",
     );
+  }
+
+  if (tx.environment === "Sandbox" && await servingMode() === "ceiling") {
+    // Ceiling mode (launch): a Sandbox purchase — only App Review or a Sandbox
+    // tester the owner created can make one — grants a 7-day `trial` plan,
+    // bounded by that plan's meters and 1200¢ monthly ceiling. It never
+    // downgrades a paid workspace and never binds a retail subscription.
+    const { data, error } = await admin.rpc("grant_sandbox_trial", {
+      p_org: orgId, p_actor: userId, p_original: tx.originalTransactionId, p_product: tx.productId,
+    });
+    if (error) {
+      if (/RP(?:400|403|409):/.test(error.message)) throwRpc(error.message);
+      throw new HttpError(503, "Test purchase could not be confirmed. Please retry.", "upstream");
+    }
+    const grant = (data ?? {}) as { plan?: unknown; source?: unknown; expires_at?: unknown };
+    const servingActivation = await subscriptionServingActivation(admin, userId, orgId);
+    return json({
+      plan: String(grant.plan ?? "trial"),
+      source: String(grant.source ?? "trial"),
+      expires_at: typeof grant.expires_at === "string" ? grant.expires_at : null,
+      product_id: tx.productId,
+      original_transaction_id: tx.originalTransactionId,
+      environment: "Sandbox",
+      serving_activation: servingActivation,
+      status: deriveEntitlement(tx, renewal).status,
+      test_only: true,
+    }, 200, { "cache-control": "no-store" });
   }
 
   if (tx.environment === "Sandbox") {

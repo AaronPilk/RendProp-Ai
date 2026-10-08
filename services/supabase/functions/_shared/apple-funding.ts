@@ -1,9 +1,12 @@
 // Invoked only after signature verification and successful entitlement chronology.
 import type { AppleTransaction } from "./applejws.ts";
 import { HttpError } from "./http.ts";
-import { inputHash, type FundingContext } from "./funded-serving.ts";
+import { inputHash, servingMode, type FundingContext } from "./funded-serving.ts";
 export async function fundVerifiedAppleTransaction(rpc:FundingContext["rpc"],orgId:string,tx:AppleTransaction):Promise<unknown> {
  if(tx.environment!=="Production")return {funded:false,reason:"sandbox"};
+ // Ceiling mode: the plan's meters and monthly COGS ceiling are the serving
+ // authority; no funding row is required or recorded for the purchase.
+ if(await servingMode()==="ceiling")return {funded:false,available:true,reason:"ceiling_mode"};
  const facts={p_org:orgId,p_original:tx.originalTransactionId,p_transaction:tx.transactionId,p_product:tx.productId,p_price_milliunits:tx.priceMilliunits??null,p_currency:tx.currency??null,p_storefront:tx.storefront??null,p_offer_type:tx.offerType??null,p_offer_discount_type:tx.offerDiscountType??null,p_purchased_at:tx.purchaseDate,p_expires_at:tx.expiresDate,p_signed_at:tx.signedDate};
  const reservedTrial=tx.priceMilliunits===0 && tx.offerType===1 && tx.offerDiscountType==="FREE_TRIAL";
  const boundRetail=typeof tx.priceMilliunits === "number" && tx.priceMilliunits>0 && tx.appAccountToken!==null;

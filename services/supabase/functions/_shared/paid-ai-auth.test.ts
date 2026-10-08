@@ -53,13 +53,16 @@ async function authorize(): Promise<void> {
   const user = await auth.getUser(request());
   await auth.assertPaidAiIdentity(user, ORG);
 }
-async function denied(options: Options, status = 401): Promise<void> {
+// Guest refusals are 403 since 2026-10-08: the public 1.0.3 build treats a
+// repeated 401 as a dead session and signs the guest out (orphaning their
+// workspace). Invalid tokens stay 401; verification outages stay 503.
+async function denied(options: Options, status = 403): Promise<void> {
   await fixture(options, async () => {
     const error = await assertRejects(authorize, HttpError);
     assertEquals(error.status, status);
     const response = respondError(error);
     assertEquals(response.status, status);
-    assertEquals((await response.json()).code, status === 401 ? "unauthorized" : "upstream");
+    assertEquals((await response.json()).code, status === 401 ? "unauthorized" : status === 403 ? "forbidden" : "upstream");
   });
 }
 
@@ -69,7 +72,7 @@ Deno.test("identified Auth user preserves free-plan AI access without subscripti
 Deno.test("general getUser still accepts anonymous sessions for local work and adoption", () => fixture({ anonymous: true }, async (f) => {
   assertEquals((await auth.getUser(request())).is_anonymous, true); assertEquals(f.calls.length, 1);
 }));
-Deno.test("invalid Auth result cannot reach subscription authorization", () => denied({ authError: true }));
+Deno.test("invalid Auth result cannot reach subscription authorization", () => denied({ authError: true }, 401));
 for (const value of [undefined, null, "false", 0]) Deno.test(`unknown Auth identity flag ${String(value)} fails closed`, () => denied({ anonymous: value }));
 Deno.test("client metadata cannot turn anonymous Auth into a funded retail identity", () => denied({ anonymous: true }));
 Deno.test("exact service-owned retail guest predicate admits an anonymous purchase", () => fixture({ anonymous: true, retailGuest: true }, async (f) => {

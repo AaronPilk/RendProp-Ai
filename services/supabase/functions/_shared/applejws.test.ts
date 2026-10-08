@@ -1048,7 +1048,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     import {assert,HttpError,json,readJsonLimited,throwRpc} from ${JSON.stringify(new URL("./http.ts", import.meta.url).href)};
     import {reservedTrialWorkspace} from ${JSON.stringify(new URL("./trial-purchase.ts",import.meta.url).href)};
     import {fundVerifiedAppleTransaction} from ${JSON.stringify(new URL("./apple-funding.ts",import.meta.url).href)};
-    import {inputHash} from ${JSON.stringify(new URL("./funded-serving.ts",import.meta.url).href)};
+    import {inputHash,servingMode} from ${JSON.stringify(new URL("./funded-serving.ts",import.meta.url).href)};
     import {subscriptionServingActivation,trialServingActivationForSync} from ${JSON.stringify(new URL("./bounded-trial.ts",import.meta.url).href)};
     import {decodeTransaction,decodeRenewalInfo,deriveEntitlement,productToPlan,type AppleTransaction,type AppleRenewalInfo} from ${JSON.stringify(new URL("./applejws.ts", import.meta.url).href)};
     import {assertExpectedSubscriptionWorkspace,assertVerifiedPurchaseOwner} from ${JSON.stringify(new URL("../me/billing.ts", import.meta.url).href)};

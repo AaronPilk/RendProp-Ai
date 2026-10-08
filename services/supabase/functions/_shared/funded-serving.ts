@@ -1,6 +1,7 @@
 // One liability hold per paid attempt, shared by every workspace feature.
 // A refund of a feature counter is never a refund of an incurred provider bill.
 import { HttpError, throwRpc } from "./http.ts";
+import { adminClient } from "./supabase.ts";
 import type { RouteStep } from "./router.ts";
 import { paramsOf } from "./router.ts";
 import { ProviderError } from "./providers/common.ts";
@@ -35,6 +36,26 @@ export interface FundingContext {
 }
 export interface AttemptQuote { cents: number; version: string }
 export const TARIFF_VERSION = "published-standard-20261006";
+
+/** Launch cost model switch (app_config.serving_mode, 2026-10-08).
+ * `ceiling`: the pre-Oct-6 model — per-feature meters plus log_job_cost()'s
+ * monthly COGS ceilings — and the funded-serving reservation layer is inert.
+ * `funded`: Codex's certified-funding model (serving_funding, schedules, pools).
+ * A missing or unreadable setting fails CLOSED to `funded`, which refuses an
+ * unfunded workspace rather than spending without any ceiling. */
+export type ServingMode = "ceiling" | "funded";
+let servingModeCache: { mode: ServingMode; at: number } | null = null;
+export async function servingMode(): Promise<ServingMode> {
+ if (servingModeCache && Date.now() - servingModeCache.at < 30_000) return servingModeCache.mode;
+ try {
+  const result = await adminClient().rpc("serving_mode", {});
+  const mode: ServingMode = !result.error && result.data === "ceiling" ? "ceiling" : "funded";
+  servingModeCache = { mode, at: Date.now() };
+  return mode;
+ } catch { return "funded"; }
+}
+/** Test seam only: forget the cached mode so a fixture can flip it. */
+export function resetServingModeCache(): void { servingModeCache = null; }
 
 /** New operations use the transport's existing idempotency key. Helpers in old
  * clients have no such key; their request hash is a permanent conservative
@@ -92,6 +113,7 @@ async function unlimitedSponsored(context: FundingContext): Promise<boolean> {
  * package permits one pinned primary and at most one priced fallback, while
  * private unlimited QA retains its existing operator chain. */
 export async function boundedPhotoChain(context: FundingContext, steps: RouteStep[], input: GenerateInput): Promise<RouteStep[]> {
+ if(await servingMode()==="ceiling")return steps;
  if(await unlimitedSponsored(context))return steps;
  const priced=steps.filter(step=>step.task===input.task && (
   (step.provider==="gemini" && step.model==="gemini-3.1-flash-image" && !input.mask_url) ||
@@ -110,6 +132,7 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
  * accounts retain separately metered helpers through the shared funded wallet;
  * private unlimited QA retains its existing sponsorship. */
 export async function assertPhotoHelperSponsorship(context: FundingContext): Promise<void> {
+ if(await servingMode()==="ceiling")return;
  if(await unlimitedSponsored(context))return;
  let trial;
  try { trial=await context.rpc("subscription_trial_context",{p_actor:context.actorId,p_org:context.orgId}); }
@@ -129,6 +152,13 @@ export async function assertPhotoHelperSponsorship(context: FundingContext): Pro
 
 export async function fundedAttempt<T>(context: FundingContext,stage: string,step: Pick<RouteStep,"provider"|"model">,
  input: unknown,quote: AttemptQuote|null,attempt:()=>Promise<T>): Promise<T> {
+ if(await servingMode()==="ceiling"){
+  // Ceiling mode: the route's own meter and log_job_cost()'s monthly ceiling
+  // already bound this attempt; no funded hold is reserved or settled.
+  const result=await attempt();
+  if(result instanceof Response)throw new HttpError(502,"The generation service did not return a validated receipt.","upstream");
+  return result;
+ }
  try{
  if(!quote && !await unlimitedSponsored(context))throw new FundingAdmissionError(503,"This operation's complete price could not be verified. No generation was submitted.","upstream");
  // An unpriced private QA attempt is explicitly sponsor expense and never

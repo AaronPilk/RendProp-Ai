@@ -86,7 +86,10 @@ export type PaidAiCaller = Pick<User, "id" | "is_anonymous">;
  */
 export async function assertPaidAiIdentity(user: PaidAiCaller, orgId: string): Promise<void> {
   if (user.is_anonymous === false) return;
-  const denied = () => new HttpError(401, "Sign in to use AI tools, or restore your active subscription.", "unauthorized");
+  // 403, not 401: the public 1.0.3 build treats a repeated 401 as a dead session
+  // and signs the guest out, orphaning their workspace. This is a refusal of
+  // the action, not of the session.
+  const denied = () => new HttpError(403, "Sign in with Apple to use AI tools (Settings → Account), or restore your active subscription.", "forbidden");
   if (user.is_anonymous !== true) throw denied();
   const unavailable = () => new HttpError(503, "Subscription access could not be verified. Please retry.", "upstream");
   // The SQL operation/reservation/result readers use this identical retail
