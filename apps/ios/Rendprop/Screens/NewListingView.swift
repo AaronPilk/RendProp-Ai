@@ -315,7 +315,7 @@ struct ListingFieldsForm<Middle: View>: View {
                     Label("Address filled from the \(linkResult.source.label) link.",
                           systemImage: "checkmark.circle.fill")
                         .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.good)
-                    Text("Beds, baths, size, price and photos aren\u{2019}t pulled \u{2014} those come from your MLS feed once it\u{2019}s connected. Add what you want below.")
+                    Text("Beds, baths, size, price and photos aren\u{2019}t pulled from the link. Add what you want below.")
                         .font(.caption2).foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
                 }

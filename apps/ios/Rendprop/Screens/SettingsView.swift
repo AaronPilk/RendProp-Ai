@@ -572,7 +572,7 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(serverAccountsEnabled
-                 ? "This permanently deletes your account, published tours, leads and data. Shared links stop working."
+                 ? "This permanently deletes your account, published tours, leads and data. Shared links stop working. An Apple subscription keeps billing until you cancel it in Settings → Subscriptions."
                  : "This removes everything stored on this phone.")
         }
         .alert("Sign in to delete your account", isPresented: $showDeleteNeedsSignIn) {
@@ -623,7 +623,7 @@ struct SettingsView: View {
     /// Sign-out now also drops a workspace transfer that is still waiting
     /// (AuthStore.signOut), so the confirmation says so when there is one.
     private var signOutMessage: String {
-        var text = "Your \(localItemNoun)s, videos and tours stay on this phone. Publishing and AI tools ask you to sign in again."
+        var text = "Your \(localItemNoun)s, videos and tours stay on this phone. You\u{2019}ll be asked to sign in with Apple again to keep working."
         if auth.adoptionRecoveryMessage != nil {
             text += " The workspace transfer that is still waiting will be cancelled; those tours stay on this phone and can be published again."
         }

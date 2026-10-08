@@ -48,7 +48,7 @@ enum PaywallReason: Equatable, Sendable {
         case .quota(let feature):
             return "You've used your included \(PaywallReason.featureNoun(feature)). Your saved work remains available. Review your plan and usage below."
         case .trialEnded:
-            return "Your trial access has ended. Choose a subscription and confirm it with Apple to continue."
+            return "Your workspace is on the free tier: one published listing and local tools. Choose a plan to add AI photo edits, reels, aerial intros and more listings."
         case .featureLocked(let name):
             return "\(name) isn't in your current plan. Pick a plan that includes it."
         }

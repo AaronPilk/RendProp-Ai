@@ -462,8 +462,7 @@ enum CoachOffline {
             "Calculated closing walls need checking, and these totals do not set advertised living area. " +
             "Use tape or laser measurements, or the ruler button for an approximate phone distance. " +
             "Any phone can upload a plan you already have. Automatic 3D floor plans and 3D " +
-            "walkthroughs are Coming soon. The separate TestFlight Lab keeps local capture " +
-            "tests available. Plan your video is no longer an ordinary listing detail entry; " +
+            "walkthroughs are Coming soon. Plan your video is no longer an ordinary listing detail entry; " +
             "agency and Studio capture planning remain in their own workflows."),
         // The introductory trial starts only after Apple's purchase confirmation.
         Topic(keywords: ["trial", "free week", "first week"], reply:
@@ -474,10 +473,11 @@ enum CoachOffline {
             "Reels turn a handful of your photos into a short vertical video — a gliding camera " +
             "move on each photo, a voiceover, and captions that land on the beat."),
         Topic(keywords: ["sign in", "guest", "account needed", "do i need an account"], reply:
-            // Anonymous sessions support publication; an Apple identity is optional.
-            "No account is required to record, edit, build or publish a tour. " +
-            "Publishing needs an internet connection. Sign in with Apple is optional " +
-            "for accessing your workspace on another device."),
+            // Account-first since build 50: Apple sign-in owns the cloud workspace.
+            "Rendprop is an account-based workspace: sign in with Apple to create or " +
+            "open your account. Recording and editing work offline once you are signed in; " +
+            "publishing and AI tools need an internet connection. Your first published " +
+            "listing is free, and a plan adds AI tools and more listings."),
     ]
 
     private static let offlineNote = "\n\n(I'm answering offline right now, so this is from what I already know.)"

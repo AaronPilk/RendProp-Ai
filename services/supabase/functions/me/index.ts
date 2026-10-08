@@ -407,6 +407,9 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     trial_reservation: heldPurchase,
     serving_activation: servingActivation,
     serving_photo_package: photoPackage,
+    // Launch cost model (2026-10-08): "ceiling" = ordinary StoreKit purchases,
+    // meters + monthly COGS ceilings; "funded" = held-trial / funded-serving.
+    serving_mode: await servingMode(),
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
     plan_source: testingAccess ? "manual" : org.plan_source ?? null,

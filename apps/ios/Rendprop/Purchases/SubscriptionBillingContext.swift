@@ -201,6 +201,10 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     var trialReservation: TrialPurchaseReservation? = nil
     var servingActivation: ServingActivationSummary? = nil
     var planName: String? = nil
+    /// Server cost model (2026-10-08). "ceiling": ordinary StoreKit purchases
+    /// and Apple's own introductory offer; no server-held trial exists.
+    var servingMode: String? = nil
+    var isCeilingMode: Bool { servingMode == "ceiling" }
     var showsServicePending: Bool {
         servingActivation?.shouldShowPending(plan: planName, recordedTrial: trialUsage) == true
     }
@@ -227,6 +231,7 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
             let trialReservation: TrialPurchaseReservation?
             let servingActivation: ServingActivationSummary?
             let plan: String?
+            let servingMode: String?
         }
         var value = try JSONDecoder().decode(BillingResponse.self, from: data).billing
         guard value.orgID == selectedOrg else { throw TrialPresentationError.invalidResponse }
@@ -245,6 +250,7 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
         value.trialReservation = trial.trialReservation
         value.servingActivation = trial.servingActivation
         value.planName = trial.plan
+        value.servingMode = trial.servingMode
         return value
     }
 }
@@ -294,11 +300,14 @@ struct TrialPurchaseReservation: Codable, Hashable, Sendable {
 enum PurchaseDispatchAdmission {
     static let paidUnavailableMessage = "Paid subscriptions are temporarily unavailable. No Apple purchase has started. You can restore purchases or manage an existing subscription below."
 
-    static func allows(liveBackend: Bool, uiTesting: Bool, verifiedHeldTrial: Bool,
+    static func allows(liveBackend: Bool, uiTesting: Bool, ceilingMode: Bool = false, verifiedHeldTrial: Bool,
                        captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
         guard liveBackend && !uiTesting else { return true }
         guard captured == current, current.actor.flatMap(UUID.init(uuidString:)) != nil,
               current.org != nil else { return false }
+        // Ceiling serving mode (2026-10-08): the server meters and caps spend
+        // per plan, so an ordinary StoreKit purchase is the live purchase path.
+        if ceilingMode { return true }
         return verifiedHeldTrial
     }
 }

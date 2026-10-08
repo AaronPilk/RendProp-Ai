@@ -59,7 +59,7 @@ assert 'Check trial availability' in block(paywall, 'private func buyTitle(')
 assert 'purchases.heldTrialOffer(for: product)' in details
 assert 'state = PlanBanner.boundedTrialState(trial)' in banner
 assert 'trial.checked(org: org)' in banner and banner.count('WorkspaceContext.selectedOrgID == org') == 2
-assert "This feature's included allowance is used up" in block(fly, 'var actionHint:')
+assert "A plan upgrade unlocks this. Your saved work is still here." in block(fly, 'var actionHint:')
 assert 'this month' not in block(host, 'var contextLine:').split('case .quota(let feature):')[1].split('case .trialEnded:')[0]
 
 interfaces = '''

@@ -928,7 +928,7 @@
     },
     "me": {
       "id": "2fe30f3d-3570-4a10-b8c1-e3afa7a3518d",
-      "version": 55,
+      "version": 56,
       "verifyJwt": false
     },
     "notify": {
@@ -937,5 +937,13 @@
       "verifyJwt": false
     }
   },
-  "note": "Deployed 2026-10-08 ~20:21 UTC by Claude via apps/studio/scripts/deploy-backend.mjs --run (Supabase CLI 2.120.0) from branch claude/launch-fixes-20261008. Migrations 20261008201736_launch_ceiling_mode and ops_health_alert applied first via the Supabase MCP connector. See docs/handoff/CLAUDE-LAUNCH-FIXES-20261008.md."
+  "note": "Deployed 2026-10-08 ~20:21 UTC by Claude via apps/studio/scripts/deploy-backend.mjs --run (Supabase CLI 2.120.0) from branch claude/launch-fixes-20261008. Migrations 20261008201736_launch_ceiling_mode and ops_health_alert applied first via the Supabase MCP connector. See docs/handoff/CLAUDE-LAUNCH-FIXES-20261008.md.",
+  "followUp": {
+    "me": {
+      "version": 56,
+      "reason": "/me now reports serving_mode so the native paywall can key on it",
+      "status": "source-verified",
+      "deployedAt": "2026-10-08T20:34:49.544Z"
+    }
+  }
 }

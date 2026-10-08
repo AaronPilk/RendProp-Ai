@@ -4,7 +4,7 @@ This is an unsubmitted draft for the account-first source follow-up. It does not
 
 ## Proposed access explanation
 
-Rendprop is an account-based property media workspace. The initial screen requires Continue with Apple to create or sign in to a Rendprop account before business setup, the dashboard, capture tools, publishing or subscription actions. The same account owns the person's cloud listings, hosted pages, AI usage, Studio access and team membership. The Apple button handles both a new account and a returning account; there is no separate password form or guest-skip button.
+Rendprop is an account-based property media workspace. The initial screen requires Sign in with Apple to create or sign in to a Rendprop account before business setup, the dashboard, capture tools, publishing or subscription actions. The same account owns the person's cloud listings, hosted pages, AI usage, Studio access and team membership. The Apple button handles both a new account and a returning account; there is no separate password form or guest-skip button.
 
 New account creation does not activate a paid plan or a funded AI trial. StoreKit purchases require a separate explicit user action and the existing verified funding and workspace checks. Existing subscriptions retain their receipt-processing and recovery paths. No subscription price, allowance or trial configuration is changed by the entry screen.
 

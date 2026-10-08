@@ -285,7 +285,7 @@ private struct RenderStatusContent: View {
                         .multilineTextAlignment(.center)
                 }
             case .awaitingConnection:
-                Text("Saved on your phone. Publishing will continue automatically when the connection returns — no sign-in or re-render needed.")
+                Text("Saved on your phone. Publishing will continue automatically when the connection returns — no re-render needed.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
@@ -310,8 +310,10 @@ private struct RenderStatusContent: View {
                         // (Purchases/PaywallView.swift). No web pricing link
                         // sits beside it — an external purchase CTA next to an
                         // IAP is what 3.1.1 / 3.1.3 read as steering.
-                        Button("Upgrade plan") {
-                            PaywallRouter.shared.present(reason: .quota(feature: "renders"))
+                        // The server sentence above says why (free tier used,
+                        // plan needed). The paywall must not invent a second one.
+                        Button("View plans") {
+                            PaywallRouter.shared.present(reason: .upgrade)
                         }
                         .font(.rpCaption.weight(.semibold))
                         .foregroundStyle(Theme.accent)

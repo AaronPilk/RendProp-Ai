@@ -1489,6 +1489,9 @@ enum APIError: Error, LocalizedError {
     var isNotFound: Bool { status == 404 || code == "not_found" }
     var isForbidden: Bool { status == 403 || code == "forbidden" }
     var isPayloadTooLarge: Bool { status == 413 || code == "payload_too_large" }
+    /// 503 `upstream` — the generation service refused or could not be
+    /// reached. Not the customer's input; a batch must stop on the first one.
+    var isServiceUnavailable: Bool { status == 503 || code == "upstream" || code == "internal" }
     /// 400 — the request itself was rejected; retrying identically won't help.
     var isValidation: Bool { status == 400 || code == "validation" }
 

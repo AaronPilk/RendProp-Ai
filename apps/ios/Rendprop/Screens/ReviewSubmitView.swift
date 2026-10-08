@@ -385,7 +385,7 @@ struct ReviewSubmitView: View {
         } else {
             VStack(spacing: 10) {
                 PrimaryButton(title: "Create my tour", systemImage: "sparkles") { start() }
-                Text("Renders right on your phone. The share link publishes when connected — no registration needed.")
+                Text("Renders right on your phone. Your first listing publishes free once you\u{2019}re connected; a plan adds more listings and AI tools.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)

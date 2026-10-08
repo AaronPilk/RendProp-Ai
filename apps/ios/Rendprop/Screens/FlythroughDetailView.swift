@@ -242,7 +242,7 @@ private struct ListingToolboxGrid: View {
                             icon: "cube.transparent", gradient: RPGradient.plan, dimmed: true)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("detail.floorPlanComingSoon")
-            ListingToolCard(title: "3D walkthrough", sub: "Coming soon · local tests in TestFlight Lab",
+            ListingToolCard(title: "3D walkthrough", sub: "Coming soon",
                             icon: "rotate.3d", gradient: RPGradient.drone, dimmed: true)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("detail.spatialComingSoon")
@@ -2501,6 +2501,7 @@ struct AIFailure: Identifiable {
     let isQuota: Bool
     let isUnauthorized: Bool
     let isRateLimited: Bool
+    let isServiceUnavailable: Bool
 
     // No `pricingURL` here any more. A 402 on this screen offers the in-app
     // paywall and nothing else — see `Config.pricingURL` (retired, always nil).
@@ -2518,17 +2519,20 @@ struct AIFailure: Identifiable {
             isQuota = api.isQuota
             isUnauthorized = api.isUnauthorized
             isRateLimited = api.isRateLimited
+            isServiceUnavailable = api.isServiceUnavailable
         } else if AIFailure.isOffline(error) {
             message = "You're offline — check your connection and try again."
             isQuota = false
             isUnauthorized = false
             isRateLimited = false
+            isServiceUnavailable = false
         } else {
             let text = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             message = text.isEmpty ? "Something went wrong. Please try again." : text
             isQuota = false
             isUnauthorized = false
             isRateLimited = false
+            isServiceUnavailable = false
         }
     }
 
@@ -2538,6 +2542,7 @@ struct AIFailure: Identifiable {
         isQuota = false
         isUnauthorized = false
         isRateLimited = false
+        isServiceUnavailable = false
     }
 
     /// Re-word a failure WITHOUT losing what class of failure it is.
@@ -2595,9 +2600,10 @@ struct AIFailure: Identifiable {
 
     /// One-line next step for the status class (empty when there is none).
     var actionHint: String {
-        if isQuota { return "This feature's included allowance is used up. Your saved work is still here." }
+        if isQuota { return "A plan upgrade unlocks this. Your saved work is still here." }
         if isUnauthorized { return "The connection to your workspace needs to be restored. Your work is still here." }
         if isRateLimited { return "Try again in a few minutes." }
+        if isServiceUnavailable { return "If it keeps happening, contact support — the message above helps us find it." }
         return ""
     }
 
@@ -2660,6 +2666,17 @@ private struct AIFailureCard: View {
                 Text(failure.actionHint)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+            } else if failure.isServiceUnavailable {
+                Text(failure.actionHint)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                Link(destination: SettingsView.supportMailURL(subject: "AI request failed — \(failure.title)")) {
+                    Label("Contact support", systemImage: "envelope")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
             } else {
                 Text(retryHint)
                     .font(.rpCaption)
@@ -4848,6 +4865,12 @@ struct PhotoStudioView: View {
                 Button("Retry connection") {
                     aiFailure = nil
                     connection.run {}
+                }
+            }
+            if f.isServiceUnavailable {
+                Button("Contact support") {
+                    aiFailure = nil
+                    UIApplication.shared.open(SettingsView.supportMailURL(subject: "AI edit failed — \(f.title)"))
                 }
             }
             Button("OK", role: .cancel) { aiFailure = nil }
@@ -7826,6 +7849,7 @@ struct AerialIntroSheet: View {
                 // Closed mid-generate — the persisted job resumes on the next open.
             } catch {
                 await MainActor.run {
+                    Analytics.trackAIFailure("aerial", step: "generate", error: error)
                     phase = clipURL != nil ? .result : .form
                     failure = AIFailure(error, title: "That one didn't generate")
                 }
@@ -8201,7 +8225,7 @@ struct ReelClipIssue: Identifiable {
         let original = AIFailure(error, title: title)
         let message: String
         if let api = error as? APIError, (api.status ?? 0) >= 500 || api.code == "upstream" || api.code == "internal" {
-            message = "The video service is unavailable. Try again later."
+            message = "The video service is unavailable right now, so this clip wasn't made. If it keeps happening, contact support from Settings → Legal & support."
         } else if AIFailure.isOffline(error) {
             message = "The connection stopped. Check your connection before making more clips."
         } else {
@@ -10526,6 +10550,7 @@ struct ReelStudioView: View {
                     return
                 }
                 await MainActor.run {
+                    Analytics.trackAIFailure("reel", step: "clips", error: error)
                     parkedClips = PendingReelClips.load(for: listingID)
                     reloadPendingRequest()
                     phase = .failed

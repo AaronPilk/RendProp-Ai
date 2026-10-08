@@ -287,6 +287,9 @@ final class PurchaseManager: ObservableObject {
 
     func canStartNewPurchase(for product: Product) -> Bool {
         guard Config.useLiveBackend && !Config.isUITesting else { return true }
+        // Ceiling serving mode (2026-10-08): no server-held trial exists; the
+        // workspace billing authority alone decides who may buy.
+        if billingContext?.isCeilingMode == true { return ceilingModePurchaseAllowed() }
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
             revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
         guard trialEligibility(for: product) == true, heldTrialOffer(for: product) != nil else { return false }
@@ -303,8 +306,24 @@ final class PurchaseManager: ObservableObject {
         return preparedTrialReservation?.trialOffer
     }
 
+    /// Ceiling serving mode: a signed-in, identified owner/admin of the selected
+    /// workspace may start an ordinary StoreKit purchase. Apple applies its own
+    /// introductory offer when the customer is eligible.
+    func ceilingModePurchaseAllowed() -> Bool {
+        guard let billing = billingContext, billing.isCeilingMode else { return false }
+        return AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
+            && AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil
+            && billing.orgID == WorkspaceContext.selectedOrgID && billing.canManageSubscription
+    }
+
+    /// Ceiling serving mode: the introductory offer is Apple's own.
+    func ceilingShowsIntroOffer(for product: Product) -> Bool {
+        billingContext?.isCeilingMode == true && trialEligibility(for: product) == true
+    }
+
     func canCheckTrialAvailability(for product: Product) -> Bool {
         guard Config.useLiveBackend && !Config.isUITesting else { return false }
+        if billingContext?.isCeilingMode == true { return false }
         return trialEligibility(for: product) != false && AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
             && AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil
             && billingContext?.orgID == WorkspaceContext.selectedOrgID
@@ -458,10 +477,12 @@ final class PurchaseManager: ObservableObject {
         let heldAtTap = continuingHeldTrial ? preparedTrialReservation : nil
         var retainTrialBinding = continuingHeldTrial
         var verifiedHeldTrialForDispatch = false
+        var ceilingMode = false
         if Config.useLiveBackend && !Config.isUITesting {
             guard let owner = actor.flatMap(UUID.init(uuidString:)), let api else { return }
             do {
                 let context = try await api.billingContext()
+                ceilingMode = context.isCeilingMode
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
                       let expectedOrgID, WorkspaceContext.selectedOrgID == expectedOrgID, context.orgID == expectedOrgID else {
                     lastError = "Your workspace changed. Refresh the plan screen before subscribing. Nothing has been purchased."
@@ -486,7 +507,7 @@ final class PurchaseManager: ObservableObject {
         }
         // Eligibility may have changed since the paywall loaded. Recheck it
         // with Apple, then fetch fresh server authority before Apple's sheet.
-        if Config.useLiveBackend && !Config.isUITesting, hasFreeIntroductoryOffer(for: product) {
+        if Config.useLiveBackend && !Config.isUITesting, !ceilingMode, hasFreeIntroductoryOffer(for: product) {
             let captured = TrialPurchaseSnapshot(actor: actor, revision: identityRevision, org: expectedOrgID)
             let storeEligibility = await product.subscription?.isEligibleForIntroOffer
             let eligible: Bool? = storeEligibility == true && !hasSevenDayTrial(for: product) ? nil : storeEligibility
@@ -554,7 +575,7 @@ final class PurchaseManager: ObservableObject {
             // new SKU charge. Only the exact freshly rechecked hold above may
             // dispatch in live mode; there is no await after this check.
             guard PurchaseDispatchAdmission.allows(liveBackend: Config.useLiveBackend,
-                    uiTesting: Config.isUITesting, verifiedHeldTrial: verifiedHeldTrialForDispatch,
+                    uiTesting: Config.isUITesting, ceilingMode: ceilingMode, verifiedHeldTrial: verifiedHeldTrialForDispatch,
                     captured: .init(actor: actor, revision: identityRevision, org: expectedOrgID),
                     current: .init(actor: AuthStore.shared.userID,
                         revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)) else {

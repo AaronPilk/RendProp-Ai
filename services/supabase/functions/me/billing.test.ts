@@ -5,7 +5,7 @@ import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
-type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean};
+type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string};
 async function invoke(o:Options={}) {
  const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon"};
  const previous=new Map(Object.keys(values).map(key=>[key,Deno.env.get(key)]));for(const [key,value]of Object.entries(values))Deno.env.set(key,value);
@@ -42,6 +42,7 @@ async function invoke(o:Options={}) {
     assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
     return json({org_id:o.selector??ORG,available:!o.servingUnavailable,funded:!o.servingUnavailable,authority:o.servingUnavailable?"subscription_activation_unavailable":"verified_retail"});
    }
+   if(table==="serving_mode") return json(o.servingMode??"ceiling");
    if(table==="serving_photo_package_context") {
     assertEquals(req.method,"POST");
     assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
@@ -59,11 +60,16 @@ async function invoke(o:Options={}) {
    unexpected.push(url.pathname);throw new Error("Unmodeled request");
   };
   Object.defineProperty(Deno,"serve",{configurable:true,writable:true,value:(fn:Handler)=>{handler=fn;return {};}});
+  (await import("../_shared/funded-serving.ts")).resetServingModeCache();
   await import("./index.ts");assert(handler);
   const response=await handler(new Request(o.prepareBody?"https://edge.invalid/me/trial/prepare":"https://edge.invalid/me",{...(o.prepareBody?{method:"POST",body:JSON.stringify(o.prepareBody)}:{}),headers:{authorization:"Bearer fixture-token",...(o.selector?{"x-org-id":o.selector}:{})}}));
   const body=await response.json();assertEquals(unexpected,[]);return {response,body,queries};
  }finally{globalThis.fetch=oldFetch;Object.defineProperty(Deno,"serve",serve);for(const[key,value]of previous)value===undefined?Deno.env.delete(key):Deno.env.set(key,value);}
 }
+Deno.test("/me reports the serving mode the paywall keys on (ceiling → ordinary StoreKit purchase)",async()=>{
+ const ceiling=await invoke({});assertEquals(ceiling.response.status,200);assertEquals(ceiling.body.serving_mode,"ceiling");
+ const funded=await invoke({servingMode:"funded"});assertEquals(funded.body.serving_mode,"funded");
+});
 Deno.test("billing context belongs to the same selected workspace as entitlement",async()=>{
  const r=await invoke({selector:OTHER});assertEquals(r.response.status,200);assertEquals(r.body.org.id,OTHER);assertEquals(r.body.billing,{org_id:OTHER,org_name:"Fixture Workspace",role:"owner",can_manage_subscription:true,original_transaction_ids:[],source:null});
  assert(r.queries.filter(u=>u.pathname.endsWith("memberships")).every(u=>u.searchParams.get("org_id")==="eq."+OTHER));

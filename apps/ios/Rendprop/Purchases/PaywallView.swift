@@ -79,6 +79,10 @@ struct PaywallView: View {
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if purchases.billingContext?.isCeilingMode == true {
+                Text("Apple handles payment and cancellation. Your first published listing is free; a plan adds AI photo edits, reels, aerial intros and more listings.")
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
             } else {
                 Text("Choose a plan and check trial availability before reviewing any reserved terms. New paid subscriptions are temporarily unavailable. Restore and subscription management remain available.")
                     .font(.rpBody)
@@ -416,6 +420,11 @@ struct PaywallView: View {
     /// until their own funding admission exists; Manage remains reachable.
     private func buyTitle(for product: Product) -> String {
         if purchases.activeProductID == product.id { return "Manage current subscription" }
+        if purchases.billingContext?.isCeilingMode == true {
+            if purchases.ceilingShowsIntroOffer(for: product) { return "Start 7-day free trial" }
+            if purchases.activePlan != nil { return "Confirm plan change with Apple" }
+            return "Subscribe with Apple"
+        }
         if Config.useLiveBackend && !Config.isUITesting,
            purchases.trialEligibility(for: product) == false { return "Paid subscriptions unavailable" }
         if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {
@@ -428,6 +437,10 @@ struct PaywallView: View {
 
     private func disclosure(for product: Product, period: BillingPeriod) -> String {
         if purchases.activeProductID == product.id { return "This is the subscription on this Apple ID. Apple shows its renewal date and cancellation options; its original workspace keeps the plan." }
+        if purchases.billingContext?.isCeilingMode == true {
+            return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.ceilingShowsIntroOffer(for: product),
+                price: product.displayPrice, period: period.priceSuffix)
+        }
         if Config.useLiveBackend && !Config.isUITesting,
            purchases.trialEligibility(for: product) == false { return PurchaseDispatchAdmission.paidUnavailableMessage }
         if purchases.trialEligibility(for: product) != false && !purchases.canStartNewPurchase(for: product) {

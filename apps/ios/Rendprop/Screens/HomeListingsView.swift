@@ -88,7 +88,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Choose your main photo", "Pick a clear exterior or another strong image as the main photo. This is the first image visitors see on the listing."),
             ("Save the version you want", SpaceType.current == .realEstate ? "Use the photo's download action to export a JPEG for MLS, or open AI Photo Studio for version history. Check your MLS's image requirements." : "Use the photo's download action to export a JPEG, or open AI Photo Studio for version history. Check your advertising platform's image requirements.")]
         case .editing: return [
-            ("Choose the change", "Open AI Photo Studio. Choose Declutter, a staging style or another edit, then select the photos you want to change. Review the credit quote."),
+            ("Choose the change", "Open AI Photo Studio. Choose Declutter, a staging style or another edit, then select the photos you want to change. Each accepted edit uses one photo edit from your plan."),
             ("Keep each version", "Original, decluttered and staged versions stay separate. You can leave the screen while an accepted job processes. Check its status when you return."),
             ("Review and export", "Check walls, windows, appliances and access to doors. Select the version for your published gallery or download it. Files exports include disclosure captions; when saving to Photos, copy the caption separately. Follow your advertising platform's rules.")]
         case .reel: return [
@@ -97,7 +97,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Watch the whole result", "Review transitions, scene accuracy, captions and audio. Save the finished video before posting it to social media.")]
         case .aerial: return [
             ("Choose an exterior", "Open Make an aerial shot for the listing. Use a clear exterior photo with the property in view."),
-            ("Review the request", "Choose the motion and review the credit quote. Generated footage can contain errors in the building or surroundings."),
+            ("Review the request", "Choose the motion. Each aerial intro uses one from your plan\u{2019}s monthly allowance. Generated footage can contain errors in the building or surroundings."),
             ("Check the result", "Watch the entire clip before including it in a reel or publishing it. Keep your original footage for comparison.")]
         case .measurements: return [
             ("Enter measurements", "The Home shortcut is Coming soon. Open Measurements inside a listing to keep working with rooms or measured outlines."),
@@ -126,10 +126,10 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
         case .plan: return [
             ("Check your allowance", "Open Settings → Plan & usage to see the account's plan, feature limits and credits."),
             ("Review before purchasing", "Choose a plan and billing period. Apple's purchase sheet shows the actual price and any eligible free trial. A trial starts only after you confirm the subscription."),
-            ("Manage your subscription", "Use Manage subscription to change or cancel with Apple. Restore purchases after reinstalling or signing back in. Review each AI job's quote before spending credits.")]
+            ("Manage your subscription", "Use Manage subscription to change or cancel with Apple. Restore purchases after reinstalling or signing back in.")]
         case .spatial: return [
             ("Coming soon", "3D walkthroughs and automatic 3D floor-plan capture are still being tested. They are not required to create photos, videos or a published listing."),
-            ("Separate phone testing", "The TestFlight Lab contains local capture experiments. Photos remain on the phone until you export them; a lab test does not publish a finished tour."),
+            ("Capture now, 3D later", "Photos and walkthrough video you capture today stay usable; the 3D features will build on the same captures when they ship."),
             ("Use measurements today", "You can enter room measurements, draw measured outlines and upload an existing floor plan while the 3D features are developed.")]
         }
     }

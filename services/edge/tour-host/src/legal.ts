@@ -9,7 +9,7 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "October 6, 2026";
+const EFFECTIVE_DATE = "October 8, 2026";
 // Prospective 90-day hosting grace was approved by the owner on October 6.
 // Deploy only with matching retention/read/export contracts; the legal draft
 // and handoff separate tested behavior from account-specific provider evidence.
@@ -142,10 +142,12 @@ hosted on public pages you can send to anyone. These Terms are an agreement betw
 ${BUSINESS} ("we", "us") and apply whenever you use the app or any page we host for you.</p>
 
 <h2><span class="num">2.</span>Your account</h2>
-<p>You can capture and work locally in Rendprop without signing in with Apple. The app
-creates a guest session, but cloud uploads require a named account or an eligible, verified
-Apple subscription. Sign in with Apple to sync across devices and recover your workspace
-if you delete the app. Keep your account to yourself: you are responsible for
+<p>Rendprop is an account-based workspace. You sign in with Apple to create or open your
+account; that account owns your listings, hosted pages, AI usage and team membership, and lets
+you sync across devices and recover your workspace if you delete the app. Capturing and editing
+work offline once you are signed in; cloud uploads, hosted publication and AI tools need a
+connection. Each account can host one published listing free; a subscription adds AI tools and
+more listings. Keep your account to yourself: you are responsible for
 what happens under it. You must be at least 18 years old (and old enough to form a binding
 contract where you live) to use Rendprop. If you use Rendprop for a business or team, you
 confirm you have the authority to accept these Terms for it.</p>
@@ -279,9 +281,10 @@ export function privacyPage(): string {
 <h2><span class="num">1.</span>What we collect</h2>
 <p>Rendprop collects the minimum it needs to run:</p>
 <ul>
-  <li><b>Account and session details</b> — Rendprop creates a guest session for online features.
-  If you choose Sign in with Apple, Apple provides the name and email or private-relay address
-  you choose to share. Apple-linked sign-in and account deletion can exchange tokens with Apple.</li>
+  <li><b>Account details</b> — you sign in with Apple to use Rendprop; Apple provides the name
+  and email or private-relay address you choose to share. Apple-linked sign-in and account deletion
+  can exchange tokens with Apple. Installs from before October 2026 may hold an older guest session
+  until they sign in; its data transfers to the account you sign in with.</li>
   <li><b>Your content</b> — the listings you create and the video, photos, tours, and related
   details you upload or generate in the app. Depending on the feature you request, Rendprop
   sends selected photos or video, sampled frames, edit instructions, chat history and project

@@ -127,8 +127,11 @@ final class PhotoEditService {
         let byID = Dictionary(photos.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let started = queue.start(listingID: listing.id, title: title, photoIDs: photos.map(\.id),
             identityIsCurrent: { self.identityIsCurrent }, stopOnError: { error in
+                Task { @MainActor in Analytics.trackAIFailure("photo_edit", step: edit, error: error) }
                 let failure = AIFailure(error)
-                return failure.isQuota || failure.isUnauthorized
+                // A refused or unreachable generation service fails every photo
+                // the same way; stop instead of uploading N more to fail N times.
+                return failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable
             }, process: { id in
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
                 try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,

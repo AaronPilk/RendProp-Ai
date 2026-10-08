@@ -334,7 +334,7 @@ struct PlanBanner: View {
         // "Your free week has ended" is said in two places below; one string.
         let ended = PlanState(kind: .ended,
                               title: "Choose your Rendprop plan",
-                              detail: "Your saved work is here. View plans and confirm with Apple to activate an eligible subscription trial.")
+                              detail: "Your first published listing is free. A plan adds AI photo edits, reels, aerial intros and more listings; eligible new subscribers get 7 days free.")
         switch (plan ?? "").lowercased() {
         case "pro":
             return PlanState(kind: .paid, title: "Pro", detail: paidDetail(allowances, fallback: RendpropPlan.pro))
