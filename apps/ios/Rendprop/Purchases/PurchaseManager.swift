@@ -254,7 +254,8 @@ final class PurchaseManager: ObservableObject {
     /// product: the customer is eligible AND the product really carries an
     /// introductory offer.
     func showsIntroOffer(for product: Product) -> Bool {
-        trialEligibility(for: product) == true && heldTrialOffer(for: product) != nil
+        if billingContext?.isCeilingMode == true { return ceilingShowsIntroOffer(for: product) }
+        return trialEligibility(for: product) == true && heldTrialOffer(for: product) != nil
     }
 
     /// nil means StoreKit has not confirmed eligibility for a configured
@@ -454,7 +455,7 @@ final class PurchaseManager: ObservableObject {
         // A live purchase must have a current workspace identity before Apple
         // confirms it. A stale ID after sign-out must never bind a new purchase.
         if Config.useLiveBackend && !Config.isUITesting {
-            guard await AuthStore.validAccessToken() != nil, AuthStore.shared.isSignedIn,
+            guard await AuthStore.validAccessToken() != nil, AuthStore.shared.isSignedIn, AuthStore.shared.isIdentified,
                   AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil else {
                 lastError = "Connect to Rendprop before subscribing so the plan is linked to your workspace. Nothing has been purchased."
                 return

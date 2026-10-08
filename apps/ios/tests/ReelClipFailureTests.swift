@@ -41,8 +41,12 @@ enum FileStore {
             check(visible.isQuota==(status==402), "Preserve quota recovery action")
             check(visible.isUnauthorized==(status==401), "Preserve workspace recovery action")
             check(visible.isRateLimited==(status==429), "Preserve wait recovery action")
+            check(visible.isServiceUnavailable==(status>=500), "Preserve service-unavailable recovery when the failure message is rewritten")
             check(!visible.message.contains("private provider payload") && !visible.message.contains("Nothing was charged"), "No raw payload or unsupported billing claim")
-            if status>=500 { check(visible.message.contains("unavailable"), "Make upstream outage actionable") }
+            if status>=500 {
+                check(visible.message.contains("unavailable"), "Make upstream outage actionable")
+                check(visible.actionHint.contains("contact support"), "Copied upstream failure retains the support next step")
+            }
             if status==400 { check(visible.message==message, "Keep a readable per-photo validation reason") }
             check(!FileManager.default.fileExists(atPath:dir.path), "Clean the empty failed-run temporary directory")
         }

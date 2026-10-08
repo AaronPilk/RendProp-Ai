@@ -149,6 +149,14 @@ struct PaywallView: View {
                 Text(TrialUsageSummary.explanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
             }.frame(maxWidth: .infinity, alignment: .leading).card()
                 .accessibilityIdentifier("paywall.recordedTrial")
+        } else if selectedHasIntroOffer, purchases.billingContext?.isCeilingMode == true {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("7-day free trial").font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text("Confirm your subscription with Apple to start the trial. Your workspace's plan and usage limits apply to AI tools and publishing. Reaching a usage limit does not bring forward Apple's charge date.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+                .accessibilityIdentifier("paywall.appleTrial")
         } else if selectedHasIntroOffer, let product = planOffer(for: selectedPlan).product,
                   let offer = purchases.heldTrialOffer(for: product),
                   offer.enabled, !offer.benefitLines.isEmpty {
@@ -376,7 +384,7 @@ struct PaywallView: View {
                         (purchases.activeProductID != product.id && Config.useLiveBackend &&
                             (purchases.billingContext?.canManageSubscription != true ||
                              (!purchases.canStartNewPurchase(for: product) && !purchases.canCheckTrialAvailability(for: product))))) {
-            let continuingHeldTrial = purchases.showsIntroOffer(for: product)
+            let continuingHeldTrial = purchases.billingContext?.isCeilingMode != true && purchases.showsIntroOffer(for: product)
             let checkingAvailability = !purchases.canStartNewPurchase(for: product) && purchases.canCheckTrialAvailability(for: product)
             let expectedOrgID = purchases.billingContext?.orgID
             Task {

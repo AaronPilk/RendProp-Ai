@@ -181,6 +181,7 @@ def generated(b, a, m):
     source += '@MainActor extension PurchaseFixture {\n'
     for needle in ['func showsIntroOffer(', 'func trialEligibility(', 'private func hasFreeIntroductoryOffer(',
                    'private func hasSevenDayTrial(', 'func canStartNewPurchase(', 'func heldTrialOffer(',
+                   'func ceilingModePurchaseAllowed(', 'func ceilingShowsIntroOffer(',
                    'func canCheckTrialAvailability(', 'private func trialRegionSupported(',
                    'private func validateHeldTrialPurchase(', 'private func validateCurrentHeldTrialPurchase(',
                    'func checkTrialAvailability(', 'private func validateTrialPurchase(',

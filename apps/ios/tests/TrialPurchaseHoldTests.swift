@@ -56,6 +56,47 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
               captured: bound, current: bound), "Offline purchase test purpose blocked")
         check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: true, verifiedHeldTrial: false,
               captured: bound, current: bound), "UI-test purchase test purpose blocked")
+        check(PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+              verifiedHeldTrial: false, captured: bound, current: bound), "Ceiling purchase requires no funded hold")
+        for changed in [TrialPurchaseSnapshot(actor: other.uuidString, revision: bound.revision, org: org),
+                        TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision + 1, org: org),
+                        TrialPurchaseSnapshot(actor: bound.actor, revision: bound.revision, org: other)] {
+            check(!PurchaseDispatchAdmission.allows(liveBackend: true, uiTesting: false, ceilingMode: true,
+                  verifiedHeldTrial: false, captured: bound, current: changed), "Stale ceiling dispatch snapshot accepted")
+        }
+        // Ceiling mode uses Apple's own offer, without creating or retaining a
+        // server-held trial. Fresh workspace authority still gates the sheet.
+        for eligible in [true, false] {
+            let (manager, api, product) = fixture()
+            var context = try await api.billingContext(); context.servingMode = "ceiling"
+            api.overrideContext = context; manager.billingContext = context
+            manager.introOfferEligible[sku] = eligible
+            check(manager.canStartNewPurchase(for: product), "Ceiling mode did not allow ordinary purchase")
+            check(!manager.canCheckTrialAvailability(for: product), "Ceiling mode offered funded trial reservation")
+            check(manager.showsIntroOffer(for: product) == eligible, "Ceiling offer display does not match Apple eligibility")
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 1 && api.prepareCalls == 0, "Ceiling purchase created hold or failed to open Apple sheet")
+            check(Product.receivedOptions == [.appAccountToken(actor)], "Ceiling purchase did not bind named account")
+            check(try PurchaseWorkspaceBindingStore.load(owner: actor, productID: sku) == nil,
+                  "Cancelled ordinary ceiling purchase retained unpurchased binding")
+        }
+        for reason in ["guest", "denied", "foreign-org", "actor", "revision", "workspace"] {
+            let (manager, api, product) = fixture()
+            var context = SubscriptionBillingContext(orgID: reason == "foreign-org" ? other : org,
+                orgName: "Synthetic workspace", role: "owner", canManageSubscription: reason != "denied", source: nil)
+            context.servingMode = "ceiling"; api.overrideContext = context; manager.billingContext = context
+            if reason == "guest" { AuthStore.shared.isIdentified = false }
+            if ["guest", "denied", "foreign-org"].contains(reason) {
+                check(!manager.canStartNewPurchase(for: product), "Unauthorized ceiling UI enabled purchase")
+            }
+            api.onBilling = {
+                if reason == "actor" { AuthStore.shared.userID = other.uuidString }
+                if reason == "revision" { AuthStore.shared.syncSessionRevision += 1 }
+                if reason == "workspace" { WorkspaceContext.selectedOrgID = other }
+            }
+            await manager.purchase(product, expectedOrgID: org)
+            check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Unauthorized or stale ceiling purchase opened Apple sheet")
+        }
         check(hold.checked(actor: actor, org: org, product: sku) == hold, "Exact held identity refused")
         check(hold.checked(actor: other, org: org, product: sku) == nil, "Wrong held actor accepted")
         let wrongActor = TrialPurchaseReservation(reservationId: hold.reservationId, actorId: other,

@@ -2550,7 +2550,7 @@ struct AIFailure: Identifiable {
     /// A batch of seventeen declutters that stops on a 402 has to say "9 of 17
     /// changed" AND still offer Upgrade plan — `init(message:)` would drop
     /// `isQuota` and leave the alert with an OK button and no way forward, which
-    /// is the worst of both. Copies the three flags verbatim; only the words
+    /// is the worst of both. Copies the recovery flags verbatim; only the words
     /// change.
     init(_ other: AIFailure, title: String? = nil, message: String) {
         self.title = title ?? other.title
@@ -2558,6 +2558,7 @@ struct AIFailure: Identifiable {
         isQuota = other.isQuota
         isUnauthorized = other.isUnauthorized
         isRateLimited = other.isRateLimited
+        isServiceUnavailable = other.isServiceUnavailable
     }
 
     /// Server messages are written for a person and are shown verbatim —
