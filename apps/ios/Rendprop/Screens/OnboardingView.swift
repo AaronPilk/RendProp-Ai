@@ -202,6 +202,9 @@ struct OnboardingView: View {
         }.padding(24)
     }
     private func finish(showPlans: Bool) {
+        guard NativeAccountLaunchAdmission.allows(signedIn: AuthStore.shared.isSignedIn,
+            identified: AuthStore.shared.isIdentified, actorID: AuthStore.shared.userID,
+            offlineFixture: Config.isOfflineAccountFixture) else { return }
         if spaceTypeRaw == SpaceType.realEstate.rawValue { RealEstateRoleStore.choose(selectedRole, owner: AuthStore.shared.userID) }
         hasOnboarded = true
         if showPlans { PaywallRouter.shared.present(reason: .upgrade) }

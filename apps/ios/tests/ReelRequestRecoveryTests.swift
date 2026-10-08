@@ -29,7 +29,7 @@ final class ClipAPI:APIClient {
  static func validAccessToken() async -> String? {await Task.yield();tokenHook?();return "closed-token"}
  func forceRefresh() async -> Bool {await Task.yield();Self.refreshHook?();return true}
  static func storedAccessToken()->String?{"closed-refreshed-token"}
- func signOut() async {isSignedIn=false}
+ func signOut(preservingAdoption:Bool=false) async {isSignedIn=false}
 }
 enum Config {static let enableAuth=true}
 enum AnonymousAdoptionRecovery {struct Identity {let id:UUID};static func identity(_ s:String)->Identity?{nil}}

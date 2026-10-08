@@ -157,7 +157,7 @@ final class CoachShot: XCTestCase {
 
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: [], confirmedBy: ["RENDPROP"])
+        openTab("Home", ids: [], confirmedBy: ["REAL ESTATE AGENT", "RENDPROP"])
     }
 
     @discardableResult

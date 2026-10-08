@@ -25,7 +25,7 @@ def block(source, marker):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--inject-fault", choices=["drop-dispatch-fences", "drop-receipt-fences", "legacy-rebind", "drop-exchange-fence"])
+    parser.add_argument("--inject-fault", choices=["drop-dispatch-fences", "drop-receipt-fences", "legacy-rebind", "drop-exchange-fence", "drop-apply-acceptance"])
     args = parser.parse_args()
     source = SOURCE.read_text()
     caller = CALLER.read_text()
@@ -36,6 +36,7 @@ def main():
                "    @MainActor static func submitAppleAuthorizationCode(", "    @MainActor private static func sendPendingAppleCode(",
                "    @MainActor static func retryPendingAppleAuthorizationCodeIfNeeded()", "    private func applySession(",
                "    static func jwtSubject(", "    nonisolated static func tokenIsIdentified(", "    private struct SupabaseSession:",
+               "    nonisolated private static func tokenPayload(", "    nonisolated private static func tokenIdentityClaimIsValid(", "    nonisolated private static func jwtExpiry(",
                "    func exchangeAppleIdentityToken("]
     methods = {marker: block(source, marker) for marker in markers}
     hashes = {marker: hashlib.sha256(body.encode()).hexdigest() for marker, body in methods.items()}
@@ -63,6 +64,12 @@ def main():
         assert methods[marker].count(needle) == 1
         methods[marker] = methods[marker].replace(needle, "        guard let acceptedOwner else { throw CancellationError() }")
         expected = "exchange cannot return a sign-in receipt after replacement identity"
+    elif args.inject_fault == "drop-apply-acceptance":
+        marker = "    func exchangeAppleIdentityToken("
+        needle = "        guard applySession(accessToken: session.accessToken,\n                           refreshToken: session.refreshToken,\n                           expiresAt: session.expiryDate) else { throw APIError.decoding }"
+        assert methods[marker].count(needle) == 1
+        methods[marker] = methods[marker].replace(needle, "        _ = applySession(accessToken: session.accessToken, refreshToken: session.refreshToken, expiresAt: session.expiryDate)")
+        expected = "exchange cannot issue a receipt when session application was refused"
     fixture = Path(__file__).with_name("Fixture.swift.template").read_text().replace("__METHODS__", "\n".join(methods.values()))
     out = args.output_dir or Path(tempfile.mkdtemp(prefix="rendprop-apple-code-session-"))
     out.mkdir(parents=True, exist_ok=True)

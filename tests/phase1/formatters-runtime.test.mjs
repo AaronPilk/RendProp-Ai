@@ -12,6 +12,7 @@ const formatterPath = root + 'apps/ios/Rendprop/Support/Formatters.swift';
 const reviewPath = root + 'apps/ios/Rendprop/Screens/ReviewSubmitView.swift';
 const formatter = readFileSync(formatterPath, 'utf8');
 const review = readFileSync(reviewPath, 'utf8');
+const expectedSwiftTrapSignal = { arm64: 'SIGTRAP', x64: 'SIGILL' }[process.arch];
 
 function declaration(source, needle) {
   assert.equal(source.split(needle).length - 1, 1, `unique actual declaration ${needle}`);
@@ -26,6 +27,7 @@ function declaration(source, needle) {
 }
 
 test('actual Formatters and ReviewSubmitView metadata reject invalid values without Swift numeric traps', () => {
+  assert.ok(expectedSwiftTrapSignal, `Unsupported Swift trap architecture: ${process.arch}`);
   const out = mkdtempSync(join(tmpdir(), 'rendprop-formatters-swift-'));
   const summaryLines = review.split('\n').filter(line => line.includes('Text("\\(Formatters.duration(asset.durationS))'));
   assert.equal(summaryLines.length, 1, 'actual capture summary registered exactly once');
@@ -62,14 +64,16 @@ test('actual Formatters and ReviewSubmitView metadata reject invalid values with
   // finite duration must still kill the mutant after it passes normal values.
   writeFileSync(unsafeFormat, formatter.replace(safeConversion, 'return Int(value.rounded())'), { flag: 'wx' });
   const formatMutant = run('unchecked-conversion', unsafeFormat, scaffold).result;
-  assert.equal(formatMutant.signal, 'SIGTRAP', 'unsafe production conversion mutant must reproduce a Swift trap');
+  assert.equal(formatMutant.signal, expectedSwiftTrapSignal, 'unsafe production conversion mutant must reproduce a Swift trap');
+  assert.match(formatMutant.stderr, /Double value cannot be converted to Int/);
 
   const safeFPS = 'Formatters.frameRate(asset.fps)';
   assert.equal(scaffold.split(safeFPS).length - 1, 1);
   const fpsMutant = run('unchecked-review-fps', formatterPath,
     scaffold.replace(safeFPS, 'String(Int(asset.fps.rounded())) + " fps"'), ['--fps-only']).result;
-  assert.equal(fpsMutant.signal, 'SIGTRAP', 'original unchecked actual summary FPS mutant must trap');
-  console.log(`Formatter evidence: ${out}\n${actual.result.stdout.trim()}\nPASS: both original numeric conversion mutants reproduced SIGTRAP`);
+  assert.equal(fpsMutant.signal, expectedSwiftTrapSignal, 'original unchecked actual summary FPS mutant must trap');
+  assert.match(fpsMutant.stderr, /Double value cannot be converted to Int/);
+  console.log(`Formatter evidence: ${out}\n${actual.result.stdout.trim()}\nPASS: both original numeric conversion mutants reproduced ${expectedSwiftTrapSignal}`);
   const checked = [formatterPath, reviewPath, ...files, harness, fileURLToPath(import.meta.url)];
   writeFileSync(join(out, 'receipt.json'), JSON.stringify({ accepted: true,
     scope: 'Complete production Formatters/CaptureAsset/RoomTag plus mechanically extracted, unchanged ReviewSubmitView timeLabel and summary expression. No SwiftUI/camera/network/provider/Apple execution.',

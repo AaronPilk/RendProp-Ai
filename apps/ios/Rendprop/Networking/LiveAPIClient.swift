@@ -204,8 +204,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
            req.value(forHTTPHeaderField: "X-Org-Id") == nil { throw CloudSyncError.identityChanged }
         let client = session ?? self.session
         var request = req
-        if Config.enableAuth, let token = await AuthStore.validAccessToken() {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if Config.enableAuth {
+            let token = await AuthStore.validAccessToken()
+            // makeRequest may have attached an older bearer. A failed refresh
+            // must never leave that expired/signed-out credential on dispatch.
+            request.setValue(token.map { "Bearer \($0)" }, forHTTPHeaderField: "Authorization")
         }
 
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
@@ -218,7 +221,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
             let refreshed = await AuthStore.shared.forceRefresh()
             guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
-            if refreshed, let fresh = AuthStore.storedAccessToken() {
+            if refreshed, let fresh = await AuthStore.validAccessToken() {
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
                 request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
                 try beforeSend?()
                 let (data2, resp2) = try await client.data(for: request)
@@ -227,7 +231,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                 if (200..<300).contains(http2.statusCode) { return data2 }
                 if http2.statusCode == 401 {
                     // Refreshed token still rejected — the session is dead.
-                    await AuthStore.shared.signOut()
+                    await AuthStore.shared.signOut(preservingAdoption: true)
                 }
                 throw Self.serverError(status: http2.statusCode, data: data2)
             }

@@ -10,8 +10,10 @@ import assert from 'node:assert/strict';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const appPath = root + 'apps/ios/Rendprop/RendpropApp.swift';
 const app = readFileSync(appPath, 'utf8');
+const expectedSwiftTrapSignal = { arm64: 'SIGTRAP', x64: 'SIGILL' }[process.arch];
 
 test('actual persisted duplicate listing IDs produce a recoverable sync error and retain media', () => {
+  assert.ok(expectedSwiftTrapSignal, `Unsupported Swift trap architecture: ${process.arch}`);
   const out = mkdtempSync(join(tmpdir(), 'rendprop-duplicate-listing-swift-'));
   const start = app.indexOf('func refreshCloudWorkspace()');
   assert.ok(start >= 0);
@@ -73,9 +75,9 @@ ${store}
   assert.match(negative.stdout, /deliberate negative control/);
   assert.equal(scaffold.split(guardText).length - 1, 1);
   const mutant = run('omit-sync-guard', scaffold.replace(guardText, '')).result;
-  assert.equal(mutant.signal, 'SIGTRAP', 'removing only actual guard reproduces original duplicate-key trap');
+  assert.equal(mutant.signal, expectedSwiftTrapSignal, 'removing only actual guard reproduces original duplicate-key trap');
   assert.match(mutant.stderr, /Duplicate values for key/);
-  console.log(`Duplicate snapshot evidence: ${out}\n${actual.result.stdout.trim()}\nPASS: removing the actual sync guard reproduces SIGTRAP`);
+  console.log(`Duplicate snapshot evidence: ${out}\n${actual.result.stdout.trim()}\nPASS: removing the actual sync guard reproduces ${expectedSwiftTrapSignal}`);
   const checked = [appPath, ...files, harness, fileURLToPath(import.meta.url)];
   writeFileSync(join(out, 'receipt.json'), JSON.stringify({ accepted: true,
     scope: 'Complete production PersistentStore/tolerant decoding and model types; exact guard and dictionary block mechanically extracted from actual AppModel.refreshCloudWorkspace. Inert FileStore/error type and unused recovery dependency. Synthetic local bytes only; no app UI/camera/transport/Apple/provider calls.',

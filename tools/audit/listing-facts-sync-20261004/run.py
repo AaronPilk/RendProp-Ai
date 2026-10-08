@@ -6,6 +6,8 @@ from pathlib import Path
 import argparse,hashlib,importlib.util,json,re,subprocess,tempfile
 parser=argparse.ArgumentParser();parser.add_argument('--inject-fault',choices=['broad-wire','wrong-workspace','late-conflict','drop-receipt-scope','drop-archive-restore']);opts=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[3]
+COMPILE_SECONDS=180
+RUNTIME_SECONDS=90
 OUT=Path(tempfile.mkdtemp(prefix='rendprop-listing-facts-sync-',dir='/tmp'))
 spec=importlib.util.spec_from_file_location('extract',ROOT/'tools/audit/floor-measurement-sync-20261004/run.py');mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
 client=ROOT/'apps/ios/Rendprop/Networking/LiveAPIClient.swift';app=ROOT/'apps/ios/Rendprop/RendpropApp.swift'
@@ -43,8 +45,16 @@ files=[*models,client,app,Path(__file__).resolve(),Path(__file__).parent/'Fixtur
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 receipt={'output':str(OUT),'fault':opts.inject_fault,'sourceHashes':{str(p.relative_to(ROOT)):sha(p) for p in files},'originalExtractedHashes':originalHashes,'extractedHashes':{k:hashlib.sha256(v.encode()).hexdigest() for k,v in extracted.items()},'fixtureSHA256':sha(fixture),'scope':'Actual native methods; synthetic transport/Auth/workspace. SQL races and real phone acceptance separate.','commands':[]}
 for name,args in [('compile',['xcrun','swiftc','-swift-version','5','-parse-as-library',*map(str,models),str(fixture),'-o',str(OUT/'checks')]),('run',[str(OUT/'checks')])]:
- p=subprocess.run(args,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=90);log=OUT/(name+'.log');log.write_text(p.stdout)
- receipt['commands'].append({'name':name,'exit':p.returncode,'logSHA256':sha(log)})
+ timeout=COMPILE_SECONDS if name=='compile' else RUNTIME_SECONDS;log=OUT/(name+'.log')
+ try:p=subprocess.run(args,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=timeout)
+ except subprocess.TimeoutExpired as error:
+  partial=error.stdout or b'';log.write_bytes(partial.encode() if isinstance(partial,str) else partial)
+  receipt['commands'].append({'name':name,'exit':None,'timedOut':True,'timeoutSeconds':timeout,'logSHA256':sha(log)})
+  receipt['passed']=False;receipt['sourceBoundAtEnd']=all(sha(ROOT/k)==v for k,v in receipt['sourceHashes'].items())
+  (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(name,'timed out after',timeout,'seconds');print('Evidence:',OUT)
+  raise SystemExit(1)
+ log.write_text(p.stdout)
+ receipt['commands'].append({'name':name,'exit':p.returncode,'timeoutSeconds':timeout,'logSHA256':sha(log)})
  if name=='run' and p.returncode==0:receipt['assertions']=int(re.search(r'(\d+) assertions',p.stdout)[1])
  expected={'broad-wire':'Actual wire contains only explicit intent','wrong-workspace':'Actual facts write is workspace-bound','late-conflict':'Late conflict cannot poison an explicitly adopted shared version','drop-receipt-scope':'Ordinary facts receipt must match submitted listing and workspace','drop-archive-restore':'Clearing sold restores a Studio-archived listing explicitly'}.get(opts.inject_fault)
  receipt['passed']=name=='run' and (p.returncode==1 and expected in p.stdout if expected else p.returncode==0)

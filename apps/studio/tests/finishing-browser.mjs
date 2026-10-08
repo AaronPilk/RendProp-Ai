@@ -9,6 +9,7 @@ import {createServer} from "node:http";
 import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium, expect} from "@playwright/test";
+import {fixedAACTailWindow, measureTonePCM, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
 const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", checks: [], errors: [], externalRequests: [], status: "running"};
 let browser, server;
@@ -80,7 +81,7 @@ try {
   await expect(page.getByRole("link", {name:/Download MP4/})).toBeVisible({timeout:30000});
   const download = page.waitForEvent("download"); await page.getByRole("link", {name:/Download MP4/}).click();
   const output=join(artifacts,"music-captions-mix.mp4"); await (await download).saveAs(output);
-  const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","stream=codec_name,codec_type:format=duration","-of","json",output],{encoding:"utf8"}));
+  const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","stream=codec_name,codec_type,start_time,duration,sample_rate:format=duration","-of","json",output],{encoding:"utf8"}));
   const outputDuration=Number(probe.format.duration);
   assert(probe.streams.some(stream=>stream.codec_name==="aac"));assert(probe.streams.some(stream=>stream.codec_name==="h264"));assert(Math.abs(outputDuration-8)<.5);
   const pixel=time=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",output,"-frames:v","1","-vf","format=rgb24,crop=1:1:100:1140","-f","rawvideo","pipe:1"])];
@@ -101,7 +102,12 @@ try {
     for(let i=0;i<data.length;i++){real+=data[i]*Math.cos(2*Math.PI*frequency*i/48000);imaginary+=data[i]*Math.sin(2*Math.PI*frequency*i/48000);}
     return 2*Math.hypot(real,imaginary)/data.length;
   }
-  const levels={musicUnderOriginal:amplitude(2,440),musicOnPhoto:amplitude(photoBoundary+.4,440),musicUnderVoice:amplitude(photoBoundary+1.3,440),musicAfterVoice:amplitude(photoBoundary+2.4,440),musicFadeIn:amplitude(.03,440),musicFadeOut:amplitude(outputDuration-.2,440),original:amplitude(2,660),voice:amplitude(photoBoundary+1.3,880)};
+  const audioTailWindow=fixedAACTailWindow(probe,8);
+  const tailPCM=execFileSync("ffmpeg",["-v","error","-ss",String(audioTailWindow.probeStart),"-i",output,"-t","0.15","-vn","-ac","1","-ar","48000","-f","f32le","pipe:1"]);
+  receipt.audioTailProbe={...audioTailWindow,decodedBytes:tailPCM.byteLength,decodedSampleCount:tailPCM.byteLength/4};
+  const audioTail=measureTonePCM(tailPCM,440);
+  Object.assign(receipt.audioTailProbe,audioTail);
+  const levels={musicUnderOriginal:amplitude(2,440),musicOnPhoto:amplitude(photoBoundary+.4,440),musicUnderVoice:amplitude(photoBoundary+1.3,440),musicAfterVoice:amplitude(photoBoundary+2.4,440),musicFadeIn:amplitude(.03,440),musicFadeOut:audioTail.amplitude,original:amplitude(2,660),voice:amplitude(photoBoundary+1.3,880)};
   receipt.levels=levels;
   // AAC priming silence cannot prove a fade. The original tone must already
   // be present; compare the simultaneous music/original ratio during the ramp
@@ -110,6 +116,7 @@ try {
   receipt.audibleFadeIn=audibleFadeIn;
   assert(audibleFadeIn.original>.05,"The fade-in probe must contain the original audio, not encoder silence");
   assert(audibleFadeIn.music/audibleFadeIn.original<(levels.musicUnderOriginal/levels.original)*.5,`Audible fade-in ratio: ${JSON.stringify({audibleFadeIn,levels})}`);
+  requireAudibleFadeOut(levels.musicFadeOut,levels.musicAfterVoice);
   assert(levels.musicOnPhoto>levels.musicUnderOriginal*3,JSON.stringify(levels));assert(levels.musicAfterVoice>levels.musicUnderVoice*3,JSON.stringify(levels));assert(levels.original>.05&&levels.voice>.05,JSON.stringify(levels));assert(levels.musicFadeOut<levels.musicAfterVoice*.5,JSON.stringify(levels));assert(levels.musicFadeIn<levels.musicUnderOriginal*.5,JSON.stringify(levels));
   const caption=pixel(.7),clear=pixel(2.3);assert(caption[0]>180&&caption[1]>180&&caption[2]<150,`${caption}`);assert(clear[2]>180&&clear[0]<50,`${clear}`);
   receipt.checks.push("Decoded H.264/AAC output proves timed caption pixels, original sound, music continuity, fades, original-audio ducking, narration ducking and recovery after speech");

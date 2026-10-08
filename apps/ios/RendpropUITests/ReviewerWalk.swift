@@ -196,7 +196,7 @@ final class ReviewerWalk: XCTestCase {
                 tap(intro)
                 info("Rerun: opened onboarding through Settings; existing synthetic projects were preserved")
             }
-            guard waitForAny(ids: [], labels: ["Continue", "Get started", "RENDPROP"],
+            guard waitForAny(ids: [], labels: ["Continue", "Get started", "REAL ESTATE AGENT", "RENDPROP"],
                              timeout: screenTimeout) else {
                 note("SKIPPED: no onboarding on launch. Either `hasOnboarded` survived from a "
                      + "previous run (uninstall the app first — bridge-cmd-reviewerwalk.sh does) "

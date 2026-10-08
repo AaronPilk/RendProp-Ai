@@ -29,6 +29,7 @@ def block(source, anchor):
 # Consumer source binding accompanies executable extracted bodies. The full
 # app build and UIKit cases are separate, not implied by these closed doubles.
 app, fly, form, wall = [src[n] for n in ['RendpropApp.swift','Screens/FlythroughDetailView.swift','Screens/NewListingView.swift','Purchases/PaywallHost.swift']]
+app_routes = block(app, 'struct RendpropApp: App')
 assert app.count('demoSection') == 2
 assert '.id("\\(workspaceAuth.userID' not in app
 assert '.task { await model.load(); Analytics.start' in app
@@ -46,7 +47,9 @@ assert 'showRescanConfirm = true' in fly
 assert 'Button("Add photos") { showReelPhotos = true }' in block(fly, 'private var photoPickerGrid:')
 assert 'refreshedPhotos = EnhancedPhoto.loadAll' in fly
 assert 'let chosen = selected.compactMap { id in reelPhotos.first' in fly
-assert 'let canPresent = scenePhase == .active' in block(app, 'private func drainIncomingRoutes()')
+assert 'let canPresent = mayPresentIncomingRoutes && scenePhase == .active' in block(app, 'private func drainIncomingRoutes()')
+assert 'NativeAccountLaunchAdmission.allowsRoutes(accountReady: accountReady, hasOnboarded: hasOnboarded)' in block(app, 'private var mayPresentIncomingRoutes:')
+assert 'accountReady && hasOnboarded' in block(app, 'static func allowsRoutes(')
 assert '!NativePresentationAvailability.hasPresentedController' in app
 assert 'if accepted { push.clearPendingRoute() }' in block(app, 'private func consumePushRoute()')
 assert 'Button("See plans") { finish(showPlans: true) }' in src['Screens/OnboardingView.swift']
@@ -70,10 +73,10 @@ interfaces = '''
 import Foundation
 protocol ObservableObject {}
 @propertyWrapper struct Published<T> { var wrappedValue: T; init(wrappedValue: T) { self.wrappedValue = wrappedValue } }
-enum Config { static var useLiveBackend = true }
+enum Config { static var useLiveBackend = true; static var isOfflineAccountFixture = false }
 enum FileStore { static func url(fromRelativePath value: String) -> URL { URL(fileURLWithPath: "/synthetic/" + value) } }
 @MainActor final class AuthStore {
- static let shared = AuthStore(); var userID: String?; var syncSessionRevision: UInt64 = 1; var isIdentified = false
+ static let shared = AuthStore(); var userID: String?; var syncSessionRevision: UInt64 = 1; var isIdentified = false; var isSignedIn = false
 }
 enum WorkspaceContext { static var selectedOrgID: UUID? }
 @MainActor final class AIConsent {
@@ -94,8 +97,21 @@ class UIViewController { var presentedViewController: UIViewController?; var chi
 '''
 actual = interfaces + src['DeepLink/DeepLink.swift']
 actual += '\n' + block(src['Screens/HomeListingsView.swift'], 'private enum AppGuideTopic:').replace('private enum', 'enum', 1)
-actual += '\n@MainActor enum NativePresentationAvailability {\n' + block(app, 'static func hasPresentedController(in controller:') + '\n}\n'
+actual += '\n@MainActor enum NativePresentationAvailability {\nstatic var hasPresentedController = false\n' + block(app, 'static func hasPresentedController(in controller:') + '\n}\n'
 actual += block(wall, 'enum PaywallReason:') + '\n' + block(wall, 'final class PaywallRouter:').replace('final class','@MainActor final class',1)
+actual += '\n' + block(app, 'enum NativeAccountLaunchAdmission {') + '\n'
+actual += block(app, 'private enum RootSheet:').replace('private ', '', 1) + '\n'
+actual += '''enum ScenePhase { case active, inactive, background }
+@MainActor final class PushFixture { var showPrePrompt = true }
+@MainActor final class RootRouteFixture {
+ let analyticsAuth = AuthStore.shared; let push = PushFixture()
+ var hasOnboarded = false; var scenePhase = ScenePhase.active
+ var incomingLink: DeepLink?; var rootSheet: RootSheet?; var incomingLinkError = false
+ var incomingQueue = NativeIncomingQueue()
+'''
+for anchor in ['private var accountReady:', 'private var mayPresentIncomingRoutes:', '@MainActor private func drainIncomingRoutes()']:
+    actual += block(app_routes, anchor).replace('private ', '', 1) + '\n'
+actual += '}\n'
 actual += '\n@MainActor final class FormFixture {\nvar formOwnerID: String?; var formSessionRevision: UInt64 = 1; var formWorkspaceID: UUID?\nvar createdListing: Listing?; var photosListing: Listing?; var pendingAsset: String?; var text = ""\n'
 for anchor in ['private var formContextIsCurrent:', 'private func bindFormContext()', 'private func bindInitialFormContext()']:
     actual += block(form,anchor).replace('private ', '',1)+'\n'
@@ -123,6 +139,9 @@ actual += 'func mapJSON(_ data: Data) throws -> Listing { let d = JSONDecoder();
 
 library = [root/'apps/ios/Rendprop'/name for name in ['Models/Listing.swift','Models/ListingClientContact.swift','Models/Money.swift','Models/ProductionGuidance.swift']]
 controls = [
+ ('drop-account-route-admission', 'let canPresent = mayPresentIncomingRoutes && scenePhase == .active', 'let canPresent = scenePhase == .active', 'required account keeps queued private routes unpresented'),
+ ('drop-onboarding-route-admission', 'accountReady && hasOnboarded', 'accountReady', 'business onboarding keeps queued private routes unpresented'),
+ ('drop-identified-route-admission', 'offlineFixture || (signedIn && identified && actorID.flatMap(UUID.init(uuidString:)) != nil)', 'offlineFixture || signedIn', 'legacy guest keeps queued private routes unpresented'),
  ('drop-deferred-link', 'guard canPresent else { return nil }', 'guard true else { return nil }', 'capture modal retains link'),
  ('replay-deferred-link', 'return routes.removeFirst()', 'return routes.first', 'lead resumes second'),
  ('child-modal-ignored', 'controller.children.contains { hasPresentedController(in: $0) }', 'false', 'nested capture controller keeps incoming route deferred'),

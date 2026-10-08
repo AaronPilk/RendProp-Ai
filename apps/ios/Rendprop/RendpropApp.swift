@@ -2779,8 +2779,24 @@ enum Appearance: String, CaseIterable, Identifiable {
 
 /// A concrete boundary keeps launch routing out of the scene's modifier type.
 /// Release UI fixtures exist only in the simulator and require the offline test flag.
+enum NativeAccountLaunchAdmission {
+    static func allows(signedIn: Bool, identified: Bool, actorID: String?, offlineFixture: Bool) -> Bool {
+        offlineFixture || (signedIn && identified && actorID.flatMap(UUID.init(uuidString:)) != nil)
+    }
+
+    static func allowsRoutes(accountReady: Bool, hasOnboarded: Bool) -> Bool {
+        accountReady && hasOnboarded
+    }
+}
+
 private struct RendpropLaunchContent: View {
     let hasOnboarded: Bool
+    @ObservedObject private var auth = AuthStore.shared
+
+    private var accountReady: Bool {
+        NativeAccountLaunchAdmission.allows(signedIn: auth.isSignedIn, identified: auth.isIdentified,
+            actorID: auth.userID, offlineFixture: Config.isOfflineAccountFixture)
+    }
 
     var body: some View {
         Group {
@@ -2802,18 +2818,24 @@ private struct RendpropLaunchContent: View {
 #if DEBUG
         if Config.isSessionNetworkTesting {
             PhaseOneFixtureRoot()
-        } else if hasOnboarded {
-            RootTabView()
         } else {
-            OnboardingView()
+            accountContent
         }
 #else
-        if hasOnboarded {
-            RootTabView()
-        } else {
-            OnboardingView()
-        }
+        accountContent
 #endif
+    }
+
+    @ViewBuilder private var accountContent: some View {
+        if accountReady {
+            businessContent.paywallHost()
+        } else {
+            RequiredAccountGate()
+        }
+    }
+
+    @ViewBuilder private var businessContent: some View {
+        if hasOnboarded { RootTabView() } else { OnboardingView() }
     }
 }
 
@@ -2870,7 +2892,6 @@ struct RendpropApp: App {
             // The one paywall sheet + the StoreKit 2 lifecycle (Purchases/).
             // Mounted here so every "Upgrade plan" CTA in the app can call
             // `PaywallRouter.shared.present(reason:)` instead of owning a sheet.
-            .paywallHost()
             .tint(Theme.accent)
             // System / Light / Dark — set in Settings → Appearance. nil = follow iOS.
             .preferredColorScheme((Appearance(rawValue: appearanceRaw) ?? .system).colorScheme)
@@ -2878,11 +2899,6 @@ struct RendpropApp: App {
             // First-party analytics only: our own /events route, no third-party
             // SDK, no IDFA, no ATT prompt. `start` is idempotent.
             .task { await model.load(); Analytics.start(api: model.api as? AnalyticsAPI) }
-            // GUIDELINE 5.1.1(v). A session with NO personal information, minted
-            // silently at launch, is what lets every feature and the paywall
-            // work without anybody registering. Idempotent, and a no-op when a
-            // session already exists — including a real Apple one.
-            .task { AuthStore.shared.signInAnonymouslyIfNeeded() }
 #if SPATIAL_CAPTURE_LAB
             .task { SpatialUploadCoordinator.shared.reconnect() }
 #endif
@@ -2899,10 +2915,7 @@ struct RendpropApp: App {
             // is the most valuable flush there is.
             .onChange(of: scenePhase) { phase in
                 Analytics.sceneChanged(phase)
-                // A launch with no network leaves the device sessionless.
-                // Retry on the way back rather than stranding it.
                 if phase == .active {
-                    AuthStore.shared.signInAnonymouslyIfNeeded()
                     model.refreshSpatialCapability()
                     Task { await model.refreshCloudWorkspace() }
                     // iOS Settings can change the notification permission while
@@ -2925,7 +2938,8 @@ struct RendpropApp: App {
             .onOpenURL { url in
                 enqueueIncomingURL(url)
             }
-            .fullScreenCover(item: $incomingLink) { link in
+            .fullScreenCover(item: Binding(get: { mayPresentIncomingRoutes ? incomingLink : nil },
+                                          set: { incomingLink = $0 })) { link in
                 // A tour and a portfolio are both a page in the viewer. An
                 // invite is not a page at all - it is an action against the
                 // account - so it gets the Join sheet with its code already
@@ -2948,7 +2962,8 @@ struct RendpropApp: App {
             // The one root sheet slot. The permission pre-prompt is presented
             // from HERE so that EVERY publish path reaches it, not just the
             // detail screen's button.
-            .sheet(item: $rootSheet) { sheet in
+            .sheet(item: Binding(get: { mayPresentIncomingRoutes ? rootSheet : nil },
+                                set: { rootSheet = $0 })) { sheet in
                 switch sheet {
                 case .pushPrePrompt:
                     PushPrePromptView()
@@ -2992,7 +3007,8 @@ struct RendpropApp: App {
                     }
                 }
             }
-            .alert("Couldn't open that link", isPresented: $incomingLinkError) {
+            .alert("Couldn't open that link", isPresented: Binding(get: { mayPresentIncomingRoutes && incomingLinkError },
+                                                                  set: { incomingLinkError = $0 })) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("Finish your current screen and open the Rendprop link again. Check that an invite includes the complete code.")
@@ -3014,11 +3030,23 @@ struct RendpropApp: App {
             // A different account (an Apple sign-in after an anonymous week) is
             // a different org, which has not heard the business type yet.
             .onChange(of: analyticsAuth.userID) { _ in
+                incomingLink = nil
+                rootSheet = nil
+                incomingLinkError = false
+                PaywallRouter.shared.dismiss()
                 model.syncSpaceTypeIfNeeded()
                 Task { await model.refreshCloudWorkspace() }
             }
             .onChange(of: analyticsAuth.isIdentified) { identified in
                 if identified { Task { await model.refreshCloudWorkspace() } }
+            }
+            .onChange(of: accountReady) { ready in
+                guard !ready else { return }
+                incomingLink = nil
+                rootSheet = nil
+                incomingLinkError = false
+                incomingQueue = NativeIncomingQueue()
+                PaywallRouter.shared.dismiss()
             }
             // `externalSink` is `nonisolated` and hops to the main actor itself,
             // so the purchase flow keeps knowing nothing about Analytics.
@@ -3054,7 +3082,7 @@ struct RendpropApp: App {
     }
 
     @MainActor private func drainIncomingRoutes() {
-        let canPresent = scenePhase == .active && incomingLink == nil && rootSheet == nil
+        let canPresent = mayPresentIncomingRoutes && scenePhase == .active && incomingLink == nil && rootSheet == nil
             && !incomingLinkError && !PaywallRouter.shared.isPresented
             && !NativePresentationAvailability.hasPresentedController
         guard let next = incomingQueue.takeNext(canPresent: canPresent) else { return }
@@ -3064,6 +3092,15 @@ struct RendpropApp: App {
         case .pushPermission: if push.showPrePrompt { rootSheet = .pushPrePrompt }
         case .invalidLink: incomingLinkError = true
         }
+    }
+
+    private var accountReady: Bool {
+        NativeAccountLaunchAdmission.allows(signedIn: analyticsAuth.isSignedIn, identified: analyticsAuth.isIdentified,
+            actorID: analyticsAuth.userID, offlineFixture: Config.isOfflineAccountFixture)
+    }
+
+    private var mayPresentIncomingRoutes: Bool {
+        NativeAccountLaunchAdmission.allowsRoutes(accountReady: accountReady, hasOnboarded: hasOnboarded)
     }
 
 }
@@ -3183,6 +3220,7 @@ struct HomeDashboardView: View {
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @AppStorage(RealEstateRoleStore.uiRevisionKey) private var realEstateRoleRevision = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var goToListings: () -> Void = {}
 
     @State private var revealed = false          // staggers the sections in on first appear
@@ -3568,7 +3606,7 @@ struct HomeDashboardView: View {
 
     private var heroCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("RENDPROP")
+            Text(SpaceType.current.heroEyebrow)
                 .font(.caption.weight(.bold)).kerning(3)
                 .foregroundStyle(Color.white.opacity(0.8))
             Text(SpaceType.current.heroHeadline)
@@ -3703,38 +3741,39 @@ struct HomeDashboardView: View {
     }
 
     private var featureGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
-                            GridItem(.flexible(), spacing: 12)], spacing: 12) {
+        HomeFeatureGridLayout(columns: dynamicTypeSize.isAccessibilitySize ? 1 : 2) {
             featureButton(.tour)
-            // Only while the server says the 3D pipeline is on — for everyone,
-            // the same flag. Until a fetch has said so (offline, unknown, or
-            // switched off) there is no tile: a tile that scans a room, uploads
-            // every frame and then fails at /start is a dead feature on Home.
-            if model.isSpatialWalkthroughAvailable {
-                featureButton(.spatial)
-            } else {
-                comingSoonTile("3D walkthrough", "Room-by-room exploration", "rotate.3d")
-            }
             featureButton(.photos)
             featureButton(.photoStudio)
             featureButton(.reel)
-            featureButton(.floorPlan)
-            comingSoonTile("3D floor plan", "Scan and build a room model", "cube.transparent")
             featureButton(.aerial)
-            agentCardTile
+            // Only while the server says the 3D pipeline is on — for everyone,
+            // the same flag. Unknown, offline or disabled stays non-actionable.
+            if model.isSpatialWalkthroughAvailable {
+                featureButton(.spatial)
+            }
+            comingSoonTile("Measurements", "Draw an outline or upload a plan", "ruler", id: "floorPlan")
+            comingSoonTile("3D floor plan", "Scan and build a room model", "cube.transparent", id: "3dFloorPlan")
+            if !model.isSpatialWalkthroughAvailable {
+                comingSoonTile("3D walkthrough", "Room-by-room exploration", "rotate.3d", id: "spatial")
+            }
         }
     }
 
-    private func comingSoonTile(_ title: String, _ description: String, _ icon: String) -> some View {
+    private func comingSoonTile(_ title: String, _ description: String, _ icon: String, id: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: icon).font(.title2).foregroundStyle(Theme.accent)
             Text(title).font(.rpHeadline).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
             Text("Coming soon").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
             Text(description).font(.caption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(14).frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
+        .padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: Theme.radius))
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("\(title). Coming soon. \(description)"))
+        .accessibilityIdentifier("home.comingSoon.\(id)")
     }
 
     /// One gated tile. Tapping never starts loose work — `open` picks the home
@@ -3747,15 +3786,6 @@ struct HomeDashboardView: View {
         .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text("\(feature.actionTitle). \(feature.promise)"))
         .accessibilityIdentifier("home.feature.\(feature.rawValue)")
-    }
-
-    /// The only tile that isn't per-home: your card is the same on every tour.
-    private var agentCardTile: some View {
-        NavigationLink { AgentCardEditorView() } label: {
-            featureTile(SpaceType.current.profileCardName, "You, on every tour you send",
-                        "person.text.rectangle.fill", RPGradient.agent)
-        }
-        .buttonStyle(ScalePressStyle())
     }
 
     /// Wide banner: the payoff — every tour is a share link that captures
@@ -3814,18 +3844,15 @@ struct HomeDashboardView: View {
             Text(title)
                 .font(.rpHeadline)
                 .foregroundStyle(Color.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
             Text(promise)
                 .font(.caption)
                 .foregroundStyle(Color.white.opacity(0.85))
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 128)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(gradient)
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
@@ -4038,6 +4065,41 @@ struct HomeDashboardView: View {
         }
         .padding(14)
         .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+/// Measure the wrapped content once per layout pass, then give every Home
+/// feature the same bounds. No stored maximum survives a width or text change.
+private struct HomeFeatureGridLayout: Layout {
+    let columns: Int
+    private let spacing: CGFloat = 12
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        guard !subviews.isEmpty else { return .zero }
+        let naturalWidth = subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+            ?? (naturalWidth * CGFloat(columns) + spacing * CGFloat(columns - 1))
+        let cell = cellSize(width: width, subviews: subviews)
+        let rows = (subviews.count + columns - 1) / columns
+        return CGSize(width: width, height: cell.height * CGFloat(rows) + spacing * CGFloat(rows - 1))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        let cell = cellSize(width: bounds.width, subviews: subviews)
+        for (index, subview) in subviews.enumerated() {
+            let origin = CGPoint(x: bounds.minX + CGFloat(index % columns) * (cell.width + spacing),
+                                 y: bounds.minY + CGFloat(index / columns) * (cell.height + spacing))
+            subview.place(at: origin, anchor: .topLeading,
+                          proposal: ProposedViewSize(width: cell.width, height: cell.height))
+        }
+    }
+
+    private func cellSize(width: CGFloat, subviews: Subviews) -> CGSize {
+        let cellWidth = max(0, (width - spacing * CGFloat(columns - 1)) / CGFloat(columns))
+        let fittedHeight = subviews.map {
+            $0.sizeThatFits(ProposedViewSize(width: cellWidth, height: nil)).height
+        }.max() ?? 0
+        return CGSize(width: cellWidth, height: max(128, fittedHeight))
     }
 }
 

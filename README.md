@@ -5,6 +5,33 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+**Account-first follow-up:** new and signed-out users must create or sign in to
+an account with Apple before business setup or the dashboard. Saved guest work
+remains available to the verified account-transfer flow. Signing in does not
+start a subscription or a trial. This behavior is delivered in internal
+**1.0.4 (50)**. The
+[source audit and phone checklist](docs/audit/REQUIRED-ACCOUNT-ONBOARDING-20261008.md)
+records the account/session controls, successful Release compilation and mocked
+rendered-screen check. The
+[next public-review draft](docs/appstore/account-first-review-draft-20261008.md)
+is unsubmitted and preserves the historical build-42 review record.
+
+**Latest verified internal delivery:** **1.0.4 (51)** is **AVAILABLE** to the
+existing Rendprop team, verified on **8 October 2026 at 19:10:54 UTC**, from
+`2c567a543c9b16cbd29702cc5762cfb56f6891fc`. Apple reported VALID /
+INTERNAL_ONLY / IN_BETA_TESTING. Home now uses equal card sizes, places active
+tools first, marks Measurements Coming soon and keeps the Agent card in Profile.
+The [delivery receipt](docs/releases/TESTFLIGHT-51-20261008.json) records the
+actual uploaded Distribution package and an explicit internal qualification:
+eleven current successful CI jobs plus prior successful native checks on
+identical inputs, with the reproduced test-fixture timing defect separately
+resolved. Full current CI remains failed 11/12; details are in the
+[Home audit](docs/audit/HOME-BETA-20261008.md). Follow the
+[build-51 phone checklist](docs/handoff/PHONE-ACCEPTANCE-TESTFLIGHT51-20261008.md).
+Later documentation/test-fixture changes are not the compiled payload. The
+[build-50 receipt](docs/releases/TESTFLIGHT-50-20261008.json) remains historical.
+Physical-phone and separate paid-launch acceptance remain pending.
+
 The **6 October release candidate** adds the remaining beta fixes, private media
 delivery, a shared budget before paid AI requests, deliberate per-member hosted
 portfolios, industry-specific Studio forms and account-data export. The
@@ -219,7 +246,7 @@ Studio uses the same account/workspace subscription and has no separate checkout
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
 [App Store submission receipt](docs/releases/APPSTORE-42-20261002.json) ·
-[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-46-20261006.json) ·
+[Current internal TestFlight receipt](docs/releases/TESTFLIGHT-51-20261008.json) ·
 [Public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [handheld room-tour update](docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
@@ -261,8 +288,8 @@ passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | Published listing pages | Live: selected main photo/details first, compact navigation and optional Explore scroll viewer or Play video. Closing unloads the viewer and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
 | Photographer client delivery | Live: role choice, per-listing client card/headshot, private inquiry email, retained lead history and confirmed forwarding/resends. Optional promotional branding removal keeps domain/privacy disclosure. Actual cross-device and inbox acceptance remains pending. |
-| iOS | Internal **1.0.4 (46)** is **AVAILABLE**, verified on 7 October at 00:47:51 UTC (6 October locally). Public **1.0.3 (42)** last reported **READY_FOR_SALE** at the 5 October read; no new public submission was made. Camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
-| Internal beta | Build **46** includes Measurements, the full-system audit fixes and dormant trial/purchase safeguards. The [current rollout](docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md) records three trial migrations, three updated functions and verified Studio files. Trial funding/activation, protected-media, financial, provider-quality and phone acceptance remain open. |
+| iOS | Internal **1.0.4 (51)** is **AVAILABLE**, verified on 8 October at 19:10:54 UTC, with required-account access and the four Home feedback fixes. Public **1.0.3 (42)** last reported **READY_FOR_SALE** at the 5 October read; no new public submission was made. Physical Home, Apple sign-in, camera/room quality, purchase/restore, client inbox and phone-to-Studio acceptance remain. |
+| Internal beta | Latest **51** includes account-first access and the Home feedback fixes. Build **46** introduced per-listing Measurements, audit fixes and dormant trial/purchase safeguards; its [historical rollout](docs/handoff/TESTFLIGHT-46-AND-DORMANT-TRIAL-ROLLOUT-20261006.md) records three migrations, three updated functions and verified Studio files. Trial funding/activation, protected-media, financial, provider-quality and phone acceptance remain open. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

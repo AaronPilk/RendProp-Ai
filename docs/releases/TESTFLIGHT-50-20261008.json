@@ -1,0 +1,92 @@
+{
+  "checkedAt": "2026-10-08T10:30:56.051886+00:00",
+  "sourceCommit": "c9cf64e2e34cf6c00bcc7752e4b5569c7258906a",
+  "uploadResultSHA256": "138bce71f05fd1e61f3ba5293bdb039a2ec3ea567ea5562cfe2fb0b2ae0b5b65",
+  "uploadAttemptSHA256": "6dcba8bb2bc25cc6dbf46c5e72077bef3739e8c5530a8a795cfc7fa8a0e4cae1",
+  "operation": "GET only",
+  "uploadOutcomeUnresolved": false,
+  "available": true,
+  "builds": [
+    {
+      "id": "dbc95033-f117-4bcd-9938-2cfb1717912b",
+      "marketingVersion": "1.0.4",
+      "build": "50",
+      "processingState": "VALID",
+      "buildAudienceType": "INTERNAL_ONLY",
+      "expired": false,
+      "uploadedDate": "2026-10-08T03:28:10-07:00",
+      "usesNonExemptEncryption": false,
+      "minOsVersion": "16.0",
+      "betaDetails": {
+        "autoNotifyEnabled": true,
+        "internalBuildState": "IN_BETA_TESTING",
+        "externalBuildState": "NOT_APPLICABLE"
+      },
+      "group": {
+        "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+        "name": "Rendprop team",
+        "buildIncluded": true
+      }
+    }
+  ],
+  "sourceTree": "c7022244df6df6b385eacfb861effc399ee1d8ff",
+  "compiledPayloadNote": "Later documentation commits do not change the released c9cf64e2 payload.",
+  "appleReadbackSHA256": "ee5744e2b52b66a10228c623abd0bde071cc118b0e92d39a2d9b0f50e844e0fb",
+  "ci": {
+    "run": 37753249069,
+    "attempt": 1,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/37753249069",
+    "sourceCommit": "c9cf64e2e34cf6c00bcc7752e4b5569c7258906a",
+    "sourceTree": "c7022244df6df6b385eacfb861effc399ee1d8ff",
+    "actualExecutionCheckout": "95c6ab89315c4d41a0e9c10f7d71cd433b668f29",
+    "all12ExecutionTreesMatchSource": true,
+    "successfulJobs": 12,
+    "successfulOfficialSteps": 178,
+    "skippedOfficialSteps": 0,
+    "receiptSHA256": "ff08ef0a19efe6746315fa76e15c90c130598dc3e55b62eacc525f33e3c451a8",
+    "checkoutProofSHA256": "31fe3b23d27fafa34035f80507ba03bf56dcbecc53dee21b0fc50bf3a8b621bb",
+    "independentPricingReviewSHA256": "13bd459743ab95d4b2c0ba5a988ed09c315106c4020a2280a1963e4f193b0c74",
+    "independentMediaReviewSHA256": "1c02c0848fa388b2027a6509db466f61b5e975436070362b7d34c173ba0fa6c8"
+  },
+  "archive": {
+    "attempts": 1,
+    "exitCode": 0,
+    "sourceManifestInputs": 254,
+    "compiledTrackedSwiftFiles": 143,
+    "generatedSwiftFiles": 1,
+    "resultSHA256": "5071f12906c67b4be3485956047a3afc7ec012957ea7a630d48f2d011af4cede",
+    "sourceBindingSHA256": "0876c0e70eb61e7159bfe58f6e29c10ac7d5d21ac7e0df80304c918ab5797434",
+    "nativeUUID": "6645014A-430D-398C-8E3F-0D91C6A92DA6",
+    "independentMediaReviewSHA256": "2d146321c81d40a9f1c63768053272486dc34b9165c2900ac37d4787f0f3dd5a",
+    "independentNativeReviewSHA256": "84306ec9bc9a1f74e3e6a617ac916a2d0caf6800958dc147c9d9f3934c87f9ad",
+    "preExportSigning": "Apple Development; Distribution signing verified separately on actual uploaded IPA.",
+    "outerInfoPlistAfterExport": "Only Distributions bookkeeping added; pre-export evidence preserved."
+  },
+  "uploadedPackage": {
+    "attempts": 1,
+    "exitCode": 0,
+    "bytes": 22474618,
+    "sha256": "b289c453985a53970acab89cc96eb10e437b2309f8958181b26bc332f0afb1ef",
+    "transferMD5": "0abf46fa4c94ca803a0de5de0b7dca53",
+    "authority": "Apple Distribution",
+    "getTaskAllow": false,
+    "apnsEnvironment": "production",
+    "appStoreDistributionProfile": true,
+    "nativeUUID": "6645014A-430D-398C-8E3F-0D91C6A92DA6",
+    "fileBackedNativeSectionsMatchSourceArchive": 37,
+    "nonSignatureResourcesMatchSourceArchive": 7,
+    "retentionReceiptSHA256": "6b7458a205647d5da31a63866a61d1e64726218fbd8abdcf0b88657930ca2b8b",
+    "localBindingReceiptSHA256": "408e00006c42646d4a775a12a5a193a35b5540fd05a9e9142b718b5a6b1de481",
+    "independentDistributionReviewSHA256": "565d7525372175ea4cc0d3dce006d567fbc09317a85615e57101cea480c31e4f"
+  },
+  "acceptance": {
+    "physicalPhoneAppleSignIn": "pending",
+    "savedGuestWorkTransferOnPhone": "pending",
+    "phoneToStudioIdentity": "pending",
+    "realCameraAndSpatialQuality": "pending",
+    "realSupplierOutputQualification": "separate; not performed by this delivery",
+    "paidLaunchFunding": "separate; not activated by this delivery",
+    "publicAppStoreSubmission": false,
+    "publicBuildUnchanged": "1.0.3 (42)"
+  }
+}

@@ -25,13 +25,13 @@ enum CloudSyncError: Error { case identityChanged }
 @MainActor final class AuthStore {
  static let shared = AuthStore()
  var userID: String?; var syncSessionRevision: UInt64 = 1; var isSignedIn = true
- var token = ""; var signOuts = 0; var refreshes = 0
+ var token = ""; var signOuts = 0; var refreshes = 0; var usableToken = true; var adoptionDiscards = 0
  var onToken: (() async -> Void)?; var onRefresh: (() async -> Void)?
- static func validAccessToken() async -> String? { await shared.onToken?(); return shared.token }
+ static func validAccessToken() async -> String? { await shared.onToken?(); return shared.usableToken ? shared.token : nil }
  static func storedAccessToken() -> String? { shared.token }
  func forceRefresh() async -> Bool { refreshes += 1; await onRefresh?(); return true }
- func signOut() { signOuts += 1; isSignedIn = false; syncSessionRevision += 1 }
- func reset(_ id: UUID) { userID = id.uuidString.lowercased(); token = jwt(id); syncSessionRevision = 1; isSignedIn = true; signOuts = 0; refreshes = 0; onToken = nil; onRefresh = nil }
+ func signOut(preservingAdoption: Bool = false) { signOuts += 1; isSignedIn = false; syncSessionRevision += 1; if !preservingAdoption { adoptionDiscards += 1 } }
+ func reset(_ id: UUID) { userID = id.uuidString.lowercased(); token = jwt(id); syncSessionRevision = 1; isSignedIn = true; usableToken = true; adoptionDiscards = 0; signOuts = 0; refreshes = 0; onToken = nil; onRefresh = nil }
  func change(_ id: UUID) { userID = id.uuidString.lowercased(); token = jwt(id); syncSessionRevision += 1 }
  func jwt(_ id: UUID) -> String {
   let data = try! JSONSerialization.data(withJSONObject: ["sub": id.uuidString.lowercased(), "is_anonymous": false])
@@ -65,7 +65,7 @@ EXECUTOR
   func request() -> URLRequest {
    var value = URLRequest(url: URL(string: "https://fixture.invalid/listings")!)
    value.httpMethod = "POST"; value.httpBody = Data("private-A-listing".utf8)
-   value.setValue("Bearer " + auth.token, forHTTPHeaderField: "Authorization"); return value
+   value.setValue("Bearer " + auth.token, forHTTPHeaderField: "Authorization"); value.setValue("synthetic-public", forHTTPHeaderField: "apikey"); return value
   }
   func denied(_ client: LiveAPIClient, _ value: URLRequest) async throws {
    do { _ = try await client.call(value); throw NSError(domain: "Cross-account request was accepted", code: 1) }
@@ -75,6 +75,15 @@ EXECUTOR
   let normal = LiveAPIClient(); normal.session.codes = [401, 200]
   _ = try await normal.call(request())
   try check(normal.session.requests.count == 2 && auth.refreshes == 1, "Same-account refresh still retries exactly once")
+
+  auth.reset(a); let expired = LiveAPIClient(); let expiredRequest = request(); auth.usableToken = false
+  _ = try await expired.call(expiredRequest)
+  try check(expired.session.requests.count == 1 && expired.session.requests[0].value(forHTTPHeaderField: "Authorization") == nil, "Failed offline refresh removes inherited expired bearer before dispatch")
+  try check(expired.session.requests[0].value(forHTTPHeaderField: "apikey") == "synthetic-public", "Missing JWT preserves the public API key header")
+
+  auth.reset(a); let revoked = LiveAPIClient(); revoked.session.codes = [401, 401]
+  do { _ = try await revoked.call(request()) } catch APIError.badResponse(401) {}
+  try check(revoked.session.requests.count == 2 && auth.signOuts == 1 && auth.adoptionDiscards == 0, "Second rejected bearer preserves pending guest adoption evidence")
 
   auth.reset(a); let queued = LiveAPIClient(); let oldRequest = request(); auth.change(b)
   try await denied(queued, oldRequest)
@@ -110,6 +119,8 @@ EXECUTOR
   for (const [name, implementation] of [
     ['actual', body],
     ['missing-epoch-fences', body.replaceAll('guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }', '')],
+    ['keep-stale-bearer', body.replace('request.setValue(token.map { "Bearer \\($0)" }, forHTTPHeaderField: "Authorization")', 'if let token { request.setValue("Bearer \\(token)", forHTTPHeaderField: "Authorization") }')],
+    ['drop-forced-adoption-recovery', body.replace('signOut(preservingAdoption: true)', 'signOut()')],
   ]) {
     const path = join(out, `${name}.swift`), binary = join(out, name);
     writeFileSync(path, scaffold.replace('EXECUTOR', implementation));
@@ -118,6 +129,8 @@ EXECUTOR
     const result = spawnSync(binary, [], { encoding: 'utf8', timeout: 10000 });
     writeFileSync(join(out, name + '.log'), result.stdout + result.stderr);
     assert.equal(result.status, name === 'actual' ? 0 : 1, result.stdout + result.stderr);
+    if (name === 'keep-stale-bearer') assert.match(result.stdout, /Failed offline refresh removes inherited expired bearer before dispatch/);
+    if (name === 'drop-forced-adoption-recovery') assert.match(result.stdout, /Second rejected bearer preserves pending guest adoption evidence/);
     console.log(name + ': ' + result.stdout.trim());
   }
   console.log('Request-fence evidence: ' + out);

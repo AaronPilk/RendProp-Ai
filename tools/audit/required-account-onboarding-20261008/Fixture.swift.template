@@ -1,0 +1,218 @@
+import Foundation
+import CoreFoundation
+
+// Closed state/transport doubles: no host preferences, Keychain or networking.
+final class UserDefaults {
+    static let standard = UserDefaults()
+    var values: [String: Any] = [:]
+    func string(forKey key: String) -> String? { values[key] as? String }
+    func double(forKey key: String) -> Double { values[key] as? Double ?? 0 }
+    func set(_ value: Any?, forKey key: String) { values[key] = value }
+    func removeObject(forKey key: String) { values[key] = nil }
+}
+enum UIApplication { static let didBecomeActiveNotification = Notification.Name("synthetic-foreground") }
+enum Config {
+    static var enableAuth = true, isUITesting = false, isSessionNetworkTesting = false
+    static var isOfflineAccountFixture: Bool { isUITesting && !isSessionNetworkTesting }
+    static let supabaseURL = URL(string: "https://synthetic.invalid")
+    static let supabaseAnonKey = "synthetic-public-fixture"
+}
+enum APIError: Error { case badResponse }
+@MainActor final class URLSession {
+    static let shared = URLSession()
+    var requests = [URLRequest](), status = 200, bytes = Data()
+    var held: CheckedContinuation<Void, Never>?, holdNext = false
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        precondition(request.url?.host == "synthetic.invalid")
+        precondition(request.url?.query == "grant_type=refresh_token")
+        requests.append(request)
+        let response = (bytes, HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        if holdNext { holdNext = false; await withCheckedContinuation { held = $0 } }
+        return response
+    }
+}
+@MainActor final class AuthStore {
+    static var shared: AuthStore!
+    static var access: String?, refresh: String?
+    static var tokenExpiresAt: Date? {
+        let value = UserDefaults.standard.double(forKey: Keys.expiresAt)
+        return value > 0 ? Date(timeIntervalSince1970: value) : nil
+    }
+    static var storageReads = 0, credentialWrites = 0
+    static func storedAccessToken() -> String? { storageReads += 1; return access }
+    static func storedRefreshToken() -> String? { storageReads += 1; return refresh }
+    static func persistTokens(access: String, refresh: String?, expiresAt: Date?) {
+        credentialWrites += 1; Self.access = access; Self.refresh = refresh
+        if let expiresAt { UserDefaults.standard.set(expiresAt.timeIntervalSince1970, forKey: Keys.expiresAt) }
+    }
+    static func clearTokens() { access = nil; refresh = nil; UserDefaults.standard.removeObject(forKey: Keys.expiresAt) }
+    enum Keys { static let accessToken="access", refreshToken="refresh", userID="owner", userName="name", orgName="org", expiresAt="expiry" }
+    var isSignedIn: Bool, isIdentified = false, userID: String?
+    var displayName: String, userName: String, orgName: String
+    var foregroundObserver: NSObjectProtocol?
+    var sessionEpoch: UInt64 = 0, syncIdentityEpoch: UInt64 = 0
+    var anonymousBootstrap: Task<Void, Never>?, refreshInFlight: Task<Bool, Never>?, autoRefreshTask: Task<Void, Never>?
+    var onAccountChanged: ((UUID) -> Void)?
+    var adoptionDiscarded = 0, refreshCalls = 0
+    var connection = Connection()
+    final class Connection {
+        var calls = 0, cancellations = 0
+        func cancelAll() { cancellations += 1 }
+        func connect() async -> Bool { calls += 1; return false }
+    }
+    func scheduleAutoRefresh() {}
+    func refreshIfNeeded() async -> Bool { refreshCalls += 1; return true }
+    func retryPendingAdoptionIfNeeded() async {}
+    func discardPendingAdoption() { adoptionDiscarded += 1 }
+    static func authError(status: Int, data: Data) -> APIError { .badResponse }
+__AUTH_METHODS__
+    func tokenForTest() -> String? { validatedCurrentAccessToken() }
+    func refreshForTest() async -> Bool { await performRefresh() }
+    func applyForTest(_ token: String) -> Bool { applySession(accessToken: token, refreshToken: "synthetic", expiresAt: Date().addingTimeInterval(3600)) }
+}
+struct SignInView {
+    var title = "", subtitle = "", dismissNote = "", requiresAccount = false
+__REQUIRED_SIGNIN__
+}
+enum DeepLink: Equatable { case tour(String), join(String) }
+__QUEUE__
+__ADMISSION__
+enum CompiledConfig {
+__REAL_CONFIG__
+}
+@MainActor final class RefreshProbe {
+    var isSignedIn = true, refreshes = 0
+    static var tokenExpiresAt: Date? { AuthStore.tokenExpiresAt }
+    static func storedRefreshToken() -> String? { AuthStore.refresh }
+    func signOut(preservingAdoption: Bool = false) { isSignedIn = false }
+    func runRefresh() async -> Bool { refreshes += 1; return false }
+__REFRESH_IF_NEEDED__
+}
+enum SpaceType: String { case realEstate = "real_estate" }
+@MainActor enum RealEstateRoleStore {
+    static var writes = 0
+    static func choose(_ role: String, owner: String?) { writes += 1 }
+}
+@MainActor final class PaywallRouter {
+    static let shared = PaywallRouter()
+    enum Reason { case upgrade }
+    var calls = 0
+    func present(reason: Reason) { calls += 1 }
+}
+@MainActor final class OnboardingState {
+    var hasOnboarded = false, spaceTypeRaw = "real_estate", selectedRole = "agent"
+__ONBOARDING_FINISH__
+    func finishForTest() { finish(showPlans: true) }
+}
+
+@main @MainActor enum Checks {
+    nonisolated static let a = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", b = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    static var checks = 0
+    static func check(_ condition: Bool, _ message: String) {
+        checks += 1
+        guard condition else { print("FAIL: " + message); exit(1) }
+    }
+    static func jwt(_ owner: String = a, anonymous: Any? = false, expiry: Any = Int(Date().timeIntervalSince1970) + 3600) -> String {
+        var payload: [String: Any] = ["sub": owner, "exp": expiry]
+        if let anonymous { payload["is_anonymous"] = anonymous }
+        let bytes = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
+        return "synthetic." + bytes.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") + ".signature"
+    }
+    static func start(token: String? = nil, refresh: String? = nil, remembered: String? = nil) -> AuthStore {
+        Config.isUITesting = false; Config.isSessionNetworkTesting = false
+        AuthStore.access = token; AuthStore.refresh = refresh
+        UserDefaults.standard.values = ["name": "Prior name", "org": "Prior org"]
+        UserDefaults.standard.set(Date().addingTimeInterval(3600).timeIntervalSince1970, forKey: "expiry")
+        if let remembered { UserDefaults.standard.set(remembered, forKey: "owner") }
+        let instance = AuthStore(); AuthStore.shared = instance
+        return instance
+    }
+    static func allowed(_ auth: AuthStore, onboarded: Bool = true) -> Bool {
+        NativeAccountLaunchAdmission.allows(signedIn: auth.isSignedIn, identified: auth.isIdentified, actorID: auth.userID, offlineFixture: Config.isOfflineAccountFixture)
+    }
+    static func reply(_ token: String) {
+        URLSession.shared.status = 200
+        URLSession.shared.bytes = try! JSONSerialization.data(withJSONObject: ["access_token": token, "refresh_token": "rotated-synthetic", "expires_in": 3600])
+    }
+    static func main() async {
+        let fresh = start()
+        check(!CompiledConfig.isUITesting && !CompiledConfig.isSessionNetworkTesting && !CompiledConfig.isOfflineAccountFixture, "Nonsimulator compiled configuration cannot trust UI login flags")
+        check(!allowed(fresh), "Fresh signed-out launch requires an account")
+        for _ in 0..<3 { fresh.signInAnonymouslyIfNeeded() }
+        check(!(await fresh.ensureSession()) && fresh.connection.calls == 0, "Fresh signed-out actions do not enter a retry loop")
+        check(URLSession.shared.requests.isEmpty && AuthStore.credentialWrites == 0, "Fresh launch does not create anonymous users")
+        let staleOnboarding = OnboardingState()
+        staleOnboarding.finishForTest()
+        check(!staleOnboarding.hasOnboarded && RealEstateRoleStore.writes == 0 && PaywallRouter.shared.calls == 0, "Stale onboarding completion cannot save preferences or present purchases")
+        for onboarded in [true, false] {
+            check(!NativeAccountLaunchAdmission.allowsRoutes(accountReady: allowed(fresh), hasOnboarded: onboarded), "Onboarding preference cannot bypass the account gate")
+        }
+        let legacyToken = jwt(anonymous: true)
+        let guest = start(token: legacyToken, refresh: "legacy-refresh", remembered: a)
+        check(guest.isSignedIn && !guest.isIdentified, "Legacy guest session remains stored for adoption")
+        check(!allowed(guest), "Legacy guest cannot enter business onboarding or Home")
+        guest.signInAnonymouslyIfNeeded()
+        check(AuthStore.access == legacyToken && AuthStore.refresh == "legacy-refresh" && guest.adoptionDiscarded == 0, "Showing the gate preserves legacy credentials and local adoption work")
+        let named = start(token: jwt(), refresh: "named-refresh", remembered: a)
+        check(allowed(named), "Returning identified session can enter offline")
+        check(named.tokenForTest() != nil, "Fresh named credential remains usable")
+        check(!NativeAccountLaunchAdmission.allowsRoutes(accountReady: true, hasOnboarded: false), "Business onboarding precedes deferred routes")
+        check(NativeAccountLaunchAdmission.allowsRoutes(accountReady: true, hasOnboarded: true), "Returning identified account can resume deferred routes")
+        let expired = start(token: jwt(expiry: 1), refresh: "recoverable-refresh", remembered: a)
+        check(allowed(expired), "Cached identified account retains local offline access with refresh credentials")
+        let refreshProbe = RefreshProbe()
+        check(!(await refreshProbe.refreshIfNeeded()) && refreshProbe.refreshes == 1, "Expired cached JWT refreshes despite future remembered metadata")
+        check(allowed(expired), "Transient refresh failure preserves named local offline access")
+        check(expired.tokenForTest() == nil, "Offline admission never sends an expired credential")
+        check(!allowed(start(token: jwt(expiry: 1), remembered: a)), "Expired nonrefreshable session cannot enter")
+        for anonymous: Any in ["false", NSNull(), 1] {
+            check(!allowed(start(token: jwt(anonymous: anonymous), refresh: "synthetic")), "Wrong-typed anonymous claim cannot unlock the account")
+        }
+        for token in ["junk", "synthetic.e30.signature", jwt("not-an-actor"), String(jwt().dropLast(10))] {
+            check(!allowed(start(token: token, refresh: "synthetic", remembered: a)), "Malformed token or missing UUID cannot use remembered account identity")
+        }
+        for expiry: Any in [true, "9999999999", -1, 2.5] {
+            check(!allowed(start(token: jwt(expiry: expiry), refresh: "synthetic")), "Malformed expiry cannot unlock account content")
+        }
+        check(allowed(start(token: jwt(anonymous: nil), refresh: "synthetic")), "Legacy identified token without anonymous claim stays compatible")
+        let mismatch = start(token: jwt(b), refresh: "synthetic", remembered: a)
+        check(mismatch.userID == b && mismatch.displayName.isEmpty && mismatch.orgName.isEmpty, "Cached subject mismatch cannot show another account's names")
+        var cacheNotifications = 0
+        mismatch.onAccountChanged = { _ in cacheNotifications += 1 }
+        reply(jwt(b))
+        check(await mismatch.refreshForTest(), "Cached account can rotate its token")
+        check(cacheNotifications == 0, "Cached account does not detach itself on same-owner refresh")
+        let required = SignInView.requiredAccount()
+        check(required.requiresAccount, "Required sign-in has no dismiss mode")
+        check(required.title.contains("Rendprop") && required.subtitle.contains("Create an account"), "Required account gate uses branded honest copy")
+        var pending = NativeIncomingQueue()
+        pending.enqueue(.link(.tour("owned-fixture")))
+        pending.enqueue(.link(.join("invite-fixture")))
+        pending.enqueue(.leads)
+        check(pending.takeNext(canPresent: NativeAccountLaunchAdmission.allowsRoutes(accountReady: false, hasOnboarded: true)) == nil && pending.routes.count == 3, "Deferred URL waits behind the account gate")
+        check(pending.takeNext(canPresent: NativeAccountLaunchAdmission.allowsRoutes(accountReady: true, hasOnboarded: false)) == nil, "Deferred invitation waits for business onboarding")
+        check(pending.takeNext(canPresent: NativeAccountLaunchAdmission.allowsRoutes(accountReady: true, hasOnboarded: true)) == .link(.tour("owned-fixture")), "Deferred URL resumes only after account and onboarding")
+        let current = start(token: jwt(), refresh: "synthetic", remembered: a)
+        let before = current.syncIdentityEpoch
+        let priorToken = AuthStore.access
+        reply(jwt(b))
+        check(!(await current.refreshForTest()) && current.userID == a && current.syncIdentityEpoch == before && AuthStore.access == priorToken, "Foreign refresh cannot replace account or cached files")
+        reply(jwt(anonymous: true))
+        check(!(await current.refreshForTest()) && current.isIdentified, "A refresh cannot replace a named session with a guest")
+        reply(jwt())
+        check(await current.refreshForTest(), "Ordinary same-account refresh still succeeds")
+        check(current.syncIdentityEpoch == before, "JWT rotation preserves already admitted background identity")
+        URLSession.shared.status = 401
+        check(!(await current.refreshForTest()), "Revoked refresh refuses")
+        check(!allowed(current) && current.adoptionDiscarded == 0, "Forced invalidation preserves guest adoption evidence")
+        check(current.syncIdentityEpoch != before && AuthStore.access == nil, "Logout immediately fences old requests and regates")
+        current.signOut()
+        check(current.adoptionDiscarded == 1, "Explicit user signout retains the deliberate discard behavior")
+        let applied = start(token: jwt(), refresh: "synthetic", remembered: a)
+        let beforeInvalid = AuthStore.access
+        check(!applied.applyForTest(jwt(expiry: 1)) && AuthStore.access == beforeInvalid && applied.isIdentified, "Rejected session application cannot replace a valid account")
+        check(NativeAccountLaunchAdmission.allows(signedIn: false, identified: false, actorID: nil, offlineFixture: true), "Explicit offline simulator fixture remains available")
+        check(!NativeAccountLaunchAdmission.allows(signedIn: false, identified: false, actorID: nil, offlineFixture: false), "Physical nonfixture cannot bypass account admission")
+        print("PASS: \(checks) required account/session/route assertions")
+    }
+}

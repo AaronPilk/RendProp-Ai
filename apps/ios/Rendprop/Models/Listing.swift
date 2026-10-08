@@ -669,13 +669,16 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Home hero headline — the emotional promise, two short lines, in the
-    /// owner's words: it should hit what the app DOES for them (win the
-    /// listing, book the date, fill the room), not describe the mechanics.
+    /// Home hero label identifies the agent audience; other roles retain the brand.
+    var heroEyebrow: String {
+        self == .realEstate && !RealEstateRoleStore.current.isProducer ? "REAL ESTATE AGENT" : "RENDPROP"
+    }
+
+    /// Home hero headline wraps naturally in the owner's chosen words.
     /// Fair-housing safe: never people, neighborhoods or demographics.
     var heroHeadline: String {
         switch self {
-        case .realEstate: return RealEstateRoleStore.current.isProducer ? "Create for your clients.\nDeliver more from every shoot." : "Win the listing.\nSkip the film crew."
+        case .realEstate: return RealEstateRoleStore.current.isProducer ? "Create for your clients.\nDeliver more from every shoot." : "List it. Launch it. Sell it."
         case .venue:      return "Book the date before\nthey ever visit."
         case .restaurant: return "Fill the room before\nthey see the menu."
         case .retail:     return "Get them in the door\nfrom their couch."
@@ -684,13 +687,13 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Home hero subline — what one walkthrough turns into, for this audience.
+    /// Home hero subline describes the tools available to this audience.
     var heroSubline: String {
         switch self {
         case .realEstate:
             return RealEstateRoleStore.current.isProducer
                 ? "Capture, edit and deliver listing media. Each client's page shows their contact details, and their inquiries stay organized in your account."
-                : "One walkthrough becomes a cinematic tour, polished photos and a link buyers can't stop scrolling — in minutes, from your phone."
+                : "Be your own crew. Capture and polish photos, create tours, social media content, floor plans, virtual staging, and a shareable property site - all from your phone."
         case .venue:
             return "Walk the room once. Get a cinematic tour, polished photos and a link planners share before they've booked a visit."
         case .restaurant:

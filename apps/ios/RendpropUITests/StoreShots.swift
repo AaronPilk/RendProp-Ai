@@ -88,7 +88,7 @@ final class StoreShots: XCTestCase {
     /// the store's industry frame shows (docs/appstore/screenshots/plan.json).
     private let industries: [StoreIndustry] = [
         StoreIndustry(raw: "real_estate", displayName: "Real estate",
-                      heroLine1: "Win the listing.", shotName: nil),
+                      heroLine1: "List it. Launch it. Sell it.", shotName: nil),
         StoreIndustry(raw: "venue", displayName: "Event venue",
                       heroLine1: "Book the date before", shotName: "s09-venue-home"),
         StoreIndustry(raw: "restaurant", displayName: "Restaurant / Bar",

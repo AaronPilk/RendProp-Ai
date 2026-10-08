@@ -100,7 +100,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Review the request", "Choose the motion and review the credit quote. Generated footage can contain errors in the building or surroundings."),
             ("Check the result", "Watch the entire clip before including it in a reel or publishing it. Keep your original footage for comparison.")]
         case .measurements: return [
-            ("Enter measurements", "Open Measurements for the listing. Add rooms or draw an outline by entering measured wall lengths."),
+            ("Enter measurements", "The Home shortcut is Coming soon. Open Measurements inside a listing to keep working with rooms or measured outlines."),
             ("Review the worksheet", "Check closure, units, levels and area categories. Furnished rooms can still be measured manually. App calculations are not a certified survey or appraisal."),
             ("Share a plan", "Export your measurements and worksheet, or upload a PDF or image from your measuring software. Automatic 3D scanning is marked Coming soon.")]
         case .contact: return [

@@ -11,9 +11,9 @@ import AuthenticationServices
 /// Live backend: a successful on-device render is PUBLISHED to the cloud
 /// (upload role=render → /renders/publish-app) so it gets a real shareable
 /// slug; the in-app tour works either way (local-first, contract §4). The AI
-/// tiers add the server Topaz pass first (skippable). Publishing establishes an
-/// anonymous session when needed. A connection outage preserves the local tour
-/// and the pending publish, then resumes automatically — never an Apple gate.
+/// tiers add the server Topaz pass first (skippable). Publishing refreshes the
+/// existing account session. A connection outage preserves the local tour and
+/// its pending publish; signing out regates the app without deleting that work.
 struct RenderStatusView: View {
     @EnvironmentObject var model: AppModel
 
@@ -531,34 +531,41 @@ private struct RenderStatusContent: View {
     }
 }
 
-// MARK: - Optional Sign in with Apple (Settings)
+// MARK: - Sign in with Apple (required launch and Settings)
 // Lives here (not a standalone file) so it's always in the Xcode target without
 // re-running xcodegen — see the repo's new-file-not-in-target rule.
 
-/// Explicit account upgrade. Feature actions use ensureSession(), not this
-/// sheet; capture and on-device render remain usable offline.
+/// Account admission comes before onboarding and feature screens. Returning
+/// identified accounts can use saved work and on-device capture offline.
 ///
 /// Uses the native `SignInWithAppleButton`: generate a fresh nonce, send its
 /// SHA256 as the request `nonce`, then exchange the returned identity token with
 /// Supabase using the RAW nonce (`AuthStore.exchangeAppleIdentityToken`).
+/// Concrete launch screen; Apple's credential exchange remains in SignInView.
+struct RequiredAccountGate: View {
+    var body: some View { SignInView.requiredAccount() }
+}
+
 struct SignInView: View {
-    /// Called once the optional account upgrade succeeds.
+    /// Called once this explicit account sign-in succeeds.
     var onSignedIn: () -> Void = {}
     var title: String = "Use Rendprop on your other devices"
-    var subtitle: String = "Everything works without signing in. Choose Sign in with Apple to connect your work to an account."
+    var subtitle: String = "Sign in with Apple to connect your listings and saved work to your Rendprop account."
 
-    var dismissNote: String = "Not now changes nothing. Your work stays on this phone and every feature keeps working."
+    var dismissNote: String = "Your saved work stays on this phone."
+    var requiresAccount = false
+
+    static func requiredAccount() -> SignInView {
+        SignInView(title: "Welcome to Rendprop",
+                   subtitle: "Create an account or sign in with Apple to continue. Your account keeps your listings, saved media and workspace connected.",
+                   dismissNote: "Existing work on this phone stays saved while you sign in.",
+                   requiresAccount: true)
+    }
 
     /// Ready-made copy for the AI tools (photo edits, aerials, reels).
     ///
-    /// THIS IS NO LONGER A WALL, and the words had to change with the mechanism.
-    /// App Review rejected 1.0 under Guideline 5.1.1(v) — an app may not require
-    /// registration before someone can use features or buy an IAP that is not
-    /// account-based — and this sheet was the wall. Every launch now carries an
-    /// anonymous session, so the AI tools run without it; this can only appear
-    /// when there is NO session at all, which means the network was down when
-    /// the app started. So it says that, instead of asking somebody to register
-    /// to use a feature they may already have paid for.
+    /// Existing feature callers can explain a connection/session failure.
+    /// Fresh launches reach the required account gate before any feature UI.
     static func forAI(_ what: String, onSignedIn: @escaping () -> Void = {}) -> SignInView {
         SignInView(onSignedIn: onSignedIn,
                    title: "Couldn't reach your account",
@@ -566,18 +573,13 @@ struct SignInView: View {
                    dismissNote: "Not now closes this — everything you set up stays here, and nothing is generated.")
     }
 
-    /// The OPTIONAL upgrade, offered rather than demanded.
-    ///
-    /// Apple's own words in the rejection: "You may explain to the user that
-    /// registering will enable them to access the purchased content from any of
-    /// their supported devices and provide them a way to register at any time."
-    /// That is what this is for, and it is why nothing in the app presents it as
-    /// a requirement.
+    /// Reauthentication/account connection sheet for existing callers. The
+    /// launch gate uses requiredAccount(), which has no dismissal path.
     static func optionalUpgrade(onSignedIn: @escaping () -> Void = {}) -> SignInView {
         SignInView(onSignedIn: onSignedIn,
                    title: "Use Rendprop on your other devices",
-                   subtitle: "Everything works without signing in. Sign in with Apple and your plan, your homes and your tours follow you to a new phone or an iPad — and you can do it any time.",
-                   dismissNote: "Not now changes nothing. Your work stays on this phone and every feature keeps working.")
+                   subtitle: "Sign in with Apple to connect your plan, listings and saved media across your devices.",
+                   dismissNote: "Your saved work stays on this phone.")
     }
 
     @Environment(\.dismiss) private var dismiss
@@ -591,7 +593,7 @@ struct SignInView: View {
         VStack(spacing: 22) {
             Spacer()
 
-            Image(systemName: "person.crop.circle.badge.checkmark")
+            Image(systemName: requiresAccount ? "house.lodge.fill" : "person.crop.circle.badge.checkmark")
                 .font(.system(size: 52, weight: .light))
                 .foregroundStyle(Theme.accent)
 
@@ -629,6 +631,7 @@ struct SignInView: View {
             .frame(height: 50)
             .padding(.horizontal)
             .disabled(isExchanging)
+            .accessibilityIdentifier("account.signInApple")
 
             if isExchanging {
                 HStack(spacing: 8) {
@@ -638,11 +641,13 @@ struct SignInView: View {
                 .font(.rpCaption)
             }
 
-            Button("Not now") { dismiss() }
-                .font(.rpBody)
-                .foregroundStyle(Theme.inkDim)
-                .padding(.top, 4)
-                .disabled(isExchanging)
+            if !requiresAccount {
+                Button("Not now") { dismiss() }
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
+                    .padding(.top, 4)
+                    .disabled(isExchanging)
+            }
 
             Text(dismissNote)
                 .font(.rpCaption)
@@ -650,12 +655,25 @@ struct SignInView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
 
+            if requiresAccount {
+                HStack(spacing: 18) {
+                    Link("Terms", destination: URL(string: "https://rendprop.com/terms")!)
+                        .accessibilityIdentifier("account.terms")
+                    Link("Privacy", destination: URL(string: "https://rendprop.com/privacy")!)
+                        .accessibilityIdentifier("account.privacy")
+                    Link("Get help", destination: SettingsView.supportMailURL(subject: "Rendprop account help"))
+                        .accessibilityIdentifier("account.help")
+                }
+                .font(.rpCaption)
+                .foregroundStyle(Theme.accent)
+            }
+
             Spacer()
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
-        .interactiveDismissDisabled(isExchanging)
+        .interactiveDismissDisabled(requiresAccount || isExchanging)
     }
 
     private func handle(_ result: Result<ASAuthorization, Error>) {
@@ -703,7 +721,7 @@ struct SignInView: View {
                         }
                         isExchanging = false
                         onSignedIn()
-                        dismiss()
+                        if !requiresAccount { dismiss() }
                     }
                 } catch {
                     await MainActor.run {
