@@ -529,7 +529,11 @@ final class BetaPolishUITests: XCTestCase {
         let modern = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Modern — pick the photos")).firstMatch
         scrollTo(modern); modern.tap()
         let apply = app.buttons["studio.batchApply"]
-        scrollTo(apply); XCTAssertEqual(apply.label, "Apply to 2 photos"); apply.tap()
+        scrollTo(apply)
+        XCTAssertEqual(apply.label, "Apply"); XCTAssertFalse(apply.isEnabled, "Staging requires explicit selection")
+        app.buttons["Select all"].tap()
+        XCTAssertEqual(apply.label, "Apply to 2 photos"); apply.tap()
+        confirmSyntheticStaging(count: 2)
         let finished = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Staging · Modern", "2 photos changed")).firstMatch
         XCTAssertTrue(finished.waitForExistence(timeout: 40), app.debugDescription)
         app.navigationBars["AI Photo Studio"].buttons.element(boundBy: 0).tap()
@@ -546,6 +550,7 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(use.label, "Use this version on listing", "The cover star opens review instead of publishing staging immediately")
         attach("legacy-staging-cover-review-gate")
+        reviewSyntheticStagingForPublication()
         use.tap(); XCTAssertEqual(use.label, "Selected for listing")
         app.buttons["Close"].tap()
         let reviewedCover = app.buttons["photos.cover.\(versionID)"]
@@ -625,6 +630,7 @@ final class BetaPolishUITests: XCTestCase {
         choices.buttons["Staged"].tap()
         let stageNotSelected = NSPredicate { _, _ in publication.exists && publication.label == "Use this version on listing" }
         expectation(for: stageNotSelected, evaluatedWith: app); waitForExpectations(timeout: 5)
+        reviewSyntheticStagingForPublication()
         publication.tap()
         XCTAssertEqual(publication.label, "Selected for listing")
         choices.buttons["Decluttered"].tap()
@@ -987,11 +993,51 @@ final class BetaPolishUITests: XCTestCase {
     private func applyThreeFixturePhotosAndWait(for title: String) {
         let apply = app.buttons["studio.batchApply"]
         scrollTo(apply)
+        if title.hasPrefix("Staging") {
+            XCTAssertEqual(apply.label, "Apply"); XCTAssertFalse(apply.isEnabled, "Staging requires explicit selection")
+            app.buttons["Select all"].tap()
+        }
         XCTAssertEqual(apply.label, "Apply to 3 photos")
         apply.tap()
+        if title.hasPrefix("Staging") { confirmSyntheticStaging(count: 3) }
         let completed = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", title, "3 photos changed")).firstMatch
         XCTAssertTrue(completed.waitForExistence(timeout: 40), app.debugDescription)
         XCTAssertFalse(app.alerts.firstMatch.exists, app.debugDescription)
+    }
+
+    private func confirmSyntheticStaging(count: Int) {
+        XCTAssertTrue(app.navigationBars["Stage selected photos"].waitForExistence(timeout: 10), app.debugDescription)
+        let confirm = app.buttons["photoStage.apply"]
+        XCTAssertTrue(confirm.exists && confirm.isEnabled, app.debugDescription)
+        XCTAssertEqual(confirm.label, "Stage \(count) photo\(count == 1 ? "" : "s")")
+        confirm.tap()
+        XCTAssertTrue(app.navigationBars["AI Photo Studio"].waitForExistence(timeout: 10), app.debugDescription)
+    }
+
+    private func reviewSyntheticStagingForPublication() {
+        let use = app.buttons["photoVersion.useOnListing"]
+        XCTAssertFalse(use.isEnabled, "Unreviewed staging must remain unpublishable")
+        let choices = app.scrollViews["photoVersion.savedChoices"]
+        choices.buttons["Earlier source"].tap()
+        XCTAssertTrue(choices.buttons["Earlier source"].isSelected, app.debugDescription)
+        choices.buttons["Staged"].tap()
+        XCTAssertTrue(app.staticTexts["Source comparison opened"].waitForExistence(timeout: 5), app.debugDescription)
+        let checks = ["Windows, walls and fixed appliances match the source",
+                      "Doors, exits and walking routes remain clear",
+                      "Furniture matches my other published views, or this is the only view"]
+        for label in checks {
+            let control = app.switches[label]
+            XCTAssertTrue(control.exists && control.isHittable, app.debugDescription)
+            // SwiftUI exposes a full-width wrapper and nested physical UISwitch.
+            // A wrapper-center tap hits its caption on iOS 26.
+            let physicalSwitch = control.switches.firstMatch
+            XCTAssertTrue(physicalSwitch.exists && physicalSwitch.isHittable, app.debugDescription)
+            XCTAssertEqual(physicalSwitch.value as? String, "0")
+            physicalSwitch.tap()
+            XCTAssertEqual(physicalSwitch.value as? String, "1", "The actual review toggle must turn on")
+        }
+        let complete = NSPredicate { _, _ in use.isEnabled }
+        expectation(for: complete, evaluatedWith: app); waitForExpectations(timeout: 5)
     }
 
     private func assertCompareContains(_ phrase: String) {
@@ -1003,12 +1049,12 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(download.waitForExistence(timeout: 10) && download.isHittable, app.debugDescription)
         download.tap()
         XCTAssertTrue(app.navigationBars["Export photos"].waitForExistence(timeout: 10), app.debugDescription)
-        let selectedVersion = original ? "Earlier source files" : "Selected saved edits"
+        let selectedVersion = original ? "Earlier source files" : "Selected photos · JPEG copies"
         let selected = app.staticTexts[selectedVersion]
         XCTAssertTrue(selected.exists, "Export starts with the version currently viewed: \(app.debugDescription)")
         let footer = original
             ? "Older files have no complete edit history. These earlier sources may already contain AI edits; verify them before publishing."
-            : "Full available resolution is kept. AI output resolution may be lower than your capture. Stored photos and originals are never changed."
+            : "Selected photos download as JPEG (.jpg) copies at full available resolution. AI output resolution may be lower than your capture. Stored photos and originals are never changed."
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label == %@", footer)).firstMatch.exists, app.debugDescription)
         // Opening the native sheet checks initial selection only. Never invoke
         // share, photo-library permission, a save, an upload or a paid provider.

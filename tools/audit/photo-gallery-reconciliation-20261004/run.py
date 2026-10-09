@@ -9,7 +9,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
-parser.add_argument('--inject-fault', choices=['drop-legacy-reconciliation', 'bypass-stage-review', 'latest-as-cover', 'blank-family-badges'])
+parser.add_argument('--inject-fault', choices=['drop-legacy-reconciliation', 'bypass-stage-review', 'latest-as-cover', 'blank-family-badges', 'forget-reviewed-stage'])
 parser.add_argument('--output-dir', type=Path)
 args = parser.parse_args()
 output = args.output_dir or Path(tempfile.mkdtemp(prefix='rendprop-photo-reconciliation-', dir='/tmp'))
@@ -35,10 +35,15 @@ if args.inject_fault == 'drop-legacy-reconciliation':
     body = body[:opening] + '{ return try readIndex(directory: directory) }' + body[end:]
     expected = 'first capture reconciles every pre-history gallery sibling'
 elif args.inject_fault == 'bypass-stage-review':
-    guard = '        guard reviewed || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }\n'
+    guard = '        guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }\n'
     assert body.count(guard) == 2
     body = body.replace(guard, '')
     expected = 'staging cannot bypass review through cover selection'
+elif args.inject_fault == 'forget-reviewed-stage':
+    reviewed = ' || version.stagingReviewed == true'
+    assert body.count(reviewed) == 2
+    body = body.replace(reviewed, '')
+    expected = 'previously reviewed staging can be reselected for publication'
 elif args.inject_fault == 'latest-as-cover':
     start, _, end = method_span(body, 'static func availableCoverVersion(')
     section = body[start:end]
@@ -69,7 +74,7 @@ log = result.stdout + result.stderr
 if expected:
     passed = result.returncode != 0 and expected in log and ('Precondition failed:' in log or 'Fatal error:' in log)
 else:
-    passed = result.returncode == 0 and 'Photo history/export geometry: 415 passed' in log
+    passed = result.returncode == 0 and 'Photo history/export geometry: 422 passed' in log
 receipt = {'passed': passed, 'fault': args.inject_fault, 'expected_runtime_assertion': expected,
            'compile_exit': compile_result.returncode, 'runtime_exit': result.returncode,
            'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),

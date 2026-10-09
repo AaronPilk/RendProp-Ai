@@ -390,7 +390,7 @@ enum PhotoVersionHistory {
             throw Failure.changedVersion
         }
         try requireImage(version.imageFile, directory: directory)
-        guard reviewed || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
+        guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
         if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
         index.current[version.familyID] = id
         if index.listingSelections == nil { index.listingSelections = index.current }
@@ -407,7 +407,7 @@ enum PhotoVersionHistory {
             throw Failure.changedVersion
         }
         try requireImage(version.imageFile, directory: directory)
-        guard reviewed || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
+        guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
         if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.listingSelections?[version.familyID] = id

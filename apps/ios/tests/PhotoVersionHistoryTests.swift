@@ -99,6 +99,23 @@ struct PhotoVersionHistoryTests {
         index = try PhotoVersionHistory.load(directory: dir)
         check(index.current["capture"] == "declutter" && index.listingSelections?["capture"] == "declutter", "declutter restored after staging")
         check(index.versions.count == 4 && (try? Data(contentsOf: dir.appendingPathComponent("edit-rustic.jpg"))) != nil, "reverting preserves rejected staging and lineage")
+        // A source/access/furniture review belongs to this exact saved version.
+        // Switching to the clean photo does not erase it or require a paid rerun.
+        check(index.versions["stage"]?.stagingReviewed == true, "review remains persisted after switching to declutter")
+        do { try PhotoVersionHistory.selectForPublication(id: "stage", directory: dir) }
+        catch { preconditionFailure("previously reviewed staging can be reselected for publication") }
+        index = try PhotoVersionHistory.load(directory: dir)
+        check(index.listingSelections?["capture"] == "stage", "publication reselects the exact previously reviewed staged version")
+        check(index.current["capture"] == "declutter", "publication reselect leaves the current editing workspace unchanged")
+        try PhotoVersionHistory.selectForPublication(id: "declutter", directory: dir)
+        do { try PhotoVersionHistory.select(id: "stage", directory: dir) }
+        catch { preconditionFailure("previously reviewed staging can be reselected through cover selection") }
+        index = try PhotoVersionHistory.load(directory: dir)
+        check(index.current["capture"] == "stage" && index.listingSelections?["capture"] == "stage", "cover reselect uses the persisted review for the exact version")
+        check((try? Data(contentsOf: dir.appendingPathComponent("orig-capture.jpg"))) == original, "reviewed-stage reselection never changes retained original bytes")
+        rejected("review of one stage cannot approve another stage in the same family") { try PhotoVersionHistory.selectForPublication(id: "rustic", directory: dir) }
+        rejected("cover reselect cannot inherit review from a different stage") { try PhotoVersionHistory.select(id: "rustic", directory: dir) }
+        try PhotoVersionHistory.select(id: "declutter", directory: dir)
         rejected("missing saved version cannot become public") { try PhotoVersionHistory.select(id: "missing", directory: dir) }
         let publishChoices = try PhotoVersionHistory.publicationVersions(directory: dir)
         check(publishChoices?.map(\.id) == ["declutter"], "publication uses reviewed versions rather than newest staging")
