@@ -1,0 +1,1104 @@
+{
+  "schema": 1,
+  "createdAt": "2026-10-09T03:26:21.854Z",
+  "status": "verified",
+  "sourceCommit": "323707712f2b0bcdc3a543c360babb504da27d6a",
+  "accountId": "9c332c75b96cc642621dad5d86d4bf18",
+  "wranglerVersion": "4.148.0",
+  "dependencyUpgrades": false,
+  "backendRedeployed": false,
+  "secretOrBillingChanges": false,
+  "versions": {
+    "site": {
+      "worker": "rendprop-tour-host",
+      "versionId": "800d95aa-4fbb-41c1-92d0-09ceb70bb1cf",
+      "deployedAt": "2026-10-09T03:20:58.980401Z",
+      "deploymentId": "7728a97d-1dba-44fc-8080-8d9d3b269a6b",
+      "percentage": 100,
+      "sourceAnnotation": "ship-20261009 323707712f2b0bcdc3a543c360babb504da27d6a",
+      "scriptEtag": "317374c14fb2f096faec9bace6f9737d8bfbd3011b606042a11264f10d046812"
+    },
+    "studio": {
+      "worker": "rendprop-studio",
+      "versionId": "80651d45-0f37-4661-bf8a-b11f199daaf8",
+      "deployedAt": "2026-10-09T03:21:30.915727Z",
+      "deploymentId": "9ef6dece-159f-4682-8f9a-e8f94e5e5856",
+      "percentage": 100,
+      "sourceAnnotation": "ship-20261009 323707712f2b0bcdc3a543c360babb504da27d6a connected-production",
+      "scriptEtag": ""
+    }
+  },
+  "sourceManifest": {
+    "fileCount": 371,
+    "sha256": "85ae22c49326b56dbec56f10a2988225a4e2d47a6a1e8277fe335dc6827adc43"
+  },
+  "checks": {
+    "sitePredeploy": "passed",
+    "studioVerify": {
+      "tests": 469,
+      "passed": 469,
+      "failed": 0,
+      "typecheck": true,
+      "build": true
+    },
+    "connectedStudioDistribution": {
+      "verified": true,
+      "projectRef": "ymgqpbnjpztwjsyvceld",
+      "keyKind": "publishable",
+      "keySha256": "20fbe3da1853621035141903f43bc6041963957ec6a7ea8f4d88d3d2475a010d",
+      "authSettingsStatus": 200,
+      "appleEnabled": true,
+      "gzipBytes": 342823,
+      "initialGzipBytes": 138750,
+      "createGzipBytes": 220617
+    },
+    "dryRuns": {
+      "site": "passed",
+      "studio": "passed"
+    },
+    "siteReadback": {
+      "requests": 44,
+      "staticFiles": 42,
+      "workerPages": 2,
+      "exactOriginBodies": true,
+      "rawServedBodyEqualsSource": false,
+      "platformTransformations": [
+        {
+          "path": "/",
+          "kind": "known-cloudflare-bot-management-jsd-insertion",
+          "injectionBytes": 938,
+          "injectedSha256": "02984ff4679fbdbce5cb5abea0820f29e8799ba26088ebde0c129cb01809ee35",
+          "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+          "onlyVariableFields": [
+            "ray",
+            "base64-timestamp"
+          ],
+          "originBytesExact": true
+        },
+        {
+          "path": "/compare",
+          "kind": "known-cloudflare-bot-management-jsd-insertion",
+          "injectionBytes": 938,
+          "injectedSha256": "84332a190f190aa8d826aab594b7f46f4c3e063b3c03b5b2c4b24ca08bc99985",
+          "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+          "onlyVariableFields": [
+            "ray",
+            "base64-timestamp"
+          ],
+          "originBytesExact": true
+        },
+        {
+          "path": "/features",
+          "kind": "known-cloudflare-bot-management-jsd-insertion",
+          "injectionBytes": 938,
+          "injectedSha256": "f5a266e0e7db2419457dc31e528b9d0511b3e53de2e6a2c0ba2fa3e24da6fb84",
+          "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+          "onlyVariableFields": [
+            "ray",
+            "base64-timestamp"
+          ],
+          "originBytesExact": true
+        },
+        {
+          "path": "/pricing",
+          "kind": "known-cloudflare-bot-management-jsd-insertion",
+          "injectionBytes": 938,
+          "injectedSha256": "27409ef673631868b4a368d50f043252cdf1b8e44625faec3b6d64d4f622b085",
+          "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+          "onlyVariableFields": [
+            "ray",
+            "base64-timestamp"
+          ],
+          "originBytesExact": true
+        },
+        {
+          "path": "/privacy",
+          "kind": "known-cloudflare-bot-management-jsd-insertion",
+          "injectionBytes": 938,
+          "injectedSha256": "2490acf977ca1fba7dc79288ec6a4560164a3329e55f63f546360d5d8d586677",
+          "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+          "onlyVariableFields": [
+            "ray",
+            "base64-timestamp"
+          ],
+          "originBytesExact": true
+        },
+        {
+          "path": "/support",
+          "kind": "known-cloudflare-bot-management-jsd-insertion",
+          "injectionBytes": 938,
+          "injectedSha256": "b1ead54afdc4c4e766ba1ae8bd63e94232cb6a8efc6ee76c9063c186b993f1cd",
+          "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+          "onlyVariableFields": [
+            "ray",
+            "base64-timestamp"
+          ],
+          "originBytesExact": true
+        },
+        {
+          "path": "/terms",
+          "kind": "known-cloudflare-bot-management-jsd-insertion",
+          "injectionBytes": 938,
+          "injectedSha256": "2fd5444281271239bc1055e69fdce82f4c5d3717cecf63d6791200645ae84cd2",
+          "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+          "onlyVariableFields": [
+            "ray",
+            "base64-timestamp"
+          ],
+          "originBytesExact": true
+        }
+      ],
+      "semantics": {
+        "monthlyTerms": true,
+        "limitedSharedTrial": true,
+        "pricingNoAnnualPrices": true,
+        "retention90Days": true,
+        "pricingMonthlyAiBudget": true,
+        "realListingCta": true,
+        "llmsMonthlyOnly": true,
+        "llmsLimitedTrial": true
+      }
+    },
+    "studioReadback": {
+      "files": 31,
+      "requests": 35,
+      "exactServedAssetBodies": true,
+      "callbackStatus": 307,
+      "callbackQueryPreserved": true,
+      "unknownRoutes404": true,
+      "privateNoindex": true,
+      "accountLoginVerified": false
+    }
+  },
+  "siteFiles": [
+    {
+      "path": "/",
+      "sourceFile": "index.html",
+      "kind": "static",
+      "status": 200,
+      "bytes": 40413,
+      "localSha256": "5efdd2a024e3c74119ef0e35a0706ab3742ef72ae970fde0de6baca7f3a044f9",
+      "servedSha256": "bdac082e03f7b3f89ed5ca66487a363ca2508c6818682891206b501187b443c2",
+      "originBytesExact": true,
+      "transformation": {
+        "kind": "known-cloudflare-bot-management-jsd-insertion",
+        "injectionBytes": 938,
+        "injectedSha256": "02984ff4679fbdbce5cb5abea0820f29e8799ba26088ebde0c129cb01809ee35",
+        "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+        "onlyVariableFields": [
+          "ray",
+          "base64-timestamp"
+        ],
+        "originBytesExact": true
+      },
+      "contentType": "text/html"
+    },
+    {
+      "path": "/.well-known/security.txt",
+      "sourceFile": ".well-known/security.txt",
+      "kind": "static",
+      "status": 200,
+      "bytes": 141,
+      "localSha256": "ac775506bfcdecf7157d76e7024c194208c24ff15d5ece602b41b893948b6310",
+      "servedSha256": "ac775506bfcdecf7157d76e7024c194208c24ff15d5ece602b41b893948b6310",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/assets/agent-headshot.webp",
+      "sourceFile": "assets/agent-headshot.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 78202,
+      "localSha256": "e322c53c4b6711901b9b266b1bdca29f5b029d5b8257c65303397201bc28856e",
+      "servedSha256": "e322c53c4b6711901b9b266b1bdca29f5b029d5b8257c65303397201bc28856e",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/ai-wave-dark.webp",
+      "sourceFile": "assets/ai-wave-dark.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 46854,
+      "localSha256": "1c4c60d7ce94c5701bdcc4918d83cdc2c2e518561ae0b576855943a019c55d73",
+      "servedSha256": "1c4c60d7ce94c5701bdcc4918d83cdc2c2e518561ae0b576855943a019c55d73",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/apple-touch-icon.png",
+      "sourceFile": "assets/apple-touch-icon.png",
+      "kind": "static",
+      "status": 200,
+      "bytes": 6606,
+      "localSha256": "c00f47c8dce95f55d85fe86c56aa85116079c67c2a7d33637f8bb392661295fb",
+      "servedSha256": "c00f47c8dce95f55d85fe86c56aa85116079c67c2a7d33637f8bb392661295fb",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/png"
+    },
+    {
+      "path": "/assets/construction-site-framing.webp",
+      "sourceFile": "assets/construction-site-framing.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 133484,
+      "localSha256": "d05e50bd6f9fb850205c7538215f1cf5b344949370715e66961b50b4d8ad7cbb",
+      "servedSha256": "d05e50bd6f9fb850205c7538215f1cf5b344949370715e66961b50b4d8ad7cbb",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/demo-g1.webp",
+      "sourceFile": "assets/demo-g1.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 37558,
+      "localSha256": "8b7106de3fb113dcb99e4477376b95d532267147d480a27d85fea91b89511848",
+      "servedSha256": "8b7106de3fb113dcb99e4477376b95d532267147d480a27d85fea91b89511848",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/demo-g2.webp",
+      "sourceFile": "assets/demo-g2.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 34152,
+      "localSha256": "491d5f24eaff7415af499433e77a8e565578a77ee3407a5600582ce43c785efb",
+      "servedSha256": "491d5f24eaff7415af499433e77a8e565578a77ee3407a5600582ce43c785efb",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/demo-g3.webp",
+      "sourceFile": "assets/demo-g3.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 22552,
+      "localSha256": "e91aa2c5be72a2649c82a8369bc7ad2c7550ce9364a1db76760e1d420c8f9592",
+      "servedSha256": "e91aa2c5be72a2649c82a8369bc7ad2c7550ce9364a1db76760e1d420c8f9592",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/demo-g4.webp",
+      "sourceFile": "assets/demo-g4.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 18712,
+      "localSha256": "7ec6bb18dd4e59f9506ba9251413f4a1c1fc6285b1567231366fd15c62238753",
+      "servedSha256": "7ec6bb18dd4e59f9506ba9251413f4a1c1fc6285b1567231366fd15c62238753",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/demo-g5.webp",
+      "sourceFile": "assets/demo-g5.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 61656,
+      "localSha256": "d6d2c4f240e34a2b681f91b90bd7092c02042fa17b6e9fcdc4d50ecd9e2d5bc9",
+      "servedSha256": "d6d2c4f240e34a2b681f91b90bd7092c02042fa17b6e9fcdc4d50ecd9e2d5bc9",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/demo-g6.webp",
+      "sourceFile": "assets/demo-g6.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 53056,
+      "localSha256": "115f5d390db74c781b18b08da6fcb8f10e73fc44210a74d7233febc7bb6be273",
+      "servedSha256": "115f5d390db74c781b18b08da6fcb8f10e73fc44210a74d7233febc7bb6be273",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/demo-poster.webp",
+      "sourceFile": "assets/demo-poster.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 60676,
+      "localSha256": "3d85cdfb102b0b20cddb71cb2f7f4f7c3e979a6493ec70fbef907b5cce774436",
+      "servedSha256": "3d85cdfb102b0b20cddb71cb2f7f4f7c3e979a6493ec70fbef907b5cce774436",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/demo-reel.mp4",
+      "sourceFile": "assets/demo-reel.mp4",
+      "kind": "static",
+      "status": 200,
+      "bytes": 6471306,
+      "localSha256": "5e43b7194f25be3d79fa97c66397ebc955cc7c0fda08379b34df5f77b46593c1",
+      "servedSha256": "5e43b7194f25be3d79fa97c66397ebc955cc7c0fda08379b34df5f77b46593c1",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "video/mp4"
+    },
+    {
+      "path": "/assets/demo-tour.mp4",
+      "sourceFile": "assets/demo-tour.mp4",
+      "kind": "static",
+      "status": 200,
+      "bytes": 23714304,
+      "localSha256": "775209174667be1776ad4028cbf1e09ef7180aff9fb113d10d78d0ed7b698a05",
+      "servedSha256": "775209174667be1776ad4028cbf1e09ef7180aff9fb113d10d78d0ed7b698a05",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "video/mp4"
+    },
+    {
+      "path": "/assets/example-staging-after.webp",
+      "sourceFile": "assets/example-staging-after.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 71304,
+      "localSha256": "ba429b3341a73e495a56acc01f6074b34ececc614f70aec59169c8853a9be8e4",
+      "servedSha256": "ba429b3341a73e495a56acc01f6074b34ececc614f70aec59169c8853a9be8e4",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/example-staging-before.webp",
+      "sourceFile": "assets/example-staging-before.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 72336,
+      "localSha256": "411d36de24ec4e62b1197007e62eccfd6e3191a23aa0da0d19bd790aeb6b4dac",
+      "servedSha256": "411d36de24ec4e62b1197007e62eccfd6e3191a23aa0da0d19bd790aeb6b4dac",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/example-twilight-after.webp",
+      "sourceFile": "assets/example-twilight-after.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 171498,
+      "localSha256": "91135d3c70db7d4c3839def4c8eb16a87784f235ea44fe91f8ae1e0af807f0a0",
+      "servedSha256": "91135d3c70db7d4c3839def4c8eb16a87784f235ea44fe91f8ae1e0af807f0a0",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/example-twilight-before.webp",
+      "sourceFile": "assets/example-twilight-before.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 193618,
+      "localSha256": "5453160ae7b5cc642b99ff7a609165d30b55e577d8e962f9a9e56bd8083e241a",
+      "servedSha256": "5453160ae7b5cc642b99ff7a609165d30b55e577d8e962f9a9e56bd8083e241a",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/glass-house-exterior.webp",
+      "sourceFile": "assets/glass-house-exterior.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 141572,
+      "localSha256": "0b3232b4aa277a3e97b1493b01d5a0111395fa47e1c799de16f92c74deb824f9",
+      "servedSha256": "0b3232b4aa277a3e97b1493b01d5a0111395fa47e1c799de16f92c74deb824f9",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/hero-twilight-modern-home-1280.webp",
+      "sourceFile": "assets/hero-twilight-modern-home-1280.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 83514,
+      "localSha256": "986cadf66fa4c9fd078ac36c1965181d10edab71692298a614cf093f2efe8a83",
+      "servedSha256": "986cadf66fa4c9fd078ac36c1965181d10edab71692298a614cf093f2efe8a83",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/hero-twilight-modern-home.webp",
+      "sourceFile": "assets/hero-twilight-modern-home.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 299736,
+      "localSha256": "24bb73222b0e0e27b5f734707ebe1e473552d473fac9ef22b6a1e805e8982046",
+      "servedSha256": "24bb73222b0e0e27b5f734707ebe1e473552d473fac9ef22b6a1e805e8982046",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/hospitality-spa-detail.webp",
+      "sourceFile": "assets/hospitality-spa-detail.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 78296,
+      "localSha256": "5cf59902028d2a27d78e7c065fc9ce62573eafbae9d5501ef3e7b3fca146a6c6",
+      "servedSha256": "5cf59902028d2a27d78e7c065fc9ce62573eafbae9d5501ef3e7b3fca146a6c6",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/living-room-walkthrough.webp",
+      "sourceFile": "assets/living-room-walkthrough.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 70472,
+      "localSha256": "837ffefe26aec5b2e737a2a48688ef7eca6a8033846438470d33cc92eea282b2",
+      "servedSha256": "837ffefe26aec5b2e737a2a48688ef7eca6a8033846438470d33cc92eea282b2",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/luxury-kitchen-interior.webp",
+      "sourceFile": "assets/luxury-kitchen-interior.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 78146,
+      "localSha256": "594948dd592cf12a033689b88928e16874ee163be84fcc2a6af5f52af35c8c30",
+      "servedSha256": "594948dd592cf12a033689b88928e16874ee163be84fcc2a6af5f52af35c8c30",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/modern-home-exterior-tour.webp",
+      "sourceFile": "assets/modern-home-exterior-tour.webp",
+      "kind": "static",
+      "status": 200,
+      "bytes": 235544,
+      "localSha256": "50e602250d5f792fe6179e4f16901c6a3c9ad33ca3821f4fe096fc06f47ea0ac",
+      "servedSha256": "50e602250d5f792fe6179e4f16901c6a3c9ad33ca3821f4fe096fc06f47ea0ac",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/webp"
+    },
+    {
+      "path": "/assets/og.jpg",
+      "sourceFile": "assets/og.jpg",
+      "kind": "static",
+      "status": 200,
+      "bytes": 164953,
+      "localSha256": "38c3e5943385cf128740dc0d15afa3241da59e60271b281614babe3259cd7761",
+      "servedSha256": "38c3e5943385cf128740dc0d15afa3241da59e60271b281614babe3259cd7761",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/jpeg"
+    },
+    {
+      "path": "/assets/rendprop-mark.svg",
+      "sourceFile": "assets/rendprop-mark.svg",
+      "kind": "static",
+      "status": 200,
+      "bytes": 582,
+      "localSha256": "7d53d0d2b3dce39bd990080749a0cbab365fecb83d4b59b347fbedb663f03f81",
+      "servedSha256": "7d53d0d2b3dce39bd990080749a0cbab365fecb83d4b59b347fbedb663f03f81",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/svg+xml"
+    },
+    {
+      "path": "/assets/site.css",
+      "sourceFile": "assets/site.css",
+      "kind": "static",
+      "status": 200,
+      "bytes": 37149,
+      "localSha256": "8911ddb6320a308c66df6dc05ea2c887f4ee7d170dba1a7f12ee117fcf41942b",
+      "servedSha256": "8911ddb6320a308c66df6dc05ea2c887f4ee7d170dba1a7f12ee117fcf41942b",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "text/css"
+    },
+    {
+      "path": "/assets/site.js",
+      "sourceFile": "assets/site.js",
+      "kind": "static",
+      "status": 200,
+      "bytes": 7371,
+      "localSha256": "3bd4c36c515e500ecf4a10891e6e2727534acc5a61bdf47c01ea034116264d74",
+      "servedSha256": "3bd4c36c515e500ecf4a10891e6e2727534acc5a61bdf47c01ea034116264d74",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "text/javascript"
+    },
+    {
+      "path": "/assets/tract-word-dark.png",
+      "sourceFile": "assets/tract-word-dark.png",
+      "kind": "static",
+      "status": 200,
+      "bytes": 35741,
+      "localSha256": "35dcbf91e9339ae2c07f9031629cf366239cce5c5272981e7d1ffa86d638c45e",
+      "servedSha256": "35dcbf91e9339ae2c07f9031629cf366239cce5c5272981e7d1ffa86d638c45e",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/png"
+    },
+    {
+      "path": "/assets/tract-word-light.png",
+      "sourceFile": "assets/tract-word-light.png",
+      "kind": "static",
+      "status": 200,
+      "bytes": 31901,
+      "localSha256": "effee304226708349a3c250fa040d89f3df6b0e8def4597fef7c3a45fa52a362",
+      "servedSha256": "effee304226708349a3c250fa040d89f3df6b0e8def4597fef7c3a45fa52a362",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/png"
+    },
+    {
+      "path": "/assets/wml-mark.png",
+      "sourceFile": "assets/wml-mark.png",
+      "kind": "static",
+      "status": 200,
+      "bytes": 10214,
+      "localSha256": "0ef57123e0f9e3bdea68fa24742413597192234315aa5d0815195f54176f4bcd",
+      "servedSha256": "0ef57123e0f9e3bdea68fa24742413597192234315aa5d0815195f54176f4bcd",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/png"
+    },
+    {
+      "path": "/compare",
+      "sourceFile": "compare.html",
+      "kind": "static",
+      "status": 200,
+      "bytes": 20855,
+      "localSha256": "502ecf61217e1d51e4c3c93542ca3f7604fe49ca5ef865129811dbe764d0b2ce",
+      "servedSha256": "7ce7d77c33ad885e43ff6fa468b683e802827c61d4fa85e7e2af8b613fec3f0f",
+      "originBytesExact": true,
+      "transformation": {
+        "kind": "known-cloudflare-bot-management-jsd-insertion",
+        "injectionBytes": 938,
+        "injectedSha256": "84332a190f190aa8d826aab594b7f46f4c3e063b3c03b5b2c4b24ca08bc99985",
+        "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+        "onlyVariableFields": [
+          "ray",
+          "base64-timestamp"
+        ],
+        "originBytesExact": true
+      },
+      "contentType": "text/html"
+    },
+    {
+      "path": "/favicon.svg",
+      "sourceFile": "favicon.svg",
+      "kind": "static",
+      "status": 200,
+      "bytes": 543,
+      "localSha256": "ca256c7b1d54bff6f7244f57d38564a21741dad4adb7945d044d912a615734cd",
+      "servedSha256": "ca256c7b1d54bff6f7244f57d38564a21741dad4adb7945d044d912a615734cd",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "image/svg+xml"
+    },
+    {
+      "path": "/features",
+      "sourceFile": "features.html",
+      "kind": "static",
+      "status": 200,
+      "bytes": 33380,
+      "localSha256": "38457a9461aa1255d8314b06b01fbf4a689a490716d61b4628c1dc3a1a5e8fb5",
+      "servedSha256": "0f849ba99b92ada9c6d3859d2d80e68a792ef392716656d8f9c7427adfbb0184",
+      "originBytesExact": true,
+      "transformation": {
+        "kind": "known-cloudflare-bot-management-jsd-insertion",
+        "injectionBytes": 938,
+        "injectedSha256": "f5a266e0e7db2419457dc31e528b9d0511b3e53de2e6a2c0ba2fa3e24da6fb84",
+        "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+        "onlyVariableFields": [
+          "ray",
+          "base64-timestamp"
+        ],
+        "originBytesExact": true
+      },
+      "contentType": "text/html"
+    },
+    {
+      "path": "/gear.json",
+      "sourceFile": "gear.json",
+      "kind": "static",
+      "status": 200,
+      "bytes": 6231,
+      "localSha256": "1ccae8de74be8eab64fefae7217d562928702af3ca95f3bb978535a3336f408e",
+      "servedSha256": "1ccae8de74be8eab64fefae7217d562928702af3ca95f3bb978535a3336f408e",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "application/json"
+    },
+    {
+      "path": "/llms.txt",
+      "sourceFile": "llms.txt",
+      "kind": "static",
+      "status": 200,
+      "bytes": 4943,
+      "localSha256": "2c1e09a32987f046f8e4ac0becc1aea32b001bfa48747f2ed4e9e5719af5d7c7",
+      "servedSha256": "2c1e09a32987f046f8e4ac0becc1aea32b001bfa48747f2ed4e9e5719af5d7c7",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/pricing",
+      "sourceFile": "pricing.html",
+      "kind": "static",
+      "status": 200,
+      "bytes": 28500,
+      "localSha256": "a0dcb5ae9c5bcc2bba30843f75f1052933fbb871217bea9996d1a61e8b76cb50",
+      "servedSha256": "953e8f013f2d4a46aa7f66739eb2e24f75bc677d9f49d68b7ba85d860be74b2d",
+      "originBytesExact": true,
+      "transformation": {
+        "kind": "known-cloudflare-bot-management-jsd-insertion",
+        "injectionBytes": 938,
+        "injectedSha256": "27409ef673631868b4a368d50f043252cdf1b8e44625faec3b6d64d4f622b085",
+        "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+        "onlyVariableFields": [
+          "ray",
+          "base64-timestamp"
+        ],
+        "originBytesExact": true
+      },
+      "contentType": "text/html"
+    },
+    {
+      "path": "/privacy",
+      "sourceFile": null,
+      "kind": "worker-rendered",
+      "status": 200,
+      "bytes": 22288,
+      "localSha256": "e26ab77cf88244b22083e392b868a4301177595711776012e1acb67f82aa16cc",
+      "servedSha256": "aa5b4414f655270bc82b56c8d904a60940b4a329efb5cc32943e38d417a673bc",
+      "originBytesExact": true,
+      "transformation": {
+        "kind": "known-cloudflare-bot-management-jsd-insertion",
+        "injectionBytes": 938,
+        "injectedSha256": "2490acf977ca1fba7dc79288ec6a4560164a3329e55f63f546360d5d8d586677",
+        "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+        "onlyVariableFields": [
+          "ray",
+          "base64-timestamp"
+        ],
+        "originBytesExact": true
+      },
+      "contentType": "text/html; charset=utf-8"
+    },
+    {
+      "path": "/recipient-confirmation.js",
+      "sourceFile": "recipient-confirmation.js",
+      "kind": "static",
+      "status": 200,
+      "bytes": 748,
+      "localSha256": "8cae4fc181778c138508a6227897728bd1f1b06877fc7c78a0dd4b6e7eb46910",
+      "servedSha256": "8cae4fc181778c138508a6227897728bd1f1b06877fc7c78a0dd4b6e7eb46910",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "text/javascript"
+    },
+    {
+      "path": "/robots.txt",
+      "sourceFile": "robots.txt",
+      "kind": "static",
+      "status": 200,
+      "bytes": 3162,
+      "localSha256": "199ac610ee4de012dbc039154f5fded55774c362e16e2b2247fac649b5130d58",
+      "servedSha256": "199ac610ee4de012dbc039154f5fded55774c362e16e2b2247fac649b5130d58",
+      "originBytesExact": true,
+      "transformation": null,
+      "contentType": "text/plain"
+    },
+    {
+      "path": "/support",
+      "sourceFile": "support.html",
+      "kind": "static",
+      "status": 200,
+      "bytes": 17843,
+      "localSha256": "0ae5eca31003996b701a45e8cda8b916c61eff0e6c9ad2b0e701d614c3cdd2ef",
+      "servedSha256": "fcd12a356be623b0891d513e2f30a09e2a5f96fff9ab1463538b77001bf053b2",
+      "originBytesExact": true,
+      "transformation": {
+        "kind": "known-cloudflare-bot-management-jsd-insertion",
+        "injectionBytes": 938,
+        "injectedSha256": "b1ead54afdc4c4e766ba1ae8bd63e94232cb6a8efc6ee76c9063c186b993f1cd",
+        "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+        "onlyVariableFields": [
+          "ray",
+          "base64-timestamp"
+        ],
+        "originBytesExact": true
+      },
+      "contentType": "text/html"
+    },
+    {
+      "path": "/terms",
+      "sourceFile": null,
+      "kind": "worker-rendered",
+      "status": 200,
+      "bytes": 14877,
+      "localSha256": "c13136d4f8c8815d477cfce512456e18b19af6e07088877819b8b947cecdc9d6",
+      "servedSha256": "4f74472437e95cb1746bf4376a1c1989420dec6842a590099b1638f28f571a12",
+      "originBytesExact": true,
+      "transformation": {
+        "kind": "known-cloudflare-bot-management-jsd-insertion",
+        "injectionBytes": 938,
+        "injectedSha256": "2fd5444281271239bc1055e69fdce82f4c5d3717cecf63d6791200645ae84cd2",
+        "skeletonSha256": "6c7057c23f3b3d69eafc426363b3587d70f83e02e8774d9bd8ae542a8bdbdefd",
+        "onlyVariableFields": [
+          "ray",
+          "base64-timestamp"
+        ],
+        "originBytesExact": true
+      },
+      "contentType": "text/html; charset=utf-8"
+    }
+  ],
+  "studioFiles": [
+    {
+      "path": "/",
+      "bytes": 867,
+      "sha256": "60685e352e919775757e95d9b2f998fd471b7dc76e4adf5681a013756797d2ed",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/robots.txt",
+      "bytes": 26,
+      "sha256": "331ea9090db0c9f6f597bd9840fd5b171830f6e0b3ba1cb24dfa91f0c95aedc1",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/rendprop-mark.svg",
+      "bytes": 21252,
+      "sha256": "18c5edd6e6801cc33754b41619f167d28b8da33c5604776e70faf76311a31199",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/BusinessWorkspace-D66GMj6i.js",
+      "bytes": 54750,
+      "sha256": "ff003800e39e11723a954d05ad7629fa6a7e8e8f215b10f8e4d31449977a4232",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CloudPlanner-kODEfhvb.css",
+      "bytes": 659,
+      "sha256": "9418a3bfc8b437ea23c38c1c3cce26fcad012a7ded625332fad75224847a0f2d",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CloudPlanner-sZ3b6D_T.js",
+      "bytes": 7101,
+      "sha256": "d312aed468d2ca632e17fcc6348bc5ddef02f99181016d4c1b6ef70380f48985",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CreativeWorkspace-Bubs1oEh.js",
+      "bytes": 76130,
+      "sha256": "3eb39a88f6ddcd9bfa41c5d431dd77f30a5e9c36e37a245abb833c45b70e2afa",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CreativeWorkspace-Dy1cYa3P.css",
+      "bytes": 10906,
+      "sha256": "9b6b639f08d1dea448a30dc36219eea651ee7af88ee88135e30693d2026308d5",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/ListingWorkflow-BGD7Tl0V.js",
+      "bytes": 78399,
+      "sha256": "82e6fdc5a50cc23784c8ecef88328949290650c0870d86fd61358aede78c8dc4",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/ListingWorkflow-DevNfOJl.css",
+      "bytes": 12620,
+      "sha256": "877ec0926b58641c0085ec814f82a2a75d348695445588937fcc8d89114a5e55",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/PresenterPanel-B9Ya__Sb.css",
+      "bytes": 1381,
+      "sha256": "16da576ff68c5b6c1406a6439549815eb9c97106ee544374c0f66e03f6f6ebb8",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/PresenterPanel-DkOuLHh5.js",
+      "bytes": 34470,
+      "sha256": "d6b78c52dc2adbc16804f98ba721dd024df83636e339e50d236f88f65621950c",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/Projects-BDhZ78CV.css",
+      "bytes": 786,
+      "sha256": "b5bc7d7caea1ffd8a07e554e0b6f8e63d4cb20463d1ba94048585fed5b023d49",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/Projects-DX_g-Pjb.js",
+      "bytes": 18877,
+      "sha256": "79528d2ccc6403705fab9907b2ca91595b4667aa03803676d7f193c09401750a",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/PromptLibrary-BMwVF3qQ.css",
+      "bytes": 1718,
+      "sha256": "5c31b90ddfcd01f340a88648a0a8cdd5ac5831e48f05968fd24da04b29089325",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/PromptLibrary-BP67FR3w.js",
+      "bytes": 27248,
+      "sha256": "ecb990175926794dd89340dff7e75f11fecfeeb03ea02913e1fd8c833bf6ebf9",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/PropertyReels-Ce6ZKYAm.css",
+      "bytes": 7886,
+      "sha256": "b3c0d4c0d888cce588daa9ca26fefbdef4cff01c84f74aef434ef69e5e646ed3",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/PropertyReels-D72FUOQj.js",
+      "bytes": 93510,
+      "sha256": "4def4f9d67c44c8e99713b7ddc58349d5602e629fb85308ba4091aee078e02c6",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/ProxyPanel-BsI6qaeL.js",
+      "bytes": 14223,
+      "sha256": "676d47a2fd2dc9c5cb52219c2735f1d0f071a5a4b81037669de8704d4845b07c",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/RealEstateRolePicker-BEJkLH_s.css",
+      "bytes": 9436,
+      "sha256": "73dd4659c8da262221c1278525b4141c5bbf539094422560220cea5527ec82bb",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/RealEstateRolePicker-CKunfR78.js",
+      "bytes": 2330,
+      "sha256": "1f0625019200d11a6f7f5cf6563d25653bb729826ba96a94891fb6de15e6fbfd",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/SyncStatus-CgsMvttV.js",
+      "bytes": 629,
+      "sha256": "005c74b5231d8e4d19da10105f8a06cfa9581ed284ecc0f3197176cbe8e46e4c",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/api-Ca7E7nBl.js",
+      "bytes": 16253,
+      "sha256": "20b354c94fa05da1c8660e1a42c6d11c988a986f838c1c00e8ceff5f584641e0",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/cloud-media-BF2fFj6J.js",
+      "bytes": 114510,
+      "sha256": "fe74fc7946061af4a98049d3ae535d6a51000de96b44d296b959870a07dc5ece",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/cloud-media-CskToBGL.css",
+      "bytes": 19852,
+      "sha256": "aa17a2243cd74f778943406dfa927dec19318f39de5d4d6834ff2404d4a73d91",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/delivery-kit-DVuDJs4O.js",
+      "bytes": 25484,
+      "sha256": "c192965d3571dec5d8bc133abcec63bc7182779f3578f94a674a9e8476e51052",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/documents-DMs6yQtI.js",
+      "bytes": 4120,
+      "sha256": "7fa0a4ab607c4575612d962461f5f5500d93176399074e4728e9dd69ceb6931d",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/index-BzdA7aCM.css",
+      "bytes": 38641,
+      "sha256": "7e268c73fb27563b01a31e51dbe276fd020fa9919519be53353fb1146e618a2c",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/index-C-sqnDxF.js",
+      "bytes": 446965,
+      "sha256": "e75b7e8ec8f54d094f6327bb73fc8f44c89a7e877de0eb0a28cf99b8212fd54f",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/model-B-uEgHI1.js",
+      "bytes": 12683,
+      "sha256": "a9100446c381875ccc78917ffda6e899389707c6966c4bc7404ab352bfe9864a",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/qrcode-DtWdxa9d.js",
+      "bytes": 20628,
+      "sha256": "4d4f1742456b3e0406bba78d1d1c891386c40676bc217ef3d5e3f29bc2989034",
+      "status": 200,
+      "transformation": null
+    }
+  ],
+  "evidenceRoot": "/Users/pilksclaes/LocalRendpropAudits/ship-20261009/web",
+  "evidence": [
+    {
+      "file": "source-manifest.json",
+      "bytes": 66142,
+      "sha256": "85ae22c49326b56dbec56f10a2988225a4e2d47a6a1e8277fe335dc6827adc43"
+    },
+    {
+      "file": "site-predeploy.log",
+      "bytes": 2907,
+      "sha256": "a11bd876028ecddbe74bfbc5c144110106fd07f6d550a844b24058e5b3e40f61"
+    },
+    {
+      "file": "site-dry-run.log",
+      "bytes": 1178,
+      "sha256": "05f55c86760f89f1da2cffc980f7128bfe2c163e5941238017e5f4311d5e6130"
+    },
+    {
+      "file": "site-deploy.log",
+      "bytes": 1764,
+      "sha256": "54006cd9acfa797137683b1116650e7e62e010b8e8a39187ca65a703d431c57e"
+    },
+    {
+      "file": "site-served-readback.json",
+      "bytes": 23347,
+      "sha256": "16f8f338990c4c34376399c297bc0ccf617c7e6446a486b54b0684aae0c1ea6a"
+    },
+    {
+      "file": "site-version-before.json",
+      "bytes": 7320,
+      "sha256": "8958bdc1b871290897221f69ee85ab5dab700e88591e0abdce326154ed2ad8dc"
+    },
+    {
+      "file": "site-version-after.json",
+      "bytes": 7250,
+      "sha256": "17420f2ae51aa8fb59d578fe49d4719360e62fb29bb5070f9e94a80c741a8d50"
+    },
+    {
+      "file": "site-deployments-before.json",
+      "bytes": 4917,
+      "sha256": "284440ef7aea2d034e5fbf9a50b33997e324bf95ba7a2654e120a78fb51e0923"
+    },
+    {
+      "file": "site-deployments-after.json",
+      "bytes": 4896,
+      "sha256": "64627013aa0a28d6ad7b20e8459af5019d705069ac3f2a0a9292f156acfcaaf2"
+    },
+    {
+      "file": "studio-public-config-verification.json",
+      "bytes": 529,
+      "sha256": "8b0231a1894fdb17f4f3815cb49687521547b7286f6924eb0996850cb3571368"
+    },
+    {
+      "file": "studio-verify.log",
+      "bytes": 48434,
+      "sha256": "9d64542b6444a11b5caddcfc6a12fe6155ea1a67d1402285f736b69867bd4564"
+    },
+    {
+      "file": "studio-connected-dist.log",
+      "bytes": 312,
+      "sha256": "a3a7fbf0d841f178daca0f6d94cac78cbde2473639fdbc3670af311019d2901c"
+    },
+    {
+      "file": "studio-dry-run.log",
+      "bytes": 401,
+      "sha256": "7e06cf798ac75ce8afda5d7e8ea00588bda7baabf86f3992bd41c83b37d60deb"
+    },
+    {
+      "file": "studio-deploy.log",
+      "bytes": 1438,
+      "sha256": "df5c5b016270270210e2a426702f53ee683d2ce8babb0d9b678cd2a6aa1c1afe"
+    },
+    {
+      "file": "studio-served-readback.json",
+      "bytes": 7354,
+      "sha256": "990d701f29d437ad8fa92c9707074fca3c44478dd52fe0416f940d829a94b8a2"
+    },
+    {
+      "file": "studio-version-before.json",
+      "bytes": 3630,
+      "sha256": "f2a031a951cd877edfbcd21527eec775ac1c7c69b23a26b8f71f8c49931a2cee"
+    },
+    {
+      "file": "studio-version-after.json",
+      "bytes": 3581,
+      "sha256": "0730ca1c296edd546402ea0498c61848e9e36e6e82df66b402ddc25af91e9ec0"
+    },
+    {
+      "file": "studio-deployments-before.json",
+      "bytes": 4524,
+      "sha256": "9fbf8c0d084bbf23fad7346e0a8e07fd517975acb42f509a4829a310cddc5706"
+    },
+    {
+      "file": "studio-deployments-after.json",
+      "bytes": 4628,
+      "sha256": "1790df3cae9ccb790559135a7ddb7bd420617ce7b65cfb07ed73429e4b0b3acb"
+    },
+    {
+      "file": "verify-site.mjs",
+      "bytes": 5553,
+      "sha256": "01f55d33562b0e369135881414ce288d91f87bab52e2ad202ee52b905d4cfb4c"
+    }
+  ],
+  "limitations": [
+    "Live authenticated customer tours and leads are not exercised.",
+    "Readback proves exact origin public response bodies plus deployment source tag; Worker runtime source is not downloaded.",
+    "Cloudflare inserts a pinned bot-management JSD script into HTML; raw served hashes are recorded separately and only its ray/time vary.",
+    "Cloudflare managed robots prefix is recorded; crawler blocking is not certified.",
+    "Studio login and named non-sponsored Account & plan UI were not exercised live.",
+    "Camera capture, paid provider output and App Store acceptance are not proved by these web checks.",
+    "Both layers were stale before deploy. The prior Studio served entry lacked production Supabase configuration; this release embeds verified existing public configuration."
+  ]
+}
