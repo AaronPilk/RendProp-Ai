@@ -818,7 +818,11 @@ jobs:
         #     -H 'Accept: application/vnd.oci.image.index.v1+json' \
         #     https://registry-1.docker.io/v2/library/postgres/manifests/16
         #   # -> docker-content-digest: sha256:...
-        image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+        # Docker Hub refused the CI runner's unauthenticated pull on Oct 9.
+        # Google's official cache returned this exact index with matching
+        # Docker-Content-Digest AND independently computed SHA-256; same bits.
+        # https://docs.cloud.google.com/artifact-registry/docs/pull-cached-dockerhub-images
+        image: mirror.gcr.io/library/postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

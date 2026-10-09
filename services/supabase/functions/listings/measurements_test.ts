@@ -31,7 +31,7 @@ async function fixture() {
     const adminClient=()=>({rpc:async(name:string,args:any)=>{if(name==='listing_library_scope'){state.authority.push({name,args});return{error:null,data:{actor_id:state.actor,listing_id:args.p_listing,org_id:state.org,library_org_id:state.org,library_owner_user_id:state.actor,listing_owner_user_id:state.actor,role:'owner',access_mode:'own',can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:state.org,team_org_id:null}};}if(name!=='save_listing_measurements')throw Error('Unexpected synthetic RPC '+name);state.calls.push({name,args});return{data:{id:args.p_listing,org_id:args.p_org,details:{floor_measurements_v1:args.p_value},sqft:2000,status:'archived',sold_at:'2026-10-01'},error:state.error};}});
     export const handler=async(req:Request)=>{try{
       const seg=new URL(req.url).pathname.slice(1).split('/');const id=seg[0];
-      const explicitOrg=req.headers.get('X-Org-Id')??undefined,user={id:state.actor};
+      const requested=req.headers.get('X-Org-Id')??undefined,explicitOrg=requested,user={id:state.actor};
       ${source.slice(responseStart,responseEnd)}
       ${source.slice(start, end)}
       throw new HttpError(404,'Unknown route');

@@ -45,7 +45,7 @@ do $$declare f record;r jsonb;begin select * into f from fixture;
  perform pg_temp.ok(not exists(select 1 from leads where id=f.lead),'deleted inquiry is absent');
  perform pg_temp.ok(not exists(select 1 from notification_outbox where payload#>>'{data,lead_id}'=f.lead::text),'deleted inquiry pending alert payload is erased');
  perform pg_temp.ok((select payload#>>'{ghl_targets,0,phone}'='+1 (727) 555-0101'and not(payload#>'{ghl_targets,0}'?'email')and payload#>>'{ghl_targets,0,org_id}'=f.o::text from privacy_cleanup_jobs where kind='lead'and source_id=f.lead),'phone-only legacy CRM cleanup survives local deletion');
- perform pg_temp.denied(format('select delete_workspace_lead(%L,%L,%L)',f.a,f.o,f.lead),'RP404:','absent inquiry never invents deletion confirmation');
+ perform pg_temp.denied(format('select delete_workspace_lead(%L,%L,%L)',f.a,f.o,f.lead),'RP403:','absent inquiry never invents deletion confirmation');
 end$$;
 reset role;
 set local role service_role;

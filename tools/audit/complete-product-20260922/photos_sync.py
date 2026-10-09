@@ -70,6 +70,7 @@ def main():
             receive = selected
     modify = lifecycle.block(app, "    func modify(_ id: UUID,")
     dirty = lifecycle.block(app, "    func markDirty(_ id: UUID)")
+    workspace_scope = lifecycle.block(app, "    func isInSelectedWorkspace(_ listing: Listing)")
     sources = [ROOT / ("apps/ios/Rendprop/" + name) for name in [
         "Models/Listing.swift", "Models/ListingClientContact.swift", "Models/Money.swift", "Networking/WorkspaceSync.swift",
         "Networking/NativeReelDraft.swift", "Push/NotificationPrefs.swift", "Voice/VoiceTypes.swift",
@@ -85,6 +86,10 @@ typealias Coordinate = CLLocationCoordinate2D
 struct CaptureAsset { var localURL: URL; var motionSidecarURL: URL? }
 enum Config { static let useLiveBackend = true }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
+@MainActor final class WorkspaceStore {
+    static let shared = WorkspaceStore()
+    func canViewLibrary(_ id: UUID) -> Bool { id == UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
+}
 @MainActor final class AuthStore {
     static let shared = AuthStore()
     var userID: String? = "11111111-1111-4111-8111-111111111111"
@@ -103,6 +108,7 @@ enum Haptics { static func selection() {} }
     func syncListing(_ id: UUID) async { writes += 1 }
 __MODIFY__
 __DIRTY__
+__WORKSPACE_SCOPE__
 }
 @MainActor final class Flow {
     let model = Model(); var form = ListingFormData(); var addressFocused = false
@@ -224,7 +230,7 @@ __REUSE__
     }
 }
 '''
-    for token, code in [("__MODIFY__", modify), ("__DIRTY__", dirty), ("__PHOTO__", photo), ("__RECEIVE__", receive), ("__REUSE__", reuse), ("__CONTEXT__", context), ("__SNAPSHOTS__", "\n".join(snapshots)), ("__UNIT_ADDRESS__", unit_address), ("__FORM__", form)]:
+    for token, code in [("__MODIFY__", modify), ("__DIRTY__", dirty), ("__WORKSPACE_SCOPE__", workspace_scope), ("__PHOTO__", photo), ("__RECEIVE__", receive), ("__REUSE__", reuse), ("__CONTEXT__", context), ("__SNAPSHOTS__", "\n".join(snapshots)), ("__UNIT_ADDRESS__", unit_address), ("__FORM__", form)]:
         swift = swift.replace(token, code)
     checks = out / "Checks.swift"
     checks.write_text(swift)

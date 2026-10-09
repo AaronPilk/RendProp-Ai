@@ -155,6 +155,7 @@ Deno.serve(async (req) => {
 
     if (seg.length === 2 && seg[1] === "facts") {
       assert(req.method === "PUT", 405, "Use PUT for listing details.");
+      assert(requested !== undefined, 409, "Choose a workspace before saving listing details.");
       assert(explicitOrg, 409, "Choose a workspace before saving listing details.");
       assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), 400, "Choose a valid listing.");
       await assertNotDeleting(user.id);
@@ -182,6 +183,7 @@ Deno.serve(async (req) => {
 
     if (seg.length === 2 && seg[1] === "measurements") {
       assert(req.method === "PUT", 405, "Use PUT for measurements.");
+      assert(requested !== undefined, 409, "Choose a workspace before saving measurements.");
       assert(explicitOrg, 409, "Choose a workspace before saving measurements.");
       assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), 400, "Choose a valid listing.");
       await assertNotDeleting(user.id);

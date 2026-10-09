@@ -83,6 +83,8 @@ a326780c43f8ec458eaa42e2ccd62c2451f74af2:services/supabase/functions/ai-chapters
 8d9099b46cb06594cba09973635f73230a4eac72:docs/releases/WEB-LAUNCH-20261009.json:generic-api-key:48
 
 # Exact reviewed historical false positive: offline SQL reservation fixture
-# request_key="retained-legacy-001", generated only in the socket-only synthetic
-# Auth/Team test. It is an idempotency marker, not an authentication credential.
+# socket-only Auth/Team reservation idempotency marker, not a credential.
 80e006c6911a6f038385b1fea3aa35c02ca15ec9:services/supabase/tests/team_private_libraries.sql:generic-api-key:165
+
+# The same reviewed synthetic marker in the historical explanation comment.
+5342c2f0fb7dd795fd406066227ac8d05d2ed433:.gitleaksignore:generic-api-key:86

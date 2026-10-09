@@ -8,8 +8,8 @@ function setup(state='claimed',attempts=3,storageResult:{data:{reserved:boolean}
  const calls:string[]=[],row:ProjectMediaRow={id,actor_id:actor,org_id:org,sha256:hash,bytes:3,mime:'video/mp4',filename:'private.mp4',modified:0,parts:1,write_deadline:new Date(Date.now()+60000).toISOString(),receipts:state?{'0':{state,bytes:3,sha256:hash}}:{}};
  const context={userId:actor,orgId:org,admin:{rpc:(name:string,p:Record<string,unknown>)=>({abortSignal:async(signal:AbortSignal)=>{
   signal.throwIfAborted();
-  if(name==='media_storage_reserve'){
-   assertEquals(p,{p_org:org,p_bucket:'uploads',p_key:`studio-project/${org}/${actor}/${id}/0`,p_bytes:3});calls.push('reserve');return storageResult;
+  if(name==='library_media_storage_reserve'){
+   assertEquals(p,{p_actor:actor,p_org:org,p_bucket:'uploads',p_key:`studio-project/${org}/${actor}/${id}/0`,p_bytes:3});calls.push('reserve');return storageResult;
   }
   assertEquals(name,'studio_project_media_write');assertEquals(p.p_actor,actor);assertEquals(p.p_org,org);assertEquals(p.p_id,id);assertEquals(p.p_data,{part:0,bytes:3,sha256:hash});const action=p.p_action as string;calls.push(action);
   if(action==='claim'&&attempts>=3&&row.receipts['0']?.state!=='complete')return {error:{message:'RP409: Upload retry limit reached; existing data is preserved'}};

@@ -11,7 +11,11 @@ globalThis.fetch=async(input,init)=>{
  const r=new Request(input,init),u=new URL(r.url);check(u.hostname==='facts-fixture.invalid','Transport stays on closed fixture origin');
  const body=r.method==='GET'?null:await r.json();calls.push({path:u.pathname,method:r.method,body});
  if(u.pathname==='/auth/v1/user')return response({id:USER,is_anonymous:false});
- if(u.pathname.endsWith('/rpc/workspace_directory'))return response({active_org_id:ORG,workspaces:[{id:ORG,name:'Fixture',role:'owner'}]});
+ if(u.pathname.endsWith('/rpc/workspace_directory'))return response({actor_id:USER,own_org_id:ORG,billing_org_id:ORG,can_switch_agent_libraries:false,active_org_id:ORG,workspaces:[{id:ORG,name:'Fixture',role:'owner',access_mode:'own',library_owner_user_id:USER,billing_org_id:ORG,can_read:true,can_write:true,can_manage_subscription:true}]});
+ if(u.pathname.endsWith('/rpc/listing_library_scope')){
+  same(body,{p_actor:USER,p_listing:ID},'Fresh listing authority is bound to the authenticated actor and exact listing');
+  return response({actor_id:USER,listing_id:ID,org_id:ORG,library_org_id:ORG,library_owner_user_id:USER,listing_owner_user_id:USER,role:'owner',access_mode:'own',can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:ORG,team_org_id:null});
+ }
  if(u.pathname==='/rest/v1/deletion_requests')return response(deleting?{status:'pending'}:null);
  if(u.pathname.endsWith('/rpc/save_listing_facts'))return rpcError?response({code:rpcError,message:'fixture refusal'},rpcError==='PT409'?409:400):response({id:ID,org_id:ORG,address:'Shared',sqft:2345,status:'archived',details:{floorplan_asset_id:'preserved'}});
  if(u.pathname==='/rest/v1/listings')return response({id:ID,org_id:ORG,main_photo_key:null,gallery_asset_ids:[]});

@@ -118,9 +118,9 @@ try:
 
     # ── Money admission at the envelope boundary (991c; 980 spent). Two writers,
     # one authority: a photo serving reservation and a legacy video hold race
-    # through serving_envelope_admit under the org_month_spend lock. ──
-    admit = definition("public.serving_envelope_admit(uuid,numeric,text)")
-    spent_anchor = " spent:=public.serving_ceiling_spent_cents(p_org,ps,pe);"
+    # through the actual private-library envelope under its parent money lock.
+    admit = definition("public.library_serving_envelope_admit(uuid,uuid,numeric,text)")
+    spent_anchor = " spent:=public.serving_ceiling_spent_cents(p_billing_org,ps,pe);"
     assert admit.count(spent_anchor) == 1
     # Pause after capturing the balance: without the money lock both writers
     # must read the same stale value, rather than racing before their reads.
@@ -140,21 +140,24 @@ try:
     assert sum("RP402: AI usage limit reached" in output for _, output in outcomes) == 1, outcomes
     receipt["ceilingBudgetRace"] = {"accepted": 1, "refused": 1, "ceilingCents": 991, "spentCents": 980, "attemptCents": 6}
     run("release-negative-fixture", [*psql, "-Atq"], f"delete from serving_cost_reservations where org_id='{negative}';")
-    lock_anchor = " perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||p_org::text,42));"
+    lock_anchor = " perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||p_billing_org::text,42));"
     assert instrumented.count(lock_anchor) == 1
     reserve = definition("public.serving_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,text)")
-    early_lock = " if public.serving_mode()='ceiling' then perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||p_org::text,42));end if;"
+    early_lock = " if public.serving_mode()='ceiling' then perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||public.library_actor_billing_org(p_actor,p_org)::text,42));end if;"
     assert reserve.count(early_lock) == 1
     video = definition("public.app_video_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,numeric,numeric,jsonb)")
-    video_lock = "  perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||p_org::text,42));"
-    video_row = "  perform 1 from public.orgs where id=p_org and deleted_at is null for update;"
-    serving_row = " perform 1 from public.orgs where id=p_org and deleted_at is null for update;"
-    assert video.count(video_lock) == 1 and video.count(video_row) == 1 and reserve.count(serving_row) == 1
+    video_lock = "  perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||public.library_actor_billing_org(p_actor,p_org)::text,42));"
+    row_anchors = [" perform 1 from public.orgs where id=public.library_actor_billing_org(p_actor,p_org)and deleted_at is null for update;",
+                   " perform 1 from public.orgs where id=p_org and deleted_at is null for update;"]
+    assert video.count(video_lock) == 1 and all(video.count(a) == 1 and reserve.count(a) == 1 for a in row_anchors)
     # The control removes every lock the two writers share: the money advisory
-    # lock in the authority and in both writers, and the workspace row lock.
+    # lock in the authority and both writers, plus billing/content row locks.
     broken = instrumented.replace(lock_anchor, " -- Deliberately removed the shared money lock.")
-    broken_reserve = reserve.replace(early_lock, " -- Deliberately removed the shared money lock.").replace(serving_row, " perform 1 from public.orgs where id=p_org and deleted_at is null;")
-    broken_video = video.replace(video_lock, "  -- Deliberately removed the shared money lock.").replace(video_row, "  perform 1 from public.orgs where id=p_org and deleted_at is null;")
+    broken_reserve = reserve.replace(early_lock, " -- Deliberately removed the shared money lock.", 1)
+    broken_video = video.replace(video_lock, "  -- Deliberately removed the shared money lock.", 1)
+    for anchor in row_anchors:
+        broken_reserve = broken_reserve.replace(anchor, anchor.replace(" for update;", ";"), 1)
+        broken_video = broken_video.replace(anchor, anchor.replace(" for update;", ";"), 1)
     mutation = OUT / "negative-ceiling-no-locks.sql"
     mutation.write_text(broken + ";\n" + broken_reserve + ";\n" + broken_video + ";\n")
     run("install-ceiling-negative-control", [*psql, "-q", "-f", mutation])
@@ -162,10 +165,14 @@ try:
     # (serving:<org> vs org_month_spend:<org>) and both read the stale balance.
     outcomes = race("broken-mixed-writer-race", requests(negative, "n"))
     assert [code for code, _ in outcomes] == [0, 0], outcomes
-    receipt["ceilingNegativeControl"] = {"removed": "org_month_spend money lock (authority + both writers) and the workspace row lock", "accepted": 2, "overspendCents": 1,
+    receipt["ceilingNegativeControl"] = {"removed": "parent org_month_spend lock (actual authority + both writers) and billing/content row locks", "accepted": 2, "overspendCents": 1,
                                          "writers": ["serving_cost_reserve", "app_video_cost_reserve"],
                                          "mutation_sha256": hashlib.sha256(mutation.read_bytes()).hexdigest()}
     run("restore-ceiling-authority", [*psql, "-q"], admit + ";\n" + reserve + ";\n" + video + ";\n")
+    assert definition("public.library_serving_envelope_admit(uuid,uuid,numeric,text)") == admit
+    assert definition("public.serving_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,text)") == reserve
+    assert definition("public.app_video_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,numeric,numeric,jsonb)") == video
+    receipt["finalMoneyAuthorityRestored"] = True
 
     # ── Durable free publication slot (one per workspace; two listings race) ──
     admit = definition("public.free_publication_admit(uuid,uuid)")
@@ -203,6 +210,8 @@ try:
                   f"select count(*) from apple_sandbox_receipts where org_id='{sandbox}' and trial_granted_at is not null"]).strip()
     assert granted == "1", granted
     receipt["sandboxGrantRace"] = {"granted": 1, "recordedOnly": 1}
+    receipt["sourceHashesAfter"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}
+    assert receipt["sourceHashesAfter"] == receipt["sourceHashes"], "Source changed during verification"
     receipt["passed"] = True
 finally:
     if started:
