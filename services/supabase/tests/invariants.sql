@@ -64,7 +64,7 @@ select 'create_render_job enforces role AND uploaded asset',
        count(*) = 1, ''
 from pg_proc
 where proname = 'create_render_job'
-  and prosrc like '%org_role%' and prosrc like '%uploaded is true%';
+  and prosrc like '%library_scope_role(auth.uid(),v_org,p_listing)%' and prosrc like '%uploaded is true%';
 
 insert into _inv(name, pass, note)
 select 'create_render_job takes p_source and reads effective_plan()',
@@ -77,14 +77,14 @@ where proname = 'create_render_job'
 
 insert into _inv(name, pass, note)
 select 'publish_render enforces role', count(*) = 1, ''
-from pg_proc where proname = 'publish_render' and prosrc like '%org_role%';
+from pg_proc where proname='publish_render' and prosrc like '%library_scope_role(auth.uid(),v_org,%';
 
 insert into _inv(name, pass, note)
 select 'fail_render_job / set_render_chapters / set_lead_status are role-gated definers',
        count(*) = 3, format('%s of 3 found', count(*))
 from pg_proc
 where proname in ('fail_render_job','set_render_chapters','set_lead_status')
-  and prosecdef and prosrc like '%org_role%';
+  and prosecdef and(case when proname='set_lead_status'then prosrc like '%listing_content_access(auth.uid(),v_lead.listing_id,true)%'else prosrc like '%library_scope_role(auth.uid(),%'end);
 
 insert into _inv(name, pass, note)
 select 'idempotency is re-checked after the advisory lock',
@@ -226,7 +226,8 @@ where conrelid = 'public.orgs'::regclass and conname = 'orgs_plan_check';
 
 insert into _inv(name, pass, note)
 select 'effective_plan() demotes an expired trial to free', count(*) = 1, ''
-from pg_proc where proname = 'effective_plan' and prosrc like '%trial_ends_at < now()%';
+from pg_proc where proname='effective_plan'and prosrc like '%effective_plan_before_team(public.library_billing_org(p_org))%'
+ and exists(select 1 from pg_proc q where q.proname='effective_plan_before_team'and q.prosrc like '%trial_ends_at < now()%');
 
 -- ── Lifecycle schema (0011) ──────────────────────────────────────────────────
 
@@ -394,7 +395,7 @@ select 'record_provenance / set_provenance_media are role-gated definers',
        count(*) = 2, format('%s of 2 found', count(*))
 from pg_proc
 where proname in ('record_provenance', 'set_provenance_media')
-  and prosecdef and prosrc like '%org_role%';
+  and prosecdef and(case when proname='set_lead_status'then prosrc like '%listing_content_access(auth.uid(),v_lead.listing_id,true)%'else prosrc like '%library_scope_role(auth.uid(),%'end);
 
 insert into _inv(name, pass, note)
 select 'the provenance RPCs are NOT executable by anon',
@@ -919,8 +920,8 @@ select 'RLS helper is_admin stays executable by authenticated and anon',
        and has_function_privilege('anon','public.is_admin()','EXECUTE'), '';
 
 insert into _inv(name, pass, note)
-select 'every admin policy is SELECT-only and predicated solely on is_admin()',
-       count(*) = 4
+select 'remaining admin policies are SELECT-only; job access requires the actual listing grant',
+       count(*)=3 and not exists(select 1 from pg_policy where polname='admin jobs read')
        and bool_and(polcmd = 'r' and polpermissive)
        and bool_and(pg_get_expr(polqual, polrelid) = 'is_admin()')
        and bool_and(polwithcheck is null),
@@ -1186,7 +1187,7 @@ begin
   insert into _inv(name, pass, note) values ('an admin reads every org', n = 3, n::text);
 
   set role authenticated; select count(*) into n from render_jobs where id in (jA, jC); reset role;
-  insert into _inv(name, pass, note) values ('an admin reads every org''s render_jobs', n = 2, n::text);
+  insert into _inv(name, pass, note) values ('product-admin status alone cannot read another account''s render_jobs',n=1,n::text);
 
   set role authenticated;
   select count(*) into n from rate_limits where key in ('aiphotomo:'||vA::text, 'aiphotomo:'||vC::text);
@@ -1989,10 +1990,10 @@ where contype = 'c'
 -- Same shape as effective_plan() (0010 §3 / 0019 §5): invoker, pinned path,
 -- callable by authenticated and the service role, never by anon.
 insert into _inv(name, pass, note)
-select 'org_entitlement(uuid) mirrors effective_plan(): invoker, search_path pinned, authenticated + service_role only',
+select 'org_entitlement(uuid) resolves trusted library billing with pinned path and unchanged client ACL',
        count(*) = 1
-       and bool_and(not prosecdef
-                and 'search_path=public' = any(coalesce(proconfig, array[]::text[]))
+       and bool_and(prosecdef and prosrc like '%library_billing_org(p_org)%'
+                and 'search_path=""' = any(coalesce(proconfig,array[]::text[]))
                 and provolatile = 's'
                 and has_function_privilege('authenticated', oid, 'EXECUTE')
                 and has_function_privilege('service_role', oid, 'EXECUTE')
@@ -2006,9 +2007,9 @@ where pronamespace = 'public'::regnamespace and proname = 'org_entitlement';
 insert into _inv(name, pass, note)
 select 'create_render_job and log_job_cost read org_entitlement(); the plan-only helpers ignore the override table',
        (select count(*) from pg_proc where proname = 'create_render_job'
-         and prosrc like '%from public.org_entitlement(v_org)%' and prosrc not like '%plan_render_cap(%') = 1
+         and prosrc like '%from public.org_entitlement(v_billing)%' and prosrc like '%library_billing_org(public.listing_owner_library(p_listing))%' and prosrc not like '%plan_render_cap(%') = 1
        and (select count(*) from pg_proc where proname = 'log_job_cost'
-             and prosrc like '%from public.org_entitlement(v_org)%' and prosrc not like '%plan_entitlement(v_plan)%') = 1
+             and prosrc like '%from public.org_entitlement(v_billing)%' and prosrc like '%j.billing_org_id%' and prosrc not like '%plan_entitlement(v_plan)%') = 1
        and (select count(*) from pg_proc
              where pronamespace = 'public'::regnamespace
                and proname in ('plan_entitlement', 'plan_render_cap', 'org_seats_allowed', 'effective_plan')
@@ -2480,7 +2481,7 @@ declare
   uSeat uuid := '0f1e2d3c-4b5a-4968-8776-655443322125';
   uJoin uuid := '0f1e2d3c-4b5a-4968-8776-655443322126';
   uLose uuid := '0f1e2d3c-4b5a-4968-8776-655443322127';
-  oBrk uuid; oOut uuid; oSeat uuid; oAdmOwn uuid;
+  oBrk uuid; oOut uuid; oSeat uuid; oAdmOwn uuid; oAgOwn uuid; v_accepted_invite uuid;
   v_listing uuid; v_asset uuid; v_prov uuid;
   v_job render_jobs; v_render renders;
   r jsonb; m jsonb; row_json jsonb;
@@ -2511,6 +2512,15 @@ begin
   update orgs set plan = 'team', plan_source = 'manual' where id in (oBrk, oOut, oSeat);
 
   insert into memberships (user_id, org_id, role) values (uAdm, oBrk, 'admin'), (uAg, oBrk, 'agent');
+  -- This is retained historical Team content, not a generic shared-library
+  -- grant. Explicit accepted owner invitation plus the agent's sole original
+  -- private library is the current authority for both agent and Team owner.
+  -- The deliberate three-person read fixture above still proves seat events;
+  -- no production seats/allowances are enlarged or silently granted.
+  insert into org_invites(org_id,role,token_hash,invited_by,accepted_by,accepted_at)
+   values(oBrk,'agent',encode(sha256(convert_to('_inv-brk-accepted-agent','UTF8')),'hex'),uOwn,uAg,now())returning id into v_accepted_invite;
+  oAgOwn:=bind_team_private_library(uOwn,oBrk,uAg,v_accepted_invite);
+
 
   -- ── (a) the ledger caught every seat the trigger could see ────────────────
   select count(*) into n from org_seat_events
@@ -2573,11 +2583,12 @@ begin
             format('seats=%s totals=%s', r->'seats', r->'totals'));
 
   -- ── (c) the org-wide compliance record ────────────────────────────────────
-  r := compliance_audit(oBrk, uAdm, now() - interval '1 day', now() + interval '1 day');
+  r := compliance_audit(oAgOwn, uOwn, now() - interval '1 day', now() + interval '1 day');
+  ok:=false;begin perform compliance_audit(oAgOwn,uAdm,null,null);exception when others then ok:=sqlerrm like 'RP403%';end;
   select x into row_json from jsonb_array_elements(r->'rows') x where x->>'id' = v_prov::text;
   insert into _inv(name, pass, note)
-    values ('compliance_audit hands an ADMIN another member''s AI asset with the agent named and the disclosure',
-            row_json is not null
+    values ('compliance_audit gives only the actual Team owner a linked agent''s asset, name and disclosure',
+            ok and row_json is not null
               and row_json->>'agent_id' = uAg::text
               and row_json->>'agent_name' = 'Gus Agent'
               and row_json->>'altered_key' = 'renders/_inv/brk-altered.jpg'
@@ -2654,7 +2665,9 @@ begin
   select count(*) into n from memberships where org_id = oSeat and user_id = uJoin;
   insert into _inv(name, pass, note)
     values ('a code minted by create_org_invites_bulk is accepted verbatim by accept_org_invite',
-            (r->>'ok')::boolean and r->>'org_id' = oSeat::text and r->>'role' = 'agent' and n = 1,
+            (r->>'ok')::boolean and r->>'team_org_id'=oSeat::text and r->>'role'='owner' and n=1
+              and(r->>'org_id')::uuid=agent_private_library(uJoin)
+              and library_team_owner((r->>'org_id')::uuid)=uSeat,
             r::text);
 
   -- Two people, one code, one seat: the serialised form of the F02 race 0033
@@ -2864,12 +2877,12 @@ begin
   select count(*) into n from notification_outbox
    where category = 'lead_received' and dedupe_key like 'lead_received:' || v_lead::text || ':%';
   insert into _inv(name, pass, note)
-    values ('a lead insert queues exactly one message for the owner and the admin, and none for a marketing seat',
-            n = 2
+    values ('a lead insert queues once for its authorized owner and excludes unrelated admin/marketing seats',
+            n=1
               and exists (select 1 from notification_outbox o where o.user_id = uNO
                            and o.dedupe_key = 'lead_received:' || v_lead::text || ':' || uNO::text)
-              and exists (select 1 from notification_outbox o where o.user_id = uNA
-                           and o.dedupe_key = 'lead_received:' || v_lead::text || ':' || uNA::text)
+              and not exists(select 1 from notification_outbox o where o.user_id=uNA
+                           and o.dedupe_key='lead_received:'||v_lead::text||':'||uNA::text)
               and not exists (select 1 from notification_outbox o where o.user_id = uNM),
             format('%s rows; marketing rows=%s', n,
                    (select count(*) from notification_outbox o where o.user_id = uNM)));
@@ -2895,8 +2908,8 @@ begin
   select count(*) into n2 from notification_outbox
    where category = 'render_ready' and dedupe_key like 'render_ready:' || v_render.id::text || ':%';
   insert into _inv(name, pass, note)
-    values ('a publish queues render_ready for the owner and the admin, keyed so that render can never be announced twice',
-            n = 2 and n2 = 2,
+    values ('a publish queues render_ready only for its authorized owner with immutable per-render dedupe',
+            n=1 and n2=1,
             format('first render: %s rows, still %s after another publish', n, n2));
 
   -- ── (c) the dedupe key is the invariant, not a convention ────────────────

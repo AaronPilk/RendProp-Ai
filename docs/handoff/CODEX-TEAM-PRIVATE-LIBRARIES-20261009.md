@@ -29,7 +29,12 @@ Normal Team feature, serving-cost, storage and render usage is pooled against
 the parent subscription. Immutable billing identity stamps keep previously
 admitted liabilities on that parent after removal; later work uses the agent's
 current private entitlement. Actor-aware resolution is required even for legacy
-rows physically stored in an old parent org. Unlimited internal testing keeps
+rows physically stored in an old parent org. Trusted internal callers retain their
+existing meter context. Reflection quotes/reservations use one parent clip
+meter. Video-job failure/chapter and provenance/disclosure mutators now apply
+fresh exact-listing authority after seat removal. Render attestation accepts an
+authorized logical library while verifying the original physical property/assets.
+Unlimited internal testing keeps
 its existing separate funding rules; an actual sponsoring owner may view its
 explicitly linked testers under the owner's requested rule.
 
@@ -46,7 +51,7 @@ Join notices and Terms/Privacy explain owner access before joining.
 
 ## Verification and publication
 
-Local fresh-schema and exact-replay tests pass 78 Team, 28 workspace and 34
+Local fresh-schema and exact-replay tests pass 87 Team, 28 workspace and 34
 readiness controls, covering sibling RLS, owner delegation,
 legacy records, seat removal, usage pooling and immutable liabilities. A compiled
 sibling-access defect is caught by the unchanged raw RLS assertion. A real
@@ -67,8 +72,8 @@ Private receipts:
 `/Users/pilksclaes/LocalRendpropAudits/team-private-libraries-20261009/` and
 `/Users/pilksclaes/LocalRendpropAudits/design-refresh-20261009/team-privacy/`.
 
-At this handoff's initial writing these changes are local and have **not** been
-applied to production or uploaded to TestFlight. Update this section with actual
+Source is pushed on the isolated alignment branch; the Team changes have **not**
+yet been applied to production or uploaded to TestFlight. Update this section with actual
 CI, migration/function readback and Apple processing receipts when they occur.
 Never claim phone/camera/purchase acceptance from the closed test fixtures.
 

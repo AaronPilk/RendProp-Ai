@@ -26,7 +26,7 @@
 import { assertMediaVisible } from "../_shared/media-source-access.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError, throwRpc } from "../_shared/http.ts";
-import { adminClient, assertNotDeleting, getUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertNotDeleting, contentOrgForUser, getUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { headObject, publishedR2Url, publishedStreamUrl, R2_BUCKET_RENDERS } from "../_shared/r2.ts";
 import { presignGet } from "../_shared/providers/common.ts";
 import { attestTrialVideo } from "../_shared/trial-video-attestation.ts";
@@ -88,9 +88,11 @@ Deno.serve(async (req) => {
       const { data: property, error: propertyError } = await db.from("listings").select("org_id")
         .eq("id", listing).maybeSingle();
       assert(!propertyError && property && typeof property.org_id === "string", 404, "Property not found.");
-      const org = property.org_id;
-      const preferred = preferredOrg(req);
-      assert(!preferred || preferred.toLowerCase() === org.toLowerCase(), 409, "Your selected workspace changed.");
+      // A retained Team listing keeps its original storage namespace while
+      // the app selects the agent's private logical library. Fresh listing
+      // authority binds both IDs; a shared physical org never grants siblings.
+      const org = await contentOrgForUser(user.id, preferredOrg(req), listing, true);
+      assert(org === property.org_id, 409, "The property's video workspace changed.");
       return await attestTrialVideo({ actor: user.id, org, listing, asset }, {
         rpc: (name, args) => adminClient().rpc(name, args), rendersBucket: R2_BUCKET_RENDERS,
         head: (_bucket, key, signal) => headObject(R2_BUCKET_RENDERS, key, signal),

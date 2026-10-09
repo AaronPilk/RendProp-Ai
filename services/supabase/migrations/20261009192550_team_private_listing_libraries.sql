@@ -3137,7 +3137,7 @@ create or replace function public.current_listing_access(p_listing uuid,p_write 
  select public.listing_content_access(auth.uid(),p_listing,p_write);$$;
 create or replace function public.org_month_spend_cents(p_org uuid)returns numeric language sql stable security definer set search_path='' as $$
  select public.serving_ceiling_spent_cents(public.library_billing_org(p_org),date_trunc('month',now()),date_trunc('month',now())+interval '1 month')
- where current_setting('role',true)in('service_role','postgres','supabase_admin')or public.library_content_access(auth.uid(),p_org,false);$$;
+ where current_setting('role',true)in('service_role','postgres','supabase_admin')or(session_user=current_user and current_setting('role',true)='none')or public.library_content_access(auth.uid(),p_org,false);$$;
 
 do $$declare r record;begin for r in select policyname from pg_policies where schemaname='public'and tablename='listings'loop execute format('drop policy %I on public.listings',r.policyname);end loop;end$$;
 
@@ -3628,6 +3628,225 @@ begin
     'seats', jsonb_build_object(
       'used', public.org_seats_used(p_org),
       'allowed', public.org_seats_allowed(p_org)));
+end;
+$function$
+;
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.video_erase_quote(uuid,uuid,uuid)'::regprocedure)not in('d6faf41647515dc24c6e7c3fc6727f5d','24eeb86b9e5fb792f8aaa351d3933ee9')then raise exception 'Review changed function video_erase_quote(uuid,uuid,uuid)';end if;end$$;
+CREATE OR REPLACE FUNCTION public.video_erase_quote(p_org uuid, p_user uuid, p_listing uuid)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare e plan_entitlements; used integer; spent numeric; billing uuid;
+begin
+  perform video_erase_authorize(p_org,p_user,p_listing);
+  perform video_erase_expire(p_org);
+  billing:=public.library_actor_billing_org(p_user,p_org);
+  e:=org_entitlement(billing);
+  select coalesce(count,0) into used from rate_limits where key='reelmo:'||billing
+    and window_start>=now()-interval '30 days';
+  spent:=org_month_spend_cents(billing);
+  return jsonb_build_object('available',e.reels_per_month>coalesce(used,0) and spent<e.cogs_ceiling_cents,
+    'remaining_clips',greatest(0,e.reels_per_month-coalesce(used,0)),
+    'max_clip_seconds',4.8,'max_batch_cents',least(240,greatest(0,e.cogs_ceiling_cents-spent)),'unit_cost_cents',14,
+    'remaining_cost_cents',greatest(0,e.cogs_ceiling_cents-spent));
+end $function$
+;
+
+-- Authenticated legacy mutations are exact-listing capabilities, not broad
+-- authority from the old physical Team container.
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.fail_render_job(uuid,text)'::regprocedure)not in('e492897a5b6dd721223fba5458273f60','3d3595cde70d6fd12a6825440ca260ed')then raise exception 'Review changed function fail_render_job(uuid,text)';end if;end$$;
+CREATE OR REPLACE FUNCTION public.fail_render_job(p_job uuid, p_error text DEFAULT NULL::text)
+ RETURNS render_jobs
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_job render_jobs;
+  v_org uuid;
+  v_role text;
+begin
+  select rj.* into v_job from render_jobs rj where rj.id = p_job;
+  if not found then raise exception 'RP404: render job not found'; end if;
+
+  select l.org_id into v_org from listings l where l.id = v_job.listing_id;
+  if v_org is null then raise exception 'RP404: listing not found'; end if;
+
+  perform 1 from public.orgs where id=public.library_billing_org(public.listing_owner_library(v_job.listing_id))for share;
+  v_role := public.library_scope_role(auth.uid(),v_org,v_job.listing_id);
+  if v_role is null then raise exception 'RP403: not a member of this workspace'; end if;
+  if v_role not in ('owner','admin','agent') then
+    raise exception 'RP403: your role does not permit updating renders';
+  end if;
+
+  select rj.* into v_job from render_jobs rj where rj.id=p_job for update;
+  if not found then raise exception 'RP404: render job not found';end if;
+  if v_job.status = 'failed' then return v_job; end if;
+  if v_job.status = 'ready' or exists (select 1 from renders r where r.job_id = p_job) then
+    raise exception 'RP409: this job already published a tour and cannot be marked failed';
+  end if;
+
+  update render_jobs
+     set status = 'failed',
+         finished_at = now(),
+         error = coalesce(error, '{}'::jsonb)
+                 || jsonb_build_object(
+                      'message', left(coalesce(nullif(trim(p_error), ''), 'publish failed'), 500),
+                      'at', now(),
+                      'by', 'fail_render_job')
+   where id = p_job
+   returning * into v_job;
+  return v_job;
+end;
+$function$
+;
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.set_render_chapters(uuid,jsonb)'::regprocedure)not in('1b1eee14746b7c655fbe33f133d9a72f','49d181e7b47e23fec3e0e9ffaba7b02d')then raise exception 'Review changed function set_render_chapters(uuid,jsonb)';end if;end$$;
+CREATE OR REPLACE FUNCTION public.set_render_chapters(p_render uuid, p_chapters jsonb)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_render renders;
+  v_job render_jobs;
+  v_org uuid;
+  v_role text;
+begin
+  select r.* into v_render from renders r where r.id = p_render;
+  if not found then raise exception 'RP404: render not found'; end if;
+  select l.org_id into v_org from listings l where l.id = v_render.listing_id and l.deleted_at is null;
+  if v_org is null then raise exception 'RP404: listing not found'; end if;
+
+  perform 1 from public.orgs where id=public.library_billing_org(public.listing_owner_library(v_render.listing_id))for share;
+  v_role := public.library_scope_role(auth.uid(),v_org,v_render.listing_id);
+  if v_role is null then raise exception 'RP404: render not found'; end if;  -- don't reveal existence
+  if v_role not in ('owner','admin','agent') then
+    raise exception 'RP403: your role does not permit editing chapters';
+  end if;
+
+  select rj.* into v_job from render_jobs rj where rj.id = v_render.job_id;
+  if not found or v_job.capture_asset_id is null then
+    raise exception 'RP409: this render has no capture asset to attach chapters to';
+  end if;
+
+  return replace_asset_chapters(v_job.capture_asset_id, p_chapters);
+end;
+$function$
+;
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.record_provenance(uuid,text,text,text,text,text,text,uuid,uuid,uuid)'::regprocedure)not in('891a7b8390b3c25967bd082059de9628','f835f7a4bb83e6322bdbc1002f6cb506')then raise exception 'Review changed function record_provenance(uuid,text,text,text,text,text,text,uuid,uuid,uuid)';end if;end$$;
+CREATE OR REPLACE FUNCTION public.record_provenance(p_listing uuid, p_kind text, p_label text DEFAULT NULL::text, p_model_id text DEFAULT NULL::text, p_edit text DEFAULT NULL::text, p_style text DEFAULT NULL::text, p_prompt_summary text DEFAULT NULL::text, p_original_asset uuid DEFAULT NULL::uuid, p_altered_asset uuid DEFAULT NULL::uuid, p_render uuid DEFAULT NULL::uuid)
+ RETURNS media_provenance
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_org uuid;
+  v_role text;
+  v_kind text := lower(trim(coalesce(p_kind, '')));
+  v_label text := nullif(left(regexp_replace(coalesce(p_label, ''), '[\r\n\t]+', ' ', 'g'), 80), '');
+  v_edit text := nullif(lower(left(trim(coalesce(p_edit, '')), 40)), '');
+  v_style text := nullif(lower(left(trim(coalesce(p_style, '')), 40)), '');
+  v_model text := nullif(left(trim(coalesce(p_model_id, '')), 120), '');
+  v_summary text := nullif(left(regexp_replace(coalesce(p_prompt_summary, ''), '[\r\n\t]+', ' ', 'g'), 300), '');
+  v_original text;
+  v_altered text;
+  v_render uuid := null;
+  v_count integer;
+  v_row media_provenance;
+begin
+  if v_kind not in ('photo_edit','virtual_stage','declutter','aerial','reel','other') then
+    raise exception 'RP400: kind must be photo_edit, virtual_stage, declutter, aerial, reel, or other';
+  end if;
+
+  select l.org_id into v_org from listings l where l.id = p_listing and l.deleted_at is null;
+  if v_org is null then raise exception 'RP404: listing not found'; end if;
+
+  perform 1 from public.orgs where id=public.library_billing_org(public.listing_owner_library(p_listing))for share;
+  v_role := public.library_scope_role(auth.uid(),v_org,p_listing);
+  if v_role is null then raise exception 'RP403: not a member of this workspace'; end if;
+  if v_role not in ('owner','admin','agent') then
+    raise exception 'RP403: your role does not permit recording AI provenance';
+  end if;
+
+  -- Server-derived keys (see header). Either may be null at record time: the
+  -- altered result is usually uploaded afterwards → set_provenance_media().
+  v_original := provenance_asset_key(p_original_asset, p_listing);
+  v_altered  := provenance_asset_key(p_altered_asset, p_listing);
+
+  if p_render is not null then
+    select r.id into v_render from renders r where r.id = p_render and r.listing_id = p_listing;
+    if v_render is null then raise exception 'RP400: render_id does not belong to this listing'; end if;
+  end if;
+
+  -- A double-tapped edit must not print the same disclosure line twice on the
+  -- public tour. An identical row recorded in the last minute is returned as-is.
+  select mp.* into v_row from media_provenance mp
+   where mp.listing_id = p_listing
+     and mp.kind = v_kind
+     and mp.created_at > now() - interval '60 seconds'
+     and coalesce(mp.edit, '') = coalesce(v_edit, '')
+     and coalesce(mp.label, '') = coalesce(v_label, '')
+     and coalesce(mp.original_key, '') = coalesce(v_original, '')
+   order by mp.created_at desc
+   limit 1;
+  if found then return v_row; end if;
+
+  -- Bounded: a runaway client loop must not grow one listing's audit log
+  -- without limit (the tour caps its disclosure list at 40 anyway).
+  select count(*) into v_count from media_provenance mp where mp.listing_id = p_listing;
+  if v_count >= 500 then
+    raise exception 'RP429: this listing already has % provenance records — delete the listing or contact support', v_count;
+  end if;
+
+  insert into media_provenance (
+    org_id, listing_id, render_id, kind, label, model_id, edit, style,
+    prompt_summary, original_key, altered_key, disclosure)
+  values (
+    v_org, p_listing, v_render, v_kind, v_label, v_model, v_edit, v_style,
+    v_summary, v_original, v_altered, provenance_disclosure(v_kind, v_edit))
+  returning * into v_row;
+  return v_row;
+end;
+$function$
+;
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.set_provenance_media(uuid,uuid,uuid,text)'::regprocedure)not in('a4f295df0a8dd5d0760cf7761b34450d','03fac045fa0d408ac6390f70b8af023e')then raise exception 'Review changed function set_provenance_media(uuid,uuid,uuid,text)';end if;end$$;
+CREATE OR REPLACE FUNCTION public.set_provenance_media(p_id uuid, p_original_asset uuid DEFAULT NULL::uuid, p_altered_asset uuid DEFAULT NULL::uuid, p_label text DEFAULT NULL::text)
+ RETURNS media_provenance
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_row media_provenance;
+  v_role text;
+  v_label text := nullif(left(regexp_replace(coalesce(p_label, ''), '[\r\n\t]+', ' ', 'g'), 80), '');
+begin
+  select mp.* into v_row from media_provenance mp where mp.id = p_id;
+  if not found then raise exception 'RP404: provenance record not found'; end if;
+
+  perform 1 from public.orgs where id=public.library_billing_org(public.listing_owner_library(v_row.listing_id))for share;
+  v_role := public.library_scope_role(auth.uid(),v_row.org_id,v_row.listing_id);
+  if v_role is null then raise exception 'RP404: provenance record not found'; end if;  -- don't reveal existence
+  if v_role not in ('owner','admin','agent') then
+    raise exception 'RP403: your role does not permit editing AI provenance';
+  end if;
+  if v_row.listing_id is null then
+    raise exception 'RP409: this provenance record has no listing to attach media to';
+  end if;
+
+  update media_provenance
+     set original_key = coalesce(provenance_asset_key(p_original_asset, v_row.listing_id), original_key),
+         altered_key  = coalesce(provenance_asset_key(p_altered_asset, v_row.listing_id), altered_key),
+         label        = coalesce(v_label, label)
+   where id = p_id
+   returning * into v_row;
+  if v_row.original_key is not null and not public.studio_presenter_key_access(v_row.listing_id,v_row.original_key) then v_row.original_key:=null; end if;
+  if v_row.altered_key is not null and not public.studio_presenter_key_access(v_row.listing_id,v_row.altered_key) then v_row.altered_key:=null; end if;
+  return v_row;
 end;
 $function$
 ;

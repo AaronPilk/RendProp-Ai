@@ -1,3 +1,4 @@
+import { assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { attestTrialVideo, type TrialVideoDependencies } from "./trial-video-attestation.ts";
 import { HttpError } from "./http.ts";
 const id = (n: number) => `fa000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -28,7 +29,7 @@ function video(seconds = 60, billable = seconds, fragmented = false) {
 }
 type Options = { seconds?: number; billable?: number; fragmented?: boolean; required?: boolean;
   authority?: Record<string, unknown>; head?: Record<string, unknown>; finalHead?: Record<string, unknown>;
-  url?: string; rangeETag?: string; rangeTotal?: number; recordError?: string; recordData?: unknown; firstError?: string };
+  url?: string; rangeETag?: string; rangeTotal?: number; recordError?: string; recordData?: unknown; firstError?: string; selectedOrg?: string; logicalOrg?: string; libraryError?: string };
 function fixture(options: Options = {}) {
   const bytes = video(options.seconds, options.billable, options.fragmented), key = `renders/${scope.org}/${scope.listing}/${scope.asset}.mp4`;
   const source = { required: true, actor_id: scope.actor, org_id: scope.org, listing_id: scope.listing, asset_id: scope.asset,
@@ -120,7 +121,7 @@ Deno.test("headObject preserves existing two-argument callers and honors optiona
 });
 
 let actualRenders: ((req: Request) => Promise<Response>) | undefined;
-async function actualPublish(options: Options = {}, replay = false) {
+async function actualPublish(options: Options = {}, replay = false, removeLibraryAuthority = false) {
   const f = fixture(options), previousFetch = globalThis.fetch, names = {
     SUPABASE_URL: "https://trial-render-fixture.invalid", SUPABASE_ANON_KEY: "synthetic-public",
     SUPABASE_SERVICE_ROLE_KEY: "synthetic-service", CLOUDFLARE_ACCOUNT_ID: "a".repeat(32),
@@ -147,7 +148,19 @@ async function actualPublish(options: Options = {}, replay = false) {
     if (url.pathname === "/auth/v1/user") return response({ id: scope.actor, is_anonymous: false, email: "fixture@example.invalid" });
     if (url.pathname.includes("/rpc/")) {
       const name = url.pathname.split("/").at(-1)!, body = await req.json(); operations.push(name);
-      if (name === "subscription_trial_video_context") return response(f.source);
+      if (name === "listing_library_scope") {
+        eq(body,{p_actor:scope.actor,p_listing:scope.listing});
+        if(options.libraryError)return new Response(JSON.stringify({message:options.libraryError}),
+          {status:403,headers:{"content-type":"application/json"}});
+        return response({actor_id:scope.actor,org_id:scope.org,listing_id:scope.listing,
+          library_org_id:options.logicalOrg??scope.org,library_owner_user_id:scope.actor,
+          listing_owner_user_id:scope.actor,role:"owner",access_mode:"own",can_read:true,can_write:true,
+          can_manage_subscription:false,billing_org_id:options.logicalOrg??scope.org,team_org_id:null});
+      }
+      if (name === "subscription_trial_video_context") {
+        eq(body,{p_actor:scope.actor,p_org:scope.org,p_listing:scope.listing,p_asset:scope.asset});
+        return response(f.source);
+      }
       if (name === "record_subscription_trial_video") return options.recordError
         ? new Response(JSON.stringify({ message: options.recordError }), { status: 403, headers: { "content-type": "application/json" } })
         : response({ attested: true, duration_s: body.p_duration, billable_s: body.p_billable });
@@ -166,14 +179,25 @@ async function actualPublish(options: Options = {}, replay = false) {
     throw new Error("unexpected fixture table");
   }) as typeof fetch;
   try {
-    if (!actualRenders) {
+    let run = actualRenders;
+    if (!run || removeLibraryAuthority) {
       const descriptor = Object.getOwnPropertyDescriptor(Deno, "serve")!;
-      Object.defineProperty(Deno, "serve", { configurable: true, writable: true, value: (fn: typeof actualRenders) => { actualRenders = fn; return {}; } });
-      try { await import("../renders/index.ts"); } finally { Object.defineProperty(Deno, "serve", descriptor); }
+      Object.defineProperty(Deno, "serve", { configurable: true, writable: true, value: (fn: typeof actualRenders) => { run = fn; return {}; } });
+      try {
+        if(removeLibraryAuthority){
+          const url=new URL("../renders/index.ts",import.meta.url);
+          const source=await Deno.readTextFile(url);
+          const anchor="const org = await contentOrgForUser(user.id, preferredOrg(req), listing, true);";
+          ok(source.includes(anchor));
+          const mutant=source.replace(anchor,"const org = property.org_id;")
+            .replace(/from "(\.\.\/[^"]+)"/g,(_all,path)=>`from ${JSON.stringify(new URL(path,url).href)}`);
+          await import("data:application/typescript,"+encodeURIComponent(mutant));
+        }else{await import("../renders/index.ts");actualRenders=run;}
+      } finally { Object.defineProperty(Deno, "serve", descriptor); }
     }
-    const result = await actualRenders!(new Request("https://trial-render-fixture.invalid/functions/v1/renders/publish-app", {
+    const result = await run!(new Request("https://trial-render-fixture.invalid/functions/v1/renders/publish-app", {
       method: "POST", headers: { authorization: "Bearer synthetic-owner", "content-type": "application/json",
-        "X-Org-Id": scope.org, "Idempotency-Key": "trial-route-actual-key" },
+        "X-Org-Id": options.selectedOrg??scope.org, "Idempotency-Key": "trial-route-actual-key" },
       body: JSON.stringify({ listing_id: scope.listing, asset_id: scope.asset, duration_s: 7199 }),
     }));
     return { status: result.status, body: await result.json(), operations };
@@ -199,4 +223,25 @@ Deno.test("actual recorded publication replay skips all duration reads and attes
   const result = await actualPublish({ seconds: 91 }, true); eq(result.status, 201);
   ok(!result.operations.includes("subscription_trial_video_context") && !result.operations.includes("HEAD") &&
     !result.operations.includes("record_subscription_trial_video"));
+});
+
+Deno.test("actual publish-app accepts a retained legacy listing's logical library and attests only its original physical video",async()=>{
+  const result=await actualPublish({logicalOrg:id(9),selectedOrg:id(9)});
+  eq(result.status,201);eq(result.body.duration_s,60);
+  ok(result.operations.indexOf("listing_library_scope")<result.operations.indexOf("subscription_trial_video_context"));
+  ok(result.operations.indexOf("record_subscription_trial_video")<result.operations.indexOf("create_render_job"));
+});
+Deno.test("actual publish-app refuses a foreign logical library before probing or credit consumption",async()=>{
+  const result=await actualPublish({logicalOrg:id(9),selectedOrg:id(99)});
+  eq(result.status,403);ok(!result.operations.includes("HEAD"));
+  ok(!result.operations.includes("subscription_trial_video_context"));
+  ok(!result.operations.includes("create_render_job")&&!result.operations.includes("publish_render"));
+});
+Deno.test("actual publish-app rechecks library authority after RLS reads; compiled guard removal fails that oracle",async()=>{
+  const oracle=async(remove:boolean)=>{
+    const result=await actualPublish({logicalOrg:id(9),selectedOrg:id(9),libraryError:"RP403: The Team library relationship was removed"},false,remove);
+    eq(result.status,403);ok(!result.operations.includes("HEAD"));
+    ok(!result.operations.includes("create_render_job")&&!result.operations.includes("publish_render"));
+  };
+  await oracle(false);await assertRejects(()=>oracle(true),Error,"assertion failed");
 });
