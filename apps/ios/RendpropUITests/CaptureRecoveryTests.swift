@@ -68,8 +68,11 @@ final class CaptureRecoveryTests: XCTestCase {
     }
 
     private func openCapture() {
-        let add = app.buttons["home.addHome"]
-        XCTAssertTrue(add.waitForExistence(timeout: 20), app.debugDescription)
+        let listings = app.tabBars.buttons["Listings"]
+        XCTAssertTrue(listings.waitForExistence(timeout: 20), app.debugDescription)
+        listings.tap()
+        let add = app.buttons["Add a home"]
+        XCTAssertTrue(add.waitForExistence(timeout: 20) && add.isHittable, app.debugDescription)
         add.tap()
         let address = app.textFields["Type the home's address"]
         XCTAssertTrue(address.waitForExistence(timeout: 10), app.debugDescription)

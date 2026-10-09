@@ -47,6 +47,8 @@ async function fixture(feature: Feature, oldRefund = false) {
     ${constants}
     export const authority={role:"owner",cap:400};
     const requireEditorRole=async()=>{if(authority.role==="marketing")throw new HttpError(403,"Read only");return ${JSON.stringify(org)};};
+    const libraryBillingOrg=async(_admin:any,org:string)=>org;
+    const requireContentWrite=async()=>{if(authority.role==="marketing")throw new HttpError(403,"Read only");};
     const entitlementForCharge=async()=>({plan:"team",photo_edits_per_month:authority.cap,reels_per_month:authority.cap,renders_per_month:authority.cap});
     const quotaError=()=>new HttpError(402,"Synthetic allowance exhausted");
     const assertPaidAiIdentity=async()=>{};

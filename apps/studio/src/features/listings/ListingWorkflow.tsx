@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type { Listing, ListingMedia, Workspace } from "../../data/contracts";
-import { decodeListings } from "../../data/contracts";
+import { decodeListings, scopedListingWorkspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { cancelListingUpload, uploadListingAsset, validateUpload } from "./uploads";
 import type { UploadJournal } from "./uploads";
@@ -63,6 +63,7 @@ export default function ListingWorkflow(props: Props) {
     if(props.entryRequest&&requests.current.entry!==props.entryRequest.id){requests.current.entry=props.entryRequest.id;setCreating(false);setSelected(props.entryRequest.listingId);}
   },[props.createRequest,props.entryRequest]);
   const words=homeWords(props.workspace.org.spaceType);
+  const canCreate = canEditListing(props.workspace);
   const listing = props.listings.find((item) => item.id === selected);
   const choose = (id: string) => {
     if (id !== selected && contactGuard.current?.canLeave() === false) return;
@@ -70,9 +71,9 @@ export default function ListingWorkflow(props: Props) {
     setCreating(false); setSelected(id);
   };
   return <section className="listing-workflow" aria-label="Property workspace">
-    <div className="lw-title"><div><p className="eyebrow">From your phone to your desk</p><h1>{words.collection}</h1><p>Every uploaded photo, walkthrough, and published tour belongs to the same workspace.</p></div><button className="primary" disabled={props.workspace.memberships.find((m) => m.orgId === props.workspace.org.id)?.role === "marketing"} onClick={() => { if (contactGuard.current?.canLeave() !== false) setCreating(true); }}>＋ New property</button></div>
+    <div className="lw-title"><div><p className="eyebrow">From your phone to your desk</p><h1>{words.collection}</h1><p>Your uploaded photos, walkthroughs, and published tours stay together in this listing library.</p></div><button className="primary" disabled={!canCreate} onClick={() => { if (contactGuard.current?.canLeave() !== false) setCreating(true); }}>＋ New property</button></div>
     <div className="lw-property-switch"><label htmlFor="property-workspace-select">Working on</label><select id="property-workspace-select" value={listing?.id ?? ""} onChange={(event) => choose(event.target.value)}><option value="" disabled>Choose a property</option>{props.listings.map((item) => <option key={item.id} value={item.id}>{item.address || item.tagline || "Untitled property"}</option>)}</select><span className="lw-sync-dot">Same account as your iPhone</span></div>
-    {creating ? <PropertyForm services={props.services} workspace={props.workspace} onNavigationGuard={contactGuardChanged} onSaved={(id) => { props.onChanged(); choose(id); }} onCancel={() => setCreating(false)} /> : listing ? <PropertyWorkspace key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`} {...props} listing={listing} onContactGuardChange={contactGuardChanged} /> : <div className="lw-empty"><h2>Start with a property</h2><p>Create it here or in the Rendprop iPhone app. Sign in to the same Apple account on both devices to pick up where you left off.</p><button className="primary" onClick={() => setCreating(true)}>Create your first property</button></div>}
+    {creating ? <PropertyForm services={props.services} workspace={props.workspace} onNavigationGuard={contactGuardChanged} onSaved={(id) => { props.onChanged(); choose(id); }} onCancel={() => setCreating(false)} /> : listing ? <PropertyWorkspace key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`} {...props} workspace={scopedListingWorkspace(props.workspace, listing)} listing={listing} onContactGuardChange={contactGuardChanged} /> : <div className="lw-empty"><h2>Start with a property</h2><p>Create it here or in the Rendprop iPhone app. Sign in to the same Apple account on both devices to pick up where you left off.</p><button className="primary" disabled={!canCreate} onClick={() => setCreating(true)}>Create your first property</button></div>}
   </section>;
 }
 
@@ -124,7 +125,7 @@ function PropertyForm({ services, workspace, listing, onSaved, onCancel, onRefre
     controller.current?.abort(); const action = new AbortController(); controller.current = action;
     saving.current = true; setBusy(true); setError("");
     try {
-      const latest = (await services.listListings(workspace.org.id, action.signal)).find(row => row.id === listing.id);
+      const latest = (await services.listListings(workspace.libraryOrgId ?? workspace.org.id, action.signal)).find(row => row.id === listing.id);
       if (action.signal.aborted) return;
       if (!latest) throw new Error("This property is no longer available in this workspace. Your field edits are kept.");
       loadValues(latest); forget(); saving.current = false; setDirty(false); setRemoteChanged(false); onRefresh?.();
@@ -141,7 +142,8 @@ function PropertyForm({ services, workspace, listing, onSaved, onCancel, onRefre
       if (listing && "changes" in body && Object.keys(body.changes as object).length === 0 && Object.keys(body.details_changes as object).length === 0) { forget(); setDirty(false); return; }
       const raw = await services.api(`/functions/v1/listings${listing ? `/${listing.id}/facts` : ""}`, { method: listing ? "PUT" : "POST", orgId: workspace.org.id, body, signal: action.signal });
       if (!action.signal.aborted) {
-        const saved = decodeListings([raw], workspace.org.id, workspace.memberships)[0];
+        const saved = decodeListings([raw], workspace.libraryOrgId ?? workspace.org.id,
+          workspace.memberships, workspace.ownOrgId !== undefined)[0];
         if (!saved || listing && saved.id !== listing.id) throw new Error("The saved property could not be confirmed. Refresh your properties.");
         if (listing && "changes" in body) {
           if (!listingFactsConfirmed(saved, body as ListingFactsBody)) throw new Error("The saved property could not be confirmed. Your field edits are kept; refresh and review them.");
@@ -292,7 +294,8 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     const body = listingFactsBody(listing, changes);
     const raw = await api(`listings/${listing.id}/facts`, body, signal, "PUT");
     if (signal.aborted) return;
-    const saved = decodeListings([raw], workspace.org.id, workspace.memberships)[0];
+    const saved = decodeListings([raw], workspace.libraryOrgId ?? workspace.org.id,
+      workspace.memberships, workspace.ownOrgId !== undefined)[0];
     if (!saved || saved.id !== listing.id || !listingFactsConfirmed(saved, body)) throw new Error("The saved property status could not be confirmed. Refresh and review it before trying again.");
   };
   const changeGallery = async (body: Record<string, unknown>, success: string): Promise<boolean> => {

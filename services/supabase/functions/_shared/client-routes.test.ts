@@ -93,13 +93,28 @@ async function invoke(
           return reply({ message: "RP403: workspace is unavailable" }, 400);
         }
         return reply({
+          actor_id:user,own_org_id:org,billing_org_id:org,can_switch_agent_libraries:false,
           active_org_id: org,
           workspaces: [{
             id: org,
             name: "Photographer",
             role: opts.marketing ? "marketing" : "owner",
+            access_mode:"own",library_owner_user_id:user,billing_org_id:org,
+            can_read:true,can_write:!opts.marketing,can_manage_subscription:!opts.marketing,
           }],
         });
+      }
+      if(name === "library_access" || name === "listing_library_scope") {
+        assertEquals(args,name === "library_access"?{p_actor:user,p_org:org}:{p_actor:user,p_listing:listing});
+        return reply({actor_id:user,org_id:org,library_owner_user_id:user,role:opts.marketing?"marketing":"owner",access_mode:"own",can_read:true,can_write:!opts.marketing,can_manage_subscription:!opts.marketing,billing_org_id:org,team_org_id:null,...(name === "listing_library_scope"?{listing_id:listing,library_org_id:org,listing_owner_user_id:user}:{})});
+      }
+      if(name === "lead_library_scope") {
+        assertEquals(args,{p_actor:user,p_lead:lead});
+        return reply({actor_id:user,lead_id:lead,listing_id:listing,org_id:org,library_org_id:org});
+      }
+      if(name === "list_library_leads") {
+        assertEquals(args,{p_actor:user,p_org:org,p_limit:200,p_since:null,p_status:null,p_listing:null});
+        return reply([{id:lead,listing_id:listing,org_id:org,library_org_id:org,name:"Buyer",extra:{preferred_date:"2026-10-03"}}]);
       }
       if (
         name === "listing_client_contact_get" ||
@@ -210,7 +225,7 @@ Deno.test("actual client routes reject absent auth, foreign workspace, malformed
       undefined,
       opts,
     );
-    assert([400, 401, 403].includes(r.status));
+    assert([400, 401, 403, 404].includes(r.status));
     assert(!r.seen.some((x) => x.name === "listing_client_contact_get"));
   }
   const r = await invoke(`listings/${listing}/client-contact`, "PUT", {
@@ -264,6 +279,6 @@ Deno.test("actual lead list and manual forwarding use selected workspace and pro
   const foreign = await invoke(`leads/${lead}/send-to-client`, "POST", body, {
     workspace: other,
   });
-  assertEquals(foreign.status, 403);
+  assertEquals(foreign.status, 404);
   assert(!foreign.seen.some((x) => x.name === "client_lead_resend"));
 });

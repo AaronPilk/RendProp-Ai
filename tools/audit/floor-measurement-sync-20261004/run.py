@@ -260,6 +260,7 @@ def main():
         "__LOCAL_STATUS__": block(client, "    private static func localStatus("),
         "__MODIFY__": block(app, "    func modify(_ id: UUID,"),
         "__MARK_DIRTY__": block(app, "    func markDirty(_ id: UUID)"),
+        "__IS_IN_WORKSPACE__": block(app, "    func isInSelectedWorkspace(_ listing: Listing)"),
         "__SYNC_LISTING__": block(app, "    func syncListing(_ id: UUID)"),
         "__EDITOR_PERSIST__": block(source_bytes[EDITOR].decode(), "    private func persist(_ candidate: FloorMeasurementPlan)"),
     }

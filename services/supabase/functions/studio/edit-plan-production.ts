@@ -1,3 +1,4 @@
+import { requireContentWrite } from "../_shared/library-access.ts";
 import { beginFundingOperation, fundedAttempt, textAttemptQuote, type FundingContext } from "../_shared/funded-serving.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
@@ -77,13 +78,8 @@ export function editPlanProduction(context: StudioContext, task: "copy.edit_plan
   return {
     enabled,
     async writable() {
-      const results = await Promise.all([
-        admin.from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle(),
-        admin.from("orgs").select("id").eq("id", orgId).is("deleted_at", null).maybeSingle(),
-        admin.from("deletion_requests").select("user_id").eq("user_id", userId).neq("status", "completed").limit(1),
-      ]);
-      assert(results.every(result => !result.error), 503, "Workspace access could not be checked.");
-      return !!results[1].data && !(results[2].data?.length) && ["owner", "admin", "agent"].includes(results[0].data?.role ?? "");
+      await requireContentWrite(admin, userId, orgId, context.listingId ?? null);
+      return true;
     },
     async route() {
       if (!enabled()) return null;

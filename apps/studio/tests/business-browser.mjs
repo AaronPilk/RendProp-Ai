@@ -143,6 +143,30 @@ try {
   const calls = await page.evaluate(() => window.businessFixture.calls());
   assert.equal(calls.filter((c) => c.method === "DELETE").length, 0);
   assert.equal(calls.filter((c) => c.method === "POST").length, 1);
+  for (const persona of ["delegated-owner", "invited-agent"]) {
+    await page.goto(`${origin}/tests/business-fixture.html?teamPersona=${persona}`);
+    await expect(page.getByRole("combobox", { name: "Status for Alex Buyer" })).toBeVisible();
+    await nav("Team").click();
+    await expect(page.getByRole("table", { name: "Current team members" })).toBeVisible();
+    if (persona === "delegated-owner") {
+      await expect(page.getByRole("textbox", { name: /^Email addresses/ })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Create invite link", exact: true })).toBeEnabled();
+      await expect(nav("Team activity")).toBeVisible();
+      await nav("Team activity").click();
+      await expect(page.getByRole("table")).toContainText("Tours published");
+      receipt.checks.push("Delegated agent-library view retains Team-owner management from bound parent actor authority, not displayed team_owner role");
+    } else {
+      await expect(page.getByRole("textbox", { name: /^Email addresses/ })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "Create invite link", exact: true })).toHaveCount(0);
+      await expect(nav("Team activity")).toHaveCount(0);
+      await expect(page.getByText("Visible invitations", { exact: true })).toBeVisible();
+      receipt.checks.push("Invited agent owns its private library and can edit its own leads but cannot manage parent Team or open Team activity");
+    }
+    const scopedCalls = await page.evaluate(() => window.businessFixture.calls());
+    assert.ok(scopedCalls.some(c => c.path === "/functions/v1/team"), "Actual Team panel must read fresh summary");
+    assert.ok(scopedCalls.every(c => c.orgId === "55555555-5555-4555-8555-555555555555"), "Team reads keep logical selected-library header rather than granting parent content access");
+    assert.ok(scopedCalls.every(c => c.method === "GET"), "Permission verification must not send an invitation or mutate an account");
+  }
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []);
   assert.deepEqual(await sourceManifest(),receipt.sourceHashes,"Source changed during browser verification");receipt.status = "passed"; await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));
 } finally { await browser?.close(); if (server) await new Promise((done) => server.close(done)); }

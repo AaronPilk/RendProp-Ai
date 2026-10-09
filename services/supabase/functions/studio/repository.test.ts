@@ -107,10 +107,13 @@ function fixture() {
       assertEquals(subject, user);
       events.push("deletion");
     },
-    async orgForUser(subject, requested) {
-      assertEquals([subject, requested], [user, org]);
-      events.push("membership");
-      return org;
+    async activeOrg(id) {
+      return await client.from("orgs").select("id").eq("id",id).is("deleted_at",null).abortSignal(req.signal).maybeSingle() as {data:{id:string}|null;error:unknown};
+    },
+    async listingScope(subject, requested) {
+      assertEquals([subject, requested], [user, listing]);
+      events.push("listing-scope");
+      return {actor_id:user,org_id:org,library_org_id:org,can_read:true};
     },
   };
   return { deps, events, queries, results, clientCalls: () => clientCalls };
@@ -127,7 +130,7 @@ Deno.test("real adapter checks Auth, deletion, membership, live org then scoped 
   assertEquals(f.events, [
     "auth",
     "deletion",
-    "membership",
+    "listing-scope",
     "orgs",
     "listings",
   ]);
@@ -149,17 +152,17 @@ Deno.test("real adapter checks Auth, deletion, membership, live org then scoped 
   ]);
   await repository.authorize(req, org, listing);
   assertEquals(
-    f.events.filter((event) => event === "membership").length,
+    f.events.filter((event) => event === "listing-scope").length,
     2,
-    "membership must never be cached across rechecks",
+    "listing authority must never be cached across rechecks",
   );
 });
 
 Deno.test("deletion and removed membership failures prevent tenant reads", async () => {
-  for (const denied of ["assertNotDeleting", "orgForUser"] as const) {
+  for (const denied of ["assertNotDeleting", "listingScope"] as const) {
     const f = fixture();
     f.deps[denied] = async () => {
-      throw new HttpError(denied === "orgForUser" ? 403 : 409, "Denied.");
+      throw new HttpError(denied === "listingScope" ? 403 : 409, "Denied.");
     };
     await assertRejects(
       () => createStudioRepository(req, f.deps).authorize(req, org, listing),

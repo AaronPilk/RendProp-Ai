@@ -1,6 +1,7 @@
 import CustomPhotoPromptHelp, { analyzeCustomPhotoPrompt } from "./CustomPhotoPromptHelp";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
+import { canEditListing, scopedListingWorkspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { uploadListingAsset } from "../listings/uploads";
 import { decodeListingState } from "../listings/model";
@@ -127,6 +128,7 @@ export default function CreativeWorkspace(props: Props) {
           <ListingCreative
             key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`}
             {...props}
+            workspace={scopedListingWorkspace(props.workspace, listing)}
             listing={listing}
             consumeEntry={consumeEntry}
             presenterChanged={presenterChanged}
@@ -260,8 +262,8 @@ function ListingCreative(
       "How do I create a property reel?",
       "How do I share an unbranded tour?",
     ]);
-  const role = workspace.memberships.find((m) => m.orgId === orgId)?.role,
-    canCreate = role !== "marketing";
+  const member = workspace.memberships.find((m) => m.orgId === (workspace.libraryOrgId ?? orgId));
+  const role = member?.role, canCreate = canEditListing(workspace, listing);
   const signal = abort.current.signal;
   const api = useCallback(
     (
@@ -572,7 +574,7 @@ function ListingCreative(
     const current = services.getSnapshot();
     if (!alive.current || current.status !== "signed-in" || current.identityVersion !== photoIdentityVersion ||
       current.identity?.userId !== workspace.user.id || current.identity.isAnonymous || listing.orgId !== orgId ||
-      !(editing ? ["owner", "admin", "agent"] : ["owner", "admin", "agent", "marketing"]).includes(role ?? "")) throw new Error("Your account or editing access changed. Reopen this property.");
+      (editing ? !canCreate : !(member?.canRead ?? ["owner", "admin", "agent", "marketing"].includes(role ?? "")))) throw new Error("Your account or editing access changed. Reopen this property.");
   }
   async function chooseSource(next: PhotoSource) {
     assertPhotoScope(false);

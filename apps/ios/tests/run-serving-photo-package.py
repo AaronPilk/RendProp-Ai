@@ -46,7 +46,7 @@ assert 'usage = nil; usageError = nil' in revision_change and 'await loadUsage()
 interfaces = '''
 import Foundation
 enum APIError: Error { case decoding }
-enum WorkspaceContext { static var selectedOrgID: UUID? }
+enum WorkspaceContext { static var selectedOrgID: UUID?; static var billingOrgID: UUID? { selectedOrgID }; static var servingOrgID: UUID? { selectedOrgID } }
 @MainActor final class AuthStore {
  static let shared = AuthStore(); var userID: String?; var syncSessionRevision: UInt64 = 1
  var identityWrites = 0

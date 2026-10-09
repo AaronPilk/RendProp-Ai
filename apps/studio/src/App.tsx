@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { Listing, ListingMedia, SessionSnapshot, Workspace } from "./data";
 import { createStudioServices, readStudioConfig } from "./data";
+import { belongsToLibrary } from "./data/contracts";
 import type { VideoEditorProps } from "./editor/VideoEditor";
 import { EDIT_LIMITS, validateDraft } from "./editor/model";
 import type { EditDraft } from "./editor/model";
@@ -170,14 +171,14 @@ export default function App({ servicesFactory }: {
   const accountName = workspace?.user.name?.trim() || (isConnected ? "Your account" : "Sign in");
   const selected =
     workspace &&
-    storedSelected?.orgId === workspace.org.id
+    storedSelected && belongsToLibrary(storedSelected, workspace)
       ? listings.find((item) => item.id === storedSelected.id) ?? null
       : null;
   const media =
     workspace &&
     selected &&
     mediaVersion === session.identityVersion &&
-    storedMedia?.orgId === workspace.org.id &&
+    storedMedia?.orgId === selected.orgId &&
     storedMedia.listingId === selected.id
       ? storedMedia
       : null;
@@ -236,6 +237,8 @@ export default function App({ servicesFactory }: {
     return !state.pending || window.confirm("Discard unsaved Creative Studio changes?");
   }
   function setRequestedOrg(orgId: string | undefined) {
+    if (orgId && orgId !== workspace?.org.id && (!workspace?.canSwitchAgentLibraries ||
+        !workspace.memberships.some(member => member.orgId === orgId && member.canRead === true))) return;
     if (orgId !== workspace?.org.id && !canReplaceAccountWork()) return;
     setRequestedSelection(
       orgId ? { orgId, identityVersion: session.identityVersion } : undefined,
@@ -479,7 +482,7 @@ export default function App({ servicesFactory }: {
     const version = session.identityVersion;
     setMediaBusy(true);
     void services
-      .listMedia(workspace.org.id, selected.id, controller.signal)
+      .listMedia(selected.orgId, selected.id, controller.signal)
       .then((value) => {
         if (
           !controller.signal.aborted &&
@@ -675,7 +678,7 @@ export default function App({ servicesFactory }: {
     setMediaError(null);
     try {
       const next = await services.listMedia(
-        workspace.org.id,
+        selected.orgId,
         selected.id,
         controller.signal,
         nextOffset,
@@ -833,8 +836,8 @@ export default function App({ servicesFactory }: {
             {workspace?.org.name.slice(0, 1).toUpperCase() ?? "R"}
           </span>
           <div>
-            {workspace ? <><label className="sr-only" htmlFor="switch-workspace">Switch workspace</label><select id="switch-workspace" value={workspace.org.id} onChange={e=>{transfer.current?.abort();setRequestedOrg(e.target.value);}}>{workspace.memberships.map(m=><option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}</select></> : <strong>Your creative space</strong>}
-            <small>{workspace ? "Connected workspace" : "Local workspace"}</small>
+            {workspace?.canSwitchAgentLibraries && workspace.memberships.length > 1 ? <><label className="sr-only" htmlFor="switch-workspace">Switch agent</label><select id="switch-workspace" value={workspace.org.id} onChange={e=>{transfer.current?.abort();setRequestedOrg(e.target.value);}}>{workspace.memberships.map(m=><option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}</select></> : <strong>{workspace?.org.name || "Your creative space"}</strong>}
+            <small>{workspace ? "Your listing library" : "Local projects"}</small>
           </div>
         </div>
         <p className="nav-label">YOUR STUDIO</p>
@@ -1238,8 +1241,8 @@ export default function App({ servicesFactory }: {
                       {accountName}
                     </p>
                     <p className="muted">{workspace.user.email}</p>
-                    <label>
-                      Workspace
+                    {workspace.canSwitchAgentLibraries && workspace.memberships.length > 1 && <label>
+                      Switch agent
                       <select
                         value={workspace.org.id}
                         onChange={(e) => {
@@ -1253,7 +1256,7 @@ export default function App({ servicesFactory }: {
                           </option>
                         ))}
                       </select>
-                    </label>
+                    </label>}
                     <dl className="account-details">
                       <div>
                         <dt>Business</dt>

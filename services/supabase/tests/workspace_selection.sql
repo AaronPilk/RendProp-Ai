@@ -12,6 +12,9 @@ do $$declare u uuid:=gen_random_uuid();o uuid:=gen_random_uuid();g uuid:=gen_ran
  select org_id into a from memberships where user_id=u;select org_id into b from memberships where user_id=o;select org_id into go from memberships where user_id=g;select org_id into oo from memberships where user_id=other;
  update orgs set plan='team',name='Fixture team'where id=b;
  insert into memberships(user_id,org_id,role)values(u,b,'agent');
+ -- Historical source assignment is tied to an explicit accepted invitation;
+ -- a bare membership is not evidence that a private library may be mapped.
+ insert into org_invites(org_id,role,token_hash,invited_by,accepted_at,accepted_by)values(b,'agent',encode(sha256(convert_to(u::text,'UTF8')),'hex'),o,now(),u);
  insert into orgs(name,deleted_at)values('Deleted workspace',now())returning id into dead;
  insert into memberships(user_id,org_id,role)values(u,dead,'owner');
  insert into listings(org_id,agent_id,address)values(a,u,'Personal property'),(b,u,'Shared property');
@@ -30,14 +33,14 @@ do $$declare f record;r jsonb;before_rows jsonb;after_rows jsonb;begin
  select * into f from workspace_fixture;
  select jsonb_agg(to_jsonb(l)order by id)into before_rows from listings l where org_id in(f.personal,f.team);
  r:=workspace_directory(f.actor,null);
- perform pg_temp.ws_ok(jsonb_array_length(r->'workspaces')=2 and exists(select 1 from jsonb_array_elements(r->'workspaces')w where (w->>'id')::uuid=f.personal)and exists(select 1 from jsonb_array_elements(r->'workspaces')w where (w->>'id')::uuid=f.team and w->>'role'='agent'),'directory keeps personal and shared workspaces with actual roles');
+ perform pg_temp.ws_ok(jsonb_array_length(r->'workspaces')=1 and exists(select 1 from jsonb_array_elements(r->'workspaces')w where (w->>'id')::uuid=f.personal and w->>'role'='owner')and not exists(select 1 from jsonb_array_elements(r->'workspaces')w where (w->>'id')::uuid=f.team),'directory keeps personal library and excludes shared Team seat');
  perform pg_temp.ws_ok(not exists(select 1 from jsonb_array_elements(r->'workspaces')w where (w->>'id')::uuid in(f.other_org,f.guest_org,f.dead_org)),'directory excludes other accounts and deleted workspaces');
- r:=select_workspace(f.actor,f.team);
- perform pg_temp.ws_ok(r->>'ok'='true'and(r->>'org_id')::uuid=f.team and r->>'role'='agent','ordinary agent can select shared membership without elevation');
- perform pg_temp.ws_ok(active_org_for_user(f.actor)=f.team,'selection persists active workspace');
+ perform pg_temp.ws_denied(format('select public.select_workspace(%L,%L)',f.actor,f.team),'RP403:%','ordinary agent cannot select shared Team seat');
+ r:=select_workspace(f.actor,f.personal);
+ perform pg_temp.ws_ok(active_org_for_user(f.actor)=f.personal,'selection persists private library');
  perform pg_temp.ws_ok((workspace_directory(f.actor,f.personal)->>'active_org_id')::uuid=f.personal,'explicit personal request ignores another device active selection');
- perform pg_temp.ws_ok(active_org_for_user(f.actor)=f.team,'explicit read does not overwrite default selection');
- perform pg_temp.ws_ok(select_workspace(f.actor,f.team)=r,'repeat selection response is idempotent');
+ perform pg_temp.ws_ok(active_org_for_user(f.actor)=f.personal,'explicit read does not overwrite default selection');
+ perform pg_temp.ws_ok(select_workspace(f.actor,f.personal)=r,'repeat selection response is idempotent');
  r:=select_workspace(f.actor,f.personal);
  perform pg_temp.ws_ok(active_org_for_user(f.actor)=f.personal,'agent can return to preserved personal workspace');
  select jsonb_agg(to_jsonb(l)order by id)into after_rows from listings l where org_id in(f.personal,f.team);
@@ -51,12 +54,12 @@ select pg_temp.ws_denied('select public.workspace_directory(actor,other_org)from
 select pg_temp.ws_denied('select public.select_workspace(actor,dead_org)from workspace_fixture','RP403:%','deleted workspace cannot be selected');
 select pg_temp.ws_denied('select public.workspace_directory(actor,dead_org)from workspace_fixture','RP403:%','deleted explicit directory does not fall back');
 select pg_temp.ws_denied('select public.select_workspace(guest,team)from workspace_fixture','RP403:%','guest cannot select someone else team');
-select public.select_workspace(actor,team)from workspace_fixture;
+select public.select_workspace(actor,personal)from workspace_fixture;
 reset role;
 select set_config('request.jwt.claims',jsonb_build_object('sub',actor,'role','authenticated')::text,true)from workspace_fixture;
 set local role authenticated;
-select pg_temp.ws_ok((select count(*)=2 from listings where org_id in(select personal from workspace_fixture union select team from workspace_fixture)),'unfiltered RLS listing snapshot retains personal and team properties after selection');
-select pg_temp.ws_ok((select count(*)=1 from listings where org_id=(select personal from workspace_fixture))and(select count(*)=1 from listings where org_id=(select team from workspace_fixture)),'explicit org filters preserve the other workspace data');
+select pg_temp.ws_ok((select count(*)=2 from listings where org_id in(select personal from workspace_fixture union select team from workspace_fixture)),'unfiltered RLS snapshot retains only own original and own legacy properties');
+select pg_temp.ws_ok((select count(*)=1 from listings where org_id=(select personal from workspace_fixture))and(select count(*)=1 from listings where org_id=(select team from workspace_fixture)),'exact source-org filters retain own legacy data without shared access');
 reset role;
 select set_config('request.jwt.claims','{}',true);
 set local role service_role;

@@ -107,7 +107,7 @@ reset role;
 select set_config('request.jwt.claim.sub',(select host::text from private_fixture),true);
 set local role authenticated;
 select pg_temp.private_ok('host cannot borrow beneficiary private allowance',not org_has_private_internal_testing(private_org))from private_fixture;
-select pg_temp.private_ok('host cannot read beneficiary houses or inquiries',(select count(*)=1 from listings where id in(f.private_listing,f.host_listing))and(select count(*)=1 from leads where org_id in(f.private_org,f.host_org)))from private_fixture f;
+select pg_temp.private_ok('explicit sole Team owner can read linked beneficiary houses and inquiries',(select count(*)=2 from listings where id in(f.private_listing,f.host_listing))and(select count(*)=2 from leads where org_id in(f.private_org,f.host_org)))from private_fixture f;
 reset role;
 select set_config('request.jwt.claim.sub','',true);
 set local role service_role;
@@ -191,7 +191,7 @@ select pg_temp.private_ok('removal preserves private content and default',not or
 select pg_temp.private_ok('retail Team context is absent and standard',private_internal_testing_host_mode(retail_user,retail_org)is null and private_internal_testing_context(retail_user,retail_org)is null and(org_entitlement(retail_org)).seats=2 and(org_entitlement(retail_org)).cogs_ceiling_cents=6000)from private_fixture;
 select create_org_invite(retail_user,retail_org,null,'marketing',repeat('8',64))from private_fixture;
 select accept_org_invite(foreign_user,repeat('8',64))from private_fixture;
-select pg_temp.private_ok('ordinary customer join remains shared marketing',exists(select 1 from memberships where user_id=f.foreign_user and org_id=f.retail_org and role='marketing')and(select not private_testing from org_invites where token_hash=repeat('8',64)))from private_fixture f;
+select pg_temp.private_ok('ordinary customer marketing seat keeps private library',exists(select 1 from memberships where user_id=f.foreign_user and org_id=f.retail_org and role='marketing')and(select not private_testing from org_invites where token_hash=repeat('8',64))and exists(select 1 from team_private_libraries where team_org_id=f.retail_org and agent_user_id=f.foreign_user and private_org_id=f.foreign_org)and not library_content_access(f.foreign_user,f.retail_org,false))from private_fixture f;
 select pg_temp.private_denied('ordinary Team third seat still refused',format('select create_org_invite(%L,%L,null,''agent'',%L)',retail_user,retail_org,repeat('9',64)),'RP402:')from private_fixture;
 reset role;
 delete from auth.users where id=(select foreign_user from private_fixture);

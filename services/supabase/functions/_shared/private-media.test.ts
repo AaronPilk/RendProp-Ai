@@ -6,8 +6,13 @@ async function setup<T>(fn:()=>Promise<T>){const prior=Deno.env.get("MEDIA_GATEW
 async function token(extra:Record<string,unknown>={}){return new URL(await privateMediaUrl({actor,org,listing,bucket:"renders",key,...extra} as any)).pathname.slice(15);}
 function admin(fault=""){
  let reads=0,admits=0;const order:string[]=[];
- const rpc=async(name:string,args:any)=>{order.push(name);if(name==="media_delivery_admit"){admits++;assertEquals(args.p_org,org);assertEquals(args.p_required,true);return fault==="budget"?{data:null,error:{message:"RP429: Media serving allowance exhausted"}}:{data:{admitted:true,legacy_unbudgeted:false},error:null};}
- if(name==="hosting_retention_state")return{data:{org_id:org,policy:"preserved",protected:true,retention_ends_at:null,hosting_available:fault!=="retention"},error:null};
+ const rpc=async(name:string,args:any)=>{order.push(name);if(name==="library_media_delivery_admit"){admits++;assertEquals(args.p_org,org);assertEquals(args.p_actor,actor);assertEquals(args.p_required,true);return fault==="budget"?{data:null,error:{message:"RP429: Media serving allowance exhausted"}}:{data:{admitted:true,legacy_unbudgeted:false},error:null};}
+ if(name==="library_access"||name==="listing_library_scope") {
+  if(fault==="membership")return {data:null,error:{message:"RP403: Revoked library"}};
+  return {data:{actor_id:actor,org_id:org,library_owner_user_id:actor,role:"owner",access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:org,team_org_id:null,
+    ...(name==="listing_library_scope"?{listing_id:listing,library_org_id:fault==="legacy"?other:org,listing_owner_user_id:actor}:{})},error:null};
+ }
+ if(name==="hosting_retention_state"){assertEquals(args.p_org,fault==="legacy"?other:org);return{data:{org_id:args.p_org,policy:"preserved",protected:true,retention_ends_at:null,hosting_available:fault!=="retention"},error:null};}
  if(name==="studio_presenter_media_visibility")return{data:{assets:{},renders:{},keys:Object.fromEntries(args.p_keys.map((k:string)=>[k,fault!=="withdrawn"]))},error:null};
  if(name==="studio_production_review")return{data:{document:{revision:1,payload:{draft:{narration:{resultId:other}}}},source_revision:1,review:{status:fault==="review"?"draft":"submitted",submitted_at:"2026-10-07"}},error:null};
  throw Error("Unknown RPC "+name);};
@@ -26,7 +31,7 @@ Deno.test("private capability is exact host-only <=600s and rejects tamper/expir
  Deno.env.set("PRIVATE_MEDIA_DELIVERY","unknown");await assertRejects(()=>privateMediaUrl({actor,org,listing,bucket:"renders",key}),HttpError);
 }));
 Deno.test("gateway reads exact registered owned media and meters before any catalog work",()=>setup(async()=>{
- const a=admin(),t=await token();assertEquals(await privateMediaAuthority(a,t,7),{schema:1,slug:"private",objects:{[key]:"renders"},stream_uid:null});assertEquals(a.stats().admits,1);assertEquals(a.stats().order[0],"media_delivery_admit");
+ const a=admin(),t=await token();assertEquals(await privateMediaAuthority(a,t,7),{schema:1,slug:"private",objects:{[key]:"renders"},stream_uid:null});assertEquals(a.stats().admits,1);assertEquals(a.stats().order[0],"library_media_delivery_admit");
  const exhausted=admin("budget");await assertRejects(()=>privateMediaAuthority(exhausted,t,7),HttpError);assertEquals(exhausted.stats().reads,0);
  for(const fault of ["membership","deletion","other-org","unregistered","withdrawn","retention"])await assertRejects(()=>privateMediaAuthority(admin(fault),t,0),HttpError);
 }));
@@ -39,4 +44,10 @@ Deno.test("review narration rechecks exact submitted revision and selected cross
  const k=`ai-voice/${org}/${other}.mp3`,t=await token({bucket:"uploads",key:k,review:{owner:other,result:other,revision:1}});assertEquals((await privateMediaAuthority(admin(),t,2)).objects,{[k]:"uploads"});
  await assertRejects(()=>privateMediaAuthority(admin("review"),t,2),HttpError);
  await assertRejects(async()=>privateMediaAuthority(admin(),await token({bucket:"uploads",key:k,review:{owner:other,result:other,revision:2}}),2),HttpError);
+}));
+
+Deno.test("retained legacy media keeps physical keys but retention follows its current logical library",()=>setup(async()=>{
+ const t=await token(),a=admin("legacy");
+ assertEquals((await privateMediaAuthority(a,t,7)).objects,{[key]:"renders"});
+ assertEquals(a.stats().order.filter(n=>n==="hosting_retention_state").length,2);
 }));

@@ -71,7 +71,7 @@ import Foundation
 
         let testingSeats = try summary()
         check(teamView.row(testingSeats).value == "2 used · Unlimited", "actual Team seat consumer displays Unlimited")
-        check(teamView.footer(testingSeats) == "This is a shared workspace. Its homes, tours and leads are visible to team members. Unlimited seats are available for testing. You can invite more people.", "actual Team footer does not show sentinel seats remaining")
+        check(teamView.footer(testingSeats) == "Each agent keeps their own listings, tours and leads. The Team owner can switch between authorized agents’ listings; invited agents see only their own. Unlimited seats are available for testing. You can invite more people.", "actual Team footer does not show sentinel seats remaining")
         check(!testingSeats.seats.isFull && testingSeats.seats.remaining == unlimited - 2, "seat display never changes server numeric full-seat behavior")
         let manualSeats = try summary(source: "manual")
         check(manualSeats.hasUnlimitedTestingSeats, "optional team manual source confirms exact marker")
@@ -105,10 +105,10 @@ import Foundation
         check(teamView.row(privateTeam).value == "2 used · Unlimited", "private owner testing seat grant remains unlimited")
         let privateBeneficiary = try summary(cap: 1, used: 1, manager: false, mode: "private_testing")
         check(teamView.row(privateBeneficiary).value == "1 of 1", "private beneficiary retains one private content seat")
-        check(teamView.footer(privateBeneficiary).contains("without sharing listings"), "private beneficiary footer does not suggest team content access")
-        check(teamView.access(testingSeats).value == "Shared workspace", "missing legacy mode retains explicit shared workspace label")
+        check(teamView.footer(privateBeneficiary).contains("private from other testers") && teamView.footer(privateBeneficiary).contains("Team owner"), "private beneficiary footer does not suggest team content access")
+        check(teamView.access(testingSeats).value == "Private agent accounts", "missing legacy mode retains explicit shared workspace label")
         for mode in ["shared", "unknown", "Private_testing", ""] {
-            check(teamView.access(try summary(mode: mode)).value == "Shared workspace", "only exact server private mode changes account-access label")
+            check(teamView.access(try summary(mode: mode)).value == "Private agent accounts", "only exact server private mode changes account-access label")
         }
 
         func memberRecord(mode: String? = nil, role: String = "agent") throws -> TeamSummary.Member {
@@ -123,7 +123,7 @@ import Foundation
         check(try memberRecord(role: "owner").roleLabel == "Owner", "actual master owner retains Owner label")
         let sharedMember = try memberRecord()
         check(sharedMember.roleLabel == "Agent", "ordinary member role remains unchanged")
-        check(teamView.removal(sharedMember).contains("shared workspace"), "actual ordinary removal explains shared content ownership")
+        check(teamView.removal(sharedMember).contains("private listings") && !teamView.removal(sharedMember).contains("shared workspace"), "actual ordinary removal preserves private content ownership")
 
         func joinedRecord(mode: String? = nil) throws -> TeamJoined {
             var row: [String: Any] = ["ok": true, "org_id": "owned-private-org", "org_name": "My private workspace", "role": "owner"]
@@ -135,8 +135,8 @@ import Foundation
         check(teamView.join(privateJoin).contains("stay private in your own workspace") && !teamView.join(privateJoin).contains("shared workspace"), "actual join confirmation does not promise shared houses")
         check(teamView.join(privateJoin).hasPrefix("Synthetic Sponsor Team provides"), "private join names the verified sponsor without changing private workspace name")
         let sharedJoin = try joinedRecord()
-        check(teamView.join(sharedJoin).contains("shared workspace") && teamView.join(sharedJoin).contains("visible to team members"), "actual legacy join explains shared visibility")
-        check(teamView.join(sharedJoin).contains("personal workspace stays separate"), "ordinary join retains personal work explanation")
+        check(!teamView.join(sharedJoin).contains("shared workspace") && teamView.join(sharedJoin).contains("Only the Team owner"), "actual ordinary join explains owner-only library access")
+        check(teamView.join(sharedJoin).contains("keeping your own listings"), "ordinary join retains personal work explanation")
 
         var sentInvites: [(String?, String)] = []
         let privateInvite = InvitePolicyFixture(privateTesting: true,
@@ -151,7 +151,7 @@ import Foundation
             let sharedInvite = InvitePolicyFixture(privateTesting: false,
                 send: { email, chosen in sentInvites.append((email, chosen)) }, email: "", role: role)
             check(sharedInvite.showsRoles, "ordinary shared invites retain role selection")
-            check(sharedInvite.explanation.contains("shared workspace"), "ordinary invite explains shared content access")
+            check(sharedInvite.explanation.contains("Each agent keeps their own listings") && !sharedInvite.explanation.contains("shared workspace"), "ordinary invite explains shared content access")
             await sharedInvite.dispatch()
             check(sentInvites.last?.1 == role && sentInvites.last?.0 == nil, "actual ordinary invite preserves chosen role and code-only invitation")
         }
@@ -169,11 +169,21 @@ import Foundation
         check(selectedPrivate.visibleIDs == [privateID, draftID], "actual Home hides old host inventory after private selection")
         check(!selectedPrivate.needsSelection, "selected private workspace needs no redundant selector prompt")
         check(inventory.listings.map(\.id) == savedIDs && inventory.listings[1].cloudUnavailable, "filtering leaves cached rows and recovery state intact")
+        let legacyID = UUID()
+        inventory.listings = [Listing(id: legacyID, serverOrgID: hostOrg, serverLibraryOrgID: privateOrg)]
+        check(HomePolicyFixture(model: inventory).visibleIDs == [legacyID], "own legacy Team row hidden by physical storage org")
+        inventory.listings[0].cloudUnavailable = true
+        check(HomePolicyFixture(model: inventory).visibleIDs.isEmpty, "revoked cached library alias exposed old Team row")
+        inventory.listings[0].cloudUnavailable = false
+        WorkspaceStore.hasAuthority = false
+        check(HomePolicyFixture(model: inventory).visibleIDs.isEmpty, "revoked directory delegation exposed cached cards")
+        WorkspaceStore.hasAuthority = true
+        inventory.listings = [Listing(id: privateID, serverOrgID: privateOrg), Listing(id: hostID, serverOrgID: hostOrg, cloudUnavailable: true), Listing(id: draftID, cloudDraftOrgID: privateOrg)]
         WorkspaceContext.selectedOrgID = nil
         let noSelection = HomePolicyFixture(model: inventory)
         check(noSelection.visibleIDs.isEmpty, "nil live workspace cannot expose cached host houses")
         check(noSelection.needsSelection, "nil live workspace offers explicit selection")
-        check(noSelection.prompt.title == "Choose a workspace" && noSelection.prompt.identifier == "homes.chooseWorkspace", "actual Home selection prompt is named and identifiable")
+        check(noSelection.prompt.title == "Reconnect to your listings" && noSelection.prompt.identifier == "homes.chooseWorkspace", "actual Home selection prompt is named and identifiable")
         WorkspaceContext.selectedOrgID = hostOrg
         check(HomePolicyFixture(model: inventory).visibleIDs == [hostID], "an explicitly chosen still-authorized workspace keeps its existing scope")
         WorkspaceContext.selectedOrgID = nil; Config.useLiveBackend = false

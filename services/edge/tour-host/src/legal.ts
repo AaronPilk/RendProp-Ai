@@ -151,6 +151,11 @@ more listings. Keep your account to yourself: you are responsible for
 what happens under it. You must be at least 18 years old (and old enough to form a binding
 contract where you live) to use Rendprop. If you use Rendprop for a business or team, you
 confirm you have the authority to accept these Terms for it.</p>
+<p>Joining a Team gives you a seat while keeping your own listing library. Other
+invited agents cannot open your listings, private media or leads. The Team account
+owner can switch between its agents' listing libraries and manage their listing
+content. A Team's included usage is shared across its seats; joining does not give
+each seat a separate copy of that allowance.</p>
 
 <h2><span class="num">3.</span>Acceptable use</h2>
 <p>The one big rule: <b>only record and upload spaces you have the right to record.</b> That
@@ -301,6 +306,11 @@ export function privacyPage(): string {
   to marketing calls, texts or emails. Automatic CRM export is disabled; older versions
   may have created GoHighLevel contacts that need separate cleanup. Lead forms carry a
   notice linking to this policy.</li>
+  <li><b>Teams</b> — we record the accepted invitation, the Team account owner and
+  the agent's listing-library relationship. The Team owner can open its agents'
+  listings, listing media and leads. Invited agents cannot open another agent's
+  library. Removing a Team seat ends the owner's Team access to that agent's
+  library; it does not transfer or delete the agent's existing listings.</li>
   <li><b>Tour viewers</b> — for each visit to a tour page we record engagement telemetry (that the
   tour started, how long it was watched, how far the viewer scrolled) tied to the tour, not to a
   named person. The viewer's IP address is used briefly as a rate-limit key to prevent abuse of

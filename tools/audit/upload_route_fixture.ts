@@ -14,7 +14,7 @@ export type ObjectBytes = {
 };
 type Handler = (request: Request) => Promise<Response>;
 let actualHandler: Handler | undefined;
-export const TICKET = "uploads/fixture-org/fixture-listing/fixture-asset.mov";
+export const TICKET = "uploads/b2222222-2222-4222-8222-222222222222/c3333333-3333-4333-8333-333333333333/fixture-asset.mov";
 export const PARTS = [{ number: 1, etag: '"AAAA"' }];
 export const object = (
   body = "AAAA",
@@ -30,7 +30,7 @@ export function latch() {
 export class Fixture {
   asset: Row | null = {
     id: "fixture-asset",
-    listing_id: "fixture-listing",
+    listing_id: "c3333333-3333-4333-8333-333333333333",
     storage_key: TICKET,
     bucket: "uploads",
     kind: "video",
@@ -164,6 +164,24 @@ export class Fixture {
       json({ message: `RP${code}: ${message}` }, 400);
     if (this.rpcFailures.has(name)) {
       return reject(503, "synthetic durable state unavailable");
+    }
+    if (name === "listing_library_scope") {
+      assertEquals(args, {
+        p_actor: "a1111111-1111-4111-8111-111111111111",
+        p_listing: "c3333333-3333-4333-8333-333333333333",
+      });
+      return json({
+        actor_id: args.p_actor,
+        listing_id: args.p_listing,
+        org_id: "b2222222-2222-4222-8222-222222222222",
+        library_org_id: "b2222222-2222-4222-8222-222222222222",
+        billing_org_id: "b2222222-2222-4222-8222-222222222222",
+        team_org_id: null,
+        library_owner_user_id: args.p_actor,
+        listing_owner_user_id: args.p_actor,
+        role: "owner", access_mode: "own",
+        can_read: true, can_write: true, can_manage_subscription: true,
+      });
     }
     if(name==="media_upload_read_admit"){assertEquals(Object.keys(args),["p_asset"]);if(args.p_asset!==this.asset?.id)return reject(404,"upload media unavailable");return json({admitted:true,legacy_unbudgeted:true});}
     const op = this.operations.get(String(args.p_operation));
@@ -408,13 +426,13 @@ export class Fixture {
       );
     if (url.hostname === "upload-fixture.invalid") {
       if (url.pathname === "/auth/v1/user") {
-        return json({ id: "fixture-user", aud: "authenticated" });
+        return json({ id: "a1111111-1111-4111-8111-111111111111", aud: "authenticated" });
       }
       if (url.pathname === "/rest/v1/memberships") {
         return row({ role: "owner" });
       }
       if (url.pathname === "/rest/v1/listings") {
-        return row({ id: "fixture-listing", org_id: "fixture-org" });
+        return row({ id: "c3333333-3333-4333-8333-333333333333", org_id: "b2222222-2222-4222-8222-222222222222" });
       }
       if (url.pathname === "/rest/v1/deletion_requests") return json([]);
       if (url.pathname === "/rest/v1/upload_operations" && request.method === "GET") {

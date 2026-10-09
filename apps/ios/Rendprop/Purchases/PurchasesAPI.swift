@@ -117,7 +117,7 @@ protocol PurchasesAPI {
 extension LiveAPIClient: PurchasesAPI {
     func prepareTrialPurchase(orgID: UUID, productID: String, appAccountToken: UUID) async throws -> TrialPurchaseReservation {
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == appAccountToken,
-              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+              WorkspaceContext.billingOrgID == orgID else { throw CloudSyncError.identityChanged }
         let data = try await PurchasesRequest.post(path: ["me", "trial", "prepare"], json: [
             "org_id": orgID.uuidString.lowercased(),
             "actor_id": appAccountToken.uuidString.lowercased(), "app_account_token": appAccountToken.uuidString.lowercased(),
@@ -127,7 +127,7 @@ extension LiveAPIClient: PurchasesAPI {
     }
     func billingContext() async throws -> SubscriptionBillingContext {
         let data = try await PurchasesRequest.getBilling()
-        return try SubscriptionBillingContext.fromMe(data, selectedOrg: WorkspaceContext.selectedOrgID)
+        return try SubscriptionBillingContext.fromMe(data, selectedOrg: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID, servingOrg: WorkspaceContext.servingOrgID)
     }
     func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync {
         var body: [String: Any] = ["signed_transaction": signedTransaction]
@@ -181,6 +181,7 @@ extension LiveAPIClient: PurchasesAPI {
     }
     static func post(path: [String], json: [String: Any], retriesUnauthorized: Bool = true, requiredCurrentOrg: UUID? = nil) async throws -> Data {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let viewedOrg = WorkspaceContext.selectedOrgID
         guard var url = Config.apiBaseURL else { throw APIError.notConfigured }
         for segment in path { url.appendPathComponent(segment) }
 
@@ -217,11 +218,13 @@ extension LiveAPIClient: PurchasesAPI {
         }
 
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
-              requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
+              WorkspaceContext.selectedOrgID == viewedOrg,
+              requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
         let session = retriesUnauthorized ? URLSession.shared : reservationSession
         let (data, resp) = try await session.data(for: req)
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
-              requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
+              WorkspaceContext.selectedOrgID == viewedOrg,
+              requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         if (200..<300).contains(http.statusCode) { return data }
 
@@ -238,11 +241,13 @@ extension LiveAPIClient: PurchasesAPI {
             if refreshed, let fresh = AuthStore.storedAccessToken() {
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
                       AuthStore.jwtSubject(fresh) == actor,
-                      requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
+                      WorkspaceContext.selectedOrgID == viewedOrg,
+                      requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
                 req.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
                 let (data2, resp2) = try await URLSession.shared.data(for: req)
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
-                      requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
+                      WorkspaceContext.selectedOrgID == viewedOrg,
+                      requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }
                 guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
                 if (200..<300).contains(http2.statusCode) { return data2 }
                 throw LiveAPIClient.serverError(status: http2.statusCode, data: data2)

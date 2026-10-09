@@ -111,8 +111,8 @@ private struct Industry {
 
     var nounCap: String { noun.prefix(1).uppercased() + noun.dropFirst() }
     var customerCap: String { customer.prefix(1).uppercased() + customer.dropFirst() }
-    var tabTitle: String { nounCap + "s" }                       // RootTabView: "\(spaceNounCap)s"
-    var collectionTitle: String { "My " + nounCap + "s" }        // SpaceType.collectionTitle
+    var tabTitle: String { isRealEstate ? "Listings" : nounCap + "s" } // RootTabView collection tab
+    var collectionTitle: String { isRealEstate ? "My Listings" : "My " + nounCap + "s" } // SpaceType.collectionTitle
     var newItemTitle: String { "New " + nounCap }                // SpaceType.newItemTitle
     var isRealEstate: Bool { raw == "real_estate" }
     /// ListingFieldsForm: the optional-details disclosure title.
@@ -521,10 +521,11 @@ final class IndustryWalk: XCTestCase {
             checkContains("\(i.tag): hero headline line 2 is \"\(i.heroLine2)\" (SpaceType.heroHeadline)", i.heroLine2)
             checkContains("\(i.tag): hero subline matches SpaceType.heroSubline", i.heroSubline)
             checkText("\(i.tag): collection section titled \"\(i.collectionTitle)\"", i.collectionTitle)
-            checkText("\(i.tag): \"Add a \(i.noun)\" button (home.addHome)", "Add a \(i.noun)")
-            checkContains("\(i.tag): showroom caption \"Everything you make is saved to one \(i.noun).\"",
-                          "Everything you make is saved to one \(i.noun).")
-            checkContains("\(i.tag): profile tile is named \"\(i.profileCardName)\"", i.profileCardName)
+            check("\(i.tag): Get started creation action (home.getStarted)",
+                  app.buttons["home.getStarted"].exists)
+            checkText("\(i.tag): Home tool heading", "Create Something Amazing")
+            check("\(i.tag): AI Photo Studio retains its project-first route",
+                  app.buttons["home.feature.photoStudio"].exists)
             checkContains("\(i.tag): how-it-works step 1 \"Add the \(i.noun)\"", "Add the \(i.noun)")
             checkContains("\(i.tag): how-it-works step 3 addresses \(i.customerCap)", "\(i.customerCap) scroll it")
             checkContains("\(i.tag): demo caption says \"the tour your \(i.customer) get\"",
@@ -664,9 +665,9 @@ final class IndustryWalk: XCTestCase {
                 note("SKIPPED: Home tab unavailable.")
                 return
             }
-            scrollToTop()
-            guard let add = scrollTo(ids: ["home.addHome"], labels: ["Add a \(i.noun)"], swipes: 6) else {
-                note("SKIPPED: no `home.addHome` and no \"Add a \(i.noun)\" button on Home.")
+            guard openCollectionTab(i),
+                  let add = scrollTo(ids: [], labels: ["Add a \(i.noun)"], swipes: 6) else {
+                note("SKIPPED: the \(i.tabTitle) tab's Add a \(i.noun) action was unavailable.")
                 return
             }
             tap(add)
@@ -1346,15 +1347,14 @@ final class IndustryWalk: XCTestCase {
 
     /// Home is up when its one unmissable action is on screen.
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
-    /// CAREFUL with the confirming labels: "Add a home" and "My Homes" appear
-    /// on BOTH the Home dashboard and the collection tab, so only `home.addHome`
-    /// and "Make something" are unique to the dashboard.
+    /// Confirm the dashboard with its unique Get started action or tool heading,
+    /// never the collection tab's unchanged Add action.
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: ["home.addHome"], confirmedBy: ["Make something"])
+        openTab("Home", ids: ["home.getStarted"], confirmedBy: ["Create Something Amazing"])
     }
 
     @discardableResult

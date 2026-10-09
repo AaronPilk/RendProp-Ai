@@ -5,6 +5,7 @@ import CryptoKit
 enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/\(path)") } }
 enum APIError: Error { case decoding, server(Int); var isConflict: Bool { if case .server(409) = self { return true }; return false } }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
+@MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID } }
 enum FixtureError: Error { case failed }
 struct AssertionFailure: Error { let message: String }
 func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
@@ -93,6 +94,7 @@ __SET_SOLD__
 __SET_PHOTO__
 __SET_COORDINATE__
 __MARK_DIRTY__
+__IS_IN_WORKSPACE__
 __SYNC_LISTING__
 }
 
@@ -136,6 +138,33 @@ __SYNC_LISTING__
   let req=client.requests.last!
   try check(req.httpMethod=="PUT" && req.url!.path.hasSuffix("/facts"),"Actual client uses the atomic facts route")
   try check(req.value(forHTTPHeaderField:"X-Org-Id")==org.uuidString.lowercased(),"Actual facts write is workspace-bound")
+  let legacyPhysical=UUID(),legacyClient=WireClient()
+  var ownLegacy=coordinate; ownLegacy.serverOrgID=legacyPhysical; ownLegacy.serverLibraryOrgID=org
+  var legacyWire=response(); legacyWire["org_id"]=legacyPhysical.uuidString; legacyWire["library_org_id"]=org.uuidString
+  legacyClient.response=try JSONSerialization.data(withJSONObject:legacyWire)
+  let legacyReceipt=try await legacyClient.updateListing(ownLegacy)
+  try check(legacyClient.requests.last!.value(forHTTPHeaderField:"X-Org-Id")==legacyPhysical.uuidString.lowercased(),"Own legacy listing facts retain true storage org")
+  try check(legacyReceipt.serverOrgID==legacyPhysical && legacyReceipt.serverLibraryOrgID==org,"Legacy receipt keeps logical grouping separate")
+  var noAlias=ownLegacy; noAlias.serverLibraryOrgID=nil
+  do {_=try await legacyClient.updateListing(noAlias);throw AssertionFailure(message:"Missing logical grouping was accepted")}catch is CloudSyncError {count+=1}
+  try check(legacyClient.requests.count==1,"Unbound legacy listing dispatched a write")
+  let ownLegacyModel=SyncModel(ownLegacy)
+  ownLegacyModel.api.update={sent in
+   var acknowledgedWire=legacyWire
+   acknowledgedWire["tagline"]=sent.tagline
+   acknowledgedWire["lat"]=sent.latitude.map(coarseCoordinate)
+   acknowledgedWire["lng"]=sent.longitude.map(coarseCoordinate)
+   legacyClient.response=try JSONSerialization.data(withJSONObject:acknowledgedWire)
+   return try await legacyClient.updateListing(sent)
+  }
+  ownLegacyModel.modify(localID) {$0.tagline="Own legacy agent edit"}
+  try await wait {ownLegacyModel.listings[0].needsServerSync==false}
+  try check(ownLegacyModel.api.snapshots.count==1 && ownLegacyModel.api.snapshots[0].serverOrgID==legacyPhysical,"AppModel legacy edit retargeted parent content")
+  try check(ownLegacyModel.listings[0].tagline=="Own legacy agent edit" && ownLegacyModel.listings[0].factsSync?.fields.isEmpty==true,"Mapped legacy receipt must acknowledge exact local edit")
+  let lost=try CloudListingMerge.merge(local:[ownLegacy],remote:[],protected:[ownLegacy.id])[0]
+  try check(lost.serverLibraryOrgID==nil && lost.cloudUnavailable==true && lost.mainPhotoRelPath==ownLegacy.mainPhotoRelPath,"Revoked protected alias retained foreign cards or lost local files")
+  let returned=try CloudListingMerge.merge(local:[lost],remote:[ownLegacy],protected:[])[0]
+  try check(returned.serverLibraryOrgID==org && returned.serverOrgID==legacyPhysical && returned.cloudUnavailable==false,"Fresh owned legacy read failed to restore grouping")
   let actualBody=try JSONSerialization.jsonObject(with:req.httpBody!) as! [String:Any]
   try check(NSDictionary(dictionary:actualBody).isEqual(to:body),"Actual wire contains only explicit intent")
   let persisted=try JSONDecoder().decode(Listing.self,from:JSONEncoder().encode(coordinate))

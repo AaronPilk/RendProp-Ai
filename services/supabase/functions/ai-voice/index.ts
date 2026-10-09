@@ -1,3 +1,4 @@
+import { libraryBillingOrg } from "../_shared/library-access.ts";
 // ai-voice — ElevenLabs text-to-speech for reel voiceovers, with the
 // character-level alignment the app turns into word-by-word captions.
 // Owner-authenticated, same envelope and RPnnn conventions as ai-photo.
@@ -134,7 +135,7 @@ import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { ProviderError, definitiveSubmitRejection } from "../_shared/providers/common.ts";
 import { fundingContext, fundedAttempt, TARIFF_VERSION } from "../_shared/funded-serving.ts";
-import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
@@ -310,15 +311,10 @@ async function presignGet(bucket: string, key: string, expiresIn: number): Promi
 // ── Guards ───────────────────────────────────────────────────────────────────
 
 /** Role gate: marketing is read-only, same rule as ai-photo / ai-video. */
-async function requireEditorRole(user: PaidAiCaller, req: Request, what: string): Promise<string> {
+async function requireEditorRole(user: PaidAiCaller, req: Request, what: string, listingId?: string): Promise<string> {
   const userId = user.id;
-  const orgId = await orgForUser(userId, preferredOrg(req));
-  const { data: mem, error: mErr } = await adminClient()
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, `Your role does not permit ${what}`);
-  }
+  const orgId = await contentOrgForUser(userId, preferredOrg(req), listingId, true);
+
   await assertPaidAiIdentity(user, orgId);
   return orgId;
 }
@@ -342,8 +338,8 @@ interface Charge {
  * how `{}` bodies used to burn an org's allowance without a provider call ever
  * being made (audit round 4).
  */
-async function guardTTS(user: PaidAiCaller, req: Request): Promise<Charge> {
-  const orgId = await requireEditorRole(user, req, "AI voiceovers");
+async function guardTTS(user: PaidAiCaller, req: Request, listingId?: string): Promise<Charge> {
+  const orgId = await requireEditorRole(user, req, "AI voiceovers", listingId);
   // A degraded plan lookup is a 503, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.reels_per_month; // the CAP is shared; the counter is not
@@ -354,12 +350,13 @@ async function guardTTS(user: PaidAiCaller, req: Request): Promise<Charge> {
     throw new HttpError(409, "Duplicate submission — this voiceover was already started.", "conflict");
   }
 
-  const burstKey = `aivoice:${orgId}`;
+  const billingOrgId = await libraryBillingOrg(adminClient(), orgId, user.id);
+  const burstKey = `aivoice:${billingOrgId}`;
   const burst = await chargeRateReceipt(burstKey, TTS_MAX_PER_WINDOW, TTS_WINDOW_SECONDS);
   if (!burst.accepted) {
     throw new HttpError(429, "AI voiceover limit reached for now — try again in a few minutes.", "rate_limited");
   }
-  const monthlyKey = `aivoicemo:${orgId}`;
+  const monthlyKey = `aivoicemo:${billingOrgId}`;
   const monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
   if (!monthly.accepted) {
     await refundRateReceipt(burst.receipt);
@@ -654,7 +651,7 @@ Deno.serve(async (req) => {
 
       // ── CHARGE ── everything above is validated; the meter is charged here,
       // immediately before the billable call, and refunded on any failure.
-      const charge = await guardTTS(user, req);
+      const charge = await guardTTS(user, req, body.listing_id);
 
       try {
         // Reserve an owned object key before provider dispatch. Account deletion

@@ -14,3 +14,11 @@ Deno.test("private export final pass withdraws earlier groups while a later grou
  const second=`renders/${org}/${other}/source.jpg`;let withdrawn=false;const db={rpc:(_name:string,args:Record<string,unknown>)=>Promise.resolve({error:null,data:{assets:{},renders:{},keys:Object.fromEntries((args.p_keys as string[]).map(k=>[k,!(withdrawn&&k===key)]))}})};
  const rows=await privateProvenanceLinks(db,org,[{listing_id:listing,original_key:key},{listing_id:other,original_key:second}],async(_bucket,k)=>{if(k===second)withdrawn=true;return "signed:"+k;});assertEquals(rows[0].original_url,null);assertEquals(rows[1].original_url,"signed:"+second);
 });
+
+Deno.test("legacy provenance downloads sign the physical row org without rewriting its source key",async()=>{
+ const physical="a0301009-0000-4000-8000-000000000004",logical="a0301009-0000-4000-8000-000000000005",id="a0301009-0000-4000-8000-000000000006";
+ const source=`renders/${physical}/${id}/original.jpg`;
+ const db={rpc:async(_name:string,args:any)=>({data:{assets:{},renders:{},keys:Object.fromEntries(args.p_keys.map((k:string)=>[k,true]))},error:null})};
+ const [row]=await privateProvenanceLinks(db,logical,[{org_id:physical,listing_id:id,original_key:source}],async(_bucket,k,_seconds,l,o)=>{assertEquals(k,source);assertEquals(l,id);assertEquals(o,physical);return "exact-legacy-source";});
+ assertEquals(row.original_url,"exact-legacy-source");
+});

@@ -650,7 +650,11 @@ Deno.test("wiring: the body is validated BEFORE the burst limiter is touched", (
 });
 
 Deno.test("wiring: the check is role-gated and org-scoped like every other route", () => {
-  assertStringIncludes(INDEX_SRC, 'if (!mem?.role || mem.role === "marketing")');
+  const guard = INDEX_SRC.match(/^async function guardDriftCheck\([\s\S]*?^}/m)?.[0];
+  assert(guard, "the actual quality-check admission guard exists");
+  assertStringIncludes(guard, "await requireLibraryWrite(adminClient(), userId, orgId)");
+  assert(guard.indexOf("requireLibraryWrite") < guard.indexOf("durableRateLimit"),
+    "fresh writable-library authority precedes the quality-check charge");
   assertStringIncludes(INDEX_SRC, "async function guardDriftCheck(user: PaidAiCaller, req: Request)");
   assertStringIncludes(INDEX_SRC, "orgForUser(user.id, preferredOrg(req))");
   // The org handed to the audit RPC is the one the JWT resolved to, never one

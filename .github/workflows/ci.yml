@@ -1037,6 +1037,7 @@ jobs:
           python3 tools/audit/run_subscription_chronology.py
           python3 tools/audit/test_workspace_handler_inventory.py --out "$RUNNER_TEMP/rendprop-workspace-inventory"
           python3 tools/audit/run_workspace_selection.py
+          python3 tools/audit/run_team_private_libraries.py
           python3 tools/audit/run_internal_testing_grants.py
           python3 tools/audit/run_private_internal_testing.py
           python3 services/supabase/tests/funded_serving_pg.py

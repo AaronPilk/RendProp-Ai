@@ -18,7 +18,9 @@ export type ListingFinish = {
 };
 const terminal = new Set(["ready", "failed", "completed", "published", "cancelled"]);
 export function canEditListing(workspace: Workspace): boolean {
-  const role = workspace.memberships.find(member => member.orgId === workspace.org.id)?.role;
+  const member = workspace.memberships.find(member => member.orgId === (workspace.libraryOrgId ?? workspace.org.id));
+  if (member?.canWrite !== undefined) return member.canWrite;
+  const role = member?.role;
   return role === "owner" || role === "admin" || role === "agent";
 }
 

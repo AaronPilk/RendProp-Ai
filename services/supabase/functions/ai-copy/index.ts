@@ -1,3 +1,4 @@
+import { requireLibraryWrite } from "../_shared/library-access.ts";
 // ai-copy — AI PROMPTING FOR PEOPLE WHO ARE NOT PROMPT ENGINEERS.
 // Owner-authenticated. Three routes on one function, the way ai-voice serves
 // /voices and /tts.
@@ -133,7 +134,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import { recordRoutedAiCost } from "../_shared/ledger.ts";
@@ -292,15 +293,10 @@ async function routingPlan(orgId: string): Promise<string> {
 
 /** Role gate + burst limiter. Mirrors ai-photo's `guardHelper()`: a role check
  *  and ONE burst key, no monthly meter, nothing refundable. */
-async function guardAssist(user: PaidAiCaller, req: Request): Promise<string> {
+async function guardAssist(user: PaidAiCaller, req: Request, listingId?: string): Promise<string> {
   const userId = user.id;
-  const orgId = await orgForUser(userId, preferredOrg(req));
-  const { data: mem, error: mErr } = await adminClient()
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, "Your role does not permit AI writing help");
-  }
+  const orgId = await contentOrgForUser(userId, preferredOrg(req), listingId, true);
+
   await assertPaidAiIdentity(user, orgId);
   if (!(await durableRateLimit(`aicopy:${orgId}`, BURST_MAX_PER_WINDOW, BURST_WINDOW_SECONDS))) {
     throw new HttpError(429, "Too many writing requests for now — try again in a few minutes.", "rate_limited");
@@ -495,7 +491,7 @@ Deno.serve(async (req) => {
       const brief = userFreeText(facts, roomTags);
       assertInputSafe("marketing", brief, "This reel brief", listingSpace);
 
-      const orgId = await guardAssist(user, req);
+      const orgId = await guardAssist(user, req, body.listing_id);
       const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
       operationFunding=funding;
       const plan = await routingPlan(orgId);
@@ -623,7 +619,7 @@ Deno.serve(async (req) => {
       const brief = userFreeText(facts, photoWords(photos));
       assertInputSafe("marketing", brief, "This reel brief", listingSpace);
 
-      const orgId = await guardAssist(user, req);
+      const orgId = await guardAssist(user, req, body.listing_id);
       const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
       operationFunding=funding;
       const orgPlan = await routingPlan(orgId);
@@ -793,7 +789,7 @@ Deno.serve(async (req) => {
       const brief = userFreeText(facts, [...photoWords(photos), transcriptText(phrases)]);
       assertInputSafe("marketing", brief, "What you said on camera", listingSpace);
 
-      const orgId = await guardAssist(user, req);
+      const orgId = await guardAssist(user, req, body.listing_id);
       const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
       operationFunding=funding;
       const orgPlan = await routingPlan(orgId);
@@ -885,7 +881,7 @@ Deno.serve(async (req) => {
     // text, in the same position in the sequence.
     assertInputSafe("image_prompt", rough, "That idea", listingSpace);
 
-    const orgId = await guardAssist(user, req);
+    const orgId = await guardAssist(user, req, body.listing_id);
       const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
       operationFunding=funding;
     const plan = await routingPlan(orgId);

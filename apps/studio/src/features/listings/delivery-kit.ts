@@ -1,5 +1,5 @@
 import {isPrivateMediaURL,privateMediaCapability} from "../../data/private-media";
-import { mediaURL, uuid } from "../../data/contracts";
+import { mediaURL, uuid, belongsToLibrary } from "../../data/contracts";
 import type { Listing, ListingMedia, Workspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { decodeDocument } from "../../data/documents";
@@ -119,7 +119,7 @@ function mediaExtension(bytes: Uint8Array, type: string, kind: "photo" | "video"
 }
 export async function buildKit(snapshot: KitSnapshot, selectedIds: string[], options: { services: StudioServices; workspace: Workspace; signal: AbortSignal; progress: (value: KitProgress) => void; fetcher?: typeof fetch }) {
   const { signal, services, workspace } = options, check = () => assertKitIdentity(services, workspace, snapshot.identityVersion, signal);
-  check(); if (snapshot.listing.orgId !== workspace.org.id) throw new Error("This kit belongs to another workspace.");
+  check(); if (!belongsToLibrary(snapshot.listing, workspace)) throw new Error("This kit belongs to another workspace.");
   if (selectedIds.length > KIT_MAX_SELECTED || new Set(selectedIds).size !== selectedIds.length) throw new Error("Choose up to 40 photos or videos for one kit.");
   const selected = selectedIds.map(id => { const item = snapshot.items.find(row => row.id === id); if (!item) throw new Error("Your selection changed. Refresh the kit materials."); return item; });
   const entries: ZipEntry[] = [], files: Record<string, unknown>[] = []; let bytesRead = 0, done = 0;

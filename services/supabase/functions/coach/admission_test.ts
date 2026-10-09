@@ -30,7 +30,7 @@ async function fixture(bypassMembership = false, dropPreference = false) {
     new URL("../_shared/supabase.ts", import.meta.url),
   );
   const orgStart = shared.indexOf("export async function orgForUser(");
-  const orgEnd = shared.indexOf("/** Read an optional preferred org", orgStart);
+  const orgEnd = shared.indexOf("/** Resolve one authorized listing", orgStart);
   const headerStart = shared.indexOf("export function preferredOrg(", orgEnd);
   const headerEnd = shared.indexOf("\n}\n", headerStart) + 3;
   assert(
@@ -55,6 +55,7 @@ async function fixture(bypassMembership = false, dropPreference = false) {
     import {buildUserTurn,screenOf,spaceTypeOf,systemInstruction} from ${
     JSON.stringify(new URL("./prompt.ts", import.meta.url).href)
   };
+    import {workspaceDirectory} from ${JSON.stringify(new URL("../_shared/workspaces.ts",import.meta.url).href)};
     import {coachContext} from ${JSON.stringify(new URL("./context.ts", import.meta.url).href)};
     import {fundingContext,fundedAttempt,textAttemptQuote,completeFundingOperation} from ${JSON.stringify(new URL("../_shared/funded-serving.ts",import.meta.url).href)};
     import {parseCoachOutput} from ${
@@ -63,7 +64,7 @@ async function fixture(bypassMembership = false, dropPreference = false) {
     type RouteStep=any;type CoachContext=any;type CoachListingCtx=any;type Entitlement=any;
     export const state:any={options:{},providers:0,ledgers:0,ledgerRows:[],orgLookups:[],meters:[],plans:[],events:[],contextQueries:[],counts:new Map()};
     export function reset(options:any={}){Object.assign(state,{options,providers:0,ledgers:0,ledgerRows:[],orgLookups:[],meters:[],plans:[],events:[],contextQueries:[],counts:new Map()});}
-    const getUser=async(req:Request)=>({id:req.headers.get("x-test-user")??"synthetic-user",is_anonymous:false});
+    const getUser=async(req:Request)=>({id:req.headers.get("x-test-user")??"c0300501-0000-4000-8000-000000000001",is_anonymous:false});
     const ROLE_RANK={owner:0,admin:1,agent:2,marketing:3};
     function query(table:string){
       const filters:any={};let columns="",head=false;
@@ -74,7 +75,7 @@ async function fixture(bypassMembership = false, dropPreference = false) {
         if(state.options.contextError===table)return {data:null,count:null,error:{message:"synthetic private SQL failure"}};
         if(table==="orgs")return {error:null,data:state.options.noOrg?null:{plan_source:"apple",plan_expires_at:"2028-01-01T00:00:00Z",deleted_at:null}};
         if(table==="memberships")return {error:null,data:state.options.noOrg||state.options.removedAfterAdmission?null:{role:state.options.role??"owner"}};
-        if(table==="listings")return head?{error:null,count:3}: {error:null,data:(state.options.listingRows??[]).filter((r:any)=>r.org_id===filters.org_id&&r.deleted_at==null&&filters.id?.includes(r.id))};
+        if(table==="listings")return head?{error:null,count:3}: {error:null,data:(state.options.listingRows??[]).filter((r:any)=>(!filters.org_id||r.org_id===filters.org_id)&&r.deleted_at==null&&filters.id?.includes(r.id))};
         if(table==="leads")return {error:null,count:2};
         if(table==="render_jobs")return {error:null,count:4};
         if(table==="rate_limits")return {error:null,data:state.options.meterRows??[]};
@@ -88,7 +89,23 @@ async function fixture(bypassMembership = false, dropPreference = false) {
       if(name==="serving_cost_reserve")return {data:{reserved:true},error:null};
       if(name==="serving_cost_finish")return {data:{finished:true},error:null};
       if(name==="serving_operation_complete")return {data:{saved:true},error:null};
-      state.events.push("org");state.orgLookups.push({name,args});return {error:null,data:${JSON.stringify(ACTIVE_ORG)}};}});
+      if(name==="workspace_directory"){
+       state.events.push("org");state.orgLookups.push({name,args});
+       if(state.options.noOrg||!state.options.noOrg&&args.p_preferred_org&&![${JSON.stringify(SELECTED_ORG)},${JSON.stringify(ACTIVE_ORG)}].includes(args.p_preferred_org))return {data:null,error:{message:"RP403: Current library unavailable"}};
+       const org=args.p_preferred_org??${JSON.stringify(ACTIVE_ORG)};
+       return {data:{actor_id:args.p_user,own_org_id:org,billing_org_id:org,can_switch_agent_libraries:false,active_org_id:org,workspaces:[{id:org,name:"Synthetic library",role:state.options.role??"owner",access_mode:"own",library_owner_user_id:args.p_user,billing_org_id:org,can_read:true,can_write:true}]},error:null};
+      }
+      if(name==="library_access"){
+       if(state.options.noOrg||state.options.removedAfterAdmission)return {data:null,error:{message:"RP403: Revoked library"}};
+       return {data:{actor_id:args.p_actor,org_id:args.p_org,library_owner_user_id:args.p_actor,role:state.options.role??"owner",access_mode:"own",can_read:true,can_write:true,can_manage_subscription:state.options.role!=="agent",billing_org_id:args.p_org,team_org_id:null},error:null};
+      }
+      if(name==="listing_library_scope"){
+       const row=(state.options.listingRows??[]).find((r:any)=>r.id===args.p_listing&&r.org_id===${JSON.stringify(SELECTED_ORG)}&&r.deleted_at==null);
+       if(!row)return {data:null,error:{message:"RP404: Listing unavailable"}};
+       return {data:{actor_id:args.p_actor,org_id:row.org_id,listing_id:row.id,library_org_id:row.org_id,library_owner_user_id:args.p_actor,listing_owner_user_id:args.p_actor,role:"owner",access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:row.org_id,team_org_id:null},error:null};
+      }
+      if(name==="library_usage_summary")return state.options.contextError==="leads"?{data:null,error:{message:"Synthetic summary failed"}}:{data:{actor_id:args.p_actor,org_id:args.p_org,billing_org_id:args.p_org,listings:3,leads:2,leads_new:2,render_count:4,cost_cents:0},error:null};
+      throw Error("Unmodeled context RPC "+name);}});
     const userClient=(_req:Request)=>({from:query});
     ${actualHeader}
     ${actualMembership}
@@ -111,7 +128,7 @@ async function fixture(bypassMembership = false, dropPreference = false) {
 }
 
 function req(
-  user = "synthetic-user",
+  user = "c0300501-0000-4000-8000-000000000001",
   plan = "brokerage",
   org: string | null = SELECTED_ORG,
   extras: Record<string, unknown> = {},
@@ -121,6 +138,9 @@ function req(
     "x-test-user": user,
   };
   if (org !== null) headers["X-Org-Id"] = org;
+  // Auth uses real UUID identities; symbolic fixture seats map deterministically.
+  if(!/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(user)) {let n=0;for(const c of user)n=(n*31+c.charCodeAt(0))>>>0;user=`c0300501-0000-4000-8000-${String(n).padStart(12,"0")}`;}
+  headers["x-test-user"]=user;
   return new Request("https://fixture.invalid/coach", {
     method: "POST",
     headers,
@@ -163,7 +183,7 @@ Deno.test("actual coach uses trusted plan and routes a degraded lookup as free",
   ) {
     f.reset(options);
     assertEquals(
-      (await f.handler(req("synthetic-user", "brokerage"))).status,
+      (await f.handler(req("c0300501-0000-4000-8000-000000000001", "brokerage"))).status,
       200,
     );
     assertEquals(f.state.plans, [expected]);
@@ -207,14 +227,13 @@ async function assertSelectedWorkspace(f: Awaited<ReturnType<typeof fixture>>) {
   f.reset();
   assertEquals(
     (await f.handler(
-      req("synthetic-user", "brokerage", SELECTED_ORG.toUpperCase()),
+      req("c0300501-0000-4000-8000-000000000001", "brokerage", SELECTED_ORG.toUpperCase()),
     )).status,
     200,
   );
   assertEquals(f.state.orgLookups, [{
-    table: "memberships",
-    user_id: "synthetic-user",
-    org_id: SELECTED_ORG,
+    name: "workspace_directory",
+    args: {p_user: "c0300501-0000-4000-8000-000000000001",p_preferred_org: SELECTED_ORG},
   }]);
   assertEquals(f.state.meters[2].key, `coachorgday:${SELECTED_ORG}`);
   assertEquals(f.state.ledgerRows[0].orgId, SELECTED_ORG);
@@ -234,7 +253,7 @@ Deno.test("actual Coach rejects missing, malformed and foreign workspace before 
   ) {
     f.reset();
     assertEquals(
-      (await f.handler(req("synthetic-user", "team", org))).status,
+      (await f.handler(req("c0300501-0000-4000-8000-000000000001", "team", org))).status,
       status,
     );
     assertEquals(f.state.providers, 0);
@@ -294,7 +313,7 @@ Deno.test("all native screen and industry raw values reach the actual Coach prom
     f.reset();
     assertEquals(
       (await f.handler(
-        req("synthetic-user", "team", SELECTED_ORG, { context: { screen } }),
+        req("c0300501-0000-4000-8000-000000000001", "team", SELECTED_ORG, { context: { screen } }),
       )).status,
       200,
     );
@@ -305,7 +324,7 @@ Deno.test("all native screen and industry raw values reach the actual Coach prom
     f.reset();
     assertEquals(
       (await f.handler(
-        req("synthetic-user", "team", SELECTED_ORG, { space_type: space }),
+        req("c0300501-0000-4000-8000-000000000001", "team", SELECTED_ORG, { space_type: space }),
       )).status,
       200,
     );
@@ -319,7 +338,7 @@ Deno.test("all native screen and industry raw values reach the actual Coach prom
     f.reset();
     assertEquals(
       (await f.handler(
-        req("synthetic-user", "team", SELECTED_ORG, { context: { screen } }),
+        req("c0300501-0000-4000-8000-000000000001", "team", SELECTED_ORG, { context: { screen } }),
       )).status,
       200,
     );
@@ -332,16 +351,16 @@ Deno.test("actual Coach verifies local-to-cloud project mapping and drops foreig
   const f = await fixture();
   const local = "c0100501-0000-4000-8000-000000000001", cloud = "c0100501-0000-4000-8000-000000000002", foreign = "c0100501-0000-4000-8000-000000000003";
   f.reset({listingRows:[{id:cloud,org_id:SELECTED_ORG,deleted_at:null,status:"processing"},{id:foreign,org_id:ACTIVE_ORG,deleted_at:null,status:"ready"}]});
-  assertEquals((await f.handler(req("synthetic-user","brokerage",SELECTED_ORG,{context:{selected_listing_id:local,listings:[{id:local,server_id:cloud,title:"Owned Street",attention:"render"},{id:foreign,title:"Foreign private street",attention:"private SQL error"}]}}))).status,200);
+  assertEquals((await f.handler(req("c0300501-0000-4000-8000-000000000001","brokerage",SELECTED_ORG,{context:{selected_listing_id:local,listings:[{id:local,server_id:cloud,title:"Owned Street",attention:"render"},{id:foreign,title:"Foreign private street",attention:"private SQL error"}]}}))).status,200);
   assert(f.state.userTurn.includes(`Selected project id: ${local}`));
   assert(f.state.userTurn.includes("server_status=processing"));
   assert(f.state.userTurn.includes("device_attention=render"));
   assert(!f.state.userTurn.includes("Foreign private street"));
   assert(!f.state.userTurn.includes("private SQL error"));
   const lookup=f.state.contextQueries.find((q:any)=>q.table==="listings"&&!q.head);
-  assertEquals(lookup.filters.org_id,SELECTED_ORG);
+  assertEquals(lookup.filters.org_id,undefined);
   assertEquals(lookup.filters.deleted_at,null);
-  assertEquals(lookup.filters.id,[cloud,foreign]);
+  assertEquals(lookup.filters.id,[cloud]);
   assertEquals(lookup.filters.limit,25);
   assertEquals(f.state.ledgerRows[0].meta.listing_count,1);
 });
@@ -376,7 +395,7 @@ Deno.test("actual Coach rechecks lost workspace authority before metering and sa
 
 Deno.test("Coach keeps an explicit workspace local draft as a device hint without claiming server status", async () => {
   const f=await fixture(),draft="c0100501-0000-4000-8000-000000000004";f.reset();
-  assertEquals((await f.handler(req("synthetic-user","team",SELECTED_ORG,{context:{selected_listing_id:draft,listings:[{id:draft,local_draft:true,title:"Draft Street"}]}}))).status,200);
+  assertEquals((await f.handler(req("c0300501-0000-4000-8000-000000000001","team",SELECTED_ORG,{context:{selected_listing_id:draft,listings:[{id:draft,local_draft:true,title:"Draft Street"}]}}))).status,200);
   assert(f.state.userTurn.includes(`Selected project id: ${draft}`));assert(f.state.userTurn.includes("server_status=unavailable"));
   assert(!f.state.contextQueries.some((q:any)=>q.table==="listings"&&!q.head));
 });

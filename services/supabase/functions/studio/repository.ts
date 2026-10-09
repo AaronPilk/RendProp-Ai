@@ -7,7 +7,8 @@ export interface StudioRepositoryDependencies {
   userClient(req: Request): SupabaseClient;
   getUser(req: Request): Promise<User>;
   assertNotDeleting(userId: string): Promise<void>;
-  orgForUser(userId: string, preferredOrgId: string): Promise<string>;
+  activeOrg(orgId: string): Promise<{data: {id:string}|null;error: unknown}>;
+  listingScope(userId: string, listingId: string): Promise<{ actor_id: string; org_id: string; library_org_id: string; can_read: boolean }>;
 }
 
 /** Keep the real query/authorization adapter testable without credentials or Deno.serve. */
@@ -22,13 +23,12 @@ export function createStudioRepository(
     async authorize(request, orgId, listingId) {
       const user = await deps.getUser(request);
       await deps.assertNotDeleting(user.id);
-      const org = await deps.orgForUser(user.id, orgId);
-      if (org !== orgId) {
+      const scope = await deps.listingScope(user.id, listingId);
+      const org = scope.org_id;
+      if (scope.actor_id !== user.id || !scope.can_read || (org !== orgId && scope.library_org_id !== orgId)) {
         throw new HttpError(403, "Workspace authorization failed.");
       }
-      const { data: activeOrg, error: orgError } = await db()
-        .from("orgs").select("id").eq("id", org)
-        .is("deleted_at", null).abortSignal(req.signal).maybeSingle();
+      const { data: activeOrg, error: orgError } = await deps.activeOrg(org);
       if (orgError) throw new HttpError(503, "Workspace lookup unavailable.");
       if (!activeOrg) throw new HttpError(404, "Workspace unavailable.");
       const { data: listing, error } = await db()

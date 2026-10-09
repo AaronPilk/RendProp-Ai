@@ -31,8 +31,12 @@ final class PhotographerClientFlowTests: XCTestCase {
         XCTAssertTrue(photographer.waitForExistence(timeout: 10)); photographer.tap()
         XCTAssertTrue(app.staticTexts["How do you work?"].exists)
         app.buttons["onboarding.role.explore"].tap()
-        let add = app.buttons["home.addHome"]
-        XCTAssertTrue(add.waitForExistence(timeout: 20)); add.tap()
+        let listings = app.tabBars.buttons["Listings"]
+        XCTAssertTrue(listings.waitForExistence(timeout: 20), app.debugDescription)
+        listings.tap()
+        let add = app.buttons["Add a home"]
+        XCTAssertTrue(add.waitForExistence(timeout: 20) && add.isHittable, app.debugDescription)
+        add.tap()
         let address = app.textFields["Type the home's address"]
         XCTAssertTrue(address.waitForExistence(timeout: 10)); address.tap(); address.typeText("Synthetic client delivery fixture")
         let photos = app.buttons["newListing.startWithPhotos"]

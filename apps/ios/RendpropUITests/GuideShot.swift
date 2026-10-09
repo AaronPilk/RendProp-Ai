@@ -82,7 +82,7 @@ final class GuideShot: XCTestCase {
     // MARK: - Navigation helpers (mirrors StoreShots.swift)
 
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
     /// First element matching any identifier, else any element whose label is

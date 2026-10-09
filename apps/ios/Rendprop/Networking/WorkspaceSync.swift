@@ -288,18 +288,19 @@ struct CloudMediaAccessContext: Equatable {
     let actorID: UUID
     let revision: UInt64
     let orgID: UUID
+    var selectedLibraryID: UUID? = nil
     @MainActor static func capture(orgID: UUID) throws -> Self {
         guard AuthStore.shared.isIdentified, let raw = AuthStore.shared.userID,
-              let actor = UUID(uuidString: raw), WorkspaceContext.selectedOrgID == orgID else {
+              let actor = UUID(uuidString: raw), let selected = WorkspaceContext.selectedOrgID else {
             throw CloudSyncError.identityChanged
         }
-        return Self(actorID: actor, revision: AuthStore.shared.syncSessionRevision, orgID: orgID)
+        return Self(actorID: actor, revision: AuthStore.shared.syncSessionRevision, orgID: orgID, selectedLibraryID: selected)
     }
     @MainActor func check() throws {
         guard AuthStore.shared.isIdentified,
               AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == actorID,
               AuthStore.shared.syncSessionRevision == revision,
-              WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+              WorkspaceContext.selectedOrgID == (selectedLibraryID ?? orgID) else { throw CloudSyncError.identityChanged }
     }
 }
 
@@ -432,7 +433,10 @@ enum CloudListingMerge {
             guard !existing.isSample, let sid = existing.serverID ?? detached else { result.append(existing); continue }
             guard seen.insert(sid).inserted else { throw CloudSyncError.invalidResponse }
             guard let fresh = remoteByID[sid] else {
-                if protected.contains(existing.id) { result.append(existing); continue }
+                // Losing fresh authority also invalidates logical grouping,
+                // even while local edits/files are protected from replacement.
+                existing.serverLibraryOrgID = nil
+                if protected.contains(existing.id) { existing.cloudUnavailable = true; result.append(existing); continue }
                 // Device-only files are never deleted because a remote row is missing.
                 // Keep its local record visible with recovery guidance, but stop writes.
                 var missing = existing
@@ -445,6 +449,7 @@ enum CloudListingMerge {
             var merged = existing
             merged.serverID = sid
             merged.serverOrgID = fresh.serverOrgID
+            merged.serverLibraryOrgID = fresh.serverLibraryOrgID
             merged.cloudSyncOwnerID = ownerID ?? existing.cloudSyncOwnerID
             merged.cloudDetachedServerID = nil
             merged.cloudUnavailable = false

@@ -1,3 +1,4 @@
+import { libraryAccess, listingLibraryScope } from "./library-access.ts";
 import {propertyMusicRow,hasMusicCopy} from "../studio/property-music.ts";
 import {projectMediaComplete,type ProjectMediaRow} from "../studio/project-media.ts";
 import type {StudioContext} from "../studio/context.ts";
@@ -61,14 +62,15 @@ export async function privateMediaAuthority(admin:any,token:unknown,bytes:number
  const c=await verifyPrivateCapability(token);
  // Spend before all ownership/catalogue reads. Failed/ambiguous reads also
  // consume the request; replay cannot create unmetered database work.
- await admitMediaRead(admin,c.org,bytes,true);
+ await admitMediaRead(admin,c.org,bytes,true,c.actor);
  const current=async()=>{
-  const membership=await admin.from("memberships").select("user_id,org_id,role").eq("user_id",c.actor).eq("org_id",c.org).maybeSingle();
-  assert(!membership.error&&membership.data?.user_id===c.actor&&membership.data?.org_id===c.org&&["owner","admin","agent"].includes(membership.data.role),404,"Media unavailable.");
+  let retentionOrg=c.org;
+  if(c.listing!==null){const scope=await listingLibraryScope(admin,c.actor,c.listing);assert(scope.org_id===c.org,404,"Media unavailable.");retentionOrg=scope.library_org_id;}
+  else await libraryAccess(admin,c.actor,c.org);
   const actor=await admin.from("profiles").select("id").eq("id",c.actor).maybeSingle();
   const deletion=await admin.from("deletion_requests").select("id").eq("user_id",c.actor).in("status",["pending","processing"]).limit(1);
   assert(!actor.error&&actor.data?.id===c.actor&&!deletion.error&&Array.isArray(deletion.data)&&deletion.data.length===0,404,"Media unavailable.");
-  await assertHostingAvailable(admin,c.org);
+  await assertHostingAvailable(admin,retentionOrg);
  };
  await current();
  if(c.listing!==null){

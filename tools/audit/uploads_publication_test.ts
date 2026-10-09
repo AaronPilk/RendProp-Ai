@@ -87,7 +87,7 @@ Deno.test("ticket refuses transport when no gateway is configured", () =>
     Deno.env.delete("UPLOAD_GATEWAY_ORIGIN");
     Deno.env.delete("UPLOAD_GATEWAY_ALLOWED_ORIGIN");
     const response = await f.request("ticket", {
-      listing_id: "fixture-listing",
+      listing_id: "c3333333-3333-4333-8333-333333333333",
       filename: "fixture.mov",
       bytes: 4,
     });
@@ -502,7 +502,7 @@ Deno.test("ticket budget still charges exactly once and completion adds no charg
     f.asset = null;
     f.objects.clear();
     const response = await f.request("ticket", {
-      listing_id: "fixture-listing",
+      listing_id: "c3333333-3333-4333-8333-333333333333",
       filename: "capture.mov",
       bytes: 4,
       kind: "video",
@@ -615,7 +615,7 @@ Deno.test("batch photo ticket also completes to a DB-selected immutable key", ()
     f.asset = null;
     f.objects.clear();
     const response = await f.request("batch", {
-      listing_id: "fixture-listing",
+      listing_id: "c3333333-3333-4333-8333-333333333333",
       kind: "photo",
       files: [{ filename: "photo.jpg", bytes: 4, content_type: "image/jpeg" }],
     });
@@ -636,14 +636,14 @@ Deno.test("batch photo ticket also completes to a DB-selected immutable key", ()
 
 Deno.test("contact photo ticket creates only a bounded separate public headshot",()=>fixture(async f=>{
   f.asset=null;
-  const response=await f.request("ticket",{listing_id:"fixture-listing",role:"contact_photo",kind:"photo",filename:"headshot.jpg",content_type:"image/jpeg",bytes:4});
+  const response=await f.request("ticket",{listing_id:"c3333333-3333-4333-8333-333333333333",role:"contact_photo",kind:"photo",filename:"headshot.jpg",content_type:"image/jpeg",bytes:4});
   assertEquals(response.status,201,await response.clone().text());
   const ticket=await response.json();assert(String(ticket.storage_key).includes("/contact-"));
   assertEquals(f.asset!.kind,"photo");assertEquals(f.asset!.bucket,"renders");
 }));
 Deno.test("contact photo tickets reject video kind and poster oversize before reservation",()=>fixture(async f=>{
   for(const patch of [{kind:"video",bytes:4},{kind:"photo",bytes:11*1024**2}]){
-    const r=await f.request("ticket",{listing_id:"fixture-listing",role:"contact_photo",filename:"headshot.jpg",content_type:"image/jpeg",...patch});
+    const r=await f.request("ticket",{listing_id:"c3333333-3333-4333-8333-333333333333",role:"contact_photo",filename:"headshot.jpg",content_type:"image/jpeg",...patch});
     assertEquals(r.status,400);assertEquals(f.charges.length,0);
   }
 }));

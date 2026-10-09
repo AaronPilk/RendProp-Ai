@@ -1,3 +1,5 @@
+import { workspaceDirectory } from "../_shared/workspaces.ts";
+import { libraryAccess } from "../_shared/library-access.ts";
 // team — seats, invites and members for one org.
 //
 //   GET    /team                    -> { org, plan, seats:{used,allowed}, members[], invites[], can_manage }
@@ -277,10 +279,15 @@ Deno.serve(async (req) => {
     // ── Everything below acts on the CALLER'S org ────────────────────────────
     const user = await getUser(req);
     const admin = adminClient();
-    const orgId = await orgForUser(user.id, preferredOrg(req));
+    const directory = await workspaceDirectory(admin, user.id, preferredOrg(req));
+    const selectedOrg = directory.active_org_id;
+    await libraryAccess(admin, user.id, selectedOrg);
+    const orgId = directory.billing_org_id;
+    const selectedPrivateTesting = await privateTestingContext(admin, user.id, selectedOrg);
     const myRole = await roleInOrg(admin, user.id, orgId);
-    if (!myRole) throw new HttpError(403, "Not a member of this org", "forbidden");
-    const canManage = MANAGER_ROLES.has(myRole);
+    if (!myRole && !selectedPrivateTesting) throw new HttpError(403, "Not a member of this team", "forbidden");
+    const parentAccess = directory.own_org_id === orgId ? await libraryAccess(admin,user.id,orgId) : null;
+    const canManage = !!parentAccess?.can_manage_subscription && MANAGER_ROLES.has(myRole ?? "") && !selectedPrivateTesting;
 
     const requireManager = () => {
       if (!canManage) {
@@ -295,8 +302,9 @@ Deno.serve(async (req) => {
         ? await Promise.all([privateTestingMembers(admin, user.id, orgId), privateTestingHostMode(admin, user.id, orgId)])
         : [[], null] as const;
       const privateAccess = await privateTestingContext(admin, user.id, orgId);
-      const { data: rows, error: membersError } = await admin
-        .from("memberships").select("user_id, role").eq("org_id", orgId);
+      let membersQuery = admin.from("memberships").select("user_id, role").eq("org_id", orgId);
+      if (!canManage) membersQuery = membersQuery.eq("user_id", user.id);
+      const { data: rows, error: membersError } = await membersQuery;
       if (membersError) throw new HttpError(503, "The team could not be loaded. Please retry.");
       const ids = (rows ?? []).map((r) => r.user_id as string);
       const { data: people, error: peopleError } = ids.length
@@ -322,10 +330,12 @@ Deno.serve(async (req) => {
       if (orgError || !org) throw new HttpError(503, "The workspace could not be loaded. Please retry.");
 
       return json({
+        actor_id: user.id,
+        content_org_id: selectedOrg,
         org_id: orgId,
         org_name: org?.name ?? null,
         plan: privateAccess ? "team" : org?.plan ?? null,
-        access_mode: privateTeam || privateAccess ? "private_testing" : "shared_workspace",
+        access_mode: privateTeam || privateAccess ? "private_testing" : "private_libraries",
         ...(privateAccess ? { team_name: privateAccess.sponsor_org_name } : {}),
         can_manage: canManage && !privateAccess,
         seats,
@@ -369,7 +379,8 @@ Deno.serve(async (req) => {
       // `window` is echoed as the token the caller sent, not as the interval:
       // the screen round-trips it, and `from`/`to`/`window_seconds` from the RPC
       // are what actually define the period.
-      return json({ ...(data as Record<string, unknown>), window: requested });
+      assert(data && (data as Record<string, unknown>).org_id === orgId,503,"Team overview identity could not be verified.");
+      return json({ ...(data as Record<string, unknown>), actor_id:user.id, content_org_id:selectedOrg, window: requested });
     }
 
     // ── POST /team/invites ───────────────────────────────────────────────────

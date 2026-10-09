@@ -27,6 +27,19 @@ async function fixture(options: Options, run: (call: (method: "GET" | "POST", au
     assertEquals(url.hostname, "edit-plan-fixture.invalid");
     if (url.pathname === "/auth/v1/user") return response({ id: user, is_anonymous: options.anonymous ?? false, email: "fixture@example.invalid" });
     const table = url.pathname.split("/").pop();
+    if(table === "workspace_directory") {
+      const args=await req.json();assertEquals(args,{p_user:user,p_preferred_org:org});
+      if(options.member===false)return response({message:"RP403: no current library"},400);
+      return response({actor_id:user,own_org_id:org,billing_org_id:org,can_switch_agent_libraries:false,active_org_id:org,workspaces:[{id:org,name:"Fixture",role:options.role??"owner",access_mode:"own",library_owner_user_id:user,billing_org_id:org,can_read:true,can_write:options.role!=="marketing",can_manage_subscription:options.role!=="marketing"}]});
+    }
+    if(table === "library_access" || table === "listing_library_scope") {
+      const args=await req.json();assertEquals(args,table==="library_access"?{p_actor:user,p_org:org}:{p_actor:user,p_listing:listing});
+      if(options.member===false)return response({message:"RP403: no current library"},400);
+      return response({actor_id:user,org_id:org,library_owner_user_id:user,role:options.role??"owner",access_mode:"own",can_read:true,can_write:options.role!=="marketing",can_manage_subscription:options.role!=="marketing",billing_org_id:org,team_org_id:null,...(table==="listing_library_scope"?{listing_id:listing,library_org_id:org,listing_owner_user_id:user}:{})});
+    }
+    if(table === "library_billing_org" || table === "library_actor_billing_org") {
+      const args=await req.json();assertEquals(args,table==="library_billing_org"?{p_org:org}:{p_actor:user,p_org:org});return response(org);
+    }
     if(table === "serving_operation_begin")return response({begun:true});
     if(table === "serving_cost_reserve")return options.fundingDenied?response({message:"RP402: Shared serving allowance exhausted"},400):response({reserved:true});
     if(table === "serving_cost_finish")return response({finished:true});
@@ -63,7 +76,11 @@ Deno.test("actual Studio edit-plan rejects unauthenticated, anonymous, removed, 
 });
 Deno.test("actual Studio capability reports disabled/read-only without provider calls", async () => {
   for (const [options, reason] of [[{}, "disabled"], [{ enabled: true, role: "marketing" }, "read_only"]] as [Options, string][]) {
-    const r = await fixture(options, async call => { const result = await call("GET"); assertEquals(result.status, 200); assertEquals((await result.json()).reason, reason); });
+    const r = await fixture(options, async call => {
+      const result=await call("GET"),body=await result.json();
+      if(reason==="read_only"){assertEquals(result.status,403);assertEquals(body.code,"forbidden");assert(body.error.includes("does not permit editing"));}
+      else {assertEquals(result.status,200);assertEquals(body.reason,reason);}
+    });
     assertEquals(r.providerCalls, 0); assertEquals(r.ledger, []);
   }
 });

@@ -313,8 +313,12 @@ final class BetaPolishUITests: XCTestCase {
     func testCurrentLocationPreservesEnteredUnitThroughCreateAndEdit() {
         app.launchArguments = baseArguments + ["-ui.currentLocationFixture"]
         app.launch()
-        let newHome = app.buttons["home.addHome"]
-        XCTAssertTrue(newHome.waitForExistence(timeout: 25), app.debugDescription); newHome.tap()
+        let listings = app.tabBars.buttons["Listings"]
+        XCTAssertTrue(listings.waitForExistence(timeout: 25), app.debugDescription)
+        listings.tap()
+        let newHome = app.buttons["Add a home"]
+        XCTAssertTrue(newHome.waitForExistence(timeout: 25) && newHome.isHittable, app.debugDescription)
+        newHome.tap()
         let unit = app.textFields["newListing.unit"]
         scrollTo(unit); unit.tap(); unit.typeText("4B")
         app.buttons["newListing.keyboardDone"].tap()

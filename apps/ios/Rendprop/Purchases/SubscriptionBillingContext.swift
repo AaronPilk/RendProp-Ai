@@ -322,6 +322,8 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     let role: String
     let canManageSubscription: Bool
     let source: String?
+    var contentOrgID: UUID? = nil
+    var servingOrgID: UUID? = nil
     var originalTransactionIDs: [String]? = nil
     // Additive top-level /me fields, attached only after current-org validation.
     var trialUsage: TrialUsageSummary? = nil
@@ -339,6 +341,8 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case orgID = "org_id", orgName = "org_name", role
         case canManageSubscription = "can_manage_subscription", source
+        case contentOrgID = "content_org_id"
+        case servingOrgID = "serving_org_id"
         case originalTransactionIDs = "original_transaction_ids"
     }
     var name: String { orgName?.trimmingCharacters(in: .whitespacesAndNewlines).nonEmpty ?? "Your workspace" }
@@ -349,7 +353,7 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
     enum TrialPresentationError: Error { case invalidResponse }
     /// Decode the existing explicit billing keys separately from additive
     /// snake-case trial fields, then bind both to the request's workspace.
-    static func fromMe(_ data: Data, selectedOrg: UUID?) throws -> Self {
+    static func fromMe(_ data: Data, selectedOrg: UUID?, billingOrg: UUID? = nil, servingOrg: UUID? = nil) throws -> Self {
         struct BillingResponse: Decodable { let billing: SubscriptionBillingContext }
         struct TrialResponse: Decodable {
             struct Org: Decodable { let id: UUID }
@@ -362,16 +366,19 @@ struct SubscriptionBillingContext: Codable, Equatable, Sendable {
             let servingMode: String?
         }
         var value = try JSONDecoder().decode(BillingResponse.self, from: data).billing
-        guard value.orgID == selectedOrg else { throw TrialPresentationError.invalidResponse }
+        guard let selectedOrg, (value.contentOrgID ?? value.orgID) == selectedOrg,
+              value.orgID == (billingOrg ?? selectedOrg),
+              (value.servingOrgID ?? value.orgID) == (servingOrg ?? billingOrg ?? selectedOrg) else { throw TrialPresentationError.invalidResponse }
+        let financialOrg = value.servingOrgID ?? value.orgID
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let trial = try decoder.decode(TrialResponse.self, from: data)
         if trial.trialUsage != nil || trial.trialOffer != nil || trial.trialReservation != nil || trial.servingActivation != nil {
-            guard trial.org?.id == value.orgID,
-                  trial.trialUsage.map({ $0.checked(org: value.orgID) != nil }) ?? true,
+            guard trial.org?.id == selectedOrg,
+                  trial.trialUsage.map({ $0.checked(org: financialOrg) != nil }) ?? true,
                   trial.trialOffer.map({ $0.checked() != nil }) ?? true,
-                  trial.trialReservation.map({ $0.checked(actor: $0.actorId, org: value.orgID, product: $0.productId) != nil }) ?? true,
-                  trial.servingActivation.map({ $0.checked(org: value.orgID) != nil }) ?? true else { throw TrialPresentationError.invalidResponse }
+                  trial.trialReservation.map({ $0.checked(actor: $0.actorId, org: financialOrg, product: $0.productId) != nil }) ?? true,
+                  trial.servingActivation.map({ $0.checked(org: financialOrg) != nil }) ?? true else { throw TrialPresentationError.invalidResponse }
         }
         value.trialUsage = trial.trialUsage
         value.trialOffer = trial.trialOffer
@@ -391,6 +398,11 @@ struct TrialPurchaseSnapshot: Equatable, Sendable {
     let actor: String?
     let revision: UInt64
     let org: UUID?
+    var billingOrg: UUID? = nil
+    var purchaseOrg: UUID? { billingOrg ?? org }
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.actor == rhs.actor && lhs.revision == rhs.revision && lhs.org == rhs.org && lhs.purchaseOrg == rhs.purchaseOrg
+    }
 }
 
 /// Cash already committed by the server before Apple's purchase sheet. A hold
@@ -432,7 +444,7 @@ enum PurchaseDispatchAdmission {
                        captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
         guard liveBackend && !uiTesting else { return true }
         guard captured == current, current.actor.flatMap(UUID.init(uuidString:)) != nil,
-              current.org != nil else { return false }
+              current.org != nil, current.purchaseOrg != nil else { return false }
         // Ceiling serving mode (2026-10-08): the server meters and caps spend
         // per plan, so an ordinary StoreKit purchase is the live purchase path.
         if ceilingMode { return true }
@@ -448,7 +460,7 @@ enum TrialPurchaseAdmission {
     }
     static func allows(eligibleIntro: Bool?, billing: SubscriptionBillingContext?,
                        captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
-        guard captured == current, current.actor != nil, let org = current.org,
+        guard captured == current, current.actor != nil, let org = current.purchaseOrg,
               let eligibleIntro else { return false }
         guard let billing, billing.orgID == org, billing.canManageSubscription else { return false }
         guard eligibleIntro else { return true }
@@ -458,13 +470,13 @@ enum TrialPurchaseAdmission {
     static func allowsHeld(_ hold: TrialPurchaseReservation?, product: String,
                            captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
         guard captured == current, let actor = current.actor.flatMap(UUID.init(uuidString:)),
-              let org = current.org, let hold else { return false }
+              let org = current.purchaseOrg, let hold else { return false }
         return hold.checked(actor: actor, org: org, product: product) != nil
     }
     static func matchesFreshHold(_ hold: TrialPurchaseReservation, billing: SubscriptionBillingContext?,
                                  captured: TrialPurchaseSnapshot, current: TrialPurchaseSnapshot) -> Bool {
         guard allowsHeld(hold, product: hold.productId, captured: captured, current: current),
-              let billing, billing.orgID == current.org, billing.role == "owner", billing.canManageSubscription,
+              let billing, billing.orgID == current.purchaseOrg, billing.role == "owner", billing.canManageSubscription,
               billing.trialReservation == hold, billing.trialOffer == hold.trialOffer else { return false }
         return true
     }

@@ -19,6 +19,9 @@ TARGET = SQL / 'migrations/20261005200559_private_internal_testing_sponsorships.
 MASTER = SQL / 'migrations/20261005195004_workspace_internal_testing_grants.sql'
 MIGRATIONS = sorted(p for p in (SQL / 'migrations').glob('*.sql') if p.name <= TARGET.name)
 TEST = SQL / 'tests/private_internal_testing.sql'
+LEGACY_TEST = SQL / 'tests/private_internal_testing_legacy.sql'
+FINAL_TARGET = SQL / 'migrations/20261009192550_team_private_listing_libraries.sql'
+FINAL_MIGRATIONS = sorted((SQL / 'migrations').glob('*.sql'))
 OUT = Path(tempfile.mkdtemp(prefix='rendprop-private-testing-', dir='/tmp'))
 DATA, SOCK = OUT / 'cluster', OUT / 'socket'
 SOCK.mkdir(mode=0o700)
@@ -28,7 +31,7 @@ ENV = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LC_ALL': 'C', 'TZ': 'UT
        'PGOPTIONS': '-c statement_timeout=30000 -c lock_timeout=5000'}
 CONN = ['-h', str(SOCK), '-p', '55468', '-U', 'postgres']
 DB = 'rendprop_private_testing'
-tracked = [*MIGRATIONS, TEST, Path(__file__).resolve(), SQL / 'tests/ci-bootstrap.sql']
+tracked = [*FINAL_MIGRATIONS, TEST, LEGACY_TEST, Path(__file__).resolve(), SQL / 'tests/ci-bootstrap.sql']
 hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in tracked}
 receipt = {'startedAt': datetime.now(timezone.utc).isoformat(), 'sourceHashes': hashes, 'passed': False,
  'limits': ['Owned socket-only PostgreSQL and synthetic identities; no inherited DB credentials',
@@ -72,11 +75,11 @@ def query(name, command, database=DB, expected=0):
  file = OUT / (name + '.sql'); file.write_text(command)
  return run(name, [*psql(database), '-Atq', '-f', file], expected)
 
-def positive(name):
- output = run(name, [*psql(), '-Atq', '-f', TEST])
+def positive(name, test=LEGACY_TEST):
+ output = run(name, [*psql(), '-Atq', '-f', test])
  match = re.search(r'\n(\d+)\nPASS: private internal testing SQL assertions; fixtures rolled back\.', output)
  # Four table privilege cases, two RLS tables and seven service-only RPCs.
- expected = len(re.findall(r'select pg_temp\.private_(?:ok|denied)\(', TEST.read_text())) + 3 + 1 + 6
+ expected = len(re.findall(r'select pg_temp\.private_(?:ok|denied)\(', test.read_text())) + 3 + 1 + 6
  assert match and int(match[1]) == expected, (name, 'Incomplete exact assertion inventory', expected, output[-400:])
  return int(match[1])
 
@@ -238,7 +241,7 @@ try:
  ):
   assert function.count(anchor) >= 1, (name, 'Control anchor missing')
   query(name + '-compile', function.replace(anchor, replacement))
-  output = run(name + '-denied', [*psql(), '-Atq', '-f', TEST], 3)
+  output = run(name + '-denied', [*psql(), '-Atq', '-f', LEGACY_TEST], 3)
   assert 'PRIVATE TESTING FAIL: ' + failure in output, (name, 'Failed at unrelated boundary', output[-2500:])
   query(name + '-restore', function)
   controls.append({'name': name, 'compiled': True, 'namedBoundary': failure, 'restoredSQLAssertions': positive(name + '-restored')})
@@ -264,6 +267,20 @@ try:
  receipt['standalonePreBetaSQLAssertions'] = positive('standalone-pre-beta-positive')
  assert len(MIGRATIONS) - len(prior) - 2 == 5
  receipt['standaloneExcludesFivePendingBetaMigrations'] = True
+ # Current launch authority is a separate fresh schema. Never restore/replay
+ # the historical grant migration over its new Team-private definitions.
+ run('drop-historical-clone', [*psql('postgres'), '-c', f'drop database {DB};'])
+ run('create-current-final', [BINS['createdb'], '--no-password', *CONN, DB])
+ run('current-bootstrap', [*psql(), '-q', '-f', SQL / 'tests/ci-bootstrap.sql'])
+ for migration in FINAL_MIGRATIONS:run('current-' + migration.stem, [*psql(), '-q', '-f', migration])
+ receipt['currentMigrationCount'] = len(FINAL_MIGRATIONS)
+ receipt['currentSQLAssertions'] = positive('current-final-private-positive', TEST)
+ current_snapshot = json.loads(query('current-final-functions', SNAPSHOT))
+ run('replay-current-private-authority', [*psql(), '-q', '-f', FINAL_TARGET])
+ assert json.loads(query('current-final-replayed-functions', SNAPSHOT)) == current_snapshot
+ receipt['currentReplaySQLAssertions'] = positive('current-final-private-replayed', TEST)
+ receipt['currentAuthorityReplayOnly'] = FINAL_TARGET.name
+
  assert all(hashlib.sha256((ROOT / n).read_bytes()).hexdigest() == h for n, h in hashes.items()), 'Consumed source changed during proof'
  receipt['sourceBoundAtEnd'] = True;receipt['passed'] = True
 finally:

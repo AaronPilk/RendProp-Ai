@@ -1,8 +1,10 @@
+import { libraryAccess, listingLibraryScope } from "../_shared/library-access.ts";
+import { libraryUsageSummary } from "../_shared/library-summary.ts";
 import { HttpError } from "../_shared/http.ts";
 import type { Entitlement } from "../_shared/entitlements.ts";
 import type { CoachListingCtx } from "./prompt.ts";
 
-const ROLES = new Set(["owner", "admin", "agent", "marketing"]);
+const ROLES = new Set(["owner", "admin", "agent", "marketing", "team_owner"]);
 const STATES = new Set(["draft", "capturing", "uploading", "processing", "ready", "expired", "archived"]);
 const METERS = { photo_edits: "aiphotomo", reels: "reelmo", aerials: "aerialmo", drone: "dronemo" };
 const CAP_FIELDS = { renders: "renders_per_month", photo_edits: "photo_edits_per_month", reels: "reels_per_month", aerials: "aerials_per_month", drone: "topaz_per_month" } as const;
@@ -43,18 +45,24 @@ export async function coachContext(
   selected: string | null,
   now = new Date(),
 ): Promise<{ account: CoachAccount; listings: CoachListingCtx[]; selectedListingId: string | null }> {
+  const access = await libraryAccess(admin, user, org);
+  const billingOrg = access.billing_org_id;
   const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
-  const [workspace, membership, projects, leads, listings, meters, renders, subscription] = await Promise.all([
-    db.from("orgs").select("plan_source,plan_expires_at,trial_ends_at,deleted_at").eq("id", org).is("deleted_at", null).maybeSingle(),
-    admin.from("memberships").select("role").eq("user_id", user).eq("org_id", org).maybeSingle(),
-    db.from("listings").select("id", { count: "exact", head: true }).eq("org_id", org).is("deleted_at", null),
-    db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", org).eq("status", "new"),
-    hints.some((l) => !l.localDraft) ? db.from("listings").select("id,status").eq("org_id", org).is("deleted_at", null).in("id", hints.filter((l) => !l.localDraft).map((l) => l.serverID ?? l.id)).limit(25) : { data: [], error: null },
-    admin.from("rate_limits").select("key,count,window_start,window_seconds").in("key", Object.values(METERS).map((key) => `${key}:${org}`)),
-    admin.from("render_jobs").select("id,listings!inner(org_id)", { count: "exact", head: true }).eq("listings.org_id", org).eq("source", "worker").gte("created_at", month),
+  const cloudIds:string[]=[];
+  for (const hint of hints.filter(l=>!l.localDraft)) {
+    const id=hint.serverID??hint.id;
+    try { const scope=await listingLibraryScope(admin,user,id); if(scope.library_org_id===org)cloudIds.push(id); }
+    catch(error) { if(!(error instanceof HttpError)||![403,404].includes(error.status))throw error; }
+  }
+  const [workspace, membership, summary, listings, meters, subscription] = await Promise.all([
+    admin.from("orgs").select("plan_source,plan_expires_at,trial_ends_at,deleted_at").eq("id", billingOrg).is("deleted_at", null).maybeSingle(),
+    Promise.resolve({data:access,error:null}),
+    libraryUsageSummary(admin,user,org,month).catch(error=>{if(error instanceof HttpError && error.status===503)return {listings:null,leads_new:null,render_count:null};throw error;}),
+    cloudIds.length ? db.from("listings").select("id,status").is("deleted_at", null).in("id",cloudIds).limit(25) : { data: [], error: null },
+    admin.from("rate_limits").select("key,count,window_start,window_seconds").in("key", Object.values(METERS).map((key) => `${key}:${billingOrg}`)),
     entitlement && !entitlement.degraded && entitlement.plan !== "free"
-      ? admin.from("apple_subscriptions").select("status,auto_renew,expires_at").eq("org_id", org).eq("plan", entitlement.plan).in("status", ["active", "grace"]).order("expires_at", { ascending: false }).limit(1).maybeSingle()
+      ? admin.from("apple_subscriptions").select("status,auto_renew,expires_at").eq("org_id", billingOrg).eq("plan", entitlement.plan).in("status", ["active", "grace"]).order("expires_at", { ascending: false }).limit(1).maybeSingle()
       : { data: null, error: null },
   ]);
   if (workspace.error || membership.error) throw new HttpError(503, "Workspace context could not be verified. Please retry.", "upstream");
@@ -66,11 +74,11 @@ export async function coachContext(
   for (const [feature, field] of Object.entries(CAP_FIELDS)) {
     const cap = planAvailable ? count(entitlement![field as keyof Entitlement]) : null;
     if (feature === "renders") {
-      usage[feature] = { used: renders.error ? null : count(renders.count), cap, resets_at: nextMonth };
+      usage[feature] = { used: count(summary.render_count), cap, resets_at: nextMonth };
       continue;
     }
     const key = METERS[feature as keyof typeof METERS];
-    const row = meters.error ? null : (meters.data ?? []).find((r: { key: string }) => r.key === `${key}:${org}`);
+    const row = meters.error ? null : (meters.data ?? []).find((r: { key: string }) => r.key === `${key}:${billingOrg}`);
     const start = date(row?.window_start);
     const seconds = count(row?.window_seconds);
     const end = start && seconds ? new Date(Date.parse(start) + seconds * 1000).toISOString() : null;
@@ -88,11 +96,11 @@ export async function coachContext(
       role,
       plan_source: source,
       access_until: date(source === "trial" ? workspace.data.trial_ends_at : workspace.data.plan_expires_at),
-      can_manage_subscription: planAvailable && ["owner", "admin"].includes(role) && source !== "manual" && entitlement!.plan !== "brokerage",
+      can_manage_subscription: planAvailable && access.can_manage_subscription && source !== "manual" && entitlement!.plan !== "brokerage",
       renewal: sub?.auto_renew === true ? "on" : sub?.auto_renew === false ? "off" : "unknown",
       subscription_status: state,
-      projects: projects.error ? null : count(projects.count),
-      new_leads: leads.error ? null : count(leads.count),
+      projects: count(summary.listings),
+      new_leads: count(summary.leads_new),
       usage,
     },
     listings: verified,

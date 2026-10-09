@@ -44,7 +44,7 @@ export async function settleProjectPart(context:StudioContext,id:string,part:num
  if(!verified){
   const claimed=await write(context,id,"claim",input,signal);
   if(claimed.dispatch){signal.throwIfAborted();assert(Date.parse(claimed.media.write_deadline)>Date.now(),409,"This media upload expired.");
-   const key=projectChunkKey(claimed.media,part),reserved=await context.admin.rpc("media_storage_reserve",{p_org:context.orgId,p_bucket:"uploads",p_key:key,p_bytes:bytes.byteLength}).abortSignal(signal);
+   const key=projectChunkKey(claimed.media,part),reserved=await context.admin.rpc("library_media_storage_reserve",{p_actor:context.userId,p_org:context.orgId,p_bucket:"uploads",p_key:key,p_bytes:bytes.byteLength}).abortSignal(signal);
    assert(!reserved.error&&reserved.data?.reserved===true,503,"Project storage activation pending. No media part was sent.");
    signal.throwIfAborted();await storage.write(key,bytes,hash);}
  }

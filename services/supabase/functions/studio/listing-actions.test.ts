@@ -5,6 +5,9 @@ const org = "10000000-0000-4000-8000-000000000001", listing = "20000000-0000-400
 const asset = { id, listing_id: listing, uploaded: true, bucket: "renders", kind: "photo", content_type: "image/jpeg", storage_key: `renders/${org}/${listing}/gallery-${id}.jpg` };
 type Result = { data: unknown; error?: unknown };
 function fixture(results: Array<{ table: string; result: Result; client?: "db" | "admin"; wait?: () => Promise<void> }>) {
+  // The role fixture now represents the service-only listing authority, not
+  // a client membership lookup. Keep every subsequent business query intact.
+  results = results.map(item => item.table === "memberships" ? {table:"listing_library_scope",client:"admin" as const,result:{data:{actor_id:user,org_id:org,library_org_id:org,listing_id:listing,listing_owner_user_id:user,library_owner_user_id:user,role:(item.result.data as any)?.role,access_mode:"own",can_read:true,can_write:(item.result.data as any)?.role!=="marketing",can_manage_subscription:false,billing_org_id:org,team_org_id:null},error:item.result.error}} : item);
   const calls: Array<{ table: string; op: string; args: unknown[]; client: "db" | "admin" }> = [];
   const client = (boundary: "db" | "admin") => ({ rpc(name: string, args: unknown) {
     const item = results.shift(); assertEquals(item?.table, name); assertEquals(item?.client ?? "db", boundary);
@@ -46,7 +49,7 @@ Deno.test("caption action binds service RPC to verified actor and exact baseline
     { table: "studio_photo_caption", client: "admin", result: { data: { ok: true, photo: { ...photo, caption: "Bright kitchen · AI-altered photo" } } } }]);
   const response = await handleListingActions(request("photos", { listing_id: listing, action: "caption", photo_id: id, expected_caption: photo.caption, caption: "Bright kitchen", is_staged: false, original_key: "invented", org_id: "invented" }, "PATCH"), f.context);
   assertEquals(response?.status, 200);
-  assertEquals(f.calls.find(c => c.op === "rpc")?.args, [{ p_actor: user, p_org: org, p_listing: listing, p_photo: id, p_expected: photo.caption, p_caption: "Bright kitchen" }]);
+  assertEquals(f.calls.find(c => c.op === "rpc" && c.table !== "listing_library_scope")?.args, [{ p_actor: user, p_org: org, p_listing: listing, p_photo: id, p_expected: photo.caption, p_caption: "Bright kitchen" }]);
   assertEquals(f.calls.some(c => ["update", "insert"].includes(c.op)), false);
 });
 Deno.test("caption conflict is refused and exact desired replay uses the same atomic RPC", async () => {
@@ -59,7 +62,7 @@ Deno.test("caption conflict is refused and exact desired replay uses the same at
 Deno.test("gallery cover and order use actor-bound request service RPC with bounded exact ids", async () => {
   const f = fixture([{ table: "memberships", result: { data: { role: "agent" } } }, { table: "studio_gallery_update_v2", client: "admin", result: { data: { ok: true, main_photo_key: asset.storage_key } } }]);
   assertEquals((await handleListingActions(request("photos", { listing_id: listing, action: "cover", photo_id: id, expected_main_photo_key: null, org_id: "invented" }, "PATCH"), f.context))?.status, 200);
-  assertEquals(f.calls.find(c => c.op === "rpc")?.args[0], { p_actor: user, p_org_id: org, p_listing_id: listing, p_action: "cover", p_photo_id: id, p_expected: null, p_value: null });
+  assertEquals(f.calls.find(c => c.op === "rpc" && c.table !== "listing_library_scope")?.args[0], { p_actor: user, p_org_id: org, p_listing_id: listing, p_action: "cover", p_photo_id: id, p_expected: null, p_value: null });
   const invalid = fixture([{ table: "memberships", result: { data: { role: "agent" } } }]);
   await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, action: "reorder", expected_order: [id, id], photo_ids: [id, id] }, "PATCH"), invalid.context), Error, "each gallery photo once");
 });
@@ -101,7 +104,7 @@ Deno.test("floor-plan attachment preserves listing details and uses optimistic c
   ]);
   const response = await handleListingActions(request("floorplan", { listing_id: listing, asset_id: id, org_id: "invented", details: { description: "injected replacement" } }), f.context);
   assertEquals(response?.status, 200);
-  const rpc = f.calls.find(c => c.op === "rpc")!;
+  const rpc = f.calls.find(c => c.op === "rpc" && c.table !== "listing_library_scope")!;
   assertEquals(rpc.client, "admin");
   assertEquals(rpc.args, [{ p_actor: user, p_org: org, p_listing: listing, p_asset: id,
     p_expected: details, p_url: `https://media.rendprop.com/${asset.storage_key}` }]);
@@ -117,7 +120,7 @@ Deno.test("floor-plan concurrent phone edit produces conflict instead of success
   ]);
   const error = await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), f.context), HttpError, "changed on another device");
   assertEquals(error.status, 409);
-  assertEquals(f.calls.filter(c => c.op === "rpc").length, 1);
+  assertEquals(f.calls.filter(c => c.op === "rpc" && c.table !== "listing_library_scope").length, 1);
   assertEquals(f.calls.some(c => c.op === "update"), false);
   }
 });
@@ -135,16 +138,16 @@ Deno.test("floor-plan attachment fails safely when its request service client is
 Deno.test("floor-plan authorization and asset checks precede every service mutation", async () => {
   const denied = fixture([{ table: "memberships", result: { data: { role: "marketing" } } }]);
   await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), denied.context), Error, "role does not permit");
-  assertEquals(denied.calls.some(c => c.client === "admin"), false);
+  assertEquals(denied.calls.some(c => c.client === "admin" && c.table !== "listing_library_scope"), false);
   const foreign = fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "capture_assets", result: { data: { ...asset, storage_key: `renders/${id}/${listing}/foreign.jpg` } } }]);
   await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), foreign.context), Error, "does not belong");
-  assertEquals(foreign.calls.some(c => c.client === "admin"), false);
+  assertEquals(foreign.calls.some(c => c.client === "admin" && c.table !== "listing_library_scope"), false);
 });
 
 Deno.test("Studio binds both floor-plan clients to the verified request context", async () => {
   const source = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
   assertEquals(source.includes("const db = userClient(req), admin = adminClient();"), true);
-  assertEquals(source.includes("const context: StudioContext = { userId: user.id, orgId: org, db, admin,"), true);
+  assertEquals(source.includes("const context: StudioContext = { userId: user.id, orgId: org, listingId: listingId ?? null, db, admin,"), true);
   assertEquals(source.includes("handleListingActions(req, context)"), true);
 });
 
@@ -166,7 +169,7 @@ for (const change of ["role revoked", "account deletion started"]) Deno.test(`fl
   mutation.result = { data: null, error: { code: "42501" } }; release();
   await assertRejects(() => pending, Error, "no longer permits");
   assertEquals(f.calls.some(c => c.op === "update"), false);
-  assertEquals(f.calls.find(c => c.op === "rpc")?.table, "studio_attach_floorplan");
+  assertEquals(f.calls.find(c => c.op === "rpc" && c.table !== "listing_library_scope")?.table, "studio_attach_floorplan");
 });
 
 Deno.test("direct gallery and floor plan attachment reject an uploaded client headshot before property writes",async()=>{
@@ -190,7 +193,7 @@ Deno.test("photo service refusal after preliminary read preserves atomic authori
   for (const message of ["RP403: Your role does not permit editing photos", "RP409: This account is being deleted"]) {
     const f = fixture([{ table: "memberships", result: { data: { role: "owner" } } }, { table: "capture_assets", result: { data: asset } }, { table: "studio_attach_photo", client: "admin", result: { data: null, error: { message } } }]);
     await assertRejects(() => handleListingActions(request("photos", { listing_id: listing, asset_id: id, caption: "Reviewed", is_staged: false, enhanced_key: "invented" }), f.context), Error, message.slice(7));
-    assertEquals(f.calls.find(c => c.op === "rpc")?.args[0], { p_actor: user, p_org: org, p_listing: listing, p_asset: id, p_caption: "Reviewed", p_provenance: null });
+    assertEquals(f.calls.find(c => c.op === "rpc" && c.table !== "listing_library_scope")?.args[0], { p_actor: user, p_org: org, p_listing: listing, p_asset: id, p_caption: "Reviewed", p_provenance: null });
     assertEquals(f.calls.some(c => ["insert", "update"].includes(c.op)), false);
   }
 });

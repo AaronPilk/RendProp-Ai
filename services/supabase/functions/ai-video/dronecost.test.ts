@@ -663,7 +663,7 @@ Deno.test("wiring: the projected cost is composed with the org's monthly ceiling
   // before every meter — see guardGenerate's own comment.
   assertStringIncludes(
     DRONE_ROUTE,
-    'guardGenerate(user, req, "drone", reservation.cents, asset.org_id)',
+    'guardGenerate(user, req, "drone", reservation.cents, asset.org_id, asset.listing_id ?? undefined)',
   );
   assertStringIncludes(INDEX_SRC, "assertMonthlyHeadroom({");
   // The ceiling and the spend total are the SAME two the RPC compares, read

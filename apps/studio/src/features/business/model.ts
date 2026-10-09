@@ -91,8 +91,9 @@ export function filterLeads(leads: Lead[], query: string): Lead[] {
   const q = query.trim().toLocaleLowerCase();
   return q ? leads.filter((l) => [l.name, l.email, l.phone, l.address, l.message, l.clientDelivery?.client_name ?? "", l.clientDelivery?.recipient_email ?? "", l.clientDelivery?.current_client_name ?? "", l.clientDelivery?.current_recipient_email ?? ""].some((v) => v.toLocaleLowerCase().includes(q))) : leads;
 }
-export function decodeTeam(value: unknown, orgId: string): Team {
+export function decodeTeam(value: unknown, orgId: string, binding?: { actorId: string; contentOrgId: string }): Team {
   const r = record(value), seats = record(r.seats);
+  if (binding && (uuid(r.actor_id) !== binding.actorId || uuid(r.content_org_id) !== binding.contentOrgId)) throw new Error("Your team selection changed. Reload Studio.");
   if (uuid(r.org_id) !== orgId) throw new Error("This team belongs to a different workspace. Reload Studio.");
   const canManage = boolean(r.can_manage);
   return { canManage, used: count(seats.used), allowed: count(seats.allowed), members: unique(rows(r.members).map((v) => {
@@ -106,7 +107,7 @@ export function manager(role: Role | null): boolean { return role === "owner" ||
 export function canRemoveMember(actor: Role | null, member: TeamMember): boolean {
   return manager(actor) && !member.isYou && member.role !== "owner" && (member.role !== "admin" || actor === "owner");
 }
-export function canEditLeads(role: Role | null): boolean { return role === "owner" || role === "admin" || role === "agent"; }
+export function canEditLeads(role: Role | null): boolean { return role === "owner" || role === "admin" || role === "agent" || role === "team_owner"; }
 export function decodeNotifications(value: unknown): Notifications {
   const r = record(value), result = {} as Notifications;
   for (const key of Object.keys(notificationLabels) as NotificationKey[]) result[key] = boolean(r[key]);
@@ -120,14 +121,14 @@ export function decodeAccount(value: unknown, workspace: Workspace): Account {
   for (const field of brandFields) brand[field] = text(kit[field]);
   Object.assign(brand, { org_name: text(org.name), handle: text(org.handle), space_type: text(org.space_type) });
   const usage = record(r.usage), used = record(usage.by_feature), caps = record(usage.caps), windows = record(usage.windows);
-  const servingActivation = decodeServingActivation(r.serving_activation, workspace.org.id);
+  const servingActivation = decodeServingActivation(r.serving_activation, workspace.servingOrgId ?? workspace.org.id);
   const entitlement = record(r.entitlement), degraded = (entitlement.degraded === undefined ? false : boolean(entitlement.degraded)) || servingActivation?.available === false;
   const titles: Record<string, string> = { renders: "Cloud renders", photo_edits: "Photo edits", reels: "AI reels", aerials: "Aerial videos", drone: "Drone enhancements" };
   const meters = Object.entries(titles).map(([key, title]) => {
     const cap = count(caps[key]);
     return { key, title, used: count(used[key]), cap: servingActivation?.available === false ? 0 : cap, resetsAt: windows[key] === null ? null : date(record(windows[key]).resets_at) };
   });
-  return { brand, notifications: decodeNotifications(r.notifications), portfolioUrl: safeHTTPS(r.portfolio_url), planSource: text(r.plan_source), plan: r.plan == null ? null : text(r.plan), planExpiresAt: r.plan_expires_at == null ? null : date(r.plan_expires_at), trialEndsAt: r.trial_ends_at == null ? null : date(r.trial_ends_at), degraded, trialUsage: decodeTrialUsage(r.trial_usage, workspace.org.id), servingActivation, servingPhotoPackage: decodePhotoPackage(r.serving_photo_package, workspace.org.id), servingEnvelope: decodeServingEnvelope(r.serving_envelope), meters };
+  return { brand, notifications: decodeNotifications(r.notifications), portfolioUrl: safeHTTPS(r.portfolio_url), planSource: text(r.plan_source), plan: r.plan == null ? null : text(r.plan), planExpiresAt: r.plan_expires_at == null ? null : date(r.plan_expires_at), trialEndsAt: r.trial_ends_at == null ? null : date(r.trial_ends_at), degraded, trialUsage: decodeTrialUsage(r.trial_usage, workspace.servingOrgId ?? workspace.org.id), servingActivation, servingPhotoPackage: decodePhotoPackage(r.serving_photo_package, workspace.servingOrgId ?? workspace.org.id), servingEnvelope: decodeServingEnvelope(r.serving_envelope), meters };
 }
 export function brandPayload(brand: Brand): Record<string, string | null> {
   if (!brand.org_name.trim() || brand.org_name.length > 120 || brand.org_name.includes("@")) throw new Error("Enter a business name up to 120 characters.");
@@ -178,8 +179,9 @@ export function decodeCompliance(value: unknown, orgId: string): Compliance {
   if (count(r.count) !== result.length) throw new Error("This report is incomplete. Refresh it before exporting.");
   return { rows: result, truncated: boolean(r.truncated) };
 }
-export function decodeOverview(value: unknown, orgId: string): Overview {
+export function decodeOverview(value: unknown, orgId: string, binding?: { actorId: string; contentOrgId: string }): Overview {
   const r = record(value), seats = record(r.seats), totals = record(r.totals);
+  if (binding && (uuid(r.actor_id) !== binding.actorId || uuid(r.content_org_id) !== binding.contentOrgId)) throw new Error("Your team selection changed. Reload Studio.");
   if (uuid(r.org_id) !== orgId) throw new Error("This overview belongs to a different workspace. Reload Studio.");
   return { from: date(r.from), to: date(r.to), seats: { used: count(seats.used), allowed: count(seats.allowed), pending: count(seats.pending) }, totals: { listings: count(totals.listings), tours: count(totals.tours_published), ai: count(totals.ai_assets_published), inactive: count(totals.members_published_nothing) }, members: unique(rows(r.members).map((raw) => {
     const m = record(raw); return { id: uuid(m.user_id), name: text(m.name, text(m.email, "Team member")), role: role(m.role), listings: count(m.listings), tours: count(m.tours_published), ai: count(m.ai_assets_published), lastActive: m.last_activity_at ? date(m.last_activity_at) : null };

@@ -1,3 +1,4 @@
+import { libraryBillingOrg } from "../_shared/library-access.ts";
 // ai-photo — single-image AI edits (twilight | sky | lawn | declutter | stage |
 // custom) via Gemini image edit ("Nano Banana"). Owner-authenticated.
 // Mirrors services/pipeline providers/gemini.py + router.PHOTO_EDIT_PROMPTS.
@@ -79,7 +80,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
@@ -127,15 +128,10 @@ const HELP_WINDOW_SECONDS = 300; // 120 suggest/improve calls / 5 min / org
 // enforced number and the published number are the same number.
 
 /** Role gate shared by both guards: marketing is read-only. */
-async function requireEditorRole(user: PaidAiCaller, req: Request, what: string): Promise<string> {
+async function requireEditorRole(user: PaidAiCaller, req: Request, what: string, listingId?: string): Promise<string> {
   const userId = user.id;
-  const orgId = await orgForUser(userId, preferredOrg(req));
-  const { data: mem, error: mErr } = await adminClient()
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, `Your role does not permit ${what}`);
-  }
+  const orgId = await contentOrgForUser(userId, preferredOrg(req), listingId, true);
+
   await assertPaidAiIdentity(user, orgId);
   return orgId;
 }
@@ -157,8 +153,8 @@ interface EditCharge {
  * an org's burst + monthly quota with `{}` bodies that never reached Gemini
  * (audit round 4).
  */
-async function guardEdit(user: PaidAiCaller, req: Request): Promise<EditCharge> {
-  const orgId = await requireEditorRole(user, req, "AI photo edits");
+async function guardEdit(user: PaidAiCaller, req: Request, listingId?: string): Promise<EditCharge> {
+  const orgId = await requireEditorRole(user, req, "AI photo edits", listingId);
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.photo_edits_per_month;
@@ -167,8 +163,9 @@ async function guardEdit(user: PaidAiCaller, req: Request): Promise<EditCharge> 
   // Permanent serving-operation admission now owns replay. A time-window
   // counter must not prevent recovery or renew an admitted paid operation.
   requiredIdempotencyKey(req);
-  const burstKey = `aiphoto:${orgId}`;
-  const monthlyKey = `aiphotomo:${orgId}`;
+  const billingOrgId = await libraryBillingOrg(adminClient(), orgId, user.id);
+  const burstKey = `aiphoto:${billingOrgId}`;
+  const monthlyKey = `aiphotomo:${billingOrgId}`;
   const burst = await chargeRateReceipt(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS);
   if (!burst.accepted) {
     throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.", "rate_limited");
@@ -205,8 +202,8 @@ interface HelperCharge {
 }
 
 /** Helper modes: role gate + burst limiter only. Never touches the monthly meter. */
-async function guardHelper(user: PaidAiCaller, req: Request): Promise<HelperCharge> {
-  const orgId = await requireEditorRole(user, req, "AI photo suggestions");
+async function guardHelper(user: PaidAiCaller, req: Request, listingId?: string): Promise<HelperCharge> {
+  const orgId = await requireEditorRole(user, req, "AI photo suggestions", listingId);
   const burstKey = `aiphotohelp:${orgId}`;
   const burst = await chargeRateReceipt(burstKey, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS);
   if (!burst.accepted) {
@@ -660,7 +657,7 @@ Deno.serve(async (req) => {
     }
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
-      const helperCharge = await guardHelper(user, req);
+      const helperCharge = await guardHelper(user, req, body.listing_id);
       try {
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
         await assertPhotoHelperSponsorship(funding);
@@ -689,7 +686,7 @@ Deno.serve(async (req) => {
       const promptSpace = await gateSpace();
       assertFairHousing(rough, "That idea", promptSpace);
       assertCustomPhotoPrompt(rough, promptSpace);
-      const helperCharge = await guardHelper(user, req);
+      const helperCharge = await guardHelper(user, req, body.listing_id);
       try {
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
         await assertPhotoHelperSponsorship(funding);
@@ -767,7 +764,7 @@ Deno.serve(async (req) => {
     // Everything validated — NOW charge the quota, immediately before the
     // billable provider call. Keep the org it charged for the cost_ledger row,
     // and the plan for the router's RouteContext.
-    const orgId = await requireEditorRole(user, req, "AI photo edits");
+    const orgId = await requireEditorRole(user, req, "AI photo edits", body.listing_id);
     const requestKey = requiredIdempotencyKey(req).trim();
     const resultIdentity = { actorId: user.id, orgId, requestKey, listingId: body.listing_id ?? null };
     let funding: FundingContext = {actorId:user.id,orgId,requestKey,rpc:(name,args)=>adminClient().rpc(name,args)};
@@ -797,7 +794,7 @@ Deno.serve(async (req) => {
       validatePhotoPrompt(prompt);
     }catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
     let charge: EditCharge;
-    try { charge = await guardEdit(user, req); }
+    try { charge = await guardEdit(user, req, body.listing_id); }
     catch (error) { await abortFundingOperationBeforeDispatch(funding); throw error; }
     const { plan } = charge;
     if (charge.orgId !== orgId) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw new HttpError(409,"The generation workspace changed. Please retry.","conflict"); }

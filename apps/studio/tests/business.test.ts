@@ -191,3 +191,14 @@ test("resend and profile response identity mismatches fail without automatic mut
   await assert.rejects(api.sendLeadToClient(id, id, clientDelivery.recipient_email), /recipient changed/);
   await assert.rejects(api.saveWorkRole("agent"), /preference/); assert.equal(count, 2);
 });
+
+test("Team summary binds purchase root separately from viewed library and actor",async()=>{
+  const selected={...workspace,org:{...workspace.org,id:listing},billingOrgId:org,servingOrgId:id,libraryOrgId:listing};
+  const wire={org_id:org,actor_id:user,content_org_id:listing,can_manage:true,seats:{used:1,allowed:6},members:[],invites:[]};
+  let calls=0,response:unknown=wire;
+  const api=businessApi({api:async(_path,options)=>{calls++;assert.equal(options.orgId,listing);return response;}},selected);
+  assert.equal((await api.team()).canManage,true);assert.equal(calls,1);
+  for(const field of ["org_id","actor_id","content_org_id"]){response={...wire,[field]:id};await assert.rejects(api.team());}
+  response={...wire,can_manage:false,members:[{user_id:user,name:"Agent",email:"",role:"agent",is_you:true}],invites:[{code:"must not render"}]};
+  const agent=await api.team();assert.equal(agent.canManage,false);assert.equal(agent.members.length,1);assert.deepEqual(agent.invites,[]);
+});

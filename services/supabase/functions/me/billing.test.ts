@@ -5,7 +5,7 @@ import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
-type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string;servingEnvelope?:unknown};
+type Options={teamParent?:string;delegatedOwner?:boolean;role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string;servingEnvelope?:unknown};
 async function invoke(o:Options={}) {
  const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon"};
  const previous=new Map(Object.keys(values).map(key=>[key,Deno.env.get(key)]));for(const [key,value]of Object.entries(values))Deno.env.set(key,value);
@@ -20,7 +20,12 @@ async function invoke(o:Options={}) {
    const row=(v:unknown)=>json(req.headers.get("accept")?.includes("vnd.pgrst.object")?v:[v]);
    if(url.pathname==="/auth/v1/user")return json({id:USER,aud:"authenticated",is_anonymous:o.anonymous??false});
    if(table==="active_org_for_user")return json(ORG);
-   if(table==="workspace_directory")return json({active_org_id:o.selector??ORG,workspaces:[{id:o.selector??ORG,name:"Fixture Workspace",role:o.role??"owner"}]});
+   if(table==="workspace_directory")return json({actor_id:USER,own_org_id:o.delegatedOwner?o.teamParent:o.selector??ORG,billing_org_id:o.teamParent??o.selector??ORG,can_switch_agent_libraries:!!o.delegatedOwner,active_org_id:o.selector??ORG,workspaces:[{id:o.selector??ORG,name:"Fixture Workspace",role:o.delegatedOwner?"team_owner":o.role??"owner",access_mode:o.delegatedOwner?"team_owner":"own",library_owner_user_id:o.delegatedOwner?OTHER:USER,billing_org_id:o.teamParent??o.selector??ORG,can_read:true,can_write:o.role!=="marketing",can_manage_subscription:!o.teamParent}]});
+   if(table==="library_access") {
+    const args=await req.json(),parent=!!o.teamParent&&args.p_org===o.teamParent;
+    return o.membershipError?json({message:"fixture unavailable"},400):json({actor_id:USER,org_id:args.p_org,library_owner_user_id:o.delegatedOwner&&!parent?OTHER:USER,role:o.delegatedOwner&&!parent?"team_owner":o.role??"owner",access_mode:o.delegatedOwner&&!parent?"team_owner":"own",can_read:true,can_write:o.role!=="marketing",can_manage_subscription:(!o.teamParent||parent&&o.delegatedOwner)&&["owner","admin"].includes(o.role??"owner")&&!o.testingContext,billing_org_id:o.teamParent??o.selector??ORG,team_org_id:o.teamParent??null});
+   }
+   if(table==="library_usage_summary")return json({actor_id:USER,org_id:o.selector??ORG,billing_org_id:o.teamParent??o.selector??ORG,listings:o.teamParent?2:0,leads:0,leads_new:0,render_count:o.teamParent?7:0,cost_cents:0});
    if(table==="org_entitlement")return json(o.degraded?null:{plan:o.plan??"free",renders_per_month:o.projection?2147483647:1,photo_edits_per_month:o.projection?2147483647:0,reels_per_month:o.projection?2147483647:0,aerials_per_month:o.projection?2147483647:0,topaz_per_month:o.projection?2147483647:0,seats:1,cogs_ceiling_cents:o.projection?2147483647:250,price_cents:0});
    if(table==="org_has_internal_testing_grant")return json(o.master??false);
    if(table==="hosting_retention_state") {
@@ -35,28 +40,37 @@ async function invoke(o:Options={}) {
    if(table==="subscription_trial_held_offer")return json(o.heldPurchase??null);
    if(table==="prepare_subscription_trial_purchase"){assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG,p_product:"com.rendprop.app.starter.monthly"});return json(o.heldPurchase??null);}
    if(table==="subscription_trial_context") {
-    assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
+    assertEquals(await req.json(),{p_actor:USER,p_org:o.teamParent??o.selector??ORG});
     return o.trialError?json({message:"fixture unavailable"},503):json({trial_usage:o.trialUsage??null,trial_offer:null});
    }
    if(table==="subscription_serving_activation") {
-    assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
-    return json({org_id:o.selector??ORG,available:!o.servingUnavailable,funded:!o.servingUnavailable,authority:o.servingUnavailable?"subscription_activation_unavailable":"verified_retail"});
+    assertEquals(await req.json(),{p_actor:USER,p_org:o.teamParent??o.selector??ORG});
+    return json({org_id:o.teamParent??o.selector??ORG,available:!o.servingUnavailable,funded:!o.servingUnavailable,authority:o.servingUnavailable?"subscription_activation_unavailable":"verified_retail"});
    }
    if(table==="serving_mode") return json(o.servingMode??"ceiling");
    if(table==="serving_envelope_state") {
-    assertEquals(await req.json(),{p_org:o.selector??ORG});
+    assertEquals(await req.json(),{p_org:o.teamParent??o.selector??ORG});
     return json(o.servingEnvelope??{kind:"free",plan:"free",ceiling_cents:300,spent_cents:12.5,held_cents:0,available_cents:287.5,period_start:null,period_end:null,window:"lifetime",pool:null});
    }
    if(table==="serving_photo_package_context") {
     assertEquals(req.method,"POST");
-    assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
+    assertEquals(await req.json(),{p_actor:USER,p_org:o.teamParent??o.selector??ORG});
     return o.photoPackageError?json({message:"fixture unavailable"},503):json(o.photoPackage??null);
    }
    if(table==="memberships") {
     if(url.searchParams.get("select")==="org_id")return row({org_id:OTHER});
     return o.membershipError?json({message:"fixture denied"},400):row({role:o.role??"owner"});
    }
-   if(table==="orgs")return row({id:o.selector??ORG,name:"Fixture Workspace",plan:o.rawPlan??o.plan??"free",plan_source:o.source??null});
+   if(table==="orgs"){
+    const select=url.searchParams.get("select")??"";
+    if(o.delegatedOwner&&url.searchParams.get("id")==="eq."+OTHER&&!select.includes("plan")){
+      assertEquals(req.headers.get("authorization"),"Bearer fixture-service",
+        "delegated display reads use the already-authorized service boundary, never generic org membership");
+      assertEquals(select,"id,name,handle,space_type,brand_kit",
+        "the delegated display read excludes private account, billing and subscription columns");
+    }
+    return row({id:url.searchParams.get("id")?.replace(/^eq\./,"")??o.selector??ORG,name:"Fixture Workspace",plan:o.rawPlan??o.plan??"free",plan_source:o.source??null});
+   }
    if(table==="apple_subscriptions")return o.subscriptionError?json({message:"fixture unavailable"},400):json([{original_transaction_id:"fixture-original-transaction"}]);
    if(table==="profiles")return row({id:USER,name:"Fixture Person"});
    if(req.method==="HEAD")return new Response(null,{headers:{"content-range":"*/0"}});
@@ -78,8 +92,18 @@ Deno.test("/me reports the serving mode the paywall keys on (ceiling → ordinar
  const funded=await invoke({servingMode:"funded"});assertEquals(funded.body.serving_mode,"funded");assertEquals(funded.body.serving_envelope,null);
 });
 Deno.test("billing context belongs to the same selected workspace as entitlement",async()=>{
- const r=await invoke({selector:OTHER});assertEquals(r.response.status,200);assertEquals(r.body.org.id,OTHER);assertEquals(r.body.billing,{org_id:OTHER,org_name:"Fixture Workspace",role:"owner",can_manage_subscription:true,original_transaction_ids:[],source:null});
+ const r=await invoke({selector:OTHER});assertEquals(r.response.status,200);assertEquals(r.body.org.id,OTHER);assertEquals(r.body.billing,{actor_id:USER,content_org_id:OTHER,org_id:OTHER,serving_org_id:OTHER,org_name:"Fixture Workspace",role:"owner",can_manage_subscription:true,original_transaction_ids:[],source:null});
  assert(r.queries.filter(u=>u.pathname.endsWith("memberships")).every(u=>u.searchParams.get("org_id")==="eq."+OTHER));
+ // Execute the actual handler with different content, serving and purchase
+ // roots. Only the real Team owner may manage the parent while viewing Sally.
+ const owner=await invoke({selector:OTHER,teamParent:ORG,delegatedOwner:true,plan:"team",source:"apple"});
+ assertEquals(owner.response.status,200,JSON.stringify(owner.body));assertEquals(owner.body.org.id,OTHER);
+ assertEquals(owner.body.billing.org_id,ORG);assertEquals(owner.body.billing.serving_org_id,ORG);
+ assertEquals(owner.body.billing.content_org_id,OTHER);assertEquals(owner.body.billing.can_manage_subscription,true);
+ assertEquals(owner.body.usage.renders,7);assertEquals(owner.body.usage.listings,2);
+ const agent=await invoke({selector:OTHER,teamParent:ORG,plan:"team",source:"apple"});
+ assertEquals(agent.response.status,200);assertEquals(agent.body.billing.org_id,ORG);assertEquals(agent.body.billing.can_manage_subscription,false);
+ assertEquals(agent.body.billing.original_transaction_ids,[]);assertEquals(agent.body.usage.renders,owner.body.usage.renders);
 });
 Deno.test("guest owner may explicitly subscribe; membership does not require a named identity",async()=>{const r=await invoke({anonymous:true});assertEquals(r.response.status,200);assertEquals(r.body.billing.can_manage_subscription,true);});
 Deno.test("actual me returns only the selected workspace's verified photo allowance",async()=>{

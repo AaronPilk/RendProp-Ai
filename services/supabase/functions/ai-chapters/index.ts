@@ -1,3 +1,4 @@
+import { libraryBillingOrg, requireContentWrite } from "../_shared/library-access.ts";
 import type { RouteStep } from "../_shared/router.ts";
 // ai-chapters — AUTO ROOM CHAPTERS from the walkthrough video (owner-authenticated).
 //
@@ -60,7 +61,7 @@ import type { RouteStep } from "../_shared/router.ts";
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
@@ -325,15 +326,10 @@ interface Charge {
  * have validated — charging up front is how `{}` bodies used to burn an org's
  * allowance with no provider call ever made (audit round 4).
  */
-async function guardChapters(user: PaidAiCaller, req: Request, orgId: string): Promise<Charge> {
+async function guardChapters(user: PaidAiCaller, req: Request, orgId: string, listingId: string): Promise<Charge> {
   const userId = user.id;
   const admin = adminClient();
-  const { data: mem, error: mErr } = await admin
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, "Your role does not permit AI room suggestions");
-  }
+  await requireContentWrite(admin, userId, orgId, listingId);
 
   await assertPaidAiIdentity(user, orgId);
 
@@ -344,12 +340,13 @@ async function guardChapters(user: PaidAiCaller, req: Request, orgId: string): P
 
   requiredIdempotencyKey(req); // Permanent serving-operation authority owns replay.
 
-  const burstKey = `aichapters:${orgId}`;
+  const billingOrgId = await libraryBillingOrg(admin, orgId, userId);
+  const burstKey = `aichapters:${billingOrgId}`;
   const burst = await chargeRateReceipt(burstKey, BURST_MAX_PER_WINDOW, BURST_WINDOW_SECONDS);
   if (!burst.accepted) {
     throw new HttpError(429, "AI room-suggestion limit reached for now — try again in a few minutes.", "rate_limited");
   }
-  const monthlyKey = `chaptersmo:${orgId}`;
+  const monthlyKey = `chaptersmo:${billingOrgId}`;
   let monthly: Awaited<ReturnType<typeof chargeRateReceipt>>;
   try {
     monthly = await chargeRateReceipt(monthlyKey, monthlyCap, MONTH_SECONDS);
@@ -514,7 +511,7 @@ Deno.serve(async (req) => {
     // The org the quota is charged to is the ASSET's org, cross-checked against
     // X-Org-Id above — never orgForUser()'s default, which for a two-org user
     // could be the wrong workspace entirely.
-    const defaultOrg = await orgForUser(user.id, preferredOrg(req));
+    const defaultOrg = await contentOrgForUser(user.id, preferredOrg(req), listingId);
     if (defaultOrg !== asset.orgId && !preferredOrg(req)) {
       throw new HttpError(
         403,
@@ -523,7 +520,7 @@ Deno.serve(async (req) => {
     }
     const funding = await fundingContext(user.id, asset.orgId, req, body, (name, args) => adminClient().rpc(name, args));
     let charge: Charge;
-    try {charge=await guardChapters(user, req, asset.orgId);}
+    try {charge=await guardChapters(user, req, asset.orgId, listingId);}
     catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
 
     const space = spaceTypeOf(asset.spaceType);

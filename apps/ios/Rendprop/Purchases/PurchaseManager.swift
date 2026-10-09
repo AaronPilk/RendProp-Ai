@@ -292,7 +292,7 @@ final class PurchaseManager: ObservableObject {
         // workspace billing authority alone decides who may buy.
         if billingContext?.isCeilingMode == true { return ceilingModePurchaseAllowed() }
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         guard trialEligibility(for: product) == true, heldTrialOffer(for: product) != nil else { return false }
         return TrialPurchaseAdmission.allows(eligibleIntro: true,
             billing: billingContext, captured: current, current: current)
@@ -300,7 +300,7 @@ final class PurchaseManager: ObservableObject {
 
     func heldTrialOffer(for product: Product) -> TrialOfferSummary? {
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         guard let captured = preparedTrialSnapshot,
               TrialPurchaseAdmission.allowsHeld(preparedTrialReservation, product: product.id,
                 captured: captured, current: current) else { return nil }
@@ -314,7 +314,7 @@ final class PurchaseManager: ObservableObject {
         guard let billing = billingContext, billing.isCeilingMode else { return false }
         return AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
             && AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil
-            && billing.orgID == WorkspaceContext.selectedOrgID && billing.canManageSubscription
+            && billing.orgID == WorkspaceContext.billingOrgID && billing.canManageSubscription
     }
 
     /// Ceiling serving mode: the introductory offer is Apple's own.
@@ -327,27 +327,27 @@ final class PurchaseManager: ObservableObject {
         if billingContext?.isCeilingMode == true { return false }
         return trialEligibility(for: product) != false && AuthStore.shared.isSignedIn && AuthStore.shared.isIdentified
             && AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil
-            && billingContext?.orgID == WorkspaceContext.selectedOrgID
+            && billingContext?.orgID == WorkspaceContext.billingOrgID
             && billingContext?.role == "owner" && billingContext?.canManageSubscription == true
     }
 
     private func trialRegionSupported(for product: Product, captured: TrialPurchaseSnapshot) async -> Bool {
         let storefront = await Storefront.current
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         return captured == current && TrialPurchaseAdmission.supportsTrialRegion(
             country: storefront?.countryCode, currency: product.priceFormatStyle.currencyCode)
     }
 
     private func validateHeldTrialPurchase(productID: String, captured: TrialPurchaseSnapshot,
                                           expectedReservationID: UUID?) async throws -> TrialPurchaseReservation {
-        guard let api, let owner = captured.actor.flatMap(UUID.init(uuidString:)), let org = captured.org else { throw APIError.notConfigured }
+        guard let api, let owner = captured.actor.flatMap(UUID.init(uuidString:)), let org = captured.purchaseOrg else { throw APIError.notConfigured }
         let before = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         guard before == captured else { throw CloudSyncError.identityChanged }
         let held = try await api.prepareTrialPurchase(orgID: org, productID: productID, appAccountToken: owner)
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         guard TrialPurchaseAdmission.allowsHeld(held, product: productID, captured: captured, current: current),
               expectedReservationID.map({ held.reservationId == $0 }) ?? true else { throw CloudSyncError.identityChanged }
         return held
@@ -358,7 +358,7 @@ final class PurchaseManager: ObservableObject {
         guard let api else { throw APIError.notConfigured }
         let fresh = try await api.billingContext()
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         return TrialPurchaseAdmission.matchesFreshHold(held, billing: fresh, captured: captured, current: current)
     }
 
@@ -369,14 +369,14 @@ final class PurchaseManager: ObservableObject {
         isPurchasing = true; lastError = nil; notice = nil
         defer { isPurchasing = false }
         let captured = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-            revision: AuthStore.shared.syncSessionRevision, org: expectedOrgID)
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: expectedOrgID)
         do {
             guard let owner = captured.actor.flatMap(UUID.init(uuidString:)), let org = expectedOrgID,
                   AuthStore.shared.isSignedIn, AuthStore.shared.isIdentified, let api else { throw APIError.notConfigured }
             let fresh = try await api.billingContext()
             let eligible = await product.subscription?.isEligibleForIntroOffer
             let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
             guard current == captured, fresh.orgID == org, fresh.role == "owner", fresh.canManageSubscription else {
                 throw CloudSyncError.identityChanged
             }
@@ -399,12 +399,12 @@ final class PurchaseManager: ObservableObject {
             introOfferEligible[product.id] = true
             await refreshBillingContext()
             let finished = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
             guard finished == captured else { return }
             notice = "Trial availability is reserved for this plan and workspace. Review the included usage and Apple's confirmation before continuing. No Apple billing has started."
         } catch {
             let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
             guard current == captured else { return }
             lastError = Self.message(for: error, fallback: "Trial availability could not be confirmed. A reservation may still be pending. No Apple billing has started. Restore or explicitly check this same plan again; no reservation is automatically released or restarted.")
         }
@@ -414,7 +414,7 @@ final class PurchaseManager: ObservableObject {
         guard let api else { throw APIError.notConfigured }
         let fresh = try await api.billingContext()
         let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+            revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
         return TrialPurchaseAdmission.allows(eligibleIntro: eligibleIntro, billing: fresh,
             captured: captured, current: current)
     }
@@ -447,6 +447,7 @@ final class PurchaseManager: ObservableObject {
     func purchase(_ product: Product, expectedOrgID: UUID?, continuingHeldTrial: Bool = false) async {
         guard !isPurchasing else { return }
         let operationActor = AuthStore.shared.userID, operationRevision = AuthStore.shared.syncSessionRevision
+        let viewedOrgID = WorkspaceContext.selectedOrgID
         isPurchasing = true
         lastError = nil
         notice = nil
@@ -485,7 +486,7 @@ final class PurchaseManager: ObservableObject {
                 let context = try await api.billingContext()
                 ceilingMode = context.isCeilingMode
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
-                      let expectedOrgID, WorkspaceContext.selectedOrgID == expectedOrgID, context.orgID == expectedOrgID else {
+                      let expectedOrgID, WorkspaceContext.selectedOrgID == viewedOrgID, WorkspaceContext.billingOrgID == expectedOrgID, context.orgID == expectedOrgID else {
                     lastError = "Your workspace changed. Refresh the plan screen before subscribing. Nothing has been purchased."
                     return
                 }
@@ -509,11 +510,11 @@ final class PurchaseManager: ObservableObject {
         // Eligibility may have changed since the paywall loaded. Recheck it
         // with Apple, then fetch fresh server authority before Apple's sheet.
         if Config.useLiveBackend && !Config.isUITesting, !ceilingMode, hasFreeIntroductoryOffer(for: product) {
-            let captured = TrialPurchaseSnapshot(actor: actor, revision: identityRevision, org: expectedOrgID)
+            let captured = TrialPurchaseSnapshot(actor: actor, revision: identityRevision, org: viewedOrgID, billingOrg: expectedOrgID)
             let storeEligibility = await product.subscription?.isEligibleForIntroOffer
             let eligible: Bool? = storeEligibility == true && !hasSevenDayTrial(for: product) ? nil : storeEligibility
             let current = TrialPurchaseSnapshot(actor: AuthStore.shared.userID,
-                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+                revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)
             guard captured == current else {
                 lastError = "Your account or workspace changed. Refresh before subscribing. No Apple billing has started."
                 return
@@ -560,13 +561,13 @@ final class PurchaseManager: ObservableObject {
                     PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
                 }
                 guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
-                      WorkspaceContext.selectedOrgID == expectedOrgID else { return }
+                      WorkspaceContext.selectedOrgID == viewedOrgID, WorkspaceContext.billingOrgID == expectedOrgID else { return }
                 lastError = retainTrialBinding ? "The same trial reservation could not be confirmed. No Apple purchase has started. The reservation is retained; Restore or explicitly check this same plan again." : TrialPurchaseAdmission.unavailableMessage
                 return
             }
         }
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
-              (!Config.useLiveBackend || Config.isUITesting || WorkspaceContext.selectedOrgID == expectedOrgID) else { return }
+              (!Config.useLiveBackend || Config.isUITesting || (WorkspaceContext.selectedOrgID == viewedOrgID && WorkspaceContext.billingOrgID == expectedOrgID)) else { return }
         let result: Product.PurchaseResult
         do {
             let options: Set<Product.PurchaseOption> = actor.flatMap(UUID.init(uuidString:)).map { [.appAccountToken($0)] } ?? []
@@ -577,9 +578,9 @@ final class PurchaseManager: ObservableObject {
             // dispatch in live mode; there is no await after this check.
             guard PurchaseDispatchAdmission.allows(liveBackend: Config.useLiveBackend,
                     uiTesting: Config.isUITesting, ceilingMode: ceilingMode, verifiedHeldTrial: verifiedHeldTrialForDispatch,
-                    captured: .init(actor: actor, revision: identityRevision, org: expectedOrgID),
+                    captured: .init(actor: actor, revision: identityRevision, org: viewedOrgID, billingOrg: expectedOrgID),
                     current: .init(actor: AuthStore.shared.userID,
-                        revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID)) else {
+                        revision: AuthStore.shared.syncSessionRevision, org: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID)) else {
                 if !retainTrialBinding, createdBinding, let binding = preparedBinding {
                     PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
                 }
@@ -810,7 +811,7 @@ final class PurchaseManager: ObservableObject {
                                   signedRenewalInfo: signedRenewalInfo, expectedOrgID: expectedOrgID,
                                   actor: actor, revision: revision, selectedOrgID: selectedOrgID)
         remember(pending)
-        if Config.useLiveBackend && !Config.isUITesting, expectedOrgID != selectedOrgID {
+        if Config.useLiveBackend && !Config.isUITesting, expectedOrgID != WorkspaceContext.billingOrgID {
             lastError = "This Apple purchase belongs to its saved workspace. Select that workspace and tap Restore purchases. Your transaction is retained; contact support in Settings → Legal & support if the workspace is unavailable."
             return false
         }
@@ -828,7 +829,7 @@ final class PurchaseManager: ObservableObject {
         AuthStore.shared.syncSessionRevision == pending.revision &&
         WorkspaceContext.selectedOrgID == pending.selectedOrgID &&
         (!Config.useLiveBackend || Config.isUITesting ||
-         (pending.actor.flatMap(UUID.init(uuidString:)) != nil && pending.expectedOrgID != nil && pending.expectedOrgID == pending.selectedOrgID))
+         (pending.actor.flatMap(UUID.init(uuidString:)) != nil && pending.expectedOrgID != nil && pending.expectedOrgID == WorkspaceContext.billingOrgID))
     }
 
     /// POST the signed transaction; finish it only on success.

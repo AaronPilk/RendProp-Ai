@@ -601,7 +601,7 @@ final class AppModel: ObservableObject {
         if let expectedFacts {
             let sameBinding = expectedFacts.serverID == previous.serverID && expectedFacts.serverOrgID == previous.serverOrgID
             let firstBinding = expectedFacts.serverID == nil && expectedFacts.serverOrgID == nil && previous.serverID != nil &&
-                expectedFacts.cloudDraftOrgID == previous.serverOrgID && previous.serverOrgID == WorkspaceContext.selectedOrgID &&
+                expectedFacts.cloudDraftOrgID == previous.serverOrgID && isInSelectedWorkspace(previous) &&
                 expectedFacts.cloudSyncOwnerID == previous.cloudSyncOwnerID &&
                 previous.cloudSyncOwnerID == AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) && previous.cloudSyncOwnerID != nil
             guard expectedFacts.id == id, sameBinding || firstBinding else { return }
@@ -627,11 +627,12 @@ final class AppModel: ObservableObject {
 
     func reloadSharedMeasurements(_ id: UUID, includeListingDetails: Bool = false) async throws {
         guard let snapshot = listings.first(where: { $0.id == id }), let server = snapshot.serverID, let org = snapshot.serverOrgID,
-              org == WorkspaceContext.selectedOrgID, let cloud = api as? WorkspaceSyncAPI else { throw CloudSyncError.identityChanged }
+              isInSelectedWorkspace(snapshot), let cloud = api as? WorkspaceSyncAPI else { throw CloudSyncError.identityChanged }
         let owner = AuthStore.shared.userID; let revision = AuthStore.shared.syncSessionRevision
+        let library = WorkspaceContext.selectedOrgID
         let remote = try await cloud.cloudListings()
         guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
-              org == WorkspaceContext.selectedOrgID, let i = index(of: id), listings[i] == snapshot,
+              WorkspaceContext.selectedOrgID == library, isInSelectedWorkspace(snapshot), let i = index(of: id), listings[i] == snapshot,
               let shared = remote.first(where: { $0.serverID == server && $0.serverOrgID == org }) else { throw CloudSyncError.identityChanged }
         var current = listings[i]
         var state = FloorMeasurementSyncState(expected: FloorMeasurementPlan.wireValue(in: shared.details))
@@ -667,8 +668,8 @@ final class AppModel: ObservableObject {
     }
 
     func confirmLocalListingDetails(_ id: UUID) throws {
-        guard AuthStore.shared.isIdentified, let i = index(of: id), let org = listings[i].serverOrgID,
-              org == WorkspaceContext.selectedOrgID,
+        guard AuthStore.shared.isIdentified, let i = index(of: id), listings[i].serverOrgID != nil,
+              isInSelectedWorkspace(listings[i]),
               listings[i].cloudUnavailable != true, listings[i].measurementSync?.factsReviewRequired == true else {
             throw CloudSyncError.identityChanged
         }
@@ -684,13 +685,14 @@ final class AppModel: ObservableObject {
 
     func loadListingFactsReview(_ id: UUID) async throws -> ListingFactsReview {
         guard let local = listings.first(where: { $0.id == id }), let server = local.serverID,
-              let org = local.serverOrgID, org == WorkspaceContext.selectedOrgID,
+              let org = local.serverOrgID, isInSelectedWorkspace(local),
               let cloud = api as? WorkspaceSyncAPI, local.cloudUnavailable != true,
               AuthStore.shared.isIdentified else { throw CloudSyncError.identityChanged }
         let owner = AuthStore.shared.userID; let revision = AuthStore.shared.syncSessionRevision
+        let library = WorkspaceContext.selectedOrgID
         let remote = try await cloud.cloudListings()
         guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
-              org == WorkspaceContext.selectedOrgID,
+              WorkspaceContext.selectedOrgID == library, isInSelectedWorkspace(local),
               listings.first(where: { $0.id == id }) == local,
               let shared = remote.first(where: { $0.serverID == server && $0.serverOrgID == org }) else {
             throw CloudSyncError.identityChanged
@@ -702,7 +704,7 @@ final class AppModel: ObservableObject {
         guard AuthStore.shared.isIdentified, AuthStore.shared.userID == review.ownerID,
               AuthStore.shared.syncSessionRevision == review.sessionRevision,
               let i = index(of: review.local.id), listings[i] == review.local,
-              review.local.serverOrgID == WorkspaceContext.selectedOrgID,
+              isInSelectedWorkspace(review.local),
               review.shared.serverID == review.local.serverID,
               review.shared.serverOrgID == review.local.serverOrgID else { throw CloudSyncError.identityChanged }
         var current = listings[i]
@@ -904,11 +906,13 @@ final class AppModel: ObservableObject {
             guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }   // signed out: keep it dirty
             let owner = AuthStore.shared.userID
             let revision = AuthStore.shared.syncSessionRevision
+            let library = WorkspaceContext.selectedOrgID
+            guard isInSelectedWorkspace(snapshot) else { return }
             do {
                 if snapshot.measurementSync?.pending == true && snapshot.measurementSync?.conflict != true {
                     let receipt = try await api.updateMeasurements(snapshot)
                     guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
-                          WorkspaceContext.selectedOrgID == snapshot.serverOrgID else { return }
+                          WorkspaceContext.selectedOrgID == library && isInSelectedWorkspace(snapshot) else { return }
                     if let i = index(of: id), listings[i].serverID == snapshot.serverID,
                        listings[i].serverOrgID == snapshot.serverOrgID {
                         var current = listings[i]
@@ -933,7 +937,7 @@ final class AppModel: ObservableObject {
                 }
                 let receipt = try await api.updateListing(snapshot)
                 guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
-                      WorkspaceContext.selectedOrgID == snapshot.serverOrgID else { return }
+                      WorkspaceContext.selectedOrgID == library && isInSelectedWorkspace(snapshot) else { return }
                 if let i = index(of: id), listings[i].serverID == snapshot.serverID,
                    listings[i].serverOrgID == snapshot.serverOrgID,
                    listings[i].factsSync?.conflict != true,
@@ -947,7 +951,7 @@ final class AppModel: ObservableObject {
             } catch {
                 if snapshot.measurementSync?.pending != true, let i = index(of: id),
                    AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
-                   WorkspaceContext.selectedOrgID == snapshot.serverOrgID,
+                   WorkspaceContext.selectedOrgID == library && isInSelectedWorkspace(snapshot),
                    listings[i].serverID == snapshot.serverID, listings[i].serverOrgID == snapshot.serverOrgID,
                    ListingFactsSync.hasSameLineage(snapshot, listings[i]) {
                     if let apiError = error as? APIError, apiError.isConflict {
@@ -957,7 +961,7 @@ final class AppModel: ObservableObject {
                 }
                 if snapshot.measurementSync?.pending == true, let apiError = error as? APIError, apiError.isConflict,
                    let i = index(of: id), AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
-                   WorkspaceContext.selectedOrgID == snapshot.serverOrgID,
+                   WorkspaceContext.selectedOrgID == library && isInSelectedWorkspace(snapshot),
                    listings[i].serverID == snapshot.serverID, listings[i].serverOrgID == snapshot.serverOrgID,
                    listings[i].measurementSync?.pending == true, listings[i].measurementSync?.conflict != true,
                    listings[i].measurementSync?.expected == snapshot.measurementSync?.expected {
@@ -1063,9 +1067,13 @@ final class AppModel: ObservableObject {
 
     func isInSelectedWorkspace(_ listing: Listing) -> Bool {
         guard Config.useLiveBackend else { return true }
-        guard let selected = WorkspaceContext.selectedOrgID else { return false }
+        guard let selected = WorkspaceContext.selectedOrgID,
+              WorkspaceStore.shared.canViewLibrary(selected) else { return false }
         guard !listing.isSample, let org = listing.serverOrgID ?? listing.cloudDraftOrgID else { return true }
-        return org == selected
+        guard listing.cloudUnavailable != true else { return org == selected && listing.serverLibraryOrgID == nil }
+        // The complete server read supplies this display grouping; true org
+        // identity remains unchanged on every media request and mutation.
+        return (listing.serverLibraryOrgID ?? org) == selected
     }
 
     // MARK: - Cloud publish (local-first + cloud-publish, contract §4)
@@ -3221,6 +3229,7 @@ struct HomeDashboardView: View {
     @AppStorage(RealEstateRoleStore.uiRevisionKey) private var realEstateRoleRevision = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .footnote) private var heroBodySize: CGFloat = 14
     var goToListings: () -> Void = {}
 
     @State private var revealed = false          // staggers the sections in on first appear
@@ -3290,38 +3299,18 @@ struct HomeDashboardView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                WorkspaceEntry()
-                // A brand-new user gets the guide FIRST. The owner's stepdad —
-                // an older broker, exactly the person this has to work for —
-                // opened the app and followed none of the instructions, and the
-                // reason is visible in the order: a marketing hero and a plan
-                // banner came before the thing that says what to do, and a
-                // seven-tile grid came after it. When nothing has been done
-                // yet, nothing outranks the guide.
-                if guideLeadsTheScreen {
-                    firstProjectGuideCard
-                        .modifier(Reveal(index: 0, on: revealed))
-                }
+            VStack(alignment: .leading, spacing: 18) {
+                WorkspaceEntry(showsRecoveryChoice: false)
                 heroCard
                     .modifier(Reveal(index: 0, on: revealed))
+                showroomSection
+                    .modifier(Reveal(index: 1, on: revealed))
 #if SPATIAL_CAPTURE_LAB
                 GuidedPanoramaEntryCard()
 #endif
-                // Which plan you are on, said where somebody will actually read
-                // it. Draws nothing until /me answers and nothing at all if it
-                // fails — an empty space beats a wrong claim about their money.
-                // Asks for an upgrade only in the last two days of the free week
-                // and after it ends. Plan/PlanBanner.swift.
+                // Plan state remains one tap away, below the creation and listing
+                // sections. Its existing loader and purchase flow are unchanged.
                 PlanBanner()
-                    .modifier(Reveal(index: 0, on: revealed))
-                if !guideLeadsTheScreen {
-                    firstProjectGuideCard
-                        .modifier(Reveal(index: 0, on: revealed))
-                }
-                homesSection
-                    .modifier(Reveal(index: 1, on: revealed))
-                showroomSection
                     .modifier(Reveal(index: 2, on: revealed))
                 appGuideSection
                     .modifier(Reveal(index: 3, on: revealed))
@@ -3347,13 +3336,10 @@ struct HomeDashboardView: View {
             // The whole tab re-themes when the business type changes (top-left menu).
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: spaceTypeRaw)
         }
-        .background(Theme.bg)
+        .background(HomeStyle.canvas)
         .navigationTitle("Home")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) { businessTypeMenu }
-            ToolbarItem(placement: .navigationBarTrailing) { askCoachButton }
-        }
+        .toolbar { homeToolbar }
         .navigationDestination(isPresented: $showRoute) { routeDestination }
         .task { await model.load() }        // idempotent — seeds the demo tour for this tab
         .task(id: auth.isSignedIn) { await loadLeadCount() }
@@ -3383,6 +3369,20 @@ struct HomeDashboardView: View {
             } else {
                 applyCoachRoute(route)
             }
+        }
+    }
+
+    /// Home's custom pills already draw their own backgrounds. Avoid adding a
+    /// second native glass capsule around them; other screens keep their chrome.
+    @ToolbarContentBuilder private var homeToolbar: some ToolbarContent {
+        if #available(iOS 26.0, *) {
+            ToolbarItem(placement: .navigationBarLeading) { businessTypeMenu }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .navigationBarTrailing) { askCoachButton }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigationBarLeading) { businessTypeMenu }
+            ToolbarItem(placement: .navigationBarTrailing) { askCoachButton }
         }
     }
 
@@ -3428,8 +3428,8 @@ struct HomeDashboardView: View {
                     .opacity(0.7)
             }
             .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(Theme.accentSoft, in: Capsule())
-            .foregroundStyle(Theme.accent)
+            .background(HomeStyle.accentWash, in: Capsule())
+            .foregroundStyle(HomeStyle.accentInk)
         }
         .onChange(of: spaceTypeRaw) { _ in Haptics.selection() }
     }
@@ -3582,166 +3582,82 @@ struct HomeDashboardView: View {
         }
     }
 
-    // MARK: Hero — animated gradient billboard
-
-    /// True while the user has finished none of the five steps. Once they have
-    /// done even one, the guide drops back below the hero — it is a first-run
-    /// aid, not a permanent fixture.
-    private var guideLeadsTheScreen: Bool {
-        !FirstProjectGuide.isHiddenForever
-            && FirstProjectGuide.progress(model: model).completedCount == 0
-    }
-
-    @ViewBuilder private var firstProjectGuideCard: some View {
-        if !FirstProjectGuide.isHiddenForever {
-            FirstProjectCard { action in
-                switch action {
-                case .startProject:       open(.tour)
-                case .open(let route):    go(route.listing, route.feature)
-                case .share(let listing): go(listing, .tour)
-                }
-            }
-        }
-    }
+    // MARK: Hero — editorial cover
 
     private var heroCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(SpaceType.current.heroEyebrow)
-                .font(.caption.weight(.bold)).kerning(3)
-                .foregroundStyle(Color.white.opacity(0.8))
+                .font(.caption.weight(.semibold)).kerning(3)
+                .foregroundStyle(Color.white.opacity(0.94))
             Text(SpaceType.current.heroHeadline)
-                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .font(.system(.title2, design: .serif).weight(.semibold))
                 .foregroundStyle(Color.white)
                 .fixedSize(horizontal: false, vertical: true)
                 .contentTransition(.opacity)
             Text(SpaceType.current.heroSubline)
-                .font(.rpBody)
-                .foregroundStyle(Color.white.opacity(0.88))
+                .font(.system(size: heroBodySize))
+                .foregroundStyle(Color.white.opacity(0.96))
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : 260, alignment: .leading)
                 .contentTransition(.opacity)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .background(animatedHeroBackground)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius + 4, style: .continuous))
-        .shadow(color: Theme.accent.opacity(0.35), radius: 18, x: 0, y: 10)
-    }
-
-    /// Slow, subtle motion: the purple→indigo wash drifts a few degrees of hue
-    /// while a soft highlight orbits. Alive, never distracting; 20fps cap and
-    /// fully paused under Reduce Motion (no 20 Hz re-render for a static wash).
-    private var animatedHeroBackground: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: reduceMotion)) { context in
-            let t = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
-            ZStack {
-                LinearGradient(
-                    colors: [Color(red: 109/255, green: 40/255, blue: 217/255),
-                             Theme.accent,
-                             Color(red: 79/255, green: 70/255, blue: 229/255)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing)
-                RadialGradient(
-                    colors: [Color.white.opacity(0.22), Color.clear],
-                    center: UnitPoint(x: 0.5 + 0.42 * cos(t / 5), y: 0.35 + 0.3 * sin(t / 4)),
-                    startRadius: 8, endRadius: 260)
-            }
-            .hueRotation(.degrees(sin(t / 6) * 10))
-        }
-    }
-
-    // MARK: My homes — the primary section. Project first, always.
-
-    private var homesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionTitle(SpaceType.current.collectionTitle)
-            if projects.isEmpty {
-                emptyHomesCard
-            } else {
-                homesList
-            }
-            addHomeButton
-        }
-    }
-
-    /// No homes yet: ONE sentence, ONE button (right below). Nothing else.
-    private var emptyHomesCard: some View {
-        Text("Add a \(noun) first — every photo, tour and reel is saved to it.")
-            .font(.rpBody).foregroundStyle(Theme.ink)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .card()
-    }
-
-    /// The three most recent homes, then a way to see the rest.
-    private var homesList: some View {
-        VStack(spacing: 10) {
-            ForEach(Array(projects.prefix(3))) { listing in
-                NavigationLink { FlythroughDetailView(listing: listing) } label: {
-                    ProjectPickerRow(listing: listing)
-                        .padding(12)
-                        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(Theme.border))
+            Button { open(.tour) } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "sparkles")
+                    Text("Get started").fontWeight(.semibold)
+                    Image(systemName: "arrow.right")
                 }
-                .buttonStyle(ScalePressStyle())
-                // UI walk: same id on every row is intentional — XCUITest's
-                // `firstMatch` takes the topmost, which is the newest home.
-                .accessibilityIdentifier("home.listing.first")
+                .font(.subheadline)
+                .padding(.horizontal, 18).padding(.vertical, 13)
+                .background(HomeStyle.surface, in: Capsule())
+                .foregroundStyle(HomeStyle.accentInk)
             }
-            if projects.count > 3 {
-                seeAllHomesButton
-            }
+            .buttonStyle(ScalePressStyle())
+            .accessibilityIdentifier("home.getStarted")
+            .padding(.top, 4)
         }
+        .frame(maxWidth: .infinity, minHeight: dynamicTypeSize.isAccessibilitySize ? nil : 210, alignment: .leading)
+        .padding(18)
+        .background(animatedHeroBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .strokeBorder(HomeStyle.border))
+        .shadow(color: Color.black.opacity(0.12), radius: 16, x: 0, y: 8)
     }
 
-    private var seeAllHomesButton: some View {
-        Button(action: goToListings) {
-            HStack {
-                Text("See all \(projects.count) \(noun)s")
-                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.accent)
+    /// Branded promotional photography is confined to the Home hero and
+    /// tool shortcuts. It is never inserted into a person's listing gallery.
+    private var animatedHeroBackground: some View {
+        HomePromotionalArtwork(assetName: "BrandHomeHero")
+            .overlay {
+                if dynamicTypeSize.isAccessibilitySize {
+                    Color.black.opacity(0.66)
+                } else {
+                    LinearGradient(stops: [
+                        .init(color: .black.opacity(0.72), location: 0),
+                        .init(color: .black.opacity(0.66), location: 0.74),
+                        .init(color: .black.opacity(0.28), location: 1)
+                    ], startPoint: .leading, endPoint: .trailing)
+                }
             }
-            .padding(14)
-            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-        .buttonStyle(ScalePressStyle())
-    }
-
-    /// The one big obvious action on this screen.
-    private var addHomeButton: some View {
-        NavigationLink { NewListingView() } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                Text("Add a \(noun)").fontWeight(.semibold)
-            }
-            .font(.body)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(Theme.accent)
-            .foregroundStyle(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
-        }
-        .buttonStyle(ScalePressStyle())
-        .accessibilityLabel(Text("Add a \(noun)"))
-        .accessibilityIdentifier("home.addHome")
+            .accessibilityHidden(true)
     }
 
     // MARK: Feature showroom — every tool, one tap in, always inside a home
 
     private var showroomSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionTitle("Make something")
-            Text("Everything you make is saved to one \(noun).")
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            sectionTitle("Create Something Amazing")
             featureGrid
             leadsBanner
         }
     }
 
+    private var shortcutColumns: Int {
+        dynamicTypeSize.isAccessibilitySize ? 1 : 2
+    }
+
     private var featureGrid: some View {
-        HomeFeatureGridLayout(columns: dynamicTypeSize.isAccessibilitySize ? 1 : 2) {
+        HomeFeatureGridLayout(columns: shortcutColumns, spacing: 8) {
             featureButton(.tour)
             featureButton(.photos)
             featureButton(.photoStudio)
@@ -3761,16 +3677,8 @@ struct HomeDashboardView: View {
     }
 
     private func comingSoonTile(_ title: String, _ description: String, _ icon: String, id: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: icon).font(.title2).foregroundStyle(Theme.accent)
-            Text(title).font(.rpHeadline).foregroundStyle(Theme.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Coming soon").font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
-            Text(description).font(.caption).foregroundStyle(Theme.inkDim)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(14).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: Theme.radius))
+        HomeShortcutCard(title: shortcutTitle(for: icon, fallback: title), subtitle: "Coming soon", icon: icon,
+                         assetName: promotionalAsset(for: icon), available: false)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("\(title). Coming soon. \(description)"))
         .accessibilityIdentifier("home.comingSoon.\(id)")
@@ -3796,27 +3704,25 @@ struct HomeDashboardView: View {
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: "person.crop.circle.badge.checkmark")
-                    .font(.system(size: 22, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(Color.white)
-                    .frame(width: 48, height: 48)
-                    .background(Color.white.opacity(0.18),
-                                in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(leadsTitle).font(.rpHeadline).foregroundStyle(Color.white)
+                    .font(.system(size: 22, weight: .medium))
+                    .foregroundStyle(HomeStyle.accentInk)
+                    .frame(width: 44, height: 44)
+                    .background(HomeStyle.accentWash, in: RoundedRectangle(cornerRadius: 12))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(leadsTitle).font(.rpHeadline).foregroundStyle(HomeStyle.ink)
                     Text("Every tour is one link with a lead form built in. Leads appear here.")
-                        .font(.rpCaption).foregroundStyle(Color.white.opacity(0.9))
+                        .font(.rpCaption).foregroundStyle(HomeStyle.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 Image(systemName: "chevron.right")
-                    .font(.rpCaption.weight(.bold)).foregroundStyle(Color.white.opacity(0.9))
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(HomeStyle.accentInk)
             }
-            .padding(14)
+            .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RPGradient.share)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .background(HomeStyle.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radius).strokeBorder(HomeStyle.border))
         }
         .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text("\(leadsTitle). Opens your leads."))
@@ -3827,34 +3733,49 @@ struct HomeDashboardView: View {
         return n == 1 ? "1 lead" : "\(n) leads"
     }
 
-    /// One showroom tile: signature gradient, white hierarchical icon, name,
-    /// a short promise, and an AI badge where AI does the work.
+    /// One photo-led shortcut with a quiet accent and an explicit action.
+    /// The existing AI distinction and feature destination stay unchanged.
     private func featureTile(_ title: String, _ promise: String, _ icon: String,
                              _ gradient: LinearGradient, ai: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
-                Image(systemName: icon)
-                    .font(.system(size: 24, weight: .semibold))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(Color.white)
-                Spacer()
-                if ai { AIPill() }
-            }
-            Spacer(minLength: 10)
-            Text(title)
-                .font(.rpHeadline)
-                .foregroundStyle(Color.white)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(promise)
-                .font(.caption)
-                .foregroundStyle(Color.white.opacity(0.85))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 2)
+        HomeShortcutCard(title: shortcutTitle(for: icon, fallback: title),
+                         subtitle: shortcutSubtitle(for: icon), icon: icon,
+                         assetName: promotionalAsset(for: icon))
+    }
+
+    private func shortcutTitle(for icon: String, fallback: String) -> String {
+        switch icon {
+        case "video.fill": return "Video tours"
+        case "photo.stack": return "Add photos"
+        case "wand.and.stars": return "Edit photos"
+        case "film.stack": return "Social media"
+        case "airplane.departure": return "Aerial shot"
+        case "ruler": return "Floor plans"
+        case "cube.transparent": return "3D plans"
+        case "rotate.3d": return "3D tours"
+        default: return fallback
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(gradient)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+    }
+
+    private func shortcutSubtitle(for icon: String) -> String {
+        switch icon {
+        case "video.fill": return "Walkthrough"
+        case "photo.stack": return "Library"
+        case "wand.and.stars": return "AI edits"
+        case "film.stack": return "Reels"
+        case "airplane.departure": return "Intro"
+        case "rotate.3d": return "Explore"
+        default: return "Create content"
+        }
+    }
+
+    private func promotionalAsset(for icon: String) -> String {
+        switch icon {
+        case "photo.stack", "wand.and.stars": return "BrandPhotoTools"
+        case "film.stack": return "BrandSocialTools"
+        case "ruler", "cube.transparent": return "BrandFloorPlanTools"
+        case "airplane.departure": return "BrandHomeHero"
+        default: return "BrandVideoTools"
+        }
     }
 
     // MARK: Live demo — the real scroll-scrub player, right on Home
@@ -3862,14 +3783,14 @@ struct HomeDashboardView: View {
     private var appGuideSection: some View {
         NavigationLink { AppGuideView() } label: {
             HStack(spacing: 14) {
-                Image(systemName: "hand.tap.fill").font(.title2).foregroundStyle(Theme.accent)
+                Image(systemName: "hand.tap.fill").font(.title2).foregroundStyle(HomeStyle.accentInk)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Take an app walkthrough").font(.rpHeadline).foregroundStyle(Theme.ink)
+                    Text("Take an app walkthrough").font(.rpHeadline).foregroundStyle(HomeStyle.ink)
                     Text("Tap through each feature, from your first listing to sharing the finished work.")
-                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .font(.rpCaption).foregroundStyle(HomeStyle.secondary)
                 }
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.right").foregroundStyle(Theme.accent)
+                Image(systemName: "chevron.right").foregroundStyle(HomeStyle.accentInk)
             }.padding(18).card()
         }.buttonStyle(ScalePressStyle())
             .accessibilityIdentifier("home.appGuide")
@@ -3882,7 +3803,7 @@ struct HomeDashboardView: View {
                 demoPlayer(demo)
                 Label("Scroll inside the video — this is the tour your \(customer) get.",
                       systemImage: "arrow.up.arrow.down")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .font(.rpCaption).foregroundStyle(HomeStyle.secondary)
                 demoOpenLink(demo)
             }
         }
@@ -3902,7 +3823,7 @@ struct HomeDashboardView: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                        .strokeBorder(Theme.border)
+                        .strokeBorder(HomeStyle.border)
                 )
             Label("Sample tour", systemImage: "dot.radiowaves.left.and.right")
                 .font(.caption2.weight(.bold))
@@ -3932,13 +3853,13 @@ struct HomeDashboardView: View {
         } label: {
             HStack {
                 Label("Watch the sample tour", systemImage: "play.rectangle.fill")
-                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(HomeStyle.accentInk)
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.accent)
+                    .font(.rpCaption.weight(.bold)).foregroundStyle(HomeStyle.accentInk)
             }
             .padding(14)
-            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(HomeStyle.accentWash, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(ScalePressStyle())
     }
@@ -3964,13 +3885,13 @@ struct HomeDashboardView: View {
     private var tutorialsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text("Tutorials").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Text("Tutorials").font(.rpKicker).foregroundStyle(HomeStyle.secondary)
                 Text("COMING SOON")
                     .font(.system(size: 9, weight: .heavy))
                     .kerning(0.5)
                     .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(Theme.accentSoft, in: Capsule())
-                    .foregroundStyle(Theme.accent)
+                    .background(HomeStyle.accentWash, in: Capsule())
+                    .foregroundStyle(HomeStyle.accentInk)
                 Spacer()
             }
             VStack(spacing: 10) {
@@ -4009,22 +3930,22 @@ struct HomeDashboardView: View {
                     Image(systemName: icon)
                         .font(.system(size: 18, weight: .semibold))
                         .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(HomeStyle.accentInk)
                         .frame(width: 42, height: 42)
-                        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(HomeStyle.accentWash, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(name).font(.rpHeadline).foregroundStyle(Theme.ink)
+                        Text(name).font(.rpHeadline).foregroundStyle(HomeStyle.ink)
                             .lineLimit(1).minimumScaleFactor(0.8)
-                        Text(sub).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        Text(sub).font(.rpCaption).foregroundStyle(HomeStyle.secondary)
                             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     }
                     Spacer(minLength: 8)
                     Image(systemName: "arrow.up.right")
-                        .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.inkDim)
+                        .font(.rpCaption.weight(.bold)).foregroundStyle(HomeStyle.secondary)
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(HomeStyle.subtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(ScalePressStyle())
         }
@@ -4033,17 +3954,17 @@ struct HomeDashboardView: View {
     // MARK: Small pieces
 
     private func sectionTitle(_ t: String) -> some View {
-        Text(t).font(.rpKicker).foregroundStyle(Theme.inkDim)
+        Text(t).font(.system(.title3, design: .serif).weight(.semibold)).foregroundStyle(HomeStyle.ink)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func step(_ n: Int, _ title: String, _ sub: String) -> some View {
         HStack(alignment: .top, spacing: 14) {
             Text("\(n)").font(.rpHeadline).foregroundStyle(Color.white)
-                .frame(width: 30, height: 30).background(Theme.accent, in: Circle())
+                .frame(width: 30, height: 30).background(HomeStyle.accent, in: Circle())
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.rpHeadline).foregroundStyle(Theme.ink)
-                Text(sub).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Text(title).font(.rpHeadline).foregroundStyle(HomeStyle.ink)
+                Text(sub).font(.rpCaption).foregroundStyle(HomeStyle.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
@@ -4055,16 +3976,133 @@ struct HomeDashboardView: View {
             Image(systemName: "play.circle.fill")
                 .font(.system(size: 30))
                 .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Theme.inkDim)
+                .foregroundStyle(HomeStyle.secondary)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.rpHeadline).foregroundStyle(Theme.inkDim)
-                Text("\(len) · not filmed yet").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Text(title).font(.rpHeadline).foregroundStyle(HomeStyle.secondary)
+                Text("\(len) · not filmed yet").font(.rpCaption).foregroundStyle(HomeStyle.secondary)
             }
             Spacer()
-            Image(systemName: icon).foregroundStyle(Theme.inkDim)
+            Image(systemName: icon).foregroundStyle(HomeStyle.secondary)
         }
         .padding(14)
-        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(HomeStyle.subtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+/// These colors are confined to Home. Other screens keep the shared app theme.
+private enum HomeStyle {
+    private static func adaptive(_ light: UIColor, _ dark: UIColor) -> Color {
+        Color(UIColor { $0.userInterfaceStyle == .dark ? dark : light })
+    }
+    private static func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat) -> UIColor {
+        UIColor(red: r / 255, green: g / 255, blue: b / 255, alpha: 1)
+    }
+    static let canvas = adaptive(.white, rgb(14, 13, 20))
+    static let surface = adaptive(.white, rgb(26, 24, 37))
+    static let ink = adaptive(rgb(39, 39, 35), rgb(242, 240, 250))
+    static let secondary = adaptive(rgb(93, 90, 85), rgb(195, 189, 205))
+    static let border = adaptive(rgb(213, 207, 198), rgb(82, 76, 97))
+    static let subtle = adaptive(rgb(250, 250, 248), rgb(37, 34, 47))
+    static let accent = adaptive(rgb(124, 58, 237), rgb(155, 109, 255))
+    static let accentInk = adaptive(rgb(103, 55, 222), rgb(202, 182, 255))
+    static let accentWash = adaptive(rgb(239, 232, 250), rgb(53, 43, 70))
+    static let cardRing = adaptive(rgb(91, 33, 182).withAlphaComponent(0.14),
+                                   rgb(124, 58, 237).withAlphaComponent(0.25))
+    static let cardGlow = adaptive(rgb(91, 33, 182).withAlphaComponent(0.12),
+                                   rgb(124, 58, 237).withAlphaComponent(0.18))
+}
+
+/// Home-only branded photography supplied by the owner. Real listing covers
+/// continue to use ListingCard and ProjectCoverThumb's actual local main photo.
+private struct HomePromotionalArtwork: View {
+    let assetName: String
+
+    var body: some View {
+        GeometryReader { proxy in
+            Image(assetName).resizable().scaledToFill()
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .clipped()
+        }
+    }
+}
+
+/// A compact photographic shortcut. The button outside this presentation type
+/// retains its full action label, availability check and project-first route.
+private struct HomeShortcutCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let title: String
+    let subtitle: String
+    let icon: String
+    let assetName: String
+    var available = true
+    private var iconColor: Color { available ? HomeStyle.accentInk : HomeStyle.secondary }
+    private var titleFont: Font {
+        dynamicTypeSize.isAccessibilitySize ? .rpBody.weight(.semibold)
+            : .system(.subheadline, design: .serif).weight(.semibold)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(iconColor)
+                    .frame(width: 36, height: 36)
+                    .background(HomeStyle.accentWash,
+                                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(titleFont)
+                        .foregroundStyle(HomeStyle.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(HomeStyle.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if available {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 7, weight: .semibold))
+                        .foregroundStyle(iconColor)
+                        .padding(.top, 4)
+                }
+            }
+            .frame(minHeight: dynamicTypeSize.isAccessibilitySize ? nil : 40, alignment: .center)
+            HomePromotionalArtwork(assetName: assetName)
+                .frame(height: 100)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .accessibilityHidden(true)
+            Spacer(minLength: 0)
+        }
+        .padding(7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .modifier(HomeGlassCardSurface(interactive: available))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(HomeStyle.cardRing, lineWidth: 0.75))
+        .shadow(color: HomeStyle.cardGlow, radius: 5, x: 0, y: 0)
+    }
+}
+
+/// Native glass belongs to Home's photo shortcuts only. The shared card and
+/// feature-gradient styles continue to render the Listing toolbox unchanged.
+private struct HomeGlassCardSurface: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    let interactive: Bool
+
+    @ViewBuilder func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        if reduceTransparency {
+            content
+                .background(HomeStyle.surface, in: shape)
+                .overlay(shape.strokeBorder(HomeStyle.border.opacity(0.45), lineWidth: 0.5))
+        } else if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.interactive(interactive), in: shape)
+        } else {
+            content
+                .background(.ultraThinMaterial, in: shape)
+                .overlay(shape.strokeBorder(HomeStyle.border.opacity(0.45), lineWidth: 0.5))
+        }
     }
 }
 
@@ -4072,7 +4110,7 @@ struct HomeDashboardView: View {
 /// feature the same bounds. No stored maximum survives a width or text change.
 private struct HomeFeatureGridLayout: Layout {
     let columns: Int
-    private let spacing: CGFloat = 12
+    var spacing: CGFloat = 12
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
         guard !subviews.isEmpty else { return .zero }

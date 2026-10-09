@@ -78,7 +78,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
         case .listing: return [
             ("Add a listing", "Open your collection and tap Add. Give the location an address or name first."),
             ("Check the details", "Use address suggestions or current location, then enter a unit number separately if needed. Review the saved details."),
-            ("Keep everything together", "Open this listing whenever you add photos, film, make a reel or edit its contact details. Each workspace keeps its own listings.")]
+            ("Keep everything together", "Open this listing whenever you add photos, film, make a reel or edit its contact details. Each listing library keeps its own listings.")]
         case .capture: return [
             ("Choose your location", "Open the listing, then record a walkthrough or import a video you already have."),
             ("Keep the camera steady", "For interiors, use 0.5× on a supported iPhone. Keep the phone level and walk at a steady pace. Avoid quick turns."),
@@ -104,7 +104,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Review the worksheet", "Check closure, units, levels and area categories. Furnished rooms can still be measured manually. App calculations are not a certified survey or appraisal."),
             ("Share a plan", "Export your measurements and worksheet, or upload a PDF or image from your measuring software. Automatic 3D scanning is marked Coming soon.")]
         case .contact: return [
-            ("Set up your card", "Open Profile, edit your name, photo and contact details, then tap Save. Your personal card stays yours when you join a team. Set the workspace business logo separately. Use Send business card for your contact details alone, or Share my portfolio to choose the listings to include."),
+            ("Set up your card", "Open Profile, edit your name, photo and contact details, then tap Save. Your personal card stays yours when you join a team. Set the listing library's business logo separately. Use Send business card for your contact details alone, or Share my portfolio to choose the listings to include."),
             ("Represent your client", "For a photographer's listing, open Listing contact and enter the client's name, photo and public contact details."),
             ("Choose where leads go", "Enter the client's private lead email and choose whether to hide Rendprop branding. You retain a copy of inquiries in Leads.")]
         case .sharing: return [
@@ -116,12 +116,12 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Contact the person", "Tap the phone number to call or the email address to compose an email. Check the listing so you follow up with the right client."),
             ("Check delivery", "If a client misses an inquiry email, use the available resend action and check its delivery status. Saving a lead does not guarantee an email arrived in the inbox.")]
         case .team: return [
-            ("Choose a workspace", "The workspace selector separates personal work from a shared team. Confirm the selected workspace before adding a listing."),
+            ("Keep your own listings", "Joining a Team keeps your listings, tours and leads in your own account. Invited agents see only their own work."),
             ("Invite or join", "Open Settings → Team to create an invitation or join using a real invitation code. A pending invitation uses a seat until accepted or revoked."),
-            ("Keep access clear", "Managers and editors only see work they are authorized to access. Switching workspaces does not move your saved work automatically.")]
+            ("Team owner access", "Only the Team owner can switch between authorized agents’ listings. Switching agents does not move purchases or saved work.")]
         case .studio: return [
             ("Sign in on desktop", "Open studio.rendprop.com and sign in with the same account you use on your iPhone."),
-            ("Choose the same workspace", "Select the same workspace and listing. Uploaded media and synced changes are available there; local-only files need to upload first."),
+            ("Open the same listing", "Your own uploaded listings and synced changes are available there. Team owners can choose an authorized agent’s listings. Local-only files need to upload first."),
             ("Continue producing", "Use Studio to organize assets, create content and review work with your team. On the phone, use Retry Studio sync if a listing update is still waiting.")]
         case .plan: return [
             ("Check your allowance", "Open Settings → Plan & usage to see the account's plan, feature limits and credits."),
@@ -274,11 +274,12 @@ struct HomeListingsView: View {
     /// card keeps its own design.
     private var listBody: some View {
         List {
-            WorkspaceEntry()
             if needsWorkspaceSelection {
                 workspaceSelectionPrompt
-                Text("Choose your own workspace to see your private listings, or a shared workspace to work with its team. Saved files stay on this iPhone.")
+                Text("Choose your own listing library to see your private listings, or a shared library to work with its team. Saved files stay on this iPhone.")
                     .font(.footnote).foregroundStyle(Theme.inkDim)
+            } else {
+                WorkspaceEntry()
             }
             if let error = model.cloudSyncError {
                 Label(error, systemImage: "icloud.slash")
@@ -354,8 +355,11 @@ struct HomeListingsView: View {
     }
 
     private var workspaceSelectionPrompt: some View {
-        NavigationLink("Choose a workspace") { WorkspacePickerView() }
-            .accessibilityIdentifier("homes.chooseWorkspace")
+        Button("Reconnect to your listings") {
+            Task { await workspaceStore.refresh(); await model.refreshCloudWorkspace() }
+        }
+        .disabled(workspaceStore.isLoading)
+        .accessibilityIdentifier("homes.chooseWorkspace")
     }
 
     private var rowInsets: EdgeInsets {

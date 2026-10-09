@@ -31,6 +31,7 @@
 //   3. A LEDGER ROW per real call, so it shows up in the spend console beside
 //      every other unit cost instead of arriving as a surprise line item.
 
+import { libraryBillingOrg, requireLibraryWrite } from "../_shared/library-access.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, respondError } from "../_shared/http.ts";
 import { adminClient, assertPaidAiIdentity, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
@@ -75,6 +76,8 @@ Deno.serve(async (req: Request) => {
     await assertPaidAiIdentity(user, orgId);
 
     const admin = adminClient();
+    await requireLibraryWrite(admin,user.id,orgId);
+    const billingOrg=await libraryBillingOrg(admin,orgId,user.id);
     const akey = addressKey(address);
 
     // 1 — cache.
@@ -91,7 +94,7 @@ Deno.serve(async (req: Request) => {
     // 2 — rate limit. Fails CLOSED: `durableRateLimit` returning false because
     // the RPC is unavailable is exactly when an unbounded paid route is most
     // dangerous, so there is no in-memory fallback here on purpose.
-    const allowed = await durableRateLimit(`property:${orgId}`, RATE_MAX, RATE_WINDOW_S);
+    const allowed = await durableRateLimit(`property:${billingOrg}`, RATE_MAX, RATE_WINDOW_S);
     if (!allowed) {
       throw new HttpError(429, "That's a lot of address lookups — try again in a little while.", "rate_limited");
     }

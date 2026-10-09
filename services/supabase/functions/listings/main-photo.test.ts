@@ -22,7 +22,11 @@ async function invoke(body:Record<string,unknown>,options:Options={},method="PAT
   globalThis.fetch=async(input,init)=>{
     const req=new Request(input,init),url=new URL(req.url);assertEquals(url.hostname,"main-photo-fixture.invalid");
     if(url.pathname==="/auth/v1/user")return response({id:USER,is_anonymous:false});
-    if(url.pathname.endsWith("workspace_directory"))return response({active_org_id:options.workspace??ORG,workspaces:[{id:ORG,name:"Fixture",role:options.readOnly?"marketing":"owner"},{id:OTHER,name:"Other fixture",role:"owner"}]});
+    if(url.pathname.endsWith("workspace_directory"))return response({actor_id:USER,own_org_id:ORG,billing_org_id:ORG,can_switch_agent_libraries:true,active_org_id:options.workspace??ORG,workspaces:[ORG,OTHER].map(id=>({id,name:"Fixture",role:options.readOnly?"marketing":"owner",access_mode:"own",library_owner_user_id:USER,billing_org_id:id,can_read:true,can_write:!options.readOnly,can_manage_subscription:!options.readOnly}))});
+    if(url.pathname.endsWith("listing_library_scope")){
+      const args=await req.json();assertEquals(args,{p_actor:USER,p_listing:LISTING});
+      return response({actor_id:USER,listing_id:LISTING,org_id:ORG,library_org_id:ORG,library_owner_user_id:USER,listing_owner_user_id:USER,role:options.readOnly?"marketing":"owner",access_mode:"own",can_read:!options.listingMissing,can_write:!options.listingMissing&&!options.readOnly,can_manage_subscription:!options.readOnly,billing_org_id:ORG,team_org_id:null});
+    }
     if(url.pathname.endsWith("active_org_for_user"))return response(ORG);
     if(url.pathname.endsWith("deletion_requests"))return response(options.deleting?[{id:OTHER}]:[]);
     if(url.pathname.endsWith("studio_presenter_media_visibility")){

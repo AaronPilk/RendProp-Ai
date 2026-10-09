@@ -54,6 +54,9 @@ struct Listing: Identifiable, Codable, Hashable {
     var serverID: UUID? = nil
     /// The shared workspace that owns this server row (including team listings).
     var serverOrgID: UUID? = nil
+    /// Fresh server grouping for legacy own-agent rows in an older Team org.
+    /// This display hint never replaces the real org used for media and writes.
+    var serverLibraryOrgID: UUID? = nil
     /// The selected workspace when this local draft was created; retries never retarget it.
     var cloudDraftOrgID: UUID? = nil
     /// True for a row first discovered on another device. Optional for old snapshots.
@@ -330,7 +333,7 @@ extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
              createdAt, soldAt, cloudArchived, zillowURL, mainPhotoRelPath, latitude, longitude,
-             tagline, details, floorMeasurements, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
+             tagline, details, floorMeasurements, serverID, serverOrgID, serverLibraryOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, factsSync, measurementSync, publishedRenderID,
              unbrandedShareURL, stateCode, allowSearchIndexing,
@@ -380,6 +383,7 @@ extension Listing {
         clientPhotoDirty = try c.decodeIfPresent(Bool.self, forKey: .clientPhotoDirty)
         serverID         = try c.decodeIfPresent(UUID.self,   forKey: .serverID)
         serverOrgID      = try c.decodeIfPresent(UUID.self,   forKey: .serverOrgID)
+        serverLibraryOrgID = try c.decodeIfPresent(UUID.self, forKey: .serverLibraryOrgID)
         cloudDraftOrgID  = try c.decodeIfPresent(UUID.self, forKey: .cloudDraftOrgID)
         cloudImported    = try c.decodeIfPresent(Bool.self,   forKey: .cloudImported)
         cloudUnavailable = try c.decodeIfPresent(Bool.self,   forKey: .cloudUnavailable)

@@ -5,6 +5,7 @@ import CryptoKit
 enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fileURLWithPath: "/isolated/\(path)") } }
 enum APIError: Error { case decoding, server(Int); var isConflict: Bool { if case .server(409) = self { return true }; return false } }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222") }
+@MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID } }
 enum FixtureError: Error { case failed }
 struct AssertionFailure: Error { let message: String }
 func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
@@ -95,6 +96,7 @@ __CONFIRM_LOCAL__
 __LOAD_FACTS_REVIEW__
 __RESOLVE_FACTS__
 __MARK_DIRTY__
+__IS_IN_WORKSPACE__
 __SYNC_LISTING__
 }
 

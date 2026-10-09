@@ -1059,6 +1059,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     import {computeEntitlement,resolveVerdict,lookupVerdict,summariseNotification,type NotificationFacts,type PendingEntitlement} from ${JSON.stringify(new URL("../apple-subscriptions/logic.ts", import.meta.url).href)};
     const f=(globalThis as any).__appleChronologyFixture;
     const verifyAppleJWS=f.verify,adminClient=()=>f.admin,orgForUser=async()=>f.org,preferredOrg=()=>undefined,durableRateLimit=async()=>true;
+    const libraryAccess=async()=>({can_manage_subscription:true,billing_org_id:f.org});
     const servingMode=async()=>f.servingMode??"funded";
     const APPLE_BUNDLE_ID="com.rendprop.app",ENTITLEMENT_MAX_PER_WINDOW=30,ENTITLEMENT_WINDOW_SECONDS=60,MAX_JWS_CHARS=64*1024,MAX_ENTITLEMENT_BODY_BYTES=256*1024,MAX_REPLAY=50;
     const NOTIFY_MAX_PER_WINDOW=240,NOTIFY_WINDOW_SECONDS=60,MAX_NOTIFY_BODY_BYTES=128*1024,MAX_SIGNED_PAYLOAD_CHARS=64*1024;

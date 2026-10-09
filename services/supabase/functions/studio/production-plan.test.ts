@@ -16,10 +16,11 @@ Deno.test('capture plan rejects ambiguous types, foreign listing, duplicate IDs 
 function fake(role:string,rows:Record<string,unknown[]>={},failure=false){
  const filters:{table:string,method:string,args:unknown[]}[]=[];
  const db={from(table:string){const builder={select:()=>builder,eq:(...args:unknown[])=>{filters.push({table,method:'eq',args});return builder;},in:(...args:unknown[])=>{filters.push({table,method:'in',args});return builder;},not:(...args:unknown[])=>{filters.push({table,method:'not',args});return builder;},abortSignal:()=>builder,maybeSingle:()=>Promise.resolve({data:{role},error:null}),then:(resolve:(x:unknown)=>unknown)=>Promise.resolve({data:rows[table]??[],error:failure?{message:'db'}:null}).then(resolve)};return builder;}};
- return {ctx:{userId:actor,orgId:org,db} as unknown as StudioContext,filters};
+ const admin={rpc:async(name:string,args:any)=>{assertEquals(name,"listing_library_scope");assertEquals(args,{p_actor:actor,p_listing:listing});filters.push({table:name,method:'rpc',args:[args]});return {data:{actor_id:actor,org_id:org,library_org_id:org,listing_id:listing,listing_owner_user_id:actor,library_owner_user_id:actor,role,access_mode:'own',can_read:true,can_write:role!=='marketing',can_manage_subscription:false,billing_org_id:org,team_org_id:null},error:null};}};
+ return {ctx:{userId:actor,orgId:org,db,admin} as unknown as StudioContext,filters};
 }
 Deno.test('capture plan write is denied for marketing before file reads',async()=>{
- const f=fake('marketing');await assertRejects(()=>authorizeProductionPlan(productionPlanInput(plan,listing),f.ctx,new AbortController().signal),HttpError);assertEquals(f.filters.map(f=>f.table),['memberships','memberships']);
+ const f=fake('marketing');await assertRejects(()=>authorizeProductionPlan(productionPlanInput(plan,listing),f.ctx,new AbortController().signal),HttpError);assertEquals(f.filters.map(f=>f.table),['listing_library_scope']);
 });
 Deno.test('capture plan checks current property, completed upload and media type for every linked source',async()=>{
  const linked=productionPlanInput({...plan,shots:[{...shot,sourcePhotoIds:[photo],sourceVideoIds:[video]}]},listing);

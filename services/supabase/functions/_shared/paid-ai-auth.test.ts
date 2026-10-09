@@ -16,7 +16,7 @@ type Options = { anonymous?: unknown; authError?: boolean; retailGuest?: unknown
 type Fixture = { options: Options; calls: Request[]; meters: string[] };
 let active: Fixture | null = null;
 const originalFetch = globalThis.fetch;
-globalThis.fetch = (input, init) => {
+globalThis.fetch = async (input, init) => {
   if (!active) throw new Error("No active synthetic fixture");
   const req = new Request(input, init), url = new URL(req.url);
   if (url.hostname !== "paid-ai-auth-fixture.invalid") throw new Error("Unmodeled network refused");
@@ -32,6 +32,10 @@ globalThis.fetch = (input, init) => {
     id: USER, aud: "authenticated", is_anonymous: o.anonymous,
     user_metadata: { is_anonymous: false, plan: "team" },
   });
+  if (table === "workspace_directory") { const args=await req.json(); return json({actor_id:USER,own_org_id:ORG,billing_org_id:ORG,can_switch_agent_libraries:false,active_org_id:args.p_preferred_org??ORG,workspaces:[{id:ORG,name:"Fixture",role:"owner",access_mode:"own",library_owner_user_id:USER,billing_org_id:ORG,can_read:true,can_write:true}]}); }
+  if (table === "library_access") return json({actor_id:USER,org_id:ORG,library_owner_user_id:USER,role:"owner",access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:ORG,team_org_id:null});
+  if (table === "library_billing_org" || table === "library_actor_billing_org") return json(ORG);
+  if (table === "listing_library_scope") return json({actor_id:USER,org_id:ORG,library_org_id:ORG,listing_id:OTHER,listing_owner_user_id:USER,library_owner_user_id:USER,role:"owner",access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:ORG,team_org_id:null});
   if (table === "active_org_for_user") return json(ORG);
   if (table === "memberships") return row({ org_id: ORG, role: "owner" });
   if (table === "org_has_verified_retail_guest") return json(o.retailGuest ?? false);
@@ -108,7 +112,8 @@ async function guardModule(spec: typeof routeSpecs[number], omitIdentity = false
   if (omitIdentity) functions = functions.replaceAll("await assertPaidAiIdentity(user, orgId);", "");
   const constants = [...source.matchAll(/^const ([A-Z][A-Z0-9_]+) = ([0-9 *]+);/gm)].map((m) => m[0]).join("\n");
   const program = `
-    import {adminClient,orgForUser,preferredOrg,assertPaidAiIdentity,type PaidAiCaller} from ${JSON.stringify(new URL("./supabase.ts", import.meta.url).href)};
+    import {adminClient,orgForUser,contentOrgForUser,preferredOrg,assertPaidAiIdentity,type PaidAiCaller} from ${JSON.stringify(new URL("./supabase.ts", import.meta.url).href)};
+    import {requireLibraryWrite,libraryBillingOrg,requireContentWrite} from ${JSON.stringify(new URL("./library-access.ts",import.meta.url).href)};
     import {HttpError} from ${JSON.stringify(new URL("./http.ts", import.meta.url).href)};
     import {quotaError} from ${JSON.stringify(new URL("./entitlements.ts", import.meta.url).href)};
     import {requiredIdempotencyKey} from ${JSON.stringify(new URL("./idempotency.ts", import.meta.url).href)};
@@ -127,7 +132,10 @@ async function guardModule(spec: typeof routeSpecs[number], omitIdentity = false
 Object.assign(globalThis, { __paidAiMeter: (key: string) => { assert(active); active.meters.push(key); } });
 for (const spec of routeSpecs) Deno.test(`actual ${spec.route}/${spec.guard} authorizes before every paid meter and preserves guest purchases`, async () => {
   const module = await guardModule(spec);
-  const invoke = async () => module[spec.guard](await auth.getUser(request()), request(), spec.guard === "guardGenerate" ? "reel" : ORG);
+  const invoke = async () => spec.guard === "guardChapters"
+      ? module[spec.guard](await auth.getUser(request()), request(), ORG, OTHER)
+      : spec.guard === "guardGenerate" ? module[spec.guard](await auth.getUser(request()), request(), "reel")
+      : module[spec.guard](await auth.getUser(request()), request());
   await fixture({ anonymous: true }, async (f) => {
     await assertRejects(invoke, HttpError); assertEquals(f.meters, []);
   });

@@ -85,6 +85,9 @@ async function loadGuard(endpoint: string, name: string, mutant = false) {
     const EDIT_MAX_PER_WINDOW=40,EDIT_WINDOW_SECONDS=300,GEN_MAX_PER_WINDOW=12,GEN_WINDOW_SECONDS=300,BURST_MAX_PER_WINDOW=10,BURST_WINDOW_SECONDS=300,TTS_MAX_PER_WINDOW=20,TTS_WINDOW_SECONDS=300,MONTH_SECONDS=2592000;
     export const calls:string[]=[];const seen=new Set<string>();
     const orgForUser=async(..._args:any[])=>"synthetic-org";
+    const contentOrgForUser=orgForUser;
+    const libraryBillingOrg=async(_admin:any,org:string)=>org;
+    const requireContentWrite=async()=>{};
     const preferredOrg=(_req:Request)=>undefined;
     const requireEditorRole=orgForUser;
     const assertPaidAiIdentity=async(..._args:any[])=>{};

@@ -19,14 +19,20 @@ async function fixture() {
   const http = JSON.stringify(
     new URL("../_shared/http.ts", import.meta.url).href,
   );
+  const scope = JSON.stringify(new URL("../_shared/library-access.ts", import.meta.url).href);
+  const responseStart=source.indexOf("    const responseListing = async (row: Record<string, unknown>) => {");
+  const responseEnd=source.indexOf("\n    };",responseStart)+7;
+  assert(responseStart>0&&responseEnd>responseStart);
   const body =
     `import {HttpError,assert,json,readJsonLimited,respondError}from ${http};
-    export const state:any={calls:[],org:'22222222-2222-4222-8222-222222222222',actor:'11111111-1111-4111-8111-111111111111',deleting:false,error:null};
+    import {listingLibraryScope} from ${scope};
+    export const state:any={calls:[],authority:[],org:'22222222-2222-4222-8222-222222222222',actor:'11111111-1111-4111-8111-111111111111',deleting:false,error:null};
     const assertNotDeleting=async(user:string)=>{if(state.deleting)throw new HttpError(409,'Deleting');};
-    const adminClient=()=>({rpc:async(name:string,args:any)=>{state.calls.push({name,args});return{data:{id:args.p_listing,org_id:args.p_org,details:{floor_measurements_v1:args.p_value},sqft:2000,status:'archived',sold_at:'2026-10-01'},error:state.error};}});
+    const adminClient=()=>({rpc:async(name:string,args:any)=>{if(name==='listing_library_scope'){state.authority.push({name,args});return{error:null,data:{actor_id:state.actor,listing_id:args.p_listing,org_id:state.org,library_org_id:state.org,library_owner_user_id:state.actor,listing_owner_user_id:state.actor,role:'owner',access_mode:'own',can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:state.org,team_org_id:null}};}if(name!=='save_listing_measurements')throw Error('Unexpected synthetic RPC '+name);state.calls.push({name,args});return{data:{id:args.p_listing,org_id:args.p_org,details:{floor_measurements_v1:args.p_value},sqft:2000,status:'archived',sold_at:'2026-10-01'},error:state.error};}});
     export const handler=async(req:Request)=>{try{
       const seg=new URL(req.url).pathname.slice(1).split('/');const id=seg[0];
       const explicitOrg=req.headers.get('X-Org-Id')??undefined,user={id:state.actor};
+      ${source.slice(responseStart,responseEnd)}
       ${source.slice(start, end)}
       throw new HttpError(404,'Unknown route');
     }catch(error){return respondError(error);}};`;
@@ -58,6 +64,7 @@ const request = (
 Deno.test("actual measurement route binds verified actor/workspace/listing and writes only CAS values", async () => {
   const f = await fixture();
   f.state.calls = [];
+  f.state.authority = [];
   f.state.deleting = false;
   f.state.error = null;
   const result = await f.handler(request());
@@ -76,6 +83,8 @@ Deno.test("actual measurement route binds verified actor/workspace/listing and w
   assertEquals(receipt.sqft, 2000);
   assertEquals(receipt.status, "archived");
   assertEquals(receipt.sold_at, "2026-10-01");
+  assertEquals(receipt.library_org_id,org);
+  assertEquals(f.state.authority,[{name:"listing_library_scope",args:{p_actor:f.state.actor,p_listing:lid}}]);
 });
 Deno.test("actual measurement route refuses listing facts and malformed or unscoped bodies before RPC", async () => {
   const f = await fixture();

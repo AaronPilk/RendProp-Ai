@@ -1,3 +1,4 @@
+import { requireContentWrite } from "../_shared/library-access.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
 
@@ -38,10 +39,7 @@ export function productionPlanInput(value: unknown, listingId: string) {
 }
 
 export async function authorizeProductionPlan(plan: ReturnType<typeof productionPlanInput>, context: StudioContext, signal: AbortSignal) {
-  const {data: member, error} = await context.db.from("memberships").select("role")
-    .eq("user_id", context.userId).eq("org_id", context.orgId).abortSignal(signal).maybeSingle();
-  if (error) throw new HttpError(503, "Capture plan permissions are temporarily unavailable.");
-  assert(member && ["owner", "admin", "agent"].includes(member.role), 403, "Your role can view capture plans but cannot edit them.");
+  await requireContentWrite(context.admin, context.userId, context.orgId, plan.listingId);
   const photoIds = [...new Set(plan.shots.flatMap(shot => shot.sourcePhotoIds))];
   const videoIds = [...new Set(plan.shots.flatMap(shot => shot.sourceVideoIds))];
   const all = [...new Set([...photoIds, ...videoIds])];

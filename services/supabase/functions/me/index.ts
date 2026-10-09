@@ -1,3 +1,4 @@
+import { libraryAccess, listingLibraryScope } from "../_shared/library-access.ts";
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 import { servingMode } from "../_shared/funded-serving.ts";
 
@@ -122,6 +123,7 @@ import {
   round4,
   throwRpc,
 } from "../_shared/http.ts";
+import { libraryUsageSummary, libraryProvenance } from "../_shared/library-summary.ts";
 import { privateProvenanceLinks } from "../_shared/private-provenance-links.ts";
 import { privateMediaUrl } from "../_shared/private-media.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
@@ -297,41 +299,38 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const admin = adminClient();
   const directory = await workspaceDirectory(admin, userId, requestedWorkspace(req));
   const orgId = directory.active_org_id;
+  const access = await libraryAccess(admin, userId, orgId);
+  const servingOrgId = access.billing_org_id;
+  const billingRes = await admin.from("orgs").select("id,name,plan,trial_ends_at,plan_source,plan_expires_at,apple_product_id")
+    .eq("id",servingOrgId).is("deleted_at",null).maybeSingle();
+  assert(!billingRes.error && billingRes.data?.id === servingOrgId,503,"Team billing state could not be verified.");
+  const purchaseOrgId = directory.billing_org_id;
+  const purchaseRes = purchaseOrgId === servingOrgId ? billingRes : await admin.from("orgs")
+    .select("id,name,plan,trial_ends_at,plan_source,plan_expires_at,apple_product_id")
+    .eq("id",purchaseOrgId).is("deleted_at",null).maybeSingle();
+  assert(!purchaseRes.error && purchaseRes.data?.id === purchaseOrgId,503,"Subscription billing state could not be verified.");
 
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const month = monthStart.slice(0, 7); // YYYY-MM
-  const meterKeys = Object.values(METERS).map((k) => `${k}:${orgId}`);
+  const meterKeys = Object.values(METERS).map((k) => `${k}:${servingOrgId}`);
 
   const [
     profileRes,
     orgRes,
-    ledgerRes,
-    leadsRes,
-    leadsNewRes,
-    listingsRes,
-    jobsRes,
+    libraryUsage,
     metersRes,
     prefsRes,
     entitlement,
     membershipRes,
   ] = await Promise.all([
       db.from("profiles").select("id, email, name, avatar_url, phone, real_estate_role, public_card").eq("id", userId).maybeSingle(),
-      db.from("orgs").select(
-        "id, name, handle, space_type, plan, trial_ends_at, brand_kit, plan_source, plan_expires_at, apple_product_id",
+      // Fresh library access permits these display fields; it never grants
+      // generic RLS membership or exposes the beneficiary's account billing.
+      admin.from("orgs").select(
+        "id, name, handle, space_type, brand_kit",
       ).eq("id", orgId).maybeSingle(),
-      db.from("cost_ledger").select("total_cents").eq("org_id", orgId).gte("created_at", monthStart),
-      db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).gte("created_at", monthStart),
-      db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "new"),
-      db.from("listings").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null),
-      // Worker render jobs this calendar month — the exact count create_render_job
-      // enforces the cap against. render_jobs has no org_id: join via listings.
-      admin
-        .from("render_jobs")
-        .select("id, listings!inner(org_id)", { count: "exact", head: true })
-        .eq("listings.org_id", orgId)
-        .eq("source", "worker")
-        .gte("created_at", monthStart),
+      libraryUsageSummary(admin,userId,orgId,monthStart),
       // rate_limits is service-role only (0004): read the org's meters here.
       admin.from("rate_limits").select("key, count, window_start, window_seconds").in("key", meterKeys),
       // notification_preferences is service-role only too (0047). The RPC —
@@ -340,7 +339,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       // is on. The app must render the same answer the enqueuer acts on.
       admin.rpc("notification_preferences_for", { p_user: userId }),
       entitlementFor(orgId),
-      admin.from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle(),
+      Promise.resolve({ data: access, error: null }),
     ]);
 
   if (profileRes.error) throw new HttpError(503,"Your personal profile could not be verified. Please retry.");
@@ -348,7 +347,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   if (orgRes.error) throw new HttpError(500, `Org lookup failed: ${orgRes.error.message}`);
   if (!orgRes.data) throw new HttpError(404, "Org not found");
   if (membershipRes.error || !membershipRes.data) throw new HttpError(503, "Workspace billing permissions could not be verified. Please retry.");
-  const org = orgRes.data;
+  const org = { ...orgRes.data, plan:billingRes.data.plan, trial_ends_at:billingRes.data.trial_ends_at,
+    plan_source:billingRes.data.plan_source, plan_expires_at:billingRes.data.plan_expires_at, apple_product_id:billingRes.data.apple_product_id };
   const testingAccess = entitlement.plan === "team" ? await privateTestingContext(admin, userId, orgId) : null;
   const testingProjection = entitlement.plan === "team" && [entitlement.renders_per_month,
     entitlement.photo_edits_per_month, entitlement.reels_per_month, entitlement.aerials_per_month,
@@ -356,24 +356,29 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   if ((testingAccess && !testingProjection) || (testingProjection && !testingAccess && !(await masterTestingAccess(admin, orgId)))) {
     throw new HttpError(503, "Your testing access changed while loading. Please refresh.", "upstream");
   }
-  const canManageSubscription = ENTITLEMENT_ROLES.has(String(membershipRes.data.role)) &&
-    !entitlement.degraded && !testingAccess && entitlement.plan !== "brokerage" && org.plan_source !== "manual";
+  // Switching the viewed library must not retarget an owner's purchase.
+  // Verify the actual parent billing library independently; a beneficiary has
+  // no generic access to that parent and cannot acquire management authority.
+  let billingAccess = access;
+  if (purchaseOrgId !== orgId && access.access_mode === "team_owner") {
+    billingAccess = await libraryAccess(admin, userId, purchaseOrgId);
+  }
+  const canManageSubscription = billingAccess.can_manage_subscription &&
+    !entitlement.degraded && purchaseRes.data.plan !== "brokerage" && purchaseRes.data.plan_source !== "manual";
   // A new phone has no cached purchase/workspace intent. Let an authorized
   // purchaser compare its verified StoreKit original ID with this workspace's
   // existing bindings before Apple shows an upgrade or another purchase sheet.
   let originalTransactionIDs: string[] = [];
-  if (canManageSubscription && org.plan_source === "apple" && entitlement.plan !== "free") {
+  if (canManageSubscription && purchaseRes.data.plan_source === "apple" && purchaseRes.data.plan !== "free") {
     const { data: subscriptions, error: subscriptionsError } = await admin.from("apple_subscriptions")
-      .select("original_transaction_id").eq("org_id", orgId).in("status", ["active", "grace"]);
+      .select("original_transaction_id").eq("org_id", purchaseOrgId).in("status", ["active", "grace"]);
     if (subscriptionsError) throw new HttpError(503, "Subscription workspace could not be verified. Please retry.", "upstream");
     originalTransactionIDs = (subscriptions ?? []).map((row) => String(row.original_transaction_id));
   }
 
-  const costCents = round4(
-    (ledgerRes.data ?? []).reduce((s, r) => s + Number(r.total_cents ?? 0), 0),
-  );
-  const servingActivation = await subscriptionServingActivation(admin, userId, orgId);
-  const photoPackage = await photoPackageContext(admin, userId, orgId);
+  const costCents = round4(libraryUsage.cost_cents);
+  const servingActivation = await subscriptionServingActivation(admin, userId, servingOrgId);
+  const photoPackage = await photoPackageContext(admin, userId, servingOrgId);
   const visibleEntitlement = org.plan_source === "apple" && !servingActivation.available
     ? { ...entitlement, renders_per_month:0, photo_edits_per_month:0, reels_per_month:0, aerials_per_month:0, topaz_per_month:0, degraded:true }
     : entitlement;
@@ -381,7 +386,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   // Meter rows → used/resets_at. bump_rate still increments past the cap, so
   // clamp what we show; an expired window counts as 0 (it resets on next use).
   const nowMs = now.getTime();
-  const byFeature: Record<string, number> = { renders: jobsRes.count ?? 0 };
+  const byFeature: Record<string, number> = { renders: libraryUsage.render_count };
   const windows: Record<string, { started_at: string; resets_at: string } | null> = { renders: {
     started_at: monthStart,
     resets_at: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString(),
@@ -395,7 +400,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   };
   const rows = (metersRes.data ?? []) as Array<{ key: string; count: number; window_start: string; window_seconds: number }>;
   for (const [feature, prefix] of Object.entries(METERS)) {
-    const row = rows.find((r) => r.key === `${prefix}:${orgId}`);
+    const row = rows.find((r) => r.key === `${prefix}:${servingOrgId}`);
     if (!row) { byFeature[feature] = 0; windows[feature] = null; continue; }
     const startMs = Date.parse(row.window_start);
     const endMs = startMs + Number(row.window_seconds ?? 2_592_000) * 1000;
@@ -408,8 +413,8 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   byFeature.renders = Math.max(0, byFeature.renders);
 
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
-  const trial = await boundedTrialContext(admin, userId, orgId);
-  const heldPurchase = await heldTrialPurchase(admin, userId, orgId);
+  const trial = canManageSubscription && purchaseOrgId === servingOrgId ? await boundedTrialContext(admin, userId, servingOrgId) : {};
+  const heldPurchase = canManageSubscription && purchaseOrgId === servingOrgId ? await heldTrialPurchase(admin, userId, servingOrgId) : null;
 
   return json({
     user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null,
@@ -432,7 +437,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     // to the feature meters: ceiling, counted spend, held liability, what is
     // still available and when the window resets (null outside ceiling mode).
     serving_mode: await servingMode(),
-    serving_envelope: await servingEnvelope(admin, orgId),
+    serving_envelope: await servingEnvelope(admin, servingOrgId),
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
     plan_source: testingAccess ? "manual" : org.plan_source ?? null,
@@ -443,12 +448,15 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     // Contract/manual access is managed separately and should not prompt the
     // user to buy an Apple subscription that cannot replace that entitlement.
     billing: {
-      org_id: orgId,
-      org_name: org.name,
-      role: membershipRes.data.role,
+      actor_id: userId,
+      content_org_id: orgId,
+      org_id: purchaseOrgId,
+      serving_org_id: servingOrgId,
+      org_name: purchaseRes.data.name,
+      role: billingAccess.role,
       can_manage_subscription: canManageSubscription,
       original_transaction_ids: originalTransactionIDs,
-      source: testingAccess ? "manual" : entitlement.plan === "brokerage" ? "brokerage" : org.plan_source ?? null,
+      source: purchaseOrgId === orgId && testingAccess ? "manual" : purchaseRes.data.plan_source ?? null,
     },
     entitlement: {
       plan: entitlement.plan,
@@ -466,9 +474,9 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       caps,                         // same keys — what the plan allows
       windows,                      // same keys — { started_at, resets_at } | null
       renders: byFeature.renders,   // month-scoped, worker renders only (app publishes are free)
-      leads: leadsRes.count ?? 0,
-      leads_new: leadsNewRes.count ?? 0,
-      listings: listingsRes.count ?? 0,
+      leads: libraryUsage.leads,
+      leads_new: libraryUsage.leads_new,
+      listings: libraryUsage.listings,
       cost_cents: costCents,        // internal provider COGS this month (legacy field)
     },
     // 0047. Additive: a build older than this migration ignores the key.
@@ -847,25 +855,9 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
     return await handleComplianceOrg(userId, orgId, { from, to, listingId, limit, wantCsv });
   }
 
-  let q = db
-    .from("media_provenance")
-    .select(
-      "id, listing_id, render_id, kind, label, model_id, edit, style, prompt_summary, " +
-        "original_key, altered_key, disclosure, created_at, listings(address, space_type)",
-    )
-    .eq("org_id", orgId)
-    .order("created_at", { ascending: false })
-    .limit(limit + 1); // one extra so we can report `truncated` honestly
-  if (from) q = q.gte("created_at", from);
-  if (to) q = q.lt("created_at", to);
-  if (listingId) q = q.eq("listing_id", listingId);
-
-  const { data, error } = await q;
-  if (error) throw new HttpError(500, `Compliance lookup failed: ${error.message}`);
-
-  const all = (data ?? []) as unknown as Array<Record<string, unknown>>;
+  const all = await libraryProvenance(adminClient(),userId,orgId,{from,to,listing:listingId||null,limit:limit+1});
   const truncated = all.length > limit;
-  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,all.slice(0,limit),(bucket,key,seconds,listing)=>privateMediaUrl({actor:userId,org:orgId,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
+  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,all.slice(0,limit),(bucket,key,seconds,listing,physicalOrg)=>privateMediaUrl({actor:userId,org:physicalOrg,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
   const rows = all.slice(0, limit).map((r,index) => {
     const l = (Array.isArray(r.listings) ? r.listings[0] : r.listings) as
       | { address: string | null; space_type: string | null }
@@ -943,7 +935,7 @@ async function handleComplianceOrg(
   // one renderer serves both and a diff between the two exports is only ever
   // the attribution. Private links retain exact source identity and the same
   // current permission checks as the individual export.
-  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,scoped.slice(0,opts.limit),(bucket,key,seconds,listing)=>privateMediaUrl({actor:userId,org:orgId,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
+  const privateLinks=await privateProvenanceLinks(adminClient(),orgId,scoped.slice(0,opts.limit),(bucket,key,seconds,listing,physicalOrg)=>privateMediaUrl({actor:userId,org:physicalOrg,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
   const rows = scoped.slice(0, opts.limit).map((r,index) => ({
     id: r.id as string,
     created_at: r.created_at as string,
@@ -1012,6 +1004,15 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
     "Send at least one of original_asset_id, altered_asset_id, label",
   );
 
+  const prior = await db.from("media_provenance").select("id,org_id,listing_id").eq("id",id).maybeSingle();
+  assert(!prior.error,503,"Disclosure identity could not be verified.");
+  assert(prior.data && typeof prior.data.listing_id === "string" && UUID_RE.test(prior.data.listing_id),404,"Disclosure record not found.");
+  const listingScope=await listingLibraryScope(adminClient(),userId,prior.data.listing_id,true);
+  const selected=preferredOrg(req);
+  assert(selected===undefined||selected===listingScope.org_id||selected===listingScope.library_org_id,404,"Disclosure not found in this library.");
+  const orgId=listingScope.org_id;
+  assert(prior.data.org_id===orgId,503,"Disclosure media identity could not be verified.");
+
   const { data, error } = await db.rpc("set_provenance_media", {
     p_id: id,
     p_original_asset: originalAsset,
@@ -1021,8 +1022,9 @@ async function handleCompliancePatch(req: Request, userId: string, id: string | 
   if (error) throwRpc(error.message);
 
   const row = (data ?? {}) as Record<string, unknown>;
-  const orgId=await orgForUser(userId,preferredOrg(req));
-  const [privateLinks]=await privateProvenanceLinks(adminClient(),orgId,[row],(bucket,key,seconds,listing)=>privateMediaUrl({actor:userId,org:orgId,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
+  assert(row.id===id && row.listing_id===prior.data.listing_id && row.org_id===orgId,503,"Disclosure update returned inconsistent identity.");
+  await listingLibraryScope(adminClient(),userId,prior.data.listing_id);
+  const [privateLinks]=await privateProvenanceLinks(adminClient(),orgId,[row],(bucket,key,seconds,listing,physicalOrg)=>privateMediaUrl({actor:userId,org:physicalOrg,listing,bucket:bucket===R2_BUCKET_UPLOADS?"uploads":"renders",key},seconds));
   return json({
     ok: true,
     provenance: {
@@ -1232,6 +1234,9 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
 
   const admin = adminClient();
   const orgId = await orgForUser(userId, preferredOrg(req));
+  const purchaseAccess = await libraryAccess(admin, userId, orgId);
+  assert(purchaseAccess.can_manage_subscription && purchaseAccess.billing_org_id === orgId, 403,
+    "This library uses its Team subscription. The Team owner manages the plan.", "forbidden");
   assertExpectedSubscriptionWorkspace(body.expected_org_id, orgId);
   await assertVerifiedPurchaseOwner(tx.appAccountToken, userId, orgId, admin);
 

@@ -51,6 +51,7 @@ function fixture() {
   const qualityCalls: any[] = [];
   const admin = {
     rpc: async (name: string, args: any) => {
+      if (name === "listing_library_scope") return {data:{actor_id:user,org_id:org,library_org_id:org,listing_id:listing,listing_owner_user_id:user,library_owner_user_id:user,role,access_mode:"own",can_read:true,can_write:role!=="marketing",can_manage_subscription:false,billing_org_id:org,team_org_id:null},error:null};
       if (name === "studio_presenter_asset_access") {
         assertEquals(args, { p_asset: source });
         return { data: presenterApproved, error: null };

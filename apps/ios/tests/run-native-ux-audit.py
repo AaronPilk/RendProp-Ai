@@ -78,7 +78,7 @@ enum FileStore { static func url(fromRelativePath value: String) -> URL { URL(fi
 @MainActor final class AuthStore {
  static let shared = AuthStore(); var userID: String?; var syncSessionRevision: UInt64 = 1; var isIdentified = false; var isSignedIn = false
 }
-enum WorkspaceContext { static var selectedOrgID: UUID? }
+enum WorkspaceContext { static var selectedOrgID: UUID?; static var billingOrgID: UUID? { selectedOrgID }; static var servingOrgID: UUID? { selectedOrgID } }
 @MainActor final class AIConsent {
  static let shared = AIConsent(); var isGranted = false; var wait = false
  var waiter: CheckedContinuation<Bool,Never>?

@@ -8,10 +8,13 @@ import {
 } from "./model";
 
 export function businessApi(services: Pick<StudioServices, "api">, workspace: Workspace) {
-  const orgId = workspace.org.id;
+  const orgId = workspace.libraryOrgId ?? workspace.org.id;
+  const teamOrgId = workspace.billingOrgId ?? orgId;
+  const teamBinding = workspace.billingOrgId ? { actorId: workspace.user.id, contentOrgId: orgId } : undefined;
+  const accountWorkspace = { ...workspace, org: { ...workspace.org, id: orgId } };
   const call = (path: string, options: Omit<Parameters<StudioServices["api"]>[1], "orgId"> = {}) => services.api(`/functions/v1/${path}`, { ...options, orgId });
   return {
-    account: async (signal?: AbortSignal) => decodeAccount(await call("me", { signal }), workspace),
+    account: async (signal?: AbortSignal) => decodeAccount(await call("me", { signal }), accountWorkspace),
     leads: async (filters: { listingId?: string; status?: LeadStatus; since?: string }, signal?: AbortSignal) => {
       const query = new URLSearchParams({ limit: "500" });
       if (filters.listingId) query.set("listing_id", uuid(filters.listingId));
@@ -40,7 +43,7 @@ export function businessApi(services: Pick<StudioServices, "api">, workspace: Wo
       if (uuid(user.id) !== workspace.user.id || decodeRealEstateRole(user.real_estate_role) !== role) throw new Error("Your work preference could not be confirmed. Refresh your account.");
       return role;
     },
-    team: async (signal?: AbortSignal) => decodeTeam(await call("team", { signal }), orgId),
+    team: async (signal?: AbortSignal) => decodeTeam(await call("team", { signal }), teamOrgId, teamBinding),
     invite: async (addresses: string, role: string, signal?: AbortSignal) => {
       if (!["admin", "agent", "marketing"].includes(role)) throw new Error("Choose an invited team member's role.");
       const emails = inviteEmails(addresses), bulk = emails.length > 1;
@@ -61,7 +64,7 @@ export function businessApi(services: Pick<StudioServices, "api">, workspace: Wo
     saveNotifications: async (preferences: Notifications, signal?: AbortSignal) => decodeNotifications(record(await call("me/notifications", { method: "PATCH", body: preferences, signal })).notifications),
     overview: async (window: "7d" | "30d" | "90d", signal?: AbortSignal) => {
       if (!["7d", "30d", "90d"].includes(window)) throw new Error("Choose an overview period.");
-      return decodeOverview(await call(`team/overview?window=${window}`, { signal }), orgId);
+      return decodeOverview(await call(`team/overview?window=${window}`, { signal }), teamOrgId, teamBinding);
     },
     compliance: async (filters: { listingId?: string; scope: "user" | "org"; from?: string; to?: string }, signal?: AbortSignal) => {
       const q = new URLSearchParams({ scope: filters.scope, limit: "5000" });

@@ -19,13 +19,13 @@ export async function draftListingID(key: string | null, userId: string, orgId: 
 
 /** Caller-scoped client preserves the existing insert/select RLS. A replay
  * reads the saved row; it cannot overwrite office edits or revive deletion. */
-export async function createListingRow(db: any, patch: Record<string, unknown>, userId: string, orgId: string, key: string | null) {
+export async function createListingRow(db: any, patch: Record<string, unknown>, userId: string, orgId: string, key: string | null, ownerId = userId) {
   const id = await draftListingID(key, userId, orgId);
-  const row = { ...patch, org_id: orgId, agent_id: userId, ...(id ? { id } : {}) };
+  const row = { ...patch, org_id: orgId, agent_id: ownerId, ...(id ? { id } : {}) };
   const inserted = await db.from("listings").insert(row).select().single();
   if (!inserted.error) return { data: inserted.data, replayed: false };
   if (id && inserted.error.code === "23505") {
-    const replay = await db.from("listings").select("*").eq("id", id).eq("org_id", orgId).eq("agent_id", userId).is("deleted_at", null).maybeSingle();
+    const replay = await db.from("listings").select("*").eq("id", id).eq("org_id", orgId).eq("agent_id", ownerId).is("deleted_at", null).maybeSingle();
     if (replay.error) throw new HttpError(503, "The saved listing could not be checked. Refresh before trying again.");
     if (!replay.data) throw new HttpError(409, "This listing was deleted or is no longer available. Create a new listing to start again.");
     return { data: replay.data, replayed: true };

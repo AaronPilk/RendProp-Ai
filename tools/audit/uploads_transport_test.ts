@@ -9,7 +9,7 @@ Deno.test("missing durable reservation never falls back to a memory counter or p
     f.asset = null;
     f.rpcFailures.add("reserve_upload_assets");
     const response = await f.request("ticket", {
-      listing_id: "fixture-listing",
+      listing_id: "c3333333-3333-4333-8333-333333333333",
       filename: "a.mov",
       bytes: 4,
     });
@@ -22,7 +22,7 @@ Deno.test("misconfigured gateway allowlist cannot consume a reservation", () =>
   fixture(async (f) => {
     Deno.env.set("UPLOAD_GATEWAY_ALLOWED_ORIGIN", "https://different.invalid");
     assertEquals(
-      (await f.request("ticket", { listing_id: "fixture-listing", bytes: 4 }))
+      (await f.request("ticket", { listing_id: "c3333333-3333-4333-8333-333333333333", bytes: 4 }))
         .status,
       503,
     );
@@ -33,7 +33,7 @@ Deno.test("invalid later batch item causes no reservation or partial asset inser
     f.asset = null;
     assertEquals(
       (await f.request("batch", {
-        listing_id: "fixture-listing",
+        listing_id: "c3333333-3333-4333-8333-333333333333",
         files: [{ filename: "a.jpg", bytes: 4 }, {
           filename: "b.jpg",
           bytes: 0,
@@ -88,7 +88,7 @@ Deno.test("multipart initialization lost response recovers exactly the recorded 
     f.objects.clear();
     f.failInitializationReply = true;
     const body = {
-      listing_id: "fixture-listing",
+      listing_id: "c3333333-3333-4333-8333-333333333333",
       filename: "room.mov",
       kind: "video",
       bytes: 67108865,

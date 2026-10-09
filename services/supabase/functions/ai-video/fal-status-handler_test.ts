@@ -32,7 +32,7 @@ async function fixture(skipTerminalCheck = false, enforceReceipt = false, skipRe
     );
   }
   if (skipReceipt) {
-    const gate="await assertLegacyVideoReceipt(user.id, await orgForUser(user.id, preferredOrg(req)), statusUrl, responseUrl);";
+    const gate="await assertLegacyVideoReceipt(user.id, await legacyReceiptOrg(user.id, preferredOrg(req), statusUrl, responseUrl), statusUrl, responseUrl);";
     assertEquals(route.split(gate).length,2);
     route=route.replace(gate,"");
   }
@@ -48,11 +48,11 @@ async function fixture(skipTerminalCheck = false, enforceReceipt = false, skipRe
   import {falCompletedFailure,falLegacyReceipt,falLegacyReceiptMatchesModel} from ${
     JSON.stringify(new URL("../_shared/providers/fal.ts", import.meta.url).href)
   };
-  const extractJobToken=()=>null, falHeaders=()=>({Authorization:"Key synthetic-test-placeholder"});
+  const decodeJobToken=()=>null,routedContentOrg=()=>null,extractJobToken=()=>null, falHeaders=()=>({Authorization:"Key synthetic-test-placeholder"});
   const uncheckedDriftBlock=()=>({status:"unchecked",publishable:false});
-  const orgForUser=async()=>"synthetic-org";
-  const adminClient=()=>({from:()=>{const filters:Record<string,unknown>={};const q:any={select:()=>q,eq:(k:string,v:unknown)=>{filters[k]=v;return q;},limit:async()=>{const row={id:"owned",actor_id:"synthetic",org_id:"synthetic-org",provider:"fal",model:${JSON.stringify(storedModel)},provider_request_id:"synthetic-job"};return {data:row.model&&Object.entries(filters).every(([k,v])=>(row as any)[k]===v)?[row]:[],error:null};}};return q;}});
-  ${enforceReceipt ? "async "+functionBody(source,"assertLegacyVideoReceipt") : "const assertLegacyVideoReceipt=async()=>{};"}
+  const orgForUser=async()=>"synthetic-org", contentOrgForUser=orgForUser;
+  const adminClient=()=>({from:()=>{const filters:Record<string,unknown>={};const q:any={select:()=>q,eq:(k:string,v:unknown)=>{filters[k]=v;return q;},maybeSingle:async()=>({data:{listing_id:null},error:null}),limit:async()=>{const row={id:"owned",actor_id:"synthetic",org_id:"synthetic-org",provider:"fal",model:${JSON.stringify(storedModel)},provider_request_id:"synthetic-job"};return {data:row.model&&Object.entries(filters).every(([k,v])=>(row as any)[k]===v)?[row]:[],error:null};}};return q;}});
+  ${enforceReceipt ? "async "+functionBody(source,"legacyReceiptOrg")+"\nasync "+functionBody(source,"assertLegacyVideoReceipt") : "const legacyReceiptOrg=orgForUser,assertLegacyVideoReceipt=async()=>{};"}
   const preferredOrg=()=>undefined, verifyJobToken=orgForUser,routedStatus=orgForUser;
   ${functionBody(source, "requireFalUrl")}
   ${functionBody(source, "extractVideoUrl")}

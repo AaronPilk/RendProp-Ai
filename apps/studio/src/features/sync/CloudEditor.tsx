@@ -1,3 +1,4 @@
+import { belongsToLibrary } from "../../data/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import VideoEditor from "../../editor/VideoEditor";
 import type { VideoEditorProps, EditorSettings } from "../../editor/VideoEditor";
@@ -337,7 +338,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     const request = props.entryRequest;
     if (!ready || props.active === false || sourceBusy || outputBusy || !request || consumedEntries.current.has(request.id)) return;
     consumedEntries.current.add(request.id);
-    if (request.listingId !== listingId || !listings.some(listing => listing.id === request.listingId && listing.orgId === workspace.org.id)) { setMessage("Open that property's reel before choosing its files."); return; }
+    if (request.listingId !== listingId || !listings.some(listing => listing.id === request.listingId && belongsToLibrary(listing, workspace))) { setMessage("Open that property's reel before choosing its files."); return; }
     // Opening a native-style feature card only opens this picker. It must not
     // reassign, reset or queue the currently saved workspace edit.
     setPickerListingId(request.listingId);
@@ -495,7 +496,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     } finally { outputFlight.current = false; if (!signal.aborted) setOutputBusy(false); }
   }
   const editProperty = listings.find(listing => listing.id === listingId);
-  const pickerProperty = listings.find(listing => listing.id === pickerListingId && listing.orgId === workspace.org.id);
+  const pickerProperty = listings.find(listing => listing.id === pickerListingId && belongsToLibrary(listing, workspace));
   async function requestEditPlan(message:string,draft:EditDraft,history:ConversationState["messages"],signal:AbortSignal){
     if(!ready||sourceBusy||outputBusy||state==="conflict")throw new Error("Finish syncing this edit before asking for an AI editing plan.");
     return assistant.requestEditPlan(message,draft,history,signal);

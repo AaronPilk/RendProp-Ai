@@ -65,6 +65,12 @@ struct NavigationLink<Destination: View>: View {
     init(_ title: String, destination: () -> Destination) { self.title = title; self.destination = destination() }
     func accessibilityIdentifier(_ value: String) -> Self { var copy = self; copy.identifier = value; return copy }
 }
+struct Button: View {
+ let title:String; let action:()->Void; var identifier=""
+ init(_ title:String,action:@escaping()->Void){self.title=title;self.action=action}
+ func disabled(_ ignored:Bool)->Self{self}
+ func accessibilityIdentifier(_ value:String)->Self{var copy=self;copy.identifier=value;return copy}
+}
 struct LabeledContent: View {
     let title: String; let value: String
     init(_ title: String, value: String) { self.title = title; self.value = value }
@@ -106,23 +112,23 @@ common += 'var showsRoles: Bool { showsRolePicker }\nvar explanation: String { i
 common += 'var accessRow: LabeledContent { ' + inviteLabel[0] + ' }\nfunc dispatch() async { ' + inviteSend[0] + ' }\n}\n'
 common += '''
 enum Config { static var useLiveBackend = true }
-enum WorkspaceContext { static var selectedOrgID: UUID? }
-struct WorkspaceStore { var selected: UUID? { WorkspaceContext.selectedOrgID } }
+enum WorkspaceContext { static var selectedOrgID: UUID?; static var billingOrgID: UUID? { selectedOrgID }; static var servingOrgID: UUID? { selectedOrgID } }
+struct WorkspaceStore { static var hasAuthority = true; static let shared = WorkspaceStore(); var selected: UUID? { WorkspaceContext.selectedOrgID }; var isLoading=false; func canViewLibrary(_ org:UUID)->Bool { Self.hasAuthority && org == WorkspaceContext.selectedOrgID }; func refresh() async {} }
 struct Listing {
     let id: UUID; var address: String = "Synthetic house"; var isSample = false
     var belongsToCurrentType = true; var isSold = false
     var isInactive: Bool { isSold }
-    var serverOrgID: UUID? = nil; var cloudDraftOrgID: UUID? = nil; var cloudUnavailable = false
+    var serverOrgID: UUID? = nil; var serverLibraryOrgID: UUID? = nil; var cloudDraftOrgID: UUID? = nil; var cloudUnavailable = false
 }
 final class InventoryPolicyFixture {
-    var listings: [Listing] = []
+    var listings: [Listing] = []; func refreshCloudWorkspace() async {}
 '''
 common += block(app, 'func isInSelectedWorkspace(') + '\n}\n'
 common += '\nstruct HomePolicyFixture {\n let model: InventoryPolicyFixture; var search = ""; let workspaceStore = WorkspaceStore()\n'
 common += block(homes, 'private var filtered:') + '\n' + block(homes, 'private var needsWorkspaceSelection:')
 common += '\n' + block(homes, 'private var workspaceSelectionPrompt:')
 common += '\nvar visibleIDs: [UUID] { filtered.map(\\.id) }\nvar needsSelection: Bool { needsWorkspaceSelection }\n'
-common += 'var prompt: NavigationLink<WorkspacePickerView> { workspaceSelectionPrompt as! NavigationLink<WorkspacePickerView> }\n}\n'
+common += 'var prompt: Button { workspaceSelectionPrompt as! Button }\n}\n'
 common += '''
 @MainActor final class LivePolicyFixture {
     let data: Data; var requestCount = 0
@@ -149,10 +155,11 @@ controls = [
     ('ignored-team-source', 'cap: seats.allowed, plan: plan, source: planSource)', 'cap: seats.allowed, plan: plan, source: nil)', 'team nonmanual source stays finite'),
     ('private-mode-treated-shared', 'var isPrivateTesting: Bool { accessMode == "private_testing" }', 'var isPrivateTesting: Bool { false }', 'actual Team access row identifies private testing'),
     ('private-join-treated-shared', 'if accessMode == "private_testing" {', 'if false {', 'actual join confirmation does not promise shared houses'),
-    ('nil-workspace-shows-cache', 'guard let selected = WorkspaceContext.selectedOrgID else { return false }',
-        'guard let selected = WorkspaceContext.selectedOrgID else { return true }', 'nil live workspace cannot expose cached host houses'),
+    ('nil-workspace-shows-cache', 'guard let selected = WorkspaceContext.selectedOrgID,',
+        'if WorkspaceContext.selectedOrgID == nil { return true }; guard let selected = WorkspaceContext.selectedOrgID,', 'nil live workspace cannot expose cached host houses'),
     ('missing-workspace-prompt', 'Config.useLiveBackend && workspaceStore.selected == nil', 'false', 'nil live workspace offers explicit selection'),
     ('home-ignores-workspace', '&& model.isInSelectedWorkspace($0)', '', 'actual Home hides old host inventory after private selection'),
+    ('revoked-directory-cache', 'WorkspaceStore.shared.canViewLibrary(selected)', 'true', 'revoked directory delegation exposed cached cards'),
     ('private-invite-role-picker', 'private var showsRolePicker: Bool { !privateTesting }',
         'private var showsRolePicker: Bool { true }', 'private invites hide shared-team role selection'),
     ('private-invite-role-dispatch', 'await send(email.isEmpty ? nil : email, invitationRole)',

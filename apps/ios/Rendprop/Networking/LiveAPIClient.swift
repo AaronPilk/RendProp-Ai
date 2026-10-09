@@ -388,12 +388,38 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         return dtos.map(mapListing)
     }
 
-    /// Unlike the legacy native /listings route, a complete RLS read paginates
-    /// across all memberships. Count drift, duplicate IDs and partial pages
-    /// fail before AppModel applies anything to its saved library.
+    /// A fresh actor-bound directory limits this complete snapshot to private
+    /// libraries the server currently authorizes. True row orgs are retained.
     func cloudListings() async throws -> [Listing] {
-        let rows: [ListingDTO] = try await cloudRows(table: "listings", columns:
-            "id,org_id,space_type,address,tagline,details,price_cents,beds,baths,sqft,lat,lng,status,sold_at,zillow_url,main_photo_key,created_at", filters: [URLQueryItem(name: "deleted_at", value: "is.null")])
+        let fence = await MainActor.run { (AuthStore.shared.userID, AuthStore.shared.syncSessionRevision, WorkspaceContext.selectedOrgID) }
+        guard let actor = fence.0.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        var directoryRequest = makeRequest(url: url(["me", "workspaces"]))
+        directoryRequest.setValue(nil, forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(directoryRequest)
+        guard let directory = try JSONDecoder().decode(WorkspaceDirectory.self, from: data).checked(actor: actor) else { throw CloudSyncError.invalidResponse }
+        var rows: [ListingDTO] = [], bytes = 0
+        struct Page: Decodable { let actorId: UUID; let listings: [ListingDTO]; let total: Int; let nextOffset: Int? }
+        for library in directory.selectionChoices {
+            var offset = 0, total: Int?
+            while true {
+                try Task.checkCancellation()
+                var request = makeRequest(url: url(["listings"], query: [URLQueryItem(name: "library", value: "1"), URLQueryItem(name: "limit", value: "500"), URLQueryItem(name: "offset", value: String(offset))]))
+                request.setValue(library.id.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+                let raw = try await execute(request); bytes += raw.count
+                let current = await MainActor.run { AuthStore.shared.userID == fence.0 && AuthStore.shared.syncSessionRevision == fence.1 && WorkspaceContext.selectedOrgID == fence.2 }
+                guard current else { throw CloudSyncError.identityChanged }
+                let page: Page = try decode(raw)
+                guard raw.count <= 8 * 1024 * 1024, bytes <= 32 * 1024 * 1024, page.actorId == actor,
+                      page.total >= 0, page.total <= 10_000, total == nil || total == page.total,
+                      page.listings.count == min(500, page.total - offset),
+                      page.listings.allSatisfy({ $0.libraryOrgId.flatMap(UUID.init(uuidString:)) == library.id }),
+                      page.nextOffset == (offset + page.listings.count < page.total ? offset + page.listings.count : nil)
+                else { throw CloudSyncError.incomplete }
+                total = page.total; rows += page.listings; offset += page.listings.count
+                guard rows.count <= 10_000 else { throw CloudSyncError.incomplete }
+                if page.nextOffset == nil { break }
+            }
+        }
         guard rows.allSatisfy({ $0.id.flatMap(UUID.init(uuidString:)) != nil && $0.orgId.flatMap(UUID.init(uuidString:)) != nil }),
               Set(rows.compactMap(\.id)).count == rows.count else { throw CloudSyncError.invalidResponse }
         var result = rows.map(mapListing)
@@ -570,13 +596,14 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
 
     func updateListing(_ listing: Listing) async throws -> Listing {
         _ = try ListingWireDetails.merged(listing)
+        let library = WorkspaceContext.selectedOrgID
         guard let target = listing.serverID, let org = listing.serverOrgID,
-              org == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+              (listing.serverLibraryOrgID ?? org) == library else { throw CloudSyncError.identityChanged }
         var request = makeRequest(url: url(["listings", target.uuidString, "facts"]),
                                   method: "PUT", json: try ListingFactsSync.body(listing))
         request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         let data = try await execute(request, beforeSend: {
-            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+            guard WorkspaceContext.selectedOrgID == library else { throw CloudSyncError.identityChanged }
         })
         let dto: ListingDTO = try decode(data)
         guard dto.id.flatMap(UUID.init(uuidString:)) == target,
@@ -585,8 +612,9 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     func updateMeasurements(_ listing: Listing) async throws -> Listing {
+        let library = WorkspaceContext.selectedOrgID
         guard let target = listing.serverID, let org = listing.serverOrgID,
-              org == WorkspaceContext.selectedOrgID,
+              (listing.serverLibraryOrgID ?? org) == library,
               let state = listing.measurementSync, state.pending, !state.conflict,
               let value = FloorMeasurementPlan.wireValue(in: listing.details) else {
             throw CloudSyncError.identityChanged
@@ -595,7 +623,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             json: ["expected": state.expected as Any? ?? NSNull(), "value": value])
         request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         let data = try await execute(request, beforeSend: {
-            guard WorkspaceContext.selectedOrgID == org else { throw CloudSyncError.identityChanged }
+            guard WorkspaceContext.selectedOrgID == library else { throw CloudSyncError.identityChanged }
         })
         let dto: ListingDTO = try decode(data)
         guard dto.id.flatMap(UUID.init(uuidString:)) == target,
@@ -1773,8 +1801,15 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     @MainActor func me() async throws -> UsageSummary {
         let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         let selectedOrg = WorkspaceContext.selectedOrgID
+        let billingOrg = WorkspaceContext.billingOrgID
+        let servingOrg = WorkspaceContext.servingOrgID
         let data = try await execute(makeRequest(url: url(["me"])))
         let dto: MeDTO = try decode(data)
+        if let billing = dto.billing {
+            guard (billing.contentOrgId == nil ? dto.org?.id.flatMap(UUID.init(uuidString:)) : billing.contentOrgId.flatMap(UUID.init(uuidString:))) == selectedOrg,
+                  billing.orgId.flatMap(UUID.init(uuidString:)) == billingOrg,
+                  (billing.servingOrgId ?? billing.orgId).flatMap(UUID.init(uuidString:)) == servingOrg else { throw CloudSyncError.invalidResponse }
+        }
         // /me returns `plan` (effective), `plan_raw`, `trial_ends_at`,
         // `entitlement {…_per_month}` and `usage.{cost_cents, leads, renders,
         // listings, by_feature{…}}` — see services/supabase/functions/me/index.ts.
@@ -1783,12 +1818,13 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         if dto.trialUsage != nil || dto.trialOffer != nil || dto.servingActivation != nil || dto.servingPhotoPackage != nil {
             guard let rawOrg = dto.org?.id, let org = UUID(uuidString: rawOrg),
                   org == selectedOrg, WorkspaceContext.selectedOrgID == selectedOrg,
-                  dto.trialUsage.map({ $0.checked(org: org) != nil }) ?? true,
+                  let financialOrg = servingOrg,
+                  dto.trialUsage.map({ $0.checked(org: financialOrg) != nil }) ?? true,
                   dto.trialOffer.map({ $0.checked() != nil }) ?? true,
-                  dto.servingActivation.map({ $0.checked(org: org) != nil }) ?? true else { throw CloudSyncError.invalidResponse }
+                  dto.servingActivation.map({ $0.checked(org: financialOrg) != nil }) ?? true else { throw CloudSyncError.invalidResponse }
         }
         if let package = dto.servingPhotoPackage {
-            guard let org = selectedOrg, package.checked(org: org) != nil,
+            guard let org = servingOrg, package.checked(org: org) != nil,
                   let owner = actor.flatMap(UUID.init(uuidString:)),
                   dto.user?.id.flatMap(UUID.init(uuidString:)) == owner,
                   dto.servingActivation?.available != false else { throw CloudSyncError.invalidResponse }
@@ -2110,6 +2146,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         l.cloudArchived = dto.status == "archived"
         l.serverID = serverID
         l.serverOrgID = dto.orgId.flatMap(UUID.init(uuidString:))
+        l.serverLibraryOrgID = dto.libraryOrgId.flatMap(UUID.init(uuidString:))
         l.cloudCreateReplayed = dto.createReplayed
         l.floorMeasurements = FloorMeasurementPlan.decodeWireValue(FloorMeasurementPlan.wireValue(in: l.details))
         l.measurementSync = FloorMeasurementSyncState(expected: FloorMeasurementPlan.wireValue(in: l.details))
@@ -2224,6 +2261,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     private struct ListingDTO: Decodable {
         let id: String?
         let orgId: String?
+        let libraryOrgId: String?
         let createReplayed: Bool?
         let spaceType: String?
         let address: String?
@@ -2420,6 +2458,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     private struct MeDTO: Decodable {
+        struct Billing: Decodable { let orgId: String?; let contentOrgId: String?; let servingOrgId: String? }
+        let billing: Billing?
         struct User: Decodable {
             let id: String?
             let email: String?

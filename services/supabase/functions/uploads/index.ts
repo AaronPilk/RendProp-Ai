@@ -1,3 +1,4 @@
+import { requireContentWrite } from "../_shared/library-access.ts";
 // Upload transport v2: service-only reservations authorize one exact-size
 // gateway dispatch per journaled operation. No reusable R2 PUT URL fallback.
 // Requires 0037 + configured gateway and drained legacy URLs before rollout.
@@ -92,17 +93,8 @@ async function reloadAsset(
 
 /** Marketing is read-only (audit P0-7): only owner/admin/agent may upload. */
 // deno-lint-ignore no-explicit-any
-async function requireWriteRole(admin: any, userId: string, orgId: string) {
-  const { data, error } = await admin
-    .from("memberships").select("role").eq("user_id", userId).eq(
-      "org_id",
-      orgId,
-    ).maybeSingle();
-  if (error) throw new HttpError(500, `Role lookup failed: ${error.message}`);
-  const role = data?.role;
-  if (!role || role === "marketing") {
-    throw new HttpError(403, "Your role does not permit uploading media");
-  }
+async function requireWriteRole(admin: any, userId: string, orgId: string, listingId: string) {
+  await requireContentWrite(admin, userId, orgId, listingId);
 }
 
 /**
@@ -126,7 +118,7 @@ async function requireAssetWriteRole(
     throw new HttpError(400, `Listing lookup failed: ${error.message}`);
   }
   if (!data) throw new HttpError(404, "Listing not found");
-  await requireWriteRole(admin, userId, data.org_id as string);
+  await requireWriteRole(admin, userId, data.org_id as string, asset.listing_id as string);
 }
 
 // Video at/above this size (or an explicit multipart flag) uses multipart.
@@ -288,7 +280,7 @@ Deno.serve(async (req) => {
       transportConfiguration();
       const body = await readJson<CreateBody & BatchBody>(req);
       const listing = await requireListing(db, body.listing_id);
-      await requireWriteRole(admin, user.id, listing.org_id);
+      await requireWriteRole(admin, user.id, listing.org_id, body.listing_id);
       await assertNotDeleting(user.id);
       const batch = seg[0] === "batch";
       const files = batch ? body.files : [body];

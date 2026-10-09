@@ -45,7 +45,7 @@ usage_load = block(settings, 'private func loadUsage(')
 assert usage_load.count('usageLoadGeneration == generation') == 3 and 'usage = nil' in usage_load.split('} catch {')[1]
 assert 'purchases.billingContext?.servingActivation?.available != false' in block(paywall, 'private var content:')
 assert 'state = PlanBanner.pendingActivationState()' in banner
-assert 'SubscriptionBillingContext.fromMe(data, selectedOrg: WorkspaceContext.selectedOrgID)' in purchases
+assert 'SubscriptionBillingContext.fromMe(data, selectedOrg: WorkspaceContext.selectedOrgID, billingOrg: WorkspaceContext.billingOrgID, servingOrg: WorkspaceContext.servingOrgID)' in purchases
 assert 'WorkspaceContext.selectedOrgID == org' in block(purchases, 'static func getBilling(')
 assert 'WorkspaceContext.selectedOrgID == selectedOrg' in block(manager, 'func refreshBillingContext(')
 assert 'for: .rendpropPlanChanged' in paywall
@@ -58,7 +58,7 @@ assert 'Trial unavailable' in block(paywall, 'private func buyTitle(')
 assert 'Check trial availability' in block(paywall, 'private func buyTitle(')
 assert 'purchases.heldTrialOffer(for: product)' in details
 assert 'state = PlanBanner.boundedTrialState(trial)' in banner
-assert 'trial.checked(org: org)' in banner and banner.count('WorkspaceContext.selectedOrgID == org') == 2
+assert 'trial.checked(org: billingOrg)' in banner and banner.count('WorkspaceContext.selectedOrgID == org') == 2
 assert "A plan upgrade unlocks this. Your saved work is still here." in block(fly, 'var actionHint:')
 assert 'this month' not in block(host, 'var contextLine:').split('case .quota(let feature):')[1].split('case .trialEnded:')[0]
 
@@ -67,7 +67,7 @@ import Foundation
 enum APIError: Error { case decoding, notConfigured }
 typealias Color = String
 enum Theme { static let accent = "accent"; static let warn = "warn" }
-enum WorkspaceContext { static var selectedOrgID: UUID? }
+enum WorkspaceContext { static var selectedOrgID: UUID?; static var billingOrgID: UUID? { selectedOrgID }; static var servingOrgID: UUID? { selectedOrgID } }
 @MainActor final class AuthStore {
     static let shared = AuthStore()
     var userID: String? = "synthetic-owner"
@@ -122,7 +122,7 @@ faults = [
     ('offer-max-days', 'maxDays == 7,', 'maxDays != nil,', 'Non-seven-day enabled offer accepted'),
     ('drop-recorded-usage', 'trialUsage: dto.trialUsage', 'trialUsage: nil', 'Actual me forwards recorded trial usage'),
     ('drop-enabled-offer', 'trialOffer: dto.trialOffer', 'trialOffer: nil', 'Disabled offer never promises numeric quantities'),
-    ('billing-enclosing-org', 'trial.org?.id == value.orgID,', 'true,', 'Billing offer accepted foreign enclosing org'),
+    ('billing-enclosing-org', 'trial.org?.id == selectedOrg,', 'true,', 'Billing offer accepted foreign enclosing org'),
     ('stale-actor', 'AuthStore.shared.userID == actor', 'true', 'Changed actor accepted after response'),
     ('stale-session', 'AuthStore.shared.syncSessionRevision == revision', 'true', 'Changed revision accepted after response'),
     ('stale-workspace', 'WorkspaceContext.selectedOrgID == selectedOrg', 'true', 'Changed workspace accepted after response'),

@@ -165,7 +165,7 @@ final class StoreShots: XCTestCase {
 
     // MARK: s01 — Home, scrolled to the showroom
 
-    /// The hero shot: "Make something" — every tool the app has, in one grid.
+    /// The hero shot: "Create Something Amazing" — every tool in one grid.
     ///
     /// Note for whoever reviews the PNG: the two seeded sample homes
     /// ("1247 Hillcrest Drive", "88 Marina Vista #501") are deliberately NOT in
@@ -239,9 +239,9 @@ final class StoreShots: XCTestCase {
                 note("SKIPPED: Home tab unavailable.")
                 return
             }
-            scrollToTop()       // s02 left Home scrolled past the "Add a home" button
-            guard let add = scrollTo(ids: ["home.addHome"], labels: ["Add a home"], swipes: 6) else {
-                note("SKIPPED: no `home.addHome` and no \"Add a home\" button on Home.")
+            guard openTab("Listings", ids: [], confirmedBy: ["Add a home"]),
+                  let add = scrollTo(ids: [], labels: ["Add a home"], swipes: 6) else {
+                note("SKIPPED: the Listings tab's Add a home action was unavailable.")
                 return
             }
             tap(add)
@@ -807,17 +807,14 @@ final class StoreShots: XCTestCase {
     // MARK: - Navigation helpers
 
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
-    /// CAREFUL with the confirming labels below: "Add a home" and "My Homes"
-    /// appear on BOTH the Home dashboard and the Homes tab (one as a section
-    /// title and a button, the other as a nav title and a button), so using
-    /// either would make `openTab` report success without switching tab. Only
-    /// `home.addHome` and "Make something" are unique to the dashboard.
+    /// Confirm the dashboard with its unique Get started action or tool heading,
+    /// never the collection tab's unchanged Add action.
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: ["home.addHome"], confirmedBy: ["Make something"])
+        openTab("Home", ids: ["home.getStarted"], confirmedBy: ["Create Something Amazing"])
     }
 
     @discardableResult
@@ -1121,7 +1118,7 @@ final class StoreShots: XCTestCase {
     /// Scroll back to the top of the current screen.
     ///
     /// LOAD-BEARING: `scrollTo` only ever walks DOWN the page, so a step that
-    /// needs something ABOVE where the previous step left off — "Add a home"
+    /// needs something ABOVE where the previous step left off — the hero
     /// and the homes list both sit above the demo player on Home — will never
     /// find it without this first.
     private func scrollToTop(_ swipes: Int = 6) {

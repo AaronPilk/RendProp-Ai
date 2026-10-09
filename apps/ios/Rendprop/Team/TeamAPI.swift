@@ -37,6 +37,8 @@ enum WorkspaceAllowanceDisplay {
 
 struct TeamSummary: Decodable, Sendable {
     let orgId: String
+    var actorId: String? = nil
+    var contentOrgId: String? = nil
     let orgName: String?
     let plan: String?
     /// Optional on older /team responses. A present nonmanual source cannot
@@ -49,11 +51,11 @@ struct TeamSummary: Decodable, Sendable {
     let invites: [Invite]
 
     var isPrivateTesting: Bool { accessMode == "private_testing" }
-    var accessLabel: String { isPrivateTesting ? "Private testing accounts" : "Shared workspace" }
+    var accessLabel: String { isPrivateTesting ? "Private testing accounts" : "Private agent accounts" }
     var accessExplanation: String {
         isPrivateTesting
-            ? "Each person keeps their own homes, tours and leads private. This team provides testing access without sharing listings."
-            : "This is a shared workspace. Its homes, tours and leads are visible to team members."
+            ? "Each tester keeps their own homes, tours and leads private from other testers. The Team owner can manage authorized testers’ listings."
+            : "Each agent keeps their own listings, tours and leads. The Team owner can switch between authorized agents’ listings; invited agents see only their own."
     }
 
     var hasUnlimitedTestingSeats: Bool {
@@ -104,7 +106,7 @@ struct TeamSummary: Decodable, Sendable {
         var removalExplanation: String {
             isPrivateTesting
                 ? "Their testing access ends. Their private homes, tours and leads stay in their own account."
-                : "\(displayName) loses access to this shared workspace. Its homes, tours and leads stay with the team."
+                : "\(displayName)’s Team plan access ends. Their private listings, tours and leads remain in their own account."
         }
     }
 
@@ -152,7 +154,7 @@ struct TeamJoined: Decodable, Sendable {
         if accessMode == "private_testing" {
             return "\(teamName ?? "The team") provides your testing access. Your homes, tours and leads stay private in your own workspace. Other people's listings are not added to your account."
         }
-        return "You've joined \(orgName ?? "the team"). This is a shared workspace: its homes, tours and leads are visible to team members. Your personal workspace stays separate."
+        return "You’ve joined \(teamName ?? orgName ?? "the Team") while keeping your own listings, tours and leads. Only the Team owner can switch between authorized agents’ listings."
     }
 }
 
@@ -244,7 +246,13 @@ enum TeamAPI {
     }
 
     @MainActor static func summary() async throws -> TeamSummary {
-        try decode(try await request("", method: "GET"))
+        let actor = AuthStore.shared.userID, content = WorkspaceContext.selectedOrgID
+        let billing = WorkspaceContext.billingOrgID
+        let result: TeamSummary = try decode(try await request("", method: "GET"))
+        guard let content, let billing, UUID(uuidString: result.orgId) == billing,
+              result.actorId == actor, result.contentOrgId.flatMap(UUID.init(uuidString:)) == content,
+              WorkspaceContext.selectedOrgID == content, WorkspaceContext.billingOrgID == billing else { throw CloudSyncError.identityChanged }
+        return result
     }
 
     @MainActor static func invite(email: String?, role: String = "agent") async throws -> TeamInviteCreated {

@@ -438,6 +438,8 @@ Deno.test("actual paid guard binds a resolved asset workspace when a multi-org c
     export const state:any={choices:[],meters:[]};
     const preferredOrg=(req:Request)=>req.headers.get('X-Org-Id')??undefined;
     const orgForUser=async(_u:string,preferred?:string)=>{state.choices.push(preferred);return preferred??'different-default-org';};
+    const contentOrgForUser=orgForUser;
+    const libraryBillingOrg=async(_admin:any,org:string,_actor:string)=>org;
     const adminClient=()=>({from:()=>({select:()=>({eq:()=>({eq:()=>({maybeSingle:async()=>({data:{role:'owner'},error:null})})})})})});
     const assertPaidAiIdentity=async(..._a:any[])=>{};
     const entitlementForCharge=async(_o:string)=>({plan:'team',cogs_ceiling_cents:6000});

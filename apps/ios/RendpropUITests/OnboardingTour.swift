@@ -239,7 +239,7 @@ final class OnboardingTour: XCTestCase {
             settle(1.0)
             mark("01")
             beat(2.5)                   // the hero: "List it. Launch it. Sell it."
-            gentleScroll(down: true)    // reveal "Make something"
+            gentleScroll(down: true)    // reveal "Create Something Amazing"
             beat(1.5)
             gentleScroll(down: false)   // and back up to the hero
             beat(0.8)
@@ -292,8 +292,9 @@ final class OnboardingTour: XCTestCase {
         activity("02 — Start with the space") {
             scrollToTop()
             mark("02")
-            guard let add = scrollTo(ids: ["home.addHome"], labels: ["Add a home"], swipes: 4) else {
-                note("SKIPPED: no `home.addHome` and no \"Add a home\" button on Home.")
+            guard openTab("Listings", ids: [], confirmedBy: ["Add a home"]),
+                  let add = scrollTo(ids: [], labels: ["Add a home"], swipes: 4) else {
+                note("SKIPPED: the Listings tab's Add a home action was unavailable.")
                 beat(3.0)
                 return
             }
@@ -841,15 +842,14 @@ final class OnboardingTour: XCTestCase {
 
     /// Home is up when its one unmissable action is on screen.
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
-    /// CAREFUL with the confirming labels: "Add a home" and "My Homes" appear
-    /// on BOTH the Home dashboard and the collection tab, so only `home.addHome`
-    /// and "Make something" are unique to the dashboard.
+    /// Confirm the dashboard with its unique Get started action or tool heading,
+    /// never the collection tab's unchanged Add action.
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: ["home.addHome"], confirmedBy: ["Make something"])
+        openTab("Home", ids: ["home.getStarted"], confirmedBy: ["Create Something Amazing"])
     }
 
     @discardableResult

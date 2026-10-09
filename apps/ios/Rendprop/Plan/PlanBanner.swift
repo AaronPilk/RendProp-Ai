@@ -128,7 +128,7 @@ struct PlanBanner: View {
             guard Config.useLiveBackend, let base = Config.apiBaseURL else { return }
             state = nil
             let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
-            guard let org = WorkspaceContext.selectedOrgID else { state = nil; return }
+            guard let org = WorkspaceContext.selectedOrgID, let billingOrg = WorkspaceContext.servingOrgID else { state = nil; return }
 
             // A session can exist a beat before its token is usable, so give it
             // a few tries rather than going quiet for the rest of the launch.
@@ -157,11 +157,11 @@ struct PlanBanner: View {
                 // in the app, are the promise the server will actually keep.
                 if let activation = me.servingActivation {
                     guard me.org?.id.flatMap(UUID.init(uuidString:)) == org,
-                          activation.checked(org: org) != nil else { state = nil; return }
+                          activation.checked(org: billingOrg) != nil else { state = nil; return }
                 }
                 if let trial = me.trialUsage {
                     guard me.org?.id.flatMap(UUID.init(uuidString:)) == org,
-                          trial.checked(org: org) != nil else { state = nil; return }
+                          trial.checked(org: billingOrg) != nil else { state = nil; return }
                 }
                 if let trial = me.trialUsage, trial.status != .active {
                     state = PlanBanner.boundedTrialState(trial)

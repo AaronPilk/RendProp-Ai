@@ -56,6 +56,11 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/png",result_url:"data:image/png;base64,QUFB"};};
  const recordRoutedAiCost=async()=>{},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
  const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
+ if(name==="library_access"||name==="listing_library_scope"){
+ if(state.deleted||state.role!=="owner"||args.p_actor!==state.actor)return {data:null,error:{message:"RP403: Current editor access is required"}};
+ return {data:{actor_id:state.actor,org_id:state.org,library_owner_user_id:state.actor,role:state.role,access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:state.org,team_org_id:null,
+ ...(name==="listing_library_scope"?{listing_id:args.p_listing,library_org_id:state.org,listing_owner_user_id:state.actor}:{})},error:null};
+ }
  if(name==="serving_operation_begin"){
  if(state.deleted||state.role!=="owner")return{data:null,error:{message:"RP403: Current editor access is required"}};
  if(state.started){if(state.operationInputHash!==args.p_input_sha256)return{data:null,error:{message:"RP409: This request key was used for different input"}};if(state.saved)return{data:{replay:true,result:structuredClone(state.saved)},error:null};return{data:null,error:{message:"RP409: This operation already started. Check its saved result or status before starting another"}};}
@@ -184,7 +189,7 @@ Deno.test("actual photo replay rechecks access after signing and after the bound
  }finally{f.close();}
 });
 Deno.test("actual photo replay rejects signing-time access withdrawal before GET",async()=>{
- const f=await fixture();try{assertEquals((await f.run(f.request())).status,200);await assertRejects(()=>f.withdrawDuringSign(),Error,"unavailable for this account");assertEquals(f.state.gets,0);}finally{f.close();}
+ const f=await fixture();try{assertEquals((await f.run(f.request())).status,200);await assertRejects(()=>f.withdrawDuringSign(),Error,"Current editor access is required");assertEquals(f.state.gets,0);}finally{f.close();}
 });
 Deno.test("compiled removed final photo-authority check fails the unchanged no-private-bytes boundary",async()=>{
  const verify=async(remove:boolean)=>{const f=await fixture(remove);try{assertEquals((await f.run(f.request())).status,200);f.state.withdrawOnGet=true;const retry=await f.run(f.request());assertEquals(retry.status,403,"Withdrawal during replay must suppress private photo bytes");}finally{f.close();}};

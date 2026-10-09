@@ -25,6 +25,7 @@ async function fixture(failure: Failure, removeAbort = false) {
     const BURST_MAX_PER_WINDOW=10,BURST_WINDOW_SECONDS=300,MONTH_SECONDS=2592000,DEFAULT_MAX_CHAPTERS=12,HARD_MAX_CHAPTERS=24,SOURCE_URL_TTL_SECONDS=900,MAX_VIDEO_BYTES=300000000,GEMINI_DEADLINE_MS=110000,SAMPLE_FPS=1;
     const LEGACY_ROUTE={provider:'gemini',model:'synthetic-model',unit:'call',unitCents:1,routeId:null};
     const handleOptions=()=>new Response(null,{status:204}),pathSegments=()=>[],requireGemini=()=>{},getUser=async()=>({id:'synthetic-user'}),userClient=()=>({}),preferredOrg=()=>null,orgForUser=async()=> 'synthetic-org';
+    const contentOrgForUser=orgForUser,libraryBillingOrg=async(_admin:any,org:string)=>org,requireContentWrite=async()=>{};
     const requiredUuid=(value:any)=>value, cleanLanguage=()=> 'en';
     const resolveVideoAsset=async()=>({id:'synthetic-asset',orgId:'synthetic-org',bucket:'uploads',storageKey:['synthetic','mp4'].join('.'),spaceType:'real_estate',durationS:90,contentType:'video/mp4'});
     const rpc=async(name:string,_args:any)=>{

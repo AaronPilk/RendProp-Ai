@@ -9,7 +9,7 @@ async function fixture(run:(f:{call:(app:string,method:string,path:string,body?:
  const oldFetch=globalThis.fetch,serve=Object.getOwnPropertyDescriptor(Deno,"serve")!;
  const calls:{path:string;body:any;url:URL}[]=[],unexpected:string[]=[];
  let active=A,error:string|undefined;
- const workspaces=[{id:A,name:"Personal",role:"owner"},{id:B,name:"Agency",role:"agent"}];
+ const workspaces=[{id:A,name:"Personal",role:"owner",access_mode:"own",library_owner_user_id:USER,billing_org_id:A,can_read:true,can_write:true,can_manage_subscription:true},{id:B,name:"Client library",role:"team_owner",access_mode:"team_owner",library_owner_user_id:OUTSIDER,billing_org_id:A,can_read:true,can_write:true,can_manage_subscription:false}];
  const rows=[{id:ROW_A,org_id:A,address:"Personal home",deleted_at:null},{id:ROW_B,org_id:B,address:"Agency home",deleted_at:null}];
  const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{"content-type":"application/json"}});
  try{
@@ -22,12 +22,20 @@ async function fixture(run:(f:{call:(app:string,method:string,path:string,body?:
     assertEquals(body.p_user,USER);if(error)return json({message:error},400);
     const selected=body.p_preferred_org??active;
     if(!workspaces.some(w=>w.id===selected))return json({message:"RP403: this workspace is no longer available"},400);
-    return json({active_org_id:selected,workspaces});
+    return json({actor_id:USER,own_org_id:A,billing_org_id:A,can_switch_agent_libraries:true,active_org_id:selected,workspaces});
    }
    if(table==="select_workspace"){
     assertEquals(body.p_user,USER);if(error)return json({message:error},400);
     const selected=workspaces.find(w=>w.id===body.p_org);if(!selected)return json({message:"RP403: this workspace is no longer available"},400);
-    active=selected.id;return json({ok:true,org_id:active,org_name:selected.name,role:selected.role});
+    active=selected.id;return json({ok:true,actor_id:USER,org_id:active,org_name:selected.name,role:selected.role});
+   }
+   if(table==="library_access") {
+    assertEquals(body.p_actor,USER);const w=workspaces.find(w=>w.id===body.p_org);
+    return w?json({actor_id:USER,org_id:w.id,library_owner_user_id:w.library_owner_user_id,role:w.role,access_mode:w.access_mode,can_read:true,can_write:true,can_manage_subscription:w.can_manage_subscription,billing_org_id:w.billing_org_id,team_org_id:null}):json({message:"RP403: Removed library"},400);
+   }
+   if(table==="listing_library_scope") {
+    const row=rows.find(r=>r.id===body.p_listing&&r.deleted_at===null),w=workspaces.find(w=>w.id===row?.org_id);
+    return row&&w?json({actor_id:USER,org_id:row.org_id,library_org_id:row.org_id,listing_id:row.id,listing_owner_user_id:w.library_owner_user_id,library_owner_user_id:w.library_owner_user_id,role:w.role,access_mode:w.access_mode,can_read:true,can_write:true,can_manage_subscription:w.can_manage_subscription,billing_org_id:w.billing_org_id,team_org_id:null}):json({message:"RP404: Listing unavailable"},400);
    }
    if(table==="deletion_requests")return json([]);
    if(table==="active_org_for_user")return json(active);
@@ -61,12 +69,12 @@ async function fixture(run:(f:{call:(app:string,method:string,path:string,body?:
   assertEquals(unexpected,[]);
  }finally{globalThis.fetch=oldFetch;Object.defineProperty(Deno,"serve",serve);for(const[k,v]of previous)v===undefined?Deno.env.delete(k):Deno.env.set(k,v);}
 }
-Deno.test("workspace directory keeps personal and shared memberships visible",()=>fixture(async f=>{
+Deno.test("workspace directory exposes own and explicit owner delegated libraries",()=>fixture(async f=>{
  const r=await f.call("me","GET","/workspaces");assertEquals(r.status,200);assertEquals(r.body.active_org_id,A);assertEquals(r.body.workspaces.map((w:any)=>w.id),[A,B]);
 }));
 Deno.test("workspace selection uses verified caller and preserves requested role",()=>fixture(async f=>{
  const r=await f.call("me","POST","/workspace",{org_id:B,user_id:OUTSIDER,role:"owner"},A);
- assertEquals(r.status,200);assertEquals(r.body,{ok:true,org_id:B,org_name:"Agency",role:"agent"});assertEquals(f.active(),B);
+ assertEquals(r.status,200);assertEquals(r.body,{ok:true,actor_id:USER,org_id:B,org_name:"Client library",role:"team_owner"});assertEquals(f.active(),B);
  assertEquals((await f.call("me","GET","/workspaces",undefined,A)).body.active_org_id,A);
 }));
 Deno.test("invalid selection and malformed explicit headers never fall back",()=>fixture(async f=>{
@@ -103,7 +111,8 @@ Deno.test("bound listing edits and deletion refuse IDs from another selected wor
  assertEquals((await f.call("listings","PUT","/"+ROW_B+"/facts",edit("Agency home","Wrong workspace"),A)).status,404);
  assertEquals((await f.call("listings","DELETE","/"+ROW_B,undefined,A)).status,404);
  assertEquals((await f.call("listings","PUT","/"+ROW_A+"/facts",edit("Personal home","Correct workspace"),A)).status,200);
- for(const id of [ROW_A,ROW_B])assertEquals((await f.call("listings","PATCH","/"+id,{address:"Unsafe legacy edit"},A)).status,426);
+ assertEquals((await f.call("listings","PATCH","/"+ROW_A,{address:"Unsafe legacy edit"},A)).status,426);
+ assertEquals((await f.call("listings","PATCH","/"+ROW_B,{address:"Unsafe legacy edit"},A)).status,404);
  assertEquals(f.calls.filter(c=>c.path.endsWith("listings")&&c.body?.address==="Unsafe legacy edit").length,0);
  assertEquals((await f.call("listings","GET","",undefined,A)).body[0].address,"Correct workspace");
  assertEquals((await f.call("listings","GET","",undefined,B)).body[0].address,"Agency home");

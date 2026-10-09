@@ -20,8 +20,11 @@ final class ProductionPlanUITests: XCTestCase {
 
     func testPhotoFirstPropertyCanPlanWithoutVideoAndPreservesChecklist() {
         app.launch()
-        let addHome = app.buttons["home.addHome"]
-        XCTAssertTrue(addHome.waitForExistence(timeout: 20), app.debugDescription)
+        let listings = app.tabBars.buttons["Listings"]
+        XCTAssertTrue(listings.waitForExistence(timeout: 20), app.debugDescription)
+        listings.tap()
+        let addHome = app.buttons["Add a home"]
+        XCTAssertTrue(addHome.waitForExistence(timeout: 20) && addHome.isHittable, app.debugDescription)
         addHome.tap()
         let address = app.textFields["Type the home's address"]
         XCTAssertTrue(address.waitForExistence(timeout: 10), app.debugDescription)

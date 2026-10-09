@@ -1,3 +1,4 @@
+import { requireLibraryWrite, libraryBillingOrg, listingLibraryScope } from "../_shared/library-access.ts";
 import { fundingContext, fundedAttempt, textAttemptQuote, visionInputTokenBound, type FundingContext } from "../_shared/funded-serving.ts";
 // ai-video — server-side AI video suite on fal.ai (owner-authenticated).
 //
@@ -203,7 +204,7 @@ import {
   readJsonLimited,
   respondError,
 } from "../_shared/http.ts";
-import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, refundRateLimit, chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementFor, entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
@@ -230,6 +231,7 @@ import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservatio
 import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
+  decodeJobToken,
   extractJobToken,
   type JobTokenOwner,
   type RouterJobToken,
@@ -364,17 +366,11 @@ async function guardGenerate(
   kind: GenKind,
   projectedCents?: number,
   sourceOrgId?: string,
+  sourceListingId?: string,
 ): Promise<GenerateCharge> {
   const userId = user.id;
-  const orgId = await orgForUser(userId, sourceOrgId ?? preferredOrg(req));
+  const orgId = await contentOrgForUser(userId, sourceOrgId ?? preferredOrg(req), sourceListingId, true);
   const admin = adminClient();
-
-  const { data: mem, error: mErr } = await admin
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, "Your role does not permit AI video generation");
-  }
 
   await assertPaidAiIdentity(user, orgId);
 
@@ -393,7 +389,7 @@ async function guardGenerate(
   // a refusal here costs the org nothing to recover from.
   if (projectedCents != null && projectedCents > 0) {
     assertMonthlyHeadroom({
-      monthSpentCents: await orgMonthSpendCents(admin, orgId),
+      monthSpentCents: await orgMonthSpendCents(admin, orgId, userId),
       ceilingCents: ent.cogs_ceiling_cents,
       projectedCents,
       plan: ent.plan,
@@ -409,8 +405,9 @@ async function guardGenerate(
   if (!(await durableRateLimit(`aividem:${orgId}:${idem}`, 1, 120))) {
     throw new HttpError(409, "Duplicate submission — this job was already started.", "conflict");
   }
-  const burstKey = `aivideo:${orgId}`;
-  const monthlyKey = `${meterKeyFor(kind)}:${orgId}`;
+  const billingOrgId = await libraryBillingOrg(admin, orgId, userId);
+  const burstKey = `aivideo:${billingOrgId}`;
+  const monthlyKey = `${meterKeyFor(kind)}:${billingOrgId}`;
   const burst = await chargeRateReceipt(burstKey, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS);
   if (!burst.accepted) {
     throw new HttpError(429, "AI video generation limit reached for now — try again in a few minutes.", "rate_limited");
@@ -493,12 +490,7 @@ const DRIFT_LINEAGE_WINDOW_SECONDS = 6 * 3600;
 async function guardDriftCheck(user: PaidAiCaller, req: Request): Promise<string> {
   const userId = user.id;
   const orgId = await orgForUser(userId, preferredOrg(req));
-  const { data: mem, error: mErr } = await adminClient()
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, "Your role does not permit AI video generation");
-  }
+  await requireLibraryWrite(adminClient(), userId, orgId);
   await assertPaidAiIdentity(user, orgId);
   if (!(await durableRateLimit(`aidrift:${orgId}`, DRIFT_MAX_PER_WINDOW, DRIFT_WINDOW_SECONDS))) {
     throw new HttpError(
@@ -573,8 +565,9 @@ async function refundRejectedClipAllowance(orgId: string, kind: GenKind, request
 async function orgMonthSpendCents(
   admin: ReturnType<typeof adminClient>,
   orgId: string,
+  userId: string,
 ): Promise<number> {
-  const { data, error } = await admin.rpc("org_month_spend_cents", { p_org: orgId });
+  const { data, error } = await admin.rpc("org_month_spend_cents", { p_org: await libraryBillingOrg(admin, orgId, userId) });
   if (error) {
     console.error("ai-video: org_month_spend_cents lookup failed:", error.message);
     throw new HttpError(
@@ -1020,7 +1013,7 @@ Deno.serve(async (req) => {
       // Priced — now compose with the org's existing monthly COGS ceiling
       // (inside guardGenerate, before any meter is consumed) and charge.
       await assertVideoReceiptSigningReady();
-      const charge = await guardGenerate(user, req, "drone", reservation.cents, asset.org_id);
+      const charge = await guardGenerate(user, req, "drone", reservation.cents, asset.org_id, asset.listing_id ?? undefined);
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated): 4K tiers and the 1080p60 tier are separate tasks
@@ -1162,7 +1155,8 @@ Deno.serve(async (req) => {
       });
 
       await assertVideoReceiptSigningReady();
-      const charge = await guardGenerate(user, req, "aerial"); // validated — charge, then submit
+      assert(!assetListingId || !body.listing_id || assetListingId === body.listing_id,400,"Choose a source from this listing.");
+      const charge = await guardGenerate(user, req, "aerial", undefined, undefined, body.listing_id ?? assetListingId ?? undefined); // validated — charge, then submit
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). GROUNDED is an image-to-video task carrying the
@@ -1348,7 +1342,8 @@ Deno.serve(async (req) => {
       const chosenMotion: ReelMotion | null = userMotion ? null : shotMotion;
 
       await assertVideoReceiptSigningReady();
-      const charge = await guardGenerate(user, req, "reel"); // validated — charge, then submit
+      assert(!reelListingId || !body.listing_id || reelListingId === body.listing_id,400,"Choose a source from this listing.");
+      const charge = await guardGenerate(user, req, "reel", undefined, undefined, body.listing_id ?? reelListingId ?? undefined); // validated — charge, then submit
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). With the flag off this resolves to the one legacy
@@ -1691,9 +1686,13 @@ Deno.serve(async (req) => {
       // answer a confusing 400).
       const rawJobToken = extractJobToken(params);
       if (rawJobToken !== null) {
-        const callerOrgId = await orgForUser(user.id, preferredOrg(req));
-        const routed = await verifyJobToken(rawJobToken, { orgId: callerOrgId, userId: user.id });
-        if (!routed) {
+        // First establish signature and submitting actor; only an authenticated
+        // token's exact admitted listing may resolve a legacy storage org.
+        const signed = await decodeJobToken(rawJobToken);
+        assert(signed && signed.usr === user.id,403,"This job status link does not belong to your account.");
+        const routed = await verifyJobToken(rawJobToken, { orgId: signed.o, userId: user.id });
+        const callerOrgId = routed ? await routedContentOrg(user.id, preferredOrg(req), routed) : null;
+        if (!routed || callerOrgId !== routed.o) {
           throw new HttpError(
             403,
             "This job status link is invalid, expired, or does not belong to your workspace.",
@@ -1704,7 +1703,7 @@ Deno.serve(async (req) => {
 
       const statusUrl = requireFalUrl(params.get("status_url"), "status_url");
       const responseUrl = requireFalUrl(params.get("response_url"), "response_url");
-      await assertLegacyVideoReceipt(user.id, await orgForUser(user.id, preferredOrg(req)), statusUrl, responseUrl);
+      await assertLegacyVideoReceipt(user.id, await legacyReceiptOrg(user.id, preferredOrg(req), statusUrl, responseUrl), statusUrl, responseUrl);
 
       const su = new URL(statusUrl);
       su.searchParams.set("logs", "1");
@@ -1789,6 +1788,22 @@ Deno.serve(async (req) => {
  * — it is what the finished asset is persisted under, never re-derived from
  * the token itself.
  */
+async function routedContentOrg(actor: string, preferred: string | undefined, job: RouterJobToken): Promise<string> {
+  let listing = job.l;
+  if (!listing) {
+    const admin = adminClient();
+    const saved = await admin.from("app_video_cost_reservations").select("id")
+      .eq("org_id",job.o).eq("actor_id",actor).eq("provider_request_id",job.i).eq("provider",job.p).eq("model",job.m).limit(2);
+    assert(!saved.error && Array.isArray(saved.data) && saved.data.length <= 1,503,"This saved video scope could not be verified.");
+    if (saved.data[0]) {
+      const allowance = await admin.from("app_video_allowance_receipts").select("listing_id").eq("reservation_id",saved.data[0].id).maybeSingle();
+      assert(!allowance.error,503,"This saved video scope could not be verified.");
+      listing = allowance.data?.listing_id ?? undefined;
+    }
+  }
+  return await contentOrgForUser(actor,preferred,listing);
+}
+
 async function routedStatus(orgId: string, job: RouterJobToken): Promise<Response> {
   const adapter = adapterFor(job.p);
   const ref: JobRef = {
@@ -2287,6 +2302,21 @@ async function falSubmit(
  * SSRF guard: the status route fetches caller-supplied URLs with OUR fal key,
  * so only https URLs on fal's own queue hosts are allowed.
  */
+async function legacyReceiptOrg(actor: string, preferred: string | undefined, status: string, response: string): Promise<string> {
+  const receipt = falLegacyReceipt(status,response);
+  assert(receipt,403,"This older job needs verified account recovery. No new generation was started.");
+  const admin = adminClient();
+  const saved = await admin.from("app_video_cost_reservations").select("id,org_id,model,provider_request_id")
+    .eq("actor_id",actor).eq("provider","fal").eq("provider_request_id",receipt.requestId).limit(2);
+  assert(!saved.error,503,"This saved video could not be checked.");
+  assert(saved.data?.length === 1 && falLegacyReceiptMatchesModel(saved.data[0].model,saved.data[0].provider_request_id,receipt),403,"This older job needs verified account recovery. No new generation was started.");
+  const allowance = await admin.from("app_video_allowance_receipts").select("listing_id").eq("reservation_id",saved.data[0].id).maybeSingle();
+  assert(!allowance.error,503,"This saved video scope could not be verified.");
+  const org = await contentOrgForUser(actor,preferred,allowance.data?.listing_id ?? undefined);
+  assert(org === saved.data[0].org_id,403,"This saved video belongs to another listing library.");
+  return org;
+}
+
 async function assertLegacyVideoReceipt(actorId: string, orgId: string, status: string, response: string): Promise<void> {
   const receipt = falLegacyReceipt(status, response);
   assert(receipt, 403, "This older job needs verified account recovery. No new generation was started.");
@@ -2379,8 +2409,11 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
     | undefined;
   if (!listing || listing.deleted_at) throw new HttpError(404, "Asset not found");
 
+  const actor = await getUser(req);
+  const scope = await listingLibraryScope(adminClient(), actor.id, String(data.listing_id), true);
+  assert(scope.org_id === listing.org_id, 404, "This source belongs to another listing library.");
   const preferred = preferredOrg(req);
-  if (preferred && preferred !== listing.org_id) {
+  if (preferred && preferred !== scope.org_id && preferred !== scope.library_org_id) {
     throw new HttpError(403, "This asset belongs to a different workspace than X-Org-Id");
   }
 

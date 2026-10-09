@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
-import { uuid } from "../../data/contracts";
+import { uuid, canEditListing } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { businessApi } from "../business/api";
 import { uploadListingAsset } from "../listings/uploads";
@@ -146,7 +146,7 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
   const choices = eligible.filter(photo => selected.includes(photo.id));
   function assertScope() {
     const current = services.getSnapshot();
-    if (!alive.current || current.identityVersion !== version || current.status !== "signed-in" || current.identity?.userId !== workspace.user.id || current.identity.isAnonymous || listing.orgId !== workspace.org.id || !["owner", "admin", "agent"].includes(workspace.memberships.find(m => m.orgId === workspace.org.id)?.role ?? "")) throw new Error("Your account or editing access changed. Reopen this property before editing.");
+    if (!alive.current || current.identityVersion !== version || current.status !== "signed-in" || current.identity?.userId !== workspace.user.id || current.identity.isAnonymous || !canEditListing(workspace, listing)) throw new Error("Your account or editing access changed. Reopen this property before editing.");
   }
   async function refreshAllowance(signal?: AbortSignal) {
     try {

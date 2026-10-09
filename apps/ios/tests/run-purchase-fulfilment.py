@@ -21,7 +21,7 @@ import CryptoKit
 enum Config { static var useLiveBackend=true;static var isUITesting=false;static var enableAuth=true
  static let apiBaseURL:URL?=URL(string:"https://synthetic.invalid/functions/v1");static let supabaseAnonKey="fixture" }
 enum CloudSyncError:Error {case identityChanged,invalidResponse}
-enum WorkspaceContext {static var selectedOrgID:UUID?}
+enum WorkspaceContext {static var selectedOrgID:UUID?;static var billingOrgID:UUID?{selectedOrgID};static var servingOrgID:UUID?{selectedOrgID}}
 final class UserDefaults {static let standard=UserDefaults();var values:[String:Any]=[:]
  func data(forKey k:String)->Data?{values[k]as?Data};func string(forKey k:String)->String?{values[k]as?String}
  func set(_ value:Any,forKey k:String){values[k]=value};func removeObject(forKey k:String){values.removeValue(forKey:k)};func synchronize()->Bool{true} }
@@ -64,7 +64,8 @@ for name,old,new,expected in faults:
    # Only the post-request boundary; the initial context guard remains intact.
    mark='let result = try await api.syncEntitlement';i=s.index(mark);s=s[:i]+s[i:].replace(old,new,1)
   else:s=s.replace(old,new)
-  if name=='renewal-workspace':s=s.replace('WorkspaceContext.selectedOrgID == pending.selectedOrgID &&','true &&')
+  if name=='renewal-workspace':
+   s=s.replace('WorkspaceContext.selectedOrgID == pending.selectedOrgID &&','true &&').replace('pending.expectedOrgID == WorkspaceContext.billingOrgID','true')
  folder=OUT/name;folder.mkdir();swift=folder/'Actual.swift';swift.write_text(program(s));binary=folder/'checks'
  c=subprocess.run(['xcrun','swiftc','-parse-as-library',str(swift),str(paths[-2]),'-o',str(binary)],capture_output=True,text=True,timeout=90);(folder/'compile.log').write_text(c.stdout+c.stderr)
  if c.returncode:raise RuntimeError('compile failure '+str(folder/'compile.log'))

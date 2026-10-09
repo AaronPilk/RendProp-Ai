@@ -281,7 +281,7 @@ struct TeamView: View {
                 Label("Join a team with a code", systemImage: "arrow.right.circle")
             }
         } footer: {
-            Text("A team can invite you to a shared workspace or provide private testing access. Your own saved work stays in its original workspace. The confirmation explains which access you joined.")
+            Text("Join a Team plan while keeping your own listings. Invited agents see only their own listings; the Team owner can switch between authorized agents.")
         }
     }
 
@@ -379,7 +379,7 @@ private struct NewInviteView: View {
     private var invitationExplanation: String {
         privateTesting
             ? "This person gets testing access in their own private account. Their listings are not shared with your team. Add an email to request an invitation, or leave it blank to share the code yourself."
-            : "Adding an email requests an invitation. Leave it blank to create a code you share yourself. An admin can invite and remove people; an agent can't. This invitation opens a shared workspace."
+            : "Adding an email requests an invitation. Leave it blank to share a code yourself. Each agent keeps their own listings. The Team owner can view authorized agents’ listings and manage invitations."
     }
 
     var body: some View {
@@ -528,8 +528,8 @@ struct JoinTeamView: View {
                             .disabled(joining)
                     } footer: {
                         Text(prefilledCode.isEmpty
-                             ? "The team owner sends this code, usually as a link. Your existing work stays in its original workspace. The confirmation explains whether this is shared workspace access or private testing access."
-                             : "This code came from your invite link — just tap Join. Your existing work stays in its original workspace. The confirmation explains whether this is shared workspace access or private testing access.")
+                             ? "The Team owner sends this code, usually as a link. Your listings stay in your own account. Only the Team owner can switch between authorized agents’ listings."
+                             : "This code came from your invite link — just tap Join. Your listings stay in your own account. Only the Team owner can switch between authorized agents’ listings.")
                     }
                     if let errorMessage {
                         Section {
@@ -586,9 +586,6 @@ struct JoinTeamView: View {
             guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             await WorkspaceStore.shared.refresh()
             guard auth.userID == actor else { return }
-            if let membership = WorkspaceStore.shared.workspaces.first(where: { $0.id.uuidString.lowercased() == joined.orgId.lowercased() }) {
-                _ = await WorkspaceStore.shared.select(membership)
-            }
             guard auth.userID == actor else { return }
             Haptics.success()
             joinedDetails = joined

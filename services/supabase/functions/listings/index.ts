@@ -19,6 +19,8 @@ import { SPACE_TYPES } from "../_shared/spacetypes.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
 import { createListingRow } from "./create.ts";
+import { listLibraryListings } from "../_shared/library-listings.ts";
+import { listingLibraryScope, requireLibraryWrite } from "../_shared/library-access.ts";
 import { clientContact, saveClientContact } from "./client-contact.ts";
 import { appendPublishedPhotos, publishedPhotoPatch } from "../_shared/property-cover.ts";
 
@@ -140,8 +142,16 @@ Deno.serve(async (req) => {
     // No header keeps the complete cross-workspace snapshot older native sync
     // merges depend on. Explicit selection is validated and never falls back.
     const requested = requestedWorkspace(req);
-    const explicitOrg = requested === undefined ? undefined :
-      (await workspaceDirectory(adminClient(), user.id, requested)).active_org_id;
+    const scope = id ? await listingLibraryScope(adminClient(), user.id, id, req.method !== "GET") : null;
+    if (scope && requested !== undefined) assert(requested === scope.org_id || requested === scope.library_org_id, 404, "This listing belongs to another library.");
+    const explicitOrg = scope?.org_id ?? (requested === undefined ? undefined :
+      (await workspaceDirectory(adminClient(), user.id, requested)).active_org_id);
+    const responseListing = async (row: Record<string, unknown>) => {
+      assert(typeof row?.id === "string" && typeof row.org_id === "string", 503, "Listing update returned inconsistent data.");
+      const fresh = await listingLibraryScope(adminClient(), user.id, row.id);
+      assert(fresh.org_id === row.org_id, 503, "Listing identity changed during this request.");
+      return {...row, library_org_id: fresh.library_org_id};
+    };
 
     if (seg.length === 2 && seg[1] === "facts") {
       assert(req.method === "PUT", 405, "Use PUT for listing details.");
@@ -167,7 +177,7 @@ Deno.serve(async (req) => {
         if (error.code === "P0002") throw new HttpError(404, "Listing not found in this workspace.");
         throw new HttpError(400, "These listing edits could not be saved.");
       }
-      return json(data);
+      return json(await responseListing(data));
     }
 
     if (seg.length === 2 && seg[1] === "measurements") {
@@ -190,7 +200,7 @@ Deno.serve(async (req) => {
         if(error.code==="P0002") throw new HttpError(404,"Listing not found in this workspace.");
         throw new HttpError(400,"The measurement plan could not be saved.");
       }
-      return json(data);
+      return json(await responseListing(data));
     }
 
     if (seg.length === 2 && seg[1] === "client-contact") {
@@ -218,13 +228,18 @@ Deno.serve(async (req) => {
           "Create the listing and upload its photos before choosing the published gallery.");
       }
       validate(patch);
-      const result = await createListingRow(db, patch, user.id, org_id, req.headers.get("Idempotency-Key"));
-      return json({ ...result.data, create_replayed: result.replayed }, result.replayed ? 200 : 201);
+      const access = await requireLibraryWrite(adminClient(), user.id, org_id);
+      const result = await createListingRow(db, patch, user.id, org_id, req.headers.get("Idempotency-Key"), access.library_owner_user_id);
+      return json({ ...await responseListing(result.data), create_replayed: result.replayed }, result.replayed ? 200 : 201);
     }
 
     // ---- GET /listings ----
     if (req.method === "GET" && !id) {
       const url = new URL(req.url);
+      if (url.searchParams.get("library") === "1") {
+        assert(explicitOrg, 409, "Choose your listing library before syncing.");
+        return json(await listLibraryListings(adminClient(), user.id, explicitOrg, url.searchParams));
+      }
       let q = db.from("listings").select("*").is("deleted_at", null);
       if (explicitOrg) q = q.eq("org_id", explicitOrg);
       const status = url.searchParams.get("status");
@@ -234,6 +249,13 @@ Deno.serve(async (req) => {
       const { data, error } = await q.order("created_at", { ascending: false });
       if (error) throw new HttpError(400, `List failed: ${error.message}`);
       return json(data ?? []);
+    }
+
+    if (req.method === "GET" && id && seg.length === 1) {
+      const {data,error} = await db.from("listings").select("*").eq("id",id).is("deleted_at",null).maybeSingle();
+      assert(!error,503,"This listing could not be loaded.");
+      assert(data,404,"Listing not found in this library.");
+      return json(await responseListing(data));
     }
 
     // ---- PATCH /listings/:id ----
@@ -254,7 +276,7 @@ Deno.serve(async (req) => {
         assert(Object.keys(patch).every(k=>k==="main_photo_key"),400,
           "Save listing details separately when adding published photos.");
         await assertNotDeleting(user.id);
-        return json(await appendPublishedPhotos(adminClient(),{orgId:existing.org_id as string,listingId:id},user.id,body));
+        return json(await responseListing(await appendPublishedPhotos(adminClient(),{orgId:existing.org_id as string,listingId:id},user.id,body)));
       }
       if (Object.hasOwn(body,"main_photo_asset_id") || Object.hasOwn(body,"main_photo_key") || Object.hasOwn(body,"gallery_asset_ids")) {
         await assertNotDeleting(user.id);
@@ -273,7 +295,7 @@ Deno.serve(async (req) => {
       // Readable but not updatable → the RLS update policy (owner/admin/agent)
       // filtered the row: that is a role problem, not a missing listing.
       if (!data) throw new HttpError(403, "Your role does not permit editing listings");
-      return json(data);
+      return json(await responseListing(data));
     }
 
     // ---- DELETE /listings/:id (soft) ----

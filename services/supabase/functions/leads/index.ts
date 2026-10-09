@@ -35,6 +35,8 @@ import { deliverySummaries, resendClientLead } from "./client-delivery.ts";
 import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
 import { requestClientVerification, verifyClientRecipient } from "./recipient-verification.ts";
 import { deleteLead } from "./deletion.ts";
+import { leadLibraryScope, listLibraryLeads } from "../_shared/library-leads.ts";
+import { listingLibraryScope } from "../_shared/library-access.ts";
 
 async function authenticatedOrg(req:Request,user:string):Promise<string> {
   return (await workspaceDirectory(adminClient(),user,requestedWorkspace(req))).active_org_id;
@@ -87,8 +89,9 @@ Deno.serve(async (req) => {
     const seg = pathSegments(req, "leads");
 
     if (req.method === "DELETE" && seg.length === 1) {
-      const user = await getUser(req); const org = await authenticatedOrg(req, user.id);
-      return json(await deleteLead(adminClient(), user.id, org, seg[0]));
+      const user = await getUser(req);
+      const scope = await leadLibraryScope(adminClient(), user.id, seg[0], requestedWorkspace(req), true);
+      return json(await deleteLead(adminClient(), user.id, scope.org_id, seg[0]));
     }
 
     if (req.method === "POST" && seg.length === 1 && seg[0] === "verify-client-recipient") {
@@ -99,20 +102,23 @@ Deno.serve(async (req) => {
     }
     if (req.method === "POST" && seg.length === 1 && seg[0] === "client-recipient-verification") {
       const user = await getUser(req);
-      const org = await authenticatedOrg(req, user.id);
-      return json(await requestClientVerification(adminClient(), user.id, org, await readJsonLimited(req, 256)));
+      const body = await readJsonLimited<Record<string, unknown>>(req, 256);
+      assert(typeof body.listing_id === "string" && UUID_RE.test(body.listing_id), 400, "Choose a saved listing contact.");
+      const scope = await listingLibraryScope(adminClient(), user.id, body.listing_id, true);
+      const selected = requestedWorkspace(req);
+      assert(selected === null || selected === scope.org_id || selected === scope.library_org_id, 404, "Listing not found in this library.");
+      return json(await requestClientVerification(adminClient(), user.id, scope.org_id, body));
     }
 
     if(req.method === "POST" && seg.length === 2 && seg[1] === "send-to-client") {
       const user=await getUser(req);
-      const org=await authenticatedOrg(req,user.id);
-      return json(await resendClientLead(adminClient(),user.id,org,seg[0],await readJsonLimited(req,1024)));
+      const scope=await leadLibraryScope(adminClient(),user.id,seg[0],requestedWorkspace(req),true);
+      return json(await resendClientLead(adminClient(),user.id,scope.org_id,seg[0],await readJsonLimited(req,1024)));
     }
 
     // ---- GET /leads (owner) ----
     if (req.method === "GET") {
       const user = await getUser(req);
-      const db = userClient(req); // RLS: "org leads" select policy (member)
       const orgId = await authenticatedOrg(req,user.id);
       const params = new URL(req.url).searchParams;
 
@@ -130,20 +136,18 @@ Deno.serve(async (req) => {
       const status = params.get("status");
       if (status) assert(LEAD_STATUSES.includes(status), 400, `status must be one of ${LEAD_STATUSES.join(", ")}`);
 
-      let q = db
-        .from("leads")
-        .select("id, listing_id, render_id, name, phone, email, extra, source, status, synced_crm, created_at, listings(address, space_type)")
-        .eq("org_id", orgId)
-        .order("created_at", { ascending: false })
-        .limit(limit);
-      if (listingId) q = q.eq("listing_id", listingId);
-      if (sinceIso) q = q.gte("created_at", sinceIso);
-      if (status) q = q.eq("status", status);
-
-      const { data, error } = await q;
-      if (error) throw new HttpError(503, "Inquiries could not be loaded. Please retry.");
-      const summaries=await deliverySummaries(adminClient(),user.id,orgId,(data??[]).map(r=>r.id));
-      return json({ leads: (data ?? []).map((r) => ({...shapeLead(r as Record<string, unknown>),client_delivery:summaries[r.id]??null})) });
+      const admin = adminClient();
+      const data = await listLibraryLeads(admin, user.id, orgId, {limit, since: sinceIso, status, listing: listingId});
+      const summaries: Record<string, unknown> = {};
+      // Each delivery snapshot retains its physical source org. SQL rechecks
+      // the exact lead's current library access rather than broad membership.
+      const groups = new Map<string, string[]>();
+      for (const row of data) {
+        const org = row.org_id as string, ids = groups.get(org) ?? [];
+        ids.push(row.id as string); groups.set(org, ids);
+      }
+      for (const [org, ids] of groups) Object.assign(summaries, await deliverySummaries(admin, user.id, org, ids));
+      return json({ leads: data.map((r) => ({...shapeLead(r), client_delivery: summaries[String(r.id)] ?? null})) });
     }
 
     // ---- PATCH /leads/:id (owner) ----
@@ -152,10 +156,8 @@ Deno.serve(async (req) => {
       const db = userClient(req);
       const leadId = seg[0];
       assert(UUID_RE.test(leadId), 400, "lead id must be a UUID");
-      const org=await authenticatedOrg(req,user.id);
-      const {data: scoped,error: scopeError}=await db.from("leads").select("id,org_id").eq("id",leadId).eq("org_id",org).maybeSingle();
-      if(scopeError)throw new HttpError(503,"The inquiry could not be verified.");
-      if(!scoped)throw new HttpError(404,"Inquiry not found in this workspace.");
+      const scope=await leadLibraryScope(adminClient(),user.id,leadId,requestedWorkspace(req),true);
+      const org=scope.org_id;
       const body = await readJsonLimited<{ status?: string }>(req, 1024);
       const status = String(body.status ?? "").trim().toLowerCase();
       assert(LEAD_STATUSES.includes(status), 400, `status must be one of ${LEAD_STATUSES.join(", ")}`);
@@ -165,12 +167,15 @@ Deno.serve(async (req) => {
       if (error) throwRpc(error.message);
 
       // Read back in the same shape as GET (with the listing address).
-      const { data: row } = await db
+      const { data: row, error: readError } = await db
         .from("leads")
         .select("id, listing_id, render_id, name, phone, email, extra, source, status, synced_crm, created_at, listings(address, space_type)")
         .eq("id", leadId)
+        .eq("org_id", org)
         .maybeSingle();
-      const shaped=shapeLead((row ?? updated ?? {}) as Record<string, unknown>);
+      if (readError || !row || row.id !== leadId) throw new HttpError(503, "Inquiry update could not be read back. Please refresh.");
+      await leadLibraryScope(adminClient(),user.id,leadId,requestedWorkspace(req));
+      const shaped=shapeLead(row as Record<string, unknown>);
       const summaries=await deliverySummaries(adminClient(),user.id,org,[leadId]);
       return json({ ok: true, lead: {...shaped,client_delivery:summaries[leadId]??null} });
     }

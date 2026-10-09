@@ -35,6 +35,8 @@ class Fixture {
       if (table === "org_seats_allowed") return json(2);
       const body = await req.json();
       if (this.failedRPC === table) return json({message:"fixture unavailable"},503);
+      if (table === "workspace_directory") return json({actor_id:user,own_org_id:org,billing_org_id:org,can_switch_agent_libraries:false,active_org_id:org,workspaces:[{id:org,name:"Fixture Team",role:"owner",access_mode:"own",library_owner_user_id:user,billing_org_id:org,can_read:true,can_write:true}]});
+      if (table === "library_access") return json({actor_id:user,org_id:org,library_owner_user_id:user,role:this.role,access_mode:"own",can_read:true,can_write:this.role!=="marketing",can_manage_subscription:!this.testingContext,billing_org_id:org,team_org_id:null});
       if (table === "org_has_internal_testing_grant") return json(this.masterTesting);
       if (table === "private_internal_testing_host_mode") return json(this.masterTesting ? {configured:true,active:true,access_mode:"private_testing"} : null);
       if (table === "private_internal_testing_context") {
@@ -168,5 +170,5 @@ Deno.test("sponsored private workspace reports Team benefits without becoming a 
 }));
 
 Deno.test("ordinary anonymous owner can still read its own workspace without private-host authority",async()=>fixture(async f=>{
- f.anonymous=true;f.failedRPC="private_internal_testing_host_mode";const response=await f.request("",{},"GET");const body=await response.json();assertEquals(response.status,200);assertEquals(body.access_mode,"shared_workspace");assertEquals(body.members.length,1);assertEquals(f.writes,[]);
+ f.anonymous=true;f.failedRPC="private_internal_testing_host_mode";const response=await f.request("",{},"GET");const body=await response.json();assertEquals(response.status,200);assertEquals(body.access_mode,"private_libraries");assertEquals(body.members.length,1);assertEquals(f.writes,[]);
 }));

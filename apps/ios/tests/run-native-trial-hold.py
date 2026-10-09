@@ -66,7 +66,7 @@ enum CloudSyncError: Error { case identityChanged, invalidResponse }
 enum Config { static var useLiveBackend = true; static var isUITesting = false; static let enableAuth = true
     static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1")
     static let supabaseAnonKey = "synthetic-anon" }
-enum WorkspaceContext { static var selectedOrgID: UUID? }
+enum WorkspaceContext { static var selectedOrgID: UUID?; static var billingOrgID: UUID? { selectedOrgID }; static var servingOrgID: UUID? { selectedOrgID } }
 @MainActor final class AuthStore {
     static let shared = AuthStore()
     var userID: String?; var syncSessionRevision: UInt64 = 1
@@ -211,9 +211,9 @@ faults = [
     ('eligibility-after-hold', 'guard finalEligibility == true, hasSevenDayTrial(for: product)', 'guard hasSevenDayTrial(for: product)', 'Late eligibility change opened Apple sheet'),
     ('retain-cancel', 'if !retainTrialBinding, createdBinding, let binding = preparedBinding', 'if createdBinding, let binding = preparedBinding', 'Cancellation discarded trial workspace binding'),
     ('api-token', 'AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == appAccountToken,', 'true,', 'Foreign appAccountToken dispatched'),
-    ('api-workspace', 'WorkspaceContext.selectedOrgID == orgID else', 'true else', 'Foreign API workspace dispatched'),
+    ('api-workspace', 'WorkspaceContext.billingOrgID == orgID else', 'true else', 'Foreign API workspace dispatched'),
     ('api-401-retry', 'retriesUnauthorized: false,', 'retriesUnauthorized: true,', 'Reservation retried after 401'),
-    ('api-response-snapshot', 'let (data, resp) = try await session.data(for: req)\n        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,\n              requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }',
+    ('api-response-snapshot', 'let (data, resp) = try await session.data(for: req)\n        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,\n              WorkspaceContext.selectedOrgID == viewedOrg,\n              requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true else { throw CloudSyncError.identityChanged }',
      'let (data, resp) = try await session.data(for: req)', 'Late API response accepted'),
     ('fresh-authority-order', None, None, 'Late server authority during Apple await opened sheet'),
     ('fresh-false-cache', 'introOfferEligible[product.id] = eligible', 'introOfferEligible[product.id] = true', 'Fresh ineligible result reused stale trial authority'),
@@ -245,7 +245,7 @@ for name, old, new, expected in faults:
         elif old in a:
             a = a.replace(old, new)
             if name == 'api-workspace':
-                a = a.replace('requiredCurrentOrg.map({ WorkspaceContext.selectedOrgID == $0 }) ?? true', 'true')
+                a = a.replace('requiredCurrentOrg.map({ WorkspaceContext.billingOrgID == $0 }) ?? true', 'true')
         elif old in m: m = m.replace(old, new)
         else: raise RuntimeError('Unapplied guard fault: ' + name)
     folder = out/name; folder.mkdir(exist_ok=True)

@@ -121,6 +121,18 @@ async function execute(
       }
       const name = url.pathname.split("/").at(-1)!;
       if (url.pathname.includes("/rpc/")) {
+        if (name === "workspace_directory") {
+          assertEquals(args.p_user, actor);
+          assertEquals(args.p_preferred_org, org);
+          return Response.json({actor_id:actor,active_org_id:org,own_org_id:org,billing_org_id:org,
+            can_switch_agent_libraries:false,workspaces:[{id:org,name:"Agent reel fixture",role:"owner",
+              access_mode:"own",library_owner_user_id:actor,billing_org_id:org,can_read:true,can_write:true}]});
+        }
+        if (name === "library_access") {
+          assertEquals(args,{p_actor:actor,p_org:org});
+          return Response.json({actor_id:actor,org_id:org,library_owner_user_id:actor,role:"owner",
+            access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:org,team_org_id:null});
+        }
         if (name === "org_entitlement") {
           return Response.json({
             plan: "pro",

@@ -1,3 +1,4 @@
+import { requireContentWrite } from "../_shared/library-access.ts";
 import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 
@@ -107,10 +108,7 @@ export async function handleListingActions(req: Request, context: ListingActionC
   const listingId = body.listing_id, assetId = body.asset_id;
   assert(typeof listingId === "string" && UUID.test(listingId), 400, "Choose a property.");
   await context.authorizeListing(listingId);
-  const { data: member, error: memberError } = await context.db.from("memberships").select("role")
-    .eq("org_id", context.orgId).eq("user_id", context.userId).maybeSingle();
-  if (memberError) throw new HttpError(503, "Workspace permissions could not be checked.");
-  assert(member && ["owner", "admin", "agent"].includes(member.role), 403, "Your role does not permit editing property media.");
+  await requireContentWrite(context.admin, context.userId, context.orgId, listingId);
   if (req.method === "PATCH") return await editGallery(body, listingId, context);
   assert(typeof assetId === "string" && UUID.test(assetId), 400, "Choose an uploaded photo.");
   const { data: asset, error: assetError } = await context.db.from("capture_assets")

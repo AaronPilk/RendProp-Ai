@@ -638,16 +638,14 @@ final class ReviewerWalk: XCTestCase {
     // MARK: - Navigation helpers
 
     private func waitForHome(timeout: TimeInterval) -> Bool {
-        waitForAny(ids: ["home.addHome"], labels: ["Make something"], timeout: timeout)
+        waitForAny(ids: ["home.getStarted"], labels: ["Create Something Amazing"], timeout: timeout)
     }
 
-    /// CAREFUL with the confirming labels: "Add a home" and "My Homes" appear
-    /// on BOTH the Home dashboard and the Homes tab, so either would make
-    /// `openTab` report success without switching tab. Only `home.addHome` and
-    /// "Make something" are unique to the dashboard.
+    /// Confirm the dashboard with its unique Get started action or tool heading,
+    /// never the collection tab's unchanged Add action.
     @discardableResult
     private func openHomeTab() -> Bool {
-        openTab("Home", ids: ["home.addHome"], confirmedBy: ["Make something"])
+        openTab("Home", ids: ["home.getStarted"], confirmedBy: ["Create Something Amazing"])
     }
 
     @discardableResult

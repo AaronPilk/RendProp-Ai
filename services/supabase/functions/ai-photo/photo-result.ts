@@ -1,3 +1,4 @@
+import { requireContentWrite } from "../_shared/library-access.ts";
 import { assert, HttpError } from "../_shared/http.ts";
 import { R2_BUCKET_RENDERS, headObject } from "../_shared/r2.ts";
 import { MAX_INLINE_IMAGE_BYTES, persistResult, presignGet, bytesToB64 } from "../_shared/providers/common.ts";
@@ -21,8 +22,7 @@ export async function photoResultKeys(identity:PhotoResultIdentity):Promise<Reco
  return Object.fromEntries(Object.entries(mimeExtensions).map(([mime,extension])=>[mime,`ai-router/${identity.orgId}/completed-photo/${digest}.${extension}`]));
 }
 async function authority(admin:any,identity:PhotoResultIdentity,key:string,bytes:number) {
- const membership=await admin.from("memberships").select("user_id,org_id,role").eq("user_id",identity.actorId).eq("org_id",identity.orgId).maybeSingle();
- assert(!membership.error&&membership.data?.user_id===identity.actorId&&membership.data?.org_id===identity.orgId&&["owner","admin","agent"].includes(membership.data.role),403,"The saved photo is unavailable for this account.");
+ await requireContentWrite(admin,identity.actorId,identity.orgId,identity.listingId);
  const {data,error}=await admin.rpc("register_private_ai_output",{p_user:identity.actorId,p_org:identity.orgId,p_listing:identity.listingId,p_bucket:"renders",p_key:key,p_bytes:bytes});
  assert(!error&&data?.ok===true&&data.key===key,403,"The saved photo is unavailable for this account.");
 }

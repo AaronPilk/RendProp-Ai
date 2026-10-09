@@ -13,6 +13,8 @@ import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { HttpError } from "./http.ts";
 import { runtimeApiKey, serviceKeyMatches } from "./api-key-config.ts";
+import { workspaceDirectory } from "./workspaces.ts";
+import { listingLibraryScope, requireLibraryWrite } from "./library-access.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const LEGACY_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -101,49 +103,29 @@ export async function assertPaidAiIdentity(user: PaidAiCaller, orgId: string): P
   if (data !== true) throw denied();
 }
 
-// Prefer owner > admin > agent > marketing when a user has multiple memberships.
-const ROLE_RANK: Record<string, number> = { owner: 0, admin: 1, agent: 2, marketing: 3 };
-
 /**
- * Resolve the org a user is acting under.
- * If `preferredOrgId` is given (e.g. from an `X-Org-Id` header) we verify the
- * user is a member of it; otherwise we pick their highest-privilege membership.
- * Uses the admin client so it works regardless of the caller's RLS context.
+ * Resolve a currently authorized content library, including explicit Team-owner
+ * delegation. The SQL directory is the authority; raw memberships or a cached
+ * selection cannot give an invited agent another member's private library.
  */
 export async function orgForUser(userId: string, preferredOrgId?: string): Promise<string> {
-  const admin = adminClient();
-  if (preferredOrgId) {
-    const { data, error } = await admin
-      .from("memberships")
-      .select("org_id")
-      .eq("user_id", userId)
-      .eq("org_id", preferredOrgId)
-      .maybeSingle();
-    if (error) throw new HttpError(500, `Membership lookup failed: ${error.message}`);
-    if (!data) throw new HttpError(403, "Not a member of the requested org");
-    return preferredOrgId;
+  return (await workspaceDirectory(adminClient(), userId, preferredOrgId)).active_org_id;
+}
+
+/** Resolve one authorized listing's real storage org without exposing the rest
+ * of an old shared Team org. The selected logical library and the row's real
+ * org are both accepted only after the fresh listing-specific SQL authority. */
+export async function contentOrgForUser(userId: string, preferredOrgId?: string, listingId?: string | null, write = false): Promise<string> {
+  if (listingId != null) {
+    const scope = await listingLibraryScope(adminClient(), userId, listingId, write);
+    if (preferredOrgId && preferredOrgId !== scope.org_id && preferredOrgId !== scope.library_org_id) {
+      throw new HttpError(403, "This listing belongs to a different library.", "forbidden");
+    }
+    return scope.org_id;
   }
-
-  // The active workspace first (migration 0033). Joining a team no longer
-  // deletes the joiner's personal workspace, so a person can hold two
-  // memberships — and role rank alone would send an agent back to their own
-  // owner-role personal org instead of the team they just joined.
-  // active_org_for_user re-checks that the recorded choice is still a real
-  // membership in a live org, and falls back to highest privilege, which is
-  // also what makes a REMOVED member land somewhere instead of nowhere.
-  const { data: active, error: activeErr } = await admin
-    .rpc("active_org_for_user", { p_user: userId });
-  if (!activeErr && typeof active === "string" && active) return active;
-
-  const { data, error } = await admin
-    .from("memberships")
-    .select("org_id, role")
-    .eq("user_id", userId);
-  if (error) throw new HttpError(500, `Membership lookup failed: ${error.message}`);
-  if (!data || data.length === 0) throw new HttpError(403, "User has no org membership");
-
-  data.sort((a, b) => (ROLE_RANK[a.role] ?? 9) - (ROLE_RANK[b.role] ?? 9));
-  return data[0].org_id as string;
+  const org = await orgForUser(userId, preferredOrgId);
+  if (write) await requireLibraryWrite(adminClient(), userId, org);
+  return org;
 }
 
 /** Read an optional preferred org from the request header. */

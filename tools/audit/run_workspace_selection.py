@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
-TARGET=SQL/'migrations/20261001145730_workspace_selection.sql'
+TARGET=SQL/'migrations/20261009192550_team_private_listing_libraries.sql'
 UPLOAD_SUPPORT=['transport.ts','gateway_contract.ts','content_type.ts']
 STUDIO_SUPPORT=['handler.ts','property-music.ts','project-media.ts','context.ts']
 # Exact audited registration inventory, including current trial reservation and
@@ -74,21 +74,24 @@ try:
   if phase=='replayed':query('replay',TARGET.read_text())
   result=query('workspace-'+phase,(SQL/'tests/workspace_selection.sql').read_text());assert '\n28\n'in result and result.count('|t')==28
  # SQL negative control proves membership authorization is tested semantically.
- source=TARGET.read_text();anchor="if v_role is null then raise exception 'RP403: this workspace is no longer available to this account';end if;"
- assert source.count(anchor)==1;query('install-missing-membership-control',source.replace(anchor,"if v_role is null then v_role:='agent';end if;"))
- negative=query('missing-membership-control',(SQL/'tests/workspace_selection.sql').read_text(),3);assert 'wrong denial for nonmember cannot select another account workspace' in negative
- query('restore-selection',source)
+ source=TARGET.read_text()
+ helper=query('current-library-access-definition', "select pg_get_functiondef('public.library_content_access(uuid,uuid,boolean)'::regprocedure);")
+ header=helper.split('AS $function$',1)[0]
+ query('install-missing-membership-control',header+'AS $function$ select true; $function$;')
+ negative=query('missing-membership-control',(SQL/'tests/workspace_selection.sql').read_text(),3);assert 'WORKSPACE FAIL: directory keeps personal library and excludes shared Team seat' in negative
+ query('restore-selection',helper)
  for n in [1,2]:
   owner=f'd0100106-0000-4000-8000-{n*2:012d}';actor=f'd0100106-0000-4000-8000-{n*2+1:012d}'
   query(f'race-users-{n}',f"insert into auth.users(id,email,is_anonymous)values('{owner}','owner-{n}@fixture.invalid',false),('{actor}','actor-{n}@fixture.invalid',false);")
   org=query(f'race-org-{n}',f"select org_id from memberships where user_id='{owner}';").strip()
-  query(f'race-membership-{n}',f"update orgs set plan='team'where id='{org}';insert into memberships(user_id,org_id,role)values('{actor}','{org}','agent');")
-  commands=[f"select select_workspace('{actor}','{org}');",f"select remove_org_member('{org}','{owner}','{actor}');"]
+  query(f'race-membership-{n}',f"update orgs set plan='team'where id='{org}';set role service_role;select create_org_invite('{owner}','{org}',null,'agent','{str(n)*64}');select accept_org_invite('{actor}','{str(n)*64}');")
+  private=query(f'race-private-{n}',f"select private_org_id from team_private_libraries where agent_user_id='{actor}'and revoked_at is null;").strip()
+  commands=[f"select select_workspace('{owner}','{private}');",f"select remove_org_member('{org}','{owner}','{actor}');"]
   if n==2:commands.reverse()
   values=race(f'selection-removal-race-{n}',commands,org);removal=values[1 if n==1 else 0];selection=values[0 if n==1 else 1]
   assert removal['exit']==0 and (selection['exit']==0 or(selection['exit']==3 and 'RP403:'in selection['output']))
   assert query(f'removal-wins-{n}',f"select count(*)from memberships where user_id='{actor}'and org_id='{org}';select active_org_for_user('{actor}')<>'{org}';").strip()=='0\nt'
-  denied=query(f'explicit-no-fallback-{n}',f"set role service_role;select workspace_directory('{actor}','{org}');",3);assert 'RP403:'in denied
+  denied=query(f'explicit-no-fallback-{n}',f"set role service_role;select workspace_directory('{owner}','{private}');",3);assert 'RP403:'in denied
  deno=[BIN['deno'],'test','--cached-only','--no-config','--no-lock','--node-modules-dir=none','--allow-read','--allow-env','--deny-net','--deny-write','--deny-run']
  output=run('handlers',deno+[SQL/'functions/me/workspaces.test.ts',SQL/'functions/me/billing.test.ts',SQL/'functions/listings/create.test.ts']);assert_handler_inventory(output)
  # Bind first create in A, lose its response, switch default to B, retry with A.

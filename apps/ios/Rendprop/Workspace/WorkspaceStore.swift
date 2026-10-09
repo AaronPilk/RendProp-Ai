@@ -9,38 +9,64 @@ import Combine
     @Published private(set) var errorMessage: String?
     private var loadedOwner: UUID?
     private var operation: UUID?
-    var selected: WorkspaceMembership? { snapshot?.selected }
-    var workspaces: [WorkspaceMembership] { snapshot?.workspaces ?? [] }
-    var displayName: String { selected?.displayName ?? "Choose a workspace" }
+    private var verifiedDirectory: WorkspaceDirectory?
+    private var verifiedRevision: UInt64?
+    var selected: WorkspaceMembership? {
+        // Cached delegated rows never reopen another person's cards. Only a
+        // fresh directory from this actor and session enables delegation.
+        if let directory = currentDirectory { return directory.workspaces.first { $0.id == snapshot?.selectedOrgID } }
+        guard let owner = loadedOwner, owner == WorkspaceContext.owner(),
+              let member = snapshot?.selected, member.accessMode == "own", member.libraryOwnerUserID == owner else { return nil }
+        return member
+    }
+    private var currentDirectory: WorkspaceDirectory? {
+        guard let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)), owner == loadedOwner,
+              verifiedRevision == AuthStore.shared.syncSessionRevision else { return nil }
+        return verifiedDirectory?.checked(actor: owner)
+    }
+    var workspaces: [WorkspaceMembership] { currentDirectory?.workspaces ?? [] }
+    var selectionChoices: [WorkspaceMembership] { currentDirectory?.selectionChoices ?? [] }
+    var canSwitchAgentLibraries: Bool { currentDirectory?.canSwitchAgentLibraries == true }
+    func canViewLibrary(_ org: UUID) -> Bool {
+        if let directory = currentDirectory { return directory.selectionChoices.contains { $0.id == org } }
+        return selected?.id == org
+    }
+    var displayName: String { selected?.displayName ?? "Choose a listing library" }
 
     init() { snapshot = WorkspaceContext.current; loadedOwner = WorkspaceContext.owner() }
 
-    /// Membership refresh does not let another device silently retarget this
-    /// device. A removed selection becomes an explicit choice, never a fallback.
+    /// Preserve an authorized local selection. A fresh default directory can
+    /// recover a removed shared-Team selection into this actor's private library.
     func refresh() async {
         guard Config.useLiveBackend, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return }
-        if loadedOwner != owner { snapshot = WorkspaceContext.read(owner: owner); loadedOwner = owner }
+        if loadedOwner != owner {
+            snapshot = WorkspaceContext.read(owner: owner); loadedOwner = owner
+            verifiedDirectory = nil; verifiedRevision = nil
+        }
         let op = UUID(); operation = op; isLoading = true
         let revision = AuthStore.shared.syncSessionRevision
         defer { if operation == op { isLoading = false } }
         do {
             let data = try await request(path: "workspaces", method: "GET", body: nil, owner: owner, revision: revision)
-            struct Response: Decodable { let active_org_id: UUID?; let workspaces: [WorkspaceMembership] }
-            let result = try JSONDecoder().decode(Response.self, from: data)
+            guard let result = try JSONDecoder().decode(WorkspaceDirectory.self, from: data).checked(actor: owner)
+                else { throw CloudSyncError.invalidResponse }
             guard operation == op else { return }
             let previous = WorkspaceContext.read(owner: owner)
-            let selection = previous.map { prior in result.workspaces.contains(where: { $0.id == prior.selectedOrgID }) ? prior.selectedOrgID : nil } ?? result.active_org_id
-            try apply(.init(selectedOrgID: selection, workspaces: result.workspaces), owner: owner)
+            let selection = result.refreshedSelection(previous: previous?.selectedOrgID)
+            guard let directory = result.selecting(selection) else { throw CloudSyncError.invalidResponse }
+            try apply(.init(selectedOrgID: selection, workspaces: result.workspaces, directory: directory), owner: owner)
+            verifiedDirectory = directory; verifiedRevision = AuthStore.shared.syncSessionRevision
             errorMessage = nil
         } catch {
             guard operation == op, AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner else { return }
-            errorMessage = UserFacingError.message(error, fallback: "Couldn't load your workspaces. Your saved work is safe; try again when connected.")
+            if Self.isAuthorityFailure(error) { invalidateAuthority(owner: owner) }
+            errorMessage = UserFacingError.message(error, fallback: "Couldn't load your listing libraries. Your saved work is safe; try again when connected.")
         }
     }
 
     func select(_ membership: WorkspaceMembership) async -> Bool {
         guard !isSwitching, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
-              workspaces.contains(membership) else { return false }
+              let directory = currentDirectory, directory.selectionChoices.contains(membership) else { return false }
         if selected?.id == membership.id { return true }
         isSwitching = true; operation = UUID()
         let revision = AuthStore.shared.syncSessionRevision
@@ -49,21 +75,56 @@ import Combine
             let bytes = try await request(path: "workspace", method: "POST", body: ["org_id": membership.id.uuidString.lowercased()], owner: owner, revision: revision)
             struct Response: Decodable { let org_id: UUID }
             guard try JSONDecoder().decode(Response.self, from: bytes).org_id == membership.id else { throw CloudSyncError.invalidResponse }
-            try apply(.init(selectedOrgID: membership.id, workspaces: workspaces), owner: owner)
+            guard let selection = directory.selecting(membership.id) else { throw CloudSyncError.invalidResponse }
+            try apply(.init(selectedOrgID: membership.id, workspaces: selection.workspaces, directory: selection), owner: owner)
+            verifiedDirectory = selection; verifiedRevision = AuthStore.shared.syncSessionRevision
             errorMessage = nil
             return true
         } catch {
             guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner else { return false }
-            errorMessage = UserFacingError.message(error, fallback: "Couldn't switch workspaces. Your current workspace is unchanged.")
+            if Self.isAuthorityFailure(error) { invalidateAuthority(owner: owner) }
+            errorMessage = UserFacingError.message(error, fallback: "Couldn't switch listing libraries. Your current library is unchanged.")
             return false
         }
     }
 
+    /// A permission/deletion refusal or malformed authority response revokes
+    /// cached delegation immediately. Transport failures retain own offline work.
+    static func isAuthorityFailure(_ error: Error) -> Bool {
+        if error is DecodingError { return true }
+        if let cloud = error as? CloudSyncError, case .invalidResponse = cloud { return true }
+        if let api = error as? APIError {
+            switch api {
+            case .decoding: return true
+            case .badResponse(let status): return status < 0 || [400, 401, 403, 404, 409, 410].contains(status)
+            case .server(let status, _, _): return [400, 401, 403, 404, 409, 410].contains(status)
+            default: break
+            }
+        }
+        return false
+    }
+
+    private func invalidateAuthority(owner: UUID) {
+        let hadAuthority = verifiedDirectory != nil || snapshot?.selectedOrgID != nil
+        verifiedDirectory = nil; verifiedRevision = nil
+        let ownRows = (snapshot?.workspaces ?? []).filter { $0.accessMode == "own" && $0.libraryOwnerUserID == owner }
+        let disconnected = WorkspaceContext.Snapshot(selectedOrgID: nil, workspaces: ownRows)
+        _ = WorkspaceContext.save(disconnected, owner: owner)
+        snapshot = disconnected
+        if hadAuthority {
+            AuthStore.shared.workspaceDidChange()
+            AuthStore.shared.orgName = ""
+            NotificationCenter.default.post(name: .rendpropWorkspaceChanged, object: nil)
+            NotificationCenter.default.post(name: .rendpropPlanChanged, object: nil)
+        }
+    }
+
     private func apply(_ value: WorkspaceContext.Snapshot, owner: UUID) throws {
-        let previous = WorkspaceContext.read(owner: owner)?.selectedOrgID
+        let previousSnapshot = WorkspaceContext.read(owner: owner)
+        let previous = previousSnapshot?.selectedOrgID
         guard WorkspaceContext.save(value, owner: owner) else { throw CloudSyncError.invalidResponse }
         snapshot = value; loadedOwner = owner
-        if previous != value.selectedOrgID {
+        if previous != value.selectedOrgID || previousSnapshot?.directory != value.directory {
             AuthStore.shared.workspaceDidChange()
             AuthStore.shared.orgName = value.selected?.displayName ?? ""
             NotificationCenter.default.post(name: .rendpropWorkspaceChanged, object: nil)
