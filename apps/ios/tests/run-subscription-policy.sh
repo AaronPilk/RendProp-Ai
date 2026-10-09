@@ -6,6 +6,7 @@ trap 'rm -rf "$subscription_test_dir"' EXIT
 xcrun swiftc -parse-as-library \
   "$subscription_test_root/apps/ios/Rendprop/Purchases/SubscriptionOfferPolicy.swift" \
   "$subscription_test_root/apps/ios/Rendprop/Purchases/SubscriptionBillingContext.swift" \
+  "$subscription_test_root/apps/ios/Rendprop/Models/Money.swift" \
   "$subscription_test_root/apps/ios/tests/SubscriptionPolicyTests.swift" \
   -o "$subscription_test_dir/subscription-policy-tests"
 "$subscription_test_dir/subscription-policy-tests"
