@@ -118,7 +118,7 @@ class RunnerCase(unittest.TestCase):
                     output, rc = table(states=states), 3
             elif sqlfile in ('video_erase.sql', 'video_erase_direct_bria.sql', 'member_portfolios.sql'):
                 marker = ('PASS video erase SQL: 51 assertions' if sqlfile == 'video_erase.sql' else
-                          'PASS direct Bria SQL: 37 assertions' if sqlfile == 'video_erase_direct_bria.sql' else
+                          'PASS direct Bria SQL: 40 assertions' if sqlfile == 'video_erase_direct_bria.sql' else
                           'PASS: member portfolio SQL assertions; all fixtures rolled back.')
                 output, rc = scenario.get('reflection', {}).get(sqlfile, (marker + '\n', 0))
             elif sqlfile == 'negative_astra_paid_gates.sql':
@@ -236,7 +236,7 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('video_erase.sql', 51), ('video_erase_direct_bria.sql', 37), ('member_portfolios.sql', 23)]])
+            for filename, count in [('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):
@@ -249,10 +249,10 @@ class InventoryTests(RunnerCase):
                 self.rejected(reflection={filename: ('ROLLBACK without acceptance marker\n', 0)})
 
     def test_reflection_wrong_assertion_count_rejects(self):
-        self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 38 assertions\n', 0)})
+        self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 41 assertions\n', 0)})
 
     def test_reflection_marker_cannot_override_error_exit(self):
-        self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 37 assertions\n', 3)})
+        self.rejected(reflection={'video_erase_direct_bria.sql': ('PASS direct Bria SQL: 40 assertions\n', 3)})
 
     def test_publication_exit_zero_without_required_marker_rejects(self):
         self.rejected(publication_positive=('printed without actually finishing', 0))

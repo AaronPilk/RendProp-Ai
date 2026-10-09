@@ -64,3 +64,15 @@ bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/admin/probe
 # bytes, and eight unchanged neighbours reproduce. This classification does not
 # certify the unavailable original APIClient bytes or historical test results.
 98e43b779fcc110a8761b78ad949cf85a33bc4d3:docs/web-client/release-parity-2026-09-14/native-validation.json:generic-api-key:443
+
+# Exact historical non-secrets independently reviewed on2026-10-09.
+# Four source checksums recomputed from the corresponding historical source;
+# current receipts separate path/sha256. No credential values or broad exclusions.
+1f5650e6616bb74abe5044263d9f98d9620d9334:docs/releases/CODEX-LAUNCH-ROUND2-VERIFICATION-20261008.json:generic-api-key:10
+78556e0cad0d23b500773aceb388b712a6efd5f5:docs/releases/BACKEND-LAUNCH-CEILING-MODE-20261008.json:generic-api-key:32
+78556e0cad0d23b500773aceb388b712a6efd5f5:docs/releases/BACKEND-LAUNCH-CEILING-MODE-20261008.json:generic-api-key:50
+78556e0cad0d23b500773aceb388b712a6efd5f5:docs/releases/BACKEND-LAUNCH-CEILING-MODE-20261008.json:generic-api-key:64
+# Deliberately unsigned forged-role JWT; actual handler refuses403 before transport.
+a326780c43f8ec458eaa42e2ccd62c2451f74af2:services/supabase/functions/_shared/modern-service-handlers.test.ts:jwt:31
+# Offline synthetic media storage path; no authentication or capability.
+a326780c43f8ec458eaa42e2ccd62c2451f74af2:services/supabase/functions/ai-chapters/failure-recovery.test.ts:generic-api-key:29

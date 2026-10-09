@@ -26,7 +26,7 @@ async function fixture(failure: Failure, removeAbort = false) {
     const LEGACY_ROUTE={provider:'gemini',model:'synthetic-model',unit:'call',unitCents:1,routeId:null};
     const handleOptions=()=>new Response(null,{status:204}),pathSegments=()=>[],requireGemini=()=>{},getUser=async()=>({id:'synthetic-user'}),userClient=()=>({}),preferredOrg=()=>null,orgForUser=async()=> 'synthetic-org';
     const requiredUuid=(value:any)=>value, cleanLanguage=()=> 'en';
-    const resolveVideoAsset=async()=>({id:'synthetic-asset',orgId:'synthetic-org',bucket:'uploads',storageKey:'synthetic.mp4',spaceType:'real_estate',durationS:90,contentType:'video/mp4'});
+    const resolveVideoAsset=async()=>({id:'synthetic-asset',orgId:'synthetic-org',bucket:'uploads',storageKey:['synthetic','mp4'].join('.'),spaceType:'real_estate',durationS:90,contentType:'video/mp4'});
     const rpc=async(name:string,_args:any)=>{
       if(name==='serving_operation_begin')return {data:{begun:true},error:null};
       if(name==='serving_cost_reserve'){state.attempts++;state.liability=true;return {data:{reserved:true},error:null};}

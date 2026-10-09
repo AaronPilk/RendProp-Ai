@@ -122,7 +122,9 @@ try:
     admit = definition("public.serving_envelope_admit(uuid,numeric,text)")
     spent_anchor = " spent:=public.serving_ceiling_spent_cents(p_org,ps,pe);"
     assert admit.count(spent_anchor) == 1
-    instrumented = admit.replace(spent_anchor, " perform pg_sleep(0.25);\n" + spent_anchor)
+    # Pause after capturing the balance: without the money lock both writers
+    # must read the same stale value, rather than racing before their reads.
+    instrumented = admit.replace(spent_anchor, spent_anchor + "\n perform pg_sleep(0.25);")
     run("instrument-ceiling-race", [*psql, "-q"], instrumented)
     def requests(org, suffix):
         return [f"select serving_cost_reserve('{actor}','{org}','race-photo-{suffix}','photo.stage:0','gemini','gemini-3.1-flash-image',repeat('a',64),6,'verified');",

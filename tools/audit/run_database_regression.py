@@ -45,7 +45,7 @@ INVARIANT_COUNT = 270
 # hashing/registering an SQL file does not prove its receipts or cost fences.
 REFLECTION_FIXTURES = (
     ("video_erase.sql", "PASS video erase SQL: 51 assertions", 51),
-    ("video_erase_direct_bria.sql", "PASS direct Bria SQL: 37 assertions", 37),
+    ("video_erase_direct_bria.sql", "PASS direct Bria SQL: 40 assertions", 40),
     ("member_portfolios.sql", "PASS: member portfolio SQL assertions; all fixtures rolled back.", 23),
 )
 

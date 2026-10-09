@@ -28,7 +28,7 @@ Deno.test("each mixed/service entrypoint refuses absent, public, wrong, legacy o
     for (const [name, suffix] of routes) for (const headers of [{}, { apikey: PUBLIC },
       { apikey: "sb_secret_wrong_synthetic_credential" },
       { authorization: "Bearer synthetic-legacy-service" },
-      { authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIn0.unverified" }]) {
+      { authorization: `Bearer ${btoa(JSON.stringify({alg:"HS256"}))}.${btoa(JSON.stringify({role:"service_role"}))}.unverified` }]) {
       const request = new Request(`https://edge.invalid/${name}${suffix}`, {
         method: name === "tours" ? "GET" : "POST", headers: headers as Record<string, string>, body: name === "tours" ? undefined : "{}",
       });

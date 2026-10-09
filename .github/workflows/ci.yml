@@ -848,14 +848,11 @@ jobs:
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
           done
 
-      - name: Durable video reflection jobs and idempotent migration replay
+      # Test current writers here. Historical replay runs in the clean second
+      # database below; old function bodies cannot be replayed over their newer
+      # receipt-identity replacements on the final schema.
+      - name: Durable video reflection jobs on the final schema
         run: |
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0055_video_reflection_jobs.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0056_active_photo_fallback.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261002225458_video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
@@ -875,20 +872,11 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
           # Launch ceiling mode (2026-10-08): money admission, SKU envelopes,
           # fail-closed configuration, Sandbox trials, free slots, retention.
-          # Runs on the final schema BEFORE the historical replays below restore
-          # the Oct 6 function bodies that migration 20261008220411 rewrote.
+          # Keep these on the final schema. Historical versions are replayed
+          # only in the second clean database below.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006164721_funded_serving_and_app_review_authority.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006202500_bounded_subscription_trial.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006212900_subscription_trial_purchase_reservations.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006213000_subscription_trial_video_duration.sql
-          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261007141725_bounded_photo_package.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/bounded_subscription_trial.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
-          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
 
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
@@ -927,6 +915,16 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase_direct_bria.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
+          # Run the same serving fixtures after the supported historical replay
+          # reaches the final schema, including strict settlement and grace.
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/funded_serving.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/bounded_subscription_trial.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_purchase_reservations.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/subscription_trial_video_duration.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/modern_service_transport.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
 
       - name: Invariants after the replay (all270 must pass)
         env:
