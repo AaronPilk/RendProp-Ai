@@ -40,7 +40,15 @@ create function pg_temp.reject(mutation text,label text)returns void language pl
  begin
   execute mutation;
   if public.org_has_verified_retail_guest(f.u,f.o)then raise exception 'FAIL: %',label;end if;
-  if exists(select 1 from public.memberships where org_id=f.o and user_id=f.u) and exists(select 1 from public.orgs where id=f.o and deleted_at is null) and public.subscription_serving_activation(f.u,f.o)->>'available'<>'false' then raise exception 'FAIL: % advertised guest allowance',label;end if;
+  if exists(select 1 from public.memberships where org_id=f.o and user_id=f.u) and exists(select 1 from public.orgs where id=f.o and deleted_at is null) then
+   begin
+    if public.subscription_serving_activation(f.u,f.o)->>'available'<>'false' then raise exception 'FAIL: % advertised guest allowance',label;end if;
+   exception when others then
+    -- Current private-library authority refuses a deleting/inaccessible actor
+    -- before advertising an allowance. Only that exact denial is acceptable.
+    if sqlerrm is distinct from 'RP403: Current service workspace access is required' then raise;end if;
+   end;
+  end if;
   foreach command in array array[
    format('select public.serving_operation_begin(%L,%L,''denied-operation'',''coach.chat'',%L)',f.u,f.o,repeat('b',64)),
    format('select public.serving_cost_reserve(%L,%L,''denied-reserve'',''coach:0'',''openai'',''synthetic'',%L,1,''synthetic'')',f.u,f.o,repeat('b',64)),

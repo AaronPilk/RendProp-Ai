@@ -3201,6 +3201,14 @@ create policy "private chapters read"on public.capture_chapters for select to au
 
 create policy "private provenance read"on public.media_provenance for select to authenticated using((listing_id is null and public.is_org_member(org_id))or public.current_listing_access(listing_id,false));
 
+-- Listing authority and Presenter consent are independent requirements. The
+-- replaced org-wide policies must not discard the restrictive consent gate
+-- for accepted Presenter media or any of its tracked descendants.
+create policy presenter_approved_read on public.capture_assets as restrictive for select to authenticated using(public.studio_presenter_media_access(id));
+create policy presenter_approved_read on public.renders as restrictive for select to authenticated using(public.studio_presenter_render_access(id));
+create policy presenter_approved_read on public.media_provenance as restrictive for select to authenticated using(
+ (original_key is null or public.studio_presenter_key_access(listing_id,original_key)) and (altered_key is null or public.studio_presenter_key_access(listing_id,altered_key)));
+
 revoke all on function public.team_library_owner(uuid) from public,anon,authenticated;
 grant execute on function public.team_library_owner(uuid) to service_role,postgres;
 
