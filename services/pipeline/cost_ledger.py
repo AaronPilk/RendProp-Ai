@@ -37,6 +37,8 @@ compatibility path also sends a Bearer JWT. Never ship either server key to the 
 
 from __future__ import annotations
 
+import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -56,14 +58,20 @@ class LedgerError(ProviderError):
 
 
 def _is_duplicate_key_error(err: Exception) -> bool:
-    """True for a unique-constraint violation (PostgREST 409 / SQLSTATE 23505).
+    """Only an actual PostgREST 409/23505 acknowledges the same charge.
 
-    Mirrors services/worker/db._looks_like_duplicate_key — same shape of
-    error (request_json's ProviderError wraps the raw PostgREST body exactly
-    like db.DBError does), same detection.
+    request_json preserves HTTP status in an anchored prefix. URLs and error
+    bodies are not status authority: a redirect to port 409xx is still a
+    failed ledger write, even if its body mentions a duplicate-key code.
     """
-    m = str(err).lower()
-    return "409" in m or "duplicate key" in m or "23505" in m
+    match = re.fullmatch(r"HTTP (\d{3}) from \S+: (.*)", str(err), re.DOTALL)
+    if not match or match.group(1) != "409":
+        return False
+    try:
+        body = json.loads(match.group(2))
+    except (TypeError, ValueError):
+        return False
+    return isinstance(body, dict) and body.get("code") == "23505"
 
 
 # Bounded retry — no unbounded loops anywhere near a money path.

@@ -45,6 +45,9 @@ COUNTS = {"firstRequests": 0, "secondRequests": 0, "guardControlsRejected": 0}
 class LocalHTTPFixture:
     def __init__(self):
         self.first = []; self.second = []; self.redirect_status = 302; self.rollup = False
+        # Error text deliberately resembles a duplicate. Only the actual HTTP
+        # status and parsed PostgREST code may acknowledge a persisted charge.
+        self.error_body = {"code": "23505", "message": "synthetic redirect mentions 409 and duplicate key"}
         fixture = self
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_):
@@ -62,7 +65,7 @@ class LocalHTTPFixture:
                 if not second and fixture.redirect_status is not None and not (fixture.rollup and self.command == "GET"):
                     self.send_response(fixture.redirect_status)
                     self.send_header("Location", fixture.second_url + "/sink")
-                    body = b'{"message":"synthetic redirect"}'
+                    body = json.dumps(fixture.error_body).encode()
                 else:
                     self.send_response(200)
                     body = json.dumps({"reserved": True} if "/rpc/" in self.path else [{"total_cents": 1.25}]).encode()
@@ -108,17 +111,44 @@ class CredentialRedirectTests(unittest.TestCase):
                         self.assertEqual(len(self.fixture.first), before + 1)
                         self.assertEqual(self.fixture.first[-1]["apikey"], key)
     def test_ledger_get_and_insert_deny_redirects(self):
+        # A stable URL digit reproduces the former random-port409 false success.
+        self.ledger.supabase_url = self.fixture.first_url + "/409"
+        self.settings.supabase_url = self.fixture.first_url + "/409"
         for key in ["sb_secret_synthetic_redirect_test_only", "synthetic-legacy-redirect-only"]:
             self.ledger.service_key = key
+            self.settings.supabase_service_role_key = key
             for code in [301, 302, 303, 307, 308]:
                 self.fixture.redirect_status = code
-                for action in [lambda: self.ledger.job_total_cents("synthetic-job"),
-                               lambda: self.ledger._insert_once({"idempotency_key": "synthetic-owned-receipt"})]:
-                    with self.subTest(key_kind=key.startswith("sb_secret_"), code=code):
+                for name, action, error_type in [
+                    ("ledger-read", lambda: self.ledger.job_total_cents("synthetic-job"), base.ProviderError),
+                    ("ledger-insert", lambda: self.ledger._insert_once({"idempotency_key": "synthetic-owned-receipt"}), base.ProviderError),
+                    ("worker-insert", lambda: db._insert_cost_row({"idempotency_key": "synthetic-owned-receipt"}), db.DBError),
+                ]:
+                    with self.subTest(key_kind=key.startswith("sb_secret_"), code=code, action=name):
                         before = len(self.fixture.first)
-                        with self.assertRaises(base.ProviderError): action()
+                        with self.assertRaises(error_type): action()
                         self.no_second(); self.assertEqual(len(self.fixture.first), before + 1)
                         self.assertEqual(self.fixture.first[-1]["apikey"], key)
+    def test_actual_postgrest_duplicate_remains_recoverable(self):
+        self.fixture.redirect_status = 409
+        self.ledger._insert_once({"idempotency_key": "synthetic-owned-receipt"})
+        db._insert_cost_row({"idempotency_key": "synthetic-owned-receipt"})
+        self.assertEqual(len(self.fixture.first), 2); self.no_second()
+    def test_status_and_duplicate_code_are_both_required(self):
+        for status, code in [(401, "23505"), (500, "23505"), (409, "RP409"), (409, "23503")]:
+            with self.subTest(status=status, code=code):
+                self.fixture.redirect_status = status
+                self.fixture.error_body = {"code": code, "message": "409 23505 duplicate key are untrusted text"}
+                with self.assertRaises(base.ProviderError):
+                    self.ledger._insert_once({"idempotency_key": "synthetic-owned-receipt"})
+                with self.assertRaises(db.DBError):
+                    db._insert_cost_row({"idempotency_key": "synthetic-owned-receipt"})
+                self.no_second()
+        for classify, error in [
+            (cost_ledger._is_duplicate_key_error, base.ProviderError("Network error to http://127.0.0.1:40900/23505: duplicate key")),
+            (db._looks_like_duplicate_key, db.DBError("Network error to http://127.0.0.1:40900/23505: duplicate key")),
+        ]:
+            self.assertFalse(classify(error), "Unconfirmed network errors cannot acknowledge a charge")
     def test_ledger_best_effort_rollup_cannot_forward_keys(self):
         self.fixture.rollup = True
         for code in [302, 307]:

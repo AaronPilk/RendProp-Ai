@@ -232,8 +232,20 @@ def _looks_like_duplicate_key(err: Exception) -> bool:
     Used for cost-ledger idempotency (migration 0025). Publication slug
     collisions are handled inside the fenced database transaction instead.
     """
-    m = str(err).lower()
-    return "409" in m or "duplicate key" in m or "23505" in m
+    if isinstance(err, DBError) and err.status_code is not None:
+        return err.status_code == 409 and err.code == "23505"
+    if isinstance(err, DBError) and err.code is not None:
+        return err.code == "23505"
+    # Older retained DBError fixtures have only _check's exact HTTP prefix.
+    # Never interpret a URL, body fragment or redirect status as a duplicate.
+    match = re.fullmatch(r"PostgREST HTTP (\d{3}) [A-Z]+ \S+: (.*)", str(err), re.DOTALL)
+    if not match or match.group(1) != "409":
+        return False
+    try:
+        body = json.loads(match.group(2))
+    except (TypeError, ValueError):
+        return False
+    return isinstance(body, dict) and body.get("code") == "23505"
 
 
 def lease_supported() -> bool:
