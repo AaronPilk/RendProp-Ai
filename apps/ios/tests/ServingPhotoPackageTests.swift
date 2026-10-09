@@ -179,8 +179,7 @@ import Foundation
                            (envelope(["spent_cents": -1]), "Negative spend"),
                            (envelope(["spent_cents": 1e20, "available_cents": 0]), "Overflowing spend"),
                            (envelope(["held_cents": 1e20, "available_cents": 0]), "Overflowing hold"),
-                           (envelope(["pool": ["cap_cents": 1e20, "spent_cents": 0]], kind: "trial"), "Overflowing pool cap"),
-                           (envelope(["pool": ["cap_cents": 29000, "spent_cents": 1e20]], kind: "trial"), "Overflowing pool spend"),
+                           (envelope(["ceiling_cents": 2147483647, "available_cents": 2147483647 - 120.5 - 8.36], kind: "sponsored"), "Sponsored unlimited budget"),
                            (envelope(["spent_cents": "inf"]), "Infinite spend"),
                            (envelope(["ceiling_cents": "abc"]), "Non-numeric ceiling")] as [(Any, String)] {
             reset()
@@ -192,6 +191,14 @@ import Foundation
         let brokenPool = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["ceiling_cents": 500, "available_cents": 371.14,
             "window": "trial_window", "pool": ["cap_cents": "x"]], kind: "trial"))).me()
         check(brokenPool.servingEnvelope?.budgetTitle == "Free-trial AI budget" && brokenPool.servingEnvelope?.poolLine == "Trial AI capacity is unavailable right now.", "Malformed pool cannot advertise available trial capacity")
+        for (pool, why) in [(["cap_cents": 1e20, "spent_cents": 0], "Overflowing pool cap"),
+                            (["cap_cents": 29000, "spent_cents": 1e20], "Overflowing pool spend")] as [([String: Any], String)] {
+            reset()
+            let bad = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["ceiling_cents": 500, "available_cents": 371.14,
+                "window": "trial_window", "pool": pool], kind: "trial"))).me()
+            check(bad.servingEnvelope?.budgetTitle == "Free-trial AI budget", why + " hid the customer's own budget")
+            check(bad.servingEnvelope?.pool == nil && bad.servingEnvelope?.poolLine == "Trial AI capacity is unavailable right now.", why + " advertised trial capacity")
+        }
         reset()
         let missingPool = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["window": "trial_window"], kind: "trial"))).me()
         check(missingPool.servingEnvelope?.poolLine == "Trial AI capacity is unavailable right now.", "Missing pool cannot advertise available trial capacity")

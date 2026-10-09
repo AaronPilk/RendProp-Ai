@@ -431,7 +431,11 @@ Deno.serve(async (req) => {
       );
     }));
 
-    const output = parseCoachOutput(attempt.value, validListingIds);
+    // Parse after the ledger: the provider billed this answer whether or not it
+    // parses, and its hold only settles when the ledger row names it.
+    let output: ReturnType<typeof parseCoachOutput> | null = null;
+    let parseFailure: unknown = null;
+    try { output = parseCoachOutput(attempt.value, validListingIds); } catch (e) { parseFailure = e; }
 
     // Ledger — best effort: the user is waiting on `output` above, which is
     // already computed. A ledger insert failure must never turn a good reply
@@ -446,7 +450,8 @@ Deno.serve(async (req) => {
           stage: `coach.chat:${chain.indexOf(attempt.step)}`,
           message_count: messages.length,
           listing_count: context.listings.length,
-          has_action: output.actions.length > 0,
+          has_action: output ? output.actions.length > 0 : null,
+          parse_failed: parseFailure !== null,
           screen: context.screen,
         },
       });
@@ -456,6 +461,7 @@ Deno.serve(async (req) => {
         e instanceof Error ? e.name : "unknown",
       );
     }
+    if (parseFailure !== null || output === null) throw parseFailure;
 
     return json(await completeFundingOperation(funding, {
       reply: output.reply,

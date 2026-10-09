@@ -104,7 +104,8 @@ struct ServingEnvelopeSummary: Codable, Hashable, Sendable {
     /// Only a self-consistent envelope is drawn; anything odd hides the rows
     /// rather than showing a wrong dollar figure.
     func checked() -> Self? {
-        guard let kind, !kind.isEmpty, let ceilingCents, let spentCents, let heldCents, let availableCents,
+        // Sponsored testers are unlimited: there is no budget to draw.
+        guard let kind, !kind.isEmpty, kind != "sponsored", let ceilingCents, let spentCents, let heldCents, let availableCents,
               ceilingCents.isFinite, spentCents.isFinite, heldCents.isFinite, availableCents.isFinite,
               ceilingCents >= 0, ceilingCents <= 100_000_000,
               spentCents >= 0, spentCents <= 100_000_000,
@@ -113,7 +114,12 @@ struct ServingEnvelopeSummary: Codable, Hashable, Sendable {
               abs(availableCents - max(0, ceilingCents - spentCents - heldCents)) <= 0.02 else { return nil }
         if let pool {
             guard let cap = pool.capCents, let spent = pool.spentCents, cap.isFinite, spent.isFinite,
-                  cap >= 0, cap <= 100_000_000, spent >= 0, spent <= 100_000_000 else { return nil }
+                  cap >= 0, cap <= 100_000_000, spent >= 0, spent <= 100_000_000 else {
+                // A bad pool hides only the pool line, never the customer's own budget.
+                return Self(kind: kind, ceilingCents: ceilingCents, spentCents: spentCents, heldCents: heldCents,
+                            availableCents: availableCents, periodStart: periodStart, periodEnd: periodEnd,
+                            window: window, pool: nil)
+            }
         }
         return self
     }

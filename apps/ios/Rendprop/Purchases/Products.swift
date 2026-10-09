@@ -186,7 +186,7 @@ enum BillingPeriod: String, CaseIterable, Identifiable, Sendable {
     /// it is true for: Team has no yearly product at launch (see
     /// `RendpropProducts.notSoldAtLaunch`), so promising it "2 months free"
     /// would be a lie.
-    static let annualBadge = "2 months free on Starter and Pro"
+    static let annualBadge = "Billed once a year"
 }
 
 // MARK: - Product id ⇄ plan

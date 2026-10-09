@@ -29,8 +29,10 @@ assert 'ForEach(package.rows, id: \\.title)' in block(settings, 'private func ph
 assert 'usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation' in settings
 # The shared AI budget (ceiling mode) is drawn above the meters in both the
 # package branch and the plan branch, and only from a checked envelope.
-assert rows.count('if let envelope = usage.servingEnvelope { envelopeRows(envelope) }') == 2
-assert rows.count('usage.servingEnvelope == nil,') == 3
+assert rows.count('if let envelope = usage.servingEnvelope { envelopeRows(envelope) }') == 3
+assert rows.count('usage.servingEnvelope == nil,') == 2
+# A pending activation always wins over any envelope (a payer is never told to subscribe).
+assert '} else if usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {' in rows
 assert rows.index('if let envelope = usage.servingEnvelope { envelopeRows(envelope) }', legacy_branch) < rows.index('usageRow("Cloud tour renders"')
 envelope_rows = block(settings, 'private func envelopeRows(')
 assert 'LabeledContent(envelope.budgetTitle, value: envelope.budgetValue)' in envelope_rows

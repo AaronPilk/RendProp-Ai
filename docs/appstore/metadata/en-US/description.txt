@@ -24,9 +24,10 @@ Sign in with Apple to create your account. It owns your listings and hosted page
 
 WHAT A PLAN INCLUDES
 Rendprop is free to download, and your first published listing is free. A subscription adds more hosted listings and monthly AI allowances:
-• Starter — 4 tour renders, 100 AI photo edits, 6 reel clips, 2 aerial intros a month.
-• Pro — 10 tour renders, 200 AI photo edits, 12 reel clips, 4 aerial intros a month.
-• Team — 25 tour renders, 400 AI photo edits, 25 reel clips, 8 aerial intros a month, and 2 seats.
+• Starter — 4 tour renders, 100 AI photo edits, 6 reel clips, 2 aerial intros a month, 1 seat.
+• Pro — 10 tour renders, 200 AI photo edits, 12 reel clips, 4 aerial intros a month, 1 seat.
+• Team — 25 tour renders, 400 AI photo edits, 25 reel clips, 8 aerial intros and 2 video quality upgrades a month, and 2 seats.
+AI requests are also limited by a monthly cost budget sized to your plan.
 
 SUBSCRIPTION DETAILS
 Auto-renewable subscriptions:

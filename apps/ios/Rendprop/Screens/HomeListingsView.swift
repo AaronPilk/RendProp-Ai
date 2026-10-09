@@ -125,7 +125,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Continue producing", "Use Studio to organize assets, create content and review work with your team. On the phone, use Retry Studio sync if a listing update is still waiting.")]
         case .plan: return [
             ("Check your allowance", "Open Settings → Plan & usage to see the account's plan, feature limits and credits."),
-            ("Review before purchasing", "Choose a plan and billing period. Apple's purchase sheet shows the actual price and any eligible free trial. A trial starts only after you confirm the subscription."),
+            ("Review before purchasing", "Choose a plan. Every plan bills monthly. Apple's purchase sheet shows the actual price and any eligible free trial. A trial starts only after you confirm the subscription."),
             ("Manage your subscription", "Use Manage subscription to change or cancel with Apple. Restore purchases after reinstalling or signing back in.")]
         case .spatial: return [
             ("Coming soon", "3D walkthroughs and automatic 3D floor-plan capture are still being tested. They are not required to create photos, videos or a published listing."),

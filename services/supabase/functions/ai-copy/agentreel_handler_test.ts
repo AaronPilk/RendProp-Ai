@@ -306,14 +306,23 @@ Deno.test("actual compact captions still pass through the output fair-housing re
   assertEquals(result.requests.length, 2);
 });
 
-Deno.test("actual retry ledger names the successful retry stage and never the predecessor", async () => {
+Deno.test("actual retry ledgers every billed call under its own stage, so both holds settle", async () => {
   const result = await execute({ firstRaw: "{}" });
   assertEquals(result.response.status, 200);
   assertEquals(result.holds.map(hold => hold.p_stage), ["copy.agent_reel:initial:0", "copy.agent_reel:retry:0"]);
-  assertEquals(result.ledger.length, 1);
-  const row = result.ledger[0], meta = row.meta as Record<string, unknown>;
-  assertEquals(meta.stage, result.holds[1].p_stage);
-  assertEquals(meta.request_key, result.holds[1].p_key);
-  assertEquals(row.provider, result.holds[1].p_provider);
-  assertEquals(row.model, result.holds[1].p_model);
+  assertEquals(result.ledger.length, 2, "the discarded first answer was billed too; its hold must not stay held forever");
+  result.ledger.forEach((row, i) => {
+    const meta = row.meta as Record<string, unknown>;
+    assertEquals(meta.stage, result.holds[i].p_stage);
+    assertEquals(meta.request_key, result.holds[i].p_key);
+    assertEquals(row.provider, result.holds[i].p_provider);
+    assertEquals(row.model, result.holds[i].p_model);
+  });
+});
+
+Deno.test("actual refused copy still ledgers both billed attempts", async () => {
+  const result = await execute({ raw: compact("PERFECT FOR FAMILIES") });
+  assertEquals(result.response.status, 502);
+  assertEquals(result.holds.length, 2);
+  assertEquals(result.ledger.map(row => (row.meta as Record<string, unknown>).stage), result.holds.map(hold => hold.p_stage));
 });

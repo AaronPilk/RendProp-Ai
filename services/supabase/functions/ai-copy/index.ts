@@ -537,6 +537,11 @@ Deno.serve(async (req) => {
             fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn)));
           lastStep = attempt.step;
           lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
+          // Every answered call is billed by the provider, kept or not (a compliance
+          // retry discards the first answer). One ledger row per call, naming its own
+          // stage, so each hold settles exactly and nothing stays held forever.
+          await recordRoutedAiCost(adminClient(), { orgId, feature: "copy_assist", step: attempt.step,
+            meta: { ...{ kind: "reel_script", target_seconds: targetSeconds }, request_key: funding.requestKey, stage: lastStage, attempt: isRetry ? "retry" : "initial" } });
           return attempt.value;
         },
       });
@@ -559,12 +564,7 @@ Deno.serve(async (req) => {
       // PRICE — a wrong price is a worse lie than a known 2¢ under-count on a
       // path that should be rare. Fix it properly by teaching unitsForStep()
       // about calls when _shared/ledger.ts is next open for edits.
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "copy_assist",
-        step: lastStep,
-        meta: { kind: "reel_script", target_seconds: targetSeconds, attempts: written.attempts, request_key: funding.requestKey, stage: lastStage },
-      });
+      // Ledger rows are written per billed attempt inside `attempt` above.
 
       const script = written.text;
       return json(await completeFundingOperation(funding, {
@@ -667,6 +667,11 @@ Deno.serve(async (req) => {
             fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_SHOTLIST_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_SHOTLIST_TOKENS)));
           lastStep = attempt.step;
           lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
+          // Every answered call is billed by the provider, kept or not (a compliance
+          // retry discards the first answer). One ledger row per call, naming its own
+          // stage, so each hold settles exactly and nothing stays held forever.
+          await recordRoutedAiCost(adminClient(), { orgId, feature: "copy_assist", step: attempt.step,
+            meta: { ...{ kind: "shotlist", target_seconds: targetSeconds }, request_key: funding.requestKey, stage: lastStage, attempt: isRetry ? "retry" : "initial" } });
           return attempt.value;
         },
       });
@@ -683,19 +688,7 @@ Deno.serve(async (req) => {
       // bounded integer, which is the only kind of thing that belongs in a
       // durable row every member of the org can read — never a room label,
       // never a caption, never the script.
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "copy_assist",
-        step: lastStep,
-        meta: {
-          request_key: funding.requestKey,
-          stage: lastStage,
-          kind: "shotlist",
-          target_seconds: targetSeconds,
-          attempts: written.attempts,
-          shots: answer.shots.length,
-        },
-      });
+      // Ledger rows are written per billed attempt inside `attempt` above.
 
       // `characters` / `estimated_seconds` mean exactly what they mean on
       // /script: the length of the SPOKEN script and how long it takes to say.
@@ -844,6 +837,11 @@ Deno.serve(async (req) => {
             fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_AGENT_REEL_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_AGENT_REEL_TOKENS)));
           lastStep = attempt.step;
           lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
+          // Every answered call is billed by the provider, kept or not (a compliance
+          // retry discards the first answer). One ledger row per call, naming its own
+          // stage, so each hold settles exactly and nothing stays held forever.
+          await recordRoutedAiCost(adminClient(), { orgId, feature: "copy_assist", step: attempt.step,
+            meta: { ...{ kind: "agent_reel", subject, clip_seconds: Math.round(clipSeconds) }, request_key: funding.requestKey, stage: lastStage, attempt: isRetry ? "retry" : "initial" } });
           return attempt.value;
         },
       });
@@ -857,20 +855,7 @@ Deno.serve(async (req) => {
       // Bounded integers only in a durable row every member of the org can
       // read — never a room label, never a caption, and above all never a word
       // of what the agent said on camera.
-      await recordRoutedAiCost(adminClient(), {
-        orgId,
-        feature: "copy_assist",
-        step: lastStep,
-        meta: {
-          request_key: funding.requestKey,
-          stage: lastStage,
-          kind: "agent_reel",
-          subject,
-          clip_seconds: Math.round(clipSeconds),
-          attempts: written.attempts,
-          cutaways: answer.cutaways.filter((c) => c.photo_id).length,
-        },
-      });
+      // Ledger rows are written per billed attempt inside `attempt` above.
 
       // The EDL. `cutaways` is the whole edit: every window in clip order, with
       // an empty photo_id wherever the reel deliberately stays on the agent.
@@ -935,17 +920,17 @@ Deno.serve(async (req) => {
           fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn)));
         lastStep = attempt.step;
         lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
+        // Every answered call is billed by the provider, kept or not (a compliance
+        // retry discards the first answer). One ledger row per call, naming its own
+        // stage, so each hold settles exactly and nothing stays held forever.
+        await recordRoutedAiCost(adminClient(), { orgId, feature: "copy_assist", step: attempt.step,
+          meta: { ...{ kind: "photo_prompt", target_seconds: null }, request_key: funding.requestKey, stage: lastStage, attempt: isRetry ? "retry" : "initial" } });
         return attempt.value;
       },
     });
 
     // Same ledger note as the script route above (units 1, `attempts` in meta).
-    await recordRoutedAiCost(adminClient(), {
-      orgId,
-      feature: "copy_assist",
-      step: lastStep,
-      meta: { kind: "photo_prompt", target_seconds: null, attempts: polished.attempts, request_key: funding.requestKey, stage: lastStage },
-    });
+    // Ledger rows are written per billed attempt inside `attempt` above.
 
     return json(await completeFundingOperation(funding, { prompt: polished.text, model: lastStep.model }));
   } catch (err) {

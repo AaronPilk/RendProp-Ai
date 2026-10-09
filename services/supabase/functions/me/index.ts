@@ -15,7 +15,7 @@ async function servingEnvelope(admin: { rpc: (name: string, args: Record<string,
       ceiling_cents: num(row.ceiling_cents), spent_cents: num(row.spent_cents), held_cents: num(row.held_cents), available_cents: num(row.available_cents),
       period_start: typeof row.period_start === "string" ? row.period_start : null, period_end: typeof row.period_end === "string" ? row.period_end : null,
       window: typeof row.window === "string" ? row.window : null,
-      pool: row.pool && typeof row.pool === "object" && !Array.isArray(row.pool) ? { cap_cents: num((row.pool as Record<string, unknown>).cap_cents), spent_cents: num((row.pool as Record<string, unknown>).spent_cents), ends_at: typeof (row.pool as Record<string, unknown>).ends_at === "string" ? (row.pool as Record<string, unknown>).ends_at : null } : null,
+      pool: row.pool && typeof row.pool === "object" && !Array.isArray(row.pool) ? { cap_cents: num((row.pool as Record<string, unknown>).cap_cents), spent_cents: num((row.pool as Record<string, unknown>).spent_cents), starts_at: typeof (row.pool as Record<string, unknown>).starts_at === "string" ? (row.pool as Record<string, unknown>).starts_at : null, ends_at: typeof (row.pool as Record<string, unknown>).ends_at === "string" ? (row.pool as Record<string, unknown>).ends_at : null } : null,
     };
   } catch { return null; }
 }

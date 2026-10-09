@@ -933,7 +933,7 @@ struct SettingsView: View {
         if usage.servingEnvelope == nil, let trial = usage.trialUsage, trial.status != .active {
             trialUsageRows(trial)
             if let package = usage.servingPhotoPackage { photoPackageRows(package) }
-        } else if usage.servingEnvelope == nil, usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
+        } else if usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
             LabeledContent("Service", value: ServingActivationSummary.pendingTitle)
             if let plan = usage.entitlements {
                 LabeledContent("Recorded subscription", value: Self.planLabel(plan))
@@ -971,6 +971,7 @@ struct SettingsView: View {
             if let plan = usage.planName, !plan.isEmpty {
                 LabeledContent("Plan", value: plan.capitalized)
             }
+            if let envelope = usage.servingEnvelope { envelopeRows(envelope) }
             if let renders = usage.renderCount {
                 LabeledContent("Cloud tour renders", value: "\(renders)")
             }

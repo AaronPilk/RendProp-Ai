@@ -103,3 +103,28 @@ Aaron decided: **monthly plans only**; **Small Business Program approved 2026-09
 - **Testers.** Richard Tocado's main workspace (`bfd4427e…`, 6 listings) now has a private-testing sponsorship from Aaron's workspace (same mechanism and eligibility checks as Stephenie's; dry-run first, readback `kind=sponsored`). Unlimited figures are hidden in both clients (budgets above 100,000,000¢ fail the display check). Not granted: Stephenie's empty second workspace `9b5d6053…` (her sponsored one is `8dd57861…`), Richard's empty `6271d544…`, and "John Apple" (`10ff6907…`, Sept 9 — looks like an Apple reviewer account; ask Aaron).
 - **Grandfathering (Codex item 4):** closed by fact — 0 active/grace Apple subscriptions; every future original transaction is created after the Oct 6 policy date.
 - iOS changes need Codex's compile (Products.swift, PaywallView.swift, BetaPolishUITests). Site needs deploy.
+
+## Four-agent pre-launch audit — fixes shipped 2026-10-09 ~02:30 UTC (Claude)
+
+Four independent reviewers (backend money paths, live production state, iOS + Studio clients, public copy truth) audited HEAD `e5d48c7`. Fixed:
+
+**Backend — LIVE** (migration `20261009022239 admit_pre_and_grants`; ai-photo 63, ai-video 61, ai-copy 30, coach 32, me 60; receipt `docs/releases/BACKEND-LAUNCH-AUDIT-FIXES-20261009.json`)
+- `serving_envelope_admit` subtracted a legacy video/erase hold even after `serving_ceiling_spent_cents` had already excluded it (live serving reservation on the same key), so a later admission under that key could overspend by the whole video hold (up to ~$14 Topaz). `pre` now nets only holds spent still counts, within the window. Repro + 5 new assertions (`launch_blockers.sql` 189); two-connection races and negative control still pass.
+- Holds that never settled (customer budget silently lost + permanent `holds_unledgered` alerts): ai-video QC judge rows now carry their `stage`; ai-copy writes one ledger row per billed call inside `attempt` (a compliance retry or a refused pair was billed twice but ledgered once/zero); coach ledgers before parsing; ai-photo `suggest`/`improve_prompt` are now ledgered (unit cost = their documented bound). Codex's `agentreel_handler_test` updated: two billed calls → two rows, each naming its own hold.
+- `/me` dropped `serving_envelope.pool.starts_at`, so both clients told EVERY trial user "trial AI unavailable". Fixed server-side (no app build needed for that symptom).
+- Index on `serving_cost_reservations.ledger_id`; TRUNCATE/TRIGGER/REFERENCES revoked from anon/authenticated on all public tables (0 remain).
+**iOS (needs Codex compile):** pending activation always wins over the envelope (a payer is never told to subscribe); envelope rows in the legacy-shape branch; explicit `kind != "sponsored"` guard; a malformed/overflowing pool drops only the pool line; uploads treat `trial_capacity_unavailable` as terminal; Home guide "Choose a plan. Every plan bills monthly."; annual badge copy neutralised. Native harness + `ServingPhotoPackageTests` updated (sponsored case added; overflowing pool now keeps the budget and says capacity unavailable).
+**ASC tool:** every command skips the three annual products unless `--include-annual` (`unprice` still reaches them, so they can be pulled from sale by API). 208/208 tool tests.
+**Copy (site, Terms, App Store):** pricing FAQ/cancel card no longer promise indefinite hosting after a lapse (now the 90-day policy); "No surprise meters" states the monthly AI cost budget; CTA no longer implies a funded first week; trial wording says trial AI is limited (index/features/support/llms/Terms §6); Team lists video quality upgrades, Starter/Pro list 1 seat; App Store description states the AI budget; stale "link opens when Apple approves 1.0" removed; review notes trimmed to 3,980 chars (were 4,219 — over Apple's 4,000 limit, `asc.py review apply` would have refused). Site `npm test` + `tsc` + asset preflight green.
+
+**Not fixed (noted, decisions/owner):**
+- Seedance (fal) is still route #1 for reels/aerials with 28 failures, last success Sep 7 (fallbacks hailuo/veo exist). One real reel decides it.
+- gpt-image-2 has never succeeded (photo fallback #2).
+- Apple offer codes/win-back/non-US storefront prices are not recorded, so the envelope assumes US list price (no such offers are configured today — don't create any before this is fixed).
+- The commission switches on `now()`, not on each term's purchase date. Terms bought Oct 8–10 get the 15% envelope after Oct 11 (0 subscribers today).
+- A lost `serving_cost_finish` leaves its hold counted (over-count, rare).
+- Bria direct erase and presenter have no quote, so they are refused for non-sponsored workspaces (fail closed).
+- The Python worker's holds can't settle (path disabled).
+- Three privacy cron drains are deliberately off. Confirm the privacy policy doesn't promise those sweeps.
+- Leaked-password protection is off (Auth setting; Apple-only sign-in).
+- "John Apple" workspace: owner to confirm (likely App Review).

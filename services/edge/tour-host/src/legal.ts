@@ -195,8 +195,9 @@ and they are what you are charged.</p>
   an Apple subscription</b> in Rendprop. Apple determines eligibility and shows the offer and
   renewal price before confirmation; no Apple purchase starts until you continue to Apple's
   confirmation. Downloading or signing in does not activate a trial. During the trial the plan's
-  allowances apply and AI usage is additionally limited to a trial usage ceiling, so AI tools can
-  stop before the seven days end. Using an allowance stops new work for that feature; it does not
+  allowances apply and AI usage is additionally limited to a trial usage ceiling drawn from a
+  limited shared allocation, so AI tools can be temporarily unavailable or stop before the seven
+  days end. Using an allowance stops new work for that feature; it does not
   move Apple's renewal date forward. You may redeem one introductory offer per subscription group;
   changing plans, reinstalling, cancelling or changing workspaces does not create another trial.
   Cancel at least 24 hours before the trial ends to avoid renewal charges.</li>

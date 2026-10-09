@@ -430,5 +430,26 @@ do $$declare admin_user uuid:='d1000000-0000-4000-8000-000000000001';other uuid:
  perform pg_temp.ok(not has_function_privilege('authenticated','public.ops_alert_current(uuid)','execute'),'tenants cannot consult alert currency');
 end$$;
 reset role;
+-- ------------------------------------------------------------ audit 2026-10-09: video hold netted once, never twice
+insert into orgs(id,name,plan)values('d2000000-0000-4000-8000-0000000000c1','Synthetic pre netting','free');
+insert into memberships(user_id,org_id,role)select user_id,'d2000000-0000-4000-8000-0000000000c1','owner' from memberships where org_id='d2000000-0000-4000-8000-000000000009' and role='owner' limit 1;
+do $$declare actor uuid;begin
+ select user_id into actor from memberships where org_id='d2000000-0000-4000-8000-0000000000c1';
+ insert into app_video_cost_reservations(org_id,actor_id,idempotency_key,feature,provider,model,input_sha256,units,unit_cost_cents,total_cents,hold_cents,meta)values
+  ('d2000000-0000-4000-8000-0000000000c1',actor,'pre-key-0001','drone_render','fal','fal-ai/topaz/upscale/video',repeat('c',64),10,20,200,200,'{}');
+ perform pg_temp.ok((public.serving_envelope_admit('d2000000-0000-4000-8000-0000000000c1',200,'pre-key-0001')->>'spent_cents')::numeric=0,
+  'first serving admission for a video attempt replaces its legacy hold (200 + 200 <= 300 lifetime)');
+ insert into serving_cost_reservations(org_id,actor_id,request_key,stage,provider,model,input_sha256,tariff_version,hold_cents,budget_source,state,settled_at)values
+  ('d2000000-0000-4000-8000-0000000000c1',actor,'pre-key-0001','drone_render','fal','fal-ai/topaz/upscale/video',repeat('c',64),'x',200,'ceiling','uncertain',now());
+ begin perform public.serving_envelope_admit('d2000000-0000-4000-8000-0000000000c1',290,'pre-key-0001');
+  perform pg_temp.ok(false,'a later admission under the same key must not subtract the video hold a second time');
+ exception when others then perform pg_temp.ok(sqlerrm like 'RP402: AI usage limit reached [kind=free] (200 of 300%','a later admission under the same key counts the attempt once: 200 + 290 > 300 refused');end;
+ begin perform public.serving_envelope_admit('d2000000-0000-4000-8000-0000000000c1',290,'pre-key-other');
+  perform pg_temp.ok(false,'another key is refused at the same boundary');
+ exception when others then perform pg_temp.ok(sqlerrm like 'RP402:%','the same request key gets no discount over any other key');end;
+ perform pg_temp.ok((public.serving_envelope_admit('d2000000-0000-4000-8000-0000000000c1',100,'pre-key-0001')->>'spent_cents')::numeric=200,'exactly the remaining 100c is still admissible under that key');
+end$$;
+select pg_temp.ok(not exists(select 1 from information_schema.table_privileges where table_schema='public' and grantee in('anon','authenticated') and privilege_type in('TRUNCATE','TRIGGER','REFERENCES')),'client roles hold no TRUNCATE/TRIGGER/REFERENCES on public tables');
+
 select jsonb_build_object('assertions',n,'passed',true)from lb_assertions;
 rollback;

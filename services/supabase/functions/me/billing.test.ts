@@ -74,7 +74,7 @@ Deno.test("/me reports the serving mode the paywall keys on (ceiling → ordinar
  const ceiling=await invoke({});assertEquals(ceiling.response.status,200);assertEquals(ceiling.body.serving_mode,"ceiling");
  assertEquals(ceiling.body.serving_envelope,{kind:"free",ceiling_cents:300,spent_cents:12.5,held_cents:0,available_cents:287.5,period_start:null,period_end:null,window:"lifetime",pool:null});
  const trial=await invoke({servingEnvelope:{kind:"trial",plan:"trial",ceiling_cents:500,spent_cents:"60.5",held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,starts_at:"2026-10-08T00:00:00+00:00",ends_at:"2026-11-08T00:00:00+00:00",spent_cents:460}}});
- assertEquals(trial.body.serving_envelope,{kind:"trial",ceiling_cents:500,spent_cents:60.5,held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,spent_cents:460,ends_at:"2026-11-08T00:00:00+00:00"}});
+ assertEquals(trial.body.serving_envelope,{kind:"trial",ceiling_cents:500,spent_cents:60.5,held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,spent_cents:460,starts_at:"2026-10-08T00:00:00+00:00",ends_at:"2026-11-08T00:00:00+00:00"}});
  const funded=await invoke({servingMode:"funded"});assertEquals(funded.body.serving_mode,"funded");assertEquals(funded.body.serving_envelope,null);
 });
 Deno.test("billing context belongs to the same selected workspace as entitlement",async()=>{

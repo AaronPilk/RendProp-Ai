@@ -665,7 +665,10 @@ Deno.serve(async (req) => {
         const step = legacyPhotoStep("photo.suggest");
         step.provider = "gemini"; step.model = TEXT_MODEL;
         const payload=photoHelperPayload([{text:suggestInstruction(profile)},{inline_data:{mime_type:mime,data:body.image_b64!}}]);
-        return json(await completeFundingOperation(funding, { suggestions: await fundedAttempt(funding, "photo.suggest", step, body, photoHelperQuote(step.model,payload), () => suggestEdits(payload)), space_type: space }));
+        const suggestions = await fundedAttempt(funding, "photo.suggest", step, body, photoHelperQuote(step.model,payload), () => suggestEdits(payload));
+        // Billed text call: the ledger row names the hold so it settles.
+        await recordRoutedAiCost(adminClient(), { orgId: helperCharge.orgId, feature: "photo_helper", step, unitCentsOverride: photoHelperQuote(step.model,payload)?.cents, meta: { request_key: funding.requestKey, stage: "photo.suggest", kind: "suggest" } });
+        return json(await completeFundingOperation(funding, { suggestions, space_type: space }));
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
@@ -689,6 +692,8 @@ Deno.serve(async (req) => {
         step.provider = "gemini"; step.model = TEXT_MODEL;
         const payload=photoHelperPayload([{text:editPromptInstruction(space)+"\n\nUser's idea: "+rough}]);
         const improved = await fundedAttempt(funding, "photo.improve_prompt", step, body, photoHelperQuote(step.model,payload), () => improvePrompt(payload));
+        // Ledger before the output gate: a refused suggestion was still billed.
+        await recordRoutedAiCost(adminClient(), { orgId: helperCharge.orgId, feature: "photo_helper", step, unitCentsOverride: photoHelperQuote(step.model,payload)?.cents, meta: { request_key: funding.requestKey, stage: "photo.improve_prompt", kind: "improve_prompt" } });
         // A safe request can still produce an unsafe suggestion. Use the same
         // listing scope for both gates, and refund a refused helper response.
         assertFairHousing(improved, "The suggested edit", promptSpace);

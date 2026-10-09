@@ -1596,6 +1596,7 @@ Deno.serve(async (req) => {
           step: call.step,
           meta: {
             request_key: funding.requestKey,
+            stage: call.stage,
             kind: "video_drift",
             clip_kind: kind,
             request_id: requestId,
@@ -2112,6 +2113,8 @@ async function callJudgeStep(step: RouteStep, rubric: string, parts: DriftPart[]
 interface JudgeCall {
   step: RouteStep;
   escalated: boolean;
+  /** The serving-hold stage this call was admitted under; its ledger row must name it. */
+  stage: string;
 }
 
 interface JudgeOutcome {
@@ -2182,7 +2185,7 @@ async function judgeDrift(args: {
     };
   }
 
-  const calls: JudgeCall[] = [{ step: primary.step, escalated: false }];
+  const calls: JudgeCall[] = [{ step: primary.step, escalated: false, stage: `qc.initial:${steps.indexOf(primary.step)}` }];
   let verdict = parseDriftVerdict(primary.value);
   let step = primary.step;
   let escalated = false;
@@ -2197,7 +2200,7 @@ async function judgeDrift(args: {
     if (rest.length > 0) {
       try {
         const second = await runChain(DRIFT_TASK, rest, (s) => fundedAttempt(args.funding, `qc.escalation:${steps.indexOf(s)}`, s, parts, textAttemptQuote(s, rubric, "", DRIFT_MAX_TOKENS, true, judgeInputTokens), () => callJudgeStep(s, rubric, parts)));
-        calls.push({ step: second.step, escalated: true });
+        calls.push({ step: second.step, escalated: true, stage: `qc.escalation:${steps.indexOf(second.step)}` });
         verdict = parseDriftVerdict(second.value);
         step = second.step;
         escalated = true;

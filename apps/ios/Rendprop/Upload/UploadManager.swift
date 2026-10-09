@@ -764,7 +764,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// A burst 429 remains transient; the server marks a monthly limit as quota.
     static func isTerminalAdmissionFailure(_ error: Error) -> Bool {
         guard let api = error as? APIError else { return false }
-        return api.isValidation || api.isUnauthorized || api.isForbidden || api.isQuota
+        return api.isValidation || api.isUnauthorized || api.isForbidden || api.isQuota || api.isTrialCapacityUnavailable
             || api.isNotFound || api.isPayloadTooLarge
     }
 
