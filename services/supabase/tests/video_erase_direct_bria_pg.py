@@ -36,19 +36,19 @@ try:
     migrations=sorted((SQL/'migrations').glob('*.sql'))
     for m in migrations: run('apply-'+m.stem,[*psql,'-q','-1','-f',m])
     for name in ('video_erase','video_erase_direct_bria'): receipt[name+'-fresh']=run(name+'-fresh',[*psql,'-f',SQL/f'tests/{name}.sql'])
-    m=SQL/'migrations/20261002225458_video_erase_direct_bria.sql'
-    run('replay-direct',[*psql,'-q','-1','-f',m])
-    for name in ('video_erase','video_erase_direct_bria'): receipt[name+'-replay']=run(name+'-replay',[*psql,'-f',SQL/f'tests/{name}.sql'])
     # Replay reflection migrations immediately after their ordered application
     # in a second fresh DB. Some existing Studio migrations are deliberately
     # one-time CREATE TABLE scripts, so do not claim full historical idempotency.
+    # Replaying an old writer over the final schema would replace its newer
+    # exact-attempt ledger identity and would not represent a supported upgrade.
     run('createdb-historical',[TOOLS['createdb'],*conn,'bria_historical'])
     historical=[TOOLS['psql'],'-X','--no-password',*conn,'-d','bria_historical','-v','ON_ERROR_STOP=1']
     run('bootstrap-historical',[*historical,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
     for m in migrations:
         run('historical-'+m.stem,[*historical,'-q','-1','-f',m])
         if m.name in ('0055_video_reflection_jobs.sql','0056_active_photo_fallback.sql','20261002225458_video_erase_direct_bria.sql'): run('ordered-replay-'+m.stem,[*historical,'-q','-1','-f',m])
-    for name in ('video_erase','video_erase_direct_bria'): run(name+'-ordered-replay',[*historical,'-f',SQL/f'tests/{name}.sql'])
+    for name in ('video_erase','video_erase_direct_bria'): receipt[name+'-replay']=run(name+'-ordered-replay',[*historical,'-f',SQL/f'tests/{name}.sql'])
+    receipt['replayMode']='second clean database; reflection migrations twice at their historical schema points'
     # Eight actual transactions compete for each durable paid admission/receipt.
     u,o,l,a,b,idem=[str(uuid.uuid4()) for _ in range(6)]
     config=json.dumps({'mask_unit_cost_cents':2,'erase_unit_cost_cents':3,'price_version':'synthetic-race','output_hosts':['outputs.example.com']})
