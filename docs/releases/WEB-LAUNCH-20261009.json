@@ -45,12 +45,17 @@
       "verified": true,
       "projectRef": "ymgqpbnjpztwjsyvceld",
       "keyKind": "publishable",
-      "keySha256": "20fbe3da1853621035141903f43bc6041963957ec6a7ea8f4d88d3d2475a010d",
       "authSettingsStatus": 200,
       "appleEnabled": true,
       "gzipBytes": 342823,
       "initialGzipBytes": 138750,
-      "createGzipBytes": 220617
+      "createGzipBytes": 220617,
+      "publicCredentialFingerprint": {
+        "algorithm": "SHA-256",
+        "digest": "20fbe3da1853621035141903f43bc6041963957ec6a7ea8f4d88d3d2475a010d",
+        "sourceFile": "apps/ios/Rendprop/Config.swift",
+        "credentialKind": "Supabase public browser publishable configuration"
+      }
     },
     "dryRuns": {
       "site": "passed",
