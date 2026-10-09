@@ -69,6 +69,7 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     # bodies (pg_temp.rp_patch) refuse a second application by design.
     "20261008201736_launch_ceiling_mode.sql",
     "20261008220411_launch_blockers.sql",
+    "20261008235218_launch_round2.sql",
 })
 
 

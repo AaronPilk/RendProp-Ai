@@ -1848,7 +1848,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             trialUsage: dto.trialUsage,
             trialOffer: dto.trialOffer,
             servingActivation: dto.servingActivation,
-            servingPhotoPackage: dto.servingPhotoPackage)
+            servingPhotoPackage: dto.servingPhotoPackage,
+            servingEnvelope: dto.servingEnvelope?.checked())
         // Let the Account row show the server-side name (never an email).
         guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
               WorkspaceContext.selectedOrgID == selectedOrg else { throw CloudSyncError.identityChanged }
@@ -2478,6 +2479,9 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let trialOffer: TrialOfferSummary?
         let servingActivation: ServingActivationSummary?
         let servingPhotoPackage: ServingPhotoPackageSummary?
+        /// `serving_envelope` (ceiling mode only). The summary decodes itself
+        /// leniently, so a malformed block drops to nil instead of failing /me.
+        let servingEnvelope: ServingEnvelopeSummary?
         let trialEndsAt: String?
         let entitlement: Entitlement?
         let usage: Usage?

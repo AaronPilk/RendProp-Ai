@@ -175,6 +175,10 @@ struct UsageSummary: Codable, Hashable {
     var trialOffer: TrialOfferSummary? = nil
     var servingActivation: ServingActivationSummary? = nil
     var servingPhotoPackage: ServingPhotoPackageSummary? = nil
+    /// Shared AI budget in ceiling serving mode (`/me` → `serving_envelope`);
+    /// nil on funded-mode servers, on older servers, and when the server
+    /// could not compute it.
+    var servingEnvelope: ServingEnvelopeSummary? = nil
 
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }

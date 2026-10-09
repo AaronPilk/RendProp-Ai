@@ -5,7 +5,7 @@ import {HttpError} from "../_shared/http.ts";
 const USER="d0100103-0000-4000-8000-000000000001", ORG="d0100103-0000-4000-8000-000000000002", OTHER="d0100103-0000-4000-8000-000000000003";
 type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
-type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string};
+type Options={role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string;servingEnvelope?:unknown};
 async function invoke(o:Options={}) {
  const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon"};
  const previous=new Map(Object.keys(values).map(key=>[key,Deno.env.get(key)]));for(const [key,value]of Object.entries(values))Deno.env.set(key,value);
@@ -43,6 +43,10 @@ async function invoke(o:Options={}) {
     return json({org_id:o.selector??ORG,available:!o.servingUnavailable,funded:!o.servingUnavailable,authority:o.servingUnavailable?"subscription_activation_unavailable":"verified_retail"});
    }
    if(table==="serving_mode") return json(o.servingMode??"ceiling");
+   if(table==="serving_envelope_state") {
+    assertEquals(await req.json(),{p_org:o.selector??ORG});
+    return json(o.servingEnvelope??{kind:"free",plan:"free",ceiling_cents:300,spent_cents:12.5,held_cents:0,available_cents:287.5,period_start:null,period_end:null,window:"lifetime",pool:null});
+   }
    if(table==="serving_photo_package_context") {
     assertEquals(req.method,"POST");
     assertEquals(await req.json(),{p_actor:USER,p_org:o.selector??ORG});
@@ -68,7 +72,10 @@ async function invoke(o:Options={}) {
 }
 Deno.test("/me reports the serving mode the paywall keys on (ceiling → ordinary StoreKit purchase)",async()=>{
  const ceiling=await invoke({});assertEquals(ceiling.response.status,200);assertEquals(ceiling.body.serving_mode,"ceiling");
- const funded=await invoke({servingMode:"funded"});assertEquals(funded.body.serving_mode,"funded");
+ assertEquals(ceiling.body.serving_envelope,{kind:"free",ceiling_cents:300,spent_cents:12.5,held_cents:0,available_cents:287.5,period_start:null,period_end:null,window:"lifetime",pool:null});
+ const trial=await invoke({servingEnvelope:{kind:"trial",plan:"trial",ceiling_cents:500,spent_cents:"60.5",held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,starts_at:"2026-10-08T00:00:00+00:00",ends_at:"2026-11-08T00:00:00+00:00",spent_cents:460}}});
+ assertEquals(trial.body.serving_envelope,{kind:"trial",ceiling_cents:500,spent_cents:60.5,held_cents:4,available_cents:435.5,period_start:"2026-10-08T00:00:00+00:00",period_end:"2026-10-15T00:00:00+00:00",window:"trial_window",pool:{cap_cents:29000,spent_cents:460,ends_at:"2026-11-08T00:00:00+00:00"}});
+ const funded=await invoke({servingMode:"funded"});assertEquals(funded.body.serving_mode,"funded");assertEquals(funded.body.serving_envelope,null);
 });
 Deno.test("billing context belongs to the same selected workspace as entitlement",async()=>{
  const r=await invoke({selector:OTHER});assertEquals(r.response.status,200);assertEquals(r.body.org.id,OTHER);assertEquals(r.body.billing,{org_id:OTHER,org_name:"Fixture Workspace",role:"owner",can_manage_subscription:true,original_transaction_ids:[],source:null});

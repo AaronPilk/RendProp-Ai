@@ -1,4 +1,4 @@
-import { fundingContext, fundedAttempt, textAttemptQuote, type FundingContext } from "../_shared/funded-serving.ts";
+import { fundingContext, fundedAttempt, textAttemptQuote, visionInputTokenBound, type FundingContext } from "../_shared/funded-serving.ts";
 // ai-video — server-side AI video suite on fal.ai (owner-authenticated).
 //
 // ASYNC SUBMIT/STATUS pattern: edge functions can't babysit multi-minute GPU
@@ -1595,6 +1595,7 @@ Deno.serve(async (req) => {
           feature: "qc",
           step: call.step,
           meta: {
+            request_key: funding.requestKey,
             kind: "video_drift",
             clip_kind: kind,
             request_id: requestId,
@@ -2161,10 +2162,12 @@ async function judgeDrift(args: {
   ];
 
   const steps = await driftChain(args.plan);
+  // Documented vision bound: one source still plus the judged frames.
+  const judgeInputTokens = visionInputTokenBound(1 + args.frames.length, new TextEncoder().encode(rubric).byteLength);
 
   let primary: ChainResult<string>;
   try {
-    primary = await runChain(DRIFT_TASK, steps, (step) => fundedAttempt(args.funding, `qc.initial:${steps.indexOf(step)}`, step, parts, textAttemptQuote(step, rubric, "", DRIFT_MAX_TOKENS, true), () => callJudgeStep(step, rubric, parts)));
+    primary = await runChain(DRIFT_TASK, steps, (step) => fundedAttempt(args.funding, `qc.initial:${steps.indexOf(step)}`, step, parts, textAttemptQuote(step, rubric, "", DRIFT_MAX_TOKENS, true, judgeInputTokens), () => callJudgeStep(step, rubric, parts)));
   } catch (e) {
     const why = e instanceof Error ? e.message : String(e);
     console.error("ai-video: the drift judge could not be reached:", why);
@@ -2193,7 +2196,7 @@ async function judgeDrift(args: {
     const rest = at >= 0 ? steps.slice(at + 1) : [];
     if (rest.length > 0) {
       try {
-        const second = await runChain(DRIFT_TASK, rest, (s) => fundedAttempt(args.funding, `qc.escalation:${steps.indexOf(s)}`, s, parts, textAttemptQuote(s, rubric, "", DRIFT_MAX_TOKENS, true), () => callJudgeStep(s, rubric, parts)));
+        const second = await runChain(DRIFT_TASK, rest, (s) => fundedAttempt(args.funding, `qc.escalation:${steps.indexOf(s)}`, s, parts, textAttemptQuote(s, rubric, "", DRIFT_MAX_TOKENS, true, judgeInputTokens), () => callJudgeStep(s, rubric, parts)));
         calls.push({ step: second.step, escalated: true });
         verdict = parseDriftVerdict(second.value);
         step = second.step;

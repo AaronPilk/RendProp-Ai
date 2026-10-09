@@ -70,7 +70,7 @@ import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
 import * as routerModule from "../_shared/router.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 
-import { fundingContext, fundedAttempt, textAttemptQuote, completeFundingOperation, FundingAdmissionError, abortFundingOperationBeforeDispatch } from "../_shared/funded-serving.ts";
+import { fundingContext, fundedAttempt, textAttemptQuote, videoInputTokenBound, completeFundingOperation, FundingAdmissionError, abortFundingOperationBeforeDispatch } from "../_shared/funded-serving.ts";
 import { deleteFile, generateChapters, requireGemini, uploadVideoFromUrl, waitForActive } from "./gemini.ts";
 import { allowedLabels, chaptersPrompt, spaceTypeOf, systemInstruction } from "./prompt.ts";
 import { postprocessChapters } from "./postprocess.ts";
@@ -569,7 +569,7 @@ Deno.serve(async (req) => {
         const pricedStep: RouteStep = {route_id:candidate.routeId ?? "legacy", task:"video.chapters",provider:candidate.provider,model:candidate.model,unit:candidate.unit,unit_cents:candidate.unitCents,capabilities:[],max_latency_s:90,min_plan:"starter",same_model_as:null,privacy_tier:"retained_30d",enabled:true};
         const attemptAt = Date.now();
         try {
-          result = await fundedAttempt(funding, `chapters:${i}`, pricedStep, {asset:asset.id, system, prompt, fps:SAMPLE_FPS}, textAttemptQuote(pricedStep, system, prompt, 4096, true), () => generateChapters({
+          result = await fundedAttempt(funding, `chapters:${i}`, pricedStep, {asset:asset.id, system, prompt, fps:SAMPLE_FPS}, textAttemptQuote(pricedStep, system, prompt, 4096, true, videoInputTokenBound(asset.durationS, new TextEncoder().encode(system + prompt).byteLength)), () => generateChapters({
             model: candidate.model,
             fileUri: uploaded.uri,
             mimeType: uploaded.mimeType,
@@ -643,6 +643,7 @@ Deno.serve(async (req) => {
       units: ledgerUnits(route, asset.durationS),
       unitCents: route.unitCents,
       meta: {
+        request_key: funding.requestKey,
         asset_id: asset.id,
         space_type: space,
         chapters: chapters.length,

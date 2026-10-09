@@ -781,6 +781,8 @@ Deno.serve(async (req) => {
           step,
           chars: text.length,
           meta: {
+            request_key: funding.requestKey,
+            stage: "voice.tts",
             voice_id: voiceId, // VOICE_ID_RE-validated above: [A-Za-z0-9_-]{1,64}
             characters: text.length,
             duration_s: durationS,

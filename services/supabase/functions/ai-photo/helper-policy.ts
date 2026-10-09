@@ -1,6 +1,6 @@
 // Price the same complete payload that is sent. No tools, grounding, caching,
 // URL inputs or extra candidates can enter this helper contract.
-import {TARIFF_VERSION,type AttemptQuote} from "../_shared/funded-serving.ts";
+import {TARIFF_VERSION,visionInputTokenBound,type AttemptQuote} from "../_shared/funded-serving.ts";
 import {HttpError} from "../_shared/http.ts";
 export const PHOTO_HELPER_MAX_OUTPUT_TOKENS=1024;
 export type PhotoHelperPart={text:string}|{inline_data:{mime_type:string;data:string}};
@@ -33,15 +33,15 @@ function inspect(value:unknown):{media:boolean;textBytes:number}|null {
  if(texts!==1||images>1||textBytes===0||textBytes>8192)return null;
  return{media:images===1,textBytes};
 }
-/** Keep the whole published input window for both vision and text. Payload
- * byte limits are structural guards, not a documented billed-token ceiling.
- * An assumed text-token/role overhead must not reduce a financial hold.
- * Legacy GenerateContent
- * maxOutputTokens is a hard cutoff over thought+answer tokens. The1.5/7.5
- * standard rates retain the announced2027 rates rather than today's promotion.
+/** The helper sends at most one ≤12 MB still plus ≤8 KB of text. Its input is
+ * bounded by Google's documented image tokenisation (258 tokens per 768px
+ * tile; a 2048px photo ≈ 2,322 tokens — visionInputTokenBound allows 2,048
+ * per image plus text) rather than the whole context window. Output is the
+ * hard maxOutputTokens cutoff over thought+answer tokens. The 1.5/7.5 rates
+ * are the announced 2027 standard rates, higher than today's promotion.
  * This is a request liability hold, not an invoice reconciliation. */
 export function photoHelperQuote(model:string,payload:unknown):AttemptQuote|null {
  const input=inspect(payload);if(model!=="gemini-3.6-flash"||!input)return null;
- const tokens=1048576;
+ const tokens=input.media?visionInputTokenBound(1,input.textBytes):Math.ceil(input.textBytes/2)+1024;
  return{cents:(tokens*1.5+PHOTO_HELPER_MAX_OUTPUT_TOKENS*7.5)/10000,version:TARIFF_VERSION};
 }

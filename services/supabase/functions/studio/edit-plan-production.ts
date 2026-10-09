@@ -134,7 +134,7 @@ export function editPlanProduction(context: StudioContext, task: "copy.edit_plan
       }
     },
     async record(step, outcome) {
-      await recordRoutedAiCost(admin, { orgId, feature: "copy_assist", step, meta: { kind: task === EDIT_PLAN_TASK ? "edit_plan" : "prompt_enhancement", attempts: 1, outcome, price_estimated: true } });
+      await recordRoutedAiCost(admin, { orgId, feature: "copy_assist", step, meta: { kind: task === EDIT_PLAN_TASK ? "edit_plan" : "prompt_enhancement", attempts: 1, outcome, price_estimated: true, request_key: requestKey, stage: task } });
     },
     async spaceType(listingId) {
       if (!listingId) return null;

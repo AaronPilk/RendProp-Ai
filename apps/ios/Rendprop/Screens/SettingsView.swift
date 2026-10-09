@@ -869,7 +869,7 @@ struct SettingsView: View {
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text(usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
+            Text(usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : usage?.servingEnvelope != nil ? "Allowances are shared by this workspace. AI work is admitted against the AI budget shown above the meters, which is sized to your plan's service period; a request that would exceed it is declined before any provider is called. Pull down to refresh." : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -943,10 +943,12 @@ struct SettingsView: View {
             if let package = usage.servingPhotoPackage { photoPackageRows(package) }
         } else if let package = usage.servingPhotoPackage {
             if let e = usage.entitlements { LabeledContent("Plan", value: Self.planLabel(e)) }
+            if let envelope = usage.servingEnvelope { envelopeRows(envelope) }
             photoPackageRows(package)
             if let leads = usage.leadCount { LabeledContent("Leads this month", value: "\(leads)") }
         } else if let e = usage.entitlements {
             LabeledContent("Plan", value: Self.planLabel(e))
+            if let envelope = usage.servingEnvelope { envelopeRows(envelope) }
             if e.plan.lowercased() == "trial", let ends = e.trialEndsAt, ends > Date() {
                 // "Free week", never "trial": the paywall's StoreKit
                 // introductory offer is the "7-day free trial", and the server
@@ -973,6 +975,24 @@ struct SettingsView: View {
             if let leads = usage.leadCount {
                 LabeledContent("Leads this month", value: "\(leads)")
             }
+        }
+    }
+
+    /// The shared AI budget the server admits work against (ceiling mode).
+    /// Meters below it are plan allowances; this is the money gate behind
+    /// them, so a refusal reads the same here as in the RP402 copy.
+    @ViewBuilder
+    private func envelopeRows(_ envelope: ServingEnvelopeSummary) -> some View {
+        LabeledContent(envelope.budgetTitle, value: envelope.budgetValue)
+            .accessibilityIdentifier("settings.aiBudget")
+        if let line = envelope.resetLine {
+            Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+        if let line = envelope.heldLine {
+            Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+        if let line = envelope.poolLine {
+            Text(line).font(.rpCaption).foregroundStyle(Theme.inkDim)
         }
     }
 

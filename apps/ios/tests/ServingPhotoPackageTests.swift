@@ -103,6 +103,56 @@ import Foundation
             catch { checks += 1 }
             check(AuthStore.shared.identityWrites == 0, "Late package context wrote replacement identity")
         }
+        // serving_envelope (ceiling mode): additive, lenient, self-checked.
+        func envelope(_ patch: [String: Any] = [:], kind: String = "retail") -> [String: Any] {
+            var value: [String: Any] = ["kind": kind, "plan": "pro", "ceiling_cents": 1682, "spent_cents": 120.5, "held_cents": 8.36,
+                "available_cents": 1553.14, "period_start": iso.string(from: clock.addingTimeInterval(-86_400)),
+                "period_end": iso.string(from: clock.addingTimeInterval(29 * 86_400)), "window": "apple_term", "pool": NSNull()]
+            value.merge(patch) { _, newer in newer }
+            return value
+        }
+        func withEnvelope(_ value: Any?) throws -> Data {
+            var result = try JSONSerialization.jsonObject(with: reply()) as! [String: Any]
+            if let value { result["serving_envelope"] = value }
+            return try JSONSerialization.data(withJSONObject: result)
+        }
+        reset()
+        let retail = try await LivePhotoPackageFixture(data: withEnvelope(envelope())).me()
+        check(retail.servingEnvelope?.kind == "retail" && retail.servingEnvelope?.window == "apple_term", "Actual me forwards the serving envelope")
+        check(retail.servingEnvelope?.budgetTitle == "AI budget", "Retail envelope title")
+        check(retail.servingEnvelope?.budgetValue == "$1.21 used · $15.53 available of $16.82", "Envelope value rounds spend up and what is left down")
+        check(retail.servingEnvelope?.resetLine?.hasPrefix("Resets ") == true && retail.servingEnvelope?.resetLine?.contains("subscription period") == true, "Apple term reset line")
+        check(retail.servingEnvelope?.heldLine == "$0.09 is reserved for work still running.", "Held liability line")
+        check(retail.servingEnvelope?.poolLine == nil, "Retail shows no sponsor pool")
+        reset()
+        let free = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "free", "ceiling_cents": 300, "spent_cents": 0, "held_cents": 0,
+            "available_cents": 300, "period_start": NSNull(), "period_end": NSNull(), "window": "lifetime"]))).me()
+        check(free.servingEnvelope?.budgetTitle == "Free AI allowance" && free.servingEnvelope?.resetLine?.contains("does not reset") == true, "Free lifetime wording")
+        reset()
+        let trial = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "trial", "ceiling_cents": 500, "available_cents": 371.14, "window": "trial_window",
+            "pool": ["cap_cents": 29000, "spent_cents": 1200.25, "ends_at": iso.string(from: clock.addingTimeInterval(20 * 86_400))]]))).me()
+        check(trial.servingEnvelope?.budgetTitle == "Free-trial AI budget" && trial.servingEnvelope?.resetLine?.hasPrefix("Trial budget ends ") == true, "Trial wording")
+        check(trial.servingEnvelope?.poolLine?.hasPrefix("Trials share a reviewed sponsor pool: $277.99 of $290 left, closing ") == true, "Trial pool line")
+        reset()
+        let grace = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "grace", "window": "apple_grace"]))).me()
+        check(grace.servingEnvelope?.budgetTitle == "AI budget (billing grace)" && grace.servingEnvelope?.resetLine?.hasPrefix("Billing grace ends ") == true, "Grace wording")
+        for (bad, why) in [(NSNull(), "Null envelope"), ("ceiling", "String envelope"), (["kind": 7], "Wrong-typed kind"),
+                           (["kind": "retail"], "Envelope without money"),
+                           (envelope(["available_cents": 1700]), "Available above ceiling"),
+                           (envelope(["spent_cents": -1]), "Negative spend"),
+                           (envelope(["ceiling_cents": "abc"]), "Non-numeric ceiling")] as [(Any, String)] {
+            reset()
+            let usage = try await LivePhotoPackageFixture(data: withEnvelope(bad)).me()
+            check(usage.servingEnvelope == nil, why + " was drawn")
+            check(usage.entitlements?.photoEditsPerMonth == 200, why + " broke the legacy allowances")
+        }
+        reset()
+        let brokenPool = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["ceiling_cents": 500, "available_cents": 371.14,
+            "window": "trial_window", "pool": ["cap_cents": "x"]], kind: "trial"))).me()
+        check(brokenPool.servingEnvelope?.budgetTitle == "Free-trial AI budget" && brokenPool.servingEnvelope?.poolLine == nil, "Malformed pool hides only the pool line")
+        reset()
+        let absent = try await LivePhotoPackageFixture(data: withEnvelope(nil)).me()
+        check(absent.servingEnvelope == nil, "Funded-mode server invents an envelope")
         print("Native photo package: \(checks) checks passed")
     }
 }

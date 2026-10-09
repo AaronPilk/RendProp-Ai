@@ -891,7 +891,7 @@ Deno.serve(async (req) => {
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, ...(style ? { style } : {}),
+      meta: { edit, space_type: space, request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
         ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
           cost_basis: "route_output_image_estimate_input_tokens_unmodeled" } : {}) },
     });

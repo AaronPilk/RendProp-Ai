@@ -14,14 +14,26 @@ export class FundingAdmissionError extends HttpError { readonly funding_admissio
 export class SavedFundingResponse extends HttpError {
  constructor(readonly saved_response:Record<string,unknown>){super(200,"Restored generated result.");}
 }
+/** Ceiling-mode refusals name their kind so the customer hears the right thing:
+ * a free sample never refills, a personal trial window ends on its own, the
+ * shared sponsor pool is ours (never the customer's fault), and a paid period
+ * resets on a date. */
+export function ceilingRefusalCopy(message:string):string|null {
+ const kind=/RP402:\s*AI usage limit reached \[kind=([a-z_]+)\]/.exec(message)?.[1];
+ if(kind==="free")return "Your free AI sample is used up. Subscribe to keep using AI tools.";
+ if(kind==="trial")return "Your trial's AI allowance is used up. Your plan's full allowance starts with the paid period.";
+ if(kind==="grace")return "AI tools are paused while Apple retries your subscription payment. They resume as soon as the renewal goes through.";
+ if(kind)return "This workspace has used its AI allowance for the current billing period. It resets with the next period, or upgrade for more.";
+ const pool=/RP402:\s*Free-trial AI limit reached \[pool=([a-z]+)\]/.exec(message)?.[1];
+ if(pool)return "Free-trial AI is paused right now: the shared trial allowance is used up on our side. Nothing was charged. Your plan's own allowance starts with its paid period.";
+ return null;
+}
 function fundingRpcError(message:string):never {
  // Ceiling mode (2026-10-08): the workspace's serving envelope is spent for
- // this period, or the global trial sponsor pool is. Both are quota: a bigger
- // plan or the next period repairs them; no further provider attempt runs.
- if (/RP402:\s*AI usage limit reached for this workspace/.test(message))
-  throw new FundingAdmissionError(402,"This workspace has used its AI allowance for this period. Upgrade your plan or wait for the next period.","quota_exceeded");
- if (/RP402:\s*Free-trial AI limit reached/.test(message))
-  throw new FundingAdmissionError(402,"The free trial's AI allowance is used up for this month. Subscribe to keep going.","quota_exceeded");
+ // this window, or the shared trial sponsor pool is. Both are quota: nothing
+ // more dispatches, and the copy says which it was.
+ const copy=ceilingRefusalCopy(message);
+ if(copy)throw new FundingAdmissionError(402,copy,"quota_exceeded");
  // Missing activation is an operator-side availability boundary. Buying a
  // bigger plan cannot repair it. An exhausted funded interval remains quota;
  // neither case permits another provider attempt or loosens the spending gate.
@@ -191,20 +203,84 @@ function freeCatalogRoute(step:Pick<RouteStep,"provider"|"model">&Partial<Pick<R
  return step.unit_cents===0&&(step.provider==="apple"||step.provider==="rendprop");
 }
 
+/** Pixel count of a JPEG or PNG carried as a data URL / base64 string, from
+ * its header only (SOFn for JPEG, IHDR for PNG). Null when unknown. */
+export function imagePixelsFromBase64(value:unknown):number|null {
+ if(typeof value!=="string")return null;
+ const b64=value.startsWith("data:")?value.slice(value.indexOf(",")+1):value;
+ if(b64.length<64)return null;
+ let bytes:Uint8Array;
+ try{bytes=Uint8Array.from(atob(b64.slice(0,Math.min(b64.length,262144))),c=>c.charCodeAt(0));}catch{return null;}
+ if(bytes[0]===0x89&&bytes[1]===0x50&&bytes[2]===0x4e&&bytes[3]===0x47&&bytes.length>=24){
+  const view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+  const w=view.getUint32(16),h=view.getUint32(20);return w>0&&h>0?w*h:null;
+ }
+ if(bytes[0]===0xff&&bytes[1]===0xd8){
+  let i=2;
+  while(i+9<bytes.length){
+   if(bytes[i]!==0xff){i++;continue;}
+   const marker=bytes[i+1];
+   if(marker===0xd8||marker===0x01||(marker>=0xd0&&marker<=0xd7)){i+=2;continue;}
+   const length=(bytes[i+2]<<8)|bytes[i+3];
+   if(marker>=0xc0&&marker<=0xcf&&marker!==0xc4&&marker!==0xc8&&marker!==0xcc){
+    const h=(bytes[i+5]<<8)|bytes[i+6],w=(bytes[i+7]<<8)|bytes[i+8];return w>0&&h>0?w*h:null;
+   }
+   if(length<2)return null;
+   i+=2+length;
+  }
+ }
+ return null;
+}
+
+/** Ceiling mode holds the DOCUMENTED complete bound of the attempt, not the
+ * provider's whole context window and not the catalog estimate:
+ *  - Gemini image models: Google bills image OUTPUT at a fixed token count per
+ *    image (1K = 1120 tokens; ai.google.dev/gemini-api/docs/pricing) and the
+ *    request pins imageSize 1K with one candidate; image INPUT is tiled at 258
+ *    tokens per 768px tile, so two ≤2048px images plus the prompt stay far
+ *    under the 8,192-token input bound used here; text/thinking output is
+ *    bounded by maxOutputTokens at the text rate.
+ *  - gpt-image-2: $8/M input, $30/M output image tokens (developers.openai.com
+ *    pricing, standard tier, the higher of the two published rate cards); a
+ *    medium 1536x1024 output is 1,584 tokens; input bounded at 8,192 tokens.
+ *  - FLUX.1 [pro] Fill: $0.05 per output megapixel, rounded UP (fal model page);
+ *    priced from the input image's own pixel count, else the app's 2048px cap.
+ *  - FLUX.1 Kontext [pro]: $0.04 per image (fal model page).
+ * Anything else keeps the caller's bounded quote. Returns null when there is
+ * no documented bound for this step, which refuses the attempt (see below). */
+export function ceilingVerifiedQuote(step:Pick<RouteStep,"provider"|"model">,input:unknown,quote:AttemptQuote|null):AttemptQuote|null {
+ const data=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:{};
+ const model=step.model.replace(/^fal-ai\//,"");
+ const bound=(cents:number)=>({cents:Math.ceil(cents*10000)/10000,version:"documented-bound-20261008"});
+ if(step.provider==="gemini"&&model==="gemini-3.1-flash-image")return bound((8192*0.5+4096*3+1120*60)/10000);
+ if(step.provider==="gemini"&&model==="gemini-3.1-flash-lite-image")return bound((8192*0.25+4096*1.5+1120*30)/10000);
+ if(step.provider==="openai"&&model==="gpt-image-2")return bound((8192*8+1584*30)/10000);
+ if(step.provider==="fal"&&model==="flux-pro/kontext")return bound(4);
+ if(step.provider==="fal"&&model==="flux-pro/v1/fill"){
+  const pixels=imagePixelsFromBase64(data.image_url)??imagePixelsFromBase64(data.image_b64)??2048*2048;
+  return bound(5*Math.max(1,Math.ceil(pixels/1000000)));
+ }
+ return quote;
+}
+
 export async function fundedAttempt<T>(context: FundingContext,stage: string,step: Pick<RouteStep,"provider"|"model">,
  input: unknown,quote: AttemptQuote|null,attempt:()=>Promise<T>): Promise<T> {
  let admittedQuote=quote;
  if(await servingMode()==="ceiling"){
   // Ceiling mode (2026-10-08): every paid attempt — primaries, fallbacks,
-  // helpers, judges — reserves its catalog price against the workspace's
-  // serving envelope before dispatch (serving_cost_reserve, budget 'ceiling').
+  // helpers, judges — reserves money against the workspace's serving envelope
+  // before dispatch (serving_cost_reserve → serving_envelope_admit). The hold
+  // is the documented complete bound, never below the catalog price the ledger
+  // bills; a step with no documented bound is refused unless privately sponsored.
   if(freeCatalogRoute(step)){
    const result=await attempt();
    if(result instanceof Response)throw new HttpError(502,"The generation service did not return a validated receipt.","upstream");
    return result;
   }
+  const verified=ceilingVerifiedQuote(step,input,quote);
   const catalog=routeCatalogQuote(step,input);
-  if(catalog&&catalog.cents>0)admittedQuote=catalog;
+  if(verified&&catalog&&catalog.cents>verified.cents)admittedQuote={cents:catalog.cents,version:verified.version};
+  else admittedQuote=verified;
  }
  try{
  if(!admittedQuote && !await unlimitedSponsored(context))throw new FundingAdmissionError(503,"This operation's complete price could not be verified. No generation was submitted.","upstream");
@@ -254,22 +330,43 @@ export async function fundedAttempt<T>(context: FundingContext,stage: string,ste
  * entire model input window until a trusted token/pixel authority exists.
  * Published tariffs: Google pricing/model limits, OpenAI pricing, Claude pricing.
  * Unknown models, image inputs, tools and private rates never use flat averages. */
-export function textAttemptQuote(step:RouteStep,system:string,turn:string,maxOutputTokens:number,media=false):AttemptQuote|null {
+export function textAttemptQuote(step:RouteStep,system:string,turn:string,maxOutputTokens:number,media=false,inputTokens?:number):AttemptQuote|null {
  let inputRate:number,outputRate:number,output:number;
  if(step.provider==="openai"){
   const rates:Record<string,[number,number]>={"gpt-5.6-terra":[2,12],"gpt-5.6-sol":[4,20],"gpt-6-astra":[20,75],"gpt-6.1-sol":[4,15],"gpt-6-sol":[4,20],"gpt-5.6-luna":[.2,1.2]};
-  const rate=rates[step.model];if(!rate||media)return null;[inputRate,outputRate]=rate;
+  const rate=rates[step.model];if(!rate||(media&&inputTokens===undefined))return null;[inputRate,outputRate]=rate;
   output=openaiChatConfig(paramsOf(step),maxOutputTokens).maxOutputTokens;
  }else if(step.provider==="anthropic"){
   const rates:Record<string,[number,number]>={"claude-sonnet-5":[2,10],"claude-sonnet-5-5":[2,10],"claude-opus-5":[5,25],"claude-haiku-4-5":[1,5]};
   const rate=rates[step.model];if(!rate)return null;[inputRate,outputRate]=rate;output=anthropicMaxTokens(paramsOf(step),maxOutputTokens);
  }else if(step.provider==="gemini"&&step.model==="gemini-3.6-flash"){
   inputRate=1.5;outputRate=7.5;output=65536;
+ }else if(step.provider==="gemini"&&step.model==="gemini-3.8-flash"){
+  // ai.google.dev/gemini-api/docs/pricing: $0.75/$3.75 through 2026, $1.50/$7.50 from 2027 — hold the higher.
+  inputRate=1.5;outputRate=7.5;output=Math.min(65536,Math.max(1,Math.floor(maxOutputTokens)));
+ }else if(step.provider==="gemini"&&step.model==="gemini-3.1-flash-lite"){
+  // ai.google.dev/gemini-api/docs/pricing: $0.25 input (text/image/video), $1.50 output.
+  inputRate=0.25;outputRate=1.5;output=Math.min(65536,Math.max(1,Math.floor(maxOutputTokens)));
  }else return null;
  const bytes=new TextEncoder().encode(system+"\n\n---\n\n"+turn).byteLength;
  if(bytes>100000||!Number.isInteger(output)||output<=0||output>65536)return null;
- const tokens=media?1048576:bytes+1024;
+ // Media calls take the caller's DOCUMENTED input bound (frames x per-image
+ // tokens, or seconds x per-second tokens) and otherwise the whole window.
+ const tokens=media?(Number.isInteger(inputTokens)&&inputTokens!>0?Math.min(1048576,inputTokens!):1048576):bytes+1024;
  return {cents:(tokens*inputRate+output*outputRate)/10000,version:TARIFF_VERSION};
+}
+
+/** Documented input-token bound for a vision call: Anthropic images cost about
+ * (width x height) / 750 tokens and are downscaled to ≤1.15 MP (≈1,600 tokens);
+ * OpenAI high-detail images are ≤ ~1,600 tokens; Gemini tiles 768px at 258
+ * tokens each (a 2048px image ≈ 2,322). 2,048 tokens per image covers all three. */
+export function visionInputTokenBound(images:number,textBytes:number):number {
+ return Math.max(1,Math.ceil(images))*2048+Math.ceil(Math.max(0,textBytes)/2)+1024;
+}
+/** Documented input-token bound for a Gemini video call: 263 tokens per second at
+ * default media resolution (ai.google.dev/gemini-api/docs/video-understanding). */
+export function videoInputTokenBound(seconds:number,textBytes:number):number {
+ return Math.ceil(Math.max(1,seconds)*263)+Math.ceil(Math.max(0,textBytes)/2)+1024;
 }
 
 /** Published legacy GenerateContent hard cutoff includes thought tokens:
