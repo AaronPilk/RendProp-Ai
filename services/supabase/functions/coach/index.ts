@@ -442,6 +442,8 @@ Deno.serve(async (req) => {
         feature: "coach",
         step: attempt.step,
         meta: {
+          request_key: funding.requestKey,
+          stage: `coach.chat:${chain.indexOf(attempt.step)}`,
           message_count: messages.length,
           listing_count: context.listings.length,
           has_action: output.actions.length > 0,

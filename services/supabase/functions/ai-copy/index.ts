@@ -561,7 +561,7 @@ Deno.serve(async (req) => {
         orgId,
         feature: "copy_assist",
         step: lastStep,
-        meta: { kind: "reel_script", target_seconds: targetSeconds, attempts: written.attempts },
+        meta: { kind: "reel_script", target_seconds: targetSeconds, attempts: written.attempts, request_key: funding.requestKey },
       });
 
       const script = written.text;
@@ -684,6 +684,7 @@ Deno.serve(async (req) => {
         feature: "copy_assist",
         step: lastStep,
         meta: {
+          request_key: funding.requestKey,
           kind: "shotlist",
           target_seconds: targetSeconds,
           attempts: written.attempts,
@@ -854,6 +855,7 @@ Deno.serve(async (req) => {
         feature: "copy_assist",
         step: lastStep,
         meta: {
+          request_key: funding.requestKey,
           kind: "agent_reel",
           subject,
           clip_seconds: Math.round(clipSeconds),
@@ -932,7 +934,7 @@ Deno.serve(async (req) => {
       orgId,
       feature: "copy_assist",
       step: lastStep,
-      meta: { kind: "photo_prompt", target_seconds: null, attempts: polished.attempts },
+      meta: { kind: "photo_prompt", target_seconds: null, attempts: polished.attempts, request_key: funding.requestKey },
     });
 
     return json(await completeFundingOperation(funding, { prompt: polished.text, model: lastStep.model }));

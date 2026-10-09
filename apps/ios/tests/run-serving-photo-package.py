@@ -27,6 +27,14 @@ assert 'usageRow(' not in rows[package_branch:legacy_branch]
 assert rows.count('if let package = usage.servingPhotoPackage { photoPackageRows(package) }') == 2
 assert 'ForEach(package.rows, id: \\.title)' in block(settings, 'private func photoPackageRows(')
 assert 'usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation' in settings
+# The shared AI budget (ceiling mode) is drawn above the meters in both the
+# package branch and the plan branch, and only from a checked envelope.
+assert rows.count('if let envelope = usage.servingEnvelope { envelopeRows(envelope) }') == 2
+assert rows.index('if let envelope = usage.servingEnvelope { envelopeRows(envelope) }', legacy_branch) < rows.index('usageRow("Cloud tour renders"')
+envelope_rows = block(settings, 'private func envelopeRows(')
+assert 'LabeledContent(envelope.budgetTitle, value: envelope.budgetValue)' in envelope_rows
+assert all(line in envelope_rows for line in ['envelope.resetLine', 'envelope.heldLine', 'envelope.poolLine'])
+assert 'servingEnvelope: dto.servingEnvelope?.checked()' in live
 assert 'usageLoadGeneration == generation' in block(settings, 'private func loadUsage(')
 revision_change = block(settings, '.onChange(of: auth.syncSessionRevision)')
 assert 'usage = nil; usageError = nil' in revision_change and 'await loadUsage()' in revision_change
@@ -65,6 +73,8 @@ faults = [
  ('response-actor', 'dto.user?.id.flatMap(UUID.init(uuidString:)) == owner,', 'true,', 'Foreign package actor accepted'),
  ('response-context', 'AuthStore.shared.syncSessionRevision == revision', 'true', 'Late package context accepted'),
  ('dropped-package', 'servingPhotoPackage: dto.servingPhotoPackage', 'servingPhotoPackage: nil', 'Actual me forwards configured package'),
+ ('envelope-unchecked', 'servingEnvelope: dto.servingEnvelope?.checked()', 'servingEnvelope: dto.servingEnvelope', 'Available above ceiling was drawn'),
+ ('envelope-dropped', 'servingEnvelope: dto.servingEnvelope?.checked()', 'servingEnvelope: nil', 'Actual me forwards the serving envelope'),
 ]
 results = []
 for name, old, new, expected in faults:

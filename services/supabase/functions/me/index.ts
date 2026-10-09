@@ -1,5 +1,24 @@
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 import { servingMode } from "../_shared/funded-serving.ts";
+
+/** Best effort: the envelope is informational on /me; the gate itself lives in
+ * serving_envelope_admit. Null when the mode is funded or the RPC is unavailable. */
+async function servingEnvelope(admin: { rpc: (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: unknown }> }, orgId: string): Promise<Record<string, unknown> | null> {
+  if (await servingMode() !== "ceiling") return null;
+  try {
+    const { data, error } = await admin.rpc("serving_envelope_state", { p_org: orgId });
+    if (error || !data || typeof data !== "object" || Array.isArray(data)) return null;
+    const row = data as Record<string, unknown>;
+    const num = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && Number.isFinite(Number(v)) ? Number(v) : null;
+    return {
+      kind: typeof row.kind === "string" ? row.kind : null,
+      ceiling_cents: num(row.ceiling_cents), spent_cents: num(row.spent_cents), held_cents: num(row.held_cents), available_cents: num(row.available_cents),
+      period_start: typeof row.period_start === "string" ? row.period_start : null, period_end: typeof row.period_end === "string" ? row.period_end : null,
+      window: typeof row.window === "string" ? row.window : null,
+      pool: row.pool && typeof row.pool === "object" && !Array.isArray(row.pool) ? { cap_cents: num((row.pool as Record<string, unknown>).cap_cents), spent_cents: num((row.pool as Record<string, unknown>).spent_cents), ends_at: typeof (row.pool as Record<string, unknown>).ends_at === "string" ? (row.pool as Record<string, unknown>).ends_at : null } : null,
+    };
+  } catch { return null; }
+}
 // me — the signed-in user, their org, plan, and account lifecycle (owner).
 //
 //   GET    /me                  -> { user, org, plan, plan_raw, trial_ends_at, entitlement,
@@ -408,8 +427,12 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     serving_activation: servingActivation,
     serving_photo_package: photoPackage,
     // Launch cost model (2026-10-08): "ceiling" = ordinary StoreKit purchases,
-    // meters + monthly COGS ceilings; "funded" = held-trial / funded-serving.
+    // meters + a per-workspace serving envelope; "funded" = held-trial /
+    // funded-serving. `serving_envelope` is the money gate the app shows next
+    // to the feature meters: ceiling, counted spend, held liability, what is
+    // still available and when the window resets (null outside ceiling mode).
     serving_mode: await servingMode(),
+    serving_envelope: await servingEnvelope(admin, orgId),
     // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
     // client: an app build older than migration 0019 simply ignores them.
     plan_source: testingAccess ? "manual" : org.plan_source ?? null,

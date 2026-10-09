@@ -100,6 +100,9 @@ export async function submitReservedVideo<T extends { id: string }>(
     quote = {cents: Math.max(hold, 1920 * 1080 * (input.seconds! * 24 + 1) / 1024 / 10000),version:TARIFF_VERSION};
   } else if (step.provider === "fal" && ["veo3.1/fast/image-to-video","veo3.1/fast"].includes(model) && Number.isInteger(input.seconds) && [4,6,8].includes(input.seconds!)) {
     quote = {cents: Math.max(hold, input.seconds! * (input.resolution === "4k" ? 30 : 10)),version:TARIFF_VERSION};
+  } else if (step.provider === "fal" && model === "minimax/hailuo-02/standard/image-to-video" && Number.isInteger(input.seconds) && input.seconds! >= 1 && input.seconds! <= 6) {
+    // fal model page: Hailuo 02 Standard (768P) is $0.045 per generated second, 6 s maximum.
+    quote = {cents: Math.max(hold, input.seconds! * 4.5),version:TARIFF_VERSION};
   }
   try {
     // The same request must never reach a second provider after a timeout or

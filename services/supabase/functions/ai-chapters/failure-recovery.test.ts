@@ -17,7 +17,7 @@ async function fixture(failure: Failure, removeAbort = false) {
   if (removeAbort) handler = handler.replace("await abortFundingOperationBeforeDispatch(funding);\n      throw e;", "throw e;");
   const module = `
     import {HttpError,assert,json,respondError,readJson} from ${JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)};
-    import {fundingContext,fundedAttempt,completeFundingOperation,abortFundingOperationBeforeDispatch,FundingAdmissionError} from ${JSON.stringify(new URL("../_shared/funded-serving.ts", import.meta.url).href)};
+    import {fundingContext,fundedAttempt,completeFundingOperation,abortFundingOperationBeforeDispatch,FundingAdmissionError,videoInputTokenBound} from ${JSON.stringify(new URL("../_shared/funded-serving.ts", import.meta.url).href)};
     import {requiredIdempotencyKey} from ${JSON.stringify(new URL("../_shared/idempotency.ts", import.meta.url).href)};
     type ChaptersBody=any;type Charge=any;type RateChargeReceipt=any;type ChosenRoute=any;type RouteStep=any;
     const failure=${JSON.stringify(failure)};

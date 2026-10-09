@@ -1,11 +1,13 @@
 import {assert,assertEquals,assertThrows} from "https://deno.land/std@0.224.0/assert/mod.ts";
 import {photoHelperPayload,photoHelperQuote} from "./helper-policy.ts";
-Deno.test("same bounded helper payload prices1024 combined output tokens and full vision input",()=>{
+Deno.test("same bounded helper payload prices 1024 combined output tokens and the documented vision input bound",()=>{
  const text=photoHelperPayload([{text:"synthetic instruction"}]),vision=photoHelperPayload([{text:"synthetic instruction"},{inline_data:{mime_type:"image/jpeg",data:"AAAA"}}]);
  assertEquals(text.generationConfig.maxOutputTokens,1024);
- assertEquals(photoHelperQuote("gemini-3.6-flash",vision)?.cents,158.0544);
- assertEquals(photoHelperQuote("gemini-3.6-flash",text)?.cents,158.0544);
- assertEquals(photoHelperQuote("gemini-3.6-flash",photoHelperPayload([{text:"x"}]))?.cents,158.0544);
+ // One image (2,048 tokens, Google's 258-per-768px-tile rule for a 2048px still) + text/2 + 1,024 at $1.50/M, 1,024 output tokens at $7.50/M.
+ const textBytes=new TextEncoder().encode("synthetic instruction").byteLength;
+ assertEquals(photoHelperQuote("gemini-3.6-flash",vision)?.cents,((2048+Math.ceil(textBytes/2)+1024)*1.5+1024*7.5)/10000);
+ assertEquals(photoHelperQuote("gemini-3.6-flash",text)?.cents,((Math.ceil(textBytes/2)+1024)*1.5+1024*7.5)/10000);
+ assert((photoHelperQuote("gemini-3.6-flash",vision)?.cents??0)<2,"a helper call is a few cents, not a whole context window");
  assertEquals(photoHelperQuote("unknown",vision),null);
  for(const change of [{maxOutputTokens:65536},{candidateCount:2},{tools:[]},{responseMimeType:"text/plain"}]){
   const bad={...vision,generationConfig:{...vision.generationConfig,...change}};assertEquals(photoHelperQuote("gemini-3.6-flash",bad),null);

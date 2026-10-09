@@ -49,6 +49,118 @@ struct ServingPhotoPackageSummary: Codable, Hashable, Sendable {
     static let explanation = "Photo edits and the budget for other AI tools are separate. These are the workspace's actual configured limits for this interval, shared on iPhone and Studio. An accepted photo edit uses an admission even if generation fails. Work is admitted by the server. Pull down to refresh."
 }
 
+/// The shared AI budget the server admits work against in ceiling serving
+/// mode (`/me` → `serving_envelope`, from `serving_envelope_state`). Cents are
+/// server numbers rounded to 2 dp; `held` is provider liability on holds not
+/// yet ledgered. Absent on funded-mode servers and on any RPC failure — the
+/// screen then shows the meters alone. Never a local permission to start work.
+struct ServingEnvelopeSummary: Codable, Hashable, Sendable {
+    struct Pool: Codable, Hashable, Sendable {
+        let capCents: Double?
+        let spentCents: Double?
+        let endsAt: String?
+    }
+    let kind: String?
+    let ceilingCents: Double?
+    let spentCents: Double?
+    let heldCents: Double?
+    let availableCents: Double?
+    let periodStart: String?
+    let periodEnd: String?
+    let window: String?
+    let pool: Pool?
+
+    enum CodingKeys: String, CodingKey {
+        case kind, ceilingCents, spentCents, heldCents, availableCents, periodStart, periodEnd, window, pool
+    }
+    init(kind: String?, ceilingCents: Double?, spentCents: Double?, heldCents: Double?, availableCents: Double?,
+         periodStart: String?, periodEnd: String?, window: String?, pool: Pool?) {
+        self.kind = kind; self.ceilingCents = ceilingCents; self.spentCents = spentCents; self.heldCents = heldCents
+        self.availableCents = availableCents; self.periodStart = periodStart; self.periodEnd = periodEnd
+        self.window = window; self.pool = pool
+    }
+    /// Lenient by design: this block is additive to /me, so a field of the
+    /// wrong type (or a non-object value) yields an empty summary that
+    /// `checked()` rejects, never a decoding error that blanks Plan & usage.
+    init(from decoder: Decoder) throws {
+        guard let keys = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self.init(kind: nil, ceilingCents: nil, spentCents: nil, heldCents: nil, availableCents: nil,
+                      periodStart: nil, periodEnd: nil, window: nil, pool: nil)
+            return
+        }
+        func text(_ key: CodingKeys) -> String? { (try? keys.decodeIfPresent(String.self, forKey: key)) ?? nil }
+        func number(_ key: CodingKeys) -> Double? {
+            if let value = (try? keys.decodeIfPresent(Double.self, forKey: key)) ?? nil { return value }
+            if let value = text(key), let parsed = Double(value.trimmingCharacters(in: .whitespaces)) { return parsed }
+            return nil
+        }
+        self.init(kind: text(.kind), ceilingCents: number(.ceilingCents), spentCents: number(.spentCents),
+                  heldCents: number(.heldCents), availableCents: number(.availableCents),
+                  periodStart: text(.periodStart), periodEnd: text(.periodEnd), window: text(.window),
+                  pool: (try? keys.decodeIfPresent(Pool.self, forKey: .pool)) ?? nil)
+    }
+
+    /// Only a self-consistent envelope is drawn; anything odd hides the rows
+    /// rather than showing a wrong dollar figure.
+    func checked() -> Self? {
+        guard let kind, !kind.isEmpty, let ceilingCents, let spentCents, let heldCents, let availableCents,
+              ceilingCents.isFinite, spentCents.isFinite, heldCents.isFinite, availableCents.isFinite,
+              ceilingCents >= 0, ceilingCents <= 100_000_000, spentCents >= 0, heldCents >= 0, availableCents >= 0,
+              availableCents <= ceilingCents + 0.01 else { return nil }
+        if let pool {
+            guard let cap = pool.capCents, let spent = pool.spentCents, cap.isFinite, spent.isFinite, cap >= 0, spent >= 0 else { return nil }
+        }
+        return self
+    }
+    /// Spend and holds round up, what is left rounds down — the screen never
+    /// promises a cent the server would refuse.
+    static func money(_ cents: Double, up: Bool = true) -> String {
+        Money(cents: Int(max(0, cents).rounded(up ? .up : .down))).formatted
+    }
+    var periodEndDate: Date? { periodEnd.flatMap(TrialUsageSummary.date) }
+    var isFree: Bool { kind == "free" }
+    var isTrial: Bool { kind == "trial" }
+    var isGrace: Bool { kind == "grace" }
+    var budgetTitle: String {
+        switch kind {
+        case "free": return "Free AI allowance"
+        case "trial": return "Free-trial AI budget"
+        case "grace": return "AI budget (billing grace)"
+        default: return "AI budget"
+        }
+    }
+    var budgetValue: String {
+        let used = spentCents.map { Self.money($0) } ?? "—"
+        let avail = availableCents.map { Self.money($0, up: false) } ?? "—"
+        let ceiling = ceilingCents.map { Self.money($0, up: false) } ?? "—"
+        return "\(used) used · \(avail) available of \(ceiling)"
+    }
+    /// One line on when the budget resets or ends, by window kind.
+    var resetLine: String? {
+        if isFree { return "Lifetime allowance for free workspaces. It does not reset; subscribe for a monthly budget." }
+        guard let end = periodEndDate else { return nil }
+        let when = end.formatted(date: .abbreviated, time: .omitted)
+        switch window {
+        case "trial_window": return "Trial budget ends \(when)."
+        case "apple_grace": return "Billing grace ends \(when). Renew to restore the full budget."
+        case "apple_term", "apple_slice", "intro_window": return "Resets \(when) with your subscription period."
+        case "calendar_month": return "Resets \(when)."
+        default: return "Resets \(when)."
+        }
+    }
+    var poolLine: String? {
+        guard isTrial, let pool, let cap = pool.capCents, let spent = pool.spentCents else { return nil }
+        let left = max(0, cap - spent)
+        var line = "Trials share a reviewed sponsor pool: \(Self.money(left, up: false)) of \(Self.money(cap, up: false)) left"
+        if let ends = pool.endsAt.flatMap(TrialUsageSummary.date) { line += ", closing \(ends.formatted(date: .abbreviated, time: .omitted))" }
+        return line + "."
+    }
+    var heldLine: String? {
+        guard let heldCents, heldCents > 0 else { return nil }
+        return "\(Self.money(heldCents)) is reserved for work still running."
+    }
+}
+
 /// Recorded Apple subscription identity and usable service are separate.
 /// This is fresh workspace-scoped serving authority, not a locally chosen plan.
 struct ServingActivationSummary: Codable, Hashable, Sendable {

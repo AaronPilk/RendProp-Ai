@@ -228,7 +228,7 @@ export function mediaAnalysisProduction(context: StudioContext): MediaAnalysisDe
       return await fundedAttempt(funding, "stt.captions", step, {bytes:bytes.length,seconds}, quote, () => transcribeAnalysis(step,bytes,signal));
     },
     async record(step, seconds, outcome) {
-      await recordRoutedAiCost(admin, { orgId, feature: "speech_captions", step, seconds, meta: { kind: "studio_media_analysis", attempts: 1, outcome, price_estimated: true } });
+      await recordRoutedAiCost(admin, { orgId, feature: "speech_captions", step, seconds, meta: { kind: "studio_media_analysis", attempts: 1, outcome, price_estimated: true, request_key: requestKey, stage: "stt.captions" } });
     },
   };
 }
