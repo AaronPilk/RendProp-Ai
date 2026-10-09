@@ -7,7 +7,10 @@ type Handler=(req:Request)=>Promise<Response>;
 let handler:Handler;
 type Options={teamParent?:string;delegatedOwner?:boolean;role?:string;plan?:string;rawPlan?:string;source?:string|null;anonymous?:boolean;degraded?:boolean;membershipError?:boolean;selector?:string;subscriptionError?:boolean;testingContext?:unknown;testingError?:boolean;projection?:boolean;master?:boolean;trialUsage?:unknown;trialError?:boolean;servingUnavailable?:boolean;heldPurchase?:unknown;prepareBody?:unknown;photoPackage?:unknown;photoPackageError?:boolean;servingMode?:string;servingEnvelope?:unknown};
 async function invoke(o:Options={}) {
- const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon"};
+ const values={SUPABASE_URL:"https://billing-fixture.invalid",SUPABASE_SERVICE_ROLE_KEY:"fixture-service",SUPABASE_ANON_KEY:"fixture-anon",
+  SUPABASE_SECRET_KEYS:JSON.stringify({default:"sb_secret_synthetic_billing_fixture"}),
+  SUPABASE_PUBLISHABLE_KEYS:JSON.stringify({default:"sb_publishable_synthetic_billing_fixture"}),
+  RENDPROP_SECRET_KEY_NAME:"default",RENDPROP_PUBLISHABLE_KEY_NAME:"default"};
  const previous=new Map(Object.keys(values).map(key=>[key,Deno.env.get(key)]));for(const [key,value]of Object.entries(values))Deno.env.set(key,value);
  const oldFetch=globalThis.fetch,serve=Object.getOwnPropertyDescriptor(Deno,"serve")!;
  const unexpected:string[]=[],queries:URL[]=[];
@@ -64,7 +67,7 @@ async function invoke(o:Options={}) {
    if(table==="orgs"){
     const select=url.searchParams.get("select")??"";
     if(o.delegatedOwner&&url.searchParams.get("id")==="eq."+OTHER&&!select.includes("plan")){
-      assertEquals(req.headers.get("authorization"),"Bearer fixture-service",
+      assertEquals(req.headers.get("authorization"),"Bearer sb_secret_synthetic_billing_fixture",
         "delegated display reads use the already-authorized service boundary, never generic org membership");
       assertEquals(select,"id,name,handle,space_type,brand_kit",
         "the delegated display read excludes private account, billing and subscription columns");

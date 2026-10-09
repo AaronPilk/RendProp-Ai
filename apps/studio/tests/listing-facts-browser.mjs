@@ -10,7 +10,7 @@ const args = process.argv.slice(2), fault = args[0]?.slice(8) ?? null;
 assert.ok(args.length <= 1 && args.every(arg => ["--fault=broad-changes", "--fault=normalized-baseline", "--fault=missing-draft"].includes(arg)), "Unknown argument");
 const root = resolve(import.meta.dirname,".."), artifacts = await mkdtemp(join(tmpdir(),"rendprop-listing-facts-browser-")), dist = join(artifacts,"dist");
 const receipt = { proof:"Real Studio App, form and authenticated services with owned synthetic HTTP transport. No live account, provider, email, upload, publication or paid request. SQL concurrency and real phone acceptance are separate.",fault,checks:[],errors:[],externalRequests:[],status:"running" };
-const first="55555555-5555-4555-8555-555555555500", org="33333333-3333-4333-8333-333333333333";
+const first="55555555-5555-4555-8555-555555555500", org="33333333-3333-4333-8333-333333333333", logicalOrg="44444444-4444-4444-8444-444444444444";
 const paths=["src/features/listings/model.ts","src/features/listings/ListingWorkflow.tsx","src/data/contracts.ts","src/data/services.ts","tests/fixtures/connected.tsx","tests/listing-facts-browser.mjs"];
 let server,browser,page,mutated=false;
 try {
@@ -60,7 +60,7 @@ try {
   receipt.checks.push("Property switching recovers open-tab fact drafts; forced account changes isolate and restore them to their original owner");
   await page.evaluate(()=>window.studioFixture.holdFactsSave());await save().click();await expect(headline()).toBeDisabled();
   await page.getByLabel("Working on",{exact:true}).selectOption("66666666-6666-4666-8666-666666666666");await expect(page.getByLabel("Working on",{exact:true})).toHaveValue(first);
-  await page.getByLabel("Switch workspace",{exact:true}).selectOption("44444444-4444-4444-8444-444444444444");await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue(org);
+  await page.getByLabel("Switch agent",{exact:true}).selectOption(org);await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(logicalOrg);
   await page.evaluate(()=>window.studioFixture.releaseFactsSave());await expect(save()).toBeEnabled();await expect.poll(async()=> (await row()).tagline).toBe("Unsaved fact draft belongs only to account A");
   receipt.checks.push("A held property save blocks listing/workspace replacement; verified completion clears its scoped draft");
   await page.getByRole("button",{name:"＋ New property",exact:true}).click();await page.getByLabel("Address or property name",{exact:true}).fill("New fact contract property");await page.getByLabel("Asking price ($)",{exact:true}).fill("1234.56");await page.getByRole("button",{name:"Create property",exact:true}).click();await expect(page.getByRole("heading",{name:"New fact contract property",exact:true})).toBeVisible();

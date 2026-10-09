@@ -16,7 +16,7 @@ let mode = "ok";
 let callbacks: (event: AuthChangeEvent, session: Session | null) => void = () => {};
 let release: (() => void) | undefined;
 const documents = new Map<string, unknown>();
-const listingRows: Record<string, unknown>[] = [L1,L2].slice(0,Number(new URL(location.href).searchParams.get("homes")??2)).map((id,i)=>({id,org_id:ORG,agent_id:A,space_type:"real_estate",address:i?"22 Pine Street":"10 Oak Street",tagline:"A bright new beginning",details:{},status:"ready",created_at:"2026-09-14T12:00:00Z",deleted_at:null,main_photo_key:`renders/${ORG}/${id}/cover.png`,beds:3,baths:2,sqft:2100,price_cents:49000000}));
+const listingRows: Record<string, unknown>[] = [L1,L2].slice(0,Number(new URL(location.href).searchParams.get("homes")??2)).map((id,i)=>({id,org_id:ORG,library_org_id:ORG,agent_id:A,space_type:"real_estate",address:i?"22 Pine Street":"10 Oak Street",tagline:"A bright new beginning",details:{},status:"ready",created_at:"2026-09-14T12:00:00Z",deleted_at:null,main_photo_key:`renders/${ORG}/${id}/cover.png`,beds:3,baths:2,sqft:2100,price_cents:49000000}));
 function mediaRows(listingId:string){
  const now=new Date(),stamp=now.toISOString().replace(/[-:]/g,"").replace(/\.\d{3}Z$/,"Z");
  const expires=new Date(Math.floor(now.getTime()/1000)*1000+600000).toISOString();
@@ -50,7 +50,7 @@ const fetcher: typeof fetch = async (input, options) => {
   if (calls.length > 600) throw new Error("Unexpected request loop");
   if (url.pathname === "/functions/v1/listings" && options?.method === "POST") {
     const body = JSON.parse(String(options.body));
-    const row = {id:crypto.randomUUID(),org_id:org,agent_id:actor,space_type:"real_estate",address:"",tagline:null,details:{},status:"draft",created_at:new Date().toISOString(),deleted_at:null,main_photo_key:null,beds:null,baths:null,sqft:null,price_cents:null,...body};
+    const row = {id:crypto.randomUUID(),org_id:org,library_org_id:org,agent_id:actor,space_type:"real_estate",address:"",tagline:null,details:{},status:"draft",created_at:new Date().toISOString(),deleted_at:null,main_photo_key:null,beds:null,baths:null,sqft:null,price_cents:null,...body};
     listingRows.push(row);return Response.json(row,{status:201});
   }
   if (url.pathname.endsWith("/client-contact")) return Response.json({contact:null});
@@ -71,15 +71,17 @@ const fetcher: typeof fetch = async (input, options) => {
     }
     return Response.json({document:documents.get(storageKey)??null});
   }
-  if (url.pathname === "/rest/v1/memberships") {
+  if (url.pathname === "/functions/v1/me/workspaces") {
     if (mode === "hold") await new Promise<void>((resolve) => {
       const done = () => { options?.signal?.removeEventListener("abort", done); resolve(); };
       release = done;
       options?.signal?.addEventListener("abort", done, { once: true });
     });
     if (mode === "403" || mode === "503") return Response.json({}, { status: Number(mode) });
-    return Response.json([ORG, OTHER].map((id) => ({ user_id: actor, org_id: id, role: "owner",
-      orgs: { id, name: id === ORG ? "Fixture business" : "Second business", space_type: "real_estate", deleted_at: null } })), { headers: { "Content-Range": "0-1/2" } });
+    const own = actor === A ? ORG : OTHER;
+    return Response.json({ actor_id:actor, own_org_id:own, billing_org_id:own, active_org_id:own, can_switch_agent_libraries:false,
+      workspaces:[{ id:own, name:own === ORG ? "Fixture business" : "Second business", space_type:"real_estate", library_owner_user_id:actor,
+        role:"owner",access_mode:"own",billing_org_id:own,can_read:true,can_write:true,can_manage_subscription:true }] });
   }
   if (url.pathname === "/functions/v1/me/card") {
     const card = publicCards.get(actor) ?? {};
@@ -90,14 +92,18 @@ const fetcher: typeof fetch = async (input, options) => {
   if (url.pathname === "/functions/v1/me") return Response.json({
     user: { id: actor, name: actor === A ? "  " : "Fixture B", email: "fixture@example.invalid", avatar_url: null },
     org: { id: org, name: org === ORG ? "Fixture business" : "Second business", handle: null, space_type: "real_estate",brand_kit:{name:"Jamie Agent",title:"Real estate agent",accent:"#7C3AED"} },
+    billing:{content_org_id:org,org_id:org,serving_org_id:org,can_manage_subscription:true},
     notifications:{lead_received:true,render_ready:true,upload_stuck:true,free_week_ending:false,allowance_low:true,first_tour_nudge:false,muted_until:null},entitlement:{degraded:false},portfolio_url:null,plan_source:"apple",
     plan: "free", plan_raw: "trial", trial_ends_at: null, plan_expires_at: null,
     usage: { listings: listingRows.length, leads: 0, leads_new: 0, renders: 0, by_feature:{photo_edits:0,reels:0,aerials:0,drone:0,renders:0},caps:{photo_edits:50,reels:50,aerials:50,drone:50,renders:50},windows:{renders:null,photo_edits:null,reels:null,aerials:null,drone:null} },
   });
-  if (url.pathname === "/rest/v1/listings") {
-    if (url.searchParams.get("org_id") !== `eq.${org}`) throw new Error("Missing selected workspace filter");
-    const selectedRows=listingRows.filter(row=>row.org_id===org&&row.agent_id===actor);
-    return Response.json(selectedRows, { headers: { "Content-Range": selectedRows.length ? `0-${selectedRows.length-1}/${selectedRows.length}` : "*/0" } });
+  if (url.pathname === "/functions/v1/listings") {
+    const own = actor === A ? ORG : OTHER;
+    if (org !== own) return Response.json({error:"Foreign library"},{status:403});
+    const offset = Number(url.searchParams.get("offset"));
+    if (url.searchParams.get("library") !== "1" || url.searchParams.get("limit") !== "500" || !Number.isSafeInteger(offset) || offset < 0) throw new Error("Missing complete library pagination");
+    const selectedRows=listingRows.filter(row=>row.library_org_id===org&&row.agent_id===actor);
+    return Response.json({actor_id:actor,org_id:org,listings:selectedRows.slice(offset,offset+500),total:selectedRows.length,next_offset:offset+500<selectedRows.length?offset+500:null});
   }
   throw new Error(`Unexpected fixture request: ${url.pathname}`);
 };

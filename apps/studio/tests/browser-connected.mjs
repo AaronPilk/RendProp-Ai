@@ -111,7 +111,7 @@ try {
   check("verified access recovery restores the right draft and honestly requests original-file reselection");
 
   await nav("Workspace").click();
-  await page.getByRole("combobox", { name: "Workspace", exact: true }).selectOption("44444444-4444-4444-8444-444444444444");
+  await page.locator("#switch-workspace").selectOption("44444444-4444-4444-8444-444444444444");
   await expect(page.getByText(/^Updated \d/)).toBeVisible();
   await nav("Video editor").click();
   await page.locator(".rp-editor:visible").getByRole("button",{name:"Pro view",exact:true}).click();
@@ -123,6 +123,9 @@ try {
   await page.locator(".rp-editor:visible").getByRole("button", {name:"Pro view",exact:true}).click();
   await expect(title()).not.toHaveValue("Second organization only");
   await expect(title()).not.toHaveValue("Scoped business edit");
+  await expect(page.getByLabel("Switch agent", { exact: true })).toHaveCount(0);
+  const isolatedRows = await page.evaluate(() => window.studioFixture.calls().filter(call => call.path === "/functions/v1/listings" && call.method === "GET").at(-1));
+  assert.equal(isolatedRows.org, "44444444-4444-4444-8444-444444444444", "Invited agent only loads their own library");
   check("organization and account switches still fence drafts and in-memory files");
 
   await nav("Properties").click();
@@ -139,7 +142,7 @@ try {
   assert.deepEqual(receipt.externalRequests, [], "No provider or external request is permitted");
   assert.deepEqual(receipt.errors, [], "No browser runtime errors");
   receipt.requests = await page.evaluate(() => window.studioFixture.calls());
-  assert.ok(receipt.requests.some((call) => call.path === "/rest/v1/listings"));
+  assert.ok(receipt.requests.some((call) => call.path === "/functions/v1/listings" && call.method === "GET"));
   receipt.status = "passed";
 } catch (error) {
   receipt.status = "failed";

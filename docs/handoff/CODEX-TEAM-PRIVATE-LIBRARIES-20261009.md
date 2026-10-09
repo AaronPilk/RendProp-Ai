@@ -31,7 +31,9 @@ admitted liabilities on that parent after removal; later work uses the agent's
 current private entitlement. Actor-aware resolution is required even for legacy
 rows physically stored in an old parent org. Trusted internal callers retain their
 existing meter context. Reflection quotes/reservations use one parent clip
-meter. Video-job failure/chapter and provenance/disclosure mutators now apply
+meter. Unresolved provider/serving liabilities remain counted across month rollover;
+booked ledger entries retain the paid-period bounds. Video-job failure/chapter
+and provenance/disclosure mutators now apply
 fresh exact-listing authority after seat removal. Render attestation accepts an
 authorized logical library while verifying the original physical property/assets.
 Unlimited internal testing keeps
@@ -51,7 +53,7 @@ Join notices and Terms/Privacy explain owner access before joining.
 
 ## Verification and publication
 
-Local fresh-schema and exact-replay tests pass 87 Team, 28 workspace and 34
+Local fresh-schema and exact-replay tests pass 90 Team, 28 workspace and 34
 readiness controls, covering sibling RLS, owner delegation,
 legacy records, seat removal, usage pooling and immutable liabilities. A compiled
 sibling-access defect is caught by the unchanged raw RLS assertion. A real
@@ -62,7 +64,7 @@ record counts and inputs; do not substitute static role checks for these tests.
 Native final receipt records 989 assertions and 104 negative controls. Studio
 has 478 unit tests, typecheck and 13 browser checks, including owner viewing an
 agent and an invited agent's restricted management controls. Actual simulator
-SDK build and Home appearance tests passed. The full Deno regression passed 1,858 tests with zero failures and one ignored
+SDK build and Home appearance tests passed. The full Deno regression passed 1,862 tests with zero failures and one ignored
 local-SQL presenter integration case. Focused actor-aware billing controls also
 passed. Closed handler fixtures now implement the new RPC contracts while
 retaining their recovery, money and negative-control oracles; the original

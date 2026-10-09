@@ -64,12 +64,12 @@ try {
   receipt.checks.push("Opening a property is an explicit separate-edit decision; cancel preserves local work, return retains bytes, URLs follow selection, and local media never uploads or cloud-saves");
 
   page.removeAllListeners("dialog");page.on("dialog",dialog=>dialog.dismiss());
-  await page.getByLabel("Switch workspace",{exact:true}).selectOption(other);
-  await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue(org);
+  await page.getByLabel("Switch agent",{exact:true}).selectOption(other);
+  await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(org);
   await expect(clip()).not.toHaveAccessibleName(/original file missing/);
   page.removeAllListeners("dialog");page.on("dialog",dialog=>dialog.accept());
-  await page.getByLabel("Switch workspace",{exact:true}).selectOption(other);
-  await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue(other);
+  await page.getByLabel("Switch agent",{exact:true}).selectOption(other);
+  await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(other);
   await expect(local().getByRole("button",{name:/Select clip 1:/})).toHaveCount(0);
   await prompt().fill("Second workspace private text");
   await page.evaluate(()=>window.studioFixture.switchUser("B"));

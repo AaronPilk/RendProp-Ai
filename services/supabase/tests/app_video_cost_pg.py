@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / "services/supabase"
 MIGRATION = SQL / "migrations/20261003020955_app_video_cost_reservations.sql"
 RELEASE = SQL / "migrations/20261004215403_app_video_rejected_submission_release.sql"
+TEAM = SQL / "migrations/20261009192550_team_private_listing_libraries.sql"
 TOOLS = {name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
          for name in ("initdb", "pg_ctl", "psql", "createdb")}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), "Use existing PostgreSQL binaries"
@@ -90,7 +91,7 @@ begin
   perform pg_temp.check_video(has_function_privilege('service_role','public.app_video_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,numeric,numeric,jsonb)','execute'),'service reserve grant');
   perform pg_temp.check_video(has_function_privilege('service_role','public.app_video_cost_settle(uuid,uuid,text,text)','execute'),'service settle grant');
   perform pg_temp.check_video(not has_table_privilege('service_role','public.app_video_cost_reservations','DELETE'),'no service deletion/release grant');
-  perform pg_temp.check_video(not (select prosecdef from pg_proc where oid='public.org_month_spend_cents(uuid)'::regprocedure),'spend remains invoker');
+  perform pg_temp.check_video((select prosecdef and proconfig=array['search_path=""'] from pg_proc where oid='public.org_month_spend_cents(uuid)'::regprocedure) and not has_function_privilege('anon','public.org_month_spend_cents(uuid)','execute'),'pooled spend has pinned path and no anonymous access');
   perform pg_temp.check_video(not exists(select 1 from pg_proc where proname='app_video_cost_release'),'no automatic release RPC');
 
   -- Every live editor role can reserve. Marketing/non-members/deleted workspaces
@@ -118,7 +119,7 @@ begin
   update plan_entitlements set topaz_per_month=50 where plan='pro';
   foreach field in array array['pending','processing'] loop
     insert into public.deletion_requests(user_id,status) values(u,field);
-    perform pg_temp.video_refuses(format('select public.app_video_cost_reserve(%L,%L,%L,''reel'',''fal'',''synthetic/reel'',%L,24,5,4.8,''{}'')',u,o,key,repeat('a',64)),'RP409');
+    perform pg_temp.video_refuses(format('select public.app_video_cost_reserve(%L,%L,%L,''reel'',''fal'',''synthetic/reel'',%L,24,5,4.8,''{}'')',u,o,key,repeat('a',64)),'RP403');
     delete from public.deletion_requests where user_id=u;
   end loop;
 
@@ -282,10 +283,15 @@ try:
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     for name in ("video_erase", "video_erase_direct_bria"):
         receipt[name + "-preserved"] = run(name + "-preserved", [*psql, "-f", SQL / f"tests/{name}.sql"]).strip()
+    # This legacy monthly-cap suite intentionally uses synthetic plan caps,
+    # independently from signed retail serving envelopes tested elsewhere.
+    receipt["syntheticFundedMode"] = run("synthetic-monthly-mode", [*psql, "-Atq"], "update public.app_config set value=jsonb_set(value,'{mode}','\"funded\"'::jsonb) where key='serving_mode'; select public.serving_mode();").strip()
+    assert receipt["syntheticFundedMode"] == "funded"
     receipt["rejections-fresh"] = run("rejections-fresh", [*psql, "-Atq", "-f", SQL / "tests/app_video_rejections.sql"]).strip()
     receipt["ordinary-fresh"] = run("ordinary-fresh", [*psql, "-Atq"], FIXTURE).strip()
-    run("replay-app-video", [*psql, "-q", "-1", "-f", MIGRATION])
-    run("replay-app-video-release", [*psql, "-q", "-1", "-f", RELEASE])
+    # Historical video migrations replay at their own schema in the full DB
+    # runner. Reinstalling them here would overwrite current Team authority.
+    run("replay-current-team-authority", [*psql, "-q", "-1", "-f", TEAM])
     receipt["rejections-replay"] = run("rejections-replay", [*psql, "-Atq", "-f", SQL / "tests/app_video_rejections.sql"]).strip()
     receipt["ordinary-replay"] = run("ordinary-replay", [*psql, "-Atq"], FIXTURE).strip()
 
@@ -330,7 +336,7 @@ select jsonb_build_object('reservations',(select count(*) from app_video_cost_re
     assert before == {"reservations": 1, "ledgers": 0, "held": 4800, "booked": 0, "spend": 4800}, before
     run("cross-key-budget-fence", [*psql, "-Atq"], reserve(u, o, str(uuid.uuid4()), 1201, "reel"), refuses="RP402:")
     # Actual authenticated callers: own aggregate works, foreign ledger/holds
-    # remain invisible through INVOKER RLS, and private RPC/table access fails.
+    # remain invisible through fresh scoped authority, and private RPC/table access fails.
     auth = f"set role authenticated; set request.jwt.claim.sub='{u}'; set request.jwt.claim.role='authenticated';\n"
     visible = json.loads(run("authenticated-aggregates", [*psql, "-Atq"], auth +
         f"select jsonb_build_object('own',org_month_spend_cents('{o}'),'foreign',org_month_spend_cents('{foreign}'),'held',app_video_held_cents('{o}'));").strip())
@@ -391,15 +397,21 @@ select jsonb_build_object('ordinaryHeld',app_video_held_cents('{cross}'),
     assert total["spend"] in (4800, 10) and total["spend"] == total["ordinaryHeld"] + total["reflectionHeld"]
     receipt["concurrentReflectionOverlap"] = {"ceiling": 4805, "results": overlap, "totals": total}
 
-    # Meaningful negative control uses the ACTUAL migration body, removing both
-    # org serialization mechanisms and pausing after the spend read. The same
-    # race invariant must detect9600 admitted against6000. No repo mutation.
-    unguarded = MIGRATION.read_text().replace(
-        "perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||p_org::text,42));",
-        "perform 1; -- deliberately removed serialization for negative control").replace(
-        "where id=p_org and deleted_at is null for update;", "where id=p_org and deleted_at is null;").replace(
-        "spent:=public.org_month_spend_cents(p_org);", "spent:=public.org_month_spend_cents(p_org); perform pg_sleep(0.5);")
-    assert unguarded != MIGRATION.read_text() and "perform pg_sleep(0.5)" in unguarded
+    # Mutate the actual final function, preserving every latest authority and
+    # price guard. Remove exactly its three financial/physical admission locks;
+    # a controlled pause after the shared spend read must expose over-admission.
+    final_reserve = run("read-final-reserve-body", [*psql, "-Atq"],
+        "select pg_get_functiondef('public.app_video_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,numeric,numeric,jsonb)'::regprocedure);")
+    unguarded = final_reserve
+    for before, after in (
+        ("perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||public.library_actor_billing_org(p_actor,p_org)::text,42));", "perform 1; -- negative control removes pooled serialization"),
+        ("where id=public.library_actor_billing_org(p_actor,p_org)and deleted_at is null for update;", "where id=public.library_actor_billing_org(p_actor,p_org)and deleted_at is null;"),
+        ("where id=p_org and deleted_at is null for update;", "where id=p_org and deleted_at is null;"),
+        ("spent:=public.org_month_spend_cents(public.library_actor_billing_org(p_actor,p_org));", "spent:=public.org_month_spend_cents(public.library_actor_billing_org(p_actor,p_org)); perform pg_sleep(0.5);"),
+    ):
+        assert unguarded.count(before) == 1, before
+        unguarded = unguarded.replace(before, after)
+    assert unguarded != final_reserve and "perform pg_sleep(0.5)" in unguarded
     (OUT / "removed-locks-mutation.sql").write_text(unguarded)
     run("install-negative-control", [*psql, "-q", "-1"], unguarded)
     o, k1, k2 = [str(uuid.uuid4()) for _ in range(3)]
@@ -421,7 +433,11 @@ update plan_entitlements set cogs_ceiling_cents=6000 where plan='pro';
                                        "ceiling": 6000, "totals": violated}
     else:
         raise AssertionError("Admission race failed to catch removed serialization")
-    run("restore-after-negative-control", [*psql, "-q", "-1", "-f", MIGRATION])
+    run("restore-after-negative-control", [*psql, "-q", "-1"], final_reserve)
+    assert run("verify-restored-final-reserve", [*psql, "-Atq"], "select pg_get_functiondef('public.app_video_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,numeric,numeric,jsonb)'::regprocedure);") == final_reserve
+    receipt["sourceHashesAfter"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}
+    receipt["sourceUnchanged"] = receipt["sourceHashesAfter"] == receipt["sourceHashes"]
+    assert receipt["sourceUnchanged"], "Ordinary-video SQL source changed during verification"
     receipt["passed"] = True
 finally:
     if started:

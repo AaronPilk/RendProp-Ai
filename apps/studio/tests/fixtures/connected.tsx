@@ -23,13 +23,24 @@ let holdContactSave = false;
 let releaseContactSave: (() => void) | undefined;
 let failFactsSave = false, holdFactsSave = false, mismatchFactsReceipt = false;
 let releaseFactsSave: (() => void) | undefined;
-// Every account/workspace has its own property; noProperties covers local-first creation.
+// Team owner A can choose B’s private library; B only receives their own library.
+// Retained legacy rows keep physical ORG IDs while grouping under the private library.
 const listingRows: Record<string, unknown>[] = [A, B].flatMap((actor, actorIndex) => [ORG, OTHER].map((orgId, orgIndex) => ({
   id: `55555555-5555-4555-8555-5555555555${actorIndex}${orgIndex}`,
-  org_id: orgId, agent_id: actor, space_type: "real_estate", address: `Isolated property ${actorIndex + 1}-${orgIndex + 1}`,
+  org_id: orgId, library_org_id: actor === A ? ORG : OTHER, agent_id: actor, space_type: "real_estate", address: `Isolated property ${actorIndex + 1}-${orgIndex + 1}`,
   tagline: null, details: {}, status: "draft", created_at: "2026-09-22T00:00:00Z", deleted_at: null,
   main_photo_key: null, beds: null, baths: null, sqft: null, price_cents: null,
-})));
+}))).filter(row => !(row.agent_id === A && row.org_id === OTHER));
+if (sharedProperty && listingRows.length) {
+  const ownerListing = { ...listingRows[0], id:"55555555-5555-4555-8555-555555555501", address:"Owner’s own property" };
+  Object.assign(listingRows[0], { agent_id: B, library_org_id: OTHER });
+  listingRows.push(ownerListing);
+}
+const ownLibrary = (actor: string) => actor === A ? ORG : OTHER;
+const authorizedLibraries = (actor: string) => actor === A ? [ORG, OTHER] : [OTHER];
+const activeLibraries = new Map([[A, sharedProperty ? OTHER : ORG], [B, OTHER]]);
+const readableListing = (actor: string, row: Record<string, unknown>) => row.agent_id === actor || actor === A && row.agent_id === B && row.library_org_id === OTHER;
+const scopedListing = (actor: string, selected: string, row: Record<string, unknown>) => readableListing(actor, row) && [row.org_id, row.library_org_id].includes(selected);
 if (new URLSearchParams(window.location.search).has("secondProperty")) listingRows.push({
   ...listingRows[0], id:"66666666-6666-4666-8666-666666666666", address:"Second property for navigation checks",
 });
@@ -70,14 +81,15 @@ const fetcher: typeof fetch = async (input, options) => {
   });
   if (calls.length > 250) throw new Error("Unexpected request loop");
   if (url.pathname === "/functions/v1/listings" && options?.method === "POST") {
+    if (!authorizedLibraries(actor).includes(org)) return Response.json({error:"Foreign library"},{status:403});
     const body = JSON.parse(String(options.body));
-    const row = {id:crypto.randomUUID(),org_id:org,agent_id:actor,space_type:"real_estate",address:"",tagline:null,details:{},status:"draft",created_at:new Date().toISOString(),deleted_at:null,main_photo_key:null,beds:null,baths:null,sqft:null,price_cents:null,...body};
+    const row = {id:crypto.randomUUID(),org_id:org,library_org_id:org,agent_id:org === ORG ? A : B,space_type:"real_estate",address:"",tagline:null,details:{},status:"draft",created_at:new Date().toISOString(),deleted_at:null,main_photo_key:null,beds:null,baths:null,sqft:null,price_cents:null,...body};
     listingRows.push(row);return Response.json(row,{status:201});
   }
   if (url.pathname.startsWith("/functions/v1/listings/") && options?.method === "PATCH") return Response.json({error:"Upgrade before saving ordinary listing facts."},{status:426});
   if (url.pathname.endsWith("/facts") && options?.method === "PUT") {
     const id = url.pathname.split("/").at(-2)!;
-    const row = listingRows.find(row => row.id === id && row.org_id === org && (row.agent_id === actor || sharedProperty && row.id === listingRows[0].id));
+    const row = listingRows.find(row => row.id === id && scopedListing(actor, org, row));
     if (!row) return Response.json({error:"Foreign fixture property"},{status:403});
     if (failFactsSave) { failFactsSave = false; return Response.json({error:"Synthetic save failed"},{status:503}); }
     if (holdFactsSave) await new Promise<void>(resolve => { releaseFactsSave = resolve; });
@@ -91,8 +103,9 @@ const fetcher: typeof fetch = async (input, options) => {
   }
   if (url.pathname.endsWith("/client-contact")) {
     const id = url.pathname.split("/").at(-2)!;
-    if (!listingRows.some(row => row.id === id && row.org_id === org && (row.agent_id === actor || sharedProperty && row.id === listingRows[0].id))) return Response.json({error:"Foreign fixture property"}, {status:403});
-    const contactKey = `${sharedProperty ? "shared" : actor}:${org}:${id}`;
+    const property = listingRows.find(row => row.id === id && scopedListing(actor, org, row));
+    if (!property) return Response.json({error:"Foreign fixture property"}, {status:403});
+    const contactKey = `${property.agent_id}:${property.library_org_id}:${id}`;
     if (options?.method !== "PUT") return Response.json({contact:contacts.get(contactKey) ?? null});
     if (failContactSave) { failContactSave = false; return Response.json({error:"Synthetic contact save failed. Your changes are kept."}, {status:503}); }
     if (holdContactSave) await new Promise<void>(resolve => { releaseContactSave = resolve; });
@@ -112,15 +125,19 @@ const fetcher: typeof fetch = async (input, options) => {
     }
     return Response.json({document:documents.get(storageKey)??null});
   }
-  if (url.pathname === "/rest/v1/memberships") {
+  if (url.pathname === "/functions/v1/me/workspaces") {
     if (mode === "hold") await new Promise<void>((resolve) => {
       const done = () => { options?.signal?.removeEventListener("abort", done); resolve(); };
       release = done;
       options?.signal?.addEventListener("abort", done, { once: true });
     });
     if (mode === "403" || mode === "503") return Response.json({}, { status: Number(mode) });
-    return Response.json([ORG, OTHER].map((id) => ({ user_id: actor, org_id: id, role: "owner",
-      orgs: { id, name: id === ORG ? "Fixture business" : "Second business", space_type: "real_estate", deleted_at: null } })), { headers: { "Content-Range": "0-1/2" } });
+    return Response.json({ actor_id: actor, own_org_id: ownLibrary(actor), billing_org_id: ORG,
+      active_org_id: activeLibraries.get(actor), can_switch_agent_libraries: actor === A,
+      workspaces: authorizedLibraries(actor).map(id => ({ id, name: id === ORG ? "Fixture business" : "Second business", space_type: "real_estate",
+        library_owner_user_id: id === ORG ? A : B, role: id === ownLibrary(actor) ? "owner" : "team_owner",
+        access_mode: id === ownLibrary(actor) ? "own" : "team_owner", billing_org_id: ORG,
+        can_read: true, can_write: true, can_manage_subscription: actor === A && id === ORG })) });
   }
   if (url.pathname === "/functions/v1/me/card") {
     const card = publicCards.get(actor) ?? {};
@@ -128,16 +145,23 @@ const fetcher: typeof fetch = async (input, options) => {
     const {space_type,...public_card}=card; return Response.json({ok:true,user_id:actor,space_type:space_type??null,public_card:publicCards.has(actor)?public_card:null});
   }
   if (url.pathname === "/functions/v1/me/portfolio") return Response.json({ok:true,user_id:actor,org_id:org,id:null,revision:0,listing_ids:[],portfolio_url:null});
-  if (url.pathname === "/functions/v1/me") return Response.json({
-    user: { id: actor, name: actor === A ? "  " : "Fixture B", email: "fixture@example.invalid", avatar_url: null },
-    org: { id: org, name: org === ORG ? "Fixture business" : "Second business", handle: null, space_type: "real_estate" },
-    plan: "free", plan_raw: "trial", trial_ends_at: null, plan_expires_at: null,
-    usage: { listings: 0, leads: 0, leads_new: 0, renders: 0 },
-  });
-  if (url.pathname === "/rest/v1/listings") {
-    if (url.searchParams.get("org_id") !== `eq.${org}`) throw new Error("Missing selected workspace filter");
-    const selectedRows=listingRows.filter(row=>row.org_id===org&&(row.agent_id===actor||sharedProperty&&row.id===listingRows[0].id));
-    return Response.json(selectedRows, { headers: { "Content-Range": selectedRows.length ? `0-${selectedRows.length-1}/${selectedRows.length}` : "*/0" } });
+  if (url.pathname === "/functions/v1/me") {
+    if (!authorizedLibraries(actor).includes(org)) return Response.json({error:"Foreign library"},{status:403});
+    activeLibraries.set(actor,org);
+    return Response.json({
+      user: { id: actor, name: actor === A ? "  " : "Fixture B", email: "fixture@example.invalid", avatar_url: null },
+      org: { id: org, name: org === ORG ? "Fixture business" : "Second business", handle: null, space_type: "real_estate" },
+      billing: { actor_id: actor, content_org_id: org, org_id: ORG, serving_org_id: ORG, can_manage_subscription: actor === A },
+      plan: "free", plan_raw: "trial", trial_ends_at: null, plan_expires_at: null,
+      usage: { listings: 0, leads: 0, leads_new: 0, renders: 0 },
+    });
+  }
+  if (url.pathname === "/functions/v1/listings") {
+    if (!authorizedLibraries(actor).includes(org)) return Response.json({error:"Foreign library"},{status:403});
+    const offset = Number(url.searchParams.get("offset"));
+    if (url.searchParams.get("library") !== "1" || url.searchParams.get("limit") !== "500" || !Number.isSafeInteger(offset) || offset < 0) throw new Error("Missing complete library pagination");
+    const selectedRows=listingRows.filter(row=>row.library_org_id===org && readableListing(actor,row));
+    return Response.json({ actor_id: actor, org_id: org, listings: selectedRows.slice(offset,offset+500), total:selectedRows.length, next_offset: offset+500<selectedRows.length ? offset+500 : null });
   }
   throw new Error(`Unexpected fixture request: ${url.pathname}`);
 };

@@ -64,7 +64,7 @@ begin
   r:=public.app_video_cost_release_rejected(u,o,'old-unconfirmed-key',403,'upstream');
   perform pg_temp.check_rejection(public.org_month_spend_cents(o)=before_cents-90,'confirmed old-month rejection releases exact hold');
   perform pg_temp.check_rejection((select count(*)=1 from cost_ledger where org_id=o),'rejections never book ledger cost');
-  perform pg_temp.check_rejection(not (select prosecdef from pg_proc where oid='public.org_month_spend_cents(uuid)'::regprocedure),'spend remains invoker');
+  perform pg_temp.check_rejection((select prosecdef and proconfig=array['search_path=""'] from pg_proc where oid='public.org_month_spend_cents(uuid)'::regprocedure) and not has_function_privilege('anon','public.org_month_spend_cents(uuid)','execute'),'pooled spend has pinned path and no anonymous access');
 end $$;
 select jsonb_build_object('assertions',n,'passed',true) from video_rejection_assertions;
 rollback;

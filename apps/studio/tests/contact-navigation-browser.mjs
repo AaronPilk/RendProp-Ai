@@ -11,7 +11,7 @@ const args = process.argv.slice(2), fault = args[0]?.slice(8) ?? null;
 assert.ok(args.length <= 1 && args.every(arg => ["--fault=missing-guard", "--fault=missing-account-scope"].includes(arg)), "Unknown argument");
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-contact-navigation-")), dist = join(artifacts, "dist");
 const receipt = { proof: "Real App, ListingWorkflow and ClientContactEditor with synthetic scoped Auth/API. No live account, email, upload, publication or paid request.", fault, checks: [], errors: [], externalRequests: [], status: "running" };
-const first = "55555555-5555-4555-8555-555555555500", second = "66666666-6666-4666-8666-666666666666", org = "33333333-3333-4333-8333-333333333333", other = "44444444-4444-4444-8444-444444444444";
+const first = "55555555-5555-4555-8555-555555555500", second = "66666666-6666-4666-8666-666666666666", org = "44444444-4444-4444-8444-444444444444", other = "33333333-3333-4333-8333-333333333333";
 let server, browser, page, mutated = false;
 try {
   await build({ configFile: false, root, publicDir: "public", logLevel: "error", plugins: fault ? [{name:"missing-contact-guard", enforce:"pre", transform(code,id) {
@@ -52,12 +52,12 @@ try {
   await property().selectOption(second); await openContact(); await expect(name()).toHaveValue("Saved client B"); await property().selectOption(first); await openContact(); await expect(name()).toHaveValue("Client A after retry"); assert.equal(dialogs.length,afterSaveDialogs);
   receipt.checks.push("Failed save retains draft and guard; verified successful save clears the guard and preserves both saved clients");
   await name().fill("Client A held save"); await page.evaluate(() => window.studioFixture.holdContactSave()); await save().click(); await expect(contact().getByRole("button",{name:"Saving…",exact:true})).toBeDisabled();
-  await property().selectOption(second); await expect(property()).toHaveValue(first); await page.getByLabel("Switch workspace",{exact:true}).selectOption(other); await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue(org);
+  await property().selectOption(second); await expect(property()).toHaveValue(first); await page.getByLabel("Switch agent",{exact:true}).selectOption(other); await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(org);
   await page.evaluate(() => window.studioFixture.releaseContactSave()); await expect(contact().getByText(/Client contact saved/)).toBeVisible();
   receipt.checks.push("In-flight save blocks property and workspace replacement until the exact receipt is confirmed");
-  await name().fill("Client A workspace draft"); cancelDiscard(); await page.getByLabel("Switch workspace",{exact:true}).selectOption(other); await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue(org); await expect(name()).toHaveValue("Client A workspace draft");
-  acceptDiscard(); await page.getByLabel("Switch workspace",{exact:true}).selectOption(other); await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue(other); await openContact(); await expect(contact().getByRole("radio",{name:"My account",exact:true})).toBeChecked();
-  await page.getByLabel("Switch workspace",{exact:true}).selectOption(org); await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue(org); await openContact(); await expect(name()).toHaveValue("Client A held save");
+  await name().fill("Client A workspace draft"); cancelDiscard(); await page.getByLabel("Switch agent",{exact:true}).selectOption(other); await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(org); await expect(name()).toHaveValue("Client A workspace draft");
+  acceptDiscard(); await page.getByLabel("Switch agent",{exact:true}).selectOption(other); await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(other); await openContact(); await expect(contact().getByRole("radio",{name:"My account",exact:true})).toBeChecked();
+  await page.getByLabel("Switch agent",{exact:true}).selectOption(org); await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(org); await openContact(); await expect(name()).toHaveValue("Client A held save");
   receipt.checks.push("Workspace Cancel retains fields; confirmed discard isolates the next workspace and clears only the previous contact draft");
   await name().fill("Account A private pending contact"); await page.evaluate(() => window.studioFixture.switchUser("B")); await expect(page.getByRole("button",{name:"Manage Fixture B",exact:true})).toBeVisible(); await openContact(); await expect(property()).toHaveValue(first); await expect(name(), "The other account must see only the saved shared contact").toHaveValue("Client A held save");
   await page.evaluate(() => window.studioFixture.switchUser("A")); await expect(page.getByRole("button",{name:"Manage Your account",exact:true})).toBeVisible(); await openContact(); await expect(name()).toHaveValue("Account A private pending contact"); await expect(save()).toBeEnabled();

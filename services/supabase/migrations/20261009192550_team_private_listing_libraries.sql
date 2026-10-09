@@ -1002,7 +1002,7 @@ create trigger z_team_billing_liability before insert or update on public.upload
 drop trigger if exists z_team_billing_liability on public.media_storage_receipts;
 create trigger z_team_billing_liability before insert or update on public.media_storage_receipts for each row execute function public.stamp_library_financial_liability();
 
-do $$begin if(select md5(prosrc) from pg_proc where oid='public.serving_ceiling_spent_cents(uuid,timestamp with time zone,timestamp with time zone)'::regprocedure)not in('3e92a419dbc8ca71e2337640c78ead68','bd6d77fc4be05b887ad01aab4849cdab')then raise exception 'Review changed function serving_ceiling_spent_cents(uuid,timestamp with time zone,timestamp with time zone)';end if;end$$;
+do $$begin if(select md5(prosrc) from pg_proc where oid='public.serving_ceiling_spent_cents(uuid,timestamp with time zone,timestamp with time zone)'::regprocedure)not in('3e92a419dbc8ca71e2337640c78ead68','d053fe5bd094d958041a48f0c02dfa4f')then raise exception 'Review changed function serving_ceiling_spent_cents(uuid,timestamp with time zone,timestamp with time zone)';end if;end$$;
 
 CREATE OR REPLACE FUNCTION public.serving_ceiling_spent_cents(p_org uuid, p_start timestamp with time zone, p_end timestamp with time zone)
  RETURNS numeric
@@ -1012,15 +1012,15 @@ CREATE OR REPLACE FUNCTION public.serving_ceiling_spent_cents(p_org uuid, p_star
 AS $function$
  select coalesce((select sum(total_cents) from public.cost_ledger c where c.billing_org_id=public.library_billing_org(p_org) and(p_start is null or c.created_at>=p_start)and(p_end is null or c.created_at<p_end)),0)
   +coalesce((select sum(hold_cents) from public.serving_cost_reservations r where r.billing_org_id=public.library_billing_org(p_org) and r.budget_source='ceiling' and r.ledger_id is null
-     and r.state in('reserved','uncertain','succeeded')and(p_start is null or r.created_at>=p_start)and(p_end is null or r.created_at<p_end)),0)
+     and r.state in('reserved','uncertain','succeeded')),0)
   +coalesce((select sum(v.hold_cents) from public.app_video_cost_reservations v where v.billing_org_id=public.library_billing_org(p_org) and v.cost_ledger_id is null and v.released_at is null
-     and(p_start is null or v.created_at>=p_start)and(p_end is null or v.created_at<p_end)
+
      and not exists(select 1 from public.serving_cost_reservations r where r.org_id=v.org_id and r.request_key=v.idempotency_key and r.budget_source='ceiling' and r.ledger_id is null and r.state<>'rejected')),0)
   +coalesce((select sum(j.cost_cents) from public.video_erase_jobs j where j.billing_org_id=public.library_billing_org(p_org) and j.provider='fal' and j.cost_ledger_id is null and j.cost_hold_released_at is null
-     and(p_start is null or j.created_at>=p_start)and(p_end is null or j.created_at<p_end)
+
      and not exists(select 1 from public.serving_cost_reservations r where r.org_id=j.org_id and r.request_key=j.idempotency_key::text and r.budget_source='ceiling' and r.ledger_id is null and r.state<>'rejected')),0)
   +coalesce((select sum(st.cost_cents) from public.video_erase_stages st join public.video_erase_jobs j on j.id=st.job_id where j.billing_org_id=public.library_billing_org(p_org) and st.cost_ledger_id is null and st.cost_hold_released_at is null
-     and(p_start is null or j.created_at>=p_start)and(p_end is null or j.created_at<p_end)),0);
+     ),0);
 $function$
 ;
 
@@ -3135,9 +3135,13 @@ create or replace function public.org_role(target uuid)returns text language sql
  union all select 'agent'where public.library_team_owner(target)=auth.uid()and not exists(select 1 from public.memberships where org_id=target and user_id=auth.uid())limit 1;$$;
 create or replace function public.current_listing_access(p_listing uuid,p_write boolean default false)returns boolean language sql stable security definer set search_path='' as $$
  select public.listing_content_access(auth.uid(),p_listing,p_write);$$;
-create or replace function public.org_month_spend_cents(p_org uuid)returns numeric language sql stable security definer set search_path='' as $$
- select public.serving_ceiling_spent_cents(public.library_billing_org(p_org),date_trunc('month',now()),date_trunc('month',now())+interval '1 month')
- where current_setting('role',true)in('service_role','postgres','supabase_admin')or(session_user=current_user and current_setting('role',true)='none')or public.library_content_access(auth.uid(),p_org,false);$$;
+create or replace function public.org_month_spend_cents(p_org uuid)returns numeric language plpgsql stable security definer set search_path='' as $$
+begin
+ if not(current_setting('role',true)in('service_role','postgres','supabase_admin')or(session_user=current_user and current_setting('role',true)='none')or public.library_content_access(auth.uid(),p_org,false))then return 0;end if;
+ -- Every finance path uses the same immutable parent liability. Booked
+ -- expenses are month-bound; unresolved provider holds carry through rollover.
+ return public.serving_ceiling_spent_cents(public.library_billing_org(p_org),date_trunc('month',now()),date_trunc('month',now())+interval '1 month');
+end$$;
 
 do $$declare r record;begin for r in select policyname from pg_policies where schemaname='public'and tablename='listings'loop execute format('drop policy %I on public.listings',r.policyname);end loop;end$$;
 

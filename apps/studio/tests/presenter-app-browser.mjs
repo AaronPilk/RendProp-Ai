@@ -29,10 +29,10 @@ try {
   await nav("Home").click();await nav("AI tools").click();
   await expect(page.getByLabel("Your display name",{exact:true})).toHaveValue("Unsaved presenter identity");
   receipt.checks.push("Home card opens AI Presenter; ordinary page navigation preserves unsaved fields in its mounted workspace");
-  const originalOrg=await page.getByLabel("Switch workspace",{exact:true}).inputValue();
+  const originalOrg=await page.getByLabel("Switch agent",{exact:true}).inputValue();
   let dialogs=0;page.on("dialog",async dialog=>{dialogs++;await dialog.dismiss();});
-  await page.getByLabel("Switch workspace",{exact:true}).selectOption("44444444-4444-4444-8444-444444444444");
-  assert.equal(dialogs,1);await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue(originalOrg);
+  await page.getByLabel("Switch agent",{exact:true}).selectOption("44444444-4444-4444-8444-444444444444");
+  assert.equal(dialogs,1);await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue(originalOrg);
   await expect(page.getByLabel("Your display name",{exact:true})).toHaveValue("Unsaved presenter identity");
   await nav("Home").click();
   await page.getByRole("region",{name:"More AI tools"}).getByRole("button",{name:/Scripts & shot plans/}).click();
@@ -55,8 +55,8 @@ try {
   await page.getByLabel("Your display name",{exact:true}).fill("Unsaved presenter identity");
   receipt.checks.push("Canceling a property switch in My Listings preserves both the property and hidden Presenter; confirming switches both together");
   page.removeAllListeners("dialog");page.on("dialog",dialog=>dialog.accept());
-  await page.getByLabel("Switch workspace",{exact:true}).selectOption("44444444-4444-4444-8444-444444444444");
-  await expect(page.getByLabel("Switch workspace",{exact:true})).toHaveValue("44444444-4444-4444-8444-444444444444");
+  await page.getByLabel("Switch agent",{exact:true}).selectOption("44444444-4444-4444-8444-444444444444");
+  await expect(page.getByLabel("Switch agent",{exact:true})).toHaveValue("44444444-4444-4444-8444-444444444444");
   await page.getByRole("navigation",{name:"Creative tools"}).getByRole("button",{name:"AI Presenter",exact:true}).click();
   await page.getByRole("button",{name:"Create my likeness profile",exact:true}).click();
   await expect(page.getByLabel("Your display name",{exact:true})).not.toHaveValue("Unsaved presenter identity");

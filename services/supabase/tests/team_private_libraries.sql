@@ -136,6 +136,28 @@ do $$declare x record;r jsonb;j uuid;a uuid:=gen_random_uuid();b uuid:=gen_rando
  update public.memberships set role='agent'where org_id=x.team and user_id=x.tom;
 end$$;
 reset role;
+ -- A prior-month provider attempt has no evidence of expiry/no charge.
+ -- Parent and both finite child paths retain the same liability; an older
+ -- already-booked ledger charge stays outside the new period. All synthetic
+ -- rows below are rolled back inside this subtransaction before other checks.
+do $$declare x record;prior_bound boolean:=false;period_bound boolean:=false;budget_refused boolean:=false;
+ begin select *into x from f;
+  begin
+   insert into public.app_video_cost_reservations(org_id,actor_id,idempotency_key,feature,provider,model,input_sha256,units,unit_cost_cents,total_cents,hold_cents,created_at)
+    values(x.sally_org,x.sally,'team-rollover-video','aerial','fal','fixture/old',repeat('9',64),1,80,80,90,date_trunc('month',now())-interval '1 day');
+   insert into public.serving_cost_reservations(org_id,actor_id,request_key,stage,provider,model,input_sha256,tariff_version,hold_cents,budget_source,state,created_at)
+    values(x.sally_org,x.sally,'team-rollover-copy','copy.caption:0','gemini','fixture',repeat('8',64),'fixture-v1',15,'ceiling','uncertain',date_trunc('month',now())-interval '1 day');
+   insert into public.cost_ledger(org_id,feature,provider,total_cents,created_at)
+    values(x.sally_org,'fixture-old-booked','gemini',70,date_trunc('month',now())-interval '1 day');
+   prior_bound:=public.org_month_spend_cents(x.team)=105 and public.org_month_spend_cents(x.tom_org)=105;
+   period_bound:=public.serving_ceiling_spent_cents(x.team,date_trunc('month',now()),date_trunc('month',now())+interval '1 month')=105;
+   begin perform public.library_serving_envelope_admit(x.tom_org,x.team,5896,'team-rollover-new');exception when others then budget_refused:=sqlerrm like 'RP402:%';end;
+   raise exception using errcode='PZ001',message='Synthetic rollover fixture rollback';
+  exception when sqlstate 'PZ001'then null;end;
+  perform pg_temp.ok(prior_bound,'parent and sibling retain prior-month unknown provider holds');
+  perform pg_temp.ok(period_bound,'unified period spend carries open holds but excludes old booked expenses');
+  perform pg_temp.ok(budget_refused,'prior-month child hold fences a new sibling serving envelope');
+ end$$;
 -- Owner transfer/co-owner ambiguity and seat revocation are freshly denied.
 set local role service_role;
 do $$declare x record;old_role text;begin select *into x from f;

@@ -142,7 +142,9 @@ test('actual team transport fences invite and join identity and retains selected
 import Foundation
 enum Config { static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1"); static let supabaseAnonKey = "fixture" }
 enum CloudSyncError: Error { case identityChanged }
-@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? }
+// The selected content library and stable account purchase root are separate.
+// This fixture never derives parent billing authority from a display role.
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID?; static var billingOrgID: UUID? }
 @MainActor final class AuthStore {
  static let shared = AuthStore(); var userID: String?; var syncSessionRevision: UInt64 = 1
  var onToken: (() async -> Void)?
@@ -151,10 +153,10 @@ enum CloudSyncError: Error { case identityChanged }
  func change(_ id: UUID) { userID = id.uuidString; syncSessionRevision += 1 }
 }
 @MainActor final class URLSession {
- static let shared = URLSession(); var requests: [URLRequest] = []; var onSend: (() async -> Void)?
+ static let shared = URLSession(); var requests: [URLRequest] = []; var onSend: (() async -> Void)?; var responseJSON: String?
  func data(for request: URLRequest) async throws -> (Data, URLResponse) {
   requests.append(request); await onSend?()
-  let json = "{\"id\":\"invite-A\",\"role\":\"agent\",\"code\":\"private-A-code\",\"email_queued\":true}"
+  let json = responseJSON ?? "{\"id\":\"invite-A\",\"role\":\"agent\",\"code\":\"private-A-code\",\"email_queued\":true}"
   return (Data(json.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
  }
 }
@@ -165,10 +167,17 @@ enum CloudSyncError: Error { case identityChanged }
   do { _ = try await TeamAPI.invite(email: nil); throw NSError(domain: "Old invite was delivered to replacement account", code: 1) }
   catch CloudSyncError.identityChanged { checks += 1 }
  }
+ static func deniedSummary(_ name: String) async throws {
+  do { _ = try await TeamAPI.summary(); throw NSError(domain: name, code: 1) }
+  catch CloudSyncError.identityChanged { checks += 1 }
+ }
+ static func summaryJSON(actor: UUID, content: UUID, billing: UUID) -> String {
+  "{\"org_id\":\"\(billing.uuidString)\",\"actor_id\":\"\(actor.uuidString)\",\"content_org_id\":\"\(content.uuidString)\",\"org_name\":\"Team\",\"plan\":\"team\",\"can_manage\":true,\"seats\":{\"used\":2,\"allowed\":2},\"members\":[],\"invites\":[]}"
+ }
  static func main() async {
   do {
-   let a = UUID(), b = UUID(), org = UUID(), auth = AuthStore.shared
-   auth.reset(a); WorkspaceContext.selectedOrgID = org
+   let a = UUID(), b = UUID(), org = UUID(), billing = UUID(), auth = AuthStore.shared
+   auth.reset(a); WorkspaceContext.selectedOrgID = org; WorkspaceContext.billingOrgID = billing
    let invite = try await TeamAPI.invite(email: nil)
    try check(invite.emailQueued == true, "Queued delivery decodes without claiming delivered")
    try check(URLSession.shared.requests.first?.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Team write pins selected workspace")
@@ -178,6 +187,19 @@ enum CloudSyncError: Error { case identityChanged }
    try check(URLSession.shared.requests.count == 1, "Stale success never returns private invite code")
    auth.reset(a); URLSession.shared.onSend = { auth.change(b); auth.change(a) }; try await denied()
    try check(auth.syncSessionRevision == 3, "Same final account cannot accept old session invite")
+   auth.reset(a); URLSession.shared.responseJSON = summaryJSON(actor: a, content: org, billing: billing)
+   let summary = try await TeamAPI.summary()
+   try check(UUID(uuidString: summary.orgId) == billing, "Team summary binds stable purchase root while viewing another library")
+   try check(URLSession.shared.requests.last?.value(forHTTPHeaderField: "X-Org-Id") == org.uuidString.lowercased(), "Team summary keeps logical content header instead of granting parent content")
+   auth.reset(a); URLSession.shared.responseJSON = summaryJSON(actor: b, content: org, billing: billing)
+   try await deniedSummary("Other actor's parent summary was accepted")
+   auth.reset(a); URLSession.shared.responseJSON = summaryJSON(actor: a, content: b, billing: billing)
+   try await deniedSummary("Other library's parent summary was accepted")
+   auth.reset(a); URLSession.shared.responseJSON = summaryJSON(actor: a, content: org, billing: b)
+   try await deniedSummary("Unbound billing root was accepted")
+   auth.reset(a); URLSession.shared.responseJSON = summaryJSON(actor: a, content: org, billing: billing)
+   URLSession.shared.onSend = { WorkspaceContext.billingOrgID = b }
+   try await deniedSummary("Late parent summary retargeted changed billing root")
    print("PASS: \(checks) actual team account/workspace checks")
   } catch { print("FAIL: \(error)"); exit(1) }
  }
