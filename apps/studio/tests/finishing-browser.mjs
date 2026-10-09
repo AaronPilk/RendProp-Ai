@@ -9,7 +9,7 @@ import {createServer} from "node:http";
 import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium, expect} from "@playwright/test";
-import {fixedAACTailWindow, measureTonePCM, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
+import {fixedAACTailWindow, fixedPCMWindow, measureTonePCM, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-finishing-")), dist = join(artifacts, "dist");
 const receipt = {proof: "Real editor UI, synthetic original footage and licensed-audio fixture, real H.264/AAC export decoded for music/original/narration mixing and timed caption pixels. No live media, account or provider.", checks: [], errors: [], externalRequests: [], status: "running"};
 let browser, server;
@@ -96,14 +96,17 @@ try {
   assert(Math.abs(photoBoundary-4)<=.5,"The photo transition must remain within the existing timing allowance");
   receipt.outputTiming={duration:outputDuration,photoBoundary,beforePhoto,firstPhoto:cutFrames[firstRed]};
   receipt.outputSHA256=createHash("sha256").update(await readFile(output)).digest("hex");
+  // Decode once, then measure the same declared windows by sample index.
+  // Seeking browser AAC packets may return fewer samples despite a complete
+  // soundtrack; complete-window refusal and fade thresholds remain unchanged.
+  const fullPCM=execFileSync("ffmpeg",["-v","error","-i",output,"-vn","-ac","1","-ar","48000","-f","f32le","pipe:1"],{maxBuffer:8*1024*1024,timeout:15000});
+  receipt.audioPCM={decodedBytes:fullPCM.byteLength,decodedSampleCount:fullPCM.byteLength/4,
+    decodedSeconds:fullPCM.byteLength/4/48000,sha256:createHash("sha256").update(fullPCM).digest("hex")};
   function amplitude(time, frequency) {
-    const bytes=execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",output,"-t","0.15","-vn","-ac","1","-ar","48000","-f","f32le","pipe:1"]);
-    const data=new Float32Array(bytes.buffer,bytes.byteOffset,bytes.byteLength/4);let real=0,imaginary=0;
-    for(let i=0;i<data.length;i++){real+=data[i]*Math.cos(2*Math.PI*frequency*i/48000);imaginary+=data[i]*Math.sin(2*Math.PI*frequency*i/48000);}
-    return 2*Math.hypot(real,imaginary)/data.length;
+    return measureTonePCM(fixedPCMWindow(fullPCM,time),frequency).amplitude;
   }
   const audioTailWindow=fixedAACTailWindow(probe,8);
-  const tailPCM=execFileSync("ffmpeg",["-v","error","-ss",String(audioTailWindow.probeStart),"-i",output,"-t","0.15","-vn","-ac","1","-ar","48000","-f","f32le","pipe:1"]);
+  const tailPCM=fixedPCMWindow(fullPCM,audioTailWindow.probeStart);
   receipt.audioTailProbe={...audioTailWindow,decodedBytes:tailPCM.byteLength,decodedSampleCount:tailPCM.byteLength/4};
   const audioTail=measureTonePCM(tailPCM,440);
   Object.assign(receipt.audioTailProbe,audioTail);

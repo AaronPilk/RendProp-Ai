@@ -6,7 +6,7 @@ import {tmpdir} from "node:os";
 import {basename, dirname, isAbsolute, join} from "node:path";
 import {spawn} from "node:child_process";
 import {fileURLToPath} from "node:url";
-import {fixedAACTailWindow, measureTonePCM, PCM_RATE, PROBE_SECONDS, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
+import {fixedAACTailWindow, fixedPCMWindow, measureTonePCM, PCM_RATE, PROBE_SECONDS, requireAudibleFadeOut} from "./finishing-audio-probe.mjs";
 
 process.umask(0o077);
 const args = process.argv.slice(2), options = {};
@@ -63,7 +63,15 @@ async function run(argv, label, maxBytes = 8 * 1024 * 1024) {
 async function probe(file, label) {
   return JSON.parse(await run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_name,codec_type,start_time,duration,sample_rate:format=duration", "-of", "json", file], `${label}-probe`));
 }
+const fullDecodes = new Map();
+async function fullPCM(file, label) {
+  if (!fullDecodes.has(file)) fullDecodes.set(file, await run(["ffmpeg", "-v", "error", "-i", file, "-vn", "-ac", "1", "-ar", String(PCM_RATE), "-f", "f32le", "pipe:1"], `${label}-complete`));
+  return fullDecodes.get(file);
+}
 async function pcm(file, seconds, label) {
+  return fixedPCMWindow(await fullPCM(file, label), seconds);
+}
+async function legacySeekPCM(file, seconds, label) {
   return run(["ffmpeg", "-v", "error", "-ss", String(seconds), "-i", file, "-t", String(PROBE_SECONDS), "-vn", "-ac", "1", "-ar", String(PCM_RATE), "-f", "f32le", "pipe:1"], label);
 }
 function refusal(name, work, expected) {
@@ -85,7 +93,7 @@ try {
   const faded = await fixture("faded-intact", 8, "volume=0.5,afade=t=out:st=7:d=1");
   const good = await inspect(faded, "faded", 2);
   checks.push({name: "declared-AAC-endpoint-measures-real-fade", expected: "pass", passed: true, window: good.window, tail: good.tail, reference: good.reference, ratio: good.ratio});
-  const oldBytes = await pcm(faded, Number(good.metadata.format.duration) - .2, "old-format-window");
+  const oldBytes = await legacySeekPCM(faded, Number(good.metadata.format.duration) - .2, "old-format-window");
   assert.equal(oldBytes.length, 0, "Synthetic format tail must reproduce the empty old window");
   refusal("old-format-window-empty-is-rejected", () => measureTonePCM(oldBytes, 440), /PCM window is empty/);
   const shortened = await probe(await fixture("shortened-audio", 7.2, "volume=0.5,afade=t=out:st=6.2:d=1"), "shortened");
@@ -96,6 +104,11 @@ try {
     refusal(`${name}-PCM-is-rejected`, () => measureTonePCM(invalid, 440), /nonfinite samples/);
   }
   refusal("partial-PCM-window-is-rejected", () => measureTonePCM(good.tailBytes.subarray(0, 3600 * 4), 440), /full requested duration/);
+  const fullGood = await fullPCM(faded, "faded"), sampleStart = Math.round(good.window.probeStart * PCM_RATE);
+  assert.equal(good.tailBytes.length / 4, PROBE_SECONDS * PCM_RATE, "Fixed window must contain exactly7200samples, without tolerance or padding");
+  refusal("one-missing-sample-in-full-timeline-is-rejected", () => fixedPCMWindow(fullGood.subarray(0, (sampleStart + PROBE_SECONDS * PCM_RATE - 1) * 4), good.window.probeStart), /complete fixed window/);
+  refusal("nonfinite-fixed-window-start-is-rejected", () => fixedPCMWindow(fullGood, NaN), /Invalid fixed PCM window start/);
+  refusal("negative-fixed-window-start-is-rejected", () => fixedPCMWindow(fullGood, -1), /Invalid fixed PCM window start/);
   const noFade = await fixture("missing-fade", 8, "volume=0.5");
   const noFadeProbe = await probe(noFade, "missing-fade"), noFadeWindow = fixedAACTailWindow(noFadeProbe, 8);
   const noFadeTail = measureTonePCM(await pcm(noFade, noFadeWindow.probeStart, "missing-fade-tail"), 440);
@@ -114,9 +127,24 @@ try {
   if (options["--retained-mp4"]) {
     const retained = options["--retained-mp4"]; assert(isAbsolute(retained) && basename(retained) === "music-captions-mix.mp4");
     const original = JSON.parse(await readFile(join(dirname(retained), "receipt.json"), "utf8"));
-    assert.equal(original.status, "fail"); assert.equal(original.levels.musicFadeOut, null);
+    assert.equal(original.status, "fail");
+    // Support both retained old empty-format-tail failures and this actual
+    // partial-seek regression, without treating an arbitrary failed file as proof.
+    const partialSeek = original.failure?.includes("PCM window does not contain the full requested duration") === true;
+    assert(original.levels?.musicFadeOut === null || partialSeek, "Retained CI must have failed the original fade-window gate");
     assert.equal((await descriptor(retained)).sha256, original.outputSHA256);
     const fixed = await inspect(retained, "retained-actual-CI", original.outputTiming.photoBoundary + 2.4);
+    if (partialSeek) {
+      const legacyBytes = await legacySeekPCM(retained, fixed.window.probeStart, "retained-original-seek");
+      assert.equal(legacyBytes.length / 4, original.audioTailProbe.decodedSampleCount, "Exact retained browser AAC reproduces the CI seek truncation");
+      assert(legacyBytes.length / 4 < PROBE_SECONDS * PCM_RATE - 1);
+      refusal("actual-retained-partial-seek-remains-rejected", () => measureTonePCM(legacyBytes, 440), /full requested duration/);
+      assert.equal(fixed.tail.sampleCount, PROBE_SECONDS * PCM_RATE, "Same declared window from a complete decode must contain exactly7200samples");
+      checks.push({name: "retained-browser-AAC-fixed-timestamps-full-window", expected: "pass", passed: true,
+        legacySeekSamples: legacyBytes.length / 4, fullWindowSamples: fixed.tail.sampleCount,
+        probeStart: fixed.window.probeStart, probeEnd: fixed.window.probeEnd,
+        thresholdsUnchanged: {minimumReferenceRatio: .01, maximumReferenceRatio: .5}});
+    }
     checks.push({name: "actual-retained-failed-MP4-fixed-probe-passes", expected: "pass", passed: true,
       originalCIStillFailed: true, media: await descriptor(retained), window: fixed.window,
       tail: fixed.tail, reference: fixed.reference, ratio: fixed.ratio});

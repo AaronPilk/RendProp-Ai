@@ -41,6 +41,23 @@ export function fixedAACTailWindow(probe, nominalSeconds) {
     formatDuration, probeStart, probeEnd: probeStart + PROBE_SECONDS};
 }
 
+// Slice the predeclared time window from a complete decode. Browser-recorded
+// AAC packets can have timestamp increments slightly shorter than their1024
+// decoded samples; ffmpeg -ss/-t then filters a partial window even when the
+// full soundtrack is intact. Do not search levels, move the window, pad it or
+// relax the sample count. The caller retains the declared AAC endpoint guard.
+export function fixedPCMWindow(bytes, startSeconds) {
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length % 4)
+    throw new Error("Full PCM timeline is empty or malformed");
+  if (!Number.isFinite(startSeconds) || startSeconds < 0)
+    throw new Error("Invalid fixed PCM window start");
+  const start = Math.round(startSeconds * PCM_RATE), count = PROBE_SECONDS * PCM_RATE;
+  if (!Number.isSafeInteger(start) || !Number.isInteger(count) ||
+      start + count > bytes.length / 4)
+    throw new Error("Full PCM timeline does not contain the complete fixed window");
+  return bytes.subarray(start * 4, (start + count) * 4);
+}
+
 export function measureTonePCM(bytes, frequency) {
   if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length % 4)
     throw new Error("PCM window is empty or malformed");
