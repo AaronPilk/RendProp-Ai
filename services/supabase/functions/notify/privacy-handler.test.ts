@@ -10,8 +10,8 @@ const serve=Object.getOwnPropertyDescriptor(Deno,"serve")!;
 Object.defineProperty(Deno,"serve",{configurable:serve.configurable,enumerable:serve.enumerable,writable:true,value:(fn:typeof handler)=>{handler=fn;return{};}});
 try{await import("./index.ts?privacy-handler-proof");}finally{Object.defineProperty(Deno,"serve",serve);for(const[key,value]of previous)if(value===undefined)Deno.env.delete(key);else Deno.env.set(key,value);}
 if(!handler)throw new Error("Actual notify handler not captured");
-const row=(category="lead_received")=>({id:"fixture-outbox-"+category,org_id:ORG,user_id:USER as string|null,to_email:"editable-profile@fixture.invalid",category,channel:"email",dedupe_key:"fixture-"+category,payload:{data:{lead_name:"Synthetic buyer",listing_address:"Synthetic property"}},attempts:1});
-async function invoke(rows:Array<ReturnType<typeof row> & {client_verification_id?:string}>,options:{lookupError?:boolean,verificationError?:boolean,authenticated?:boolean,serviceHeaders?:Record<string,string>}={}){
+const row=(category="lead_received")=>({id:"fixture-outbox-"+category,org_id:ORG,user_id:USER as string|null,to_email:"editable-profile@fixture.invalid",category,channel:"email",dedupe_key:"fixture-"+category,payload:{data:{lead_name:"Synthetic buyer",listing_address:"Synthetic property"}} as Record<string,unknown>,attempts:1});
+async function invoke(rows:Array<ReturnType<typeof row> & {client_verification_id?:string}>,options:{lookupError?:boolean,verificationError?:boolean,authenticated?:boolean,serviceHeaders?:Record<string,string>,opsCurrent?:boolean}={}){
  const oldFetch=globalThis.fetch,keys=["SUPABASE_SERVICE_ROLE_KEY","RESEND_API_KEY","NOTIFY_FROM_EMAIL","APNS_KEY_P8","APNS_KEY_ID","APNS_TEAM_ID"];
  const saved=new Map(keys.map(key=>[key,Deno.env.get(key)]));
  Deno.env.set("SUPABASE_SERVICE_ROLE_KEY","fixture-service");Deno.env.set("RESEND_API_KEY","fixture-only");Deno.env.set("NOTIFY_FROM_EMAIL","Rendprop <notify@fixture.invalid>");for(const key of keys.slice(3))Deno.env.delete(key);
@@ -24,6 +24,7 @@ async function invoke(rows:Array<ReturnType<typeof row> & {client_verification_i
   if(url.pathname==="/rest/v1/rpc/notification_verified_recipients")return options.lookupError?Response.json({message:"private SQL unavailable"},{status:503}):Response.json([{id:USER,email:"confirmed-auth@fixture.invalid"}]);
   if(url.pathname==="/rest/v1/rpc/client_recipient_verification_prepare")return options.verificationError?Response.json({to:"other@fixture.invalid"}):Response.json({to:"client@fixture.invalid",from:"Rendprop <notify@fixture.invalid>",subject:"Confirm your listing inquiry email",text:"Confirm only if expected. https://rendprop.com/verify-client-email#token="+"a".repeat(64),idempotency_key:"client-verification/"+VERIFY});
   if(url.pathname==="/rest/v1/rpc/notification_mark"){marked.push(body);return Response.json({ok:true});}
+  if(url.pathname==="/rest/v1/rpc/ops_alert_current")return Response.json(options.opsCurrent!==false);
   throw new Error("Unmodeled database request: "+url.pathname);
  };
  // Modern service authentication is the exact configured apikey, never a JWT role claim.
@@ -58,4 +59,19 @@ Deno.test("actual drain refuses forged service claims, wrong apikey and bearer-o
  for(const headers of refused){
   const out=await invoke([row()],{serviceHeaders:headers});assertEquals(out.status,403);assertEquals(out.calls,[]);assertEquals(out.marked,[]);
  }
+});
+
+Deno.test("actual drain renders owner copy only after admin finding currency check and preserves dedupe",async()=>{
+ const alert={...row("ops_alert"),payload:{code:"holds_unledgered",title:"Admin alert: no ledger row",body:"Technical envelope",observed_at:"2026-10-09T15:07:00Z",data:{holds:1}}};
+ const out=await invoke([alert]);assertEquals(out.body.sent,1);
+ const checked=out.calls.findIndex(c=>new URL(c.url).pathname==="/rest/v1/rpc/ops_alert_current");
+ const delivered=out.calls.findIndex(c=>new URL(c.url).hostname==="api.resend.com");
+ assert(checked>=0&&delivered>checked);
+ assertEquals(out.calls[checked].body,{p_outbox:alert.id});
+ assertEquals(out.calls[delivered].body.subject,"Admin: AI cost tracking needs attention");
+ assert(String(out.calls[delivered].body.text).includes("2026-10-09 15:07 UTC"));
+ assertEquals(out.marked[0].p_id,alert.id);
+ const expired=await invoke([alert],{opsCurrent:false});assertEquals(expired.body.sent,0);assertEquals(expired.body.skipped,1);
+ assert(!expired.calls.some(c=>new URL(c.url).hostname==="api.resend.com"));
+ assertEquals(expired.marked,[]);
 });

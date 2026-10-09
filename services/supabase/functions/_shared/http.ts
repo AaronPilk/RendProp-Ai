@@ -28,6 +28,7 @@ export type ErrorCode =
   // 400, never auto-derived from a status: only thrown deliberately, so the app
   // can show the refusal differently from an ordinary validation error.
   | "unsupported_edit"
+  | "photo_clarification_required"
   | "upstream"
   | "internal";
 

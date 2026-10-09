@@ -38,7 +38,7 @@ function fakeModel(answers: string[]) {
 
 const CLEAN_SCRIPT = "Four bedrooms open onto the water. The kitchen was rebuilt last year. Book a showing.";
 const TRIPS_SCRIPT = "Great for families, and a safe neighborhood too.";
-const CLEAN_PROMPT = "Repaint the kitchen cabinets a soft matte white, keeping the hardware and worktops identical.";
+const CLEAN_PROMPT = "Brighten exposure only; preserve existing paint colors, trim and garage finishes.";
 const TRIPS_PROMPT = "add a family in the living room";
 
 const base = {
@@ -260,4 +260,22 @@ Deno.test("a non-HttpError thrown by the generation is not swallowed", async () 
       }),
     TypeError,
   );
+});
+
+Deno.test("photo polisher ambiguity and permanent edits stop before any model call", async () => {
+  for (const [input, status, code] of [["clean garage",409,"photo_clarification_required"],["repaint the garage white",400,"unsupported_edit"]] as const) {
+    const model = fakeModel([CLEAN_PROMPT]);
+    const error = await assertRejects(() => guardedCopy({...base,gate:"image_prompt",input,attempt:model.attempt}), HttpError);
+    assertEquals(error.status,status); assertEquals(error.code,code); assertEquals(error.details?.no_charge,true);
+    assertEquals(model.calls.length,0);
+  }
+});
+Deno.test("photo polisher retries invented scopes and never returns the model's repaint request", async () => {
+  const model = fakeModel(["Brighten exposure and add modern furniture.", CLEAN_PROMPT]);
+  const result = await guardedCopy({...base,gate:"image_prompt",input:"Improve lighting only.",attempt:model.attempt});
+  assertEquals(result.text,CLEAN_PROMPT); assertEquals(model.calls,[false,true]);
+  const broken = fakeModel(["Repaint the garage white and brighten the exposure."]);
+  const error = await assertRejects(() => guardedCopy({...base,gate:"image_prompt",input:"Improve lighting only.",attempt:broken.attempt}),HttpError);
+  assertEquals(error.status,502); assertEquals(error.code,"upstream"); assertEquals(broken.calls.length,2);
+  assert(!error.message.includes("Repaint"));
 });

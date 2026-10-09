@@ -4,4 +4,6 @@ Choose your listing's cover photo and publish the current photo versions. Shared
 
 Photo edits show progress across screens and keep completed images when work stops. We've also fixed listing-toolbox crashes and improved room tags, listing details and photo disclosures.
 
+Ask for anything now helps you clarify a photo edit before generating. Review custom results against the original before using them on your listing, cover or download.
+
 Rendprop now starts with Sign in with Apple, so your listings and pages belong to your account on every device. Your first published listing is free; plans add AI tools and more listings, and an eligible 7-day free trial starts only after you confirm a subscription with Apple.

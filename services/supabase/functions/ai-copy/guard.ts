@@ -33,6 +33,23 @@
 
 import { HttpError } from "../_shared/http.ts";
 import { assertFairHousing, assertMarketingCopy } from "../_shared/fairhousing.ts";
+import { analyzeCustomPhotoPrompt, CUSTOM_PHOTO_CHOICES, customPhotoOutputMatchesInput } from "../_shared/custom-photo-prompt.ts";
+
+export function assertCustomPhotoPrompt(text: string, spaceType: string | null) {
+  const result = analyzeCustomPhotoPrompt(text, spaceType);
+  if (result.status === "blocked") throw new HttpError(400, result.message, "unsupported_edit", {
+    category: "permanent_property_change", no_charge: true,
+  });
+  if (result.status === "clarify") throw new HttpError(409, result.message, "photo_clarification_required", {
+    clarification_options: CUSTOM_PHOTO_CHOICES, no_charge: true,
+  });
+  return result;
+}
+
+export function assertCustomPhotoOutput(input: string, output: string, spaceType: string | null) {
+  if (!customPhotoOutputMatchesInput(input, output, spaceType)) throw new HttpError(502,
+    "The writing assistant changed the requested scope. No suggested instruction was returned. Use your original specific request instead.", "upstream");
+}
 
 /** How many times the model gets to write compliant copy. One retry: a second
  *  refusal is a pattern, not a fluke, and a third attempt is just spend. */
@@ -61,7 +78,10 @@ export function assertInputSafe(
   spaceType: string | null,
 ): void {
   if (gate === "marketing") assertMarketingCopy(text, what, spaceType);
-  else assertFairHousing(text, what, spaceType);
+  else {
+    assertFairHousing(text, what, spaceType);
+    assertCustomPhotoPrompt(text, spaceType);
+  }
 }
 
 /** True when `err` is a fair-housing refusal (as opposed to a provider or
@@ -147,7 +167,12 @@ export async function guardedCopy(args: GuardedCopyArgs): Promise<GuardedCopyRes
     // 3. OUTPUT — a system rule is a request, not a guarantee.
     try {
       if (args.gate === "marketing") assertMarketingCopy(text, args.outputWhat, args.spaceType);
-      else assertFairHousing(text, args.outputWhat, args.spaceType);
+      else {
+        assertFairHousing(text, args.outputWhat, args.spaceType);
+        if (!customPhotoOutputMatchesInput(args.input, text, args.spaceType)) {
+          throw new HttpError(400, "The suggested edit changed the requested scope.", "unsupported_edit", { category: "photo_scope" });
+        }
+      }
       return { text, attempts, retried: attempts > 1 };
     } catch (e) {
       if (!isComplianceRefusal(e)) throw e;

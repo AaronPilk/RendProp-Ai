@@ -21,6 +21,8 @@ source = root / 'apps/ios/Rendprop/Photos/PhotoExport.swift'
 base = source.read_text()
 variants = {
     'actual': (base, None),
+    'negative-custom-review-removed': (base.replace('try PhotoVersionHistory.requireDownloadReview(imageURL: source)', '/* review guard removed */'), 'unreviewed custom cannot be exported by the actual renderer'),
+    'negative-paired-source-review-removed': (base.replace('try PhotoVersionHistory.requireDownloadReview(imageURL: photo.originalURL)', '/* paired source review guard removed */'), 'paired-original export cannot expose an unreviewed custom ancestor'),
     'negative-original-added-last': (base.replace('images: urls,', 'images: urls.sorted { $0.lastPathComponent < $1.lastPathComponent },'), 'Photos receives original before current edit'),
     'negative-mls-overlay': (base.replace('options.destination != .mls && options.includeLabel', 'options.includeLabel'), 'MLS file is clean with no banned text overlay'),
     'negative-web-label-missing': (base.replace('options.destination != .mls && options.includeLabel', 'false && options.destination != .mls && options.includeLabel'), 'web label burns into exported copy'),
@@ -116,7 +118,7 @@ def discover_simulator(run_command, requested_uuid, diagnostics, clock=time.mono
                     if device['udid'] in available_ids:
                         raise ValueError('Simulator discovery returned duplicate available device IDs')
                     available_ids.add(device['udid'])
-                    if 'iOS' in runtime and 'iPhone' in device['name']:
+                    if 'iOS' in runtime and ('iPhone' in device['name'] or str(device.get('deviceTypeIdentifier', '')).startswith('com.apple.CoreSimulator.SimDeviceType.iPhone-')):
                         ios.append(device)
         if not ios:
             raise RuntimeError('No available iPhone simulator')

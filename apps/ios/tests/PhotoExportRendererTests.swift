@@ -46,6 +46,55 @@ import ImageIO
         let version = try PhotoVersionHistory.saveEdit(jpeg: original, id: "stage", parentID: "capture", sourceID: "capture", edit: "stage", style: "modern",
                                                       disclosure: "Furniture digitally added.", provenanceID: "row", provenanceRecorded: true, directory: root)
         let photo = EnhancedPhoto(id: "stage", originalURL: root.appendingPathComponent("orig-capture.jpg"), enhancedURL: root.appendingPathComponent(version.imageFile))
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: original, id: "custom-capture", directory: root)
+        let custom = try PhotoVersionHistory.saveEdit(jpeg: original, id: "custom", parentID: "custom-capture", sourceID: "custom-capture", edit: "custom", style: nil,
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: root)
+        let customPhoto = EnhancedPhoto(id: custom.id, originalURL: root.appendingPathComponent("orig-custom-capture.jpg"),
+            enhancedURL: root.appendingPathComponent(custom.imageFile))
+        func rejectsCustom(_ input: [EnhancedPhoto], _ message: String, options: PhotoExportRenderer.Options = .init()) throws {
+            do {
+                let output = try PhotoExportRenderer.prepare(input, options: options)
+                try? FileManager.default.removeItem(at: output.directory)
+                check(false, message)
+            } catch PhotoVersionHistory.Failure.customReviewRequired { checks += 1 }
+        }
+        try rejectsCustom([customPhoto], "unreviewed custom cannot be exported by the actual renderer")
+        let tempBefore = Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+            .filter { $0.hasPrefix("Rendprop-photos-") })
+        try rejectsCustom([photo, customPhoto], "bulk export cannot include an unreviewed custom after an approved photo")
+        let tempAfter = Set(try FileManager.default.contentsOfDirectory(atPath: FileManager.default.temporaryDirectory.path)
+            .filter { $0.hasPrefix("Rendprop-photos-") })
+        check(tempBefore == tempAfter, "a rejected bulk export removes all partial prepared output")
+        let alias = EnhancedPhoto(id: "unknown-alias", originalURL: customPhoto.originalURL, enhancedURL: customPhoto.enhancedURL)
+        try rejectsCustom([alias], "filename lookup still fences custom output when the view has an older alias")
+        let forgedID = EnhancedPhoto(id: "capture", originalURL: customPhoto.originalURL, enhancedURL: customPhoto.enhancedURL)
+        do {
+            let output = try PhotoExportRenderer.prepare([forgedID], options: .init())
+            try? FileManager.default.removeItem(at: output.directory)
+            preconditionFailure("an approved capture id cannot hide a different unreviewed custom file")
+        } catch PhotoVersionHistory.Failure.changedVersion { checks += 1 }
+        let rawCustom = try PhotoExportRenderer.prepare([customPhoto], options: .init(original: true))
+        defer { try? FileManager.default.removeItem(at: rawCustom.directory) }
+        check((try? Data(contentsOf: rawCustom.images[0])) == original, "unreviewed custom still allows exact original download")
+        check((try? PhotoVersionHistory.load(directory: root).versions[custom.id]?.customReviewed) == false,
+              "original download does not approve the edited custom image")
+        let descendant = try PhotoVersionHistory.saveEdit(jpeg: original, id: "custom-sky", parentID: custom.id, sourceID: custom.id, edit: "sky", style: nil,
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: root)
+        let descendantPhoto = EnhancedPhoto(id: descendant.id, originalURL: customPhoto.originalURL, enhancedURL: root.appendingPathComponent(descendant.imageFile))
+        try rejectsCustom([descendantPhoto], "a preset descendant cannot bypass custom download review")
+        let earlierUnreviewedCustom = EnhancedPhoto(id: photo.id, originalURL: customPhoto.enhancedURL, enhancedURL: photo.enhancedURL)
+        try rejectsCustom([earlierUnreviewedCustom], "earlier-source export cannot expose an unreviewed custom ancestor", options: .init(original: true))
+        try rejectsCustom([earlierUnreviewedCustom], "paired-original export cannot expose an unreviewed custom ancestor")
+        let beforeReview = try PhotoVersionHistory.load(directory: root)
+        try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: custom.imageFile, sourceFile: "orig-custom-capture.jpg",
+            review: .init(comparedSource: true, fixedFeaturesMatch: true, colorsAndMaterialsMatch: true, onlyRequestedChange: true), directory: root)
+        let reviewed = try PhotoVersionHistory.load(directory: root)
+        check(reviewed.current == beforeReview.current && reviewed.listingSelections == beforeReview.listingSelections,
+              "reviewing a download leaves publication and editing selections unchanged")
+        let customPack = try PhotoExportRenderer.prepare([customPhoto], options: .init())
+        defer { try? FileManager.default.removeItem(at: customPack.directory) }
+        check(customPack.images.count == 2 && customPack.files.count == 3, "reviewed exact custom exports with original and disclosure")
+        try rejectsCustom([descendantPhoto], "review of one custom output cannot approve a different descendant download")
         let mls = try PhotoExportRenderer.prepare([photo], options: .init())
         defer { try? FileManager.default.removeItem(at: mls.directory) }
         check(mls.images.count == 2 && mls.files.count == 3, "MLS package includes current, original and disclosure")

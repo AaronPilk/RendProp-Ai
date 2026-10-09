@@ -51,6 +51,7 @@ def case(name, events, *, expected_id=None, requested=None, failure=None,
 CASES = [
     case('initial-prefers-booted', [(0.01, 0, VALID)], expected_id=TWO),
     case('requested-exact-device', [(0.01, 0, VALID)], requested=ONE, expected_id=ONE),
+    case('named-task-owned-iphone', [(0.01, 0, inventory(dict(device(ONE), name='Rendprop Custom Acceptance', deviceTypeIdentifier='com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro')))], requested=ONE, expected_id=ONE),
     case('timeout-then-valid-read', [(30, 'timeout', ''), (1, 0, VALID)], expected_id=TWO, count=2, second_timeout=90),
     case('remaining-budget-is-recomputed', [(119, 'timeout', ''), (0.5, 0, VALID)], expected_id=TWO, count=2, second_timeout=1),
     case('empty-inventory', [(0, 0, inventory())], failure='No available iPhone simulator'),

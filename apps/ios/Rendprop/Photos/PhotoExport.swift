@@ -40,8 +40,12 @@ enum PhotoExportRenderer {
             for (offset, photo) in photos.enumerated() {
                 let url = try autoreleasepool {
                     let history = try PhotoVersionHistory.load(directory: photo.enhancedURL.deletingLastPathComponent())
-                    let version = history.versions[photo.id] ?? history.versions.values.first { $0.imageFile == photo.enhancedURL.lastPathComponent }
+                    if let named = history.versions[photo.id], named.imageFile != photo.enhancedURL.lastPathComponent {
+                        throw PhotoVersionHistory.Failure.changedVersion
+                    }
+                    let version = history.versions.values.first { $0.imageFile == photo.enhancedURL.lastPathComponent }
                     let source = options.original ? photo.originalURL : photo.enhancedURL
+                    try PhotoVersionHistory.requireDownloadReview(imageURL: source)
                     if options.original, source.standardizedFileURL == photo.enhancedURL.standardizedFileURL {
                         throw Failure(message: "An earlier source is missing for photo \(offset + 1). Export its current version instead.")
                     }
@@ -72,6 +76,7 @@ enum PhotoExportRenderer {
                         if options.includeOriginals, version?.originalVerified == true,
                            photo.originalURL.standardizedFileURL != photo.enhancedURL.standardizedFileURL {
                             let originalURL = directory.appendingPathComponent(String(format: "%02d", offset + 1) + "-retained-original." + photo.originalURL.pathExtension)
+                            try PhotoVersionHistory.requireDownloadReview(imageURL: photo.originalURL)
                             try FileManager.default.copyItem(at: photo.originalURL, to: originalURL)
                             urls.append(originalURL); deliveryFiles.append(originalURL)
                         }
@@ -196,6 +201,10 @@ struct PhotoExportSheet: View {
                     }
                     Text(photos.count == 1 ? "Export this photo" : "Export \(photos.count) photos")
                         .font(.headline)
+                    if !original, versions.contains(where: { $0?.needsCustomReview == true }) {
+                        Text("A selected custom edit still needs comparison. Open Photo versions, compare it with its source and complete the checks before downloading the edited copy. You can still export its earlier source.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     Picker("Destination", selection: $destination) {
                         ForEach(PhotoExportRenderer.Destination.allCases) { Text($0.rawValue).tag($0) }
                     }

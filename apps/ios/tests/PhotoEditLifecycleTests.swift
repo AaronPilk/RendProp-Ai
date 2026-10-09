@@ -136,7 +136,11 @@ struct UNNotificationRequest {
         check(UIApplication.shared.ended.count == 1 && IdleTimer.releases == IdleTimer.holds, "Normal completion ends the exact leases once")
         check(UNUserNotificationCenter.shared.delivered[0].content.body.contains("1 of 1 photos changed"), "Notification uses completed output count")
 
-        for failure in [SyntheticFailure.quota, .unauthorized, .serviceUnavailable, .trialCapacityUnavailable] {
+        let stoppingFailures: [any Error] = [SyntheticFailure.quota, SyntheticFailure.unauthorized,
+            SyntheticFailure.serviceUnavailable, SyntheticFailure.trialCapacityUnavailable,
+            APIError.server(status: 409, code: "photo_clarification_required", message: "Choose a specific edit."),
+            APIError.server(status: 400, code: "unsupported_edit", message: "We can't repaint a listing photo.")]
+        for failure in stoppingFailures {
             reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []
             let refused = PhotoEditService(model: model, listing: listing, process: { photo in
                 calls.append(photo.id); throw failure

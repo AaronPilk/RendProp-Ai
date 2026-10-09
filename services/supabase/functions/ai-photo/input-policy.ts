@@ -8,7 +8,9 @@ export const PHOTO_INPUT_POLICY = Object.freeze({
   maxDecodedBytes: 9_000_000,
   maxPixels: 24_000_000,
   maxEdge: 8192,
-  maxUserPromptBytes: 600,
+  maxUserPromptChars: 600,
+  // A 600-character request must not be cut in half by UTF-8 accents.
+  maxUserPromptBytes: 2400,
   maxProviderPromptBytes: 8192,
 });
 export interface StillImage { mime: string; bytes: number; width: number; height: number }
@@ -130,6 +132,8 @@ export function validatePhotoInputs(image: unknown, mime: string, mask?: unknown
   return source;
 }
 export function validatePhotoPrompt(prompt: string, user = false) {
+  if (user && prompt.length > PHOTO_INPUT_POLICY.maxUserPromptChars) throw new HttpError(400,
+    `Photo instructions are too long (maximum ${PHOTO_INPUT_POLICY.maxUserPromptChars} characters).`, "validation");
   const cap = user ? PHOTO_INPUT_POLICY.maxUserPromptBytes : PHOTO_INPUT_POLICY.maxProviderPromptBytes;
   if (new TextEncoder().encode(prompt).byteLength > cap) throw new HttpError(400, `Photo instructions are too long (maximum ${cap} UTF-8 bytes).`, "validation");
 }

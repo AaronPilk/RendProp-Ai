@@ -17,6 +17,25 @@ struct PhotoVersionHistoryTests {
             review.accessIsClear = flags & 4 != 0
             review.furnitureMatchesOtherViews = flags & 8 != 0
             check(review.isComplete == (flags == 15), "staging review requires source, fixed features, access and other-view checks")
+            var customReview = PhotoVersionHistory.CustomReview()
+            customReview.comparedSource = flags & 1 != 0
+            customReview.fixedFeaturesMatch = flags & 2 != 0
+            customReview.colorsAndMaterialsMatch = flags & 4 != 0
+            customReview.onlyRequestedChange = flags & 8 != 0
+            check(customReview.isComplete == (flags == 15), "custom review requires actual source comparison, fixed features, colors/materials and requested-change checks")
+        }
+        for text in ["repaint the garage white", "make the garage door white", "change the color of the trim", "hide the wall crack", "repair the roof", "remove the wall", "replace the windows", "make it brighter and repaint the garage white", "make it look freshly painted white with warm evening light", "repainting the garage and improve lighting", "re\u{200B}paint garage and lighting", "chànge trím color and lighting", "répair roof and lighting", "repaint\u{2060}ing garage and lighting", "ｒｅｐａｉｎｔ garage and lighting"] {
+            check(CustomPhotoPromptPolicy.decision(for: text, realEstate: true) == .blocked, "explicit permanent property changes are refused rather than silently interpreted: \(text)")
+        }
+        for text in ["make it better", "make it nicer", "modernize garage", "clean garage", "clean house", "make this modern", "change this", "improve lighting and make house nicer", "make the garage modern"] {
+            check(CustomPhotoPromptPolicy.decision(for: text, realEstate: true) == .clarify, "ambiguous property request needs a plain choice before generation: \(text)")
+        }
+        for text in ["brighten exposure only; preserve all colors", "remove bags", "add modern furniture", "do not repaint the garage; improve lighting only", "Don't repair the roof, replace only the sky", "make the lawn greener", "remove my reflection"] {
+            check(CustomPhotoPromptPolicy.decision(for: text, realEstate: true) == .ready, "specific benign scope and protective negations remain available: \(text)")
+        }
+        for choice in CustomPhotoPromptPolicy.Choice.allCases {
+            check(CustomPhotoPromptPolicy.decision(for: choice.prompt, realEstate: true) == .ready, "every offered clarification choice can reach a prepared review")
+            check(choice.prompt.count <= 600, "clarification instruction fits the same full request contract")
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("photo-history-tests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -356,6 +375,132 @@ struct PhotoVersionHistoryTests {
         let unknownIndex = try PhotoVersionHistory.load(directory: noOriginalDir)
         check(unknownStage.reviewSourceFile(in: unknownIndex) == "enh-old.jpg", "legacy staging without orig file compares retained pre-furniture source")
         check(!unknownStage.originalVerified && unknownStage.caption.contains("unaltered original has not been verified"), "retained comparison cannot certify an unverified original")
+
+        let customDir = root.appendingPathComponent("custom-preview")
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: enhanced, id: "custom-root", directory: customDir)
+        let custom = try PhotoVersionHistory.saveEdit(jpeg: Data("lighting-preview".utf8), id: "custom-one", parentID: "custom-root", sourceID: "custom-root", edit: "custom", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customDir)
+        var customIndex = try PhotoVersionHistory.load(directory: customDir)
+        check(custom.customReviewed == false && custom.needsCustomReview, "a new custom output explicitly starts as an unreviewed preview")
+        check(!custom.canAutomaticallySelectForListing, "unreviewed custom cannot automatically replace the main photo")
+        check(customIndex.current["custom-root"] == "custom-one", "custom preview remains visible for comparison in latest history")
+        check(customIndex.listingSelections?["custom-root"] == "custom-root", "the prior photo remains on the listing until custom review")
+        check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-root"], "sync publishes the retained selected source, never the new custom preview")
+        rejected("unreviewed custom cannot become cover") { try PhotoVersionHistory.select(id: "custom-one", directory: customDir) }
+        rejected("unreviewed custom cannot become a listing photo") { try PhotoVersionHistory.selectForPublication(id: "custom-one", directory: customDir) }
+        rejected("a staging-only acknowledgement cannot approve a custom edit") { try PhotoVersionHistory.selectForPublication(id: "custom-one", directory: customDir, reviewed: true) }
+        rejected("raw-file save cannot bypass persisted custom download review") {
+            try PhotoVersionHistory.requireDownloadReview(imageURL: customDir.appendingPathComponent(custom.imageFile))
+        }
+        try PhotoVersionHistory.requireDownloadReview(imageURL: customDir.appendingPathComponent("orig-custom-root.jpg"))
+        check((try? PhotoVersionHistory.load(directory: customDir).versions[custom.id]?.customReviewed) == false,
+              "admitting a retained original cannot approve its custom image")
+        let completeCustomReview = PhotoVersionHistory.CustomReview(comparedSource: true, fixedFeaturesMatch: true,
+            colorsAndMaterialsMatch: true, onlyRequestedChange: true)
+        for flags in 0..<15 {
+            let partialReview = PhotoVersionHistory.CustomReview(comparedSource: flags & 1 != 0, fixedFeaturesMatch: flags & 2 != 0,
+                colorsAndMaterialsMatch: flags & 4 != 0, onlyRequestedChange: flags & 8 != 0)
+            rejected("an incomplete custom review cannot approve edited downloads") {
+                try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: custom.imageFile,
+                    sourceFile: "orig-custom-root.jpg", review: partialReview, directory: customDir)
+            }
+        }
+        rejected("custom download approval must match the displayed exact output file") {
+            try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: "enh-custom-root.jpg",
+                sourceFile: "orig-custom-root.jpg", review: completeCustomReview, directory: customDir)
+        }
+        rejected("custom download approval must compare the exact retained source") {
+            try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: custom.imageFile,
+                sourceFile: "enh-custom-root.jpg", review: completeCustomReview, directory: customDir)
+        }
+        let retainedSource = customDir.appendingPathComponent("orig-custom-root.jpg")
+        let retainedSourceBytes = try Data(contentsOf: retainedSource)
+        try FileManager.default.removeItem(at: retainedSource)
+        rejected("missing retained source cannot be approved by checking boxes") {
+            try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: custom.imageFile,
+                sourceFile: "orig-custom-root.jpg", review: completeCustomReview, directory: customDir)
+        }
+        try retainedSourceBytes.write(to: retainedSource)
+        let beforeDownloadReview = try PhotoVersionHistory.load(directory: customDir)
+        try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: custom.imageFile,
+            sourceFile: "orig-custom-root.jpg", review: completeCustomReview, directory: customDir)
+        let downloadReview = try PhotoVersionHistory.load(directory: customDir)
+        check(downloadReview.versions[custom.id]?.customReviewed == true, "complete download-only comparison persists on the exact custom output")
+        try PhotoVersionHistory.requireDownloadReview(imageURL: customDir.appendingPathComponent(custom.imageFile))
+        check((try? Data(contentsOf: customDir.appendingPathComponent(custom.imageFile))) == Data("lighting-preview".utf8),
+              "reviewed direct file download preserves the saved output bytes")
+        check(downloadReview.current == beforeDownloadReview.current && downloadReview.listingSelections == beforeDownloadReview.listingSelections,
+              "download-only review does not publish a photo or replace the editing workspace")
+        check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-root"],
+              "the selected listing and cover source remain unchanged after download approval")
+        try PhotoVersionHistory.selectForPublication(id: "custom-one", directory: customDir, customReviewed: true)
+        customIndex = try PhotoVersionHistory.load(directory: customDir)
+        check(customIndex.versions["custom-one"]?.customReviewed == true, "exact custom output review survives disk reload")
+        try PhotoVersionHistory.selectForPublication(id: "custom-root", directory: customDir)
+        try PhotoVersionHistory.select(id: "custom-one", directory: customDir)
+        check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-one"], "a reviewed exact custom output can be reselected without a paid rerun")
+        let secondCustom = try PhotoVersionHistory.saveEdit(jpeg: Data("second-preview".utf8), id: "custom-two", parentID: "custom-one", sourceID: "custom-one", edit: "custom", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customDir)
+        check(secondCustom.customReviewed == false, "review cannot transfer to a newly generated sibling custom output")
+        rejected("new custom cannot inherit earlier custom approval") { try PhotoVersionHistory.selectForPublication(id: "custom-two", directory: customDir) }
+        let customDescendant = try PhotoVersionHistory.saveEdit(jpeg: Data("custom-then-sky".utf8), id: "custom-sky", parentID: "custom-two", sourceID: "custom-two", edit: "sky", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customDir)
+        check(customDescendant.needsCustomReview && !customDescendant.canAutomaticallySelectForListing, "a preset cannot launder an unreviewed custom ancestor")
+        rejected("descendant of custom remains fenced from publication") { try PhotoVersionHistory.selectForPublication(id: "custom-sky", directory: customDir) }
+        let customStage = try PhotoVersionHistory.saveEdit(jpeg: Data("custom-then-stage".utf8), id: "custom-stage", parentID: "custom-sky", sourceID: "custom-sky", edit: "stage", style: "modern", disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customDir)
+        check(customStage.needsCustomReview, "custom and staging lineage retain separate review requirements")
+        rejected("custom acknowledgement alone cannot approve unreviewed staging") { try PhotoVersionHistory.selectForPublication(id: "custom-stage", directory: customDir, customReviewed: true) }
+        rejected("staging acknowledgement alone cannot approve unreviewed custom lineage") { try PhotoVersionHistory.selectForPublication(id: "custom-stage", directory: customDir, reviewed: true) }
+        try PhotoVersionHistory.selectForPublication(id: "custom-stage", directory: customDir, reviewed: true, customReviewed: true)
+        check((try? PhotoVersionHistory.load(directory: customDir).versions["custom-stage"]?.customReviewed) == true, "combined custom/staging review only approves that exact output")
+        check((try? Data(contentsOf: customDir.appendingPathComponent("orig-custom-root.jpg"))) == original, "custom review and presets preserve retained original bytes")
+
+        // An older on-disk custom version has no new review marker. Preserve its
+        // existing selection, without silently recording that it was reviewed.
+        let customIndexURL = customDir.appendingPathComponent(".photo-history.json")
+        let encoded = try Data(contentsOf: customIndexURL)
+        var olderJSON = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+        var olderVersions = olderJSON["versions"] as! [String: [String: Any]]
+        olderVersions["custom-stage"]?.removeValue(forKey: "customReviewed")
+        olderJSON["versions"] = olderVersions
+        try JSONSerialization.data(withJSONObject: olderJSON).write(to: customIndexURL)
+        check((try? PhotoVersionHistory.load(directory: customDir).versions["custom-stage"]?.customReviewed) == nil, "missing legacy marker decodes without certifying a review")
+        check((try? PhotoVersionHistory.publicationVersions(directory: customDir)?.map(\.id)) == ["custom-stage"], "legacy already selected outputs remain backward compatible")
+        // A damaged selection must not bypass a new explicit false marker.
+        olderVersions["custom-stage"]?["customReviewed"] = false
+        olderJSON["versions"] = olderVersions
+        try JSONSerialization.data(withJSONObject: olderJSON).write(to: customIndexURL)
+        rejected("an erroneously selected unreviewed custom is fenced at actual publication") { _ = try PhotoVersionHistory.publicationVersions(directory: customDir) }
+        check((try? PhotoVersionHistory.availableCoverVersion(directory: customDir)) == nil, "cover fallback cannot pick an erroneously selected unreviewed custom")
+
+        let customCloudDir = root.appendingPathComponent("new-cloud-altered-preview")
+        try FileManager.default.createDirectory(at: customCloudDir, withIntermediateDirectories: true)
+        try original.write(to: customCloudDir.appendingPathComponent("cloud-original.jpg"))
+        try Data("remote-custom-result".utf8).write(to: customCloudDir.appendingPathComponent("cloud-result.jpg"))
+        try PhotoVersionHistory.registerImport(id: "remote", imageFile: "cloud-result.jpg", originalFile: "cloud-original.jpg", staged: false, altered: true, directory: customCloudDir)
+        var remoteIndex = try PhotoVersionHistory.load(directory: customCloudDir)
+        let remote = remoteIndex.versions["remote"]!
+        check(remote.needsCustomReview && !remote.canAutomaticallySelectForListing, "new cloud altered imports require review when exact edit identity is unavailable")
+        check(remote.reviewSourceFile(in: remoteIndex) == "cloud-original.jpg", "cloud comparison uses the exact retained source attached to this import")
+        check(!remote.originalVerified, "a cloud comparison does not certify an unaltered original")
+        check(remoteIndex.isSelectedForListing("remote-source"), "cloud import keeps the retained source selected for the listing")
+        rejected("cloud custom import cannot become cover without comparison") { try PhotoVersionHistory.select(id: "remote", directory: customCloudDir) }
+        rejected("cloud custom import cannot be selected for publication without comparison") { try PhotoVersionHistory.selectForPublication(id: "remote", directory: customCloudDir) }
+        let remoteSky = try PhotoVersionHistory.saveEdit(jpeg: Data("remote-then-sky".utf8), id: "remote-sky", parentID: "remote", sourceID: "remote", edit: "sky", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: customCloudDir)
+        check(remoteSky.needsCustomReview && !remoteSky.canAutomaticallySelectForListing, "a preset cannot launder unreviewed unknown cloud AI lineage")
+        rejected("cloud custom descendant still cannot become public") { try PhotoVersionHistory.selectForPublication(id: "remote-sky", directory: customCloudDir) }
+        try PhotoVersionHistory.selectForPublication(id: "remote", directory: customCloudDir, customReviewed: true)
+        try PhotoVersionHistory.selectForPublication(id: "remote-source", directory: customCloudDir)
+        try PhotoVersionHistory.selectForPublication(id: "remote", directory: customCloudDir)
+        remoteIndex = try PhotoVersionHistory.load(directory: customCloudDir)
+        check(remoteIndex.versions["remote"]?.customReviewed == true && remoteIndex.isSelectedForListing("remote"), "exact reviewed cloud output can be reselected without generation")
+        try PhotoVersionHistory.registerImport(id: "remote", imageFile: "cloud-result.jpg", originalFile: "cloud-original.jpg", staged: false, altered: true, directory: customCloudDir)
+        check((try? PhotoVersionHistory.load(directory: customCloudDir).versions["remote"]?.customReviewed) == true, "repeat import cannot erase an existing exact review")
+        var legacyCloudJSON = try JSONSerialization.jsonObject(with: Data(contentsOf: customCloudDir.appendingPathComponent(".photo-history.json"))) as! [String: Any]
+        var legacyCloudVersions = legacyCloudJSON["versions"] as! [String: [String: Any]]
+        legacyCloudVersions["remote"]?.removeValue(forKey: "customReviewed")
+        legacyCloudJSON["versions"] = legacyCloudVersions
+        try JSONSerialization.data(withJSONObject: legacyCloudJSON).write(to: customCloudDir.appendingPathComponent(".photo-history.json"))
+        try PhotoVersionHistory.registerImport(id: "remote", imageFile: "cloud-result.jpg", originalFile: "cloud-original.jpg", staged: false, altered: true, directory: customCloudDir)
+        check((try? PhotoVersionHistory.load(directory: customCloudDir).versions["remote"]?.customReviewed) == nil, "preexisting cloud ids are not retroactively rewritten or certified")
+        check((try? Data(contentsOf: customCloudDir.appendingPathComponent("cloud-original.jpg"))) == original, "cloud import review preserves exact retained source bytes")
 
         typealias Layout = PhotoExportLayout
         check(Layout.size(width: 4032, height: 3024, aspect: .original, framing: .crop) == .init(width: 4032, height: 3024), "default preserves every original pixel")

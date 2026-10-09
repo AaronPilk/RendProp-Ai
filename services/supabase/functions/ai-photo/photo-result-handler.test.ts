@@ -2,7 +2,7 @@ import {assert,assertEquals,assertRejects,AssertionError} from "https://deno.lan
 const actor="ea100606-0000-4000-8000-000000000001",org="ea100606-0000-4000-8000-000000000002",listing="ea100606-0000-4000-8000-000000000003";
 const encode=(source:string)=>`data:application/typescript;base64,${btoa(unescape(encodeURIComponent(source)))}`;
 const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|null=null){
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|null=null){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
@@ -12,8 +12,15 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   const anchor="chain = await boundedPhotoChain(funding, chain, genInput);";
   assert(source.includes(anchor));source=source.replace(anchor,"");
  }
+ if(removeAdmission==="intent"){
+  const anchor="const prepared = assertCustomPhotoPrompt(userText, promptSpace);";
+  assert(source.includes(anchor));source=source.replace(anchor,"const prepared = {prompt:userText};");
+ }
  const start=source.indexOf("Deno.serve(async (req) => {")+"Deno.serve(".length,end=source.indexOf("\n});\n\n// ── helper modes",start);
  assert(start>0&&end>start,"Extract actual handler callback");
+ const locksStart=source.indexOf("const CONDITION_LOCK ="),locksEnd=source.indexOf("\n/**\n * The photographer",locksStart);
+ const customStart=source.indexOf("function customPrompt("),customEnd=source.indexOf("\nDeno.serve(",customStart);
+ assert(locksStart>0&&locksEnd>locksStart&&customStart>0&&customEnd>customStart,"Extract actual fixed-feature locks and custom compiler wrapper");
  let helper=url("./photo-result.ts");
  if(removeFinalAuthority){
   const original=await Deno.readTextFile(new URL("./photo-result.ts",import.meta.url));
@@ -28,26 +35,34 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {requiredIdempotencyKey} from ${url("../_shared/idempotency.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
+ import {assertCustomPhotoPrompt,assertCustomPhotoOutput} from ${url("../ai-copy/guard.ts")};
+ import {CUSTOM_PHOTO_FIXED_FEATURES} from ${url("../_shared/custom-photo-prompt.ts")};
+ import {MAX_PROMPT_INPUT,MAX_PROMPT_OUTPUT,editPromptInstruction} from ${url("../ai-copy/prompt.ts")};
  import {validatePhotoInputs,validatePhotoPrompt} from ${url("./input-policy.ts")};
  import {persistOwnedPhotoResult,restorePhotoResult,photoResultKeys} from ${helper};
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
- export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,charges:0,submits:0,polls:0,puts:0,gets:0,completes:0};
+ export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],submits:0,polls:0,puts:0,gets:0,completes:0};
  const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}},RE_PROMPTS={twilight:"Synthetic"};
- const customPrompt=(_profile,text)=>text,assertFairHousing=()=>{},listingSpaceType=async()=>"real_estate",userClient=()=>({});
+ ${source.slice(locksStart,locksEnd)}
+ ${source.slice(customStart,customEnd)}
+ const assertFairHousing=()=>{},listingSpaceType=async()=>"real_estate",userClient=()=>({});
  const spaceTypeOf=()=>"real_estate",getUser=async()=>({id:state.actor}),requireEditorRole=async()=>state.org,guardrailsFor=()=>"",provenanceKind=()=>"photo_edit",disclosureFallback=()=>"Synthetic disclosure";
+ const MAX_IMPROVE_INPUT=MAX_PROMPT_INPUT,TEXT_MODEL="gemini-3.6-flash";
+ const guardHelper=async()=>{state.charges++;return{orgId:state.org};},refundHelperCharge=async()=>{},improvePrompt=async()=>{state.helperDispatch++;return state.helperText;};
  const step={route_id:"fixture-route",provider:"gemini",model:MODEL,task:"photo.twilight",unit:"output_image",unit_cents:1,capabilities:[],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true};
- const routerEnabled=async()=>state.router,resolveChain=async()=>state.routes??[step],legacyPhotoStep=()=>step,needsForPhotoEdit=()=>[];
+ const routerEnabled=async()=>state.router,resolveChain=async(task)=>state.routes??[{...step,task}],legacyPhotoStep=(task)=>({...step,task}),needsForPhotoEdit=()=>[];
  const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{};
- const adapterFor=()=>({submit:async()=>{state.submits++;return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/png",result_url:"data:image/png;base64,QUFB"};};
+ const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/png",result_url:"data:image/png;base64,QUFB"};};
  const recordRoutedAiCost=async()=>{},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
  const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
  if(name==="serving_operation_begin"){
  if(state.deleted||state.role!=="owner")return{data:null,error:{message:"RP403: Current editor access is required"}};
  if(state.started){if(state.operationInputHash!==args.p_input_sha256)return{data:null,error:{message:"RP409: This request key was used for different input"}};if(state.saved)return{data:{replay:true,result:structuredClone(state.saved)},error:null};return{data:null,error:{message:"RP409: This operation already started. Check its saved result or status before starting another"}};}
  state.started=true;state.operationInputHash=args.p_input_sha256;return{data:{begun:true},error:null};}
- if(name==="serving_cost_reserve")return{data:{reserved:true},error:null};
+ if(name==="serving_cost_reserve"){state.holds++;return{data:{reserved:true},error:null};}
  if(name.startsWith("org_has_"))return{data:state.qa,error:null};
+ if(name==="subscription_trial_context")return{data:{trial_usage:null},error:null};
  if(name==="hosting_retention_state")return{data:{org_id:state.org,policy:"preserved",protected:true,retention_ends_at:null,hosting_available:true},error:null};
  if(name==="media_delivery_admit")return{data:{admitted:true,legacy_unbudgeted:true},error:null};
  if(name==="serving_cost_finish")return{data:{finished:true},error:null};
@@ -95,9 +110,50 @@ Deno.test("actual photo handler router-off and router-on persist once and replay
  }finally{f.close();}}
 });
 Deno.test("actual photo handler refuses malformed/animated/oversized prompt input before quota and dispatch",async()=>{
- for(const body of [{image_b64:"QUFB"},{image_b64:"AAAA",mime:"image/heic"},{edit:"custom",prompt:"é".repeat(301)}]){
+ for(const body of [{image_b64:"QUFB"},{image_b64:"AAAA",mime:"image/heic"},{edit:"custom",prompt:"é".repeat(601)}]){
   const f=await fixture();try{const response=await f.run(f.request(body));assertEquals(response.status,400,await response.text());assertEquals(f.state.charges,0);assertEquals(f.state.submits,0);}finally{f.close();}
  }
+});
+Deno.test("actual custom photo handler clarifies or refuses before operation admission, holds or image dispatch",async()=>{
+ for(const [prompt,status,code] of [["make it nicer",409,"photo_clarification_required"],["clean garage",409,"photo_clarification_required"],["modernize garage",409,"photo_clarification_required"],["repaint garage white",400,"unsupported_edit"],["make the garage door white",400,"unsupported_edit"],["hide wall crack",400,"unsupported_edit"],["re\u200Bpaint the garage and improve lighting",400,"unsupported_edit"],["chànge trím color and improve lighting",400,"unsupported_edit"]] as const){
+  const f=await fixture();try{const response=await f.run(f.request({edit:"custom",prompt}));assertEquals(response.status,status);const body=await response.json();assertEquals(body.code,code);assertEquals(body.no_charge,true);if(status===409)assertEquals(body.clarification_options.length,4);assertEquals(f.state.started,false);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);assertEquals(f.state.submits,0);}finally{f.close();}
+ }
+});
+Deno.test("actual custom handler automatically prepares the complete request and locks garage, trim and paint on both routing modes",async()=>{
+ const prefix="Improve brightness and exposure only. ",tail=" Preserve the garage door and trim colors exactly.";
+ const prompt=prefix+"natural lighting ".repeat(40).slice(0,600-prefix.length-tail.length)+tail;assertEquals(prompt.length,600);
+ for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
+  const response=await f.run(f.request({edit:"custom",prompt}));assertEquals(response.status,200,await response.text());assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);
+  const prepared=f.state.prompts[0];assert(prepared.includes(JSON.stringify(prompt)));assert(prepared.includes("garage-door color and finish"));assert(prepared.includes("trim color and finish"));assert(prepared.includes("every existing paint color"));assert(prepared.includes("quoted data"));
+ }finally{f.close();}}
+});
+Deno.test("actual custom handler accepts all 600 accented characters without truncating the quoted request",async()=>{
+ const prefix="Improve brightness only. ",tail=" Preserve the garage and trim colors.";
+ const prompt=prefix+"é".repeat(600-prefix.length-tail.length)+tail;
+ const f=await fixture();try{const response=await f.run(f.request({edit:"custom",prompt}));assertEquals(response.status,200,await response.text());assertEquals(f.state.submits,1);assert(f.state.prompts[0].includes(JSON.stringify(prompt)));}
+ finally{f.close();}
+});
+Deno.test("actual custom handler's paid fallback receives exactly the same prepared scope and finish locks",async()=>{
+ const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
+  {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.custom",unit:"output_image",unit_cents:6.7},
+  {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.custom",unit:"output_image",unit_cents:4}];
+  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,200,await response.text());
+  assertEquals(f.state.submits,2);assertEquals(f.state.holds,2);assertEquals(f.state.prompts[0],f.state.prompts[1]);assert(f.state.prompts[1].includes("garage-door color and finish"));assert(f.state.prompts[1].includes("trim color and finish"));
+ }finally{f.close();}
+});
+Deno.test("legacy photo polisher clarifies before a paid helper and refuses invented same-category work",async()=>{
+ for(const [prompt,status] of [["make garage nicer",409],["repair roof",400]] as const){const f=await fixture();try{
+  const response=await f.run(f.request({edit:"improve_prompt",prompt}));assertEquals(response.status,status);assertEquals(f.state.started,false);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);assertEquals(f.state.helperDispatch,0);
+ }finally{f.close();}}
+ const f=await fixture();try{f.state.helperText="Remove boxes and movable furniture.";
+  const response=await f.run(f.request({edit:"improve_prompt",prompt:"Remove boxes only."}));assertEquals(response.status,502);assertEquals((await response.json()).code,"upstream");assertEquals(f.state.helperDispatch,1);assertEquals(f.state.holds,1);assertEquals(f.state.submits,0);
+ }finally{f.close();}
+});
+Deno.test("compiled missing custom preparation fails unchanged no-spend clarification oracle",async()=>{
+ const f=await fixture(false,"intent");try{
+  await assertRejects(async()=>{const response=await f.run(f.request({edit:"custom",prompt:"make it nicer"}));assertEquals(response.status,409);assertEquals(f.state.holds,0);assertEquals(f.state.submits,0);},AssertionError);
+  assertEquals(f.state.holds,1);assertEquals(f.state.submits,1);
+ }finally{f.close();}
 });
 Deno.test("actual photo handler refuses a duplicated priced primary before any paid dispatch",async()=>{
  const f=await fixture();try{f.state.router=true;f.state.routes=[0,1].map(i=>({route_id:"route-"+i,provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.twilight"}));

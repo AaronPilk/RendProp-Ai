@@ -1,6 +1,6 @@
 Rendprop creates shareable listing pages from phone walkthroughs and photos, with photo editing, reels and client contact cards. Walkthrough output is the user's recorded video, not captured drone footage or a production 3D walkthrough.
 
-ACCESS: Rendprop is an account-based workspace. The first screen asks for Sign in with Apple (new or returning account); there is no password form, no guest skip and no external purchase link. The account owns the person's listings, hosted pages, AI usage, Studio access and team membership. Use your own Apple ID: the Apple button creates the account. Terms, Privacy and help are reachable from the entry screen. Account deletion is in Settings > Your data > Delete account.
+ACCESS: Sign in with Apple creates or restores the account that owns listings, hosted pages, AI usage, Studio access and team membership. Use your own Apple ID. There is no password, guest skip or external purchase link. Terms, Privacy and help are on the entry screen. Delete account: Settings > Your data > Delete account.
 
 NEW IN 1.0.4: Sign in with Apple before setup and Home. Onboarding offers Agent or Photographer/videographer. Per-listing client contact cards; enquiries route to the saved client address with explicit send/resend. Cover and gallery selections reach the published page. Photo batches continue across screens (unfinished work does not resume after force-quit). Toolbox crashes, room tags, forms and disclosures corrected. Notifications respect preferences.
 
@@ -14,8 +14,8 @@ TRIAL: new accounts start on the free tier (one published listing, 5 AI photo ed
 
 DELETION: Settings > Your data > Delete account covers the account and its sole-member workspaces. Shared workspace content can remain for other members. Failures/pending cleanup are reported. Removing local data is separate; deleting the app does not cancel an Apple subscription.
 
-AI: explicit consent names providers and media/text uses, including quality checks/fallback. Settings > Your data > AI processing revokes permission. Altered media carries disclosure; original comparison requires a verified untouched original. Geometry is not guaranteed unchanged. Compliance exports disclosure/audit information.
+AI: consent names providers and media/text uses, including checks/fallback. Settings > Your data > AI processing revokes permission. Ask for anything prepares a specific request or asks clarification before a paid photo attempt; repainting fixed finishes, remodeling and hiding damage are refused. Custom outputs need comparison and approval before listing/cover/export. Original comparison needs a verified untouched original. Model fidelity is not guaranteed. Altered media and exports carry disclosure.
 
-USER CONTENT: shared listing/portfolio links can open inside the app; team members access shared workspaces. No public discovery feed, comment thread or user-to-user chat. Publish only content you have permission to use.
+USER CONTENT: shared listing/portfolio links and authorized team workspaces are supported. No public feed, comments or user chat. Publish only permitted content.
 
 Contact: aaron@pilk.ai

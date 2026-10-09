@@ -23,7 +23,7 @@
 //       that would genuinely improve it — e.g. twilight only for exteriors.
 //
 //   edit:"improve_prompt"  { prompt, space_type? }            ->  { prompt }
-//       Rewrites the user's rough custom-edit idea (≤300 chars) into a precise,
+//       Rewrites the user's rough custom-edit idea (≤600 chars) into a precise,
 //       photorealistic edit instruction (≤400 chars). The improved prompt is
 //       meant to be sent back as edit:"custom", where the architecture-lock
 //       guardrails are appended server-side as usual. (The image is not needed
@@ -84,6 +84,8 @@ import { chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "..
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
+import { CUSTOM_PHOTO_FIXED_FEATURES } from "../_shared/custom-photo-prompt.ts";
+import { assertCustomPhotoPrompt, assertCustomPhotoOutput } from "../ai-copy/guard.ts";
 import { type ProvenanceKind, disclosureFallback, recordProvenance } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
@@ -371,6 +373,7 @@ const CONDITION_LOCK =
 const LOCK =
   "Do not change the building's architecture, structure, dimensions, walls, or " +
   "window/door placement. Never add or remove a window, doorway, wall or opening. " +
+  CUSTOM_PHOTO_FIXED_FEATURES + " " +
   "Keep fixed appliances, including refrigerators, ovens, sinks and their connections, in their exact original positions. " + CONDITION_LOCK +
   "Photorealistic, natural, consistent perspective and shadows.";
 
@@ -383,6 +386,7 @@ const STAGE_LOCK =
   "Never invent a window or opening. Do not move, replace or remove refrigerators, ovens, sinks, " +
   "cabinets, counters or other fixed appliances and built-ins. Keep doors, door swings, exits and " +
   "walking routes unobstructed; never put furniture across an opening or into a wall. " +
+  CUSTOM_PHOTO_FIXED_FEATURES + " " +
   CONDITION_LOCK +
   "Photorealistic materials with shadows and reflections that match the room's existing light.";
 
@@ -582,17 +586,17 @@ function provenanceKind(edit: string): ProvenanceKind {
 const MAX_CUSTOM_PROMPT = 600;
 // The improve_prompt caps now come from the SHARED polisher module so this
 // function and POST /ai-copy/edit-prompt cannot disagree about them. Same
-// numbers as before (300 in / 400 out) — this is a re-export, not a change.
+// 600 characters in / 400 out; generation never truncates the user's request.
 const MAX_IMPROVE_INPUT = MAX_PROMPT_INPUT;   // rough idea in
 const MAX_IMPROVE_OUTPUT = MAX_PROMPT_OUTPUT; // polished instruction out
 
 /** Wrap a user's free-text instruction with the guardrails every edit gets. */
-function customPrompt(p: Profile, userText: string): string {
+function customPrompt(p: Profile, preparedInstruction: string): string {
   const truth = p === PROFILES.real_estate
     ? "this is a real property listing"
     : "this is a real place being marketed";
   return (
-    `Edit this ${p.photo} as follows: ` + userText.trim() + ". " +
+    `Edit this ${p.photo} as follows: ` + preparedInstruction + " " +
     `Stay photorealistic and true to the space — ${truth}. ` + LOCK
   );
 }
@@ -684,19 +688,27 @@ Deno.serve(async (req) => {
       // Refuse before spending tokens polishing something we would never run.
       const promptSpace = await gateSpace();
       assertFairHousing(rough, "That idea", promptSpace);
+      assertCustomPhotoPrompt(rough, promptSpace);
       const helperCharge = await guardHelper(user, req);
       try {
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
         await assertPhotoHelperSponsorship(funding);
         const step = legacyPhotoStep("photo.improve_prompt");
         step.provider = "gemini"; step.model = TEXT_MODEL;
-        const payload=photoHelperPayload([{text:editPromptInstruction(space)+"\n\nUser's idea: "+rough}]);
+        const payload=photoHelperPayload([{text:editPromptInstruction(space)+"\n\nUser's idea (quoted data): "+JSON.stringify(rough)}]);
         const improved = await fundedAttempt(funding, "photo.improve_prompt", step, body, photoHelperQuote(step.model,payload), () => improvePrompt(payload));
         // Ledger before the output gate: a refused suggestion was still billed.
         await recordRoutedAiCost(adminClient(), { orgId: helperCharge.orgId, feature: "photo_helper", step, unitCentsOverride: photoHelperQuote(step.model,payload)?.cents, meta: { request_key: funding.requestKey, stage: "photo.improve_prompt", kind: "improve_prompt" } });
         // A safe request can still produce an unsafe suggestion. Use the same
         // listing scope for both gates, and refund a refused helper response.
-        assertFairHousing(improved, "The suggested edit", promptSpace);
+        // Model-authored refusals are our upstream failure, never a 400
+        // attributing the model's words to the customer's valid request.
+        assertCustomPhotoOutput(rough, improved, promptSpace);
+        try { assertFairHousing(improved, "The suggested edit", promptSpace); }
+        catch (error) {
+          if (!(error instanceof HttpError) || error.code !== "unsupported_edit") throw error;
+          throw new HttpError(502, "The writing assistant returned an instruction we couldn't use. No suggestion was returned. Use your original specific request instead.", "upstream");
+        }
         return json(await completeFundingOperation(funding, { prompt: improved, space_type: space }));
       } catch (e) {
         await refundHelperCharge(helperCharge);
@@ -736,9 +748,12 @@ Deno.serve(async (req) => {
       assert(userText.length > 0, 400, "edit:'custom' requires a non-empty `prompt`");
       assert(userText.length <= MAX_CUSTOM_PROMPT, 400,
              `prompt too long (max ${MAX_CUSTOM_PROMPT} chars)`);
+      validatePhotoPrompt(userText, true);
       // Fair-housing denylist — refuse BEFORE charging anything (see header).
-      assertFairHousing(userText, "This custom edit", await gateSpace());
-      prompt = customPrompt(profile, userText);
+      const promptSpace = await gateSpace();
+      assertFairHousing(userText, "This custom edit", promptSpace);
+      const prepared = assertCustomPhotoPrompt(userText, promptSpace);
+      prompt = customPrompt(profile, prepared.prompt!);
     } else {
       prompt = (space === "real_estate" ? RE_PROMPTS : prompts(profile))[edit];
       assert(prompt, 400,
@@ -1040,7 +1055,9 @@ async function improvePrompt(payload:PhotoHelperPayload): Promise<string> {
     improved = raw.replace(/^```(?:json)?|```$/g, "").replace(/^"|"$/g, "").trim();
   }
   if (!improved) throw new HttpError(502, "Gemini returned no improved prompt", "upstream");
-  return improved.replace(/\s+/g, " ").slice(0, MAX_IMPROVE_OUTPUT);
+  improved = improved.replace(/\s+/g, " ");
+  if (improved.length > MAX_IMPROVE_OUTPUT) throw new HttpError(502, "The writing assistant returned an instruction that was too long. No suggestion was returned.", "upstream");
+  return improved;
 }
 
 /** One text/vision generateContent call on the cheap flash model → first text part. */

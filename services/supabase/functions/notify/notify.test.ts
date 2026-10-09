@@ -411,3 +411,68 @@ Deno.test("the email body carries the link and how to turn these off", () => {
   assertStringIncludes(text, "https://rendprop.com/f/abc");
   assertStringIncludes(text, "Settings");
 });
+
+Deno.test("known owner provider warnings replace technical copy with feature, event age and action", () => {
+  const message = render("ops_alert", {code:"provider_dead:fal:bytedance/seedance/v1/pro/fast/image-to-video",
+    title:"Admin alert: AI provider failing: fal / bytedance/seedance/v1/pro/fast/image-to-video",body:"28 failures upstream",
+    observed_at:"2026-10-09T00:07:00Z",data:{provider:"fal",model:"bytedance/seedance/v1/pro/fast/image-to-video",
+      consecutive_failures:28,last_error_class:"upstream",last_fail_at:"2026-10-02T20:44:18Z",last_status:null}});
+  assertEquals(message.title,"Admin: Photo-to-video needs attention");
+  assertStringIncludes(message.body,"FAL: 28 requests failed in a row");
+  assertStringIncludes(message.body,"Last failure 2026-10-02 20:44 UTC");
+  assertStringIncludes(message.body,"Checked 2026-10-09 00:07 UTC");
+  assertStringIncludes(message.body,"Check the connected provider account");
+  assert(!/seedance|upstream|API key|out of balance/.test(message.body));
+  assert(!/output failed|quality|finished video/i.test(message.body));
+});
+
+Deno.test("owner provider warnings distinguish a rejected key from old timeouts without claiming all editing failed", () => {
+  const payload={code:"provider_dead:openai:gpt-image-2",data:{provider:"openai",model:"gpt-image-2",
+    consecutive_failures:3,last_error_class:"timeout",last_status:401,last_fail_at:"2026-10-02T15:34:57Z"}};
+  const rejected=render("ops_alert",payload);
+  assertEquals(rejected.title,"Admin: AI photo editing needs attention");
+  assertStringIncludes(rejected.body,"The service rejected our access key");
+  assert(!rejected.body.includes("took too long"));
+  const timeout=render("ops_alert",{...payload,data:{...payload.data,last_status:null}});
+  assertStringIncludes(timeout.body,"The service took too long to respond");
+  assert(!timeout.body.includes("rejected our access key"));
+  assert(!/all photo|everything|delete|rotate/i.test(timeout.body));
+});
+
+Deno.test("owner ceiling warning says reached when historical spend exceeds cap and does not quote a customer charge", () => {
+  const message=render("ops_alert",{code:"org_near_ceiling:fixture",title:"Workspace near its AI ceiling: Synthetic team",
+    observed_at:"2026-10-08T22:07:00Z",data:{kind:"free",basis:"lifetime",spent_cents:396.06,ceiling_cents:300}});
+  assertEquals(message.title,"Admin: Workspace AI limit reached");
+  assertStringIncludes(message.body,"Synthetic team");
+  assertStringIncludes(message.body,"free AI spending allowance");
+  assertStringIncludes(message.body,"New AI requests are paused");
+  assertStringIncludes(message.body,"Check the account's plan or testing access");
+  assert(!/3\.96|3\.00|\$|charged|invoice|resets/.test(message.body));
+});
+
+Deno.test("owner near-limit warning does not falsely say generation is already paused", () => {
+  const message=render("ops_alert",{code:"org_near_ceiling:fixture",title:"Workspace near its AI envelope: Synthetic brokerage",data:{kind:"retail",spent_cents:80,ceiling_cents:100}});
+  assertEquals(message.title,"Admin: Workspace AI limit nearly used");
+  assertStringIncludes(message.body,"AI generation for Synthetic brokerage");
+  assertStringIncludes(message.body,"pause when it is used up");
+  assert(!message.body.includes("requests are paused"));
+});
+
+Deno.test("owner unlinked-cost warning explains bookkeeping without declaring failed output or refunding it", () => {
+  const message=render("ops_alert",{code:"holds_unledgered",observed_at:"2026-10-09T15:07:00Z",data:{holds:1}});
+  assertEquals(message.title,"Admin: AI cost tracking needs attention");
+  assertStringIncludes(message.body,"1 AI request has an incomplete saved cost record");
+  assertStringIncludes(message.body,"budget reserved");
+  assertStringIncludes(message.body,"account-deletion history");
+  assertStringIncludes(message.body,"2026-10-09 15:07 UTC");
+  assert(!/ledger|envelope|output failed|refund/i.test(message.body));
+});
+
+Deno.test("admin copy has honest fallbacks and leaves unrelated or ordinary messages unchanged", () => {
+  const missing=render("ops_alert",{code:"holds_unledgered",observed_at:"not-a-date",data:{holds:"invalid"}});
+  assertStringIncludes(missing.body,"Some AI requests have");
+  assertStringIncludes(missing.body,"Check time was not recorded");
+  const ordinary={title:"Maintenance",body:"Back soon.",code:"holds_unledgered",data:{holds:1}};
+  assertEquals(render("render_ready",ordinary),{title:"Maintenance",body:"Back soon."});
+  assertEquals(render("ops_alert",{...ordinary,code:"other-alert"}),{title:"Maintenance",body:"Back soon."});
+});

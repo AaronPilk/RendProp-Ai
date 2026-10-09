@@ -105,7 +105,7 @@ final class PhotoEditService {
             directory: directory, originalAssetID: originalAssetID, serverListingID: serverID?.uuidString,
             stagingReferenceID: stagingReferenceID, stagingBrief: edit == "stage" ? prompt : nil)
         let output = directory.appendingPathComponent(version.imageFile)
-        if wasMain && !version.effects.contains("stage")
+        if wasMain && version.canAutomaticallySelectForListing
             && model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath == FileStore.relativePath(for: p.enhancedURL) {
             model.setMainPhoto(FileStore.relativePath(for: output), for: listing.id)
         }
@@ -132,6 +132,7 @@ final class PhotoEditService {
                 // A refused or unreachable generation service fails every photo
                 // the same way; stop instead of uploading N more to fail N times.
                 return failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable || failure.isTrialCapacityUnavailable
+                    || (error as? APIError)?.isPhotoPromptRefusal == true
             }, process: { id in
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
                 try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,

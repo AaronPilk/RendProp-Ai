@@ -958,7 +958,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // the wire (audit F-E-16), but the CALLER went on encoding a 1024 px
         // JPEG for it on the main path, so both ends of that dead work are gone
         // and the parameter with them.
-        var body: [String: Any] = ["rough": String(idea.prefix(300)),   // contract: ≤ 300
+        var body: [String: Any] = ["rough": String(idea.prefix(600)),   // contract: ≤ 600
                                    "space_type": SpaceType.current.rawValue]
         // The area the photo shows, when the app knows it. Bounded to the
         // contract's 60 because it is a label ("Primary bath"), not prose.

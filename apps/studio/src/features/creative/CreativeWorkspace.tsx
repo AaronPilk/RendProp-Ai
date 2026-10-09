@@ -1,3 +1,4 @@
+import CustomPhotoPromptHelp, { analyzeCustomPhotoPrompt } from "./CustomPhotoPromptHelp";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
@@ -191,7 +192,7 @@ function ListingCreative(
       { edit: Edit; reason: string }[]
     >([]),
     [photoResult, setPhotoResult] = useState<
-      (PhotoDelivery & { preview: string; disclosure: string; originalAssetId: string; saved: boolean; edit: Edit; source: PhotoSource }) | null
+      (PhotoDelivery & { preview: string; disclosure: string; originalAssetId: string; saved: boolean; reviewed: boolean; edit: Edit; source: PhotoSource }) | null
     >(null);
   const [draft, setDraft] = useState<CreativeDraft>(EMPTY_DRAFT),
     [draftReady, setDraftReady] = useState(false),
@@ -597,8 +598,9 @@ function ListingCreative(
   }
   async function generatePhoto() {
     if (!source) throw new Error("Choose a photo first.");
-    if (edit === "custom" && !prompt.trim()) {
-      throw new Error("Describe the change you want to make.");
+    if (edit === "custom") {
+      const decision = analyzeCustomPhotoPrompt(prompt, listing.spaceType);
+      if (decision.status !== "ready") throw new Error(decision.message);
     }
     const originalAssetId = await ensureOriginal();
     assertPhotoScope();
@@ -630,7 +632,7 @@ function ListingCreative(
     const disclosure = requiredText(response.disclosure, "the photo disclosure", 1000);
     const delivery = photoDelivery(source, file, edit, disclosure, provenance.recorded === true ? text(provenance.id, 80) || null : null);
     setPhotoResult({ ...delivery, preview, originalAssetId, disclosure: delivery.disclosures.join("\n"),
-      saved: false, edit, source: { ...source, originalAssetId } });
+      saved: false, reviewed: edit !== "custom", edit, source: { ...source, originalAssetId } });
     if (provenance.recorded !== true) {
       setNotice(
         "Your edited photo is ready to review, but its disclosure record could not be saved. Download the result and retry later before adding it to a public gallery.",
@@ -639,6 +641,7 @@ function ListingCreative(
   }
   async function savePhoto() {
     if (!photoResult) return;
+    if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare the preview with its original and confirm the fixed features before saving it.");
     assertPhotoScope();
     if (!photoResult.provenanceId) {
       throw new Error(
@@ -1322,12 +1325,12 @@ function ListingCreative(
                   />
                 </label>
                 <button
-                  disabled={isBusy || !prompt.trim() || !canCreate}
+                  disabled={isBusy || !canCreate || analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"}
                   onClick={() =>
                     run("Refining your edit", async () => {
                       const response = record(
                         await api("ai-copy/edit-prompt", {
-                          rough: prompt.slice(0, 300),
+                          rough: prompt,
                           room_hint: room,
                           listing_id: listingId,
                           space_type: listing.spaceType,
@@ -1344,6 +1347,7 @@ function ListingCreative(
                 >
                   Help me describe it
                 </button>
+                <CustomPhotoPromptHelp prompt={prompt} onPrompt={setPrompt} space={listing.spaceType} disabled={isBusy || !canCreate} />
               </>
             )}
             <div className="creative-actions">
@@ -1377,7 +1381,7 @@ function ListingCreative(
               </button>
               <button
                 className="creative-primary"
-                disabled={!source || !source.originalVerified || isBusy || !canCreate}
+                disabled={!source || !source.originalVerified || isBusy || !canCreate || edit === "custom" && analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"}
                 onClick={() => run("Creating your photo", generatePhoto)}
               >
                 Generate preview
@@ -1416,22 +1420,24 @@ function ListingCreative(
                 </figure>
               </div>
               <p>{photoResult.disclosure}</p>
+              {photoResult.edit === "custom" && <label className="creative-review-confirmation"><input type="checkbox" checked={photoResult.reviewed} disabled={isBusy} onChange={event => setPhotoResult(current => current ? { ...current, reviewed: event.target.checked } : null)} />I compared the preview with the original: paint and garage/trim finishes, fixed features, layout and property condition are unchanged.</label>}
               <div className="creative-actions">
                 <button
                   className="creative-primary"
                   disabled={isBusy || photoResult.saved ||
-                    !photoResult.provenanceId}
+                    !photoResult.provenanceId || photoResult.edit === "custom" && !photoResult.reviewed}
                   onClick={() => run("Saving photo and original", savePhoto)}
                 >
                   {photoResult.saved
                     ? "Saved to gallery"
                     : "Save to property gallery"}
                 </button>
-                <button disabled={isBusy} onClick={() => void run("Preparing next edit", async () => {
+                <button disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} onClick={() => void run("Preparing next edit", async () => {
+                  if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare and confirm this custom edit before continuing.");
                   const next = await continuePhoto(photoResult.source, photoResult, photoResult.edit, signal);
                   await chooseSource(next);
                 })}>Continue editing this result</button>
-                <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy} />
+                <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} />
               </div>
             </section>
           )}

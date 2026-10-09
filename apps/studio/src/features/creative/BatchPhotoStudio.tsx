@@ -8,6 +8,7 @@ import type { UploadedAsset, UploadJournal } from "../listings/uploads";
 import { editedImage } from "./media";
 import { inputForEdit, photoDelivery, propertyPhoto, type PhotoSource, type PhotoDelivery } from "./photo-lineage";
 import PhotoExportPanel from "./PhotoExportPanel";
+import CustomPhotoPromptHelp, { analyzeCustomPhotoPrompt } from "./CustomPhotoPromptHelp";
 import type { SourceImage } from "./media";
 import { PRESETS, record, requiredText, text } from "./model";
 import type { Edit } from "./model";
@@ -21,7 +22,7 @@ export type BatchPhotoResult = PhotoDelivery & {
 export type BatchPhotoEntry = {
   photo: StudioPhoto; requestKey: string;
   state: "queued" | "preparing" | "generating" | "ready" | "saving" | "saved" | "failed" | "stopped";
-  error: string | null; result?: BatchPhotoResult; output?: UploadedAsset; journal?: UploadJournal;
+  error: string | null; result?: BatchPhotoResult; output?: UploadedAsset; journal?: UploadJournal; reviewed?: boolean;
 };
 type BatchDependencies = {
   assertScope: () => void;
@@ -49,6 +50,10 @@ export class PhotoBatch {
   constructor(photos: readonly StudioPhoto[], listingId: string, choice: BatchEdit, private deps: BatchDependencies, private changed: () => void = () => {}) {
     if (!photos.length || photos.length > MAX_BATCH_PHOTOS || new Set(photos.map(p => p.id)).size !== photos.length || photos.some(p => !batchEligible(p, listingId))) throw new Error(`Choose 1–${MAX_BATCH_PHOTOS} photos with their originals from this property.`);
     if (!PRESETS.some(p => p.id === choice.edit) || choice.edit === "custom" && (!choice.prompt.trim() || choice.prompt.trim().length > 600) || choice.edit === "stage" && !["modern", "rustic", "minimalist", "scandinavian"].includes(choice.style)) throw new Error("Choose an edit and review its settings first.");
+    if (choice.edit === "custom") {
+      const decision = analyzeCustomPhotoPrompt(choice.prompt, "real_estate");
+      if (decision.status !== "ready") throw new Error(decision.message);
+    }
     this.choice = { ...choice, prompt: choice.prompt.trim() };
     const batchId = crypto.randomUUID();
     this.entries = photos.map(photo => ({ photo: { ...photo }, requestKey: `studio-photo-batch:${batchId}:${crypto.randomUUID()}`, state: "queued", error: null }));
@@ -93,10 +98,11 @@ export class PhotoBatch {
           if (this.abort.signal.aborted) throw error;
           this.check();
           const dispatched = entry.state === "generating";
+          const refusal = ["photo_clarification_required", "unsupported_edit"].includes((error as { code?: string })?.code ?? "");
           entry.state = "failed";
-          entry.error = `${describe(error)}${dispatched ? " No automatic retry was made. A request with a lost response may still count against your allowance." : " No AI edit was started for this photo."}`;
+          entry.error = `${describe(error)}${dispatched && !refusal ? " No automatic retry was made. A request with a lost response may still count against your allowance." : " No AI edit was started for this photo."}`;
           const status = (error as { status?: number })?.status;
-          if ([401, 402, 403, 429].includes(status ?? 0)) this.stopped = true;
+          if (refusal || [401, 402, 403, 429].includes(status ?? 0)) this.stopped = true;
         }
         this.emit();
       }
@@ -105,6 +111,7 @@ export class PhotoBatch {
   async save(index: number) {
     const entry = this.entries[index];
     if (this.busy || !entry?.result?.provenanceId || entry.state !== "ready") return;
+    if (this.choice.edit === "custom" && !entry.reviewed) throw new Error("Compare this preview with its original and confirm the fixed features before saving it.");
     this.check(); this.saving = true; entry.state = "saving"; entry.error = null; this.emit();
     try {
       if (!entry.output) entry.output = await this.deps.upload(entry.result.file, "gallery", this.abort.signal, entry.journal, journal => { this.check(); entry.journal = journal; });
@@ -211,18 +218,19 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
       <fieldset disabled={!!disabled || !canCreate}><legend>1. Choose one change for these photos</legend><div className="creative-preset-grid">{PRESETS.filter(p => listing.spaceType === "real_estate" || p.id !== "lawn").map(p => <button type="button" key={p.id} aria-pressed={edit === p.id} className={edit === p.id ? "selected" : ""} onClick={() => setEdit(p.id)}>{p.name}</button>)}</div>
         {edit === "stage" && <div className="creative-actions" aria-label="Staging style">{["modern", "rustic", "minimalist", "scandinavian"].map(value => <button type="button" key={value} aria-pressed={style === value} onClick={() => setStyle(value)}>{value[0]!.toUpperCase() + value.slice(1)}</button>)}</div>}
         {edit === "custom" && <label>Describe the change<textarea value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={600} placeholder="Remove the moving boxes and preserve the room." /></label>}
+        {edit === "custom" && <CustomPhotoPromptHelp prompt={prompt} onPrompt={setPrompt} space={listing.spaceType} disabled={!!disabled || !canCreate} />}
       </fieldset>
       <fieldset disabled={!!disabled || !canCreate}><legend>2. Choose the photos to change</legend>
         {!eligible.length ? <p>Add photos to this property first. Edited photos need their untouched original before another edit.</p> : <div className="batch-photo-grid">{eligible.map((photo, index) => <label className="batch-photo-choice" key={photo.id}><input type="checkbox" checked={selected.includes(photo.id)} disabled={!selected.includes(photo.id) && choices.length >= MAX_BATCH_PHOTOS} onChange={event => setSelected(ids => event.target.checked ? [...ids, photo.id] : ids.filter(id => id !== photo.id))} /><img src={photo.url} alt="" loading="lazy" referrerPolicy="no-referrer" /><span>{photo.caption || `Photo ${index + 1}`}</span></label>)}</div>}
       </fieldset>
       {choices.filter(photo => photo.isAltered || photo.isStaged).map(photo => <details key={photo.id}><summary>Verify the original for {photo.caption || "this edited photo"}</summary><img src={photo.originalUrl!} alt="Paired source to verify" style={{ maxWidth: "100%", maxHeight: 240 }} /><p>The current edited photo will be used. Earlier source history is not verified automatically.</p><label><input type="checkbox" checked={confirmedOriginals.includes(photo.id)} onChange={event => setConfirmedOriginals(ids => event.target.checked ? [...ids, photo.id] : ids.filter(id => id !== photo.id))} />This is the actual unedited original.</label></details>)}
       <p>{choices.length} selected. This starts {choices.length} separate AI edit{choices.length === 1 ? "" : "s"}. Review and save the previews below before leaving this property.</p>
-      <button className="creative-primary" disabled={!!disabled || !canCreate || !choices.length || choices.some(photo => (photo.isAltered || photo.isStaged) && !confirmedOriginals.includes(photo.id)) || !!allowance && choices.length > Math.max(0, allowance.cap - allowance.used) || edit === "custom" && !prompt.trim()} onClick={() => void start()}>Generate {choices.length || "selected"} photo previews</button>
+      <button className="creative-primary" disabled={!!disabled || !canCreate || !choices.length || choices.some(photo => (photo.isAltered || photo.isStaged) && !confirmedOriginals.includes(photo.id)) || !!allowance && choices.length > Math.max(0, allowance.cap - allowance.used) || edit === "custom" && analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"} onClick={() => void start()}>Generate {choices.length || "selected"} photo previews</button>
     </> : <>
       <div className="creative-actions"><p role="status">{batch.entries.filter(e => e.state === "saved").length} saved · {batch.entries.filter(e => e.state === "ready").length} ready to review · {batch.entries.filter(e => e.state === "failed").length} failed · {batch.entries.filter(e => e.state === "stopped").length} not started</p>{busy ? <button disabled={batch.stopRequested} onClick={() => batch.stop()}>{batch.stopRequested ? "Stopping after this photo…" : "Stop remaining photos"}</button> : <button onClick={reset}>Choose another batch</button>}</div>
       {busy && <p>Keep this property open. Stopping leaves an edit already sent to AI running; no further photo will be sent.</p>}
-      {batch.entries.some(entry => entry.result) && <PhotoExportPanel photos={batch.entries.flatMap(entry => entry.result ? [entry.result] : [])} assertScope={assertScope} disabled={busy || !!disabled} />}
-      <div className="batch-photo-results">{batch.entries.map((entry, index) => <article className="batch-photo-result" key={entry.requestKey}><h3>{index + 1}. {entry.photo.caption || "Property photo"}</h3><p className="batch-photo-status">{({ queued: "Waiting", preparing: "Preparing your photo and original…", generating: "Creating your preview…", ready: "Review your preview", saving: "Saving the photo and disclosure…", saved: "Saved to your property", failed: "This photo needs attention", stopped: "Not started" })[entry.state]}</p>{entry.error && <p role="alert">{entry.error}</p>}{entry.result && <><div className="creative-comparison"><figure><img src={entry.result.originalPreview ?? undefined} alt="Untouched original" /><figcaption>Original</figcaption></figure><figure><img src={entry.result.preview} alt="AI edited preview" /><figcaption>AI edited</figcaption></figure></div><p>{entry.result.disclosure}</p><div className="creative-actions"><PhotoExportPanel photos={[entry.result]} assertScope={assertScope} disabled={busy || !!disabled} />{entry.state !== "saved" && <button className="creative-primary" disabled={busy || !!disabled || !canCreate || !entry.result.provenanceId} onClick={() => void save(index)}>{entry.error && entry.result.provenanceId ? "Retry saving this preview" : "Save to property gallery"}</button>}</div></>}</article>)}</div>
+      {batch.entries.some(entry => entry.result) && <PhotoExportPanel photos={batch.entries.flatMap(entry => entry.result && (batch.choice.edit !== "custom" || entry.reviewed) ? [entry.result] : [])} assertScope={assertScope} disabled={busy || !!disabled} />}
+      <div className="batch-photo-results">{batch.entries.map((entry, index) => <article className="batch-photo-result" key={entry.requestKey}><h3>{index + 1}. {entry.photo.caption || "Property photo"}</h3><p className="batch-photo-status">{({ queued: "Waiting", preparing: "Preparing your photo and original…", generating: "Creating your preview…", ready: "Review your preview", saving: "Saving the photo and disclosure…", saved: "Saved to your property", failed: "This photo needs attention", stopped: "Not started" })[entry.state]}</p>{entry.error && <p role="alert">{entry.error}</p>}{entry.result && <><div className="creative-comparison"><figure><img src={entry.result.originalPreview ?? undefined} alt="Untouched original" /><figcaption>Original</figcaption></figure><figure><img src={entry.result.preview} alt="AI edited preview" /><figcaption>AI edited</figcaption></figure></div><p>{entry.result.disclosure}</p>{batch.choice.edit === "custom" && <label className="creative-review-confirmation"><input type="checkbox" checked={!!entry.reviewed} disabled={busy || !!disabled} onChange={event => { entry.reviewed = event.target.checked; redraw(value => value + 1); }} />I compared this preview with the original: paint and garage/trim finishes, fixed features, layout and property condition are unchanged.</label>}<div className="creative-actions"><PhotoExportPanel photos={[entry.result]} assertScope={assertScope} disabled={busy || !!disabled || batch.choice.edit === "custom" && !entry.reviewed} />{entry.state !== "saved" && <button className="creative-primary" disabled={busy || !!disabled || !canCreate || !entry.result.provenanceId || batch.choice.edit === "custom" && !entry.reviewed} onClick={() => void save(index)}>{entry.error && entry.result.provenanceId ? "Retry saving this preview" : "Save to property gallery"}</button>}</div></>}</article>)}</div>
     </>}
   </section>;
 }

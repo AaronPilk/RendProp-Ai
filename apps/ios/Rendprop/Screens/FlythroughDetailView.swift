@@ -1541,8 +1541,14 @@ struct FlythroughDetailView: View {
                 Label("Download JPEG for MLS", systemImage: "doc.badge.arrow.down")
             }
         }
-        ShareLink(item: item.url) {
-            Label("Share", systemImage: "square.and.arrow.up")
+        if item.kind == .photo {
+            Button { downloadJPEG(item) } label: {
+                Label("Share photo", systemImage: "square.and.arrow.up")
+            }
+        } else {
+            ShareLink(item: item.url) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
         }
     }
 
@@ -3032,8 +3038,10 @@ private enum PhotosLibrarySaver {
     @MainActor static func saveImageFile(at url: URL, while canSave: @escaping @MainActor () -> Bool = { true }) async throws {
         let context = NativeMediaExportContext()
         guard context.isCurrent, canSave() else { throw ContextChanged() }
+        try PhotoVersionHistory.requireDownloadReview(imageURL: url)
         try await ensureAddAccess()
         guard context.isCurrent, canSave() else { throw ContextChanged() }
+        try PhotoVersionHistory.requireDownloadReview(imageURL: url)
         try await PHPhotoLibrary.shared().performChanges {
             _ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
         }
@@ -4271,6 +4279,8 @@ struct PhotoStudioView: View {
                 priorFile: p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent, directory: directory)
             try PhotoVersionHistory.selectForPublication(id: p.id, directory: directory)
         } catch PhotoVersionHistory.Failure.reviewRequired {
+            compare = PhotoComparePresentation(photo: p, requestedCover: true); return
+        } catch PhotoVersionHistory.Failure.customReviewRequired {
             compare = PhotoComparePresentation(photo: p, requestedCover: true); return
         } catch {
             aiFailure = AIFailure(error); return
@@ -6314,11 +6324,13 @@ struct PhotoCompareView: View {
     @State private var selectedForListing = false
     @State private var imageLoadComplete = false
     @State private var stagingReview = PhotoVersionHistory.StagingReview()
+    @State private var customReview = PhotoVersionHistory.CustomReview()
 
     private var viewed: EnhancedPhoto { selectedVersion ?? photo }
     private var needsStagingReview: Bool {
         viewed.savedVersion?.effects.contains("stage") == true && viewed.savedVersion?.stagingReviewed != true
     }
+    private var needsCustomReview: Bool { viewed.savedVersion?.needsCustomReview == true }
     private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
     private var savedDisclosure: String? { viewed.savedVersion?.reviewDisclosure ?? (viewed.id == photo.id ? disclosure : nil) }
     private var versionChoices: [EnhancedPhoto] {
@@ -6387,6 +6399,15 @@ struct PhotoCompareView: View {
                         stagingReviewChecklist
                     }
                 }
+                if !showOriginal, needsCustomReview {
+                    Text("Compare this edit with its source before using it. Check the garage door, trim, paint colors and materials, as well as the change you requested.")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).padding(.horizontal)
+                    if imageLoadComplete && (original == nil || viewed.originalURL == viewed.enhancedURL) {
+                        Text("The earlier source isn't available. Restore it before selecting this custom edit.")
+                            .font(.caption).foregroundStyle(.orange).padding(.horizontal)
+                    }
+                    customReviewChecklist
+                }
                 if !showOriginal, let savedDisclosure, !savedDisclosure.isEmpty {
                     Text(savedDisclosure).font(.caption).foregroundStyle(.white.opacity(0.85))
                         .fixedSize(horizontal: false, vertical: true).padding(.horizontal)
@@ -6407,6 +6428,9 @@ struct PhotoCompareView: View {
                             guard !needsStagingReview || stagingReview.isComplete else {
                                 throw PhotoVersionHistory.Failure.reviewRequired
                             }
+                            guard !needsCustomReview || customReview.isComplete else {
+                                throw PhotoVersionHistory.Failure.customReviewRequired
+                            }
                             let directory = viewed.enhancedURL.deletingLastPathComponent()
                             guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
                             let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
@@ -6414,7 +6438,7 @@ struct PhotoCompareView: View {
                             try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
                                 priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
                             try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory,
-                                reviewed: stagingReview.isComplete)
+                                reviewed: stagingReview.isComplete, customReviewed: customReview.isComplete)
                             if familyWasMain || requestedCover { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
                             selectedForListing = true
                             if let listing = model.listings.first(where: { $0.id == listingID }),
@@ -6426,16 +6450,33 @@ struct PhotoCompareView: View {
                         Label(selectedForListing ? "Selected for listing" : "Use this version on listing", systemImage: "checkmark.circle")
                             .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
                     }.padding(.horizontal).accessibilityIdentifier("photoVersion.useOnListing")
-                        .disabled(enhanced == nil || (viewed.savedVersion?.effects.contains("stage") == true
+                        .disabled(enhanced == nil || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
                             && (original == nil || viewed.originalURL == viewed.enhancedURL
-                                || (needsStagingReview && !stagingReview.isComplete))))
+                                || (needsStagingReview && !stagingReview.isComplete)
+                                || (needsCustomReview && !customReview.isComplete))))
                 }
-                Button { exporting = PhotoExportSelection(photos: [viewed], original: showOriginal) } label: {
+                Button {
+                    do {
+                        if !showOriginal, needsCustomReview {
+                            guard enhanced != nil, original != nil, viewed.originalURL != viewed.enhancedURL else {
+                                throw PhotoVersionHistory.Failure.missingImage
+                            }
+                            try PhotoVersionHistory.confirmCustomReview(id: viewed.id,
+                                imageFile: viewed.enhancedURL.lastPathComponent,
+                                sourceFile: viewed.originalURL.lastPathComponent, review: customReview,
+                                directory: viewed.enhancedURL.deletingLastPathComponent())
+                        }
+                        exporting = PhotoExportSelection(photos: [viewed], original: showOriginal)
+                    } catch { selectionError = error.localizedDescription }
+                } label: {
                     Label(showOriginal ? (viewed.retainedSourceIsVerified ? "Download original" : "Download earlier source")
                           : "Download \(choiceTitle(viewed).lowercased()) photo", systemImage: "square.and.arrow.down")
                         .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
                         .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12))
                 }.padding(.horizontal).padding(.bottom, 12)
+                    .accessibilityIdentifier("photoVersion.download")
+                    .disabled(showOriginal ? original == nil : enhanced == nil || (needsCustomReview
+                        && (original == nil || viewed.originalURL == viewed.enhancedURL || !customReview.isComplete)))
             }.foregroundStyle(.white)
         }
         .environment(\.colorScheme, .dark)
@@ -6444,7 +6485,7 @@ struct PhotoCompareView: View {
             exporting = nil; enhanced = nil; original = nil; dismiss()
         }
         .sheet(item: $exporting) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
-        .alert("Couldn't select that version", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
+        .alert("Couldn't use that version", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
             Button("OK") { selectionError = nil }
         } message: { Text(selectionError ?? "") }
         .task(id: viewed.id) {
@@ -6452,6 +6493,7 @@ struct PhotoCompareView: View {
             selectedForListing = (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
             let target = viewed
             stagingReview = PhotoVersionHistory.StagingReview()
+            customReview = PhotoVersionHistory.CustomReview()
             enhanced = nil; original = nil; imageLoadComplete = false
             let after = await AIImagePrep.decoded(at: target.enhancedURL, maxPixel: 2400)
             guard !Task.isCancelled, viewed.id == target.id else { return }
@@ -6463,11 +6505,13 @@ struct PhotoCompareView: View {
             imageLoadComplete = true
             if showOriginal, before != nil, target.originalURL != target.enhancedURL {
                 stagingReview.comparedSource = true
+                customReview.comparedSource = true
             }
         }
         .onChange(of: showOriginal) { showing in
             if showing, original != nil, viewed.originalURL != viewed.enhancedURL {
                 stagingReview.comparedSource = true
+                customReview.comparedSource = true
             }
         }
     }
@@ -6481,6 +6525,17 @@ struct PhotoCompareView: View {
             Toggle("Furniture matches my other published views, or this is the only view", isOn: $stagingReview.furnitureMatchesOtherViews)
         }.font(.caption).padding(.horizontal)
             .accessibilityIdentifier("photoVersion.stagingReview")
+    }
+
+    private var customReviewChecklist: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(customReview.comparedSource ? "Source comparison opened" : "Open the original or earlier source above, then check this version.")
+                .font(.caption).foregroundStyle(.orange)
+            Toggle("Structure and fixed features match the source", isOn: $customReview.fixedFeaturesMatch)
+            Toggle("Paint colors, garage door, trim and materials match", isOn: $customReview.colorsAndMaterialsMatch)
+            Toggle("Only the change I requested was made", isOn: $customReview.onlyRequestedChange)
+        }.font(.caption).padding(.horizontal)
+            .accessibilityIdentifier("photoVersion.customReview")
     }
 
     private func versionChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -6513,6 +6568,9 @@ struct CustomEditSheet: View {
     /// The area named by the starter chip the person tapped, sent as
     /// `room_hint`. See `StarterChip` for why this is the room signal we have.
     @State private var pickedArea: String?
+    @State private var needsClarification = false
+    @State private var preparedPrompt: String?
+    @State private var chosenScope: CustomPhotoPromptPolicy.Choice?
 
     private var trimmed: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6520,15 +6578,17 @@ struct CustomEditSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Tell the AI what to change — it edits this photo and keeps the original.")
+            ScrollView {
+              VStack(alignment: .leading, spacing: 14) {
+                Text("Tell us what to change. You'll review the instruction first, then compare the result with your saved source.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
 
-                TextField("Describe the change — e.g. 'make it look freshly painted white with warm evening light'",
+                TextField("For example: improve brightness and keep the existing paint colors",
                           text: $prompt, axis: .vertical)
                     .lineLimit(4...8)
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("customPhoto.request")
 
                 Text("\(prompt.count)/600")
                     .font(.rpCaption)
@@ -6554,7 +6614,7 @@ struct CustomEditSheet: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(trimmed.isEmpty || isImproving)
-                Text("Rewrites the first 300 characters of your idea into a sharper prompt.")
+                Text("Optional: refine your whole request before reviewing it. Uses your AI allowance.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
 
@@ -6564,23 +6624,61 @@ struct CustomEditSheet: View {
                         .foregroundStyle(Theme.warn)
                 }
 
-                Button {
-                    let text = String(trimmed.prefix(600))
-                    Haptics.selection()
-                    dismiss()
-                    onGenerate(text)
-                } label: {
-                    Label("Generate", systemImage: "wand.and.stars")
+                if needsClarification {
+                    Text("What would you like us to change?")
+                        .font(.rpBody.weight(.semibold))
+                    Text("Your request is still above. Pick one specific change so we don't guess what you meant.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    ForEach(CustomPhotoPromptPolicy.Choice.allCases) { choice in
+                        Button(choice.label) {
+                            chosenScope = choice
+                            preparedPrompt = choice.prompt
+                            needsClarification = false
+                            improveError = nil
+                        }.font(.rpBody.weight(.semibold))
+                            .accessibilityIdentifier("customPhoto.choice.\(choice.id)")
+                    }
+                }
+
+                if let preparedPrompt {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Review your edit").font(.rpBody.weight(.semibold))
+                        if let chosenScope { Text("We'll only: \(chosenScope.label.lowercased()).").font(.rpCaption) }
+                        Text(preparedPrompt).font(.rpBody)
+                            .accessibilityIdentifier("customPhoto.preparedInstruction")
+                        Text(CustomPhotoPromptPolicy.preservedFeatures).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        Text("AI can still make mistakes. The result is saved as a preview until you compare and approve it for your listing.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }.padding().background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12))
+                    Button {
+                        guard CustomPhotoPromptPolicy.decision(for: preparedPrompt, realEstate: space == .realEstate) == .ready else {
+                            reviewEdit(); return
+                        }
+                        Haptics.selection()
+                        dismiss()
+                        onGenerate(preparedPrompt)
+                    } label: {
+                        Label("Generate preview", systemImage: "wand.and.stars")
                         .font(.rpBody.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 14)
                         .background(Theme.accent).foregroundStyle(Color.white)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }.disabled(isImproving).accessibilityIdentifier("customPhoto.generatePreview")
+                    Button("Choose a different change") {
+                        self.preparedPrompt = nil; chosenScope = nil; needsClarification = true
+                    }.font(.rpCaption)
+                } else if !needsClarification {
+                    Button { reviewEdit() } label: {
+                        Label("Review edit", systemImage: "text.magnifyingglass")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(Theme.accent).foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }.disabled(trimmed.isEmpty || isImproving).accessibilityIdentifier("customPhoto.reviewEdit")
                 }
-                .disabled(trimmed.isEmpty || isImproving)
-
-                Spacer()
+              }.padding()
             }
-            .padding()
+            .scrollDismissesKeyboard(.interactively)
             .disabled(connection.isWaiting)
             .background(Theme.bg)
             .navigationTitle("Custom AI edit")
@@ -6592,6 +6690,7 @@ struct CustomEditSheet: View {
             }
             .onChange(of: prompt) { newValue in
                 if newValue.count > 600 { prompt = String(newValue.prefix(600)) }
+                preparedPrompt = nil; chosenScope = nil; needsClarification = false; improveError = nil
                 // An emptied box means the starter chip that named an area is
                 // gone too: whatever gets typed next may be about a different
                 // room, and a stale `room_hint` is worse than none.
@@ -6602,7 +6701,19 @@ struct CustomEditSheet: View {
         }
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .onDisappear { connection.cancel() }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
+    }
+
+    private func reviewEdit() {
+        switch CustomPhotoPromptPolicy.decision(for: trimmed, realEstate: space == .realEstate) {
+        case .ready:
+            preparedPrompt = trimmed; needsClarification = false; improveError = nil
+        case .clarify:
+            preparedPrompt = nil; needsClarification = true; improveError = nil
+        case .blocked:
+            preparedPrompt = nil; needsClarification = false
+            improveError = CustomPhotoPromptPolicy.blockedMessage
+        }
     }
 
     // MARK: Starter chips — somewhere to begin when the box is empty
@@ -6643,15 +6754,15 @@ struct CustomEditSheet: View {
         case .realEstate:
             return [
                 StarterChip(label: "Clear the counters", area: "Kitchen",
-                            text: "Clear everything off the kitchen counters and make the surfaces look freshly wiped. Keep the cabinets, appliances and layout exactly as photographed."),
-                StarterChip(label: "Fresh white walls", area: nil,
-                            text: "Repaint the walls a clean warm white and touch up the trim, keeping every window, fixture and piece of furniture exactly where it is."),
+                            text: "Remove loose items from the kitchen counters. Keep the cabinets, appliances, existing materials, paint colors and actual property condition as photographed."),
+                StarterChip(label: "Brighter photo", area: nil,
+                            text: CustomPhotoPromptPolicy.Choice.lighting.prompt),
                 StarterChip(label: "Warm evening light", area: "Living Room",
                             text: "Relight the room with warm evening light coming through the windows, keeping the furniture and the architecture exactly as photographed."),
                 StarterChip(label: "Tidy the yard", area: "Backyard",
-                            text: "Tidy the yard: clear the hose, bins and loose items, and make the beds look freshly mulched. Keep the house and the planting exactly as photographed."),
+                            text: "Remove the hose, bins and loose items from the yard. Keep the house, planting, materials and actual property condition as photographed."),
                 StarterChip(label: "Empty the driveway", area: "Exterior",
-                            text: "Remove the cars and the bins from the driveway and the street in front, keeping the house exactly as photographed."),
+                            text: "Remove movable cars and bins from the driveway and the street in front, keeping the house and actual property condition as photographed."),
             ]
         case .venue:
             return [
@@ -6701,8 +6812,8 @@ struct CustomEditSheet: View {
             return [
                 StarterChip(label: "Clear the clutter", area: "Main Area",
                             text: "Remove the boxes, cables and loose items from the shot, keeping the room exactly as photographed."),
-                StarterChip(label: "Fresh white walls", area: nil,
-                            text: "Repaint the walls a clean warm white and touch up the trim, keeping every window and fixture exactly where it is."),
+                StarterChip(label: "Brighter photo", area: nil,
+                            text: CustomPhotoPromptPolicy.Choice.lighting.prompt),
                 StarterChip(label: "Warm evening light", area: "Main Area",
                             text: "Relight the room with warm evening light, keeping the furniture and the architecture exactly as photographed."),
                 StarterChip(label: "Tidy the entrance", area: "Entrance",
@@ -6768,6 +6879,9 @@ struct CustomEditSheet: View {
     /// floor. That left a multi-megabyte encode running on the main path of the
     /// one AI call in the app that is meant to feel instant.
     private func improvePrompt() {
+        guard CustomPhotoPromptPolicy.decision(for: trimmed, realEstate: space == .realEstate) == .ready else {
+            reviewEdit(); return
+        }
         guard !trimmed.isEmpty, !isImproving else { return }
         connection.run { improvePromptWithSession() }
     }
@@ -6784,10 +6898,11 @@ struct CustomEditSheet: View {
         let spaceRaw = space.rawValue
         Task {
             do {
-                let improved = try await api.aiImprovePrompt(rough: String(rough.prefix(300)),
+                let improved = try await api.aiImprovePrompt(rough: rough,
                                                              roomHint: hint,
                                                              listingServerID: serverID)
-                let text = String(improved.prefix(600))
+                guard improved.count <= 600 else { throw APIError.decoding }
+                let text = improved
                 await MainActor.run {
                     prompt = text
                     isImproving = false
@@ -6801,9 +6916,13 @@ struct CustomEditSheet: View {
                 }
             } catch {
                 let why = AIFailure(error).fullMessage
+                let asksClarification = (error as? APIError)?.code == "photo_clarification_required"
                 await MainActor.run {
                     isImproving = false
                     improveError = why
+                    if asksClarification {
+                        preparedPrompt = nil; chosenScope = nil; needsClarification = true
+                    }
                     // Deliberately NO reason prop: the server's message is
                     // written for a person and can quote their own words back.
                     Analytics.track("ai_prompt_improved",

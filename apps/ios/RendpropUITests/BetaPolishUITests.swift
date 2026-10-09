@@ -504,6 +504,112 @@ final class BetaPolishUITests: XCTestCase {
         attach("photo-work-completed-global-status")
     }
 
+    func testCustomPhotoClarifiesPreservesRequestAndReviewsSafeInstruction() {
+        launchDetail() // Existing synthetic photos and closed MockAPIClient only.
+        openDetail("detail.photoStudio", title: "AI Photo Studio")
+        let custom = app.buttons["studio.edit.custom"]
+        scrollTo(custom); custom.tap()
+        let apply = app.buttons["studio.batchApply"]
+        scrollTo(apply); XCTAssertTrue(apply.isEnabled); apply.tap()
+        XCTAssertTrue(app.navigationBars["Custom AI edit"].waitForExistence(timeout: 10), app.debugDescription)
+        let request = element("customPhoto.request")
+        XCTAssertTrue(request.waitForExistence(timeout: 5))
+        request.tap(); request.typeText("make it nicer")
+        let review = app.buttons["customPhoto.reviewEdit"]
+        scrollTo(review); review.tap()
+        let lighting = app.buttons["customPhoto.choice.lighting"]
+        scrollTo(lighting)
+        XCTAssertTrue(lighting.isEnabled, app.debugDescription)
+        XCTAssertEqual(request.value as? String, "make it nicer", "Clarification must not discard the user's original request")
+        XCTAssertFalse(app.buttons["customPhoto.generatePreview"].exists, "A vague request cannot directly generate")
+        lighting.tap()
+        let prepared = app.staticTexts["customPhoto.preparedInstruction"]
+        XCTAssertTrue(prepared.waitForExistence(timeout: 5))
+        XCTAssertEqual(prepared.label, "Improve brightness and exposure only, preserving every paint color and material.")
+        XCTAssertEqual(request.value as? String, "make it nicer", "The chosen explicit instruction is reviewed separately from original text")
+        XCTAssertTrue(app.buttons["customPhoto.generatePreview"].exists)
+        attach("custom-photo-explicit-lighting-instruction")
+        scrollTo(request)
+        request.coordinate(withNormalizedOffset: CGVector(dx: 0.999, dy: 0.5)).tap()
+        replace(request, with: "repaint the garage white")
+        XCTAssertFalse(app.buttons["customPhoto.generatePreview"].exists, "Changing the request invalidates the earlier prepared review")
+        scrollTo(review); review.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "we can't repaint or remodel")).firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(request.value as? String, "repaint the garage white", "A refused permanent change is explained without silently changing the request")
+        XCTAssertFalse(app.buttons["customPhoto.generatePreview"].exists)
+        attach("custom-photo-garage-paint-refusal")
+        scrollTo(request)
+        request.coordinate(withNormalizedOffset: CGVector(dx: 0.999, dy: 0.5)).tap()
+        let safe = "Improve brightness only; keep garage door and trim colors."
+        replace(request, with: safe)
+        scrollTo(review); review.tap()
+        XCTAssertTrue(prepared.waitForExistence(timeout: 5))
+        XCTAssertEqual(prepared.label, safe, "The explicit safe instruction must be exactly what the user reviews")
+        XCTAssertTrue(app.buttons["customPhoto.generatePreview"].exists)
+        attach("custom-photo-safe-request-reviewed-before-generation")
+        // Deliberately stop before Generate: no image request, paid model,
+        // camera, export or real transaction is exercised by this acceptance.
+        app.navigationBars["Custom AI edit"].buttons["Cancel"].tap()
+    }
+
+    func testCustomPhotoDownloadReviewDoesNotPublishAndPersists() {
+        launchDetail() // Procedural images and simulator-only MockAPIClient.
+        openDetail("detail.photoStudio", title: "AI Photo Studio")
+        let custom = app.buttons["studio.edit.custom"]
+        scrollTo(custom); custom.tap()
+        let apply = app.buttons["studio.batchApply"]
+        scrollTo(apply); XCTAssertTrue(apply.isEnabled); apply.tap()
+        XCTAssertTrue(app.navigationBars["Custom AI edit"].waitForExistence(timeout: 10), app.debugDescription)
+        let request = element("customPhoto.request")
+        request.tap(); request.typeText("Improve brightness only; keep all paint colors and materials.")
+        let review = app.buttons["customPhoto.reviewEdit"]
+        scrollTo(review); review.tap()
+        let generate = app.buttons["customPhoto.generatePreview"]
+        scrollTo(generate); XCTAssertTrue(generate.isEnabled); generate.tap()
+        let finished = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Ask for anything", "3 photos changed")).firstMatch
+        XCTAssertTrue(finished.waitForExistence(timeout: 40), app.debugDescription)
+        app.navigationBars["AI Photo Studio"].buttons.element(boundBy: 0).tap()
+        openDetail("detail.photos", title: "Photos")
+        let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
+        XCTAssertEqual(cards.count, 3)
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0,
+                       "New custom previews cannot replace the published gallery")
+        scrollTo(cards.firstMatch); cards.firstMatch.tap()
+        let download = app.buttons["photoVersion.download"]
+        let use = app.buttons["photoVersion.useOnListing"]
+        XCTAssertTrue(download.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(download.isEnabled, "Edited custom downloads require exact comparison")
+        XCTAssertFalse(use.isEnabled, "The same new custom remains unpublishable")
+        let choices = app.scrollViews["photoVersion.savedChoices"]
+        choices.buttons["Earlier source"].tap()
+        assertSelectedExportForCompareButton("Download earlier source", original: true)
+        choices.buttons["Enhanced"].tap()
+        XCTAssertFalse(download.isEnabled, "Opening the retained source alone does not approve the edit")
+        for label in ["Structure and fixed features match the source",
+                      "Paint colors, garage door, trim and materials match",
+                      "Only the change I requested was made"] {
+            let control = app.switches[label].switches.firstMatch
+            XCTAssertTrue(control.exists && control.isHittable, app.debugDescription)
+            control.tap(); XCTAssertEqual(control.value as? String, "1")
+        }
+        XCTAssertTrue(download.isEnabled, "Complete exact comparison allows downloading")
+        download.tap()
+        XCTAssertTrue(app.navigationBars["Export photos"].waitForExistence(timeout: 10), app.debugDescription)
+        app.navigationBars["Export photos"].buttons["Done"].tap()
+        XCTAssertEqual(use.label, "Use this version on listing", "Download approval must never publish or change the cover")
+        attach("custom-photo-download-reviewed-without-publication")
+        app.buttons["Close"].tap()
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0)
+        scrollTo(cards.firstMatch); cards.firstMatch.tap()
+        XCTAssertTrue(download.waitForExistence(timeout: 10)); XCTAssertTrue(download.isEnabled,
+                      "Review of the exact saved custom output persists after closing comparison")
+        XCTAssertFalse(app.otherElements["photoVersion.customReview"].exists)
+        XCTAssertEqual(use.label, "Use this version on listing")
+        // Only the offline mock output and native sheet are exercised. No real
+        // model, permission, Photos write, transaction or camera is requested.
+        app.buttons["Close"].tap()
+    }
+
     func testLegacyGalleryKeepsSiblingsAndStagedCoverRequiresReview() {
         launchDetail() // Three enh-/orig- pairs, deliberately no history file.
         openDetail("detail.photos", title: "Photos")

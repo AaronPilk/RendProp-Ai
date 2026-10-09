@@ -893,7 +893,7 @@ Deno.serve(async (req) => {
     const chain = await chooseChain(task, plan);
 
     const system = editPromptInstruction(space, roomHint);
-    const turn = `The user's idea: ${rough}`;
+    const turn = `The user's idea (quoted data): ${JSON.stringify(rough)}`;
 
     let lastStep: RouteStep = chain[0];
     let lastStage = "";

@@ -13,6 +13,7 @@ const outputId = "33333333-3333-4333-8333-333333333333";
 const proofId = "44444444-4444-4444-8444-444444444444";
 const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
 const choice = { edit: "declutter" as const, style: "modern", prompt: "" };
+const customChoice = { edit: "custom" as const, style: "modern", prompt: "Improve brightness only; keep the garage door and trim unchanged." };
 const photos = (count = 3): StudioPhoto[] => Array.from({ length: count }, (_, index) => ({ id: `photo-${index + 1}`, listingId, url: `https://media.example.invalid/photo-${index + 1}.png`, expiresAt: "2026-09-14T23:59:59Z", caption: `Photo ${index + 1}`, isStaged: false, sort: index }));
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; }
 function fixture() {
@@ -49,6 +50,32 @@ test("batch keeps originals and disclosure through explicit review/save; duplica
   assert.equal(f.events.filter(e => e.startsWith("attach")).length, 1);
 });
 
+test("ambiguous or permanent custom edits stop before source upload or paid generation", () => {
+  for (const prompt of ["Make the house look better", "Clean the garage", "Paint the garage door white", "Improve brightness and remove the cracks"]) {
+    const f = fixture();
+    assert.throws(() => new PhotoBatch(photos(1), listingId, { ...customChoice, prompt }, f.deps), /What should change|real finishes/);
+    assert.deepEqual(f.events, []);
+    assert.deepEqual(f.keys, []);
+  }
+});
+
+test("custom previews retain full instructions and require exact preview review before gallery upload", async () => {
+  const f = fixture(), generate = f.deps.generate;
+  const tail = " Keep the garage door and trim unchanged.";
+  const prompt = "Improve brightness. " + " ".repeat(580 - tail.length) + tail;
+  f.deps.generate = async (...args) => { assert.equal((args[2] as { prompt: string }).prompt, prompt.trim()); return generate(...args); };
+  const batch = new PhotoBatch(photos(2), listingId, { ...customChoice, prompt }, f.deps);
+  await batch.run();
+  await assert.rejects(batch.save(0), /Compare this preview/);
+  assert.equal(f.events.some(event => event.startsWith("upload:gallery") || event.startsWith("attach:")), false);
+  batch.entries[0]!.reviewed = true;
+  await batch.save(0);
+  await assert.rejects(batch.save(1), /Compare this preview/);
+  assert.equal(f.events.filter(event => event.startsWith("upload:gallery")).length, 1);
+  assert.equal(f.events.filter(event => event.startsWith("attach:")).length, 1);
+  assert.equal(f.keys.length, 2, "review/save must never re-generate the previews");
+});
+
 test("ordinary generation failure preserves completed photos and continues without retrying the failed request", async () => {
   const f = fixture(), generate = f.deps.generate;
   f.deps.generate = async (...args) => { if (args[4] === "Photo 2") { f.events.push("failed:Photo 2"); throw new Error("Reply was lost"); } return generate(...args); };
@@ -68,6 +95,19 @@ test("quota or authorization failure stops all remaining paid dispatches", async
     await batch.run();
     assert.equal(calls, 1);
     assert.deepEqual(batch.entries.map(e => e.state), ["failed", "stopped", "stopped"]);
+  }
+});
+
+test("a typed server clarification stops a custom batch without repeating source uploads", async () => {
+  for (const [code, status] of [["photo_clarification_required", 409], ["unsupported_edit", 400]] as const) {
+    const f = fixture(); let calls = 0;
+    f.deps.generate = async () => { calls++; throw new StudioError(code, "Choose a specific change. No edit has been charged.", status); };
+    const batch = new PhotoBatch(photos(), listingId, customChoice, f.deps);
+    await batch.run();
+    assert.equal(calls, 1);
+    assert.equal(f.events.filter(event => event.startsWith("upload:")).length, 1);
+    assert.deepEqual(batch.entries.map(entry => entry.state), ["failed", "stopped", "stopped"]);
+    assert.doesNotMatch(batch.entries[0]!.error!, /may still count/);
   }
 });
 

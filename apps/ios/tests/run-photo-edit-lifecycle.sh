@@ -14,7 +14,9 @@ def block(anchor):
             depth-=1
             if depth==0: return source[start:position+1]
     raise AssertionError('Unclosed actual lifecycle method')
-header='''import Foundation
+api_source=pathlib.Path(sys.argv[1]).parents[1].joinpath('Networking/APIClient.swift').read_text()
+api_error=api_source[api_source.index('enum APIError:'):api_source.index('// MARK: - Admin console models')]
+header='import Foundation\n'+api_error+'''
 @MainActor final class PhotoEditService {
 private let model:AppModel
 private let listing:Listing

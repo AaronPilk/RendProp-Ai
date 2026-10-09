@@ -1,5 +1,76 @@
 import Foundation
 
+/// Free local guidance; the server independently validates the actual listing
+/// and instruction before reserving funds or sending a photo to a model.
+enum CustomPhotoPromptPolicy {
+    enum Decision: Equatable { case ready, clarify, blocked }
+    enum Choice: String, CaseIterable, Identifiable {
+        case lighting, clutter, sky, furniture
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .lighting: return "Improve lighting"
+            case .clutter: return "Remove movable clutter"
+            case .sky: return "Change the sky"
+            case .furniture: return "Add furniture"
+            }
+        }
+        var prompt: String {
+            switch self {
+            case .lighting: return "Improve brightness and exposure only, preserving every paint color and material."
+            case .clutter: return "Remove movable clutter only; keep fixed features and actual property condition."
+            case .sky: return "Replace only the sky; keep the building, garage door, trim and landscaping unchanged."
+            case .furniture: return "Add movable furniture only; preserve all fixed features, paint colors and materials."
+            }
+        }
+    }
+    static let preservedFeatures = "Keep the structure, fixed features, materials, finishes and existing paint colors—including the garage door and trim—as photographed."
+    static let blockedMessage = "For a property listing, we can't repaint or remodel the home, repair damage or hide defects in a photo. Choose lighting, movable clutter, the sky or furniture instead."
+
+    static func decision(for prompt: String, realEstate: Bool) -> Decision {
+        let text = prompt.decomposedStringWithCompatibilityMapping
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .replacingOccurrences(of: "’", with: "'")
+            .replacingOccurrences(of: "[\\p{Cf}]", with: "", options: .regularExpression)
+        func matches(_ pattern: String, in value: String) -> Bool {
+            value.range(of: pattern, options: .regularExpression) != nil
+        }
+        // Mirrors the free server policy: split independent actions first, then
+        // exclude explicit preservation clauses. A negation cannot authorize a
+        // later positive request to change a permanent feature.
+        let clauses = text.replacingOccurrences(of: "[.,;!?\\n]+|\\b(?:but|however|then|and|except)\\b|\\s+(?=without\\b)",
+            with: "\n", options: .regularExpression).components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !matches("^(?:(?:please|also)\\s+)*(?:do\\s+not|don't|never|no\\s+|without\\s+|keep\\b|preserv\\w*\\b|retain\\b|leave\\b)", in: $0) }
+        let fixed = "(?:garage(?:[ -]door)?|trim|walls?|ceilings?|floors?|flooring|cabinets?|countertops?|counters?|windows?|doors?|roof|siding|facade|appliances?|fixtures?|built[ -]ins?|driveway|fences?|power poles?|utility (?:boxes|meters)|air[ -]conditioning units?)"
+        let unsafe = [
+            "\\b(?:repaint\\w*|painted|painting|recolor\\w*|recolour\\w*|remodel\\w*|renovat\\w*|resurfac\\w*|refinish\\w*|rebuild\\w*)\\b|\\bpaint\\s+(?:it|over)\\b",
+            "\\b(?:remove|replace|move|resize|cover|hide|change|alter|paint|repair|fix)\\s+(?:(?:the|a|an|existing|original|all|every)\\s+)*" + fixed + "\\b",
+            "\\b(?:repair|patch|fix|hide|erase|remove|cover|smooth|clean)\\b.{0,70}\\b(?:cracks?|damage|defects?|water ?(?:marks?|stains?)|stains?|mou?ld|rust|wear|holes?|dents?|peeling|chipped|broken|missing flooring)\\b",
+            "\\b(?:repair|fix)\\s+(?:the\\s+)?" + fixed + "\\b",
+            "\\b(?:make|turn|change)\\b.{0,70}\\b" + fixed + "\\b.{0,40}\\b(?:white|black|grey|gray|beige|blue|red|green|color|colour|finish|material)\\b|\\b(?:change|alter|replace)\\b.{0,50}\\b(?:paint|color|colour|finish|material)\\b",
+            "\\b(?:ignore|override|disregard|bypass)\\b.{0,60}\\b(?:instructions?|rules?|locks?|restrictions?|guardrails?)\\b"
+        ]
+        if clauses.contains(where: { clause in unsafe.contains { matches($0, in: clause) } }) { return .blocked }
+        let actionable = clauses.joined(separator: ". ")
+        let specific = [
+            "\\b(?:brighten|brighter|brightness|exposure|lighting|relight|illuminate|illumination|lighten|white balance|color balance)\\b",
+            "\\b(?:declutter|clutter|tidy)\\b|\\b(?:remove|clear|erase)\\b.{0,70}\\b(?:movable|personal items?|bags?|laundry|toys?|dishes|boxes|mess|loose items?|objects?|furniture|sofas?|couches?|chairs?|tables?|beds?|rugs?|cars?)\\b",
+            "\\bsky\\b",
+            "\\b(?:add|stage|furnish|place)\\b.{0,70}\\b(?:movable furniture|furniture|sofas?|couches?|chairs?|tables?|decor|beds?|rugs?)\\b|\\b(?:virtual staging|furnish)\\b",
+            "\\b(?:lawn|grass|planting)\\b",
+            "\\b(?:remove|erase)\\b.{0,70}\\b(?:photographer|my reflection|camera reflection)\\b"
+        ]
+        let vague = clauses.contains {
+            (matches("\\b(?:nicer|better|beautiful|beautify|modernize|modernise|upgrade|transform|refresh|clean|cleaner)\\b", in: $0)
+                && !matches("\\b(?:clutter|movable|brightness|exposure|lighting|sky|grass|lawn|furniture|decor)\\b", in: $0))
+                || (matches("\\b(?:make|look|feel)\\b.{0,50}\\bmodern\\b", in: $0) && !matches("\\b(?:furniture|decor)\\b", in: $0))
+        }
+        guard !vague, specific.contains(where: { matches($0, in: actionable) }) else { return .clarify }
+        return .ready
+    }
+}
+
 /// Local, durable photo lineage. Image files are immutable; selecting a newer
 /// version never deletes its source or the retained pre-enhancement capture.
 /// This is a local history, not a claim that a cloud provenance row was saved.
@@ -12,6 +83,15 @@ enum PhotoVersionHistory {
         var furnitureMatchesOtherViews = false
         var isComplete: Bool {
             comparedSource && fixedFeaturesMatch && accessIsClear && furnitureMatchesOtherViews
+        }
+    }
+    struct CustomReview {
+        var comparedSource = false
+        var fixedFeaturesMatch = false
+        var colorsAndMaterialsMatch = false
+        var onlyRequestedChange = false
+        var isComplete: Bool {
+            comparedSource && fixedFeaturesMatch && colorsAndMaterialsMatch && onlyRequestedChange
         }
     }
     enum LibraryKind: String, CaseIterable, Identifiable, Sendable {
@@ -40,6 +120,12 @@ enum PhotoVersionHistory {
         var stagingReviewed: Bool? = nil
         var stagingReferenceID: String? = nil
         var stagingBrief: String? = nil
+        /// nil belongs to older saved versions; it is never recorded as a new
+        /// review. New custom outputs and their descendants explicitly start false.
+        var customReviewed: Bool? = nil
+
+        var needsCustomReview: Bool { customReviewed == false }
+        var canAutomaticallySelectForListing: Bool { !effects.contains("stage") && !needsCustomReview }
 
         var visibleLabel: String? {
             var parts: [String] = []
@@ -162,14 +248,15 @@ enum PhotoVersionHistory {
     }
 
     enum Failure: LocalizedError {
-        case invalidHistory, missingImage, duplicate, changedVersion, reviewRequired, coverNotSelected
+        case invalidHistory, missingImage, duplicate, changedVersion, reviewRequired, customReviewRequired, coverNotSelected
         var errorDescription: String? {
             switch self {
             case .invalidHistory: return "This photo's saved history couldn't be read. Its files are still safe. Reopen Photos or contact support before editing it."
             case .missingImage: return "A source photo is missing from this phone. Import it again before editing."
             case .duplicate: return "That photo version is already saved. Reopen Photos to see it."
             case .changedVersion: return "This photo changed while the edit was running. Reopen Photos before editing again."
-            case .reviewRequired: return "Review this staged photo against its original before using it on the listing or as its cover."
+            case .reviewRequired: return "Review this staged photo against its original before downloading it, using it on the listing or choosing it as the cover."
+            case .customReviewRequired: return "Compare this edit with its source and check the paint colors, materials and fixed features before downloading it, using it on the listing or choosing it as the cover."
             case .coverNotSelected: return "The cover isn't among the photos selected for this listing. Open Photos and choose a cover from a reviewed version. Your published gallery has been kept."
             }
         }
@@ -237,6 +324,7 @@ enum PhotoVersionHistory {
         return try (index.listingSelections ?? index.current).compactMap { family, id in
             guard !index.hiddenFamilies.contains(family) else { return nil }
             guard let version = index.versions[id], version.familyID == family else { throw Failure.invalidHistory }
+            guard !version.needsCustomReview else { throw Failure.customReviewRequired }
             try requireImage(version.imageFile, directory: directory)
             return version
         }
@@ -247,7 +335,7 @@ enum PhotoVersionHistory {
     static func availableCoverVersion(directory: URL) throws -> Version? {
         let index = try load(directory: directory)
         return (index.listingSelections ?? index.current).compactMap { family, id -> Version? in
-            guard !index.hiddenFamilies.contains(family), let version = index.versions[id],
+            guard !index.hiddenFamilies.contains(family), let version = index.versions[id], !version.needsCustomReview,
                   (try? requireImage(version.imageFile, directory: directory)) != nil else { return nil }
             return version
         }.sorted { $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.id > $1.id }.first
@@ -366,13 +454,14 @@ enum PhotoVersionHistory {
                               provenanceRecorded: provenanceRecorded, createdAt: Date())
         version.stagingReferenceID = stagingReferenceID
         version.stagingBrief = stagingBrief
+        if effects.contains("custom") || source.customReviewed != nil { version.customReviewed = false }
         do {
             try write(jpeg, imageURL)
             if index.listingSelections == nil { index.listingSelections = index.current }
             index.versions[id] = version; index.current[parent.familyID] = id
             // A generated window, displaced fixture, blocked door or mismatched
             // furniture must be reviewed rather than automatically published.
-            if !effects.contains("stage") { index.listingSelections?[parent.familyID] = id }
+            if version.canAutomaticallySelectForListing { index.listingSelections?[parent.familyID] = id }
             try save(index, directory: directory, write: write)
         } catch {
             try? FileManager.default.removeItem(at: imageURL)
@@ -381,9 +470,38 @@ enum PhotoVersionHistory {
         return version
     }
 
+    /// Admit the actual file being delivered, independent of a view's cached
+    /// version id. Retained original files stay available for comparison.
+    static func requireDownloadReview(imageURL: URL) throws {
+        let directory = imageURL.deletingLastPathComponent()
+        let index = try load(directory: directory)
+        if let version = index.versions.values.first(where: { $0.imageFile == imageURL.lastPathComponent }),
+           version.needsCustomReview { throw Failure.customReviewRequired }
+    }
+
+    /// Record comparison of this exact custom output without selecting it for
+    /// publication or changing the editing workspace. Downloads use the same
+    /// persisted marker, including bulk exports opened from another screen.
+    static func confirmCustomReview(id: String, imageFile: String, sourceFile: String,
+                                    review: CustomReview, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard review.isComplete else { throw Failure.customReviewRequired }
+        guard let version = index.versions[id], version.imageFile == imageFile,
+              !index.hiddenFamilies.contains(version.familyID),
+              version.reviewSourceFile(in: index) == sourceFile, sourceFile != imageFile
+        else { throw Failure.changedVersion }
+        try requireImage(imageFile, directory: directory)
+        try requireImage(sourceFile, directory: directory)
+        // Missing legacy markers remain missing; a comparison does not invent
+        // new provenance or certify that an imported source was unaltered.
+        if version.customReviewed != nil { index.versions[id]?.customReviewed = true }
+        try save(index, directory: directory)
+    }
+
     /// Select a saved version without generating again or discarding later edits.
     /// Only a complete retained image can become the listing's current version.
-    static func select(id: String, directory: URL, reviewed: Bool = false) throws {
+    static func select(id: String, directory: URL, reviewed: Bool = false, customReviewed: Bool = false) throws {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
         guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID) else {
@@ -391,7 +509,9 @@ enum PhotoVersionHistory {
         }
         try requireImage(version.imageFile, directory: directory)
         guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
+        guard customReviewed || !version.needsCustomReview else { throw Failure.customReviewRequired }
         if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
+        if customReviewed, version.customReviewed != nil { index.versions[id]?.customReviewed = true }
         index.current[version.familyID] = id
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.listingSelections?[version.familyID] = id
@@ -400,7 +520,7 @@ enum PhotoVersionHistory {
 
     /// Choosing the public photo doesn't replace the editing workspace's latest
     /// version. Browsing/exporting a saved edit never calls this operation.
-    static func selectForPublication(id: String, directory: URL, reviewed: Bool = false) throws {
+    static func selectForPublication(id: String, directory: URL, reviewed: Bool = false, customReviewed: Bool = false) throws {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
         guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID) else {
@@ -408,7 +528,9 @@ enum PhotoVersionHistory {
         }
         try requireImage(version.imageFile, directory: directory)
         guard reviewed || version.stagingReviewed == true || !version.effects.contains("stage") || index.isSelectedForListing(id) else { throw Failure.reviewRequired }
+        guard customReviewed || !version.needsCustomReview else { throw Failure.customReviewRequired }
         if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
+        if customReviewed, version.customReviewed != nil { index.versions[id]?.customReviewed = true }
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.listingSelections?[version.familyID] = id
         try save(index, directory: directory)
@@ -447,11 +569,15 @@ enum PhotoVersionHistory {
             edit: "legacy", style: nil, effects: [], sourceHistoryKnown: false, disclosure: nil,
             provenanceID: nil, originalAssetID: nil, serverListingID: nil, provenanceRecorded: false, createdAt: Date())
         let effects = staged ? ["stage"] : altered ? ["cloud-edit"] : []
-        let output = Version(id: id, familyID: id, imageFile: imageFile, originalFile: originalFile,
+        var output = Version(id: id, familyID: id, imageFile: imageFile, originalFile: originalFile,
             originalVerified: false, parentID: baseID, sourceID: baseID, stagingBaseID: staged ? baseID : nil,
             edit: staged ? "stage" : altered ? "cloud-edit" : "legacy", style: nil, effects: effects,
             sourceHistoryKnown: false, disclosure: nil, provenanceID: nil, originalAssetID: nil,
             serverListingID: nil, provenanceRecorded: false, createdAt: Date())
+        // The cloud's altered flag doesn't identify a custom edit separately.
+        // New non-staged AI imports therefore require the same source/color
+        // comparison. Existing ids returned above are never retroactively changed.
+        if altered && !staged { output.customReviewed = false }
         if index.listingSelections == nil { index.listingSelections = index.current }
         index.versions[baseID] = source; index.versions[id] = output; index.current[id] = id
         index.listingSelections?[id] = staged || altered ? baseID : id

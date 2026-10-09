@@ -5,6 +5,17 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+**9 October launch follow-up:** App Store eligible **1.0.4 (53)** is available
+in TestFlight. The 1.0.4 review draft has MANUAL release, monthly-only products
+and seven reviewed marketing graphics; all three annual products are unavailable.
+A replacement FAL key passed a real completed, stored photo-to-video run.
+The [custom-photo and alert follow-up](docs/handoff/CODEX-CUSTOM-PHOTO-AND-LAUNCH-20261009.md)
+adds free intent preparation, clarification before spending an edit, explicit
+preservation of permanent finishes, exact-version custom-result review and plain
+owner/admin alerts. This newer native source needs the next signed build before
+final App Review submission. Physical phone acceptance remains owner-deferred.
+The dated checkpoints below describe their state at the time, not current gates.
+
 **Account-first follow-up:** new and signed-out users must create or sign in to
 an account with Apple before business setup or the dashboard. Saved guest work
 remains available to the verified account-transfer flow. Signing in does not
@@ -16,7 +27,7 @@ rendered-screen check. The
 [next public-review draft](docs/appstore/account-first-review-draft-20261008.md)
 is unsubmitted and preserves the historical build-42 review record.
 
-**Latest verified internal delivery:** **1.0.4 (51)** is **AVAILABLE** to the
+**8 October internal delivery:** **1.0.4 (51)** was **AVAILABLE** to the
 existing Rendprop team, verified on **8 October 2026 at 19:10:54 UTC**, from
 `2c567a543c9b16cbd29702cc5762cfb56f6891fc`. Apple reported VALID /
 INTERNAL_ONLY / IN_BETA_TESTING. Home now uses equal card sizes, places active

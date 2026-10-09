@@ -1014,13 +1014,13 @@ protocol APIClient: Sendable {
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion]
 
     /// POST /ai-copy/edit-prompt — rewrites a rough custom-edit idea
-    /// (≤ 300 chars sent) into a sharper, more specific prompt (≤ 400 back).
+    /// (≤ 600 chars sent) into a sharper, more specific prompt (≤ 400 back).
     ///
     /// TEXT-ONLY, and now honestly so. `improve_prompt` never looked at the
     /// image (audit F-E-16 stopped the client SENDING one) but the call site
     /// went on base64-encoding a 1024 px JPEG on the main path for a payload
-    /// that was thrown away, so the photo is gone from the signature too. Not
-    /// charged against the monthly photo-edit allowance.
+    /// that was thrown away, so the photo is gone from the signature too.
+    /// Its funded text cost shares the AI serving allowance.
     ///
     /// `roomHint` is the area the photo shows ("Kitchen", "Patio") when the app
     /// knows it — it is what turns "make it brighter" into an instruction about
@@ -1484,6 +1484,9 @@ enum APIError: Error, LocalizedError {
     /// Trial-wide capacity is separate from a customer's own allowance.
     /// Purchasing a higher plan is not the recovery action for this refusal.
     var isTrialCapacityUnavailable: Bool { code == "trial_capacity_unavailable" }
+    /// A free intent clarification/refusal is resolved by changing the request,
+    /// never by repeating the same batch or opening the purchase screen.
+    var isPhotoPromptRefusal: Bool { code == "photo_clarification_required" || code == "unsupported_edit" }
     /// 402 — a customer's plan boundary / allowance reached → the in-app
     /// StoreKit paywall. A typed trial capacity refusal never opens it.
     var isQuota: Bool { !isTrialCapacityUnavailable && (status == 402 || code == "quota_exceeded" || code == "plan_required") }
@@ -1524,6 +1527,7 @@ enum APIError: Error, LocalizedError {
     }
 
     var recoverySuggestion: String? {
+        if isPhotoPromptRefusal { return "Choose a specific photo change and review the instruction before generating." }
         if isTrialCapacityUnavailable { return "Try again later, or contact support. Your saved work is still here." }
         if isQuota { return "Upgrade your plan to continue." }
         if isRateLimited { return "Try again in a few minutes." }

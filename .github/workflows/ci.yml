@@ -168,6 +168,8 @@ jobs:
         run: bash apps/ios/tests/run-photo-work-queue.sh
       - name: Photo edit lifecycle and background resource cleanup
         run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
+      - name: Custom photo prompt delivery and native review controls
+        run: python3 apps/ios/tests/run-custom-photo-prompt.py
       - name: Owner-bound Apple sign-in code and export admission
         run: |
           python3 tools/audit/apple-code-session-20261004/run.py
@@ -175,7 +177,7 @@ jobs:
             python3 tools/audit/apple-code-session-20261004/run.py --inject-fault "$fault"
           done
           python3 tools/audit/native-media-export-20261004/run.py
-          for fault in drop-permission-context drop-listing-binding drop-csv-context drop-completion-context drop-presentation-actor drop-presentation-workspace; do
+          for fault in drop-permission-context drop-listing-binding drop-csv-context drop-completion-context drop-presentation-actor drop-presentation-workspace drop-custom-download-review; do
             python3 tools/audit/native-media-export-20261004/run.py --inject-fault "$fault"
           done
       - name: Ordinary listing intent and shared-version review
@@ -877,6 +879,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/ops_deleted_workspace.sql
 
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
@@ -925,6 +928,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/ops_deleted_workspace.sql
 
       - name: Invariants after the replay (all270 must pass)
         env:

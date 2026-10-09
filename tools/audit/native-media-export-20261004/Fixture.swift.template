@@ -196,6 +196,35 @@ __FILENAME__
         original = root.appendingPathComponent("source-original.jpg")
         try Data("synthetic-private-original".utf8).write(to: original)
 
+        let historyDirectory = root.appendingPathComponent("custom-history", isDirectory: true)
+        let originalBytes = Data("synthetic-original-for-comparison".utf8)
+        try PhotoVersionHistory.saveCapture(original: originalBytes, enhanced: originalBytes, id: "capture", directory: historyDirectory)
+        let custom = try PhotoVersionHistory.saveEdit(jpeg: Data("synthetic-custom-preview".utf8), id: "custom", parentID: "capture", sourceID: "capture",
+            edit: "custom", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: historyDirectory)
+        let customURL = historyDirectory.appendingPathComponent(custom.imageFile)
+        reset(); let unreviewed = Harness(); unreviewed.local(customURL)
+        await until("unreviewed raw save") { !unreviewed.isSavingFile }
+        check(boundary.writeAttempts == 0 && unreviewed.savedFiles.isEmpty, "unreviewed custom raw save never requests a Photos write")
+        check(unreviewed.filesNoteOK == false && unreviewed.filesNote?.contains("Compare this edit") == true,
+              "unreviewed raw download gives the comparison action without success feedback")
+        check(try PhotoVersionHistory.load(directory: historyDirectory).versions[custom.id]?.customReviewed == false,
+              "failed raw download cannot approve the custom result")
+        reset(); let retainedOriginal = Harness(); retainedOriginal.local(historyDirectory.appendingPathComponent("orig-capture.jpg"))
+        await until("original raw save") { !retainedOriginal.isSavingFile }
+        check(boundary.completedWrites == 1 && retainedOriginal.savedFiles.count == 1, "retained original still saves without approving a custom edit")
+        check(try PhotoVersionHistory.load(directory: historyDirectory).versions[custom.id]?.customReviewed == false,
+              "raw original save preserves the custom review requirement")
+        let beforeReview = try PhotoVersionHistory.load(directory: historyDirectory)
+        try PhotoVersionHistory.confirmCustomReview(id: custom.id, imageFile: custom.imageFile, sourceFile: "orig-capture.jpg",
+            review: .init(comparedSource: true, fixedFeaturesMatch: true, colorsAndMaterialsMatch: true, onlyRequestedChange: true), directory: historyDirectory)
+        reset(); let reviewedCustom = Harness(); reviewedCustom.local(customURL)
+        await until("reviewed custom raw save") { !reviewedCustom.isSavingFile }
+        check(boundary.completedWrites == 1 && reviewedCustom.savedFiles.count == 1, "reviewed exact custom raw file saves once")
+        let afterReview = try PhotoVersionHistory.load(directory: historyDirectory)
+        check(beforeReview.current == afterReview.current && beforeReview.listingSelections == afterReview.listingSelections,
+              "raw-file download review never changes the listing or editing selection")
+        check(try Data(contentsOf: customURL) == Data("synthetic-custom-preview".utf8), "raw-file custom save preserves stored output bytes")
+
         for mode in ["account", "workspace"] {
             reset(); let previous = Harness(); change(mode, previous)
             await previous.load()

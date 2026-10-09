@@ -66,6 +66,7 @@ Deno.test("source and mask have one combined byte allowance and exact dimensions
 });
 Deno.test("prompt limits measure UTF-8 before dispatch and never silently truncate",()=>{
   validatePhotoPrompt("a".repeat(600),true); assertThrows(()=>validatePhotoPrompt("a".repeat(601),true),HttpError);
-  validatePhotoPrompt("é".repeat(300),true); assertThrows(()=>validatePhotoPrompt("é".repeat(301),true),HttpError);
+  validatePhotoPrompt("é".repeat(600),true); assertThrows(()=>validatePhotoPrompt("é".repeat(601),true),HttpError);
+  validatePhotoPrompt("界".repeat(600),true);
   validatePhotoPrompt("a".repeat(8192)); assertThrows(()=>validatePhotoPrompt("a".repeat(8193)),HttpError);
 });

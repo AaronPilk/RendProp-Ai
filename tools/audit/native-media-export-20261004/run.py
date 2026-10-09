@@ -28,7 +28,7 @@ def block(source, marker):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--inject-fault", choices=["drop-permission-context", "drop-listing-binding", "drop-csv-context", "drop-completion-context", "drop-presentation-actor", "drop-presentation-workspace"])
+    parser.add_argument("--inject-fault", choices=["drop-permission-context", "drop-listing-binding", "drop-csv-context", "drop-completion-context", "drop-presentation-actor", "drop-presentation-workspace", "drop-custom-download-review"])
     args = parser.parse_args()
     raw = SOURCE.read_bytes()
     source = raw.decode()
@@ -55,6 +55,11 @@ def main():
         assert bodies["__SAVER__"].count(needle) == 4
         bodies["__SAVER__"] = bodies["__SAVER__"].replace(needle, "        // injected missing permission admission")
         expected = "permission change prevents Photos transaction"
+    elif args.inject_fault == "drop-custom-download-review":
+        needle = "        try PhotoVersionHistory.requireDownloadReview(imageURL: url)"
+        assert bodies["__SAVER__"].count(needle) == 2
+        bodies["__SAVER__"] = bodies["__SAVER__"].replace(needle, "        // injected missing persisted custom download review")
+        expected = "unreviewed custom raw save never requests a Photos write"
     elif args.inject_fault == "drop-listing-binding":
         needle = "            return current.serverID == snapshot.serverID && current.serverOrgID == snapshot.serverOrgID"
         assert bodies["__ADMISSION__"].count(needle) == 1
@@ -89,11 +94,11 @@ def main():
     files.mkdir(exist_ok=True)
     receipt = {"source": str(SOURCE.relative_to(ROOT)), "sourceSHA256": hashlib.sha256(raw).hexdigest(),
                "sourceHashes": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
-                                for path in [SOURCE, APP_SOURCE, Path(__file__).resolve(), Path(__file__).with_name("Fixture.swift.template")]},
+                                for path in [SOURCE, APP_SOURCE, ROOT / "apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift", ROOT / "apps/ios/Rendprop/Photos/PhotoVersionHistory.swift", Path(__file__).resolve(), Path(__file__).with_name("Fixture.swift.template")]},
                "actualBodyHashes": hashes, "compiledBodyHashes": {key: hashlib.sha256(body.encode()).hexdigest() for key, body in bodies.items()},
                "injectedFault": args.inject_fault, "networkCalls": 0, "realPhotosCalls": 0, "cameraCalls": 0,
                "customerFilesAccessed": 0, "commands": []}
-    for label, command in [("compile", ["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library", str(swift), "-o", str(binary)]),
+    for label, command in [("compile", ["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library", str(ROOT / "apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift"), str(ROOT / "apps/ios/Rendprop/Photos/PhotoVersionHistory.swift"), str(swift), "-o", str(binary)]),
                            ("run", [str(binary), str(files)])]:
         result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=60)
         log = out / f"{label}.log"
