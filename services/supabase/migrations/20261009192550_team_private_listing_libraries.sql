@@ -199,7 +199,7 @@ end$$;
 revoke all on function public.library_listing_ids(uuid,uuid),public.lead_library_scope(uuid,uuid),public.list_library_leads(uuid,uuid,integer,timestamptz,text,uuid)from public,anon,authenticated;
 grant execute on function public.library_listing_ids(uuid,uuid),public.lead_library_scope(uuid,uuid),public.list_library_leads(uuid,uuid,integer,timestamptz,text,uuid)to service_role,postgres;
 
-do $$begin if(select md5(prosrc)from pg_proc where oid='public.set_lead_status(uuid,text)'::regprocedure)not in('6d1a62fbd31b185cbe8ad36eb7015426','22b1983390c8b51d3fa1b023fcc6e28d')then raise exception 'Review changed function set_lead_status';end if;end$$;
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.set_lead_status(uuid,text)'::regprocedure)not in('6d1a62fbd31b185cbe8ad36eb7015426','22b1983390c8b51d3fa1b023fcc6e28d','da850adfb30d729dd4cecdada1f16139')then raise exception 'Review changed function set_lead_status';end if;end$$;
 CREATE OR REPLACE FUNCTION public.set_lead_status(p_lead uuid, p_status text)
  RETURNS leads
  LANGUAGE plpgsql
@@ -3731,7 +3731,7 @@ begin
 end;
 $function$
 ;
-do $$begin if(select md5(prosrc)from pg_proc where oid='public.set_render_chapters(uuid,jsonb)'::regprocedure)not in('1b1eee14746b7c655fbe33f133d9a72f','49d181e7b47e23fec3e0e9ffaba7b02d')then raise exception 'Review changed function set_render_chapters(uuid,jsonb)';end if;end$$;
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.set_render_chapters(uuid,jsonb)'::regprocedure)not in('1b1eee14746b7c655fbe33f133d9a72f','49d181e7b47e23fec3e0e9ffaba7b02d','f54cfafc39b5e54c0d258a08c55fc0e1')then raise exception 'Review changed function set_render_chapters(uuid,jsonb)';end if;end$$;
 CREATE OR REPLACE FUNCTION public.set_render_chapters(p_render uuid, p_chapters jsonb)
  RETURNS integer
  LANGUAGE plpgsql
@@ -3765,7 +3765,7 @@ begin
 end;
 $function$
 ;
-do $$begin if(select md5(prosrc)from pg_proc where oid='public.record_provenance(uuid,text,text,text,text,text,text,uuid,uuid,uuid)'::regprocedure)not in('891a7b8390b3c25967bd082059de9628','f835f7a4bb83e6322bdbc1002f6cb506')then raise exception 'Review changed function record_provenance(uuid,text,text,text,text,text,text,uuid,uuid,uuid)';end if;end$$;
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.record_provenance(uuid,text,text,text,text,text,text,uuid,uuid,uuid)'::regprocedure)not in('891a7b8390b3c25967bd082059de9628','f835f7a4bb83e6322bdbc1002f6cb506','3d3ed68beb400c14192338df21cb50e5')then raise exception 'Review changed function record_provenance(uuid,text,text,text,text,text,text,uuid,uuid,uuid)';end if;end$$;
 CREATE OR REPLACE FUNCTION public.record_provenance(p_listing uuid, p_kind text, p_label text DEFAULT NULL::text, p_model_id text DEFAULT NULL::text, p_edit text DEFAULT NULL::text, p_style text DEFAULT NULL::text, p_prompt_summary text DEFAULT NULL::text, p_original_asset uuid DEFAULT NULL::uuid, p_altered_asset uuid DEFAULT NULL::uuid, p_render uuid DEFAULT NULL::uuid)
  RETURNS media_provenance
  LANGUAGE plpgsql
@@ -3842,7 +3842,7 @@ begin
 end;
 $function$
 ;
-do $$begin if(select md5(prosrc)from pg_proc where oid='public.set_provenance_media(uuid,uuid,uuid,text)'::regprocedure)not in('a4f295df0a8dd5d0760cf7761b34450d','03fac045fa0d408ac6390f70b8af023e')then raise exception 'Review changed function set_provenance_media(uuid,uuid,uuid,text)';end if;end$$;
+do $$begin if(select md5(prosrc)from pg_proc where oid='public.set_provenance_media(uuid,uuid,uuid,text)'::regprocedure)not in('a4f295df0a8dd5d0760cf7761b34450d','03fac045fa0d408ac6390f70b8af023e','9f3ccdbe4560d9e9cc0e8c6d8f57dafc')then raise exception 'Review changed function set_provenance_media(uuid,uuid,uuid,text)';end if;end$$;
 CREATE OR REPLACE FUNCTION public.set_provenance_media(p_id uuid, p_original_asset uuid DEFAULT NULL::uuid, p_altered_asset uuid DEFAULT NULL::uuid, p_label text DEFAULT NULL::text)
  RETURNS media_provenance
  LANGUAGE plpgsql
