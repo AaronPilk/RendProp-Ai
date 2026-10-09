@@ -281,6 +281,22 @@ final class AuthStore: ObservableObject {
         }
     }
 
+    #if targetEnvironment(simulator)
+    /// The dedicated offline Profile host seeds one fixed synthetic identity.
+    /// It cannot consume a remembered account, token or arbitrary account ID.
+    @MainActor func prepareProfileFeedbackFixtureOwner() -> Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        let owner = "b3710000-0000-4000-8000-000000000001"
+        guard Config.isOfflineAccountFixture,
+              arguments.contains("-ui.profileFeedbackFixture"),
+              let index = arguments.firstIndex(of: "-auth.supabase.userID"),
+              index + 1 < arguments.count,
+              arguments[index + 1].lowercased() == owner else { return false }
+        userID = owner
+        return true
+    }
+    #endif
+
     // MARK: - Token access (read by LiveAPIClient, any thread)
 
     /// Current Supabase JWT, or nil when signed out. Read at request-build time.

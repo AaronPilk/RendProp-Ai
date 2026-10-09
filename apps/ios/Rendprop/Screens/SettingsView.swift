@@ -3568,8 +3568,16 @@ struct ProfileFeedbackFixtureHost: View {
     }
 
     @MainActor private func seed() {
+        let arguments = ProcessInfo.processInfo.arguments
         guard Self.isRequested, model.api is MockAPIClient,
-              AuthStore.shared.userID?.lowercased() == Self.owner.uuidString.lowercased() else {
+              let ownerArgument = arguments.firstIndex(of: "-auth.supabase.userID"),
+              ownerArgument + 1 < arguments.count,
+              arguments[ownerArgument + 1].lowercased() == Self.owner.uuidString.lowercased() else {
+            failure = "Profile fixture requires its synthetic owner and offline API."; return
+        }
+        // Offline walks discard remembered account IDs. This host accepts only
+        // its explicit, fixed synthetic owner; it never restores a real session.
+        guard AuthStore.shared.prepareProfileFeedbackFixtureOwner() else {
             failure = "Profile fixture requires its synthetic owner and offline API."; return
         }
         let spaces = [WorkspaceMembership(id: Self.org, name: "Synthetic agency", role: "owner"),

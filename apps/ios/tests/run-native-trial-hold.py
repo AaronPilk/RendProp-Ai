@@ -15,11 +15,13 @@ out = (args.out or Path(tempfile.mkdtemp(prefix='rendprop-native-trial-hold-')))
 out.mkdir(parents=True, exist_ok=True)
 paths = [root/'apps/ios/Rendprop/Purchases'/name for name in
          ['SubscriptionBillingContext.swift', 'PurchasesAPI.swift', 'PurchaseManager.swift', 'PaywallView.swift']]
+paths.append(root/'apps/ios/Rendprop/Models/Money.swift')
 paths += [root/'apps/ios/Rendprop/Auth/AuthStore.swift', root/'apps/ios/tests/TrialPurchaseHoldTests.swift', Path(__file__).resolve()]
 digest = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 hashes = lambda: {str(p.relative_to(root)): digest(p) for p in paths}
 start = hashes()
 billing, api, manager, paywall = [p.read_text() for p in paths[:4]]
+money = paths[4].read_text()
 
 def block(source, needle):
     begin = source.index(needle)
@@ -172,7 +174,7 @@ enum SheetError: Error { case cancelled, timeout }
 auth_source=paths[-3].read_text()
 interfaces=interfaces.replace('func forceRefresh() async -> Bool { refreshes += 1; return true }', 'func forceRefresh() async -> Bool { refreshes += 1; return true }\n'+block(auth_source,'static func jwtSubject('))
 def generated(b, a, m):
-    source = interfaces + '\n}\n' + b + '\n'
+    source = interfaces + '\n}\n' + b + '\n' + money + '\n'
     source += '@MainActor extension LiveAPIClient {\n' + block(a, prepare_needle) + '\n}\n'
     request = block(a, '@MainActor private enum PurchasesRequest {')
     # Real redirect delegate is checked above and by the SDK compile. Closed

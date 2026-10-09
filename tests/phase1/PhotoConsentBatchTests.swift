@@ -132,11 +132,15 @@ enum FileStore { static func relativePath(for url: URL) -> String { url.path } }
 enum PhotoStudioView {
     static func provenanceLabel(edit: String, style: String?, space: SpaceType) -> String { edit }
 }
-enum Analytics { static func track(_ name: String, _ props: [String: String]) {} }
+enum Analytics {
+    static func track(_ name: String, _ props: [String: String]) {}
+    @MainActor static func trackAIFailure(_ tool: String, step: String, error: Error) {}
+}
 enum FirstProjectGuide { static func recordAIPhotoEditCompleted() {} }
 struct AIFailure {
     init(_ error: Error) {}
     var isQuota: Bool { false }; var isUnauthorized: Bool { false }
+    var isServiceUnavailable: Bool { false }; var isTrialCapacityUnavailable: Bool { false }
 }
 struct UIBackgroundTaskIdentifier: Equatable {
     let value: Int

@@ -170,6 +170,13 @@ final class BetaPolishUITests: XCTestCase {
         attach("profile-guide-large-text")
     }
 
+    func testProfileFixtureRejectsAnUnexpectedSyntheticOwner() {
+        app.launchArguments = baseArguments + ["-ui.profileFeedbackFixture", "-auth.supabase.userID", "b3710000-0000-4000-8000-000000000099"]
+        app.launch()
+        XCTAssertTrue(element("profile.fixture.failure").waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.navigationBars["Profile"].exists)
+    }
+
     func testProfileGuestArchiveRequiresReviewAndExplicitSave() {
         launchProfile(archive: true)
         XCTAssertEqual(app.staticTexts["profile.personalName"].label, "Synthetic Agent", "Guest archive cannot replace current identity on opening Profile")
