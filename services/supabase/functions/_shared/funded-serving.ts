@@ -1,6 +1,6 @@
 // One liability hold per paid attempt, shared by every workspace feature.
 // A refund of a feature counter is never a refund of an incurred provider bill.
-import { HttpError, throwRpc } from "./http.ts";
+import { HttpError, throwRpc, isTrialCapacityRefusal, TRIAL_CAPACITY_UNAVAILABLE_MESSAGE } from "./http.ts";
 import { adminClient } from "./supabase.ts";
 import type { RouteStep } from "./router.ts";
 import { paramsOf } from "./router.ts";
@@ -24,14 +24,15 @@ export function ceilingRefusalCopy(message:string):string|null {
  if(kind==="trial")return "Your trial's AI allowance is used up. Your plan's full allowance starts with the paid period.";
  if(kind==="grace")return "AI tools are paused while Apple retries your subscription payment. They resume as soon as the renewal goes through.";
  if(kind)return "This workspace has used its AI allowance for the current billing period. It resets with the next period, or upgrade for more.";
- const pool=/RP402:\s*Free-trial AI limit reached \[pool=([a-z]+)\]/.exec(message)?.[1];
- if(pool)return "Free-trial AI is paused right now: the shared trial allowance is used up on our side. Nothing was charged. Your plan's own allowance starts with its paid period.";
+ if(isTrialCapacityRefusal(message))return TRIAL_CAPACITY_UNAVAILABLE_MESSAGE;
  return null;
 }
 function fundingRpcError(message:string):never {
  // Ceiling mode (2026-10-08): the workspace's serving envelope is spent for
- // this window, or the shared trial sponsor pool is. Both are quota: nothing
- // more dispatches, and the copy says which it was.
+ // this window, or the shared trial sponsor pool is. The latter is operator
+ // availability, so it must never be mistaken for the customer's upgrade quota.
+ if(isTrialCapacityRefusal(message))
+  throw new FundingAdmissionError(402,TRIAL_CAPACITY_UNAVAILABLE_MESSAGE,"trial_capacity_unavailable");
  const copy=ceilingRefusalCopy(message);
  if(copy)throw new FundingAdmissionError(402,copy,"quota_exceeded");
  // Missing activation is an operator-side availability boundary. Buying a

@@ -778,7 +778,9 @@ Deno.serve(async (req) => {
         await recordRoutedAiCost(adminClient(), {
           orgId: charge.orgId,
           feature: "voiceover",
-          step,
+          // The timestamp endpoint is a route label; the hold identifies the
+          // actual ElevenLabs model sent in model_id. Keep the route's price.
+          step: { ...step, model },
           chars: text.length,
           meta: {
             request_key: funding.requestKey,

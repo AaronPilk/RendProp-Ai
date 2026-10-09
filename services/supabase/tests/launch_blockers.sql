@@ -54,7 +54,7 @@ insert into apple_subscriptions(original_transaction_id,org_id,user_id,product_i
  ('lb-team-original','d2000000-0000-4000-8000-000000000003','d1000000-0000-4000-8000-000000000001','com.rendprop.app.team.monthly','team','Production','active',now()+interval '25 days',true,'lb-team-tx-1',now()-interval '5 days',now()-interval '1 day'),
  ('lb-intro-original','d2000000-0000-4000-8000-000000000004','d1000000-0000-4000-8000-000000000001','com.rendprop.app.pro.monthly','pro','Production','active',now()+interval '6 days',true,'lb-intro-tx-1',now()-interval '1 day',now()-interval '1 day'),
  ('lb-starter-original','d2000000-0000-4000-8000-000000000009','d1000000-0000-4000-8000-000000000001','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval '20 days',true,'lb-starter-tx-1',now()-interval '10 days',now()-interval '1 day'),
- ('lb-grace-original','d2000000-0000-4000-8000-000000000011','d1000000-0000-4000-8000-000000000001','com.rendprop.app.starter.monthly','starter','Production','grace',now()-interval '2 days',true,'lb-grace-tx-1',now()-interval '32 days',now()-interval '1 day'),
+ ('lb-grace-original','d2000000-0000-4000-8000-000000000011','d1000000-0000-4000-8000-000000000001','com.rendprop.app.starter.monthly','starter','Production','active',now()-interval '2 days',true,'lb-grace-tx-1',now()-interval '32 days',now()-interval '1 day'),
  ('lb-prepolicy-original','d2000000-0000-4000-8000-000000000012','d1000000-0000-4000-8000-000000000001','com.rendprop.app.pro.monthly','pro','Production','expired',now()-interval '40 days',false,'lb-prepolicy-tx-1',now()-interval '70 days','2026-09-20T00:00:00Z');
 -- Ledger history inside and outside the windows.
 insert into cost_ledger(org_id,feature,provider,model,units,unit_cost_cents,total_cents,created_at)values
@@ -178,10 +178,10 @@ do $$declare u uuid:='d1000000-0000-4000-8000-000000000001';pro uuid:='d2000000-
  insert into cost_ledger(org_id,feature,provider,model,units,unit_cost_cents,total_cents,meta)values(pro,'copy_assist','anthropic','claude-sonnet-5',1,2.1,2.1,jsonb_build_object('request_key','lb-pro-fit','stage','copy.initial:0'));
  perform pg_temp.ok((select count(*)=1 from serving_cost_reservations where org_id=pro and ledger_id is not null),'duplicate ledger write binds no second hold');
  perform pg_temp.ok(public.serving_ceiling_spent_cents(pro,now()-interval '10 days',now()+interval '20 days')=2054.2,'duplicate ledger row still counts as cost (never under)');
- -- FIFO fallback: a ledger row without keys binds the oldest unbound success of the same provider/model.
+ -- A receipt without exact identity cannot release another successful attempt.
  perform serving_cost_finish(u,pro,'lb-pro-over','copy.initial:0','succeeded',null);
  insert into cost_ledger(org_id,feature,provider,model,units,unit_cost_cents,total_cents)values(pro,'copy_assist','anthropic','claude-sonnet-5',1,2.1,2.1);
- perform pg_temp.ok((select ledger_id is not null from serving_cost_reservations where org_id=pro and request_key='lb-pro-over'),'keyless ledger row binds the oldest unbound success of that model');
+ perform pg_temp.ok((select ledger_id is null from serving_cost_reservations where org_id=pro and request_key='lb-pro-over'),'keyless ledger row preserves the successful hold for reconciliation');
  -- Video: the legacy writer and the serving reservation share ONE authority and count ONCE.
  update public.app_config set value=value||'{"apple_commission_bps":1500}'::jsonb where key='serving_envelope';
  perform pg_temp.refuse(format('select app_video_cost_reserve(%L,%L,''lb-video-over'',''reel'',''fal'',''bytedance/seedance/v1/pro/fast/image-to-video'',%L,9.72,2,4.86,''{}''::jsonb)',u,starter,repeat('b',64)),'RP402: AI usage limit reached [kind=retail]','the video writer is admitted by the same envelope authority (985 + 6 open + 9.72 > 991)');
@@ -193,10 +193,10 @@ do $$declare u uuid:='d1000000-0000-4000-8000-000000000001';starter uuid:='d2000
  r:=app_video_cost_reserve(u,starter,'lb-video-fit','reel','fal','bytedance/seedance/v1/pro/fast/image-to-video',repeat('b',64),4,2,2,'{}'::jsonb);
  perform pg_temp.ok((r->>'reserved')::boolean,'video hold admitted inside the envelope (985 + 4 <= 991)');
  perform pg_temp.ok(public.serving_ceiling_spent_cents(starter,now()-interval '10 days',now()+interval '20 days')=989,'open video hold counts');
- r:=serving_cost_reserve(u,starter,'lb-video-fit','video.reel_clip','fal','bytedance/seedance/v1/pro/fast/image-to-video',repeat('b',64),5,'verified');
+ r:=serving_cost_reserve(u,starter,'lb-video-fit','reel','fal','bytedance/seedance/v1/pro/fast/image-to-video',repeat('b',64),5,'verified');
  perform pg_temp.ok((r->>'reserved')::boolean and(r->>'spent_cents')::numeric=985,'the serving reservation for the same attempt replaces the legacy hold instead of adding to it');
  perform pg_temp.ok(public.serving_ceiling_spent_cents(starter,now()-interval '10 days',now()+interval '20 days')=990,'one attempt, one count (the serving hold)');
- perform serving_cost_finish(u,starter,'lb-video-fit','video.reel_clip','succeeded',null);
+ perform serving_cost_finish(u,starter,'lb-video-fit','reel','succeeded',null);
  r:=app_video_cost_settle(u,starter,'lb-video-fit','fal-request-1');
  perform pg_temp.ok((r->>'settled')::boolean,'video settles into the ledger');
  perform pg_temp.ok((select ledger_id=(r->>'ledger_id')::uuid from serving_cost_reservations where org_id=starter and request_key='lb-video-fit'),'the video ledger row binds the serving hold through the app-video reservation id');

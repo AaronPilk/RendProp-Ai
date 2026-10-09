@@ -1481,9 +1481,12 @@ enum APIError: Error, LocalizedError {
         return nil
     }
 
-    /// 402 — plan boundary / monthly allowance reached → show an "Upgrade plan"
-    /// CTA that opens the in-app StoreKit paywall (`PaywallRouter`).
-    var isQuota: Bool { status == 402 || code == "quota_exceeded" || code == "plan_required" }
+    /// Trial-wide capacity is separate from a customer's own allowance.
+    /// Purchasing a higher plan is not the recovery action for this refusal.
+    var isTrialCapacityUnavailable: Bool { code == "trial_capacity_unavailable" }
+    /// 402 — a customer's plan boundary / allowance reached → the in-app
+    /// StoreKit paywall. A typed trial capacity refusal never opens it.
+    var isQuota: Bool { !isTrialCapacityUnavailable && (status == 402 || code == "quota_exceeded" || code == "plan_required") }
     /// 401 — session expired/revoked → re-prompt sign-in.
     var isUnauthorized: Bool { status == 401 || code == "unauthorized" }
     /// 409 — duplicate / already complete / account deleting.
@@ -1521,6 +1524,7 @@ enum APIError: Error, LocalizedError {
     }
 
     var recoverySuggestion: String? {
+        if isTrialCapacityUnavailable { return "Try again later, or contact support. Your saved work is still here." }
         if isQuota { return "Upgrade your plan to continue." }
         if isRateLimited { return "Try again in a few minutes." }
         if isUnauthorized { return "Sign in again to continue." }

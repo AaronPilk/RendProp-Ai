@@ -43,6 +43,7 @@ begin
  perform video_erase_finish_stage(j,'mask','processing',mr);
  perform video_erase_finish_stage(j,'mask','processing',mr);
  perform pg_temp.direct_check((select count(*) from cost_ledger where meta->>'erase_job_id'=j::text)=1,'mask receipt accounts exactly once');
+ perform pg_temp.direct_check((select meta->>'request_key'=j::text and meta->>'stage'='reflection.mask' and model='/v2/video/segment/mask_by_prompt' from cost_ledger where meta->>'erase_job_id'=j::text),'mask ledger identifies its exact shared serving attempt');
  perform pg_temp.direct_check(org_month_spend_cents(o)=10 and video_erase_held_cents(o)=6,'mask ledger replaces only mask hold');
  perform video_erase_finish_stage(j,'mask','completed',null,'https://outputs.example.com/mask.mp4');
  perform pg_temp.direct_refuses(format('select video_erase_admit_stage(%L,%L,%L,%L)',o,u,j,'old-consent'),'RP403');
@@ -53,6 +54,7 @@ begin
  perform video_erase_finish_stage(j,'erase','completed',null,'https://outputs.example.com/edited.mp4');
  perform video_erase_finish_stage(j,'erase','completed',er,'https://outputs.example.com/edited.mp4');
  perform pg_temp.direct_check((select count(*) from cost_ledger where meta->>'erase_job_id'=j::text)=2 and org_month_spend_cents(o)=10,'erase receipt accounts once without doubling total COGS');
+ perform pg_temp.direct_check((select meta->>'request_key'=j::text and meta->>'stage'='reflection.erase' from cost_ledger where meta->>'erase_job_id'=j::text and model='/v2/video/edit/erase'),'erase ledger identifies its exact shared serving attempt');
  perform pg_temp.direct_check((select sum(total_cents) from cost_ledger where meta->>'erase_job_id'=j::text)=10 and (select bool_and(provider='bria' and meta->>'price_version'='synthetic-account-v1') from cost_ledger where meta->>'erase_job_id'=j::text),'stage costs use pinned account pricing');
  perform pg_temp.direct_refuses(format('select video_erase_finish(%L,%L,null,%L,%L)',j,'completed','https://cdn.example.com/video.mp4','video-reflections/another-org/output.mp4'),'RP400');
  r:=video_erase_finish(j,'completed',null,'https://cdn.example.com/video.mp4','video-reflections/'||o||'/'||j||'.mp4');
@@ -61,6 +63,7 @@ begin
  r:=video_erase_reserve(o,u,l,gen_random_uuid(),a,gen_random_uuid(),repeat('f',64),2); jj:=(r->'job'->>'id')::uuid;
  perform video_erase_finish(jj,'completed',fal,'https://fal.media/synthetic.mp4','synthetic/fal.mp4');
  perform pg_temp.direct_check((select provider='fal' and cost_cents=28 from video_erase_jobs where id=jj) and not exists(select 1 from video_erase_stages where job_id=jj),'legacy fal receipts retain transport and price');
+ perform pg_temp.direct_check((select c.meta->>'request_key'=v.idempotency_key::text and c.meta->>'stage'='reflection.fal' from cost_ledger c join video_erase_jobs v on v.cost_ledger_id=c.id where v.id=jj),'fal erase ledger identifies its exact shared serving attempt');
  -- Cancellation after masking releases the unpaid erase but preserves incurred mask COGS.
  r:=video_erase_reserve_direct(o,u,l,gen_random_uuid(),a,gen_random_uuid(),repeat('b',64),2,cfg,'bria-video-v1'); j:=(r->'job'->>'id')::uuid;
  perform video_erase_finish_stage(j,'mask','completed',mr,'https://outputs.example.com/mask.mp4');

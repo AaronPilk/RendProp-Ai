@@ -133,8 +133,6 @@ Deno.test("ceiling mode: refusals are quota the paywall can act on, name their k
     ["RP402: AI usage limit reached [kind=free] (300 of 300 cents this lifetime)", "Your free AI sample is used up. Subscribe to keep using AI tools."],
     ["RP402: AI usage limit reached [kind=trial] (500 of 500 cents this period)", "Your trial's AI allowance is used up. Your plan's full allowance starts with the paid period."],
     ["RP402: AI usage limit reached [kind=grace] (10 of 991 cents this period)", "AI tools are paused while Apple retries your subscription payment. They resume as soon as the renewal goes through."],
-    ["RP402: Free-trial AI limit reached [pool=cap]", "Free-trial AI is paused right now: the shared trial allowance is used up on our side. Nothing was charged. Your plan's own allowance starts with its paid period."],
-    ["RP402: Free-trial AI limit reached [pool=closed]", "Free-trial AI is paused right now: the shared trial allowance is used up on our side. Nothing was charged. Your plan's own allowance starts with its paid period."],
   ] as const) {
     const f = context({ reserveError: message });
     f.context.operationBegun = true;
@@ -143,6 +141,21 @@ Deno.test("ceiling mode: refusals are quota the paywall can act on, name their k
     assert(!dispatched);
     assertEquals(error.status, 402); assertEquals(error.code, "quota_exceeded"); assertEquals(error.message, expected);
     assertEquals(f.calls.map((call) => call.name), ["serving_cost_reserve", "serving_operation_no_dispatch"]);
+  }
+});
+
+Deno.test("shared trial capacity refusal stops dispatch and emits availability instead of an upgrade quota", async () => {
+  mode("ceiling");
+  for (const pool of ["cap", "closed"]) {
+    const f = context({ reserveError: `RP402: Free-trial AI limit reached [pool=${pool}]` });
+    f.context.operationBegun = true;
+    let dispatched = false;
+    const error = await assertRejects(() => serving.fundedAttempt(f.context, "photo.stage:0", step, {}, null, async () => { dispatched = true; return "image"; }), HttpError);
+    assert(!dispatched);
+    assertEquals(error.status, 402);
+    assertEquals(error.code, "trial_capacity_unavailable");
+    assertEquals(error.message, "Trial AI is temporarily unavailable. Nothing was charged. Please try again later or contact support.");
+    assertEquals(f.calls.map(call => call.name), ["serving_cost_reserve", "serving_operation_no_dispatch"]);
   }
 });
 

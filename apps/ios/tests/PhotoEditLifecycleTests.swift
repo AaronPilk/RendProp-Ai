@@ -7,12 +7,15 @@ struct Listing { let id: UUID; var cloudUnavailable: Bool? = nil }
 enum SpaceType { case realEstate }
 enum CloudSyncError: Error { case identityChanged }
 enum PhotoVersionHistory { enum Failure: Error { case missingImage } }
-enum SyntheticFailure: Error { case quota, unauthorized, recoverable }
+enum SyntheticFailure: Error { case quota, unauthorized, serviceUnavailable, trialCapacityUnavailable, recoverable }
+enum Analytics { static func trackAIFailure(_ event: String, step: String, error: Error) {} }
 struct AIFailure {
     let error: Error
     init(_ error: Error) { self.error = error }
     var isQuota: Bool { (error as? SyntheticFailure) == .quota }
     var isUnauthorized: Bool { (error as? SyntheticFailure) == .unauthorized }
+    var isServiceUnavailable: Bool { (error as? SyntheticFailure) == .serviceUnavailable }
+    var isTrialCapacityUnavailable: Bool { (error as? SyntheticFailure) == .trialCapacityUnavailable }
 }
 struct NotificationPrefs { var enabled = true; var renders = true }
 protocol NotificationPrefsAPI { func notificationPrefs() async throws -> NotificationPrefs? }
@@ -132,6 +135,21 @@ struct UNNotificationRequest {
         check(calls == ["one"] && PhotoWorkQueue.shared.job?.done == 1, "Leaving a screen does not cancel its edit")
         check(UIApplication.shared.ended.count == 1 && IdleTimer.releases == IdleTimer.holds, "Normal completion ends the exact leases once")
         check(UNUserNotificationCenter.shared.delivered[0].content.body.contains("1 of 1 photos changed"), "Notification uses completed output count")
+
+        for failure in [SyntheticFailure.quota, .unauthorized, .serviceUnavailable, .trialCapacityUnavailable] {
+            reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []
+            let refused = PhotoEditService(model: model, listing: listing, process: { photo in
+                calls.append(photo.id); throw failure
+            })
+            check(refused.start(title: "Refused", photos: [.init(id: "one"), .init(id: "never-start")], edit: "declutter", style: nil, prompt: nil), "Start refusal scenario")
+            await settle { IdleTimer.releases == 1 }
+            check(calls == ["one"] && PhotoWorkQueue.shared.job?.failures.count == 1 && PhotoWorkQueue.shared.job?.done == 0,
+                  "Allowance, session, provider and trial capacity refusals stop before uploading another photo")
+            check(PhotoWorkQueue.shared.job?.interrupted == true && UIApplication.shared.ended.count == 1 && IdleTimer.holds == IdleTimer.releases,
+                  "Refused batch preserves its failure and releases exact leases")
+            check(UNUserNotificationCenter.shared.delivered.isEmpty && model.testAPI.preferencesRead == 0,
+                  "A stopped batch cannot announce that the photos are ready")
+        }
 
         for boundary in ["owner", "session", "workspace", "delete", "unavailable"] {
             reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []

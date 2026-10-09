@@ -2502,6 +2502,7 @@ struct AIFailure: Identifiable {
     let isUnauthorized: Bool
     let isRateLimited: Bool
     let isServiceUnavailable: Bool
+    let isTrialCapacityUnavailable: Bool
 
     // No `pricingURL` here any more. A 402 on this screen offers the in-app
     // paywall and nothing else — see `Config.pricingURL` (retired, always nil).
@@ -2520,12 +2521,14 @@ struct AIFailure: Identifiable {
             isUnauthorized = api.isUnauthorized
             isRateLimited = api.isRateLimited
             isServiceUnavailable = api.isServiceUnavailable
+            isTrialCapacityUnavailable = api.isTrialCapacityUnavailable
         } else if AIFailure.isOffline(error) {
             message = "You're offline — check your connection and try again."
             isQuota = false
             isUnauthorized = false
             isRateLimited = false
             isServiceUnavailable = false
+            isTrialCapacityUnavailable = false
         } else {
             let text = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             message = text.isEmpty ? "Something went wrong. Please try again." : text
@@ -2533,6 +2536,7 @@ struct AIFailure: Identifiable {
             isUnauthorized = false
             isRateLimited = false
             isServiceUnavailable = false
+            isTrialCapacityUnavailable = false
         }
     }
 
@@ -2543,6 +2547,7 @@ struct AIFailure: Identifiable {
         isUnauthorized = false
         isRateLimited = false
         isServiceUnavailable = false
+        isTrialCapacityUnavailable = false
     }
 
     /// Re-word a failure WITHOUT losing what class of failure it is.
@@ -2559,6 +2564,7 @@ struct AIFailure: Identifiable {
         isUnauthorized = other.isUnauthorized
         isRateLimited = other.isRateLimited
         isServiceUnavailable = other.isServiceUnavailable
+        isTrialCapacityUnavailable = other.isTrialCapacityUnavailable
     }
 
     /// Server messages are written for a person and are shown verbatim —
@@ -2601,6 +2607,7 @@ struct AIFailure: Identifiable {
 
     /// One-line next step for the status class (empty when there is none).
     var actionHint: String {
+        if isTrialCapacityUnavailable { return "Try again later, or contact support. Your saved work is still here." }
         if isQuota { return "A plan upgrade unlocks this. Your saved work is still here." }
         if isUnauthorized { return "The connection to your workspace needs to be restored. Your work is still here." }
         if isRateLimited { return "Try again in a few minutes." }
@@ -2667,7 +2674,7 @@ private struct AIFailureCard: View {
                 Text(failure.actionHint)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
-            } else if failure.isServiceUnavailable {
+            } else if failure.isServiceUnavailable || failure.isTrialCapacityUnavailable {
                 Text(failure.actionHint)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
@@ -4868,7 +4875,7 @@ struct PhotoStudioView: View {
                     connection.run {}
                 }
             }
-            if f.isServiceUnavailable {
+            if f.isServiceUnavailable || f.isTrialCapacityUnavailable {
                 Button("Contact support") {
                     aiFailure = nil
                     UIApplication.shared.open(SettingsView.supportMailURL(subject: "AI edit failed — \(f.title)"))

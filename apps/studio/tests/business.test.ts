@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Workspace } from "../src/data/contracts";
 import type { StudioServices } from "../src/data/services";
 import { businessApi } from "../src/features/business/api";
-import { decodeServingEnvelope, envelopeMoney, envelopeResetLine, envelopeTitle } from "../src/data/serving-envelope";
+import { decodeServingEnvelope, envelopeMoney, envelopeResetLine, envelopeTitle, envelopeTrialLine, type ServingEnvelope } from "../src/data/serving-envelope";
 import { brandPayload, canEditLeads, canRemoveMember, contactLink, csv, decodeAccount, decodeClientDelivery, decodeCompliance, decodeInviteResults, decodeLeads, decodeNotifications, decodeTeam, filterLeads, inviteEmails, safeHTTPS, type Brand } from "../src/features/business/model";
 
 const user = "11111111-1111-4111-8111-111111111111", org = "22222222-2222-4222-8222-222222222222", listing = "33333333-3333-4333-8333-333333333333", id = "44444444-4444-4444-8444-444444444444";
@@ -36,15 +36,27 @@ test("workspace and user identity are checked on account hydration", () => {
   assert.equal(decodeAccount(me, workspace).servingEnvelope, null);
   assert.deepEqual(decodeAccount({ ...me, serving_envelope: envelope }, workspace).servingEnvelope, { kind: "retail", ceilingCents: 1682, spentCents: 120.5, heldCents: 8.36, availableCents: 1553.14, periodStart: "2026-10-01T00:00:00Z", periodEnd: "2026-11-01T00:00:00Z", window: "apple_term", pool: null });
   assert.equal(decodeAccount({ ...me, serving_envelope: { ...envelope, available_cents: 1700 } }, workspace).servingEnvelope, null);
+  assert.equal(decodeAccount({ ...me, serving_envelope: { ...envelope, available_cents: 1682 } }, workspace).servingEnvelope, null);
+  assert.equal(decodeServingEnvelope({ ...envelope, spent_cents: 1800, held_cents: 0, available_cents: 0 })?.availableCents, 0);
   assert.equal(decodeAccount({ ...me, serving_envelope: "ceiling" }, workspace).servingEnvelope, null);
   assert.equal(decodeAccount({ ...me, serving_envelope: { kind: 7 } }, workspace).servingEnvelope, null);
   assert.equal(decodeAccount({ ...me, serving_envelope: { ...envelope, kind: "trial", pool: { cap_cents: "x" } } }, workspace).servingEnvelope?.pool, null);
-  assert.deepEqual(decodeAccount({ ...me, serving_envelope: { ...envelope, kind: "trial", pool: { cap_cents: 29000, spent_cents: 1200.25, ends_at: "2026-11-08T00:00:00Z" } } }, workspace).servingEnvelope?.pool, { capCents: 29000, spentCents: 1200.25, endsAt: "2026-11-08T00:00:00Z" });
+  assert.deepEqual(decodeAccount({ ...me, serving_envelope: { ...envelope, kind: "trial", pool: { cap_cents: 29000, spent_cents: 1200.25, starts_at: "2026-10-08T00:00:00Z", ends_at: "2026-11-08T00:00:00Z" } } }, workspace).servingEnvelope?.pool, { capCents: 29000, spentCents: 1200.25, startsAt: "2026-10-08T00:00:00Z", endsAt: "2026-11-08T00:00:00Z" });
   assert.equal(envelopeMoney(120.5), "$1.21"); assert.equal(envelopeMoney(1553.14, false), "$15.53"); assert.equal(envelopeMoney(1682, false), "$16.82"); assert.equal(envelopeMoney(29000, false), "$290");
   assert.equal(envelopeTitle({ ...decodeServingEnvelope(envelope)!, kind: "free" }), "Free AI allowance");
   assert.match(envelopeResetLine(decodeServingEnvelope(envelope)!, (iso) => iso.slice(0, 10))!, /^Resets 2026-11-01 with your subscription period\.$/);
   assert.match(envelopeResetLine({ ...decodeServingEnvelope(envelope)!, kind: "free" }, (iso) => iso)!, /does not reset/);
   assert.match(envelopeResetLine({ ...decodeServingEnvelope(envelope)!, kind: "grace", window: "apple_grace" }, (iso) => iso.slice(0, 10))!, /^Billing grace ends 2026-11-01\./);
+  assert.match(envelopeResetLine({ ...decodeServingEnvelope(envelope)!, kind: "trial", window: "intro_window" }, (iso) => iso.slice(0, 10))!, /^Introductory AI allowance ends 2026-11-01\./);
+});
+test("trial capacity copy handles unavailable and ended pools without promising more AI", () => {
+  const now = Date.parse("2026-10-08T12:00:00Z"), format = (iso: string) => iso.slice(0, 10);
+  const trial: ServingEnvelope = { kind: "trial", ceilingCents: 500, spentCents: 0, heldCents: 0, availableCents: 500, periodStart: null, periodEnd: null, window: "trial_window", pool: { capCents: 29000, spentCents: 0, startsAt: "2026-10-08T00:00:00Z", endsAt: "2026-11-08T00:00:00Z" } };
+  assert.match(envelopeTrialLine(trial, format, now)!, /subject to available capacity until 2026-11-08/);
+  for (const pool of [null, { ...trial.pool!, startsAt: null }, { ...trial.pool!, startsAt: "2026-10-09T00:00:00Z" }, { ...trial.pool!, spentCents: 29000 }, { ...trial.pool!, endsAt: null }, { ...trial.pool!, endsAt: "2026-10-07T00:00:00Z" }]) {
+    assert.match(envelopeTrialLine({ ...trial, pool }, format, now)!, /temporarily unavailable/);
+  }
+  assert.equal(envelopeTrialLine({ ...trial, kind: "retail" }, format, now), null);
 });
 test("notification switches preserve false values and exact mute timestamps", () => {
   const expected = { ...prefs, muted_until: "2026-09-15T12:00:00Z" };

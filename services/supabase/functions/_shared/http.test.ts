@@ -53,6 +53,22 @@ Deno.test("unexpected SQL errors are unavailable responses, with no private SQL 
   assertEquals(quota.message, "photo limit reached");
 });
 
+Deno.test("trial pool RPC refusals retain a distinct availability code in the wire response", async () => {
+  for (const pool of ["cap", "closed"]) {
+    const error = assertThrows(() => throwRpc(`RP402: Free-trial AI limit reached [pool=${pool}]`), HttpError);
+    const response = respondError(error);
+    assertEquals(response.status, 402);
+    assertEquals(await response.json(), {
+      code: "trial_capacity_unavailable",
+      error: "Trial AI is temporarily unavailable. Nothing was charged. Please try again later or contact support.",
+    });
+  }
+  for (const kind of ["free", "trial", "retail"]) {
+    const error = assertThrows(() => throwRpc(`RP402: AI usage limit reached [kind=${kind}]`), HttpError);
+    assertEquals(error.code, "quota_exceeded");
+  }
+});
+
 function post(body: BodyInit, headers: Record<string, string> = {}): Request {
   return new Request("https://example.test/x", { method: "POST", body, headers });
 }

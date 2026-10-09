@@ -131,7 +131,7 @@ final class PhotoEditService {
                 let failure = AIFailure(error)
                 // A refused or unreachable generation service fails every photo
                 // the same way; stop instead of uploading N more to fail N times.
-                return failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable
+                return failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable || failure.isTrialCapacityUnavailable
             }, process: { id in
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
                 try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,

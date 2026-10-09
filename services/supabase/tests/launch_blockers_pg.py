@@ -29,7 +29,7 @@ ENV = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin", "LC_ALL": "C",
        "PGOPTIONS": "-c statement_timeout=30000 -c lock_timeout=15000"}
 PORT = "55481"
 SOURCES = [*sorted((SQL / "migrations").glob("*.sql")), SQL / "tests/ci-bootstrap.sql",
-           SQL / "tests/launch_blockers.sql", Path(__file__).resolve()]
+           SQL / "tests/launch_blockers.sql", SQL / "tests/serving_settlement_identity.sql", SQL / "tests/serving_grace.sql", Path(__file__).resolve()]
 receipt = {"kind": "owned disposable local PostgreSQL; no providers or hosted calls", "output": str(OUT),
            "commands": [], "sourceHashes": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}}
 
@@ -85,6 +85,8 @@ try:
     for m in sorted((SQL / "migrations").glob("*.sql")):
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("launch-blockers-fresh", [*psql, "-Atq", "-f", SQL / "tests/launch_blockers.sql"]).strip()
+    receipt["settlementIdentity"] = json.loads(run("settlement-identity", [*psql, "-Atq", "-f", SQL / "tests/serving_settlement_identity.sql"]).strip())
+    receipt["servingGrace"] = run("serving-grace", [*psql, "-Atq", "-f", SQL / "tests/serving_grace.sql"]).strip()
 
     actor = "e1000000-0000-4000-8000-000000000001"
     starter = "e2000000-0000-4000-8000-000000000001"

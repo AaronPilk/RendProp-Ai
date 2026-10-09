@@ -531,6 +531,7 @@ Deno.serve(async (req) => {
     const startedAt = Date.now();
     let uploadedName: string | null = null;
     let route: ChosenRoute = LEGACY_ROUTE;
+    let winningStage = "";
     let raw: { text: string; promptTokens: number | null; outputTokens: number | null; finishReason: string | null };
     try {
       // Route selection and signing can fail before any provider dispatch.
@@ -578,6 +579,7 @@ Deno.serve(async (req) => {
             fps: SAMPLE_FPS,
           }));
           route = candidate;
+          winningStage = `chapters:${i}`;
           await reportOutcome(router, candidate, true, Date.now() - attemptAt);
           break;
         } catch (e) {
@@ -644,6 +646,7 @@ Deno.serve(async (req) => {
       unitCents: route.unitCents,
       meta: {
         request_key: funding.requestKey,
+        stage: winningStage,
         asset_id: asset.id,
         space_type: space,
         chapters: chapters.length,

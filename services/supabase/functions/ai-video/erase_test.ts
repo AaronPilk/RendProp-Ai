@@ -122,11 +122,12 @@ function harness() {
     cancelDuringPersist = false,
     applied: O | null = null;
   const liabilities:unknown[]=[];
+  const holds:O[]=[];
   const rpc = async (name: string, args: O) => {
     // Explicit synthetic unlimited sponsorship for legacy provider protocol
     // cases. Finite paid admission is tested independently below.
     if (name === "org_has_internal_testing_grant") return {data:true,error:null};
-    if (name === "serving_cost_reserve") return {data:{reserved:true},error:null};
+    if (name === "serving_cost_reserve") {holds.push(args);return {data:{reserved:true},error:null};}
     if (name === "serving_cost_finish") {liabilities.push(args.p_state);return {data:{finished:true},error:null};}
     const action = name.replace("video_erase_", "");
     events.push("rpc:" + action);
@@ -412,6 +413,7 @@ function harness() {
     events,
     bodies,
     liabilities,
+    holds,
     jobs,
     set: (options: O) => {
       if ("provider" in options) provider = options.provider;
@@ -752,6 +754,10 @@ Deno.test("direct mask and erase each follow one durable admission; race polls n
       h.events.indexOf("direct-submit:erase"),
   );
   equal(h.bodies[1].mask, "https://outputs.example.com/mask.mp4");
+  equal(h.holds.map(hold => [hold.p_key,hold.p_stage,hold.p_provider,hold.p_model]),[
+    [id(10),"reflection.mask","bria","/v2/video/segment/mask_by_prompt"],
+    [id(10),"reflection.erase","bria","/v2/video/edit/erase"],
+  ]);
   const result = await (await h.status()).json();
   equal(result.status, "completed");
   equal(result.publishable, false);

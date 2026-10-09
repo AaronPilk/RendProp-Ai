@@ -30,11 +30,13 @@ assert 'usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanati
 # The shared AI budget (ceiling mode) is drawn above the meters in both the
 # package branch and the plan branch, and only from a checked envelope.
 assert rows.count('if let envelope = usage.servingEnvelope { envelopeRows(envelope) }') == 2
+assert rows.count('usage.servingEnvelope == nil,') == 3
 assert rows.index('if let envelope = usage.servingEnvelope { envelopeRows(envelope) }', legacy_branch) < rows.index('usageRow("Cloud tour renders"')
 envelope_rows = block(settings, 'private func envelopeRows(')
 assert 'LabeledContent(envelope.budgetTitle, value: envelope.budgetValue)' in envelope_rows
 assert all(line in envelope_rows for line in ['envelope.resetLine', 'envelope.heldLine', 'envelope.poolLine'])
 assert 'servingEnvelope: dto.servingEnvelope?.checked()' in live
+assert 'usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation' in settings
 assert 'usageLoadGeneration == generation' in block(settings, 'private func loadUsage(')
 revision_change = block(settings, '.onChange(of: auth.syncSessionRevision)')
 assert 'usage = nil; usageError = nil' in revision_change and 'await loadUsage()' in revision_change
@@ -75,6 +77,7 @@ faults = [
  ('dropped-package', 'servingPhotoPackage: dto.servingPhotoPackage', 'servingPhotoPackage: nil', 'Actual me forwards configured package'),
  ('envelope-unchecked', 'servingEnvelope: dto.servingEnvelope?.checked()', 'servingEnvelope: dto.servingEnvelope', 'Available above ceiling was drawn'),
  ('envelope-dropped', 'servingEnvelope: dto.servingEnvelope?.checked()', 'servingEnvelope: nil', 'Actual me forwards the serving envelope'),
+ ('envelope-overflow', 'spentCents >= 0, spentCents <= 100_000_000,', 'spentCents >= 0,', 'Overflowing spend was drawn'),
 ]
 results = []
 for name, old, new, expected in faults:

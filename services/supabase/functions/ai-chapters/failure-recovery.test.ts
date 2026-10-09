@@ -21,7 +21,7 @@ async function fixture(failure: Failure, removeAbort = false) {
     import {requiredIdempotencyKey} from ${JSON.stringify(new URL("../_shared/idempotency.ts", import.meta.url).href)};
     type ChaptersBody=any;type Charge=any;type RateChargeReceipt=any;type ChosenRoute=any;type RouteStep=any;
     const failure=${JSON.stringify(failure)};
-    export const state={charges:[] as string[],refunds:[] as string[],uploads:0,generations:0,deletions:0,attempts:0,abortCalls:0,closed:false,liability:false,saved:false};
+    export const state={charges:[] as string[],refunds:[] as string[],uploads:0,generations:0,deletions:0,attempts:0,abortCalls:0,closed:false,liability:false,saved:false,ledger:null as any};
     const BURST_MAX_PER_WINDOW=10,BURST_WINDOW_SECONDS=300,MONTH_SECONDS=2592000,DEFAULT_MAX_CHAPTERS=12,HARD_MAX_CHAPTERS=24,SOURCE_URL_TTL_SECONDS=900,MAX_VIDEO_BYTES=300000000,GEMINI_DEADLINE_MS=110000,SAMPLE_FPS=1;
     const LEGACY_ROUTE={provider:'gemini',model:'synthetic-model',unit:'call',unitCents:1,routeId:null};
     const handleOptions=()=>new Response(null,{status:204}),pathSegments=()=>[],requireGemini=()=>{},getUser=async()=>({id:'synthetic-user'}),userClient=()=>({}),preferredOrg=()=>null,orgForUser=async()=> 'synthetic-org';
@@ -50,7 +50,7 @@ async function fixture(failure: Failure, removeAbort = false) {
     const waitForActive=async()=>{},deleteFile=async()=>{state.deletions++;};
     const textAttemptQuote=()=>({cents:1,version:'synthetic-tariff'});
     const generateChapters=async()=>{state.generations++;if(failure==='generate')throw new HttpError(502,'Generation unavailable','upstream');return {text:'{}',promptTokens:1,outputTokens:1,finishReason:'STOP'};};
-    const reportOutcome=async()=>{},postprocessChapters=()=>({chapters:[],warnings:[] as string[]}),ledgerUnits=()=>90,recordAppAiCost=async()=>({total_cents:1}),recordProvenance=async()=>({id:'synthetic',recorded:true,disclosure:'Synthetic'});
+    const reportOutcome=async()=>{},postprocessChapters=()=>({chapters:[],warnings:[] as string[]}),ledgerUnits=()=>90,recordAppAiCost=async(args:any,receipt:any)=>{state.ledger=receipt;return {total_cents:1};},recordProvenance=async()=>({id:'synthetic',recorded:true,disclosure:'Synthetic'});
     async ${functionBody(source, "guardChapters")}
     async ${functionBody(source, "refundCharge")}
     ${functionBody(source, "errorClassOf")}
@@ -87,6 +87,8 @@ Deno.test("actual chapter success saves result and deletes uploaded provider fil
   const f=await fixture("none"),response=await f.handler(request());
   assertEquals(response.status,200);assertEquals(f.state.refunds,[]);assertEquals(f.state.abortCalls,0);
   assertEquals(f.state.generations,1);assertEquals(f.state.saved,true);assertEquals(f.state.deletions,1);
+  assertEquals(f.state.ledger.meta.stage,"chapters:0");
+  assertEquals(typeof f.state.ledger.meta.request_key,"string");
 });
 Deno.test("compiled removed predispatch closure fails the same chapter recovery boundary",async()=>{
   const f=await fixture("sign",true),response=await f.handler(request());assert(response.status>=500);

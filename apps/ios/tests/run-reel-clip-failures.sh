@@ -6,6 +6,7 @@ trap 'rm -rf "$reel_clip_test_dir"' EXIT
 python3 - "$reel_clip_test_root" "$reel_clip_test_dir/Production.swift" "${1:-}" <<'PY'
 import pathlib,sys
 root=pathlib.Path(sys.argv[1]);source=(root/'apps/ios/Rendprop/Screens/FlythroughDetailView.swift').read_text();api=(root/'apps/ios/Rendprop/Networking/APIClient.swift').read_text()
+live=(root/'apps/ios/Rendprop/Networking/LiveAPIClient.swift').read_text()
 def block(text,marker):
  assert text.count(marker)==1,marker
  start=text.index(marker);opening=text.index('{',start);depth,end=1,opening+1
@@ -13,6 +14,7 @@ def block(text,marker):
   depth+=(text[end]=='{')-(text[end]=='}');end+=1
  return text[start:end]
 apierror=block(api,'enum APIError: Error, LocalizedError')
+error_adapter='enum LiveErrorFixture {\n'+block(live,'private struct ErrorEnvelope: Decodable')+'\n'+block(live,'static func serverError(status:')+'\n}\n'
 job=block(api,'struct AIVideoJob: Codable, Sendable')
 failure=source[source.index('struct AIFailure: Identifiable'):source.index('/// Loud, unmissable failure card')]
 issue=source[source.index('struct ReelClipIssue: Identifiable'):source.index('struct ReelStudioView: View')]
@@ -34,6 +36,9 @@ assert 'failure = ReelClipIssue.failure(for: error' in source
 assert 'Button("Finish reel from saved clips") { finishParkedReel() }' in source
 assert 'Button("Back to reel setup") { resetToSetup() }' in source
 assert source.count('clipFailureDetails')>=3
+assert 'failure.isServiceUnavailable || failure.isTrialCapacityUnavailable' in source
+assert 'f.isServiceUnavailable || f.isTrialCapacityUnavailable' in source
+assert 'failure.isServiceUnavailable || failure.isTrialCapacityUnavailable' in (root/'apps/ios/Rendprop/Photos/PhotoEditService.swift').read_text()
 if sys.argv[3]=='--inject-swallowed-error':
  assert loop.count('throw error')==1
  loop=loop.replace('throw error','// restored silent continuation')
@@ -79,7 +84,7 @@ __LOOP__
 __PARK__
 }
 '''
-pathlib.Path(sys.argv[2]).write_text('import Foundation\nimport CryptoKit\nenum AIImagePrep { static func error(_ m:String)->Error { NSError(domain: \"synthetic\", code:1,userInfo:[NSLocalizedDescriptionKey:m]) } }\n@MainActor final class AIConsent { static let shared=AIConsent();var isGranted=true;var revocationRevision=0 }\n'+apierror+'\n'+job+'\n'+failure+'\n'+issue+'\n'+pending+'\n'+harness.replace('__LOOP__',loop).replace('__PARK__',park))
+pathlib.Path(sys.argv[2]).write_text('import Foundation\nimport CryptoKit\nenum AIImagePrep { static func error(_ m:String)->Error { NSError(domain: \"synthetic\", code:1,userInfo:[NSLocalizedDescriptionKey:m]) } }\n@MainActor final class AIConsent { static let shared=AIConsent();var isGranted=true;var revocationRevision=0 }\n'+apierror+'\n'+error_adapter+'\n'+job+'\n'+failure+'\n'+issue+'\n'+pending+'\n'+harness.replace('__LOOP__',loop).replace('__PARK__',park))
 PY
 xcrun swiftc -swift-version 5 -parse-as-library \
   "$reel_clip_test_dir/Production.swift" \

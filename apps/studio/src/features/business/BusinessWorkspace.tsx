@@ -244,9 +244,9 @@ function AccountDetails({ account, workspace, services, api, onChanged, allowanc
   const expiredTrial = account.trialUsage?.status === "expired";
   const activationPending = serviceActivationPending(account) && !allowanceUnavailable;
   const planUnavailable = allowanceUnavailable || (account.degraded && !activationUnavailable);
-  const trialVisible = account.trialUsage && !allowanceUnavailable && (!account.degraded || activationUnavailable);
+  const trialVisible = !account.servingEnvelope && account.trialUsage && !allowanceUnavailable && (!account.degraded || activationUnavailable);
   const planLabel = planUnavailable || !account.plan ? "Temporarily unavailable"
-    : account.trialUsage && !expiredTrial && account.plan !== "trial" && account.plan !== "free" ? `${account.plan} trial` : account.plan;
+    : trialVisible && !expiredTrial && account.plan !== "trial" && account.plan !== "free" ? `${account.plan} trial` : account.plan;
   const [preferences, setPreferences] = useState<Notifications>(account.notifications), [saved, setSaved] = useState(account.notifications), action = useAction();
   const [deleting, setDeleting] = useState(false), [confirmation, setConfirmation] = useState(""), [acknowledged, setAcknowledged] = useState(false);
   const [deletion, setDeletion] = useState<{ accountDeleted: boolean; complete: boolean; needsSupport: boolean; requestId: string } | null>(null);

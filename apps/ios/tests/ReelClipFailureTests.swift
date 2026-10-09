@@ -25,11 +25,14 @@ enum FileStore {
             (503, "upstream", "All providers unavailable"),
             (500, "internal", "Internal provider problem"),
             (402, "quota_exceeded", "Your clip allowance is used up."),
+            (402, "trial_capacity_unavailable", "Trial AI is temporarily unavailable. Your saved work is still here."),
             (401, "unauthorized", "Expired session"),
             (429, "rate_limited", "Too many requests"),
             (400, "validation", "Choose a supported camera move."),
         ] {
-            let error=APIError.server(status: status,code: code,message: message)
+            let wire=try JSONSerialization.data(withJSONObject:["error":message,"code":code])
+            let error=LiveErrorFixture.serverError(status:status,data:wire)
+            check(error.code == code && error.errorDescription == message, "Actual server error decoder preserves the machine code and readable message")
             let api=ClipAPI(errors: [0:error]);let run=ReelBatchHarness(api:api)
             let id=UUID();let dir=FileManager.default.temporaryDirectory.appendingPathComponent("clip-test-\(id)")
             try await run.run(count:8,listingID:id,tmpDir:dir)
@@ -38,18 +41,25 @@ enum FileStore {
             check(run.clipIssues.count==1 && run.clipIssues[0].photoNumber==1, "Keep the exact failed-photo position")
             check(run.completedClips==1, "Completed attempts includes the failed photo")
             let visible=run.clipIssues[0].failure
-            check(visible.isQuota==(status==402), "Preserve quota recovery action")
+            check(visible.isQuota==(status==402 && code != "trial_capacity_unavailable"), "Preserve customer quota recovery without upselling trial capacity")
             check(visible.isUnauthorized==(status==401), "Preserve workspace recovery action")
             check(visible.isRateLimited==(status==429), "Preserve wait recovery action")
             check(visible.isServiceUnavailable==(status>=500), "Preserve service-unavailable recovery when the failure message is rewritten")
+            check(visible.isTrialCapacityUnavailable==(code=="trial_capacity_unavailable"), "Preserve typed capacity recovery when the failure message is rewritten")
             check(!visible.message.contains("private provider payload") && !visible.message.contains("Nothing was charged"), "No raw payload or unsupported billing claim")
             if status>=500 {
                 check(visible.message.contains("unavailable"), "Make upstream outage actionable")
                 check(visible.actionHint.contains("contact support"), "Copied upstream failure retains the support next step")
             }
+            if code=="trial_capacity_unavailable" {
+                check(visible.actionHint.contains("contact support") && !visible.actionHint.contains("upgrade"), "Trial capacity offers support without promising a plan upgrade fixes it")
+                check(error.recoverySuggestion?.contains("Upgrade") == false, "API recovery does not upsell trial capacity")
+            }
             if status==400 { check(visible.message==message, "Keep a readable per-photo validation reason") }
             check(!FileManager.default.fileExists(atPath:dir.path), "Clean the empty failed-run temporary directory")
         }
+        let plain402=LiveErrorFixture.serverError(status:402,data:Data("{\"error\":\"Trial AI is temporarily unavailable. Your saved work is still here.\",\"code\":\"quota_exceeded\"}".utf8))
+        check(plain402.isQuota && !plain402.isTrialCapacityUnavailable, "Only the typed capacity code changes quota routing, not matching prose")
         let raw=NSError(domain:"offline-test",code:1,userInfo:[NSLocalizedDescriptionKey:"fal HTTP 422: {\"detail\":\"private image bytes\"}"])
         let issue=ReelClipIssue(photoNumber:3,error:raw)
         check(issue.failure.message.contains("Review the photo"), "Safe next step for an unclassified provider rejection")

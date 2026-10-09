@@ -1,0 +1,173 @@
+{
+  "schema": 1,
+  "recordedAtUTC": "2026-10-09T00:44:27.937683+00:00",
+  "status": "staged-verification-passed-with-open-launch-gates",
+  "reviewedClaudeCommit": "b320700",
+  "mergeCommit": "1cbaa22415612c0eacf912dd184e518090b97baa",
+  "branch": "audit/launch-alignment-20261008",
+  "sourceHashes": {
+    ".github/workflows/ci.yml": "17359a23a7cd18d9c44f4518436083ba6b5ce1968d55af73d1f6214bb65c2f18",
+    "apps/ios/Rendprop/Networking/APIClient.swift": "9cd3d824e24cb3dfa5a7dfa1d84ce01d79185a96cb106b4c6531c9aeabaed6db",
+    "apps/ios/Rendprop/Photos/PhotoEditService.swift": "f14a07b52e04b681b9040eb8d366c7aeffb41f03243fd4267d3d4ffe62cecc2a",
+    "apps/ios/Rendprop/Purchases/SubscriptionBillingContext.swift": "2516ef9e9f0167843c3d7d4b8d83fec29165d7378428ee3904f28aa084c09fd3",
+    "apps/ios/Rendprop/Screens/FlythroughDetailView.swift": "d2962a9b99e37d1d521f0bc0d9d883a9280701d960a5e88bba283e9b7e0b0d9b",
+    "apps/ios/Rendprop/Screens/SettingsView.swift": "281a0b002159bc86169e1e432700b51d1446d36bc4e958c7fb4dd7e373001fce",
+    "apps/ios/tests/PhotoEditLifecycleTests.swift": "682e5df09dd8932b62aa241cab44885f083b954c0d6c800c20e6a290d6c52f82",
+    "apps/ios/tests/ReelClipFailureTests.swift": "688c2b07c6cc8bc0671e9a631bee7763c9298d3d226e3089a649642fe459b587",
+    "apps/ios/tests/ServingPhotoPackageTests.swift": "9210afdc82687d37c45e408e5435824b2c62c72432215a5a147a01e62f811eb9",
+    "apps/ios/tests/run-reel-clip-failures.sh": "370f51909a51f688906b7d8127b40d281079d29273ada10b115621b123d066e0",
+    "apps/ios/tests/run-serving-photo-package.py": "d70f6aeba826482fb9cf72daf33cf8dbd560e006946358dedf1a2380ebcc1519",
+    "apps/studio/src/data/services.ts": "609da06f13eb183764700f5162e8963a8c818934719a2fd1acc2a730cfea46d3",
+    "apps/studio/src/data/serving-envelope.ts": "fd9296a8a4e1597a9dd523a398f79ecce0ffbb3a834f0314cb8e2e16da4c5157",
+    "apps/studio/src/features/business/BusinessWorkspace.tsx": "cc90a936ad7dc447201853ef7ec76e7d8632ed30b11449df9bf99556a07ff877",
+    "apps/studio/src/features/business/ServingEnvelopeCard.tsx": "c4bfc01a06b76a46eeefb2ec046ccbb0401655d16555b04de5e8d59979d91bfa",
+    "apps/studio/tests/business.test.ts": "bef3521a5eb08728cd420a4e9d0d0d2e2aac7243dcc30c44522b3c8a958531fe",
+    "apps/studio/tests/data.test.ts": "efcc6f4d69cd1729f8abc5ece760fd78f58e420c672bf772b0db778a113237a1",
+    "services/supabase/functions/_shared/funded-serving.ts": "91bd5d946b443ffa34602c77631c2eb6a0308d330da0f5399be2949a04c02ba7",
+    "services/supabase/functions/_shared/http.test.ts": "eb2e4dfae0433a8ab0a9435e7e9c151539cf031cf94033c557813de3a4551de5",
+    "services/supabase/functions/_shared/http.ts": "506eae012fd1cf27a25b5cfd844f1981f39aea441f0e87388f9ab69fdd442ca7",
+    "services/supabase/functions/_shared/serving-mode.test.ts": "b985253ed9c8c283be263608505597c4dd85f33871fce1736f9097f88c5d7d26",
+    "services/supabase/functions/ai-chapters/failure-recovery.test.ts": "eb468107c341f995cb6a3efdb34b6349ef350d9fadb6d46dce00b3c70017f039",
+    "services/supabase/functions/ai-chapters/index.ts": "374a82c7c128d8460ca4bd0fbd51bc8dfec6e59c51679d12c421a034c9180ee1",
+    "services/supabase/functions/ai-copy/agentreel_handler_test.ts": "4fab008f8f4831e199ac76ef9aea4b940696c0f2558bce69643c07f549e09103",
+    "services/supabase/functions/ai-copy/index.ts": "137cffd3f91bdd69ce4feff367948319e861f7dd52536556ea76d508603572cb",
+    "services/supabase/functions/ai-video/cost-reservation.test.ts": "1bae8e6bf90f5b281808a66c3111392c76d9c1ef610e3fac7ba00e13aeeeb835",
+    "services/supabase/functions/ai-video/erase.ts": "3265c04e24e1a1642bfa7a633afd446b26d47b6384141e8cb4db390c50a9ac3c",
+    "services/supabase/functions/ai-video/erase_test.ts": "015c97f7cd7ed132f575de9dfac850ec6891e3eb1455c18e8c7262926c798df2",
+    "services/supabase/functions/ai-voice/index.ts": "e71f216780a59c9774c0314ad1cc619df67d65ce92c6d89b24a784d3fefda8f8",
+    "services/supabase/migrations/20261009003159_launch_settlement_identity.sql": "fe11aa2fc0771e6e8f7dbf4e214ab1b561e8b62695c93b86f31497b0f64cfb3e",
+    "services/supabase/migrations/20261009003326_carry_paid_allowance_through_grace.sql": "d94f4ed07a290232fea666d9dfac7cb9af24b7c0342eac42d62ec0cefa351ab5",
+    "services/supabase/tests/launch_blockers.sql": "3e8d1c2bc75ec9b8327ad7207ffa04319e40adc69a50e2192ff0d11cf82cd4c3",
+    "services/supabase/tests/launch_blockers_pg.py": "63dabd39dd1073335c20fb101161e93bb1f537cfd60bd3a50837218028bed4fd",
+    "services/supabase/tests/serving_grace.sql": "d587e1af87381c4a6df26b12d98d5eb5faf7d73c581ff72f74e661d0b80393a5",
+    "services/supabase/tests/serving_settlement_identity.sql": "fad60c32bb3433e12cef95f5ef6498f48ec457953c4008805b86f1e88374fb01",
+    "services/supabase/tests/video_erase_direct_bria.sql": "c6542f4001ee075191a865af4412c355f5b81005683b100d85c72abcd6bfd0dc",
+    "tools/audit/run_database_regression.py": "35d6ab05e520042f967a2bea689d5595fec8460636e122c4f68c1fd0c388edc7"
+  },
+  "productionReadback": {
+    "migration": "20261008235218",
+    "versions": {
+      "ai-photo": 61,
+      "ai-video": 59,
+      "ai-copy": 28,
+      "ai-chapters": 34,
+      "ai-voice": 43,
+      "coach": 30,
+      "studio": 26,
+      "me": 58,
+      "notify": 20
+    },
+    "mode": "ceiling",
+    "appleCommissionBps": 3000,
+    "netMarginBps": 7500,
+    "readOnly": true,
+    "additionalFixesDeployed": false
+  },
+  "checks": {
+    "database": {
+      "passed": true,
+      "migrations": 123,
+      "launchAssertions": 176,
+      "settlementAssertions": 20,
+      "graceAssertions": 35,
+      "totalAssertions": 231,
+      "admissionPublicationSandboxRaces": true,
+      "negativeControls": true,
+      "receiptSha256": "dbc88d60f45b519c7e298d75537c4f280e25b54864c2b40f3536614a439648bc"
+    },
+    "deno": {
+      "passed": 1803,
+      "failed": 0,
+      "ignored": 1,
+      "runtimeNetworkDenied": true
+    },
+    "native": {
+      "sdk": {
+        "passed": true,
+        "exit": 0,
+        "configuration": "Release",
+        "sdk": "iphonesimulator",
+        "destination": "generic/platform=iOS Simulator",
+        "codeSigningAllowed": false,
+        "currentProjectVersionOverride": 52,
+        "spatialCaptureLabCompilationCondition": false,
+        "log": "/Users/pilksclaes/LocalRendpropAudits/launch-round2-20261008/native/release-simulator-final-source-build.log"
+      },
+      "envelopeChecks": 158,
+      "compiledNegativeControls": 12,
+      "reelChecks": 119,
+      "photoLifecycleChecks": 81,
+      "opsDispatcherSyntheticTests": 9,
+      "sourceHashesMatch": true
+    },
+    "studio": {
+      "testsPassed": 469,
+      "failed": 0,
+      "productionBuild": true,
+      "totalGzipBytes": 342720,
+      "totalGzipBudgetBytes": 350000,
+      "connectedConfigVerified": false,
+      "wranglerDryRun": true
+    },
+    "site": {
+      "predeploy": true,
+      "unbrandedAssertions": 687,
+      "unbrandedGateControls": 19,
+      "routeAssertions": 732,
+      "upstreamAssertions": 782,
+      "privateMediaChecks": 93,
+      "wranglerDryRun": true
+    }
+  },
+  "backendPackage": {
+    "mode": "dry-run",
+    "status": "staged",
+    "functions": [
+      "ai-photo",
+      "ai-video",
+      "ai-copy",
+      "ai-chapters",
+      "ai-voice",
+      "coach",
+      "studio",
+      "me",
+      "notify"
+    ],
+    "stagedFiles": 125,
+    "jwtPolicy": {
+      "ai-photo": true,
+      "ai-video": true,
+      "ai-copy": true,
+      "ai-chapters": true,
+      "ai-voice": true,
+      "coach": true,
+      "studio": true,
+      "me": false,
+      "notify": false
+    },
+    "manifestReceiptSha256": "7a5717c36c11e8b34d1ef85d06448d60b4707020ac3978ecf3999cafbc0a9bf4"
+  },
+  "externalActions": {
+    "providerGenerations": 0,
+    "hostedWrites": 0,
+    "appleWrites": 0,
+    "archives": 0,
+    "testflightUploads": 0,
+    "publicSubmissions": 0
+  },
+  "remainingLaunchGates": [
+    "Complete supplier usage/liability and enforced input bounds",
+    "Verified transaction proceeds and useful fully priced allowances",
+    "Persist signed paid expiry/offer facts and qualify commercial billing grace",
+    "Explicit new-contract/content retention cohorts preserving testers",
+    "Authorized non-owner photo/reel/aerial output and charge acceptance",
+    "Credential cutover, dated launch funding and served release verification"
+  ],
+  "lastVerifiedTestFlight": {
+    "version": "1.0.4",
+    "build": 51,
+    "source": "2c567a5",
+    "isThisSource": false
+  },
+  "handoff": "docs/handoff/CODEX-LAUNCH-ROUND2-REVIEW-20261008.md"
+}

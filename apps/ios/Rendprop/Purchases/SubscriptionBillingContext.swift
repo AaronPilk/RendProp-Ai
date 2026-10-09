@@ -58,6 +58,7 @@ struct ServingEnvelopeSummary: Codable, Hashable, Sendable {
     struct Pool: Codable, Hashable, Sendable {
         let capCents: Double?
         let spentCents: Double?
+        let startsAt: String?
         let endsAt: String?
     }
     let kind: String?
@@ -105,10 +106,14 @@ struct ServingEnvelopeSummary: Codable, Hashable, Sendable {
     func checked() -> Self? {
         guard let kind, !kind.isEmpty, let ceilingCents, let spentCents, let heldCents, let availableCents,
               ceilingCents.isFinite, spentCents.isFinite, heldCents.isFinite, availableCents.isFinite,
-              ceilingCents >= 0, ceilingCents <= 100_000_000, spentCents >= 0, heldCents >= 0, availableCents >= 0,
-              availableCents <= ceilingCents + 0.01 else { return nil }
+              ceilingCents >= 0, ceilingCents <= 100_000_000,
+              spentCents >= 0, spentCents <= 100_000_000,
+              heldCents >= 0, heldCents <= 100_000_000, availableCents >= 0,
+              availableCents <= ceilingCents + 0.01,
+              abs(availableCents - max(0, ceilingCents - spentCents - heldCents)) <= 0.02 else { return nil }
         if let pool {
-            guard let cap = pool.capCents, let spent = pool.spentCents, cap.isFinite, spent.isFinite, cap >= 0, spent >= 0 else { return nil }
+            guard let cap = pool.capCents, let spent = pool.spentCents, cap.isFinite, spent.isFinite,
+                  cap >= 0, cap <= 100_000_000, spent >= 0, spent <= 100_000_000 else { return nil }
         }
         return self
     }
@@ -143,22 +148,27 @@ struct ServingEnvelopeSummary: Codable, Hashable, Sendable {
         switch window {
         case "trial_window": return "Trial budget ends \(when)."
         case "apple_grace": return "Billing grace ends \(when). Renew to restore the full budget."
-        case "apple_term", "apple_slice", "intro_window": return "Resets \(when) with your subscription period."
+        case "intro_window": return "Trial allowance ends \(when). Your paid subscription starts after the trial unless canceled."
+        case "apple_term", "apple_slice": return "Resets \(when) with your subscription period."
         case "calendar_month": return "Resets \(when)."
         default: return "Resets \(when)."
         }
     }
-    var poolLine: String? {
-        guard isTrial, let pool, let cap = pool.capCents, let spent = pool.spentCents else { return nil }
-        let left = max(0, cap - spent)
-        var line = "Trials share a reviewed sponsor pool: \(Self.money(left, up: false)) of \(Self.money(cap, up: false)) left"
-        if let ends = pool.endsAt.flatMap(TrialUsageSummary.date) { line += ", closing \(ends.formatted(date: .abbreviated, time: .omitted))" }
-        return line + "."
+    var poolLine: String? { capacityLine(now: Date()) }
+    func capacityLine(now: Date) -> String? {
+        guard isTrial else { return nil }
+        guard let pool, let cap = pool.capCents, let spent = pool.spentCents,
+              cap.isFinite, spent.isFinite, cap > 0, spent >= 0, spent < cap,
+              let start = pool.startsAt.flatMap(TrialUsageSummary.date),
+              let end = pool.endsAt.flatMap(TrialUsageSummary.date),
+              start <= now, end > now, end > start else { return "Trial AI capacity is unavailable right now." }
+        return "Trial AI is available until \(end.formatted(date: .abbreviated, time: .omitted)), while trial capacity remains."
     }
     var heldLine: String? {
         guard let heldCents, heldCents > 0 else { return nil }
         return "\(Self.money(heldCents)) is reserved for work still running."
     }
+    static let explanation = "Photos, videos and other AI tools share this allowance on iPhone and Studio. Check the available allowance before starting a new edit."
 }
 
 /// Recorded Apple subscription identity and usable service are separate.

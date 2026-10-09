@@ -511,6 +511,7 @@ Deno.serve(async (req) => {
       // the compliance check — a different provider is a genuinely different
       // answer, which is the point of retrying at all.
       let lastStep: RouteStep = chain[0];
+      let lastStage = "";
       const written = await guardedCopy({
         gate: "marketing",
         input: brief,
@@ -535,6 +536,7 @@ Deno.serve(async (req) => {
           const attempt = await runChain(task, chain, (step) =>
             fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn)));
           lastStep = attempt.step;
+          lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
           return attempt.value;
         },
       });
@@ -561,7 +563,7 @@ Deno.serve(async (req) => {
         orgId,
         feature: "copy_assist",
         step: lastStep,
-        meta: { kind: "reel_script", target_seconds: targetSeconds, attempts: written.attempts, request_key: funding.requestKey },
+        meta: { kind: "reel_script", target_seconds: targetSeconds, attempts: written.attempts, request_key: funding.requestKey, stage: lastStage },
       });
 
       const script = written.text;
@@ -642,6 +644,7 @@ Deno.serve(async (req) => {
       // rules costs the whole attempt, gets the one retry, and is then refused
       // honestly, exactly as a bad script is.
       let lastStep: RouteStep = chain[0];
+      let lastStage = "";
       const parsed: ShotlistAnswer[] = [];
       const written = await guardedCopy({
         gate: "marketing",
@@ -663,6 +666,7 @@ Deno.serve(async (req) => {
           const attempt = await runChain(task, chain, (step) =>
             fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_SHOTLIST_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_SHOTLIST_TOKENS)));
           lastStep = attempt.step;
+          lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
           return attempt.value;
         },
       });
@@ -685,6 +689,7 @@ Deno.serve(async (req) => {
         step: lastStep,
         meta: {
           request_key: funding.requestKey,
+          stage: lastStage,
           kind: "shotlist",
           target_seconds: targetSeconds,
           attempts: written.attempts,
@@ -813,6 +818,7 @@ Deno.serve(async (req) => {
       // reason shotlist.ts gives: a whitespace join could manufacture a phrase
       // across the seam that exists in neither caption.
       let lastStep: RouteStep = chain[0];
+      let lastStage = "";
       const parsed: AgentReelAnswer[] = [];
       const written = await guardedCopy({
         gate: "marketing",
@@ -837,6 +843,7 @@ Deno.serve(async (req) => {
           const attempt = await runChain(task, chain, (step) =>
             fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_AGENT_REEL_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_AGENT_REEL_TOKENS)));
           lastStep = attempt.step;
+          lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
           return attempt.value;
         },
       });
@@ -856,6 +863,7 @@ Deno.serve(async (req) => {
         step: lastStep,
         meta: {
           request_key: funding.requestKey,
+          stage: lastStage,
           kind: "agent_reel",
           subject,
           clip_seconds: Math.round(clipSeconds),
@@ -903,6 +911,7 @@ Deno.serve(async (req) => {
     const turn = `The user's idea: ${rough}`;
 
     let lastStep: RouteStep = chain[0];
+    let lastStage = "";
     const polished = await guardedCopy({
       // An image-edit idea, so it gets ai-photo's own gate for this exact text
       // (the denylist with its ADD-verb tier), not the script rules.
@@ -925,6 +934,7 @@ Deno.serve(async (req) => {
         const attempt = await runChain(task, chain, (step) =>
           fundedAttempt(funding, `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(step)}`, step, {system, turn: isRetry ? turn + RETRY_NOTE : turn}, textAttemptQuote(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_TOKENS), () => callStep(step, system, isRetry ? turn + RETRY_NOTE : turn)));
         lastStep = attempt.step;
+        lastStage = `${task}:${isRetry ? "retry" : "initial"}:${chain.indexOf(attempt.step)}`;
         return attempt.value;
       },
     });
@@ -934,7 +944,7 @@ Deno.serve(async (req) => {
       orgId,
       feature: "copy_assist",
       step: lastStep,
-      meta: { kind: "photo_prompt", target_seconds: null, attempts: polished.attempts, request_key: funding.requestKey },
+      meta: { kind: "photo_prompt", target_seconds: null, attempts: polished.attempts, request_key: funding.requestKey, stage: lastStage },
     });
 
     return json(await completeFundingOperation(funding, { prompt: polished.text, model: lastStep.model }));

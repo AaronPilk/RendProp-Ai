@@ -869,7 +869,7 @@ struct SettingsView: View {
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text(usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : usage?.servingEnvelope != nil ? "Allowances are shared by this workspace. AI work is admitted against the AI budget shown above the meters, which is sized to your plan's service period; a request that would exceed it is declined before any provider is called. Pull down to refresh." : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
+            Text(usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -928,17 +928,19 @@ struct SettingsView: View {
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
             }
         }
-        if let trial = usage.trialUsage, trial.status != .active {
+        // A checked ceiling envelope describes the current serving period.
+        // An older funded-trial record must not hide it or replace its copy.
+        if usage.servingEnvelope == nil, let trial = usage.trialUsage, trial.status != .active {
             trialUsageRows(trial)
             if let package = usage.servingPhotoPackage { photoPackageRows(package) }
-        } else if usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
+        } else if usage.servingEnvelope == nil, usage.servingActivation?.shouldShowPending(plan: usage.planName, recordedTrial: usage.trialUsage) == true {
             LabeledContent("Service", value: ServingActivationSummary.pendingTitle)
             if let plan = usage.entitlements {
                 LabeledContent("Recorded subscription", value: Self.planLabel(plan))
             }
             Text(ServingActivationSummary.pendingExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)
             if let trial = usage.trialUsage { trialUsageRows(trial) }
-        } else if let trial = usage.trialUsage {
+        } else if usage.servingEnvelope == nil, let trial = usage.trialUsage {
             trialUsageRows(trial)
             if let package = usage.servingPhotoPackage { photoPackageRows(package) }
         } else if let package = usage.servingPhotoPackage {

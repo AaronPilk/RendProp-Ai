@@ -350,7 +350,7 @@ export function createEraseHandler(deps: EraseDeps) {
     try {
       const input = { videoUrl, durationSeconds: Number(job.duration_s) };
       const funding: FundingContext = {actorId:ctx.userId,orgId:ctx.orgId,requestKey:String(job.id),rpc:(name,args)=>deps.rpc(name,args) as Promise<{data:unknown;error:{message?:string}|null}>};
-      ref = await fundedAttempt(funding, `reflection.${name}`, {provider:"bria",model:BRIA_MODEL}, input, null, async () => {dispatched=true; return name === "mask"
+      ref = await fundedAttempt(funding, `reflection.${name}`, {provider:"bria",model:name === "mask" ? "/v2/video/segment/mask_by_prompt" : "/v2/video/edit/erase"}, input, null, async () => {dispatched=true; return name === "mask"
         ? await adapter.submitMask({ ...input, prompt: ERASE_MASK_PROMPT })
         : await adapter.submitErase(
           input,

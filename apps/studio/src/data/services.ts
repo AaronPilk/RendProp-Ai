@@ -415,12 +415,18 @@ export function createStudioServices(
                       : "Rendprop could not complete this request. Please retry.";
               // Existing Edge Functions return user-facing HttpError messages. Never
               // echo provider/5xx bodies or URLs, which may contain signed capabilities.
-              if ([400, 409, 413, 422].includes(response.status)) {
+              if ([400, 402, 409, 413, 422].includes(response.status)) {
                 try {
-                  const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown };
-                  if (typeof detail.error === "string" && detail.error.length <= 400 &&
+                  const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown; code?: unknown };
+                  if (response.status === 402 && detail.code === "trial_capacity_unavailable") {
+                    throw new StudioError("trial_capacity_unavailable", "Trial AI is temporarily unavailable. Please try again later or contact support. Your saved work is unchanged.", 402);
+                  }
+                  if (response.status !== 402 && typeof detail.error === "string" && detail.error.length <= 400 &&
                     !/https?:|bearer|token|signature|secret|stack|select\s|insert\s/i.test(detail.error)) message = detail.error;
-                } catch { /* Use the stable status message. */ }
+                } catch (error) {
+                  if (error instanceof StudioError && error.code === "trial_capacity_unavailable") throw error;
+                  /* Use the stable status message. */
+                }
               } else void response.body?.cancel().catch(() => {});
               throw new StudioError("request-failed", message, response.status);
             }

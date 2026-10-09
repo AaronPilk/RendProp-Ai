@@ -47,6 +47,7 @@ async function execute(
     provider?: "openai" | "anthropic";
     cap?: number;
     raw?: string;
+    firstRaw?: string;
     incomplete?: boolean;
   } = {},
 ) {
@@ -70,6 +71,7 @@ async function execute(
   const requests: Record<string, unknown>[] = [];
   const holds: Record<string, unknown>[] = [];
   const finishes: Record<string, unknown>[] = [];
+  const ledger: Record<string, unknown>[] = [];
   const original = globalThis.fetch;
   resetRouterCache();
   globalThis.fetch =
@@ -96,7 +98,7 @@ async function execute(
           "every real adapter POST must follow its own funded reservation",
         );
         requests.push(args);
-        const text = options.raw ?? compact();
+        const text = requests.length === 1 && options.firstRaw !== undefined ? options.firstRaw : options.raw ?? compact();
         return Response.json(
           provider === "openai"
             ? {
@@ -172,7 +174,7 @@ async function execute(
           retire_after: null,
         }]);
       }
-      if (name === "cost_ledger") return new Response(null, { status: 201 });
+      if (name === "cost_ledger") { ledger.push(args); return new Response(null, { status: 201 }); }
       throw new Error(`Unexpected synthetic table ${name}`);
     }) as typeof fetch;
   try {
@@ -201,6 +203,7 @@ async function execute(
       requests,
       holds,
       finishes,
+      ledger,
       step,
     };
   } finally {
@@ -301,4 +304,16 @@ Deno.test("actual compact captions still pass through the output fair-housing re
   assertEquals(result.response.status, 502);
   assertEquals(result.body.cutaways, undefined);
   assertEquals(result.requests.length, 2);
+});
+
+Deno.test("actual retry ledger names the successful retry stage and never the predecessor", async () => {
+  const result = await execute({ firstRaw: "{}" });
+  assertEquals(result.response.status, 200);
+  assertEquals(result.holds.map(hold => hold.p_stage), ["copy.agent_reel:initial:0", "copy.agent_reel:retry:0"]);
+  assertEquals(result.ledger.length, 1);
+  const row = result.ledger[0], meta = row.meta as Record<string, unknown>;
+  assertEquals(meta.stage, result.holds[1].p_stage);
+  assertEquals(meta.request_key, result.holds[1].p_key);
+  assertEquals(row.provider, result.holds[1].p_provider);
+  assertEquals(row.model, result.holds[1].p_model);
 });

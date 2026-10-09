@@ -111,9 +111,18 @@ import Foundation
             value.merge(patch) { _, newer in newer }
             return value
         }
-        func withEnvelope(_ value: Any?) throws -> Data {
+        func withEnvelope(_ value: Any?, historicalTrial: String? = nil) throws -> Data {
             var result = try JSONSerialization.jsonObject(with: reply()) as! [String: Any]
             if let value { result["serving_envelope"] = value }
+            if let status = historicalTrial {
+                result["trial_usage"] = ["org_id": org.uuidString, "status": status,
+                    "starts_at": iso.string(from: clock.addingTimeInterval(-6 * 86_400)),
+                    "ends_at": iso.string(from: clock.addingTimeInterval(86_400)),
+                    "walkthroughs": ["used": 0, "cap": 1, "remaining": 1],
+                    "photo_edits": ["used": 1, "cap": 5, "remaining": 4],
+                    "published_listings": ["used": 0, "cap": 1, "remaining": 1],
+                    "upload_budget_bytes": 1_073_741_824, "upload_used_bytes": 0]
+            }
             return try JSONSerialization.data(withJSONObject: result)
         }
         reset()
@@ -124,22 +133,55 @@ import Foundation
         check(retail.servingEnvelope?.resetLine?.hasPrefix("Resets ") == true && retail.servingEnvelope?.resetLine?.contains("subscription period") == true, "Apple term reset line")
         check(retail.servingEnvelope?.heldLine == "$0.09 is reserved for work still running.", "Held liability line")
         check(retail.servingEnvelope?.poolLine == nil, "Retail shows no sponsor pool")
+        for status in ["active", "exhausted", "expired"] {
+            reset()
+            let coexist = try await LivePhotoPackageFixture(data: withEnvelope(envelope(), historicalTrial: status)).me()
+            check(coexist.servingEnvelope?.checked() != nil && coexist.trialUsage?.status.rawValue == status,
+                  "Current checked allowance remains available alongside historical trial metadata")
+        }
         reset()
         let free = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "free", "ceiling_cents": 300, "spent_cents": 0, "held_cents": 0,
             "available_cents": 300, "period_start": NSNull(), "period_end": NSNull(), "window": "lifetime"]))).me()
         check(free.servingEnvelope?.budgetTitle == "Free AI allowance" && free.servingEnvelope?.resetLine?.contains("does not reset") == true, "Free lifetime wording")
         reset()
         let trial = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "trial", "ceiling_cents": 500, "available_cents": 371.14, "window": "trial_window",
-            "pool": ["cap_cents": 29000, "spent_cents": 1200.25, "ends_at": iso.string(from: clock.addingTimeInterval(20 * 86_400))]]))).me()
+            "pool": ["cap_cents": 29000, "spent_cents": 1200.25, "starts_at": iso.string(from: clock.addingTimeInterval(-86_400)), "ends_at": iso.string(from: clock.addingTimeInterval(20 * 86_400))]]))).me()
         check(trial.servingEnvelope?.budgetTitle == "Free-trial AI budget" && trial.servingEnvelope?.resetLine?.hasPrefix("Trial budget ends ") == true, "Trial wording")
-        check(trial.servingEnvelope?.poolLine?.hasPrefix("Trials share a reviewed sponsor pool: $277.99 of $290 left, closing ") == true, "Trial pool line")
+        check(trial.servingEnvelope?.poolLine?.hasPrefix("Trial AI is available until ") == true
+              && trial.servingEnvelope?.poolLine?.hasSuffix(", while trial capacity remains.") == true, "Trial capacity line")
+        check(trial.servingEnvelope?.poolLine?.contains("$") == false && trial.servingEnvelope?.poolLine?.contains("sponsor") == false, "Trial capacity hides internal funding")
+        check(trial.servingEnvelope?.capacityLine(now: clock)?.hasPrefix("Trial AI is available until ") == true, "Active trial capacity uses a fixed clock")
+        reset()
+        let intro = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "trial", "window": "intro_window"]))).me()
+        check(intro.servingEnvelope?.resetLine?.hasPrefix("Trial allowance ends ") == true
+              && intro.servingEnvelope?.resetLine?.contains("unless canceled") == true
+              && intro.servingEnvelope?.resetLine?.contains("Resets") == false, "Intro allowance ends instead of promising another trial reset")
+        for pool in [["cap_cents": 29000, "spent_cents": 29000, "starts_at": iso.string(from: clock.addingTimeInterval(-86_400)), "ends_at": iso.string(from: clock.addingTimeInterval(86_400))],
+                     ["cap_cents": 29000, "spent_cents": 0, "starts_at": iso.string(from: clock.addingTimeInterval(-2 * 86_400)), "ends_at": iso.string(from: clock.addingTimeInterval(-86_400))],
+                     ["cap_cents": 29000, "spent_cents": 0, "starts_at": iso.string(from: clock.addingTimeInterval(86_400)), "ends_at": iso.string(from: clock.addingTimeInterval(2 * 86_400))],
+                     ["cap_cents": 29000, "spent_cents": 0, "ends_at": iso.string(from: clock.addingTimeInterval(86_400))],
+                     ["cap_cents": 29000, "spent_cents": 0, "starts_at": "bad-date", "ends_at": "bad-date"]] as [[String: Any]] {
+            reset()
+            let closed = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["window": "trial_window", "pool": pool], kind: "trial"))).me()
+            check(closed.servingEnvelope?.capacityLine(now: clock) == "Trial AI capacity is unavailable right now.", "Exhausted, ended, future or invalid trial capacity is clear")
+        }
+        reset()
+        let exhaustedFree = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "free", "ceiling_cents": 300, "spent_cents": 396,
+            "held_cents": 0, "available_cents": 0, "window": "lifetime"]))).me()
+        check(exhaustedFree.servingEnvelope?.budgetValue == "$3.96 used · $0 available of $3", "Historical free spend above ceiling remains visible")
         reset()
         let grace = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["kind": "grace", "window": "apple_grace"]))).me()
         check(grace.servingEnvelope?.budgetTitle == "AI budget (billing grace)" && grace.servingEnvelope?.resetLine?.hasPrefix("Billing grace ends ") == true, "Grace wording")
-        for (bad, why) in [(NSNull(), "Null envelope"), ("ceiling", "String envelope"), (["kind": 7], "Wrong-typed kind"),
+        for (bad, why) in [(envelope(["available_cents": 1700]), "Available above ceiling"),
+                           (NSNull(), "Null envelope"), ("ceiling", "String envelope"), (["kind": 7], "Wrong-typed kind"),
                            (["kind": "retail"], "Envelope without money"),
-                           (envelope(["available_cents": 1700]), "Available above ceiling"),
+                           (envelope(["available_cents": 1600]), "Available ignores running holds"),
                            (envelope(["spent_cents": -1]), "Negative spend"),
+                           (envelope(["spent_cents": 1e20, "available_cents": 0]), "Overflowing spend"),
+                           (envelope(["held_cents": 1e20, "available_cents": 0]), "Overflowing hold"),
+                           (envelope(["pool": ["cap_cents": 1e20, "spent_cents": 0]], kind: "trial"), "Overflowing pool cap"),
+                           (envelope(["pool": ["cap_cents": 29000, "spent_cents": 1e20]], kind: "trial"), "Overflowing pool spend"),
+                           (envelope(["spent_cents": "inf"]), "Infinite spend"),
                            (envelope(["ceiling_cents": "abc"]), "Non-numeric ceiling")] as [(Any, String)] {
             reset()
             let usage = try await LivePhotoPackageFixture(data: withEnvelope(bad)).me()
@@ -149,7 +191,10 @@ import Foundation
         reset()
         let brokenPool = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["ceiling_cents": 500, "available_cents": 371.14,
             "window": "trial_window", "pool": ["cap_cents": "x"]], kind: "trial"))).me()
-        check(brokenPool.servingEnvelope?.budgetTitle == "Free-trial AI budget" && brokenPool.servingEnvelope?.poolLine == nil, "Malformed pool hides only the pool line")
+        check(brokenPool.servingEnvelope?.budgetTitle == "Free-trial AI budget" && brokenPool.servingEnvelope?.poolLine == "Trial AI capacity is unavailable right now.", "Malformed pool cannot advertise available trial capacity")
+        reset()
+        let missingPool = try await LivePhotoPackageFixture(data: withEnvelope(envelope(["window": "trial_window"], kind: "trial"))).me()
+        check(missingPool.servingEnvelope?.poolLine == "Trial AI capacity is unavailable right now.", "Missing pool cannot advertise available trial capacity")
         reset()
         let absent = try await LivePhotoPackageFixture(data: withEnvelope(nil)).me()
         check(absent.servingEnvelope == nil, "Funded-mode server invents an envelope")

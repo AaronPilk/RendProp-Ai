@@ -20,6 +20,7 @@ export type ErrorCode =
   | "plan_required"
   | "sandbox_testing_required"
   | "quota_exceeded"
+  | "trial_capacity_unavailable"
   | "rate_limited"
   | "payload_too_large"
   // A prompt the FAIR-HOUSING guardrails refuse (people, pets, religious or
@@ -226,6 +227,14 @@ export function round4(n: number): number {
   return Math.round(n * 1e4) / 1e4;
 }
 
+// A shared trial allocation is an operator availability boundary, not the
+// customer's usage quota. Keep its wire code distinct from upgrade prompts.
+export const TRIAL_CAPACITY_UNAVAILABLE_MESSAGE =
+  "Trial AI is temporarily unavailable. Nothing was charged. Please try again later or contact support.";
+export function isTrialCapacityRefusal(message: string): boolean {
+  return /RP402:\s*Free-trial AI limit reached \[pool=(?:cap|closed)\]/.test(message);
+}
+
 /**
  * Map an `RPnnn: message` exception raised by one of the SECURITY DEFINER RPCs
  * (create_render_job, publish_render, fail_render_job, set_render_chapters,
@@ -241,6 +250,9 @@ export function throwRpc(message: string | undefined): never {
   if (!m) throw new HttpError(503, "This action is temporarily unavailable. Please try again.");
   const status = Number(m[1]);
   const text = m[2].trim() || msg;
+  if (status === 402 && isTrialCapacityRefusal(msg)) {
+    throw new HttpError(402, TRIAL_CAPACITY_UNAVAILABLE_MESSAGE, "trial_capacity_unavailable");
+  }
   let code: ErrorCode | undefined;
   if (status === 402) code = /limit reached|ceiling reached/i.test(text) ? "quota_exceeded" : "plan_required";
   throw new HttpError(status, text, code);

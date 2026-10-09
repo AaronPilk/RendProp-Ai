@@ -878,6 +878,8 @@ jobs:
           # Runs on the final schema BEFORE the historical replays below restore
           # the Oct 6 function bodies that migration 20261008220411 rewrote.
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/launch_blockers.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006164721_funded_serving_and_app_review_authority.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006202500_bounded_subscription_trial.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/20261006212900_subscription_trial_purchase_reservations.sql

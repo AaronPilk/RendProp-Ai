@@ -83,6 +83,17 @@ for (const reserve of [null, {}, { reserved: false }, "ok"]) {
   });
 }
 
+Deno.test("video legacy admission distinguishes shared trial capacity before any provider dispatch", async () => {
+  for (const pool of ["cap", "closed"]) {
+    const f = fixture({ reserveError: `RP402: Free-trial AI limit reached [pool=${pool}]` });
+    const error = await assertRejects(() => submitReservedVideo(options, f.deps), HttpError);
+    assertEquals(error.status, 402);
+    assertEquals(error.code, "trial_capacity_unavailable");
+    assertEquals(f.submissions(), 0);
+    assertEquals(f.calls.map(call => call.name), ["app_video_cost_reserve_v2"]);
+  }
+});
+
 Deno.test("lost POST acceptance retains hold and never falls over to the second eligible step", async () => {
   const f = fixture({ submitError: true });
   await assertRejects(() => submitReservedVideo({ ...options, steps: [step, { ...step, provider: "kie" }] }, f.deps), VideoDispatchUnconfirmed);

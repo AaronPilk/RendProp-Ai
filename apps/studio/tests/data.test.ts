@@ -1149,6 +1149,33 @@ test("mutations keep workspace scope and never replay an ambiguous or unauthoriz
     assert.equal(writes,1);assert.equal(auth.refreshCalls(),0);services.dispose();
   }
 });
+test("trial capacity refusals give retry guidance without blaming the customer's plan", async () => {
+  for (const machineCode of ["trial_capacity_unavailable", "quota_exceeded", undefined]) {
+    const auth = mockAuth(); let writes = 0;
+    const services = createStudioServices(config, { auth: auth.auth, fetch: fakeFetch((url, options) => {
+      if (options.method === "POST") { writes++; return json({ code: machineCode, error: "https://private.invalid/?token=do-not-show" }, 402); }
+      return fixtureResponse(url);
+    }) });
+    try {
+      await services.loadWorkspace();
+      await assert.rejects(services.api("/functions/v1/ai-photo", { orgId: ORG, method: "POST", body: { listing_id: LISTING } }), (error) => {
+        assert(error instanceof StudioError);
+        assert.equal(error.status, 402);
+        assert.doesNotMatch(error.message, /private|token=/);
+        if (machineCode === "trial_capacity_unavailable") {
+          assert.equal(error.code, machineCode);
+          assert.match(error.message, /try again later/i);
+          assert.doesNotMatch(error.message, /upgrade|plan|allowance/i);
+        } else {
+          assert.equal(error.code, "request-failed");
+          assert.match(error.message, /current plan/);
+        }
+        return true;
+      });
+      assert.equal(writes, 1);
+    } finally { services.dispose(); }
+  }
+});
 test("mutation identity change aborts and rejects late completion",async()=>{
   const auth=mockAuth(), response=deferred<Response>(),started=deferred<void>();
   const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
