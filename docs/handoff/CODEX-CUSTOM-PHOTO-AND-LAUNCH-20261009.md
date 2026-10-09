@@ -1,5 +1,12 @@
 # Custom photo requests and owner alerts — 9 October 2026
 
+**Final delivery update:** These changes are included in TestFlight 1.0.4 (54),
+VALID and available to internal testers. The matching Team/backend/Studio/site
+updates are live. The historical delivery instructions below are superseded by
+`CODEX-TO-CLAUDE-FINAL-AUDIT-20261009.md`: **do not submit to Apple until Claude's
+final GO and completed successful exact-source CI**. Build53 remains attached
+to the unsubmitted draft until that separate preparation step.
+
 Aaron requested these changes before final App Review submission. Build 53 is
 already available in TestFlight but does not include this follow-up. Its signed
 archive and upload records remain preserved. The new iOS source needs a new

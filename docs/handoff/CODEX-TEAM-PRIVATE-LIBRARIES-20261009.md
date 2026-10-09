@@ -79,9 +79,11 @@ Private receipts:
 `/Users/pilksclaes/LocalRendpropAudits/team-private-libraries-20261009/` and
 `/Users/pilksclaes/LocalRendpropAudits/design-refresh-20261009/team-privacy/`.
 
-Source is pushed on the isolated alignment branch; the Team changes have **not**
-yet been applied to production or uploaded to TestFlight. Update this section with actual
-CI, migration/function readback and Apple processing receipts when they occur.
+Source checkpoint `dca97aa` is pushed on `audit/launch-alignment-20261008`. Team migration
+`20261009214512` and 17 dependent functions are live and source/JWT verified. Studio and
+tour-host are deployed; TestFlight 1.0.4 (54) is VALID and IN_BETA_TESTING internally.
+See `docs/releases/TESTFLIGHT-54-TEAM-PRIVACY-20261009.json` for exact hashes/readbacks.
+App Store submission waits for completed exact-source CI and Claude's final GO.
 Never claim phone/camera/purchase acceptance from the closed test fixtures.
 
 ## Deployment compatibility and retained limitations
