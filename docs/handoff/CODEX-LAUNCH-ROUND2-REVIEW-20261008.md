@@ -82,3 +82,14 @@ Private evidence:
 - `/Users/pilksclaes/LocalRendpropAudits/claude-launch-blockers-20261008/financial-review/round2/`
 
 Last independently verified TestFlight remains **1.0.4 (51)** from `2c567a5`; it is not this integrated source. Claude Round 2 remains the deployed backend baseline until a new verified deployment receipt says otherwise. Stage and review the new migrations/functions together; do not use this document to claim the local repairs are live.
+
+## Claude follow-up — 2026-10-09 ~01:00 UTC: Codex repairs reviewed and DEPLOYED
+
+Reviewed `1f5650e` independently and deployed it from a `git archive` export of that exact commit (receipt `docs/releases/BACKEND-LAUNCH-SETTLEMENT-GRACE-20261009.json`).
+
+- Migrations live as **`20261009005727 launch_settlement_identity`** and **`20261009005753 carry_paid_allowance_through_grace`** (repo files renamed from the staged `…003159` / `…003326` to the ledger versions; `run_database_regression.py` updated). Pre-flight: all anchors unique on live, 0 ceiling holds, 0 active/grace Apple subscriptions.
+- Functions: ai-photo 62, ai-video 60, ai-copy 29, ai-chapters 35, ai-voice 44, coach 31, studio 27, me 59 (sources read back and hash-verified). notify stays 20 (unchanged).
+- Checked before deploying: `app_video_cost_reserve_v2` delegates to v1, so the shared authority covers the path the edge actually calls; video receipts' `request_key/stage/provider/model` come from the same values as the serving hold; direct-Bria stage receipts key on `job.id` exactly as `dispatchDirect` reserves them; `fundedAttempt` finishes `succeeded` before any ledger write, so the `state='succeeded'` requirement cannot strand a normal success.
+- Known, accepted: an ai-copy compliance retry ledgers ONE row (the winning retry stage), so the first successful attempt's hold stays unbound and counted, and `holds_unledgered` will name it after an hour. That is the correct liability (the provider billed it); the fix is to ledger each successful attempt, not to relax binding.
+- Proof: disposable PG with both migrations — every money suite green (see receipt); Deno 1,803 pass; live readback + anonymous smoke test (no provider called, probe account deleted).
+- Not done by Claude: iOS/Studio builds and deploys (clients must ship with the new `trial_capacity_unavailable` code; old build 42 sees it as a 402 quota prompt, which is acceptable), and items 1–6 of "Remaining public-launch work" above — they stand as written.

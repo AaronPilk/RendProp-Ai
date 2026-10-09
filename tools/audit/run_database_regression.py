@@ -70,7 +70,7 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261008201736_launch_ceiling_mode.sql",
     "20261008220411_launch_blockers.sql",
     "20261008235218_launch_round2.sql",
-    "20261009003159_launch_settlement_identity.sql",
+    "20261009005727_launch_settlement_identity.sql",
 })
 
 
