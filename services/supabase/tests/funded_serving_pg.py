@@ -81,18 +81,29 @@ try:
     for m in sorted((SQL / "migrations").glob("*.sql")):
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("funded-fresh", [*psql, "-Atq", "-f", SQL / "tests/funded_serving.sql"]).strip()
-    run("replay-funded", [*psql, "-q", "-f", MIGRATION])
-    # Replaying an earlier overlay restores its earlier function body. Restore
-    # the latest additive trial overlay before checking current-source behavior.
-    run("restore-current-trial-overlay", [*psql, "-q", "-f", SQL / "migrations/20261006202500_bounded_subscription_trial.sql"])
-    run("restore-purchase-overlay", [*psql,"-q","-f",SQL / "migrations/20261006212900_subscription_trial_purchase_reservations.sql"])
-    run("restore-duration-overlay", [*psql,"-q","-f",SQL / "migrations/20261006213000_subscription_trial_video_duration.sql"])
-    receipt["replay"] = run("funded-replay", [*psql, "-Atq", "-f", SQL / "tests/funded_serving.sql"]).strip()
+    # The old anchor-patching migration cannot be replayed over the later Team
+    # wrapper. Test its real idempotency at its historical point in a second
+    # database, then apply every newer migration before running current oracles.
+    signature = "public.serving_cost_reserve(uuid,uuid,text,text,text,text,text,numeric,text)"
+    catalog_sql = "select jsonb_build_object('body',prosrc,'acl',proacl::text,'owner',proowner,'security',prosecdef,'config',proconfig) from pg_proc where oid='" + signature + "'::regprocedure;"
+    final_catalog = run("final-cost-catalog", [*psql, "-Atq"], catalog_sql)
+    run("createdb-replay", [TOOLS["createdb"], *conn, "funded_serving_replay"])
+    replay_psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "funded_serving_replay", "-v", "ON_ERROR_STOP=1"]
+    run("bootstrap-replay", [*replay_psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
+    for m in sorted((SQL / "migrations").glob("*.sql")):
+        run("replay-apply-" + m.stem, [*replay_psql, "-q", "-1", "-f", m])
+        if m == MIGRATION:
+            run("replay-funded-historical", [*replay_psql, "-q", "-1", "-f", m])
+    assert run("replayed-final-cost-catalog", [*replay_psql, "-Atq"], catalog_sql) == final_catalog
+    receipt["replayMode"] = "Separate clean database; funded migration twice at its historical point, all newer migrations applied"
+    receipt["replay"] = run("funded-replay", [*replay_psql, "-Atq", "-f", SQL / "tests/funded_serving.sql"]).strip()
 
     actor = "b1000000-0000-4000-8000-000000000001"
     positive = "b2000000-0000-4000-8000-000000000001"
     negative = "b2000000-0000-4000-8000-000000000002"
     run("race-fixtures", [*psql, "-Atq"], f"""
+      update app_config set value=value||'{{"mode":"funded"}}'::jsonb where key='serving_mode';
+      do $$begin if public.serving_mode()<>'funded' then raise exception 'Owned funded race mode was not selected';end if;end$$;
       insert into auth.users(id,email,is_anonymous)values('{actor}','funding-race@example.invalid',false);
       insert into orgs(id,name,plan,plan_source)values('{positive}','Synthetic funded race','pro','manual'),('{negative}','Synthetic negative race','pro','manual');
       insert into memberships(user_id,org_id,role)values('{actor}','{positive}','owner'),('{actor}','{negative}','owner');
@@ -100,10 +111,7 @@ try:
       select provision_serving_funding(id,'retail','race-receipt:'||id,null,400,0,now()-interval '1 minute',now()-interval '1 minute'+interval '1 month',1,
        '{{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}}',repeat('a',64))from orgs where id in('{positive}','{negative}');
     """)
-    source = MIGRATION.read_text()
-    start = source.index("create or replace function public.serving_cost_reserve(")
-    end = source.index("end$$;", start) + len("end$$;")
-    authority = source[start:end]
+    authority = run("actual-final-cost-definition", [*psql, "-Atq"], "select pg_get_functiondef('" + signature + "'::regprocedure);")
     spend_anchor = "  if spent+p_hold_cents>"
     assert authority.count(spend_anchor) == 1
     # The same delay at the balance-read boundary makes the race deterministic.
@@ -122,18 +130,25 @@ try:
     assert sorted(code for code, _ in outcomes) == [0, 3], outcomes
     assert sum("RP409" in output for _, output in outcomes) == 1, outcomes
     receipt["operationReplayRace"] = {"begun": 1, "refused": 1}
-    lock_anchor = " perform pg_advisory_xact_lock(hashtextextended('serving:'||p_org,72452));"
-    row_anchor = " perform 1 from public.orgs where id=p_org and deleted_at is null for update;"
-    assert instrumented.count(lock_anchor) == 1 and instrumented.count(row_anchor) == 1
-    broken = instrumented.replace(lock_anchor, " -- Deliberately removed budget lock.").replace(row_anchor, " perform 1 from public.orgs where id=p_org and deleted_at is null;")
+    lock_anchor = " perform pg_advisory_xact_lock(hashtextextended('serving:'||public.library_actor_billing_org(p_actor,p_org),72452));"
+    row_anchors = [" perform 1 from public.orgs where id=public.library_actor_billing_org(p_actor,p_org)and deleted_at is null for update;",
+                   " perform 1 from public.orgs where id=p_org and deleted_at is null for update;"]
+    assert instrumented.count(lock_anchor) == 1 and all(instrumented.count(a) == 1 for a in row_anchors)
+    broken = instrumented.replace(lock_anchor, " -- Deliberately removed budget lock.", 1)
+    for anchor in row_anchors:
+        broken = broken.replace(anchor, anchor.replace(" for update;", ";"), 1)
     mutation = OUT / "negative-cost-no-locks.sql"
     mutation.write_text(broken)
     run("install-cost-negative-control", [*psql, "-q", "-f", mutation])
     outcomes = race("broken-shared-budget-race", requests(negative))
     assert [code for code, _ in outcomes] == [0, 0], outcomes
-    receipt["negativeControl"] = {"removed": "advisory + workspace row budget locks", "accepted": 2,
+    receipt["negativeControl"] = {"removed": "advisory + billing/content row budget locks from actual final function", "accepted": 2,
                                    "overspendCents": 20, "mutation_sha256": hashlib.sha256(mutation.read_bytes()).hexdigest()}
     run("restore-cost-authority", [*psql, "-q"], authority)
+    assert run("restored-final-cost-catalog", [*psql, "-Atq"], catalog_sql) == final_catalog
+    receipt["finalAuthorityRestored"] = True
+    receipt["sourceHashesAfter"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in SOURCES}
+    assert receipt["sourceHashesAfter"] == receipt["sourceHashes"], "Source changed during verification"
     receipt["passed"] = True
 finally:
     if started:

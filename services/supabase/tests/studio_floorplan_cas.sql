@@ -85,7 +85,7 @@ do $$declare f floorplan_ids;old_details jsonb;received jsonb;attached jsonb;r j
  perform pg_temp.plan_check((select details=attached from public.listings where id=f.listing),'Deleting actor leaves listing untouched');
  perform pg_temp.plan_deletion_fixture(false);
  perform pg_temp.plan_refuses(format('select public.studio_attach_floorplan(%L,%L,%L,%L,%L,%L)',f.outsider,f.org,f.listing,f.asset,attached,url),'42501','Outsider cannot attach across workspaces');
- perform pg_temp.plan_refuses(format('select public.studio_attach_floorplan(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.foreign_listing,f.asset,attached,url),'P0002','Scoped actor cannot target foreign listing');
+ perform pg_temp.plan_refuses(format('select public.studio_attach_floorplan(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.foreign_listing,f.asset,attached,url),'42501','Scoped actor cannot target foreign listing');
  perform pg_temp.plan_refuses(format('select public.studio_attach_floorplan(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,f.foreign_asset,attached,url),'22023','Foreign asset cannot attach');
  foreach client in array array['incomplete','uploads','missing_mime','headshot','traversal','video']loop
   bad:=pg_temp.plan_bad_asset(client);select storage_key into bad_key from public.capture_assets where id=bad;
@@ -100,7 +100,7 @@ do $$declare f floorplan_ids;old_details jsonb;received jsonb;attached jsonb;r j
  r:=public.studio_attach_floorplan(f.actor,f.org,f.listing,f.asset,received,url);
  perform pg_temp.plan_check(r->'details'->>'hours'='new phone hours','Retry with current snapshot preserves phone edits');
  update public.listings set deleted_at=now()where id=f.listing;
- perform pg_temp.plan_refuses(format('select public.studio_attach_floorplan(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,f.asset,r->'details',url),'P0002','Deleted listing cannot attach');
+ perform pg_temp.plan_refuses(format('select public.studio_attach_floorplan(%L,%L,%L,%L,%L,%L)',f.actor,f.org,f.listing,f.asset,r->'details',url),'42501','Deleted listing cannot attach');
 end$$;
 reset role;
 select jsonb_build_object('passed',true,'assertions',count(*))from floorplan_checks;

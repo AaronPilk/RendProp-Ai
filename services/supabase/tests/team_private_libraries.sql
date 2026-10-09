@@ -158,6 +158,12 @@ do $$declare x record;prior_bound boolean:=false;period_bound boolean:=false;bud
   perform pg_temp.ok(period_bound,'unified period spend carries open holds but excludes old booked expenses');
   perform pg_temp.ok(budget_refused,'prior-month child hold fences a new sibling serving envelope');
  end$$;
+do $$declare x record;begin select *into x from f;
+ insert into public.deletion_requests(user_id,status)values(x.owner_id,'pending');
+ perform pg_temp.denied(format('select public.accept_org_invite(%L,%L)',x.sally,repeat('a',64)),'RP409:','accepted Team code cannot revive a deleting owner');
+ perform pg_temp.denied(format('select public.bind_team_private_library(%L,%L,%L,%L)',x.owner_id,x.team,x.sally,x.sally_invite),'RP409:','direct Team binding refuses a deleting participant before org locks');
+ delete from public.deletion_requests where user_id=x.owner_id and status='pending';
+end$$;
 -- Owner transfer/co-owner ambiguity and seat revocation are freshly denied.
 set local role service_role;
 do $$declare x record;old_role text;begin select *into x from f;

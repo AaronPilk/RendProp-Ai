@@ -82,8 +82,20 @@ try:
     for m in sorted((SQL / "migrations").glob("*.sql")):
         run("apply-" + m.stem, [*psql, "-q", "-1", "-f", m])
     receipt["fresh"] = run("guest-fresh", [*psql,"-Atq","-f",SQL / "tests/verified_retail_guest.sql"]).strip()
-    run("replay-guest",[*psql,"-q","-f",SQL / "migrations/20261007135551_verified_retail_guest_admission.sql"])
-    receipt["replay"] = run("guest-replay", [*psql,"-Atq","-f",SQL / "tests/verified_retail_guest.sql"]).strip()
+    # Replay the overlay at its historical schema point in a separate database.
+    # Later Team wrappers remain installed in the original current-schema DB.
+    catalog_sql = "select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|' order by oid::regprocedure::text)) from pg_proc where pronamespace='public'::regnamespace;"
+    final_catalog = run("final-function-catalog", [*psql, "-Atq"], catalog_sql)
+    run("createdb-historical-replay", [TOOLS["createdb"], *conn, "historical_replay"])
+    replay_psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "historical_replay", "-v", "ON_ERROR_STOP=1"]
+    run("bootstrap-historical-replay", [*replay_psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
+    for m in sorted((SQL / "migrations").glob("*.sql")):
+        run("replay-apply-" + m.stem, [*replay_psql, "-q", "-1", "-f", m])
+        if m.name == "20261007135551_verified_retail_guest_admission.sql":
+            run("historical-exact-overlay-replay", [*replay_psql, "-q", "-1", "-f", m])
+    assert run("replayed-final-function-catalog", [*replay_psql, "-Atq"], catalog_sql) == final_catalog, "Historical replay changed final function authority"
+    receipt["replayMode"] = "Separate database; overlay twice at historical point, all later migrations then applied"
+    receipt["replay"] = run("final-replayed-fixture", [*replay_psql, "-Atq", "-f", SQL / "tests/verified_retail_guest.sql"]).strip()
     receipt["fundedRegression"] = run("funded-regression",[*psql,"-Atq","-f",SQL / "tests/funded_serving.sql"]).strip()
     # Removing genuine environment/token guards must be rejected by the same
     # full source-bound fixture, never a parse/compile failure or timeout.

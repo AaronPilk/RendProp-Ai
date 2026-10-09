@@ -16,6 +16,13 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 SQL = ROOT / 'services/supabase'
 MIGRATION = SQL / 'migrations/20261006193633_cas_conflicts_terminal.sql'
+TERMINAL_PREREQUISITES = [SQL / 'migrations' / name for name in (
+    '20261004220253_listing_measurement_compare_and_set.sql',
+    '20261005024702_listing_facts_intent_cas.sql',
+    '20261005034754_studio_floorplan_attachment_cas.sql',
+    '20261005150951_nearby_places_reviewed_facts.sql',
+)]
+LIBRARY_AUTHORITY = SQL / 'migrations/20261009192550_team_private_listing_libraries.sql'
 FIXTURE = SQL / 'tests/listing_facts_cas.sql'
 NEARBY_FIXTURE = SQL / 'tests/nearby_places_facts.sql'
 FLOORPLAN_FIXTURE = SQL / 'tests/studio_floorplan_cas.sql'
@@ -66,13 +73,35 @@ try:
         'public.studio_attach_floorplan(uuid,uuid,uuid,uuid,jsonb,text)',
     ]
     catalog = "select jsonb_agg(jsonb_build_object('identity',oid::regprocedure::text,'body',prosrc,'owner',proowner,'acl',proacl::text,'config',proconfig,'security',prosecdef,'volatility',provolatile) order by proname) from pg_proc where oid=any(array[" + ','.join("'" + s + "'::regprocedure" for s in signatures) + "]);"
+    final_catalog = run('library-catalog-before-historical-replay', [*psql, '-Atq'], catalog)
+    # Test the exact historical transformation and its drift/ACL refusals on
+    # the bodies it reviewed. The final Team-library migration intentionally
+    # supersedes those bodies; it must be restored before current assertions.
+    for prerequisite in TERMINAL_PREREQUISITES:
+        run('terminal-prerequisite-' + prerequisite.stem, [*psql, '-q', '-1', '-f', prerequisite])
+    run('historical-terminal-transform', [*psql, '-q', '-1', '-f', MIGRATION])
     before = run('terminal-catalog-before', [*psql, '-Atq'], catalog)
     assert all("errcode='40001'" not in row['body'] for row in json.loads(before))
     run('replay', [*psql, '-q', '-1', '-f', MIGRATION])
     assert run('terminal-catalog-after-replay', [*psql, '-Atq'], catalog) == before
-    receipt['replay'] = json.loads(run('replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
-    receipt['nearbyReplay'] = json.loads(run('nearby-replay', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
-    receipt['floorplanReplay'] = json.loads(run('floorplan-replay', [*psql, '-Atq', '-f', FLOORPLAN_FIXTURE]).strip().splitlines()[-1])
+    receipt['historicalReplay'] = json.loads(run('historical-replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    receipt['nearbyHistoricalReplay'] = json.loads(run('nearby-historical-replay', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
+    # The historical body checked listing existence before its role guard.
+    # The final private-library body correctly refuses the same two requests
+    # with 42501 first. Bind this historical-only copy to those exact labels;
+    # the unmodified, stronger final fixture runs both before and after replay.
+    historical_floorplan = FLOORPLAN_FIXTURE.read_text()
+    for label in ('Scoped actor cannot target foreign listing', 'Deleted listing cannot attach'):
+        anchor = "'42501','" + label + "'"
+        assert historical_floorplan.count(anchor) == 1, 'Historical floorplan refusal anchor changed: ' + label
+        historical_floorplan = historical_floorplan.replace(anchor, "'P0002','" + label + "'")
+    historical_floorplan_path = OUT / 'historical-floorplan-fixture.sql'
+    historical_floorplan_path.write_text(historical_floorplan)
+    receipt['historicalFloorplanOracle'] = {'expectedExistenceFirstCode': 'P0002', 'finalFixtureUsesAuthorityFirstCode': '42501',
+        'sourceSHA256': hashlib.sha256(FLOORPLAN_FIXTURE.read_bytes()).hexdigest(),
+        'copySHA256': hashlib.sha256(historical_floorplan_path.read_bytes()).hexdigest(),
+        'onlyChangedLabels': ['Scoped actor cannot target foreign listing', 'Deleted listing cannot attach']}
+    receipt['floorplanHistoricalReplay'] = json.loads(run('floorplan-historical-replay', [*psql, '-Atq', '-f', historical_floorplan_path]).strip().splitlines()[-1])
 
     # Each complete-body precondition must refuse unknown drift, and the entire
     # attempted migration must roll back. These changes exist only in this owned
@@ -100,7 +129,14 @@ end $drift$;
     run('transient-code-control-fixture', [*psql, '-Atq', '-f', FIXTURE], refuses='expected PT409, got 40001')
     run('restore-terminal-code-after-control', [*psql, '-q', '-1', '-f', MIGRATION])
     assert run('terminal-catalog-after-control', [*psql, '-Atq'], catalog) == before
-    receipt['terminalCodeNegativeControl'] = {'restoredTransientApplicationCodeCaught': True, 'exactFinalAuthorityRestored': True}
+    receipt['terminalCodeNegativeControl'] = {'restoredTransientApplicationCodeCaught': True, 'exactHistoricalTerminalAuthorityRestored': True}
+
+    run('restore-library-authority', [*psql, '-q', '-1', '-f', LIBRARY_AUTHORITY])
+    assert run('library-catalog-after-replay', [*psql, '-Atq'], catalog) == final_catalog
+    receipt['finalLibraryBodiesAndAuthorityPreserved'] = True
+    receipt['replay'] = json.loads(run('replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    receipt['nearbyReplay'] = json.loads(run('nearby-replay', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
+    receipt['floorplanReplay'] = json.loads(run('floorplan-replay', [*psql, '-Atq', '-f', FLOORPLAN_FIXTURE]).strip().splitlines()[-1])
 
     # Two real concurrent SQL clients, not a sequential RPC stub.
     actor, other, org, listing = [str(uuid.uuid4()) for _ in range(4)]

@@ -480,6 +480,12 @@ create or replace function public.bind_team_private_library(p_actor uuid,p_team 
 language plpgsql security definer set search_path='' as $$
 declare private_id uuid;n integer;owner_id uuid;
 begin
+ -- Match account deletion's Auth/profile-before-org order. Inserting this
+ -- relation also takes profile FK locks; acquiring them after the Team org
+ -- lock can deadlock with an owner's concurrent deletion preflight.
+ perform 1 from auth.users where id=any(array[p_actor,p_agent])order by id for key share;
+ perform 1 from public.profiles where id=any(array[p_actor,p_agent])order by id for update;
+ if exists(select 1 from public.deletion_requests where user_id=any(array[p_actor,p_agent])and status in('pending','processing'))then raise exception 'RP409: An account is being deleted';end if;
  owner_id:=public.team_library_owner(p_team);
  if owner_id is null or p_actor<>owner_id or p_agent=owner_id then raise exception 'RP403: Only the current Team owner may link an accepted agent';end if;
  perform 1 from public.orgs where id=p_team for update;
@@ -849,8 +855,19 @@ create or replace function public.hosting_retention_state(p_org uuid)returns jso
 create or replace function public.subscription_trial_paid_or_override(p_org uuid)returns boolean language sql stable security definer set search_path='' as $$
  select public.library_internal_content_unlimited(p_org)or public.subscription_trial_paid_or_override_before_team(public.library_billing_org(p_org));$$;
 create or replace function public.accept_org_invite(p_user uuid,p_token_hash text)returns jsonb language plpgsql security definer set search_path='' as $$
-declare r jsonb;i public.org_invites;private_id uuid;was_accepted boolean;begin
- select accepted_at is not null into was_accepted from public.org_invites where token_hash=p_token_hash;
+declare r jsonb;i public.org_invites;private_id uuid;was_accepted boolean;current_owner uuid;lock_users uuid[];begin
+ select *into i from public.org_invites where token_hash=p_token_hash;
+ was_accepted:=i.accepted_at is not null;
+ if found and(public.effective_plan_before_team(i.org_id)='team'or i.private_testing)then
+  current_owner:=public.team_library_owner(i.org_id);
+  lock_users:=array[p_user,i.invited_by,current_owner];
+  -- Acquire every participant in deterministic Auth/profile order before the
+  -- original accepted-seat org lock. Never weaken the binding FK or allow an
+  -- invite to revive a participant whose deletion already won this race.
+  perform 1 from auth.users where id=any(lock_users)order by id for key share;
+  perform 1 from public.profiles where id=any(lock_users)order by id for update;
+  if exists(select 1 from public.deletion_requests where user_id=any(lock_users)and status in('pending','processing'))then raise exception 'RP409: An account is being deleted';end if;
+ end if;
  r:=public.accept_org_invite_before_team(p_user,p_token_hash);
  if coalesce((r->>'private_testing')::boolean,false)then return r;end if;
  select *into i from public.org_invites where token_hash=p_token_hash;

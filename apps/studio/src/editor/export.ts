@@ -165,6 +165,14 @@ export async function exportLocalVideo(options: {
   let silentSource: ConstantSourceNode | undefined;
   let audioSource: MediaElementAudioSourceNode | undefined;
   let originalGain: GainNode | undefined;
+  let originalSource: AudioBufferSourceNode | undefined;
+  let originalSourceStarted = false;
+  let removeOriginalVideoListeners: (() => void) | undefined;
+  const stopOriginalAudio = () => {
+    if (originalSourceStarted) originalSource?.stop();
+    originalSource?.disconnect(); originalSource = undefined;
+    originalSourceStarted = false;
+  };
   let voiceBuffer: AudioBuffer | undefined;
   let voiceSource: AudioBufferSourceNode | undefined;
   let voiceGain: GainNode | undefined;
@@ -174,7 +182,7 @@ export async function exportLocalVideo(options: {
   const previous = document.createElement("canvas"); Object.assign(previous, renderDimensions(draft.ratio));
   let hasPrevious = false;
   let decoded: DecodedMedia | undefined;
-  type Prepared = { media: DecodedMedia } | { error: unknown };
+  type Prepared = { media: DecodedMedia; originalBuffer?: AudioBuffer } | { error: unknown };
   let lookahead: { result?: Prepared; settled: Promise<Prepared> } | undefined;
   const prepare = (clip: EditClip) => {
     const task: NonNullable<typeof lookahead> = { settled: undefined! };
@@ -185,14 +193,35 @@ export async function exportLocalVideo(options: {
           await seekMedia(ready.element, clip.start, renderSignal);
           ready.element.playbackRate = clip.speed ?? 1;
         }
+        let originalBuffer: AudioBuffer | undefined;
+        // Normal-speed speech must not depend on the live video decoder. Only
+        // the current source and one successor retain PCM, each capped at 32 MiB
+        // after a conservative 96 kHz stereo estimate before decoding. Other
+        // audio keeps the pitch-preserving media path with a stall refusal.
+        if (originalAudio && audio && clip.source.kind === "video" && (clip.speed ?? 1) === 1 &&
+            clip.source.duration * 96_000 * 2 * 4 <= 32 * 1024 * 1024) {
+          try {
+            const bytes = await awaitMediaOperation(media.get(clip.id)!.file.arrayBuffer(), renderSignal, "Reading original audio");
+            const buffer = await awaitMediaOperation(audio.decodeAudioData(bytes), renderSignal, "Decoding original audio");
+            if (Number.isFinite(buffer.duration) && buffer.duration > 0 &&
+                buffer.duration >= clip.end - .05 && buffer.duration <= clip.source.duration + .1 &&
+                buffer.numberOfChannels <= 2 && buffer.sampleRate <= 96_000 &&
+                buffer.length * buffer.numberOfChannels * 4 <= 32 * 1024 * 1024)
+              originalBuffer = buffer;
+          } catch {
+            // A silent video or unsupported container remains usable. Never
+            // infer silence: preserve media audio and refuse any export stall.
+            throwIfAborted(renderSignal);
+          }
+        }
         throwIfAborted(renderSignal);
-        return ready;
+        return { media: ready, originalBuffer };
       } catch (error) {
         ready.dispose();
         throw error;
       }
     })().then(
-      media => (task.result = { media }),
+      result => (task.result = result),
       error => (task.result = { error }),
     );
     return task;
@@ -279,6 +308,7 @@ export async function exportLocalVideo(options: {
       lookahead = undefined;
       if ("error" in prepared) throw prepared.error;
       decoded = prepared.media;
+      const originalBuffer = prepared.originalBuffer;
       const next = draft.clips[index + 1];
       if (next) {
         lookahead = prepare(next);
@@ -293,12 +323,19 @@ export async function exportLocalVideo(options: {
           : undefined;
       if (video) {
         if (originalAudio && audio && destination) {
-          audioSource = audio.createMediaElementSource(video);
           originalGain = audio.createGain(); originalGain.gain.value = 1;
-          audioSource.connect(originalGain); originalGain.connect(destination);
-          // Sound goes only to the recording destination, avoiding an audible duplicate.
-          video.muted = false;
-          video.volume = 1;
+          originalGain.connect(destination);
+          if (originalBuffer) {
+            originalSource = audio.createBufferSource(); originalSource.buffer = originalBuffer;
+            originalSource.connect(originalGain);
+            video.muted = true;
+          } else {
+            audioSource = audio.createMediaElementSource(video);
+            audioSource.connect(originalGain);
+            // Sound goes only to the recording, avoiding an audible duplicate.
+            video.muted = false;
+            video.volume = 1;
+          }
         }
       }
       drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore, localTime: 0, previous: hasPrevious ? previous : undefined});
@@ -324,8 +361,29 @@ export async function exportLocalVideo(options: {
         track?.requestFrame?.();
       }
       // Start recording before advancing the source, so startup cannot discard speech.
-      if (video)
+      const originalClockStart = originalSource && audio ? audio.currentTime : undefined;
+      if (originalSource) {
+        originalSource.start(originalClockStart!, clip.start, clip.end - clip.start);
+        originalSourceStarted = true;
+      }
+      if (video) {
+        if (originalGain && !originalBuffer) {
+          const refuseStall = () => controller.abort(new Error("Original audio playback stalled during export. No download was created. Try a shorter clip or export with audio explicitly muted."));
+          video.addEventListener("waiting", refuseStall);
+          video.addEventListener("stalled", refuseStall);
+          removeOriginalVideoListeners = () => { video.removeEventListener("waiting", refuseStall); video.removeEventListener("stalled", refuseStall); };
+        }
         await awaitMediaOperation(video.play(), renderSignal, "Starting video");
+        if (originalBuffer && audio && originalClockStart !== undefined) {
+          const clock = audio;
+          const realign = () => {
+            const target = Math.min(clip.end, clip.start + Math.max(0, clock.currentTime - originalClockStart));
+            if (target < clip.end && Math.abs(video.currentTime - target) > .08) video.currentTime = target;
+          };
+          video.addEventListener("playing", realign);
+          removeOriginalVideoListeners = () => video.removeEventListener("playing", realign);
+        }
+      }
       if (draft.narration && voiceBuffer && audio && voiceGain) {
         const offset = Math.max(0, elapsedBefore - draft.narration.offset), delay = Math.max(0, draft.narration.offset - elapsedBefore);
         if (offset < voiceBuffer.duration && delay < clipDuration(clip)) {
@@ -348,12 +406,14 @@ export async function exportLocalVideo(options: {
       const duration = clipDuration(clip);
       while (true) {
         assertCurrentRevision(draft, currentDraft(), renderSignal);
-        const elapsedAtWait = video
-          ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
+        const elapsedAtWait = originalClockStart !== undefined && audio
+          ? Math.max(0, audio.currentTime - originalClockStart)
+          : video ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
           : (performance.now() - start) / 1000;
         const now = await nextExportFrame(renderSignal, (duration - elapsedAtWait) * 1000);
-        const elapsed = video
-          ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
+        const elapsed = originalClockStart !== undefined && audio
+          ? Math.max(0, audio.currentTime - originalClockStart)
+          : video ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
           : (now - start) / 1000;
         if (video && video.currentTime > lastVideoTime + 0.001) {
           lastVideoTime = video.currentTime;
@@ -377,7 +437,7 @@ export async function exportLocalVideo(options: {
           onProgress(Math.min(1, (elapsedBefore + elapsed) / total));
           lastProgressAt = now;
         }
-        if (elapsed >= duration || video?.ended) break;
+        if (elapsed >= duration || originalClockStart === undefined && video?.ended) break;
       }
       // The successor is already prepared. MediaRecorder pause notifications do
       // not guarantee that MP4 timestamps exclude a long decoder setup gap.
@@ -385,6 +445,8 @@ export async function exportLocalVideo(options: {
       recorder.pause();
       await paused;
       video?.pause();
+      removeOriginalVideoListeners?.(); removeOriginalVideoListeners = undefined;
+      stopOriginalAudio();
       voiceSource?.stop(); voiceSource?.disconnect(); voiceSource = undefined;
       musicSource?.stop(); musicSource?.disconnect(); musicSource = undefined;
       originalGain?.disconnect(); originalGain = undefined;
@@ -441,6 +503,8 @@ export async function exportLocalVideo(options: {
       const prepared = await lookahead.settled;
       if ("media" in prepared) prepared.media.dispose();
     }
+    removeOriginalVideoListeners?.();
+    stopOriginalAudio();
     audioSource?.disconnect();
     originalGain?.disconnect(); voiceSource?.stop(); voiceSource?.disconnect(); voiceGain?.disconnect();
     musicSource?.stop(); musicSource?.disconnect(); musicGain?.disconnect();

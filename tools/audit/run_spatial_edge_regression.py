@@ -20,7 +20,7 @@ def main():
     out=Path(tempfile.mkdtemp(prefix='rendprop-spatial-edge-',dir='/tmp'))
     functions=root/'services/supabase/functions'
     copy=out/'functions';shutil.copytree(functions/'spatial',copy/'spatial');(copy/'_shared').mkdir()
-    shared=('http.ts','cors.ts','supabase.ts','api-key-config.ts')
+    shared=('http.ts','cors.ts','supabase.ts','api-key-config.ts','workspaces.ts','library-access.ts')
     for name in shared:shutil.copy2(functions/'_shared'/name,copy/'_shared'/name)
     deno=shutil.which('deno');assert deno
     sources=[*(functions/'spatial').glob('*.ts'),*[functions/'_shared'/name for name in shared],Path(__file__).resolve()]

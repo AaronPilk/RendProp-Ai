@@ -47,7 +47,7 @@ try:
  before=json.loads(q('definitions-before-replay',snapshot))
  for phase in ['fresh','replay']:
   if phase=='replay':q('migration-exact-replay',TARGET.read_text());assert json.loads(q('definitions-after-replay',snapshot))==before,'Replay changes authority/ACL/body'
-  for name,count in [('team_private_libraries',90),('workspace_selection',28),('team_readiness',34)]:
+  for name,count in [('team_private_libraries',92),('workspace_selection',28),('team_readiness',34)]:
    r=q(name+'-'+phase,(SQL/'tests'/f'{name}.sql').read_text());assert re.search(rf'^({count})$',r,re.M)and len(re.findall(r'\|(?:true|t)$',r,re.M))==count,(name,'complete inventory')
  # A compiled exact-listing authorization defect is caught by independent raw RLS tests.
  definition=q('read-access-definition',"select pg_get_functiondef('public.listing_content_access(uuid,uuid,boolean)'::regprocedure);")
@@ -76,7 +76,7 @@ try:
  lines=final.strip().splitlines();row=lines[0].split('|');spent=lines[1].split('|');assert row[:2]==['1',org]and Decimal(row[2])==Decimal(ceiling)and len(spent)==2 and all(Decimal(v)==Decimal(ceiling)for v in spent),('shared immutable liability',final,ceiling)
  # Exact source remains frozen throughout schema/replay/race verification.
  assert all(hashlib.sha256((ROOT/n).read_bytes()).hexdigest()==h for n,h in HASHES.items()),'Source changed during verification'
- RECEIPT.update(passed=True,sqlAssertions={'team_private_libraries':90,'workspace_selection':28,'team_readiness':34},replayIdentical=True,rawRLSNegativeControlDetected=True,sharedReflectionMeterNegativeControlDetected=True,realParentChildLastDollarRace=True,raceResult='one admit, one RP402; single immutable parent liability')
+ RECEIPT.update(passed=True,sqlAssertions={'team_private_libraries':92,'workspace_selection':28,'team_readiness':34},replayIdentical=True,rawRLSNegativeControlDetected=True,sharedReflectionMeterNegativeControlDetected=True,realParentChildLastDollarRace=True,raceResult='one admit, one RP402; single immutable parent liability')
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  RECEIPT['finishedAt']=datetime.now(timezone.utc).isoformat();RECEIPT['sourceHashesAfter']={n:hashlib.sha256((ROOT/n).read_bytes()).hexdigest()for n in HASHES};RECEIPT['sourceUnchanged']=RECEIPT['sourceHashesAfter']==HASHES;RECEIPT['passed']=RECEIPT['passed']and RECEIPT['sourceUnchanged'];(OUT/'receipt.json').write_text(json.dumps(RECEIPT,indent=2)+'\n')

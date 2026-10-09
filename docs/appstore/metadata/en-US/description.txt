@@ -9,10 +9,10 @@ HOW IT WORKS
 4. Share the link. Visitors see photos and details first, then choose a scroll-through tour or ordinary video playback. Enquiries land in your Leads inbox.
 
 TOOLS FOR YOUR LISTING
-• AI Photo Studio — blue sky, twilight, lawn, decluttering, virtual staging and custom edits. Review the result, keep photo versions and export images with the disclosure for the changes you made. Original comparisons are available when an untouched original was saved.
+• AI Photo Studio — blue sky, twilight, lawn, decluttering, virtual staging and custom edits. Review the result, keep photo versions and export images with the disclosure for the changes you made. Compare to saved untouched originals.
 • Reels — turn your photos into a short vertical video with your own voiceover and word-by-word captions.
 • Aerial intro — an optional AI-generated opening clip based on your exterior photo, labelled as AI-generated. It is simulated imagery, not drone footage.
-• Floor plan — scan with Apple RoomPlan on LiDAR-supported iPhones, or import a PDF or image. Review and export the plan before using it.
+• Measurements and floor plans — enter wall lengths, draw room outlines or import a plan. Apple RoomPlan scanning needs a supported LiDAR iPhone. Verify dimensions before use.
 • Listing links — a contact page for sharing and a separate unbranded tour link. Check your MLS's rules before posting.
 • Client delivery — photographers and videographers can put their client's name, business, photo and contact details on each listing. Route enquiries to that client's email, track delivery in Leads and send them again when needed. The client does not need a Rendprop account.
 
@@ -20,10 +20,10 @@ NOT ONLY HOMES
 Choose real estate, event venues, restaurants, retail stores or gyms. The listing fields, screen labels and samples match your business.
 
 WORK ON YOUR PHONE OR IN STUDIO
-Sign in with Apple to create your account. It owns your listings and hosted pages, connects your work across devices and Studio, and lets you join a shared team. Recording and editing work offline once you are signed in; publishing and cloud tools need an internet connection.
+Sign in with Apple to create your account. Your listings stay with your account across devices and Studio. Team agents keep their own listings; only the Team owner can switch between linked agents. Recording and editing work offline once you are signed in; publishing and cloud tools need an internet connection.
 
 WHAT A PLAN INCLUDES
-Rendprop is free to download, and your first published listing is free. A subscription adds more hosted listings and monthly AI allowances:
+Your first published listing is free. Plans add hosted listings and monthly AI allowances:
 • Starter — 4 tour renders, 100 AI photo edits, 6 reel clips, 2 aerial intros a month, 1 seat.
 • Pro — 10 tour renders, 200 AI photo edits, 12 reel clips, 4 aerial intros a month, 1 seat.
 • Team — 25 tour renders, 400 AI photo edits, 25 reel clips, 8 aerial intros and 2 video quality upgrades a month, and 2 seats.
@@ -35,7 +35,7 @@ Auto-renewable subscriptions:
 • Pro Monthly — 1 month — $99.00
 • Team Monthly — 1 month — $249.00
 Every plan bills monthly.
-Eligible new subscribers can start with a 7-day free trial by confirming a subscription with Apple. The app shows the available offer and renewal price before confirmation.
+Eligible new subscribers can start with a 7-day free trial by confirming a subscription with Apple. Trial AI has a limited allowance. The app shows the offer and renewal price before confirmation.
 Payment is charged to your Apple ID account at confirmation of purchase, or when an eligible free trial ends. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Renewal is charged within 24 hours before the period ends. Manage or cancel in device Settings > your name > Subscriptions. Prices above are in U.S. dollars; the app shows your local price before you buy.
 
 Terms of Use (EULA): https://www.apple.com/legal/internet-services/itunes/dev/stdeula/

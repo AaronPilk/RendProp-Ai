@@ -675,6 +675,12 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           node tests/export-resume-browser.mjs
+          node tests/export-audio-browser.mjs
+          if node tests/export-audio-browser.mjs --fault=live-original-audio > "$RUNNER_TEMP/export-original-audio-defect.log" 2>&1; then
+            echo "::error::Original-audio regression control unexpectedly passed"
+            exit 1
+          fi
+          grep -q "Continuous speech through cutaway boundaries: weakest40ms RMS" "$RUNNER_TEMP/export-original-audio-defect.log"
           node tests/cloud-editor-browser.mjs
           node tests/conversation-browser.mjs
           node tests/finishing-audio-probe-controls.mjs
@@ -685,6 +691,9 @@ jobs:
         with:
           name: studio-macos-media-export-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/rendprop-export-original-audio-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-original-audio-*/*.mp4
+            ${{ runner.temp }}/export-original-audio-defect.log
             ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
             ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
             ${{ runner.temp }}/rendprop-cloud-editor-*/*.mp4

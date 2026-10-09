@@ -53,7 +53,10 @@ def joined_workspace_race(name,removed_recheck=False):
  """Two actual writer sessions; an observer proves the exact blocking PID."""
  actor,joiner,lid=[str(uuid.uuid4())for _ in range(3)]
  token_hash=hashlib.sha256(uuid.uuid4().bytes).hexdigest()
- sql(name+'-setup',f"""insert into auth.users(id,email,raw_user_meta_data,is_anonymous)values('{actor}','join-owner@fixture.invalid','{{}}',false),('{joiner}','join-agent@fixture.invalid','{{}}',false);update public.orgs set plan='team'where id=(select org_id from public.memberships where user_id='{actor}');insert into public.listings(id,org_id,agent_id,address)select '{lid}',org_id,'{actor}','join race custody'from public.memberships where user_id='{actor}';set role service_role;select public.create_org_invite('{actor}',(select org_id from public.memberships where user_id='{actor}'),'join-agent@fixture.invalid','agent','{token_hash}');""")
+ # This original post-org-lock recheck protects historical shared libraries.
+ # A synthetic Pro seat cap retains that exact custody race without the new
+ # private-Team participant guard serializing it earlier on owner profiles.
+ sql(name+'-setup',f"""insert into auth.users(id,email,raw_user_meta_data,is_anonymous)values('{actor}','join-owner@fixture.invalid','{{}}',false),('{joiner}','join-agent@fixture.invalid','{{}}',false);update public.plan_entitlements set seats=2 where plan='pro';update public.orgs set plan='pro',plan_source='manual'where id=(select org_id from public.memberships where user_id='{actor}');insert into public.listings(id,org_id,agent_id,address)select '{lid}',org_id,'{actor}','join race custody'from public.memberships where user_id='{actor}';set role service_role;select public.create_org_invite('{actor}',(select org_id from public.memberships where user_id='{actor}'),'join-agent@fixture.invalid','agent','{token_hash}');""")
  holder=deleter=None;prefix=b''
  try:
   holder=subprocess.Popen(psql+['-Atq'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=ENV,cwd=ROOT,start_new_session=True)
@@ -102,6 +105,47 @@ def joined_workspace_race(name,removed_recheck=False):
     for pipe in [process.stdin,process.stdout]:
      if pipe:pipe.close()
 
+def private_team_join_deletion_race(name):
+ """Actual Team acceptance commits while deletion waits at its earliest lock."""
+ actor,joiner,lid=[str(uuid.uuid4())for _ in range(3)]
+ token_hash=hashlib.sha256(uuid.uuid4().bytes).hexdigest()
+ sql(name+'-setup',f"insert into auth.users(id,email,is_anonymous)values('{actor}','private-owner@fixture.invalid',false),('{joiner}','private-agent@fixture.invalid',false);update public.orgs set plan='team',plan_source='manual'where id=(select org_id from public.memberships where user_id='{actor}');insert into public.listings(id,org_id,agent_id,address)select '{lid}',org_id,'{actor}','private Team custody'from public.memberships where user_id='{actor}';set role service_role;select public.create_org_invite('{actor}',(select org_id from public.memberships where user_id='{actor}'),'private-agent@fixture.invalid','agent','{token_hash}');")
+ holder=deleter=None;prefix=b''
+ try:
+  holder=subprocess.Popen(psql+['-Atq'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env=ENV,cwd=ROOT,start_new_session=True)
+  first=f"begin;set local role service_role;select public.accept_org_invite('{joiner}','{token_hash}');select 'private-team-ready:'||pg_backend_pid();\n"
+  save(OUT/(name+'-acceptance.sql'),first.encode());holder.stdin.write(first.encode());holder.stdin.flush()
+  deadline=time.monotonic()+10
+  while b'private-team-ready:'not in prefix:
+   remaining=deadline-time.monotonic()
+   if remaining<=0 or not select.select([holder.stdout],[],[],remaining)[0]:raise RuntimeError('Private Team acceptance readiness timed out')
+   chunk=os.read(holder.stdout.fileno(),4096)
+   if not chunk:raise RuntimeError('Private Team acceptance exited before holding its actual locks')
+   prefix+=chunk
+  backend=int(re.search(rb'private-team-ready:(\d+)',prefix).group(1));app='private-team-delete-'+uuid.uuid4().hex
+  command=f"set application_name='{app}';set role service_role;select public.prepare_account_deletion('{actor}','fixture-uploads','fixture-renders');"
+  save(OUT/(name+'-deletion.sql'),command.encode());deleter=subprocess.Popen(psql+['-Atq','-c',command],env=ENV,cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,start_new_session=True)
+  observed=False
+  for poll in range(40):
+   waiting=sql(name+f'-blocking-{poll:02d}',f"select exists(select 1 from pg_stat_activity a where a.application_name='{app}'and a.wait_event_type='Lock'and {backend}=any(pg_blocking_pids(a.pid))); ").strip()
+   if waiting=='t':observed=True;break
+   if deleter.poll()is not None:raise RuntimeError('Private Team deletion failed before its actual acceptance wait')
+   time.sleep(.025)
+  if not observed:raise RuntimeError('Private Team exact acceptance backend did not block deletion')
+  holder.stdin.write(b'commit;\n');holder.stdin.flush();holder.stdin.close();holder.stdin=None
+  rest=holder.communicate(timeout=10)[0];save(OUT/(name+'-accepted.log'),prefix+rest)
+  if holder.returncode:raise RuntimeError('Private Team acceptance did not commit')
+  output=deleter.communicate(timeout=10)[0];save(OUT/(name+'-deletion.log'),output)
+  if deleter.returncode!=1 or b'Transfer ownership'not in output or b'deadlock detected'in output:raise RuntimeError('Private Team deletion must refuse ownership transfer, never deadlock')
+  sql(name+'-custody',f"do $o$begin if not exists(select 1 from public.team_private_libraries b where b.team_owner_user_id='{actor}'and b.agent_user_id='{joiner}'and public.team_library_binding_valid(b.id))or not exists(select 1 from public.listings where id='{lid}'and agent_id='{actor}')or exists(select 1 from public.deletion_requests where user_id='{actor}')then raise exception 'FAIL deletion integrity: private Team acceptance preserves owner custody';end if;end$o$;")
+  return {'actualAcceptanceHeldLocks':True,'exactBlockObserved':True,'acceptedPrivateRelation':True,'deletionRefusedTransfer':True,'noDeletionIntent':True,'noDeadlock':True}
+ finally:
+  for process in [deleter,holder]:
+   if process is not None:
+    stop(process)
+    for pipe in [process.stdin,process.stdout]:
+     if pipe:pipe.close()
+
 started=False;httpd=None;http_log=None
 print('EVIDENCE: '+str(OUT),flush=True)
 try:
@@ -125,6 +169,7 @@ try:
  if 'FAIL deletion integrity: former-member listing reference refuses before solo purge'not in bad:raise RuntimeError('Preflight mutation failed for unrelated reason')
  # psql disconnect rolls the mutation/fixtures back. Recheck restored schema.
  sql('restored-preflight',"select position('account_deletion_integrity_preflight' in pg_get_functiondef('public.prepare_account_deletion(uuid,text,text)'::regprocedure))>0;")
+ receipt['privateTeamJoinRace']=private_team_join_deletion_race('private-team-join-deletion-race')
  receipt['joinRace']=joined_workspace_race('joined-workspace-race')
  # Remove exactly the post-org-lock invocation, preserving the early check.
  sql('remove-post-lock-recheck',"""do $m$declare d text;a text:=$a$  perform public.account_deletion_integrity_preflight(p_user);

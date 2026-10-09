@@ -49,11 +49,14 @@ their private-library owner role to manage the parent or read its transaction ID
 Picker/recovery copy says listing library. Only explicit fresh owner authority
 shows Switch agent. Individual accounts and invited agents do not get a switcher.
 A rejected cached delegation is cleared; own local files remain preserved.
-Join notices and Terms/Privacy explain owner access before joining.
+Join notices and Terms/Privacy explain owner access before joining. Invite acceptance
+locks participant profiles before the Team organization, in the same order as
+account deletion. The actual acceptance/deletion race now refuses unsafe owner
+deletion without deadlock; pending deletion cannot be bypassed by a new seat.
 
 ## Verification and publication
 
-Local fresh-schema and exact-replay tests pass 90 Team, 28 workspace and 34
+Local fresh-schema and exact-replay tests pass 92 Team, 28 workspace and 34
 readiness controls, covering sibling RLS, owner delegation,
 legacy records, seat removal, usage pooling and immutable liabilities. A compiled
 sibling-access defect is caught by the unchanged raw RLS assertion. A real
@@ -66,7 +69,9 @@ has 478 unit tests, typecheck and 13 browser checks, including owner viewing an
 agent and an invited agent's restricted management controls. Actual simulator
 SDK build and Home appearance tests passed. The full Deno regression passed 1,862 tests with zero failures and one ignored
 local-SQL presenter integration case. Focused actor-aware billing controls also
-passed. Closed handler fixtures now implement the new RPC contracts while
+passed. Studio export retains continuous original speech through video-decoder
+stalls; eight actual audio checks and the deliberately broken old path passed
+their expected oracles. Closed handler fixtures now implement the new RPC contracts while
 retaining their recovery, money and negative-control oracles; the original
 first-run failures are retained in the private evidence directory.
 

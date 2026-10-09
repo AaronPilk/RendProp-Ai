@@ -57,8 +57,20 @@ try:
  run('bootstrap',[*psql,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  for m in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+m.stem,[*psql,'-q','-1','-f',m])
  receipt['fresh']=run('package-fresh',[*psql,'-Atq','-f',FIXTURE]).strip()
- run('package-migration-replay',[*psql,'-q','-f',MIGRATION])
- receipt['replay']=run('package-replay',[*psql,'-Atq','-f',FIXTURE]).strip()
+ # Replay the overlay at its historical schema point in a separate database.
+ # Later Team wrappers remain installed in the original current-schema DB.
+ catalog_sql = "select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|' order by oid::regprocedure::text)) from pg_proc where pronamespace='public'::regnamespace;"
+ final_catalog = run("final-function-catalog", [*psql, "-Atq"], catalog_sql)
+ run("createdb-historical-replay", [TOOLS["createdb"], *conn, "historical_replay"])
+ replay_psql = [TOOLS["psql"], "-X", "--no-password", *conn, "-d", "historical_replay", "-v", "ON_ERROR_STOP=1"]
+ run("bootstrap-historical-replay", [*replay_psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"])
+ for m in sorted((SQL / "migrations").glob("*.sql")):
+     run("replay-apply-" + m.stem, [*replay_psql, "-q", "-1", "-f", m])
+     if m.name == "20261007145527_serving_photo_partitions.sql":
+         run("historical-exact-overlay-replay", [*replay_psql, "-q", "-1", "-f", m])
+ assert run("replayed-final-function-catalog", [*replay_psql, "-Atq"], catalog_sql) == final_catalog, "Historical replay changed final function authority"
+ receipt["replayMode"] = "Separate database; overlay twice at historical point, all later migrations then applied"
+ receipt["replay"] = run("final-replayed-fixture", [*replay_psql, "-Atq", "-f", FIXTURE]).strip()
  pristine=run('guard-definition',[*psql,'-Atq'],"select pg_get_functiondef('public.serving_photo_partition_guard()'::regprocedure);")
  controls=[]
  for name,anchor,oracle in [
