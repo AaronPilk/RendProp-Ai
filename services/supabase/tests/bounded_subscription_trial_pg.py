@@ -143,6 +143,10 @@ try:
     org="d2000000-0000-4000-8000-000000000001"
     run("race-fixture",[*psql,"-q"],f"""
       begin;
+      -- These races exercise the funded trial's five-photo lifetime quota.
+      -- The transaction-scoped SQL fixtures above rolled their mode back;
+      -- pin the same authority in this owned cluster before committing users.
+      update public.app_config set value=value||'{{"mode":"funded"}}'::jsonb where key='serving_mode';
       insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('{actor}','trial-race@example.invalid',false,now());
       insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('d1000000-0000-4000-8000-000000000002','trial-race-member@example.invalid',false,now());
       insert into orgs(id,name,plan,plan_source)values('{org}','Synthetic trial race','starter','apple');
@@ -163,6 +167,9 @@ try:
       select serving_cost_reserve('{actor}','{org}','race-photo-key-'||i,'photo.sky:0','gemini','synthetic',repeat('a',64),1,'synthetic')from generate_series(1,4)i;
       commit;
     """)
+    race_mode=run("race-serving-mode",[*psql,"-Atq"],"select public.serving_mode();").strip()
+    assert race_mode=="funded",race_mode
+    receipt["raceServingMode"]=race_mode
     statements=[f"select serving_cost_reserve('{actor}','{org}','last-photo-race-{i}','photo.sky:0','gemini','synthetic',repeat('a',64),1,'synthetic');"for i in range(2)]
     outcomes=race("last-credit-race",statements)
     assert sorted(code for code,_ in outcomes)==[0,3],outcomes

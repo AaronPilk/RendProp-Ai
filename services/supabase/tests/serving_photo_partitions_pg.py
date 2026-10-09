@@ -73,6 +73,9 @@ try:
  receipt['negativeControls']=controls
  u='e1000000-0000-4000-8000-000000000010';o='e2000000-0000-4000-8000-000000000010'
  run('race-fixture',[*psql,'-q'],f"""
+ -- Preserve the funded package authority tested by the rollback fixtures.
+ -- The final-schema default is ceiling mode, which has different allowances.
+ update public.app_config set value=value||'{{"mode":"funded"}}'::jsonb where key='serving_mode';
  insert into auth.users(id,email,is_anonymous,email_confirmed_at)values('{u}','package-race@example.invalid',false,now());
  insert into orgs(id,name,plan,plan_source)values('{o}','Synthetic package race','pro','manual');
  insert into memberships(user_id,org_id,role)values('{u}','{o}','owner');
@@ -82,6 +85,9 @@ try:
  select provision_serving_photo_partition(id,0,1,10,'one-gemini-1k-4096-plus-one-kontext-20261007','published-standard-20261006',repeat('b',64))from serving_funding where org_id='{o}';
  reset role;
  """)
+ race_mode=run('race-serving-mode',[*psql,'-Atq'],'select public.serving_mode();').strip()
+ if race_mode!='funded':raise RuntimeError('Wrong race serving authority '+race_mode)
+ receipt['raceServingMode']=race_mode
  for name,stage,provider,model,cost in [('last-photo','photo.sky:0','gemini','gemini-3.1-flash-image','31.1296'),('last-other-wallet','coach.chat','anthropic','synthetic','6')]:
   outcomes=race(name,[f"select serving_cost_reserve('{u}','{o}','{name}-key-{i}','{stage}','{provider}','{model}',repeat('a',64),{cost},'published-standard-20261006');"for i in range(2)])
   if sorted(code for code,_ in outcomes)!=[0,3]or not any('RP402:'in output for code,output in outcomes if code==3):raise RuntimeError(name+' failed admission race')
