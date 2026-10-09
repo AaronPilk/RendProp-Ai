@@ -150,10 +150,11 @@ final class BetaPolishUITests: XCTestCase {
         attach("paywall-compact-pro-local-products")
         app.buttons["paywall.plan.starter"].tap()
         XCTAssertTrue(app.staticTexts["paywall.selection"].label.contains("Starter"))
-        app.segmentedControls["paywall.period"].buttons["Yearly"].tap()
-        XCTAssertTrue(app.staticTexts["paywall.selection"].label.contains("Yearly"))
+        // Monthly plans only (2026-10-09): no billing-period picker, no Yearly price.
+        XCTAssertFalse(app.segmentedControls["paywall.period"].exists, "Annual plans are not sold")
+        XCTAssertTrue(app.staticTexts["paywall.selection"].label.contains("Monthly"))
         XCTAssertTrue(store.allTransactions().isEmpty, "Opening and choosing plans never purchases or starts a trial")
-        attach("paywall-compact-yearly-no-purchase")
+        attach("paywall-compact-monthly-no-purchase")
     }
 
     func testProfileGuideIsReachableAtLargeText() {

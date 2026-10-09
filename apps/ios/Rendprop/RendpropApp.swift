@@ -4433,9 +4433,9 @@ struct AIConsentView: View {
 // MARK: - Storefront (App Review Guideline 3.1.1 / 3.1.3)
 //
 // Rendprop DOES sell inside the app. `Purchases/` implements StoreKit 2
-// auto-renewable subscriptions — the FIVE products the app actually requests
-// (Starter and Pro monthly + yearly, Team monthly; Team yearly is
-// `RendpropProducts.notSoldAtLaunch`) in the single App Store Connect
+// auto-renewable subscriptions — the THREE products the app actually requests
+// (Starter, Pro and Team monthly; every annual id is
+// `RendpropProducts.notSoldAtLaunch` since 2026-10-09) in the single App Store Connect
 // subscription group `rendprop_plans`, each with a 7-day free introductory
 // offer. That count is what the App Store review notes state, so keep the two
 // in step. The paywall (`Purchases/PaywallView.swift`, mounted once via

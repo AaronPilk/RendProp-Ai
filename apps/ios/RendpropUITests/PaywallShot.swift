@@ -249,9 +249,9 @@ final class PaywallShot: XCTestCase {
 
     // MARK: p02 — the Yearly tab
 
-    /// Same sheet, picker on Yearly: "$490.00/year" on Starter and Pro, and
-    /// Team's card falling back to its monthly price with a "Monthly only"
-    /// note (Team Yearly is in `RendpropProducts.notSoldAtLaunch`).
+    /// Same sheet, picker on Yearly. Since 2026-10-09 every annual product is
+    /// in `RendpropProducts.notSoldAtLaunch`, the picker is hidden and this
+    /// step records SKIPPED; it returns if annual plans are ever sold again.
     private func step02Yearly(productsLoaded: Bool) {
         activity("p02 — Paywall · Yearly") {
             guard productsLoaded else {

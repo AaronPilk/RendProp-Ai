@@ -31,11 +31,9 @@ Rendprop is free to download, and your first published listing is free. A subscr
 SUBSCRIPTION DETAILS
 Auto-renewable subscriptions:
 • Starter Monthly — 1 month — $49.00
-• Starter Yearly — 1 year — $490.00
 • Pro Monthly — 1 month — $99.00
-• Pro Yearly — 1 year — $990.00
 • Team Monthly — 1 month — $249.00
-Starter and Pro are available monthly or yearly; Team is monthly.
+Every plan bills monthly.
 Eligible new subscribers can start with a 7-day free trial by confirming a subscription with Apple. The app shows the available offer and renewal price before confirmation.
 Payment is charged to your Apple ID account at confirmation of purchase, or when an eligible free trial ends. Subscriptions renew automatically unless cancelled at least 24 hours before the current period ends. Renewal is charged within 24 hours before the period ends. Manage or cancel in device Settings > your name > Subscriptions. Prices above are in U.S. dollars; the app shows your local price before you buy.
 

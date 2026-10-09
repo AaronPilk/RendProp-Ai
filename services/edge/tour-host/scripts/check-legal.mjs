@@ -59,7 +59,7 @@ expect(t.includes("at least 18 years old") && p.includes("adults aged 18 or olde
 expect(p.includes("Settings → Download account data") && p.includes("scope and omissions") && p.includes("separate download controls"), "Account JSON export and binary-media limits are stated");
 expect(p.includes("Provider copies can remain") && p.includes("paid and unpaid processing") && p.includes("video results do not expire by default"), "Provider retention is not inferred from Rendprop URL expiry");
 expect(!p.includes("They process data solely"), "No unsupported universal processor-use guarantee");
-expect(t.includes("Starter and Pro, billed monthly") && t.includes("Team, billed monthly"), "Payment terms not rewritten");
+expect(t.includes("Starter, Pro and Team, each") && t.includes("billed monthly.") && !/yearly|annual plan/i.test(t), "Payment terms state monthly-only plans (2026-10-09)");
 expect(t.includes("by confirming an Apple subscription") && t.includes("Downloading or signing in does not activate a trial"), "Trial requires eligible Apple subscription activation");
 expect(t.includes("One introductory") || t.includes("one introductory offer per subscription group"), "Trial eligibility remains Apple subscription-group scoped");
 expect(t.includes("limited to a trial usage ceiling") && t.includes("does not move Apple's renewal date forward"), "Trial usage ceiling and Apple billing date are distinct");

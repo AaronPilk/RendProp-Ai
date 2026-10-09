@@ -615,9 +615,9 @@ async function main() {
 
   // ---- the legal pages match the launch line-up ------------------------------
   const terms = await get(worker, "/terms");
-  expect(/Starter and Pro, billed monthly\s+or yearly, and Team, billed monthly/.test(terms.body),
-    "[/terms] §6 must say Starter and Pro bill monthly or yearly and Team bills monthly (LAUNCH-CONTRACT: Team yearly is not sold)");
-  expect(!/each\s+billed monthly or yearly/.test(terms.body), "[/terms] must not claim every plan bills yearly");
+  expect(/Starter, Pro and Team, each\s+billed monthly\./.test(terms.body),
+    "[/terms] §6 must say every plan bills monthly (2026-10-09: no annual plans are sold)");
+  expect(!/yearly|annual/i.test(terms.body.replace(/changefreq/g, "")), "[/terms] must not offer a yearly or annual plan");
   expect(terms.body.includes("Effective October 8, 2026"), "[/terms] proposed notice revision date");
   ok("terms reflect the launch plan line-up");
 

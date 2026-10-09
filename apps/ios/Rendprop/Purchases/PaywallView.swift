@@ -120,7 +120,9 @@ struct PaywallView: View {
         } else if purchases.products.isEmpty {
             unavailableCard
         } else {
-            periodPicker
+            // Monthly only today: no picker, so nobody sees a "Yearly" tab
+            // that falls back to monthly prices.
+            if RendpropProducts.sellsAnnual { periodPicker }
             planCards
             trialDetails
             if purchases.billingContext?.servingActivation?.available != false {

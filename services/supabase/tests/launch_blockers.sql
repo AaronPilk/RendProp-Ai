@@ -21,6 +21,8 @@ create function pg_temp.refuse(statement text,expected text,label text)returns v
 
 -- Ceiling mode is the live default; pin it and the launch pool explicitly for this transaction.
 update public.app_config set value=jsonb_build_object('mode','ceiling','free_published_listings',1)where key='serving_mode';
+-- Pin the commission: the dated Small Business switch is asserted on its own below.
+update public.app_config set value=(value-'reduced_commission_bps'-'reduced_commission_from')||'{"apple_commission_bps":3000}'::jsonb where key='serving_envelope';
 update public.app_config set value=jsonb_build_object('cap_cents',29000,'starts_at',to_char(now()-interval '1 day','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'ends_at',to_char(now()+interval '30 days','YYYY-MM-DD"T"HH24:MI:SS"Z"'))where key='trial_sponsor_pool';
 
 insert into auth.users(id,email,is_anonymous,email_confirmed_at)values
@@ -108,6 +110,27 @@ do $$declare saved jsonb;begin
  insert into public.app_config(key,value)values('serving_mode',saved);
  perform pg_temp.ok(public.serving_mode()='ceiling','configuration restored');
  perform pg_temp.ok(not exists(select 1 from public.ops_health_findings()where code='serving_mode_config'),'no configuration alert with a valid row');
+end$$;
+
+-- ------------------------------------------------------------ Small Business commission switches at its dated instant
+do $$declare saved jsonb;begin
+ select value into saved from public.app_config where key='serving_envelope';
+ update public.app_config set value=value||'{"reduced_commission_bps":1500}'::jsonb||jsonb_build_object('reduced_commission_from',to_char(now()+interval '1 day','YYYY-MM-DD"T"HH24:MI:SS"Z"'))where key='serving_envelope';
+ perform pg_temp.ok(public.serving_envelope_int('apple_commission_bps',0)=3000,'before the Small Business effective instant the 30% commission applies');
+ perform pg_temp.ok((public.plan_serving_ceiling('d2000000-0000-4000-8000-000000000009')->>'ceiling_cents')::int=807,'Starter is 807c before the switch');
+ update public.app_config set value=value||jsonb_build_object('reduced_commission_from',to_char(now()-interval '1 minute','YYYY-MM-DD"T"HH24:MI:SS"Z"'))where key='serving_envelope';
+ perform pg_temp.ok(public.serving_envelope_int('apple_commission_bps',0)=1500,'from the effective instant the 15% commission applies with no config edit');
+ perform pg_temp.ok((public.plan_serving_ceiling('d2000000-0000-4000-8000-000000000009')->>'ceiling_cents')::int=991
+  and(public.plan_serving_ceiling('d2000000-0000-4000-8000-000000000001')->>'ceiling_cents')::int=2053
+  and(public.plan_serving_ceiling('d2000000-0000-4000-8000-000000000003')->>'ceiling_cents')::int=5241,'after the switch: Starter 991c, Pro 2053c, Team 5241c');
+ perform pg_temp.ok(public.serving_envelope_int('net_margin_bps',0)=7500,'other envelope keys are unaffected by the commission switch');
+ update public.app_config set value=value||'{"reduced_commission_from":"soon"}'::jsonb where key='serving_envelope';
+ perform pg_temp.ok(public.serving_envelope_int('apple_commission_bps',0)=3000,'a malformed effective date keeps the 30% commission (smaller envelope)');
+ update public.app_config set value=value||'{"reduced_commission_from":"2020-01-01T00:00:00Z","reduced_commission_bps":"1500"}'::jsonb where key='serving_envelope';
+ perform pg_temp.ok(public.serving_envelope_int('apple_commission_bps',0)=3000,'a non-numeric reduced rate keeps the 30% commission');
+ update public.app_config set value=value||'{"reduced_commission_bps":20000}'::jsonb where key='serving_envelope';
+ perform pg_temp.ok(public.serving_envelope_int('apple_commission_bps',0)=3000,'an out-of-range reduced rate keeps the 30% commission');
+ update public.app_config set value=saved where key='serving_envelope';
 end$$;
 
 -- ------------------------------------------------------------ 2+3. envelopes and their service windows

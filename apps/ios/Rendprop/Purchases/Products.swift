@@ -201,12 +201,20 @@ enum RendpropProducts {
     /// entitlement — they are simply never requested from StoreKit and never
     /// shown a price.
     ///
-    /// 2026-09-05 — `com.rendprop.app.team.annual` ($2,490/yr): App Store
-    /// Connect's yearly price points stop at USD 1,000 unless Apple grants
-    /// extended price points, and that request is still open, so Team ships
-    /// monthly-only. To put it back on sale when Apple grants them, empty this
-    /// set — that one line is the whole change.
-    static let notSoldAtLaunch: Set<String> = [RendpropPlan.team.annualProductID]
+    /// 2026-10-09 — Rendprop sells MONTHLY plans only (owner decision). The
+    /// annual products cannot carry the advertised allowances inside the
+    /// per-month AI budget (ten monthly prices over twelve months), so none is
+    /// offered. Their ids stay mapped below so a stray historical or Sandbox
+    /// annual purchase still resolves to its plan; they are never requested
+    /// from StoreKit and never shown a price. The products must also be
+    /// removed from sale in App Store Connect.
+    static let notSoldAtLaunch: Set<String> = Set(RendpropPlan.allCases.map(\.annualProductID))
+
+    /// True when at least one annual product is on sale. Drives whether the
+    /// paywall shows the Monthly / Yearly picker at all.
+    static var sellsAnnual: Bool {
+        RendpropPlan.allCases.contains { $0.isSold(.annual) }
+    }
 
     /// Every product id the app asks StoreKit for, in the order the paywall
     /// shows them. Ids in `notSoldAtLaunch` are left out: asking the App Store

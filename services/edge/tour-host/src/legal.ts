@@ -186,8 +186,8 @@ local advertising rules) when you publish or share AI-enhanced media.</p>
 <h2><span class="num">6.</span>Plans and payment</h2>
 <p>Rendprop is free to download. A subscription unlocks monthly allowances for the things that
 cost us money to make: tour renders, AI photo edits, reel clips, and aerial intros. Plans are
-sold as <b>auto-renewable subscriptions through the App Store</b> — Starter and Pro, billed monthly
-or yearly, and Team, billed monthly. <b>The app is the source of truth</b>: the plan names,
+sold as <b>auto-renewable subscriptions through the App Store</b> — Starter, Pro and Team, each
+billed monthly. <b>The app is the source of truth</b>: the plan names,
 allowances, billing periods, and prices you see there come from the App Store in your own currency,
 and they are what you are charged.</p>
 <ul>

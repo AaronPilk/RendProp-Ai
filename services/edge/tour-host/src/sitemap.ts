@@ -94,7 +94,7 @@ const SITE_PAGES: SitemapEntry[] = [
   { loc: "/pricing", lastmod: "2026-09-12", changefreq: "weekly", priority: "0.9" },
   { loc: "/compare", lastmod: "2026-09-05", changefreq: "weekly", priority: "0.8" },
   { loc: "/support", lastmod: "2026-09-12", changefreq: "monthly", priority: "0.7" },
-  { loc: "/terms", lastmod: "2026-09-12", changefreq: "yearly", priority: "0.3" },
+  { loc: "/terms", lastmod: "2026-10-09", changefreq: "yearly", priority: "0.3" },
   { loc: "/privacy", lastmod: "2026-09-05", changefreq: "yearly", priority: "0.3" },
 ];
 

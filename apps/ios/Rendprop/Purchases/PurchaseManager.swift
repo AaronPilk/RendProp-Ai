@@ -206,8 +206,8 @@ final class PurchaseManager: ObservableObject {
     // MARK: - Products
 
     /// Ask StoreKit for the subscription products we currently sell
-    /// (`RendpropProducts.all` — which leaves out `notSoldAtLaunch` ids, Team
-    /// Yearly today). An empty result is not
+    /// (`RendpropProducts.all` — which leaves out `notSoldAtLaunch` ids, every
+    /// annual product today). An empty result is not
     /// an error — it is the simulator with no `.storekit` file attached, or a
     /// device with no App Store account, or products still "Waiting for
     /// Review". The paywall says "Plans aren't available right now" and offers
