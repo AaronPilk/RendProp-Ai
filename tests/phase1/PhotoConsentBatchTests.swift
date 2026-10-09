@@ -110,6 +110,7 @@ struct UIImage {
     struct Version {
         var id: String; var imageFile: String; var originalFile: String?; var originalVerified = true
         var effects: [String] = []
+__VERSION_SELECTION_MEMBERS__
     }
     static func trackExisting(id: String, imageFile: String, priorFile: String?, directory: URL) throws -> Version {
         .init(id: id, imageFile: imageFile, originalFile: priorFile ?? imageFile)

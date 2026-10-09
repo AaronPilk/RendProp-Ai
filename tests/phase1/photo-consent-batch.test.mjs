@@ -16,18 +16,32 @@ const consent = `import Foundation\nimport Combine\n${app.slice(begin, end)}\n`;
 const service = readFileSync(new URL('../../apps/ios/Rendprop/Photos/PhotoEditService.swift', import.meta.url), 'utf8')
   .replace(/^import UIKit\n/m, '').replace(/^import UserNotifications\n/m, '');
 const queue = readFileSync(new URL('../../apps/ios/Rendprop/Photos/PhotoWorkQueue.swift', import.meta.url), 'utf8');
-const fixture = readFileSync(new URL('PhotoConsentBatchTests.swift', import.meta.url), 'utf8');
+const api = readFileSync(new URL('../../apps/ios/Rendprop/Networking/APIClient.swift', import.meta.url), 'utf8');
+const apiBegin = api.indexOf('enum APIError:');
+const apiEnd = api.indexOf('// MARK: - Admin console models', apiBegin);
+assert.ok(apiBegin >= 0 && apiEnd > apiBegin, 'require exact production API error boundaries');
+const errors = `import Foundation\n${api.slice(apiBegin, apiEnd)}\n`;
+const history = readFileSync(new URL('../../apps/ios/Rendprop/Photos/PhotoVersionHistory.swift', import.meta.url), 'utf8');
+const versionMembers = ['        var customReviewed: Bool? = nil',
+  '        var needsCustomReview: Bool {', '        var canAutomaticallySelectForListing: Bool {'].map(marker => {
+  assert.equal(history.split(marker).length - 1, 1, 'require unique production version member');
+  const start = history.indexOf(marker);
+  return history.slice(start, history.indexOf('\n', start));
+}).join('\n');
+const fixture = readFileSync(new URL('PhotoConsentBatchTests.swift', import.meta.url), 'utf8')
+  .replace('__VERSION_SELECTION_MEMBERS__', versionMembers);
+assert.ok(!fixture.includes('__VERSION_SELECTION_MEMBERS__'), 'actual version selection members must be installed');
 
 test('actual photo batch fences revoked grants before dispatch and retains already-dispatched outputs', () => {
   const directory = mkdtempSync(join(tmpdir(), 'rendprop-photo-consent.'));
-  for (const [name, contents] of [['AIConsent.swift', consent], ['PhotoWorkQueue.swift', queue],
+  for (const [name, contents] of [['AIConsent.swift', consent], ['APIError.swift', errors], ['PhotoWorkQueue.swift', queue],
     ['PhotoEditService.swift', service], ['Fixture.swift', fixture]]) {
     writeFileSync(join(directory, name), contents, { flag: 'wx' });
   }
   const execute = (name, serviceFile) => {
     const binary = join(directory, name);
     const compile = spawnSync('/usr/bin/swiftc', ['-parse-as-library', join(directory, 'AIConsent.swift'),
-      join(directory, 'PhotoWorkQueue.swift'), serviceFile, join(directory, 'Fixture.swift'), '-o', binary],
+      join(directory, 'APIError.swift'), join(directory, 'PhotoWorkQueue.swift'), serviceFile, join(directory, 'Fixture.swift'), '-o', binary],
     { encoding: 'utf8', timeout: 60000 });
     assert.equal(compile.status, 0, `${name} compile: ${compile.error ?? ''}\n${compile.stdout}\n${compile.stderr}`);
     return spawnSync(binary, [`com.rendprop.offline-photo-consent.${randomUUID()}`],
