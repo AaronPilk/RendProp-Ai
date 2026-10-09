@@ -14,7 +14,7 @@ STUDIO_SUPPORT=['handler.ts','property-music.ts','project-media.ts','context.ts'
 # service activation billing cases and the selected-workspace photo package.
 # Keep file-level counts and individual pass results, not just a total that can
 # hide an omitted file, an ignored/filtered case or duplicate case output.
-HANDLER_INVENTORY={'me/workspaces.test.ts':9,'me/billing.test.ts':21,'listings/create.test.ts':4}
+HANDLER_INVENTORY={'me/workspaces.test.ts':9,'me/billing.test.ts':22,'listings/create.test.ts':4}
 HANDLER_TESTS=sum(HANDLER_INVENTORY.values())
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-workspace-selection-',dir='/tmp'));SOCK,DATA=OUT/'socket',OUT/'cluster';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC','NO_COLOR':'1','DENO_NO_PROMPT':'1'}

@@ -22,7 +22,20 @@ try:
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_privacy_audit']);assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
  for p in MIGRATIONS:query('migration-'+p.stem,p.read_text())
- receipt['freshAssertions']=positive('fresh');query('replay',TARGET.read_text());receipt['replayAssertions']=positive('replayed')
+ receipt['freshAssertions']=positive('fresh')
+ # Replay the historical migration before the later launch patches; applying
+ # it backwards to the final schema would replace current security guards.
+ final_psql=PSQL
+ run('create-historical',[BIN['createdb'],'--no-password',*CONN,'rendprop_privacy_audit_replay'])
+ PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_privacy_audit_replay','-v','ON_ERROR_STOP=1','-Atq']
+ query('bootstrap-historical',(SQL/'tests/ci-bootstrap.sql').read_text())
+ for p in MIGRATIONS:
+  query('historical-'+p.stem,p.read_text())
+  if p==TARGET:query('ordered-replay-'+p.stem,p.read_text())
+ receipt['replayAssertions']=positive('replayed')
+ receipt['replayMode']='second clean database; target migration twice at historical schema point'
+ PSQL=final_psql
+
  faults=[
   ('anonymous-retail-admission','public.upload_new_admission(uuid,uuid,bigint)',"if anonymous then","if false then",'unpaid anonymous cannot reserve upload'),
   ('sandbox-receipt-admission','public.upload_new_admission(uuid,uuid,bigint)',"s.environment='Production'","s.environment in('Production','Sandbox')",'Sandbox receipt cannot fund anonymous upload'),

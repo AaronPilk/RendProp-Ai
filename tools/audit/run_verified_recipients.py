@@ -31,12 +31,25 @@ try:
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
  for p in MIGRATIONS:query('migration-'+p.stem,p.read_text())
  receipt['freshAssertions']=positive('fresh')
- query('replay',TARGET.read_text());receipt['replayAssertions']=positive('replayed')
+ # Replay the historical migration before the later launch patches; applying
+ # it backwards to the final schema would replace current security guards.
+ final_psql=PSQL
+ run('create-historical',[BIN['createdb'],'--no-password',*CONN,'rendprop_privacy_audit_replay'])
+ PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_privacy_audit_replay','-v','ON_ERROR_STOP=1','-Atq']
+ query('bootstrap-historical',(SQL/'tests/ci-bootstrap.sql').read_text())
+ for p in MIGRATIONS:
+  query('historical-'+p.stem,p.read_text())
+  if p==TARGET:query('ordered-replay-'+p.stem,p.read_text())
+ receipt['replayAssertions']=positive('replayed')
+ receipt['replayMode']='second clean database; target migration twice at historical schema point'
+ PSQL=final_psql
+
  faults=[
   ('auth-profile-destination','public.notification_verified_recipients(uuid[])','lower(btrim(u.email))','lower(btrim(p.email))','private notification uses verified Auth not editable profile'),
   ('auth-anonymous-recipient','public.notification_verified_recipients(uuid[])','and not u.is_anonymous','and true','anonymous Auth never receives private notification'),
   ('auth-unconfirmed-recipient','public.notification_verified_recipients(uuid[])','and u.email_confirmed_at is not null','and true','unconfirmed Auth never receives private notification'),
   ('unverified-buyer-enqueue','public.client_lead_enqueue(uuid,uuid,uuid)','or not public.client_recipient_verified(c.listing_id,c.recipient_email)','or false ','unverified recipient gets no buyer snapshot'),
+  ('nonce-single-use','public.client_recipient_verification_consume(text)','or v.consumed_at is not null ','','verification nonce can only be consumed once'),
   ('nonce-revision-binding','public.client_recipient_verification_consume(text)','or c.revision is distinct from v.contact_revision','or false','nonce cannot cross contact revision edit'),
   ('nonce-expiry-binding','public.client_recipient_verification_consume(text)','v.expires_at<=now()','false ','expired nonce cannot verify recipient'),
   ('nonce-live-listing','public.client_recipient_verification_consume(text)','not public.client_routing_active(v.org_id,v.listing_id)','false ','deleted listing cannot verify recipient'),

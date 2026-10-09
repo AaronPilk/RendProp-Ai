@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 begin;
-do $$begin if current_database()<>'rendprop_privacy_audit'or inet_server_addr()is not null then raise exception 'Use only the owned socket-only privacy fixture';end if;end$$;
+do $$begin if current_database()not in('rendprop_privacy_audit','rendprop_privacy_audit_replay')or inet_server_addr()is not null then raise exception 'Use only the owned socket-only privacy fixture';end if;end$$;
 create temp table privacy_checks(label text primary key,passed boolean not null);
 create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'PRIVACY FAIL: %',label;end if;insert into privacy_checks values(label,true);end$$;
 create function pg_temp.denied(command text,prefix text,label text)returns void language plpgsql as $$declare problem text;begin begin execute command;exception when others then problem:=sqlerrm;end;perform pg_temp.ok(problem like prefix||'%',label);end$$;
@@ -51,7 +51,7 @@ do $$declare f record;c jsonb;r jsonb;v record;o record;payload jsonb;begin sele
  perform pg_temp.ok(not client_recipient_verification_consume(repeat('f',64)),'unknown nonce returns generic false');
  perform pg_temp.ok(not client_recipient_verification_consume(''), 'malformed nonce returns generic false');
  perform pg_temp.ok(client_recipient_verification_consume(repeat('a',64)),'possessed current nonce verifies recipient');
- perform pg_temp.ok(client_recipient_verification_consume(repeat('a',64)),'verification repeat is idempotent');
+ perform pg_temp.ok(not client_recipient_verification_consume(repeat('a',64)),'verification nonce can only be consumed once');
  perform pg_temp.ok(client_recipient_verified(f.l,'client@fixture.invalid')and not client_recipient_verified(f.l,'other@fixture.invalid'),'verification grants only exact recipient');
  perform pg_temp.ok(client_recipient_verification_request(f.a,f.o,f.l,repeat('b',64))=jsonb_build_object('ok',true,'state','verified'),'verified recipient needs no second email');
  r:=client_lead_resend(f.a,f.o,f.lead,gen_random_uuid(),'client@fixture.invalid');

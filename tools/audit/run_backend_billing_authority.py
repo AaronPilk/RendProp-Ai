@@ -59,13 +59,38 @@ try:
   nums=re.findall(r'^\d+$',v.stdout,re.M);assert len(nums)==1;return int(nums[0])
  assert prior_attrs==run('security-metadata-after', [*PS,'-Atqc',attrs]).stdout;r['existingSecurityMetadataPreserved']=True
  r['fresh']=proof('fresh')
- for f in owned:run('replay-'+f.stem,[*PS,'-q','-f',str(f)])
+ # Historical exact-body patches must replay before later migrations replace
+ # their writers. Use a separate clean database, then prove its final schema.
+ final_ps=PS
+ run('create-historical',[B['createdb'],*CONN,DB+'_replay'])
+ PS=[B['psql'],'-X','--no-password',*CONN,'-d',DB+'_replay','-v','ON_ERROR_STOP=1']
+ run('bootstrap-historical',[*PS,'-q','-f',str(ROOT/'services/supabase/tests/ci-bootstrap.sql')])
+ for f in files:
+  run('historical-'+f.stem,[*PS,'-q','-f',str(f)])
+  if f in owned:run('ordered-replay-'+f.stem,[*PS,'-q','-f',str(f)])
+  if f.name=='20261005220709_apple_sandbox_authority_fence.sql':
+   # Its unknown-body refusal belongs to this historical writer, not the
+   # later launch wrapper which intentionally replaced that writer.
+   sig='apply_apple_entitlement_v2(uuid,uuid,text,text,text,text,text,text,timestamptz,boolean,text,timestamptz,timestamptz,timestamptz,timestamptz)'
+   anchor='  signed_at:=greatest(p_transaction_signed_at,p_event_signed_at);'
+   definition=run('original-unknown-Apple',[*PS,'-Atqc',f"select pg_get_functiondef('{sig}'::regprocedure)"]).stdout
+   assert definition.count(anchor)==1
+   run('compile-unknown-Apple',[*PS,'-qc',definition.replace(anchor,anchor+' /* unknown body control */')])
+   snapshots="select jsonb_agg(to_jsonb(x)order by oid)from(select oid,prosrc,proowner,proacl,prosecdef,provolatile,proconfig from pg_proc where pronamespace='public'::regnamespace)x"
+   before=run('unknown-Apple-before-failed-migration',[*PS,'-Atqc',snapshots]).stdout
+   failed=run('unknown-Apple-migration',[*PS,'-q','-f',str(f)],False)
+   assert failed.returncode!=0 and 'Unknown apply_apple_entitlement_v2 body'in failed.stdout
+   assert before==run('unknown-Apple-immediate-after-failed-migration',[*PS,'-Atqc',snapshots]).stdout
+   run('restore-unknown-Apple',[*PS,'-qc',definition])
+   r.setdefault('unknownDefinitionGuards',[]).append('unknown-Apple')
  r['replay']=proof('replay')
+ r['replayMode']='second clean database; four owned migrations twice at historical schema points'
+ PS=final_ps
  controls=[
  ('wrong-window','refund_rate_receipt(text,integer,timestamptz,integer)','and window_start=p_window_start','old refund cannot decrement new charge window'),
  ('unowned-drift','app_video_refund_drift(uuid,uuid,text,text)','provider_request_id=p_request and','unowned invented request cannot refund'),
  ('missing-charge','app_video_cost_reserve_v2(uuid,uuid,text,text,text,text,text,numeric,numeric,numeric,jsonb,timestamptz,timestamptz,uuid)',"if p_monthly_window_start is null or p_burst_window_start is null or not exists(select 1 from public.rate_limits where key=monthly and window_start=p_monthly_window_start and window_seconds=2592000 and count>0)\n  or not exists(select 1 from public.rate_limits where key=burst and window_start=p_burst_window_start and window_seconds=300 and count>0)then raise exception 'RP409: Original video quota charge could not be confirmed';end if;",'unconfirmed charge cannot admit priced POST'),
- ('ungranted-Sandbox','record_apple_sandbox_receipt(uuid,uuid,text,text,text,text,timestamptz)',"if not(public.org_has_internal_testing_grant(org)or public.org_has_private_internal_testing(org))then raise exception 'RP403: Sandbox testing requires explicit authorized test access';end if;",'ungranted Sandbox cannot change retail plan'),
+ ('ungranted-Sandbox','record_apple_sandbox_receipt(uuid,uuid,text,text,text,text,timestamptz)',"if not(public.org_has_internal_testing_grant(org)or public.org_has_private_internal_testing(org)or public.org_has_app_review_funding(org))then raise exception 'RP403: Sandbox testing requires explicit authorized test access';end if;",'ungranted Sandbox cannot change retail plan'),
  ('low-entropy-slug','publish_render(uuid,numeric,numeric,jsonb,uuid)',"v_slug := replace(pg_catalog.gen_random_uuid()::text,'-','');",'real publishes mint two cryptographic slugs')]
  r['controls']=[]
  for name,target,needle,label in controls:
@@ -125,8 +150,7 @@ try:
  # Unknown definitions abort before overwriting any body or security metadata.
  snapshots="select jsonb_agg(to_jsonb(x)order by oid)from(select oid,prosrc,proowner,proacl,prosecdef,provolatile,proconfig from pg_proc where pronamespace='public'::regnamespace)x"
  for name,sig,migration,anchor in [
-   ('unknown-slug','publish_render(uuid,numeric,numeric,jsonb,uuid)',TARGET,"v_slug := replace(pg_catalog.gen_random_uuid()::text,'-','');"),
-   ('unknown-Apple','apply_apple_entitlement_v2(uuid,uuid,text,text,text,text,text,text,timestamptz,boolean,text,timestamptz,timestamptz,timestamptz,timestamptz)',TARGET.parent/'20261005220709_apple_sandbox_authority_fence.sql','  signed_at:=greatest(p_transaction_signed_at,p_event_signed_at);')]:
+   ('unknown-slug','publish_render(uuid,numeric,numeric,jsonb,uuid)',TARGET,"v_slug := replace(pg_catalog.gen_random_uuid()::text,'-','');")]:
   definition=run('original-'+name,[*PS,'-Atqc',f"select pg_get_functiondef('{sig}'::regprocedure)"]).stdout
   assert definition.count(anchor)==1
   run('compile-'+name,[*PS,'-qc',definition.replace(anchor,anchor+' /* unknown body control */')])
