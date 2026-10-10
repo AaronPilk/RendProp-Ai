@@ -190,7 +190,14 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertFalse(app.navigationBars["Floor plan"].exists, app.debugDescription)
         XCTAssertFalse(app.navigationBars["Measurements"].exists, app.debugDescription)
         XCTAssertTrue(app.navigationBars["Detail fixture \(fixture)"].exists, "Tapping Coming soon must not navigate: \(app.debugDescription)")
-        XCTAssertTrue(app.buttons["detail.photos"].waitForExistence(timeout: 10), app.debugDescription)
+        // SwiftUI restores the detail scroll position. The first lazy-grid
+        // row may be offscreen and absent from accessibility after returning
+        // from Studio or tapping a lower Coming soon card. Materialize the
+        // actual card with the existing outer-page scroll helper before
+        // checking it; a missing card or failed return still fails the test.
+        let photos = app.buttons["detail.photos"]
+        scrollTo(photos)
+        XCTAssertTrue(photos.waitForExistence(timeout: 10), app.debugDescription)
     }
 
     private func openLink(_ id: String, title: String) {
@@ -203,7 +210,14 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     private func back(from title: String) {
         let back = app.navigationBars[title].buttons.element(boundBy: 0)
         XCTAssertTrue(back.exists, app.debugDescription); back.tap()
-        XCTAssertTrue(app.buttons["detail.photos"].waitForExistence(timeout: 10), app.debugDescription)
+        // SwiftUI restores the detail scroll position. The first lazy-grid
+        // row may be offscreen and absent from accessibility after returning
+        // from Studio or tapping a lower Coming soon card. Materialize the
+        // actual card with the existing outer-page scroll helper before
+        // checking it; a missing card or failed return still fails the test.
+        let photos = app.buttons["detail.photos"]
+        scrollTo(photos)
+        XCTAssertTrue(photos.waitForExistence(timeout: 10), app.debugDescription)
     }
 
     private func openSheet(_ id: String, title: String, close: String) {
@@ -214,7 +228,14 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         attach("destination-\(id)")
         let done = navigation.buttons[close]
         XCTAssertTrue(done.exists, app.debugDescription); done.tap()
-        XCTAssertTrue(app.buttons["detail.photos"].waitForExistence(timeout: 10), app.debugDescription)
+        // SwiftUI restores the detail scroll position. The first lazy-grid
+        // row may be offscreen and absent from accessibility after returning
+        // from Studio or tapping a lower Coming soon card. Materialize the
+        // actual card with the existing outer-page scroll helper before
+        // checking it; a missing card or failed return still fails the test.
+        let photos = app.buttons["detail.photos"]
+        scrollTo(photos)
+        XCTAssertTrue(photos.waitForExistence(timeout: 10), app.debugDescription)
     }
 
     private func element(_ id: String) -> XCUIElement {
