@@ -4,7 +4,8 @@
     "The prior nine-frame1.0.1 set is historical. Three hosted-page screenshots and Photo Studio are omitted because their UI or disclosure is outdated.",
     "Retained captures show real native UI with fictional/sample listing and lead information. No camera capture, AI generation, purchase or publish was performed for this composition.",
     "Render with tools/screenshots/compose.py; the per-frame source captures and prior ASC checksum matches are recorded in the private release receipt.",
-    "The first image shows Home and tools. No paywall/IAP-review screenshot belongs in this marketing set."
+    "The first image shows Home and tools. No paywall/IAP-review screenshot belongs in this marketing set.",
+    "Build 57 (10 October 2026): Measurements, 3D floor plan and 3D walkthrough are Coming soon cards on Home and in the listing toolbox. The 1.0.3 Home capture (02-home-showroom.png) predates that change and must be re-captured from the build being submitted before this plan is composed again; no caption may name floor plans or measurements as a tool."
   ],
   "defaults": {
     "fit": "bleed",
@@ -15,7 +16,7 @@
       "src": "02-home-showroom.png",
       "out": "02-every-tool.png",
       "headline": "Listing content in one place",
-      "subline": "Walkthrough, photos, reel and floor plan, together with one home.",
+      "subline": "Walkthrough, photos, reel and listing page, together with one home.",
       "bg": "grape"
     },
     {

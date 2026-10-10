@@ -112,8 +112,10 @@ try:
    assert q('historical-followup-restored-catalog',CATALOG)==historical
  catalog=CATALOG
  before=q('final-catalog',catalog)
+ # Build 57 (20261010141500) supersedes select_workspace, the first differing
+ # pin of this overlay; the later device overlay no longer gets to refuse first.
  refused=q('superseded-followup-refused',TARGET.read_text(),3)
- assert'Review changed function notification_register_device_session'in refused
+ assert'Review changed function select_workspace'in refused
  assert q('superseded-followup-refusal-catalog',catalog)==before,'Historical replay must not overwrite newer reviewed functions'
  for phase in['fresh','replay']:
   if phase=='replay':q('exact-final-overlay-replay',FINAL_OVERLAY.read_text());assert q('replayed-catalog',catalog)==before

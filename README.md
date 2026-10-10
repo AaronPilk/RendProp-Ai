@@ -132,6 +132,10 @@ with older clients. The new native Coach privacy and scope changes are in the
 signed source. FAL generation access and the earlier rejection cause remain
 unverified; real generation still needs a controlled paid canary and output review.
 
+**Build 57 marks Measurements "Coming soon"** on Home, in every listing's
+toolbox and in the coach (see the note at the top of
+[floor-plan-measurements.md](docs/floor-plan-measurements.md)); the paragraph
+below describes the shipped-but-now-hidden implementation.
 The [floor plan measurements update](docs/floor-plan-measurements.md) is included
 in the signed build-44 source: room dimensions, irregular wall outlines,
 categorized worksheets, 2D/3D layouts, image/PDF export and an optional ARKit

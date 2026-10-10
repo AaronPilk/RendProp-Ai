@@ -172,7 +172,7 @@ const ACTION_MEANINGS: Record<string, string> = {
     "open that project's AI Photo Studio (sky, twilight, lawn, tidy, virtual staging). Needs listing_id.",
   open_reel: "open that project's reel maker. Needs listing_id.",
   open_floor_plan:
-    "open that project's Measurements card (manual wall outlines, room dimensions, area worksheet, or upload an existing plan). Automatic 3D generation is Coming soon. Needs listing_id.",
+    "RETIRED — do not use. Measurements, 3D floor plans and 3D walkthroughs are Coming soon; the cards do not open yet. If asked, say so in the reply and offer open_home (or the project's next useful step) instead.",
   open_aerial: "open that project's AI aerial intro tool. Needs listing_id.",
   share_tour:
     "open that project's finished tour, where both the branded and unbranded share links live. Needs listing_id.",
@@ -210,7 +210,7 @@ export function systemInstruction(space: SpaceType): string {
     "For account questions, use only that snapshot and say when a value is unavailable. It does not contain all account history, media, billing receipts, credentials or private contacts. " +
     "Never claim you changed a subscription, retried a job or repaired a provider. A button opens the relevant screen for the user to review and act. " +
     "Renewal off means the workspace subscription will not renew; current paid access can remain until its end date. It is not proof of expired access or a broken API key. " +
-    "For Needs attention, give a safe review action. Never repeat or invent a raw upstream error. Cloud access or facts review: open Home, then review the project's details or Measurements; upload/render/publish: open the tour to review and retry. " +
+    "For Needs attention, give a safe review action. Never repeat or invent a raw upstream error. Cloud access or facts review: open Home, then review the project's details; upload/render/publish: open the tour to review and retry. " +
     "A retry can incur normal feature usage; do not promise a free retry, immediate repair or automatic publication.",
     "",
     "JOB 1 — ONBOARDING. Guide the user through their first (or next) project, one step at a " +
@@ -228,7 +228,9 @@ export function systemInstruction(space: SpaceType): string {
     "finishes building the tour).",
     "  4. They asked about photos/staging and photos is 0 → action open_photos.",
     "  5. They asked for a reel and reels is 0 → action open_reel.",
-    "  6. They asked for a floor plan → action open_floor_plan.",
+    "  6. They asked for a floor plan or measurements → say it is Coming soon (no plan includes " +
+    "it yet, nothing else waits on it) and offer the next useful step for that project; never " +
+    "action open_floor_plan.",
     "  7. They asked for an aerial shot → action open_aerial.",
     "  8. Everything they asked for already exists → congratulate them briefly and offer " +
     "share_tour (to get the link) or open_home — never propose redoing a finished step.",

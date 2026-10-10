@@ -799,9 +799,46 @@ final class BetaPolishUITests: XCTestCase {
         app.buttons["Close"].tap()
     }
 
-    func testManualMeasurementsCreateEditExportAndKeepScanChoice() {
+    /// Build 57: the listing page shows Measurements as a Coming soon card, the
+    /// same as Home, so no user-reachable route lands on `FloorPlanView` or
+    /// `FloorMeasurementsView`. The two measurement flows below are parked, not
+    /// deleted: flip `measurementsToolboxLinkRestored` when the
+    /// `detail.floorPlan` link returns and they resume as written.
+    private static let measurementsToolboxLinkRestored = false
+    private static let measurementsParked = "Measurements is Coming soon on the listing page (build 57); no UI route reaches the measurements screen."
+
+    func testMeasurementsIsComingSoonOnTheListingPage() {
         launchDetail()
-        openDetail("detail.floorPlan", title: "Floor plan")
+        let card = element("detail.measurementsComingSoon")
+        scrollTo(card)
+        XCTAssertTrue(card.exists, app.debugDescription)
+        XCTAssertTrue(card.label.contains("Measurements"), card.label)
+        XCTAssertTrue(card.label.contains("Coming soon"), card.label)
+        XCTAssertFalse(app.buttons["detail.measurementsComingSoon"].exists, "Coming soon must not open a feature")
+        XCTAssertFalse(app.buttons["detail.floorPlan"].exists, "The listing toolbox must not keep a live Measurements link")
+        XCTAssertFalse(element("detail.floorPlan").exists, app.debugDescription)
+        // The owner's report was "still clickable": tapping must do nothing.
+        card.tap()
+        attach("listing-measurements-coming-soon-tapped")
+        XCTAssertFalse(app.navigationBars["Measurements & plans"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.navigationBars["Floor plan"].exists, app.debugDescription)
+        XCTAssertFalse(app.navigationBars["Measurements"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["floorPlan.measurements"].exists, app.debugDescription)
+        XCTAssertTrue(app.navigationBars["Detail fixture rich"].exists, "Tapping Coming soon must not navigate: \(app.debugDescription)")
+        XCTAssertTrue(app.buttons["detail.photos"].waitForExistence(timeout: 10), app.debugDescription)
+        // Its neighbours keep the identical contract.
+        for id in ["detail.floorPlanComingSoon", "detail.spatialComingSoon"] {
+            let neighbour = element(id)
+            scrollTo(neighbour)
+            XCTAssertTrue(neighbour.exists && neighbour.label.contains("Coming soon"), "\(id): \(neighbour.label)")
+            XCTAssertFalse(app.buttons[id].exists, "Coming soon must not open a feature: \(id)")
+        }
+    }
+
+    func testManualMeasurementsCreateEditExportAndKeepScanChoice() throws {
+        try XCTSkipUnless(Self.measurementsToolboxLinkRestored, Self.measurementsParked)
+        launchDetail()
+        openDetail("detail.floorPlan", title: "Measurements & plans")
         let measurements = app.buttons["floorPlan.measurements"]
         scrollTo(measurements); measurements.tap()
         XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
@@ -838,7 +875,7 @@ final class BetaPolishUITests: XCTestCase {
         attach("measured-room-layout-3d")
         app.navigationBars["3D measurement layout"].buttons["Done"].tap()
         app.navigationBars["Measurements"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["Floor plan"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Measurements & plans"].waitForExistence(timeout: 10))
         scrollTo(measurements)
         XCTAssertTrue(measurements.label.contains("2 rooms"), measurements.label)
         measurements.tap()
@@ -867,9 +904,10 @@ final class BetaPolishUITests: XCTestCase {
         attach("measured-plan-cleared")
     }
 
-    func testIrregularOutlinesDeductAreaExportReopenAndDeleteLinkedOpenings() {
+    func testIrregularOutlinesDeductAreaExportReopenAndDeleteLinkedOpenings() throws {
+        try XCTSkipUnless(Self.measurementsToolboxLinkRestored, Self.measurementsParked)
         launchDetail()
-        openDetail("detail.floorPlan", title: "Floor plan")
+        openDetail("detail.floorPlan", title: "Measurements & plans")
         let measurements = app.buttons["floorPlan.measurements"]
         scrollTo(measurements); measurements.tap()
         XCTAssertTrue(app.navigationBars["Measurements"].waitForExistence(timeout: 10), app.debugDescription)
@@ -952,7 +990,7 @@ final class BetaPolishUITests: XCTestCase {
         app.navigationBars["3D measurement layout"].buttons["Done"].tap()
 
         app.navigationBars["Measurements"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["Floor plan"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.navigationBars["Measurements & plans"].waitForExistence(timeout: 10), app.debugDescription)
         scrollTo(measurements)
         XCTAssertTrue(measurements.label.contains("2 outlines"), measurements.label)
         measurements.tap()

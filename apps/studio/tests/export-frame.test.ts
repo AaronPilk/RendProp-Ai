@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 import {getEventListeners} from "node:events";
-import {nextExportFrame} from "../src/editor/export";
+import {MAX_ORIGINAL_AUDIO_LOSS_SECONDS, nextExportFrame} from "../src/editor/export";
 
 async function withClock(run: (clock: {
   frames: Map<number, FrameRequestCallback>;
@@ -82,6 +82,15 @@ test("expired deadlines yield once and an already cancelled wait schedules nothi
     assert.equal(frames.size, 0); assert.equal(timers.size, 0);
     assert.equal(getEventListeners(controller.signal, "abort").length, 0);
   });
+});
+
+test("the original-audio loss bound stays between media clock granularity and the 100 ms stall control", () => {
+  // Two capture intervals: a measured gap this long is refused; the browser
+  // test's injected 100 ms stall must always exceed it, and a 10 ms device
+  // callback or official-playback-position step must never reach it.
+  assert.equal(MAX_ORIGINAL_AUDIO_LOSS_SECONDS, 2 / 30);
+  assert(MAX_ORIGINAL_AUDIO_LOSS_SECONDS < .1 - .03);
+  assert(MAX_ORIGINAL_AUDIO_LOSS_SECONDS > .02 + .03);
 });
 
 test("a stalled animation callback cannot exceed the existing 30 fps capture interval", async () => {

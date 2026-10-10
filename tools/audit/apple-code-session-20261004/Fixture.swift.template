@@ -67,6 +67,7 @@ enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malf
     static var onToken: (() -> Void)?
     enum Keys {
         static let userID = "id", userName = "name", orgName = "org", accessToken = "access", refreshToken = "refresh"
+        static let sessionIdentified = "sessionIdentified"
         static let pendingAppleAuthCode = "legacy"
         static let pendingAppleAuthCodeOwnerPrefix = "owned:"
     }

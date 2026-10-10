@@ -50,7 +50,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
     fact:
       "No account is required to record, edit, build or publish a tour, or to use the AI Photo " +
-      "Studio, reels, aerial intros and manual Measurements. The app connects through an anonymous " +
+      "Studio, reels and aerial intros. The app connects through an anonymous " +
       "session. Publishing needs an internet connection. Sign in with Apple is optional " +
       "for accessing your workspace on another device.",
   },
@@ -104,15 +104,15 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   {
     topic: "Measurements and floor plans — current availability",
     source:
-      "FloorMeasurementsView.swift + floor-plan-measurements handoff + support.html",
+      "FlythroughDetailView.swift ListingToolboxGrid + RendpropApp.swift Home tiles (build 57) + support.html",
     fact:
-      "Open a listing's Measurements card. Draw a floor outline by entering each " +
-      "wall's length and direction, or enter rectangular room dimensions. Review the area " +
-      "worksheet and export an image or PDF. Garage, porch and unfinished areas stay separate; " +
-      "open-below areas are deducted only from their chosen finished outline. Calculated closing " +
-      "walls and phone estimates need checking. These totals do not set advertised living area. " +
-      "Any phone can upload an existing PDF or image. Automatic 3D floor plans and 3D walkthroughs " +
-      "are Coming soon. The separate TestFlight Lab keeps local capture tests available; it is " +
+      "Measurements, 3D floor plans and 3D walkthroughs are Coming soon. The Measurements card " +
+      "on Home and in each listing's toolbox does not open yet, no plan includes it, and nothing " +
+      "else in the app waits on it: photos, AI Photo Studio, reels, aerial intros and published " +
+      "listings work without any measurements. When measurements ship, the user will be able to " +
+      "enter room dimensions, draw measured outlines and upload an existing PDF or image; app " +
+      "calculations will not be a certified survey or appraisal and will not set advertised " +
+      "living area. The separate TestFlight Lab keeps local capture tests available; it is " +
       "not the normal listing workflow. The ordinary listing detail no longer has a Plan your " +
       "video entry; agency and Studio capture planning remain available in their own workflows.",
   },
@@ -180,9 +180,9 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "What the app needs to run",
     source: "support.html",
     fact:
-      "An iPhone on iOS 16 or later. The app is free to download. Manual Measurements and plan " +
-      "uploads work without LiDAR. Automatic 3D floor plans and 3D walkthroughs are Coming soon; " +
-      "LiDAR capture experiments belong to the separate TestFlight Lab.",
+      "An iPhone on iOS 16 or later. The app is free to download. No LiDAR is needed for " +
+      "anything the app offers today. Measurements, 3D floor plans and 3D walkthroughs are " +
+      "Coming soon; LiDAR capture experiments belong to the separate TestFlight Lab.",
   },
   {
     topic: "A render or upload failed",

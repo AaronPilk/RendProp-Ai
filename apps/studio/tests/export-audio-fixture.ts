@@ -2,7 +2,7 @@ import {exportFormats, exportLocalVideo} from "../src/editor/export";
 import {inspectFile} from "../src/editor/media";
 import {newDraft, validateDraft} from "../src/editor/model";
 // Separate browser fixture. Only locally generated source bytes are consumed.
-const fixture = {config:{speed:1,stall:false,decodeFailure:false,split:false,cancelAfterBuffer:false},result:null as unknown};
+const fixture = {config:{speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false},result:null as unknown};
 Object.assign(window,{audioExportFixture:fixture});
 document.querySelector("button")!.addEventListener("click",async()=>{
   fixture.result=null;
@@ -29,6 +29,12 @@ document.querySelector("button")!.addEventListener("click",async()=>{
           this.pause();this.dispatchEvent(new Event("waiting"));
           timers.push(setTimeout(()=>Reflect.apply(play,this,[]).catch(()=>{}),100));
         },800)));
+      }
+      // A transient decoder hiccup: Chromium delivers `waiting` after playback
+      // has already resumed. Nothing pauses, so no original audio is lost.
+      if(fixture.config.hiccup&&!injected){
+        injected=true;
+        result.then(()=>timers.push(setTimeout(()=>{this.dispatchEvent(new Event("waiting"));this.dispatchEvent(new Event("playing"));},800)));
       }
       return result;
     };

@@ -74,6 +74,16 @@ export function supportsOriginalAudio(): boolean {
   return typeof AudioContext !== "undefined";
 }
 
+// Original audio that reaches the recording through the live media element
+// (speed-changed or undecodable sources) loses sound only while the media
+// clock stops but the recording clock keeps running. Chromium reports every
+// decoder or renderer hiccup as a `waiting` event, including ones that cost a
+// few milliseconds and are already over when the event is delivered; those are
+// inaudible and routine on slow or virtualised machines. Refuse only measured
+// loss above two capture intervals, well under the 100 ms interruption that
+// the original-audio regression control injects.
+export const MAX_ORIGINAL_AUDIO_LOSS_SECONDS = 2 / 30;
+
 // Animation callbacks can arrive after a segment's deadline, and their supplied
 // timestamp can precede delivery. Bound the wait by the segment deadline and
 // the existing 30 fps capture interval; use the current clock at delivery.
@@ -155,6 +165,7 @@ export async function exportLocalVideo(options: {
     (total * 2 + 60) * 1000,
   );
   const renderSignal = controller.signal;
+  const refuseStall = () => controller.abort(new Error("Original audio playback stalled during export. No download was created. Try a shorter clip or export with audio explicitly muted."));
   const overlays = new OverlayPainter(draft, media, renderSignal);
   const canvas = document.createElement("canvas");
   Object.assign(canvas, renderDimensions(draft.ratio));
@@ -366,14 +377,16 @@ export async function exportLocalVideo(options: {
         originalSource.start(originalClockStart!, clip.start, clip.end - clip.start);
         originalSourceStarted = true;
       }
+      // Live media audio: both clocks are read together once playback is
+      // actually running, so later readings measure sound lost since then.
+      let mediaClockStart: number | undefined;
+      let mediaTimeStart = 0, lossReadings = 0;
       if (video) {
-        if (originalGain && !originalBuffer) {
-          const refuseStall = () => controller.abort(new Error("Original audio playback stalled during export. No download was created. Try a shorter clip or export with audio explicitly muted."));
-          video.addEventListener("waiting", refuseStall);
-          video.addEventListener("stalled", refuseStall);
-          removeOriginalVideoListeners = () => { video.removeEventListener("waiting", refuseStall); video.removeEventListener("stalled", refuseStall); };
-        }
         await awaitMediaOperation(video.play(), renderSignal, "Starting video");
+        if (originalGain && !originalBuffer && audio) {
+          mediaClockStart = audio.currentTime;
+          mediaTimeStart = video.currentTime;
+        }
         if (originalBuffer && audio && originalClockStart !== undefined) {
           const clock = audio;
           const realign = () => {
@@ -423,6 +436,17 @@ export async function exportLocalVideo(options: {
           throw new Error(
             "Video playback stalled during export. Try a smaller or differently encoded clip.",
           );
+        // Recording seconds that passed without the same amount of media
+        // playing: the total silence stalls left in this clip's original audio.
+        // Lost sound never comes back, so a second consecutive reading excludes
+        // media clock granularity before refusing.
+        if (video && audio && mediaClockStart !== undefined && elapsed < duration && !video.ended &&
+            audio.currentTime - mediaClockStart - Math.max(0, video.currentTime - mediaTimeStart) / (clip.speed ?? 1) > MAX_ORIGINAL_AUDIO_LOSS_SECONDS) {
+          if (++lossReadings > 1) {
+            refuseStall();
+            throwIfAborted(renderSignal);
+          }
+        } else lossReadings = 0;
         if (audio) {
           const timelineTime = elapsedBefore + elapsed;
           if (musicGain) musicGain.gain.setTargetAtTime(musicGainAt(draft, clip, timelineTime, elapsed, voiceBuffer?.duration), audio.currentTime, .025);

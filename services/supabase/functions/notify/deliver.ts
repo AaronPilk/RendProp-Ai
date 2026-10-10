@@ -74,7 +74,10 @@ export async function deliverPush(
   if (!apns.configured()) {
     return { state: "skipped", reason: apns.missingReason(), providerId: null, deadTokens: [] };
   }
-  if (devices.length === 0 || !row.user_id) {
+  // The drain groups devices by the row's own user_id; a caller that hands this
+  // row somebody else's devices gets them dropped here rather than pushed to.
+  const ownDevices = row.user_id ? devices.filter((device) => device.user_id === row.user_id) : [];
+  if (ownDevices.length === 0 || !row.user_id) {
     // The device was disabled or removed between enqueue and drain. A push with
     // no device is not a failure worth retrying five times.
     return {
@@ -95,7 +98,7 @@ export async function deliverPush(
   const deadTokens: string[] = [];
   let lastReason: string | null = null;
 
-  for (const device of devices) {
+  for (const device of ownDevices) {
     const result = await apns.send({
       deviceToken: device.device_token,
       environment: device.environment === "sandbox" ? "sandbox" : "production",
@@ -120,7 +123,7 @@ export async function deliverPush(
   // EVERY token this person has is gone. Retrying cannot help, so the row is
   // closed as skipped rather than left to burn its five attempts against
   // phones that no longer exist.
-  if (deadTokens.length > 0 && deadTokens.length === devices.length) {
+  if (deadTokens.length > 0 && deadTokens.length === ownDevices.length) {
     return {
       state: "skipped",
       reason: `every device token for this user was rejected by APNs (${lastReason ?? "unregistered"})`,

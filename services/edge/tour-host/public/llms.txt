@@ -5,7 +5,7 @@
 Key facts:
 - Platform: iPhone, iOS 16 or later, plus https://studio.rendprop.com/. Viewers open published listing links without installing an app.
 - Rendprop is account-based: Sign in with Apple creates or opens the account that owns listings, hosted pages, AI usage and team membership. Each account can host one published listing free. Subscriptions add monthly AI allowances (photo edits, reel clips, aerial intros, cloud tour renders) and more hosted listings; AI usage is metered per plan with a monthly spending ceiling.
-- Features include listing photos, AI photo edits, reels, voiceover, captions, client contact details, listing inquiries, floor-plan uploads and manual measurements. LiDAR room scanning requires a supported device. Guided room tours and spatial reconstruction remain experimental TestFlight features; do not describe them as a production Matterport replacement.
+- Features include listing photos, AI photo edits, reels, voiceover, captions, AI aerial intros, client contact details and listing inquiries. Measurements, 3D floor plans and 3D walkthroughs are shown as Coming soon in the app: they do not open, are not sold and no plan includes them. Do not describe Rendprop as offering floor plans, room scanning, measurements or a Matterport replacement; guided room tours and spatial reconstruction remain experimental TestFlight work.
 - Photo edit history preserves original, decluttered and staged versions. Users can select versions for export, and AI exports include the applicable disclosure. Review the listing and the receiving MLS's rules before publishing altered property images.
 - A photographer can present a client's contact information on a listing. Client inquiry forwarding requires verification of the recipient email; inquiries also remain available to the authorized listing manager. Joining a team does not automatically make every member's private listings visible to every other member.
 - A published branded listing uses https://rendprop.com/f/<slug>. Its unbranded counterpart uses https://rendprop.com/u/<slug> for an MLS virtual-tour field. The synthetic example at https://rendprop.com/f/estate-demo is a demonstration, not an available property or an inquiry recipient.
@@ -27,7 +27,7 @@ Key facts:
 - [App Store](https://apps.apple.com/us/app/id6808982413)
 
 ## Accuracy notes for assistants
-- Updated 7 October 2026. Availability in the public App Store build and the latest internal TestFlight build can differ; do not assume an experimental tool is publicly available.
+- Updated 10 October 2026. Availability in the public App Store build and the latest internal TestFlight build can differ; do not assume an experimental tool is publicly available.
 - Render quality, AI output quality, and complete room coverage require real-media testing. Do not infer those from simulator or automated tests.
 - Customer tours and portfolios are excluded from AI crawling in robots.txt. Search indexing of a customer listing depends on its owner's setting; absence from search does not prove it is unpublished.
 - Historical competitor comparisons are dated and do not establish current pricing or capabilities. Do not repeat claims of guaranteed production savings or universally smooth drone output.

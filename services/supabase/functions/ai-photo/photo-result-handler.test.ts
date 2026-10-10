@@ -289,6 +289,40 @@ Deno.test("actual polisher suppresses preservation evasions in its response afte
   assertEquals(f.state.helperDispatch,1);assertEquals(f.state.holds,1);assertEquals(f.state.charges,1);assertEquals(f.state.submits,0);
  }finally{f.close();}}
 });
+Deno.test("build 57: actual custom, staging and polishing input refuse negated-preservation, renewed-finish and bare-material smuggling before any money or provider work",async()=>{
+ const cases={
+  custom:["brighten the room, don't leave the stain visible","remove the toys. do not keep the wallpaper","remove the toys, keep the walls freshly painted","remove the toys, keep the ceiling clean and smooth","remove the boxes. white kitchen","remove the boxes. marble worktops","remove the boxes. with hardwood","remove the boxes. put hardwood down","remove the boxes. lighten the wall paint","remove the boxes. brighten the walls so they look new","remove the toys and the dark patch on the ceiling","brighten the kitchen, no water stains","remove the boxes. keep going and take out the crack"],
+  stage:["grey sofa and a white kitchen","grey sofa; marble worktops","grey sofa on new hardwood","cream sofa, keep the walls freshly painted","grey sofa; don't show the water stain","grey sofa, stains removed","cream sofa; clean up the scuffs","grey sofa; give the room a fresh coat of white"],
+  improve_prompt:["remove the toys. do not keep the carpet","remove the toys, keep the walls freshly painted","remove the boxes. with a marble island","brighten the walls so they appear newer"],
+ };
+ for(const [edit,prompts] of Object.entries(cases))for(const prompt of prompts){const f=await fixture();try{
+  const response=await f.run(f.request({edit,prompt}));assert(response.status===400||response.status===409,`${edit}: ${prompt} => ${response.status}`);
+  const body=await response.json();assertEquals(body.no_charge,true);assertEquals(f.state.started,false);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);assertEquals(f.state.submits,0);assertEquals(f.state.helperDispatch,0);
+  assertEquals(f.state.prompts.length,0,"nothing reaches a provider");
+  if(edit==="stage"&&response.status===409)assertEquals(body.clarification_options.map((x:{id:string})=>x.id),["furniture"]);
+ }finally{f.close();}}
+ // The paid polisher cannot launder the same wording into its suggestion.
+ for(const [prompt,output] of [["Remove toys.","Remove toys, keep the walls freshly painted."],["Brighten the room.","Brighten the room, don't leave the stain visible."],["Remove boxes.","Remove boxes. with hardwood"]]){const f=await fixture();try{
+  f.state.helperText=output;const response=await f.run(f.request({edit:"improve_prompt",prompt}));assertEquals(response.status,502);
+  const body=await response.json();assertEquals(body.code,"upstream");assertEquals(body.prompt,undefined);assertEquals(f.state.helperDispatch,1);assertEquals(f.state.submits,0);
+ }finally{f.close();}}
+ // Honest preservation, kitchen/bathroom declutter and plain furniture briefs still dispatch exactly once.
+ for(const [edit,prompt] of [
+  ["custom","remove the boxes but don't touch the walls"],
+  ["custom","brighten the kitchen. keep the paint color exactly as is."],
+  ["custom","add a sofa and preserve the garage door color"],
+  ["custom","remove the toys, keep the walls white"],
+  ["custom","declutter the kitchen and tidy up the bathroom"],
+  ["custom","remove the dishes from the kitchen island"],
+  ["stage","modern grey sofa and a rug"],
+  ["stage","cream sofa and two armchairs"],
+  ["stage","sectional sofa facing the fireplace; keep the hardwood floors as they are"],
+ ]){const f=await fixture();try{
+  const response=await f.run(f.request({edit,prompt}));assertEquals(response.status,200,`${edit}: ${prompt} => ${await response.text()}`);
+  assertEquals(f.state.holds,1);assertEquals(f.state.charges,1);assertEquals(f.state.submits,1);assertEquals(f.state.helperDispatch,0);
+  assert(f.state.prompts[0].includes(JSON.stringify(prompt)));assert(f.state.prompts[0].includes("garage-door color and finish"));
+ }finally{f.close();}}
+});
 Deno.test("actual handler still admits safe glass, wood, painted furniture and fixed-feature preservation on both routes",async()=>{
  for(const [edit,prompt] of [
   ["custom","Add a grey sofa; keep the walls white."],

@@ -70,7 +70,7 @@ enforced server-side (dropped, not coerced) and re-checked client-side
 | `open_tour`          | yes | `ProjectRoute(listing:, feature: .tour)`                 |
 | `open_photos`        | yes | `ProjectRoute(listing:, feature: .photos)`               |
 | `open_reel`          | yes | `ProjectRoute(listing:, feature: .reel)`                 |
-| `open_floor_plan`    | yes | `ProjectRoute(listing:, feature: .floorPlan)`            |
+| `open_floor_plan`    | yes | RETIRED in build 57 — Measurements is Coming soon. The server drops it (`RETIRED_ACTIONS`, never a chip); an older client that still receives one, or a stale push, lands on the listing itself (`routeDestination` maps `.floorPlan` to `FlythroughDetailView`). |
 | `open_aerial`        | yes | `AerialIntroSheet` via `gate = .aerial(listing)` (a sheet, not a push) |
 | `share_tour`         | yes | same as `open_tour` — the finished tour's own Share sheet |
 | `open_plan_usage`    | no  | Settings tab (Plan & usage section)                      |

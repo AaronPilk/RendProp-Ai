@@ -98,12 +98,16 @@ Deno.test("knowledge: introductory trial requires Apple's subscription confirmat
   assert(block.includes("never on signup"), "allowances summary must not grant an automatic trial");
 });
 
-Deno.test("knowledge: current Measurements remains usable while automatic 3D generation is Coming soon", () => {
+Deno.test("knowledge: Measurements, 3D floor plans and 3D walkthroughs are all Coming soon (build 57)", () => {
   const measurement = fact("Measurements and floor plans — current availability");
-  for (const required of ["Measurements card", "floor outline", "worksheet", "PDF or image", "Automatic 3D floor plans and 3D walkthroughs", "Coming soon", "TestFlight Lab", "local capture tests", "agency and Studio capture planning"]) {
+  for (const required of ["Measurements, 3D floor plans and 3D walkthroughs are Coming soon", "does not open yet", "no plan includes it", "nothing else in the app waits on it", "PDF or image", "not be a certified survey", "TestFlight Lab", "local capture tests", "agency and Studio capture planning"]) {
     assert(measurement.includes(required), `current availability omitted: ${required}`);
   }
   assert(!measurement.includes("LiDAR phones can also scan"), "ordinary workflow must not promise automatic generation");
+  assert(!/Open a listing's Measurements card/.test(measurement), "the Measurements card is Coming soon and must not be described as opening");
+  assert(!/Draw a floor outline by entering/.test(measurement), "manual outlines are not available in build 57");
   assert(knowledgeBlock().includes(measurement), "actual online prompt must carry current availability");
+  assert(!knowledgeBlock().includes("manual Measurements"), "no fact may describe manual Measurements as usable today");
+  assert(fact("What the app needs to run").includes("Measurements, 3D floor plans and 3D walkthroughs are Coming soon"), "requirements fact must carry the Coming-soon state");
   assert(!fact("A render or upload failed").includes("back automatically"), "recovery must not promise every attempt is refunded");
 });

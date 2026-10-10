@@ -2124,8 +2124,9 @@ const PROMO: { mortgage: PromoItem; agency: PromoItem; partner: PromoItem } = {
 //   • The lender CTA names a specific mortgage company on a listing agent's own
 //     page. In the US that is RESPA §8 territory FOR THE AGENT, and most
 //     brokerages already have an affiliated lender — so it is OFF unless the
-//     owner switches it on or supplies their own lender. The neutral monthly
-//     payment estimate (what /features actually promises buyers) always stays.
+//     owner switches it on or supplies their own lender. There is no payment
+//     estimate: Rendprop never quotes rates or invents a monthly payment, so the
+//     financing block renders only when the owner supplies a lender.
 //   • The footer partner cards are ordinary vendor cross-promotion: still on by
 //     default, but now LABELLED as ours and switchable off.
 //
@@ -2171,7 +2172,7 @@ function prefStr(tour: Tour, ...keys: string[]): string {
 }
 
 interface PromoPrefs {
-  /** Show a lender CTA under the payment estimate at all. */
+  /** Show the owner-supplied lender CTA (the financing block) at all. */
   financing: boolean;
   /** Show the house partner cards in the footer. */
   partners: boolean;

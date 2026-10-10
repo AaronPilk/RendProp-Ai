@@ -200,6 +200,91 @@ Deno.test("the optional polisher cannot introduce concealed condition through pr
   ]) assertEquals(customPhotoOutputMatchesInput(input, output, null), false, output);
   assert(customPhotoOutputMatchesInput("Add a grey sofa.", "Add a grey sofa; keep walls white and original finishes unchanged.", null));
 });
+Deno.test("build 57: negated preservation verbs and renewed-condition preservation cannot authorize removal or new finishes", () => {
+  for (const idea of [
+    "brighten the room, don't leave the stain visible",
+    "remove the toys. do not keep the wallpaper",
+    "remove the toys. do not keep the carpet",
+    "remove the toys and don't keep the stain",
+    "remove the toys, keep the walls freshly painted",
+    "remove the toys, leave the walls freshly painted",
+    "remove the toys, keep the ceiling clean and smooth",
+    "remove the toys, keep the ceiling uniform white",
+    "remove the toys, keep the stain hidden",
+    "brighten the room; don't show the water stain",
+    "brighten the kitchen, no water stains",
+    "remove the boxes. keep going and take out the crack",
+    "grey sofa, keep the vibe and patch the hole in the wall",
+  ]) {
+    for (const mode of ["custom", "furnishing"] as const) {
+      const result = analyzeCustomPhotoPrompt(idea, null, mode);
+      assert(result.status !== "ready", `${mode}: ${idea}`); assertEquals(result.prompt, undefined);
+      assertStringIncludes(result.message, "No edit has been sent or charged");
+    }
+  }
+  assertEquals(analyzeCustomPhotoPrompt("remove the toys, keep the walls freshly painted").status, "blocked");
+  assertEquals(analyzeCustomPhotoPrompt("cream sofa, keep the walls freshly painted", null, "furnishing").status, "blocked");
+});
+Deno.test("build 57: bare surface materials, unlisted fixtures and renewal wording are screened beside a safe request", () => {
+  const clauses = [
+    "white kitchen", "a white kitchen", "white units", "with a white kitchen", "marble worktops", "marble benchtops",
+    "with a marble island", "with the island in marble", "marble instead", "with hardwood", "put hardwood down", "put down hardwood",
+    "lighten the wall paint", "brighten the walls so they look new", "brighten the walls so they appear newer",
+    "granite instead of laminate", "marble on the counters", "lay hardwood on the floor", "give the room a fresh coat of white",
+  ];
+  for (const clause of clauses) {
+    assert(analyzeCustomPhotoPrompt(`remove the boxes. ${clause}`).status !== "ready", clause);
+    assert(analyzeCustomPhotoPrompt(`grey sofa; ${clause}`, null, "furnishing").status !== "ready", clause);
+  }
+  for (const noun of ["dark patch on the ceiling", "spot on the ceiling", "broken tile", "exposed wiring", "balcony railing", "neighbouring house", "street sign", "kitchen island", "bathroom vanity", "backsplash"]) {
+    assert(analyzeCustomPhotoPrompt(`remove the toys and the ${noun}`).status !== "ready", noun);
+    assert(analyzeCustomPhotoPrompt(`cream sofa; remove the ${noun}`, null, "furnishing").status !== "ready", noun);
+  }
+  for (const idea of ["grey sofa and a white kitchen", "grey sofa; marble worktops", "grey sofa on new hardwood", "grey sofa, stains removed", "cream sofa; clean up the scuffs"]) {
+    assert(analyzeCustomPhotoPrompt(idea, null, "furnishing").status !== "ready", idea);
+  }
+  for (const idea of ["clean up the scuffs", "clean up the scratches", "clean up the mildew", "clean up the graffiti", "stains removed", "brighten it up; stains removed", "brighten the room. after that replace the carpet with hardwood"]) {
+    assert(analyzeCustomPhotoPrompt(idea).status !== "ready", idea);
+  }
+});
+Deno.test("build 57: honest preservation, locations and furniture briefs keep their safe scope", () => {
+  for (const idea of [
+    "remove the boxes but don't touch the walls",
+    "brighten the kitchen. keep the paint color exactly as is.",
+    "add a sofa and preserve the garage door color",
+    "remove the toys, keep the walls white",
+    "declutter the kitchen", "tidy up the bathroom", "tidy up the garage",
+    "remove the dishes from the kitchen island", "add chairs around the island", "add chairs to the kitchen island",
+    "brighten the bathroom", "brighten the kitchen cabinets", "brighten the painted walls", "fix the white balance", "even out the lighting",
+    "brighten the dark corners of the room",
+    "keep the stone fireplace as is; brighten the room",
+    "add a sofa; keep the hardwood floors as they are",
+    "add a sofa and put a grey rug down", "add a dining table with wood legs", "add a wooden table and a metal lamp",
+    "remove the boxes, nothing else", "remove the boxes and do not change anything else", "brighten the room, no other changes",
+    "remove the toys and the dog", "remove the cars and the for-sale sign",
+  ]) assertEquals(analyzeCustomPhotoPrompt(idea).status, "ready", idea);
+  const prefix = "Remove the movable clutter from the living room: ", tail = " Keep every wall, floor and finish unchanged.";
+  const long = prefix + "toys, bags, laundry and loose items ".repeat(20).slice(0, 600 - prefix.length - tail.length) + tail;
+  assertEquals(long.length, 600);
+  const result = analyzeCustomPhotoPrompt(long);
+  assertEquals(result.status, "ready"); assertEquals(result.scopes, ["clutter"]); assertStringIncludes(result.prompt!, JSON.stringify(long));
+  for (const idea of [
+    "modern grey sofa and a rug", "cream sofa and two armchairs", "grey sofa, keep it clean and minimal", "oak dining table with wood legs",
+    "a sofa in grey, and a metal floor lamp", "grey sofa; keep the walls white", "keep the hardwood floors as they are; cream sofa",
+    "wood coffee table, linen sofa, brass lamp", "two armchairs, keep the layout as is", "sectional sofa facing the fireplace",
+    "grey sofa and a rug; preserve the garage door color",
+  ]) {
+    const result = analyzeCustomPhotoPrompt(idea, null, "furnishing");
+    assertEquals(result.status, "ready", idea); assertEquals(result.scopes, ["furniture"]);
+  }
+  for (const [input, output, expected] of [
+    ["remove the boxes", "remove the boxes, keep the walls freshly painted", false],
+    ["brighten the room", "brighten the room, don't leave the stain visible", false],
+    ["remove the boxes", "remove the boxes. with hardwood", false],
+    ["remove the toys", "remove the toys. do not keep the carpet", false],
+    ["Add a grey sofa.", "Add a grey sofa; keep walls white and original finishes unchanged.", true],
+  ] as const) assertEquals(customPhotoOutputMatchesInput(input, output, null), expected, output);
+});
 Deno.test("compiled blanket preservation and negation exemptions fail the unchanged safety oracle", async () => {
   const source = await Deno.readTextFile(new URL("./custom-photo-prompt.ts", import.meta.url));
   for (const [anchor, prompt] of [

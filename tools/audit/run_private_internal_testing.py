@@ -284,8 +284,9 @@ try:
  receipt['currentMigrationCount'] = len(FINAL_MIGRATIONS)
  receipt['currentSQLAssertions'] = positive('current-final-private-positive', TEST)
  current_snapshot = json.loads(query('current-final-functions', SNAPSHOT))
+ # Build 57 (20261010141500) supersedes select_workspace, the first differing pin of this overlay.
  refused = run('superseded-followup-refused', [*psql(), '-q', '-f', FINAL_TARGET], 3)
- assert 'Review changed function notification_register_device_session' in refused
+ assert 'Review changed function select_workspace' in refused
  assert json.loads(query('superseded-followup-refusal-functions', SNAPSHOT)) == current_snapshot, 'Historical overlay must not overwrite newer reviewed functions'
  receipt['supersededFollowupRefusedAtomic'] = True
  run('replay-current-private-authority', [*psql(), '-q', '-f', FINAL_OVERLAY])

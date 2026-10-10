@@ -612,7 +612,7 @@ function landingPage(): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Rendprop — drone-style tours from a phone walkthrough</title>
-<meta name="description" content="Film a walkthrough on your phone. Rendprop turns it into a smooth, drone-style tour buyers scroll through — with AI photos, reels, and floor plans.">
+<meta name="description" content="Film a walkthrough on your phone. Rendprop turns it into a smooth, drone-style tour buyers scroll through — with AI photos, reels and aerial intros.">
 <meta name="theme-color" content="#0e0d14">
 <style>
   :root { --accent:#7c3aed; --accent2:#9b6dff; --bg:#faf9fc; --ink:#1c192d; --dim:rgba(28,25,45,.6); --card:#fff; }
@@ -643,7 +643,7 @@ function landingPage(): string {
   <div class="mark">RENDPROP</div>
   <h1>Win the listing.<br>Skip the film crew.</h1>
   <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
-  photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
+  photos, social reels, aerial intros, and a link buyers scroll through like it's social.</p>
   <div>
     <a class="pill" href="${appStoreUrl("site")}">Download on the App Store</a>
     <a class="soon" href="https://studio.rendprop.com/">Open Studio</a>

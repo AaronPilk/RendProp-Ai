@@ -1,30 +1,32 @@
-# App Review notes — regular 1.0.3 (42)
+# App Review notes — 1.0.4 (build 57 candidate)
 
-Reconciled on 2 October 2026. The text below matches the machine-uploaded
-[review notes](metadata/en-US/review_notes.txt). Submission and approval are
-separate states recorded by the [release receipt](../releases/APPSTORE-42-20261002.json).
-Build 42 was submitted on 2 October 2026 and is **Waiting for Review**, with
-automatic release after approval. Approved reviewer contact
-fields are retained in App Store Connect; no demo account is required.
+Reconciled on 10 October 2026 with the machine-uploaded
+[review notes](metadata/en-US/review_notes.txt); the text below is that file,
+verbatim, so the two stay aligned as the README requires. The 1.0.3 (42) notes
+submitted on 2 October 2026 are preserved in git history (commit `767fd60`) and
+bound by the [release receipt](../releases/APPSTORE-42-20261002.json); they
+described yearly Starter/Pro products and a reachable Floor plan tool, neither of
+which exists in this build. Submission and approval are separate states recorded
+by dated release receipts; no demo account is required.
 
 Rendprop creates shareable listing pages from phone walkthroughs and photos, with photo editing, reels and client contact cards. Walkthrough output is the user's recorded video, not captured drone footage or a production 3D walkthrough.
 
-ACCESS: exploring, capturing/importing, on-device rendering and individual publishing use an automatic anonymous workspace, without email/password registration. Cloud tools need network access and the relevant plan allowance. Sign in with Apple in Settings connects account recovery, cross-device/Studio sync and shared team membership. Team membership needs an identified account. There is no separate password login or external purchase link.
+ACCESS: Sign in with Apple creates or restores the account that owns listings, hosted pages, AI usage, Studio access and team membership. Use your own Apple ID. There is no password, guest skip or external purchase link. Terms, Privacy and help are on the entry screen. Delete account: Settings > Your data > Delete account.
 
-NEW IN 1.0.3: real-estate onboarding offers Agent or Photographer/videographer. Per-listing client contact cards can replace the account card. Enquiry emails route to the saved client address; Leads shows delivery and explicit send/resend. Cover and current-gallery selections reach the published page. Pages start with photos/details; Watch fly-through opens Explore and Play modes. Photo batches continue across app screens; completed images stay saved. iOS background time is limited and unfinished work does not auto-resume after force-quit. Listing-toolbox crashes, room tags, detail forms and disclosures have been corrected. Optional enquiry, render and local photo-completion notifications respect preferences.
+NEW IN 1.0.4: Sign in with Apple before setup and Home. Onboarding offers Agent or Photographer/videographer. Per-listing client contact cards; enquiries route to the saved client address with explicit send/resend. Cover and gallery selections reach the published page. Photo batches continue across screens (unfinished work does not resume after force-quit). Toolbox crashes, room tags, forms and disclosures corrected. Notifications respect preferences.
 
-SPATIAL: experimental guided room tours and spatial walkthrough capture are TestFlight-only and are not exposed in this App Store build. The separate Floor plan tool remains: Apple RoomPlan requires a LiDAR-supported iPhone, with PDF/image import on other devices. It is not the experimental photorealistic spatial walkthrough.
+SPATIAL: Home and each listing's toolbox show "Measurements", "3D floor plan" and "3D walkthrough" as Coming soon cards. They open nothing, are not sold and no plan includes them. No RoomPlan/LiDAR scanning, measurement entry or plan import is reachable in this build. The experimental photorealistic spatial walkthrough is not in this build.
 
-REVIEW: Home > See it in action opens the hosted sample. Watch fly-through opens Explore (scroll inside the viewer); Play uses normal playback. To create: Home > Add a home > enter an address > import a video or record > tag rooms > Create tour. Standard rendering is on-device. Import photos, open Photo Studio, review/export the current version and preview the contact card/gallery before publishing. Camera and LiDAR need a physical supported device.
+REVIEW: after Sign in with Apple, Home > See it in action opens the hosted sample. Watch fly-through opens Explore (scroll inside the viewer); Play uses normal playback. To create: Home > Get started > enter an address > Save and continue > import a video or record > tag rooms > Create my tour. Standard rendering is on-device; the first listing publishes free to a rendprop.com page. Import photos and open AI Photo Studio: a new account includes 5 AI photo edits without purchasing. Camera capture needs a physical device.
 
-SUBSCRIPTIONS: StoreKit 2, five approved products in rendprop_plans: Starter/Pro monthly or yearly; Team monthly. Home and Settings expose plans; Settings > Plan & usage offers upgrade/change plan, Restore purchases and Manage subscription. Apple handles changes/cancellation. Restore/management remain available if products fail to load. Prices use Product.displayPrice. Purchases identify the billing workspace and require its owner/admin permission.
+SUBSCRIPTIONS: StoreKit 2, three products in rendprop_plans: Starter, Pro and Team, all monthly (no annual plans are offered). Home and Settings expose plans; Settings > Plan & usage offers upgrade/change plan, Restore purchases and Manage subscription. Apple handles changes/cancellation. Restore/management remain available if products fail to load. Prices use Product.displayPrice. Purchases identify the billing workspace and require its owner/admin permission.
 
-TRIAL: new accounts start on free without an automatic grant. A trial starts only after Apple confirms a subscription and Rendprop verifies its signed transaction. Seven days free is offered only for that exact StoreKit offer and eligibility; otherwise Subscribe. Renewal price, period and cancellation are disclosed. Cancelling the purchase sheet grants no access. Existing legacy grants retain their expiry.
+TRIAL: new accounts start on the free tier (one published listing, 5 AI photo edits) without an automatic grant. A 7-day trial starts only after Apple confirms a subscription and Rendprop verifies its signed transaction; otherwise the button says Subscribe. Renewal price, period and cancellation are disclosed. Cancelling the purchase sheet grants no access. A Sandbox purchase during review activates a 7-day trial-level plan so AI tools and publishing can be exercised. Trial AI uses a limited allocation; if it reports temporarily unavailable, publishing and the free AI photo edits remain testable.
 
-DELETION: Settings > Your data > Delete account covers anonymous and identified accounts and their sole-member workspaces. Shared workspace content can remain for other members. Failures/pending cleanup are reported. Removing local data is separate; deleting the app does not cancel an Apple subscription.
+DELETION: Settings > Your data > Delete account covers the account and its sole-member workspaces. Shared workspace content can remain for other members. Failures/pending cleanup are reported. Removing local data is separate; deleting the app does not cancel an Apple subscription.
 
-AI: explicit consent names providers and media/text uses, including quality checks/fallback. Settings > Your data > AI processing revokes permission. Altered media carries disclosure; original comparison requires a verified untouched original. Geometry is not guaranteed unchanged. Compliance exports disclosure/audit information.
+AI: consent names providers and media/text uses, including checks/fallback. Settings > Your data > AI processing revokes permission. Ask for anything prepares a specific request or asks clarification before a paid photo attempt; repainting fixed finishes, remodeling and hiding damage are refused. Custom outputs need comparison and approval before listing/cover/export. Original comparison needs a verified untouched original. Model fidelity is not guaranteed. Altered media and exports carry disclosure.
 
-USER CONTENT: shared listing/portfolio links can open inside the app; team members access shared workspaces. No public discovery feed, comment thread or user-to-user chat. Publish only content you have permission to use.
+USER CONTENT: shared listing/portfolio links and authorized team workspaces are supported. No public feed, comments or user chat. Publish only permitted content.
 
 Contact: aaron@pilk.ai

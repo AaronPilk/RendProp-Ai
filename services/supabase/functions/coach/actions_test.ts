@@ -95,6 +95,24 @@ Deno.test("sanitizeCoachOutput: a listing action with a valid id is kept", () =>
   assertEquals(out.actions[0].listing_id, "listing-2");
 });
 
+Deno.test("sanitizeCoachOutput: the retired open_floor_plan chip is dropped even with a valid id (Measurements is Coming soon)", () => {
+  const out = sanitizeCoachOutput({
+    reply: "Measurements is Coming soon.",
+    actions: [
+      { type: "open_floor_plan", label: "Open Measurements", listing_id: "listing-1" },
+      { type: "open_home", label: "Go to Home" },
+    ],
+  }, IDS);
+  assertEquals(out.reply, "Measurements is Coming soon.");
+  assertEquals(out.actions, [{ type: "open_home", label: "Go to Home" }]);
+  // Retired stays retired through the end-to-end parse as well.
+  const parsed = parseCoachOutput(
+    JSON.stringify({ reply: "Try the floor plan.", actions: [{ type: "open_floor_plan", listing_id: "listing-1" }] }),
+    IDS,
+  );
+  assertEquals(parsed.actions, []);
+});
+
 Deno.test("sanitizeCoachOutput: non-listing actions never require or keep a listing_id", () => {
   const out = sanitizeCoachOutput({
     reply: "Here's where to manage your plan.",

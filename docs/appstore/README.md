@@ -42,22 +42,28 @@ evidence that every feature is ready for public release.
 
 ## Metadata measurements
 
-Measured from the committed files on 2 October 2026 after trimming outer
-whitespace, matching the tool's inputs:
+Measured from the committed files on 10 October 2026 (build 57 copy pass)
+after trimming outer whitespace, matching the tool's inputs:
 
 | Field | Characters | UTF-8 bytes | Tool limit |
 | --- | ---: | ---: | --- |
 | `name.txt` | 8 | 8 | 30 characters |
 | `subtitle.txt` | 29 | 29 | 30 characters |
 | `promotional_text.txt` | 153 | 153 | 170 characters |
-| `keywords.txt` | 94 | 94 | 100 bytes |
-| `description.txt` | 3829 | 3895 | 4000 characters |
-| `release_notes.txt` | 657 | 657 | 4000 characters |
-| `review_notes.txt` | 3936 | 3936 | 4000 characters |
+| `keywords.txt` | 96 | 96 | 100 bytes |
+| `description.txt` | 3863 | 3915 | 4000 characters |
+| `release_notes.txt` | 1157 | 1157 | 4000 characters |
+| `review_notes.txt` | 3939 | 3939 | 4000 characters |
 
-The review notes have only 64 characters of headroom. Re-measure after editing;
+The review notes have only 61 characters of headroom. Re-measure after editing;
 old counts are not a validation result for new text. The tool checks limits
 before sending fields.
+
+Build 57 copy truth: Measurements, 3D floor plan and 3D walkthrough are
+Coming soon cards on Home and in each listing's toolbox. They open nothing and
+no plan includes them, so the description, review notes and keywords no longer
+describe measurement entry, plan import or RoomPlan/LiDAR scanning. Do not
+reintroduce those claims until a signed build re-enables the tool.
 
 ## Keep listing claims consistent with the product
 

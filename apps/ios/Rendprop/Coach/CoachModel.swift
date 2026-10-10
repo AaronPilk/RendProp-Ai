@@ -455,15 +455,12 @@ enum CoachOffline {
             "upright at chest height, keep it level, and turn the lights on first. One continuous " +
             "take, ending on your best shot."),
         Topic(keywords: ["floor plan", "lidar", "roomplan", "measurements"], reply:
-            "Open a listing's Measurements card. Draw an outline by entering each wall's " +
-            "length and direction, or enter rectangular room dimensions. Review the area worksheet " +
-            "and export an image or PDF. Garage, porch and unfinished areas stay separate. " +
-            "Choose a finished outline when adding an open-below deduction. " +
-            "Calculated closing walls need checking, and these totals do not set advertised living area. " +
-            "Use tape or laser measurements, or the ruler button for an approximate phone distance. " +
-            "Any phone can upload a plan you already have. Automatic 3D floor plans and 3D " +
-            "walkthroughs are Coming soon. Plan your video is no longer an ordinary listing detail entry; " +
-            "agency and Studio capture planning remain in their own workflows."),
+            "Measurements, 3D floor plans and 3D walkthroughs are Coming soon. The cards on Home " +
+            "and in a listing's toolbox do not open yet, and no plan includes them. Photos, " +
+            "AI Photo Studio, reels, aerial intros and published listings work today without any " +
+            "measurements. When measurements ship you will be able to enter room dimensions, draw " +
+            "measured outlines and upload a plan you already have; app calculations will not be a " +
+            "certified survey or appraisal and will not set advertised living area."),
         // The introductory trial starts only after Apple's purchase confirmation.
         Topic(keywords: ["trial", "free week", "first week"], reply:
             "Open Settings → Plan & usage → View plans. Eligible subscriptions offer 7 days free, " +
@@ -522,7 +519,7 @@ enum CoachOffline {
             reply = "Your local files are still on this phone. Open Home and confirm the workspace and listing access before trying to sync or publish."
         case "facts_review":
             kind = .openHome
-            reply = "Your edits are saved on this phone. Open the listing's details and Measurements to review the shared version before syncing. A retry cannot choose which teammate's changes to keep."
+            reply = "Your edits are saved on this phone. Open the listing's details to review the shared version before syncing. A retry cannot choose which teammate's changes to keep."
         case "upload":
             kind = .openTour
             reply = "Open this project's tour and check the upload. Reconnect before retrying; keep the saved video on this phone until it completes."

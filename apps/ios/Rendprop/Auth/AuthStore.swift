@@ -109,6 +109,14 @@ final class AuthStore: ObservableObject {
         static let refreshToken = "auth.supabase.refreshToken"
         static let expiresAt    = "auth.supabase.expiresAt"    // unix seconds
         static let userID       = "auth.supabase.userID"       // JWT sub (non-secret)
+        /// Whether the session remembered in `userID` was an identified one
+        /// (Sign in with Apple) rather than an anonymous guest. Written beside
+        /// `userID` from the token itself, and read only AFTER that token is
+        /// gone (`AppModel.forgetServerIdentities` deciding whether the dead
+        /// session's unsynced work can be released to this phone). Absent on
+        /// devices that never ran build 57, which reads as "unknown" — the
+        /// custody fence stays.
+        static let sessionIdentified = "auth.supabase.sessionIdentified.v1"
         static let userName     = "auth.userName"              // display name (Apple fullName / profile)
         static let orgName      = "auth.orgName"
         /// The Apple authorizationCode awaiting POST /me/apple-code, kept only
@@ -253,6 +261,9 @@ final class AuthStore: ObservableObject {
             UserDefaults.standard.removeObject(forKey: Keys.orgName)
         }
         if let cachedOwner { UserDefaults.standard.set(cachedOwner, forKey: Keys.userID) }
+        // The token is the truth about which kind of session this is; record
+        // it beside the remembered subject for the day the token is gone.
+        if cachedOwner != nil { UserDefaults.standard.set(Self.tokenIsIdentified(cachedToken), forKey: Keys.sessionIdentified) }
         if let cachedToken, let expiry = Self.jwtExpiry(cachedToken) {
             UserDefaults.standard.set(min(expiry, Self.tokenExpiresAt ?? expiry).timeIntervalSince1970, forKey: Keys.expiresAt)
         }
@@ -324,6 +335,14 @@ final class AuthStore: ObservableObject {
     static var tokenExpiresAt: Date? {
         let t = UserDefaults.standard.double(forKey: Keys.expiresAt)
         return t > 0 ? Date(timeIntervalSince1970: t) : nil
+    }
+
+    /// True only when the session remembered in `Keys.userID` is known to have
+    /// been an anonymous guest. An identified session, or no record at all
+    /// (a device that never ran build 57), answers false so callers keep the
+    /// outgoing-account custody fence. See `Keys.sessionIdentified`.
+    static var rememberedSessionWasAnonymous: Bool {
+        (UserDefaults.standard.object(forKey: Keys.sessionIdentified) as? Bool) == false
     }
 
     /// Async accessor: refreshes first when the token is near/past expiry, then
@@ -495,6 +514,7 @@ final class AuthStore: ObservableObject {
                 AccountLocalPreferences.activate(previous: previous.flatMap(UUID.init(uuidString:)), next: id)
             }
             UserDefaults.standard.set(sub, forKey: Keys.userID)
+            UserDefaults.standard.set(Self.tokenIsIdentified(accessToken), forKey: Keys.sessionIdentified)
             userID = sub
             if switched {
                 // The old account's name must not label the new one.

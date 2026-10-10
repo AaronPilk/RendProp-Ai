@@ -32,10 +32,21 @@ test('source bindings are fail-closed, synchronous and source-before-session / r
   assert.ok(auth.includes('guard onAdoptionStorageReady?() == true else { return }'));
   const session = auth.slice(auth.indexOf('private func applySession('), auth.indexOf('    /// Sign out:'));
   assert.ok(session.indexOf('onAccountChanged?(id)') < session.indexOf('userID = sub'), 'outgoing custody callback runs before the active subject changes');
+  // The session-kind record is written from the token beside the remembered
+  // subject, after the outgoing callback has read the previous one.
+  assert.ok(session.indexOf('onAccountChanged?(id)') < session.indexOf('forKey: Keys.sessionIdentified'), 'session kind is recorded after the outgoing custody callback');
+  assert.ok(auth.includes('(UserDefaults.standard.object(forKey: Keys.sessionIdentified) as? Bool) == false'), 'an absent session-kind record keeps the custody fence');
+  const forget = declaration('func forgetServerIdentities(');
+  assert.ok(forget.includes('&& AuthStore.rememberedSessionWasAnonymous') && forget.includes("&& (adoptionBindings == nil || adoptionBindings?.confirmedOrgID != nil)"), 'dead-guest release requires a remembered anonymous source and no pending handoff');
+  assert.ok(forget.indexOf('let releasingAnonymousSource') < forget.indexOf('identityOwnerUserID = userID'), 'release decision reads the outgoing identity before it is replaced');
   const core = readFileSync(root + 'apps/ios/Rendprop/Auth/AnonymousAdoptionRecovery.swift', 'utf8');
   assert.ok(core.indexOf('finishLocal(verifiedValue, receipt.org_id, cardData)') < core.indexOf('guard remove()'));
   assert.ok(core.indexOf('let (cardData, cardResponse) = try await send(cardRequest)') < core.indexOf('finishLocal(verifiedValue, receipt.org_id, cardData)'));
   assert.ok(declaration('func confirmLocalAdoption(').includes('JSONDecoder().decode(PersonalCardReceipt.self, from: $0).checked(owner: pending.destinationUserID)'));
+  // A cancelled handoff releases only the journal's own source-custody rows; a confirmed journal is never discarded.
+  const discard = declaration('func discardLocalAdoption(');
+  assert.ok(discard.includes('journal.confirmedOrgID == nil else { return }'));
+  assert.ok(discard.includes('listings[i].cloudSyncOwnerID == journal.sourceUserID'), 'cancelled custody release is scoped to the dead source');
   const compliance = declaration('func serverListingIDForCompliance(');
   assert.ok(compliance.indexOf('pendingAdoptionBlocksServerListing') < compliance.indexOf('if let existing'));
   assert.ok(declaration('func syncListing(').includes('guard !pendingAdoptionBlocksServerListing(id)'));
@@ -46,7 +57,7 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
   const accountChanged = initializer.slice(initializer.indexOf('        AuthStore.shared.onAccountChanged'), initializer.indexOf('        AuthStore.shared.onPrepareAdoption'));
   const methods = ['struct RenderedTour', 'struct UploadedRenderAsset', 'enum PublishError',
     'func forgetServerIdentities(', 'func prepareLocalAdoption(', 'func confirmLocalAdoption(',
-    'func restoreAdoptedProductionLibrary(', 'func pendingAdoptionBlocksServerListing(', 'var workspaceSwitchIsBusy:', 'func prepareWorkspaceSwitch(', 'func isInSelectedWorkspace(', 'func ensureServerListing(', 'func index(of ', 'func load()',
+    'func restoreAdoptedProductionLibrary(', 'func pendingAdoptionBlocksServerListing(', 'func discardLocalAdoption(', 'var workspaceSwitchIsBusy:', 'func prepareWorkspaceSwitch(', 'func isInSelectedWorkspace(', 'func ensureServerListing(', 'func index(of ', 'func load()',
     'func reconcileAfterRestore()', 'func reseedSamples()', 'func persist()'].map(declaration).join('\n');
   const store = app.slice(app.indexOf('enum PersistentStore {'), app.indexOf('// MARK: - Entry'));
   assert.ok(store.includes('extension PersistentStore.PersistedState'));
@@ -72,6 +83,7 @@ enum FileStore {
  static let shared=AuthStore()
  var userID:String? { didSet { if userID != oldValue { syncSessionRevision &+= 1 } } }
  var syncSessionRevision:UInt64=0; var isIdentified:Bool { userID != nil }
+ static var rememberedSessionWasAnonymous=false
  var errors=0; var pendingExists=true; var pendingReadFails=false
  var onAccountChanged: ((UUID) -> Void)?
  static func validAccessToken() async -> String? { nil }
@@ -160,6 +172,14 @@ ${store}
       'let previousOrg = WorkspaceContext.selectedOrgID', 1],
     ['adopt-unjournaled-drafts', 'for i in restored.indices where !restored[i].isSample && adoptedIDs.contains(restored[i].id)',
       'for i in restored.indices where !restored[i].isSample', 1],
+    ['keep-cancelled-guest-custody', '            listings[i].cloudSyncOwnerID = nil\n            listings[i].cloudDraftOrgID = nil',
+      '            _ = i // cancelled guest rows stay fenced to a dead source', 1],
+    ['release-foreign-custody-on-cancel', '&& listings[i].cloudSyncOwnerID == journal.sourceUserID {',
+      '{', 1],
+    ['fence-dead-guest-custody', '            && AuthStore.rememberedSessionWasAnonymous\n',
+      '            && false // a dead guest keeps its fence\n', 1],
+    ['release-journaled-guest-custody', '&& (adoptionBindings == nil || adoptionBindings?.confirmedOrgID != nil)',
+      '&& true', 1],
   ]) {
     assert.equal(scaffold.split(needle).length - 1, count, `actual mutation target ${name}`);
     const path = join(out, name + '.swift'), mutant = join(out, name);
@@ -173,12 +193,12 @@ ${store}
     assert.equal(rejected.status, 1, `actual mutation must fail: ${name}`);
     assert.match(rejected.stdout, /FAIL: [1-9]\d*\/\d+ local binding assertions/);
   }
-  console.log('PASS: 9 actual AppModel metadata mutants compiled then failed assertions/exit1');
+  console.log('PASS: 13 actual AppModel metadata mutants compiled then failed assertions/exit1');
   const checked = [...files, root + 'apps/ios/Rendprop/RendpropApp.swift', root + 'apps/ios/Rendprop/Auth/AuthStore.swift',
     root + 'tests/phase1/AdoptionLocalBindingsTests.swift', fileURLToPath(import.meta.url)];
   writeFileSync(join(out, 'receipt.json'), JSON.stringify({ accepted: true,
     runtimeScope: 'Mechanically extracted actual AppModel metadata methods and complete PersistentStore; complete production WorkspaceSync/NativeReelDraft and model types; inert Auth/transport/FileStore/background refresh dependencies',
-    negativeControlExit: negative.status, actualExit: result.status, actualMutantsRejected: 9,
+    negativeControlExit: negative.status, actualExit: result.status, actualMutantsRejected: 11,
     sourceHashes: Object.fromEntries(checked.map(path => [path.slice(root.length), createHash('sha256').update(readFileSync(path)).digest('hex')])),
     extractedSourceSHA256: createHash('sha256').update(scaffold).digest('hex'),
   }, null, 2) + '\n', { flag: 'wx' });

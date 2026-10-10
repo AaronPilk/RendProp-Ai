@@ -53,7 +53,8 @@ try:
    for name,count in [('team_private_libraries',92),('workspace_selection',28),('team_readiness',34)]:
     r=q(name+'-historical-followup-replay',(SQL/'tests'/f'{name}.sql').read_text());assert re.search(rf'^({count})$',r,re.M)and len(re.findall(r'\|(?:true|t)$',r,re.M))==count,(name,'complete historical inventory')
  before=json.loads(q('definitions-before-replay',snapshot))
- refused=q('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function notification_register_device_session'in refused
+ # Build 57 (20261010141500) supersedes select_workspace, the first differing pin of this overlay.
+ refused=q('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function select_workspace'in refused
  assert json.loads(q('superseded-followup-refusal-catalog',snapshot))==before,'Historical overlay must not overwrite newer reviewed functions'
  for phase in ['fresh','replay']:
   if phase=='replay':q('migration-exact-final-overlay-replay',FINAL_OVERLAY.read_text());assert json.loads(q('definitions-after-replay',snapshot))==before,'Replay changes authority/ACL/body'

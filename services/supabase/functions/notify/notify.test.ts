@@ -504,3 +504,63 @@ Deno.test("final APNs serializer strips personal fields even when bypassing the 
     assertEquals(apns.pushRouteData({slug:"invalid path/with private name",lead_id:{id},unknown:id}),{});
   } finally { clearSecrets(); }
 });
+
+Deno.test("build 57: final APNs serializer bounds the deep link, category and recipient, and never serializes the rendered copy", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const id = "de550103-0000-4000-8000-000000000002";
+    const capture = async (overrides: Partial<apns.ApnsMessage>) => {
+      let emitted: Record<string, unknown> = {};
+      const result = await apns.send({deviceToken:device.device_token,environment:"production",
+        title:"Nina Patel asked about 412 Marina Blvd",body:"They left a phone number.",category:"lead_received",
+        deepLink:"https://rendprop.com/f/abc123xyz9",recipientUserId:id,data:{lead_id:id},...overrides},
+        (_url, init) => { emitted=JSON.parse(String((init as RequestInit)?.body)); return Promise.resolve(apnsResponse(200)); });
+      assert(result.ok);
+      return emitted;
+    };
+    // The exact serialized shape: nothing else rides along.
+    const plain = await capture({});
+    assertEquals(plain, {aps:{alert:{title:"Rendprop update",body:"Open Rendprop to review it."},sound:"default","interruption-level":"active"},
+      category:"lead_received",deep_link:"https://rendprop.com/f/abc123xyz9",recipient_user_id:id,data:{lead_id:id}});
+    assertEquals(Object.keys(plain).sort(), ["aps","category","data","deep_link","recipient_user_id"]);
+    assert(!JSON.stringify(plain).includes("Nina Patel")); assert(!JSON.stringify(plain).includes("412 Marina Blvd"));
+    // A token, query string or e-mail in a deep link never reaches the lock screen.
+    for (const deepLink of ["https://rendprop.com/verify-client-email#token=private-nonce", "/leads?email=private@fixture.invalid", "https://rendprop.com/f/x?lead=Nina%20Patel", "javascript:alert(1)", "rendprop://f/../private", "not a link"]) {
+      const emitted = await capture({deepLink});
+      assertEquals(emitted.deep_link, null, deepLink);
+      assert(!JSON.stringify(emitted).includes("private"), deepLink);
+    }
+    assertEquals((await capture({deepLink:"/f/abc123xyz9"})).deep_link, "/f/abc123xyz9");
+    // Free text cannot ride in the category or recipient slots.
+    const smuggled = await capture({category:"Nina Patel left 555-private", recipientUserId:"private@fixture.invalid"});
+    assertEquals(smuggled.category, "update"); assertEquals(smuggled.recipient_user_id, null);
+    assert(!JSON.stringify(smuggled).includes("Nina")); assert(!JSON.stringify(smuggled).includes("private"));
+    assertEquals(apns.pushDeepLink("https://rendprop.com/f/abc123xyz9"), "https://rendprop.com/f/abc123xyz9");
+    assertEquals(apns.pushDeepLink("https://rendprop.com/f/abc?x=1"), null);
+    assertEquals(apns.pushCategory("render_ready"), "render_ready"); assertEquals(apns.pushCategory("Render ready!"), "update");
+  } finally { clearSecrets(); }
+});
+
+Deno.test("build 57: deliverPush only pushes to the row's own devices and binds the recipient to the row", async () => {
+  clearSecrets(); await withApnsSecrets();
+  try {
+    const sent: string[] = []; const recipients: unknown[] = [];
+    const fake: typeof fetch = (url, init) => {
+      sent.push(String(url).split("/3/device/")[1]);
+      recipients.push(JSON.parse(String((init as RequestInit).body)).recipient_user_id);
+      return Promise.resolve(apnsResponse(200));
+    };
+    const stranger: DeviceRow = { user_id: "99999999-9999-4999-8999-999999999999", device_token: "ffeeddcc00112233445566778899ffee", environment: "production" };
+    // Only a stranger's device: nothing is sent and the row is closed as skipped, not failed.
+    const none = await deliverPush(row(), [stranger], BASE, fake);
+    assertEquals(none.state, "skipped"); assertEquals(none.reason, "no live device for this user"); assertEquals(sent, []);
+    // Mixed list: the stranger's token is never contacted, the owner's is, and the recipient is the row's user_id
+    // even when the payload claims another account.
+    const sourceRow = row(); sourceRow.payload.recipient_user_id = stranger.user_id;
+    const mixed = await deliverPush(sourceRow, [stranger, device], BASE, fake);
+    assertEquals(mixed.state, "sent"); assertEquals(sent, [device.device_token]); assertEquals(recipients, [row().user_id]);
+    // A userless row cannot be pushed anywhere, whatever devices are offered.
+    const userless = await deliverPush(row({ user_id: null }), [device], BASE, fake);
+    assertEquals(userless.state, "skipped"); assertEquals(sent.length, 1);
+  } finally { clearSecrets(); }
+});

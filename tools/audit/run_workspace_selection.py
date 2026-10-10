@@ -79,7 +79,8 @@ try:
    assert query('historical-followup-replayed-catalog',CATALOG)==historical
    result=query('workspace-historical-followup-replay',(SQL/'tests/workspace_selection.sql').read_text());assert '\n28\n'in result and result.count('|t')==28
  before=query('final-catalog',CATALOG)
- refused=query('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function notification_register_device_session'in refused
+ # Build 57 (20261010141500) supersedes select_workspace, the first differing pin of this overlay.
+ refused=query('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function select_workspace'in refused
  assert query('superseded-followup-refusal-catalog',CATALOG)==before,'Historical overlay must not overwrite newer reviewed functions'
  for phase in ['after','replayed']:
   if phase=='replayed':

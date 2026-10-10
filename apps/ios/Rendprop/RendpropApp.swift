@@ -232,6 +232,20 @@ final class AppModel: ObservableObject {
         let previousOrg = previousOwner.flatMap { WorkspaceContext.read(owner: $0)?.selectedOrgID }
             ?? (previousOwner == AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) ? WorkspaceContext.selectedOrgID : nil)
         adoptionBindings = adoptionBindings?.detaching(listings, owner: previousOwner)
+        // An anonymous session has no credentials, so once it is gone (a
+        // revoked refresh token, a definitive 4xx) nobody can ever become it
+        // again. Fencing its rows behind that owner would hide this phone's
+        // own work from every later identity forever. With no handoff journal
+        // in flight (a journal fences and then re-owns those rows itself) the
+        // dead guest's custody is released to the phone: drafts publish under
+        // whoever signs in next, and a detached server identity stays
+        // detached so an explicit publish creates afresh and auto-sync never
+        // duplicates. An identified source, a mismatched remembered subject,
+        // or an unknown session kind (pre-build-57 state) keeps the fence.
+        let releasingAnonymousSource = previousOwner != nil
+            && previousOwner == AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
+            && AuthStore.rememberedSessionWasAnonymous
+            && (adoptionBindings == nil || adoptionBindings?.confirmedOrgID != nil)
         identityOwnerUserID = userID
         // Rows first loaded from another device belong to that account. Their
         // downloaded files stay on disk; signing back in restores the same IDs.
@@ -241,7 +255,10 @@ final class AppModel: ObservableObject {
         tours = tours.filter { !cloudOnly.contains($0.key) }
         renders = renders.filter { !cloudOnly.contains($0.key) }
         for i in listings.indices {
-            if !listings[i].isSample {
+            if releasingAnonymousSource, !listings[i].isSample, listings[i].cloudSyncOwnerID == nil || listings[i].cloudSyncOwnerID == previousOwner {
+                listings[i].cloudSyncOwnerID = nil
+                listings[i].cloudDraftOrgID = nil
+            } else if !listings[i].isSample {
                 // Even an old guest/offline draft has outgoing-account custody.
                 // Preserve it on disk; never let the next login claim/upload it.
                 listings[i].cloudSyncOwnerID = listings[i].cloudSyncOwnerID ?? previousOwner
@@ -249,7 +266,9 @@ final class AppModel: ObservableObject {
             }
             if let sid = listings[i].serverID {
                 listings[i].cloudDetachedServerID = sid
-                listings[i].cloudSyncOwnerID = listings[i].cloudSyncOwnerID ?? previousOwner
+                if !releasingAnonymousSource {
+                    listings[i].cloudSyncOwnerID = listings[i].cloudSyncOwnerID ?? previousOwner
+                }
             }
             listings[i].serverID = nil
             listings[i].serverOrgID = nil
@@ -420,13 +439,30 @@ final class AppModel: ObservableObject {
     func discardLocalAdoption(operationID: UUID?) {
         guard let journal = adoptionBindings, journal.confirmedOrgID == nil else { return }
         if let operationID, journal.operationID != operationID { return }
-        let previous = adoptionBindings
+        let previous = adoptionBindings, previousListings = listings
+        // The source session is gone for good, so the custody fence that
+        // `forgetServerIdentities` applied on its behalf would hide its rows
+        // from every later account forever. Release exactly the rows this
+        // journal named for that source; foreign, sample and already
+        // re-owned rows keep their custody. A detached server identity stays
+        // detached: an explicit publish creates afresh, auto-sync never does.
+        let released = Set(journal.productionLocalIDs ?? journal.entries.map(\.localID))
+        let wasRestoring = isRestoring
+        isRestoring = true
+        for i in listings.indices where !listings[i].isSample && released.contains(listings[i].id)
+            && listings[i].cloudSyncOwnerID == journal.sourceUserID {
+            listings[i].cloudSyncOwnerID = nil
+            listings[i].cloudDraftOrgID = nil
+        }
         adoptionBindings = nil
+        isRestoring = wasRestoring
         if persist() { return }
         // A write failure keeps the journal on disk, so keep it in memory too;
         // the Keychain check in `pendingAdoptionBlocksServerListing` still
         // unblocks its listings, because the record itself is gone.
-        adoptionBindings = previous
+        isRestoring = true
+        listings = previousListings; adoptionBindings = previous
+        isRestoring = wasRestoring
     }
 
     func load() async {
@@ -3585,7 +3621,11 @@ struct HomeDashboardView: View {
                 // caller ever pushes this case.
                 FlythroughDetailView(listing: route.listing)
             case .floorPlan:
-                FloorPlanView(listing: route.listing)
+                // Measurements is Coming soon on Home and on the listing
+                // toolbox (build 57). A route that still names it (a coach
+                // "open_floor_plan" action, a stale push) lands on the home
+                // itself instead of opening the hidden tool.
+                FlythroughDetailView(listing: route.listing)
             case .spatial:
                 // Same gate as the tile: the product only opens while the
                 // server says its pipeline is on. A route that arrives anyway

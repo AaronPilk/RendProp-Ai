@@ -50,7 +50,7 @@ enum APIError: Error { case badResponse }
         if let expiresAt { UserDefaults.standard.set(expiresAt.timeIntervalSince1970, forKey: Keys.expiresAt) }
     }
     static func clearTokens() { access = nil; refresh = nil; UserDefaults.standard.removeObject(forKey: Keys.expiresAt) }
-    enum Keys { static let accessToken="access", refreshToken="refresh", userID="owner", userName="name", orgName="org", expiresAt="expiry" }
+    enum Keys { static let accessToken="access", refreshToken="refresh", userID="owner", userName="name", orgName="org", expiresAt="expiry", sessionIdentified="sessionIdentified" }
     var isSignedIn: Bool, isIdentified = false, userID: String?
     var displayName: String, userName: String, orgName: String
     var foregroundObserver: NSObjectProtocol?

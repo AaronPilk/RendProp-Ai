@@ -100,9 +100,9 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Review the request", "Choose the motion. Each aerial intro uses one from your plan\u{2019}s monthly allowance. Generated footage can contain errors in the building or surroundings."),
             ("Check the result", "Watch the entire clip before including it in a reel or publishing it. Keep your original footage for comparison.")]
         case .measurements: return [
-            ("Enter measurements", "The Home shortcut is Coming soon. Open Measurements inside a listing to keep working with rooms or measured outlines."),
-            ("Review the worksheet", "Check closure, units, levels and area categories. Furnished rooms can still be measured manually. App calculations are not a certified survey or appraisal."),
-            ("Share a plan", "Export your measurements and worksheet, or upload a PDF or image from your measuring software. Automatic 3D scanning is marked Coming soon.")]
+            ("Coming soon", "Measurements, 3D floor plans and 3D walkthroughs are still being tested. The cards on Home and in each listing's toolbox do not open yet, and no plan includes them."),
+            ("Nothing else waits on them", "Photos, AI Photo Studio, reels, aerial intros and published listings work today without any measurements."),
+            ("When they ship", "You will be able to enter room dimensions, draw measured outlines and upload a plan you already have. App calculations will not be a certified survey or appraisal.")]
         case .contact: return [
             ("Set up your card", "Open Profile, edit your name, photo and contact details, then tap Save. Your personal card stays yours when you join a team. Set the listing library's business logo separately. Use Send business card for your contact details alone, or Share my portfolio to choose the listings to include."),
             ("Represent your client", "For a photographer's listing, open Listing contact and enter the client's name, photo and public contact details."),
@@ -130,7 +130,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
         case .spatial: return [
             ("Coming soon", "3D walkthroughs and automatic 3D floor-plan capture are still being tested. They are not required to create photos, videos or a published listing."),
             ("Capture now, 3D later", "Photos and walkthrough video you capture today stay usable; the 3D features will build on the same captures when they ship."),
-            ("Use measurements today", "You can enter room measurements, draw measured outlines and upload an existing floor plan while the 3D features are developed.")]
+            ("Measurements too", "Entering room measurements, drawing measured outlines and uploading an existing floor plan are also marked Coming soon; nothing you publish today depends on them.")]
         }
     }
 }

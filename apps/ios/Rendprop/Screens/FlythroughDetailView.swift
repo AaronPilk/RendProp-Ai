@@ -232,12 +232,13 @@ private struct ListingToolboxGrid: View {
                     ListingToolUnavailableTile()
                 }
             }
-            ListingToolLinkTile(
-                card: ListingToolCard(title: "Measurements", sub: sample ? createFirst : "Outline · area worksheet · upload",
-                                      icon: "ruler", gradient: RPGradient.plan, dimmed: sample),
-                disabled: sample, accessibilityID: "detail.floorPlan",
-                destination: { AnyView(FloorPlanView(listing: destinationListing())) }
-            )
+            // Measurements is "Coming soon" on the listing page, exactly like Home
+            // (`home.comingSoon.floorPlan`): a card, never a link. `FloorPlanView`
+            // stays compiled for the build that re-enables it.
+            ListingToolCard(title: "Measurements", sub: "Coming soon",
+                            icon: "ruler", gradient: RPGradient.plan, dimmed: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("detail.measurementsComingSoon")
             ListingToolCard(title: "3D floor plan", sub: "Coming soon",
                             icon: "cube.transparent", gradient: RPGradient.plan, dimmed: true)
                 .accessibilityElement(children: .combine)

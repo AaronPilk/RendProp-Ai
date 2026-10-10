@@ -52,12 +52,15 @@ fixture.requestExportFrame=callback=>{
 const NativeRecorder=MediaRecorder;
 function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...extra});}
 // The exporter uses detached video elements, so observe them directly without
-// retiming events. A refused export has no MP4 to inspect; keep its media state.
+// retiming events, from the moment the export decoder creates them so that
+// readiness before playback and the element state at each event are retained.
+// A refused export has no MP4 to inspect; keep its media state.
 const observedVideo=new WeakSet();
+fixture.observe=video=>observeVideo(video);
 function observeVideo(video){
   if(!(video instanceof HTMLVideoElement)||observedVideo.has(video))return;
   observedVideo.add(video);
-  for(const event of ["waiting","stalled","playing","canplay","canplaythrough","ended"])
+  for(const event of ["waiting","stalled","playing","canplay","canplaythrough","ended","loadeddata","seeking","seeked","pause","emptied"])
     video.addEventListener(event,()=>{
       if(!fixture.exporting)return;
       log("media."+event,{sourceTime:video.currentTime,duration:video.duration,rate:video.playbackRate,
@@ -106,7 +109,7 @@ document.querySelector("#run").onclick=async()=>{
     assert(seam.test(code), "Decoder delay must match the real decode entry");
     return code.replace(seam, match => match + '\n  if ((window as any).fixture?.exporting) await (window as any).fixture.delayDecode(signal, kind);')
       .replace('return { element: image, dispose };', 'if ((window as any).fixture?.exporting) (window as any).fixture.resources.push(image); return { element: image, dispose };')
-      .replace('return { element: video, dispose };', 'if ((window as any).fixture?.exporting) (window as any).fixture.resources.push(video); return { element: video, dispose };');
+      .replace('return { element: video, dispose };', 'if ((window as any).fixture?.exporting) { (window as any).fixture.resources.push(video); (window as any).fixture.observe(video); } return { element: video, dispose };');
   } };
   const sequentialPreparationPlugin = { name: "negative-control-sequential-decode", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;

@@ -12,7 +12,7 @@ TOOLS FOR YOUR LISTING
 • AI Photo Studio — blue sky, twilight, lawn, decluttering, virtual staging and custom edits. Review the result, keep photo versions and export images with the disclosure for the changes you made. Compare to saved untouched originals.
 • Reels — turn your photos into a short vertical video with your own voiceover and word-by-word captions.
 • Aerial intro — an optional AI-generated opening clip based on your exterior photo, labelled as AI-generated. It is simulated imagery, not drone footage.
-• Measurements and floor plans — enter wall lengths, draw room outlines or import a plan. Apple RoomPlan scanning needs a supported LiDAR iPhone. Verify dimensions before use.
+• Measurements, 3D floor plans and 3D walkthroughs are shown as Coming soon. They do not open yet and are not part of any plan.
 • Listing links — a contact page for sharing and a separate unbranded tour link. Check your MLS's rules before posting.
 • Client delivery — photographers and videographers can put their client's name, business, photo and contact details on each listing. Route enquiries to that client's email, track delivery in Leads and send them again when needed. The client does not need a Rendprop account.
 

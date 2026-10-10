@@ -31,9 +31,12 @@ function positiveClauses(text: string): string[] {
   // Screening matches the native policy. The original request below remains
   // untouched/quoted; invisible separators and accents cannot disguise a
   // positive repaint/repair instruction from this gate.
+  // A negated preservation verb stays with its negation: "don't leave the
+  // stain visible" and "do not keep the wallpaper" are removal requests, never
+  // a bare "don't" followed by a safe "leave ... visible" / "keep ..." clause.
   const parts = text.normalize("NFKD").replace(/\p{M}/gu, "").replace(/\p{Cf}/gu, "")
     .toLowerCase().replace(/[’]/g, "'")
-    .split(/([.,;!?\n]+|\b(?:but|however|then|and|or|except|plus|while)\b|\s+(?=(?:without|preserve|keep|retain|leave|do not|don't|never)\b))/);
+    .split(/([.,;!?\n]+|\b(?:but|however|then|and|or|except|plus|while)\b|(?<!\b(?:not|don't|never|without|no))\s+(?=(?:without|preserve|keep|retain|leave|do not|don't|never)\b))/);
   const active: string[] = [];
   let preserved: "negative" | "preserve" | null = null;
   for (let i = 0; i < parts.length; i += 2) {
@@ -60,25 +63,39 @@ function positiveClauses(text: string): string[] {
   }
   return active;
 }
-const FIXED = "(?:garage(?:[ -]door)?|trim|walls?|ceilings?|floors?|flooring|cabinets?|cupboards?|countertops?|counters?|kitchen islands?|windows?|doors?|roof|siding|facade|appliances?|fixtures?|built[ -]ins?|driveway|fences?|power (?:poles?|lines?)|utility (?:boxes|meters)|air[ -]conditioning units?|fridges?|stoves?|ovens?|radiators?|fireplaces?|chandeliers?|bathtubs?|toilets?|carpets?|wallpaper|staircases?|pillars?|beams?|pools?|sheds?|trees?|telephone poles?|structure|layout|openings?|paint(?: colors?)?|finish(?:es)?|materials?)";
+const FIXED = "(?:garage(?:[ -]door)?|trim|walls?|ceilings?|floors?|flooring|cabinets?|cupboards?|countertops?|counters?|kitchen islands?|islands?|worktops?|benchtops?|units?|vanit(?:y|ies)|backsplash(?:es)?|tiles?|kitchens?|bathrooms?|windows?|doors?|roof|siding|facade|appliances?|fixtures?|built[ -]ins?|driveway|fences?|railings?|balcon(?:y|ies)|wiring|power (?:poles?|lines?)|utility (?:boxes|meters)|air[ -]conditioning units?|fridges?|stoves?|ovens?|radiators?|fireplaces?|chandeliers?|bathtubs?|toilets?|carpets?|wallpaper|staircases?|pillars?|beams?|pools?|sheds?|trees?|telephone poles?|(?:street|road) signs?|(?:neighbou?ring|next[ -]door|adjacent) (?:house|building|property|home)s?|structure|layout|openings?|paint(?: colors?)?|finish(?:es)?|materials?)";
 const QUALIFIERS = "(?:(?:the|a|an|existing|original|all|every|old|damaged|broken|worn|stained|chipped|peeling)\\s+)*";
+// Surface materials name a permanent finish on their own; colors need a fixed
+// noun beside them ("grey sofa" is furniture, "grey walls" is paint).
+const SURFACE = "(?:hardwood|wood|wooden|marble|granite|quartz|laminate|tile|tiled|vinyl|stone|concrete|metal)";
 const MATERIAL = "(?:hardwood|wood|wooden|marble|granite|quartz|laminate|tile|tiled|vinyl|stone|concrete|metal|white|black|grey|gray|beige|blue|red|green)";
 const CHANGE = "(?:remov(?:e|ing)|replac(?:e|ing)|swapp?ing(?: out)?|swap(?: out)?|mov(?:e|ing)|resize|cover(?:ing)?|hid(?:e|ing)|conceal(?:ing)?|eras(?:e|ing)|delet(?:e|ing)|chang(?:e|ing)|alter(?:ing)?|paint(?:ing)?|repair(?:ing)?|fix(?:ing)?|get rid of|patch(?:ing)?|fill(?:ing)?|smooth(?:ing)?|take out|install(?:ing)?|lay(?:ing)?|put|convert(?:ing)?|switch(?:ing)?|redo|seal(?:ing)?|mask(?:ing)?)";
 const negativeActionStart = new RegExp(`^(?:(?:please|also)\\s+)*(?:${CHANGE}|repaint|remodel|recolor|recolour|removing|replacing|moving|changing|altering|painting|repairing|fixing|covering|hiding|concealing|erasing|deleting|swapping|repainting|remodelling|remodeling|recoloring|recolouring|touch|touching|add|adding)\\b`);
 const actionStart = new RegExp(`^(?:(?:please|also)\\s+)*(?:${CHANGE}|make|turn|give|add|stage|furnish|place|brighten|improve|declutter|tidy|clean|new|repaint|remodel)\\b`);
 const permanent = new RegExp(`\\b${CHANGE}\\s+${QUALIFIERS}${FIXED}\\b`);
 const recolor = new RegExp(`\\b(?:make|turn|change|give|paint|swap|replace)\\b[^.;!?]*\\b${FIXED}\\b[^.;!?]*\\b(?:${MATERIAL}|color|colour|finish|material)\\b|\\b(?:change|alter|replace|swap)\\b[^.;!?]*\\b(?:paint|color|colour|finish|material)\\b|\\b(?:new|different|updated|fresh)\\s+(?:${MATERIAL}\\s+)*${FIXED}\\b`);
-const defectNoun = /\b(?:cracks?|damage|defects?|water ?(?:marks?|stains?)|stains?|scuffs?|scratches|scratch|marks?|smudges?|dirt|graffiti|discolou?ration|yellowing|mildew|leak marks?|mou?ld|rust|wear|holes?|dents?|peeling|chipped|missing flooring)\b/;
+const defectNoun = /\b(?:cracks?|damage|defects?|water ?(?:marks?|stains?)|stains?|scuffs?|scratches|scratch|marks?|smudges?|dirt|graffiti|discolou?ration|yellowing|mildew|leak marks?|mou?ld|rust|wear|holes?|dents?|peeling|chipped|missing flooring|(?:damp|wet|dirty|grease|smoke|soot|mou?ldy|rusty)\s+(?:patch(?:es)?|spots?|streaks?)|(?:dark|black|brown|yellow)\s+patch(?:es)?\s+(?:on|above|below|under|in)\b|spots?\s+(?:on|above|below|under)\s+(?:the\s+)?(?:ceilings?|walls?|floors?|carpets?|roof|doors?)\b)/;
 const defect = new RegExp(`\\b(?:${CHANGE}|patch|smooth|clean|disappear|vanish)\\b[^.;!?]*${defectNoun.source}|${defectNoun.source}[^.;!?]*\\b(?:disappear|vanish|gone|invisible|hidden|unseen|out of sight|not visible)\\b`);
 const remodel = new RegExp(`\\b(?:repaint\\w*|recolor\\w*|recolour\\w*|remodel\\w*|renovat\\w*|resurfac\\w*|refinish\\w*|rebuild\\w*)\\b|\\bpaint\\s+(?:it|over)\\b|\\b(?:freshly|newly)\\s+painted\\b|\\bpainting\\s+${QUALIFIERS}${FIXED}\\b`);
 // Preservation is permission to retain an existing thing, never a blanket
 // exemption for concealed condition or a new action in the same clause.
 const conditionPreserved = /\b(?:unchanged|unmodified|unretouched|visible|intact|as[ -]is|as they are|as it is)\b/;
 const concealment = /\b(?:hide|hidden|conceal\w*|mask|invisible|unseen|out of sight|not visible|disappear|vanish|gone|cover up)\b/;
-const materialSubstitution = new RegExp(`\\b${MATERIAL}\\s+(?:on|over|for|instead of)\\s+${QUALIFIERS}${FIXED}\\b|\\b(?:lay|install|put)\\s+(?:(?:new|fresh|a|the)\\s+)*${MATERIAL}(?=$|[.,;!?])|\\b(?:lay|install)\\s+(?:(?:new|fresh|a|the)\\s+)*(?:hardwood|laminate|tile|vinyl|carpet)\\b|\\b${MATERIAL}\\s+(?:instead of|in place of)\\s+${MATERIAL}(?:\\s+${FIXED})?(?=$|[.,;!?])|\\bfresh\\s+coat\\b`);
+const materialSubstitution = new RegExp(`\\b${MATERIAL}\\s+(?:on|over|for|instead of)\\s+${QUALIFIERS}${FIXED}\\b|\\b(?:lay|install|put)(?:\\s+(?:down|in))?\\s+(?:(?:new|fresh|a|the|some)\\s+)*${MATERIAL}(?:\\s+down)?(?=$|[.,;!?])|\\b(?:lay|install)\\s+(?:(?:new|fresh|a|the)\\s+)*(?:hardwood|laminate|tile|vinyl|carpet)\\b|\\b${MATERIAL}\\s+(?:instead of|in place of)\\s+${MATERIAL}(?:\\s+${FIXED})?(?=$|[.,;!?])|\\b${SURFACE}\\s+instead(?=$|[.,;!?])|\\b(?:new|fresh|brand new)\\s+${SURFACE}(?:\\s+(?:floors?|flooring|throughout))?(?=$|[.,;!?])|\\bfresh\\s+coat\\b`);
+// A clause that is only a surface material ("with hardwood", "marble") names
+// a new finish with no movable object to carry it.
+const bareSurface = new RegExp(`^(?:(?:with|in|on|using|of)\\s+)?(?:(?:a|an|the|some|all|new|fresh|more)\\s+)*${SURFACE}(?:\\s+(?:throughout|everywhere|finish(?:es)?|surfaces?))?$`);
+// "keep the ceiling clean/smooth/uniform" asks for a new condition of a fixed
+// surface, not retention of the photographed one.
+const renewedCondition = /\b(?:clean|cleaner|spotless|pristine|flawless|perfect|smooth|smoother|uniform|even|immaculate|\w+-free)\b/;
 const preservationAction = /\b(?:remove|replace|swap|move|resize|cover|erase|delete|change|alter|repair|fix|get rid of|patch|fill|smooth|take out|install|lay|put|convert|switch|redo|seal|repaint\w*|recolou?r\w*|remodel\w*|renovat\w*|resurfac\w*|refinish\w*|rebuild\w*)\b|\bpaint\s+(?:(?:the|a|an|existing|original)\s+)*(?:walls?|doors?|trim|cabinets?|garage|it|over)\b/;
 function safePreservationClause(part: string, explicit: boolean): boolean {
   if (concealment.test(part) || preservationAction.test(part) || materialSubstitution.test(part)) return false;
+  // "keep the walls freshly painted" / "keep the ceiling clean and smooth"
+  // describe a new finish or condition; only an explicit "unchanged/as is"
+  // marks them as the photographed state.
+  if (remodel.test(part) && !conditionPreserved.test(part)) return false;
+  if (fixedNoun.test(part) && renewedCondition.test(part) && !conditionPreserved.test(part)) return false;
   if (defectNoun.test(part) && !conditionPreserved.test(part)) return false;
   // A continued material target ("keep the sofa and marble countertops") is
   // ambiguous; a direct "keep the walls white" preserves the stated finish.
@@ -102,13 +119,14 @@ const scopeRules: [string, RegExp][] = [
   ["reflection", /\b(?:remove|erase)\b[^.;!?]{0,70}\b(?:photographer|my reflection|camera reflection)\b/],
 ];
 const fixedNoun = new RegExp(`\\b${FIXED}\\b`);
-const fixedLocation = new RegExp(`\\b(?:from|on|off|around|inside|in|at|near|beside|by|under|against|onto|above|below|to)\\s+${QUALIFIERS}${FIXED}\\b`, "g");
-const declutterSurface = /\b(?:declutter|tidy|clear)\s+(?:(?:the|existing|all)\s+)*(?:counters?|countertops?|floors?|garage)\b/g;
+const fixedLocation = new RegExp(`\\b(?:from|on|off|around|inside|in|at|near|beside|by|under|against|onto|above|below|to|along|behind|between|next to|in front of|facing|opposite)\\s+${QUALIFIERS}${FIXED}\\b`, "g");
+const declutterSurface = /\b(?:declutter|tidy(?:\s+up)?|clear(?:\s+(?:up|off))?)\s+(?:(?:the|existing|all)\s+)*(?:counters?|countertops?|floors?|garage|kitchens?|bathrooms?|islands?|worktops?|benchtops?)\b/g;
 function unscopedFixedReference(part: string): boolean {
+  if (bareSurface.test(part)) return true;
   const fixedPart = part.replace(/\b(?:wall art|floor lamps?)\b/g, "");
   if (!fixedNoun.test(fixedPart)) return false;
   // Illumination may name a wall/room, but cannot supply new paint or material.
-  if (scopeRules[0][1].test(fixedPart) && !new RegExp(`\\b(?:${MATERIAL}|color|colour|finish|material)\\b`).test(fixedPart.replace(/\b(?:white balance|color balance)\b/g, ""))) return false;
+  if (scopeRules[0][1].test(fixedPart) && !new RegExp(`\\b(?:${MATERIAL}|color|colour|finish|material|paint)\\b`).test(fixedPart.replace(/\b(?:white balance|color balance)\b/g, ""))) return false;
   // "Bags from the garage" and "sofa against the wall" name locations, not
   // authorization to remove the garage/wall. Any leftover fixed noun asks for
   // clarification, including a noun-only continuation after "and" or a comma.
@@ -142,7 +160,9 @@ export function analyzeCustomPhotoPrompt(text: string, _space: string | null = n
   // Vague improvement/cleaning is not permission to change permanent finishes.
   const vague = clauses.some((part) => /\b(?:nicer|better|beautiful|beautify|modernize|modernise|upgrade|transform|refresh|clean|cleaner)\b/.test(part)
     && !/\b(?:clutter|movable|brightness|exposure|lighting|sky|grass|lawn|furniture|decor)\b/.test(part))
-    || clauses.some((part) => /\b(?:make|look|feel)\b[^.;!?]{0,50}\bmodern\b/.test(part) && !/\b(?:furniture|decor)\b/.test(part));
+    || clauses.some((part) => /\b(?:make|look|feel)\b[^.;!?]{0,50}\bmodern\b/.test(part) && !/\b(?:furniture|decor)\b/.test(part))
+    // "brighten the walls so they look new" asks illumination to renew a surface.
+    || clauses.some((part) => /\b(?:look|looks|looking|appear|appears|seem|seems|feel|feels|read|reads)\s+(?:(?:brand|like|as|so|very|really)\s+)*(?:new|newer|fresh|freshly painted|renovated|remodell?ed|refurbished|updated|modernized|modernised)\b/.test(part));
   if (!scopes.length || vague || clauses.some((part) => defectNoun.test(part) || unscopedFixedReference(part))
     || (mode === "furnishing" && scopes.some((scope) => scope !== "furniture"))) return { status: "clarify", message: clarifyMessage, scopes: [] };
   const prompt = "AUTHORIZED PHOTO EDIT — apply only these confirmed scopes: " +

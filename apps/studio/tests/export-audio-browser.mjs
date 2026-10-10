@@ -11,7 +11,7 @@ const fault=process.argv[2]??null;assert(fault===null||fault==="--fault=live-ori
 const root=resolve(import.meta.dirname,".."), artifacts=await mkdtemp(join(tmpdir(),"rendprop-export-original-audio-")),dist=join(artifacts,"dist");
 const paths=["src/editor/export.ts","src/editor/media.ts","src/editor/model.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
 const hashes=async()=>Object.fromEntries(await Promise.all(paths.map(async path=>[path,createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
-const receipt={status:"running",fault,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source and real100ms video pause. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
+const receipt={status:"running",fault,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source, real100ms video pause and a transient waiting notification without loss. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
 let browser,server,page,mutated=false;
 try{
  await build({configFile:false,root,publicDir:false,logLevel:"error",plugins:fault?[{name:"live-original-audio-regression",enforce:"pre",transform(code,id){
@@ -32,10 +32,10 @@ try{
  page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
  const run=async(name,config,{refused=false,silentAudio=false,cancelled=false}={})=>{
   await page.goto(`${origin}/tests/export-audio-fixture.html`);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
-  await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,decodeFailure:false,split:false,cancelAfterBuffer:false,...config},config);
+  await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,...config},config);
   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
   const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error};receipt.cases.push(record);
-  if(config.stall)assert(result.injected,"Forced video stall not injected");
+  if(config.stall||config.hiccup)assert(result.injected,"Forced video stall not injected");
   if(cancelled){assert.equal(result.ok,false);assert.match(result.error,/Synthetic export cancelled/);assert.equal(result.base64,undefined);return;}
   if(refused){assert.equal(result.ok,false,"A media-audio stall must refuse an export");assert.match(result.error,/Original audio playback stalled/);assert.equal(result.base64,undefined);return;}
   assert.equal(result.ok,true,result.error);
@@ -53,6 +53,7 @@ try{
  await run("split-segments",{split:true});receipt.checks.push("Adjacent trimmed source segments export once without overlapping sound or a cut gap");
  await run("double-speed-pitch",{speed:2});receipt.checks.push("Media fallback retains2x duration and original880Hz pitch");
  await run("double-speed-stall",{speed:2,stall:true},{refused:true});
+ await run("double-speed-transient-waiting",{speed:2,hiccup:true});receipt.checks.push("A transient waiting notification without measurable audio loss keeps the 2x media-audio export continuous at its original pitch; a real 100 ms stall is still refused");
  await run("decode-failure",{decodeFailure:true});
  await run("decode-failure-stall",{decodeFailure:true,stall:true},{refused:true});receipt.checks.push("Unsupported decoding preserves source audio; speed-adjusted and unsupported audio stalls refuse download");
  await run("cancel-before-audio-start",{cancelAfterBuffer:true},{cancelled:true});receipt.checks.push("Cancellation before scheduled audio start preserves its abort reason and produces no download");

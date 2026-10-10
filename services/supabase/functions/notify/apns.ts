@@ -151,17 +151,33 @@ function hostFor(environment: string): string {
   return environment === "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com";
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** APNs custom data is visible to iOS before the signed-in recipient check.
  * Keep only identifiers needed for navigation; never buyer or account facts. */
 export function pushRouteData(input: Record<string, unknown>): Record<string, string> {
   const data: Record<string, string> = {};
-  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   for (const key of ["lead_id", "listing_id", "render_id"]) {
     const value = input[key];
-    if (typeof value === "string" && uuid.test(value)) data[key] = value;
+    if (typeof value === "string" && UUID.test(value)) data[key] = value;
   }
   if (typeof input.slug === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(input.slug)) data.slug = input.slug;
   return data;
+}
+
+/** A push deep link is a bare navigation path (`/f/<slug>`, optionally on an
+ * https host). A query string, fragment, credential or token has no place on
+ * a lock screen, so anything else is dropped rather than forwarded. */
+export function pushDeepLink(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const link = input.trim();
+  return /^(?:https?:\/\/[a-z0-9.-]{1,253})?\/[A-Za-z0-9_\-./]{0,512}$/i.test(link) && !link.includes("..") ? link : null;
+}
+
+/** The outbox CHECK constraint bounds the category; a bypassing caller gets
+ * the same bound here so free text never rides along as a routing hint. */
+export function pushCategory(input: unknown): string {
+  return typeof input === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(input) ? input : "update";
 }
 
 /**
@@ -194,6 +210,11 @@ export async function send(
     };
   }
 
+  // THE WHITELIST. This object is the only thing APNs ever receives: a generic
+  // alert, a bounded category, a bare navigation path, the recipient's own
+  // account id and validated route ids. `message.title` / `message.body` (the
+  // rendered copy with the lead's name and the address) are deliberately not
+  // serialized — they belong to e-mail and to the signed-in Leads screen.
   const aps = {
     aps: {
       // iOS can display aps.alert while the app is suspended, before its
@@ -203,9 +224,11 @@ export async function send(
       sound: "default",
       "interruption-level": "active",
     },
-    category: message.category,
-    deep_link: message.deepLink,
-    recipient_user_id: message.recipientUserId,
+    category: pushCategory(message.category),
+    deep_link: pushDeepLink(message.deepLink),
+    // iOS routes the tap only when this equals the signed-in owner; a value
+    // that is not an account id cannot match and must not be forwarded either.
+    recipient_user_id: UUID.test(message.recipientUserId) ? message.recipientUserId : null,
     data: pushRouteData(message.data),
   };
 

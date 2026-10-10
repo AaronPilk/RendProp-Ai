@@ -75,7 +75,7 @@ enum Config {
  var autoRefreshTask: Task<Void, Never>?
  struct Connection { func cancelAll() {} }
  let connection = Connection()
- enum Keys { static let userID = "id", userName = "name", orgName = "org" }
+ enum Keys { static let userID = "id", userName = "name", orgName = "org", sessionIdentified = "sessionIdentified" }
  static var access: String?; static var refresh: String?
  static func storedRefreshToken() -> String? { refresh }
  static func persistTokens(access: String, refresh: String?, expiresAt: Date?) { Self.access = access; Self.refresh = refresh }

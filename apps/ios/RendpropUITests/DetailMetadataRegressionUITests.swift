@@ -7,7 +7,10 @@ import XCTest
 final class DetailMetadataRegressionUITests: XCTestCase {
     private var app: XCUIApplication!
     private let tileIDs = ["detail.photos", "detail.photoStudio", "detail.reelStudio", "detail.roomTags",
-                           "detail.floorPlan", "detail.aerialIntro", "detail.clientContact"]
+                           "detail.aerialIntro", "detail.clientContact"]
+    /// Plain cards, never buttons — the same contract as Home's
+    /// `home.comingSoon.*`. Measurements joined them in build 57.
+    private let comingSoonIDs = ["detail.measurementsComingSoon", "detail.floorPlanComingSoon", "detail.spatialComingSoon"]
 
     override func setUpWithError() throws {
 #if targetEnvironment(simulator)
@@ -27,7 +30,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         }
     }
 
-    func testSampleHasAllSevenToolsDisabled() {
+    func testSampleHasAllSixToolsDisabledAndComingSoonCards() {
         launch("sample")
         assertTiles(sample: true, hasCapture: false)
         XCTAssertFalse(element("detail.rerenderTour").exists)
@@ -35,7 +38,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertFalse(app.buttons["listing.clientContact"].exists)
     }
 
-    func testEmptyListingStillOpensPhotoLibraryStudioAndFloorPlan() {
+    func testEmptyListingStillOpensPhotoLibraryAndStudioWhileMeasurementsIsComingSoon() {
         launch("empty")
         assertTiles(sample: false, hasCapture: false)
         XCTAssertFalse(element("detail.rerenderTour").exists)
@@ -46,8 +49,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         openLink("detail.photoStudio", title: "AI Photo Studio")
         XCTAssertTrue(app.buttons["studio.edit.declutter"].exists, app.debugDescription)
         back(from: "AI Photo Studio")
-        openLink("detail.floorPlan", title: "Floor plan")
-        back(from: "Floor plan")
+        assertMeasurementsStaysComingSoon(fixture: "empty")
         openSheet("detail.aerialIntro", title: "Aerial intro", close: "Close")
     }
 
@@ -79,8 +81,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         openLink("detail.photoStudio", title: "AI Photo Studio")
         XCTAssertTrue(app.buttons["studio.edit.declutter"].exists, app.debugDescription)
         back(from: "AI Photo Studio")
-        openLink("detail.floorPlan", title: "Floor plan")
-        back(from: "Floor plan")
+        assertMeasurementsStaysComingSoon(fixture: "rich")
         openLink("detail.clientContact", title: "Listing contact")
         XCTAssertEqual(app.textFields["clientContact.name"].value as? String, "Fixture client")
         back(from: "Listing contact") // No save or client photo picker.
@@ -159,6 +160,37 @@ final class DetailMetadataRegressionUITests: XCTestCase {
             XCTAssertTrue(tile.exists, "Missing \(id): \(app.debugDescription)")
             XCTAssertEqual(tile.isEnabled, !sample && (id != "detail.roomTags" || hasCapture), id)
         }
+        // Coming soon cards are present in every state, sample or not, and are
+        // never buttons — the same oracle Home's showroom test applies.
+        for id in comingSoonIDs {
+            let card = element(id)
+            scrollTo(card)
+            XCTAssertTrue(card.exists, "Missing \(id): \(app.debugDescription)")
+            XCTAssertTrue(card.label.contains("Coming soon"), "\(id) must read Coming soon: \(card.label)")
+            XCTAssertFalse(app.buttons[id].exists, "Coming soon must not open a feature: \(id)")
+        }
+        XCTAssertFalse(element("detail.floorPlan").exists, "The listing toolbox must not keep a live Measurements link")
+    }
+
+    /// The owner's build-56 defect: "on the listing page Measurements is still
+    /// clickable". Tapping the card must leave the detail screen exactly where
+    /// it was — no push, no sheet, no "Measurements & plans" or "Floor plan"
+    /// navigation bar — and Measurements must not reappear as a button.
+    private func assertMeasurementsStaysComingSoon(fixture: String) {
+        let card = element("detail.measurementsComingSoon")
+        scrollTo(card)
+        XCTAssertTrue(card.exists, app.debugDescription)
+        XCTAssertTrue(card.label.contains("Measurements"), card.label)
+        XCTAssertTrue(card.label.contains("Coming soon"), card.label)
+        XCTAssertFalse(app.buttons["detail.measurementsComingSoon"].exists, "Coming soon must not open a feature")
+        XCTAssertFalse(app.buttons["detail.floorPlan"].exists, app.debugDescription)
+        card.tap()
+        attach("destination-detail.measurementsComingSoon")
+        XCTAssertFalse(app.navigationBars["Measurements & plans"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.navigationBars["Floor plan"].exists, app.debugDescription)
+        XCTAssertFalse(app.navigationBars["Measurements"].exists, app.debugDescription)
+        XCTAssertTrue(app.navigationBars["Detail fixture \(fixture)"].exists, "Tapping Coming soon must not navigate: \(app.debugDescription)")
+        XCTAssertTrue(app.buttons["detail.photos"].waitForExistence(timeout: 10), app.debugDescription)
     }
 
     private func openLink(_ id: String, title: String) {

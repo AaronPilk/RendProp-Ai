@@ -23,6 +23,13 @@ order with matching checksums, dimensions and `COMPLETE` delivery states. They
 are attached to the submitted 1.0.3 (42) version; released 1.0.1's nine assets
 were verified unchanged. See the [release receipt](../../releases/APPSTORE-42-20261002.json).
 
+**Build 57 (10 October 2026):** the first frame's source capture
+(`02-home-showroom.png`) shows the 1.0.3 Home, where Floor plan was an active
+tool. In build 57 Measurements, 3D floor plan and 3D walkthrough are Coming soon
+cards that open nothing, so that frame must be re-captured from the build being
+submitted before the set is recomposed, and the plan's caption no longer names
+floor plans. Do not reuse the 1.0.3 composition for a 1.0.4 submission.
+
 The old nine-frame 1.0.1 set is historical. Three hosted-page captures and the
 old Photo Studio capture are omitted because their UI/disclosures no longer
 represent the release. Never upload the old paywall review screenshot as a

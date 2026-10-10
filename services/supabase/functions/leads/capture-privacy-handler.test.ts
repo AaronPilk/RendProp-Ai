@@ -6,13 +6,13 @@ const previous=new Map(Object.keys(fixtureEnv).map(key=>[key,Deno.env.get(key)])
 let handler!:(req:Request)=>Promise<Response>;const serve=Object.getOwnPropertyDescriptor(Deno,"serve")!;
 Object.defineProperty(Deno,"serve",{configurable:serve.configurable,enumerable:serve.enumerable,writable:true,value:(fn:typeof handler)=>{handler=fn;return{};}});
 try{await import("./index.ts?capture-privacy-proof");}finally{Object.defineProperty(Deno,"serve",serve);for(const[key,value]of previous)if(value===undefined)Deno.env.delete(key);else Deno.env.set(key,value);}
-async function invoke(options:{duplicate?:boolean,deleted?:boolean,slug?:string,honey?:boolean}={}){
+async function invoke(options:{duplicate?:boolean,deleted?:boolean,slug?:string,honey?:boolean,turnstileClosed?:boolean,rateLimited?:boolean}={}){
  const old=globalThis.fetch,keys=["TURNSTILE_SECRET_KEY","TURNSTILE_OPTIONAL","GHL_API_KEY","GHL_LOCATION_ID"],saved=new Map(keys.map(key=>[key,Deno.env.get(key)]));
- Deno.env.delete("TURNSTILE_SECRET_KEY");Deno.env.set("TURNSTILE_OPTIONAL","1");Deno.env.set("GHL_API_KEY","fixture-only");Deno.env.set("GHL_LOCATION_ID","fixture-location");
+ Deno.env.delete("TURNSTILE_SECRET_KEY");if(options.turnstileClosed)Deno.env.delete("TURNSTILE_OPTIONAL");else Deno.env.set("TURNSTILE_OPTIONAL","1");Deno.env.set("GHL_API_KEY","fixture-only");Deno.env.set("GHL_LOCATION_ID","fixture-location");
  const calls:Array<{url:string,method:string,body:Record<string,unknown>|undefined}>=[];
  globalThis.fetch=async(input,init)=>{const req=new Request(input,init),url=new URL(req.url),body=req.method==="POST"?await req.json():undefined;calls.push({url:req.url,method:req.method,body});
   if(url.hostname!=="lead-privacy-fixture.invalid")throw new Error("Public capture leaked a buyer to an external service");
-  if(url.pathname==="/rest/v1/rpc/bump_rate")return Response.json(true);
+  if(url.pathname==="/rest/v1/rpc/bump_rate")return Response.json(!options.rateLimited);
   if(url.pathname==="/rest/v1/renders")return Response.json({id:RENDER,listing_id:LISTING});
   if(url.pathname==="/rest/v1/listings")return Response.json({id:LISTING,org_id:ORG,deleted_at:options.deleted?"2026-10-05T00:00:00Z":null});
   if(url.pathname==="/rest/v1/leads"&&req.method==="GET")return Response.json(options.duplicate?{id:LEAD}:null);
@@ -28,6 +28,14 @@ Deno.test("actual lead capture stores buyer in exact workspace without global CR
 });
 Deno.test("actual duplicate and honeypot replies contain no lead identity or deduplication oracle",async()=>{
  for(const opts of [{duplicate:true},{honey:true}]){const out=await invoke(opts);assertEquals(out.status,200);assertEquals(out.body,opts.honey?{ok:true}:{ok:true,accepted:true});assert(!out.calls.some(c=>new URL(c.url).pathname==="/rest/v1/leads"&&c.method==="POST"));}
+});
+Deno.test("build 57: actual capture rate limit answers 429 before any tour lookup, and Turnstile fails closed with 403 before any lookup or insert",async()=>{
+ const limited=await invoke({rateLimited:true});assertEquals(limited.status,429);assertEquals(limited.body.code,"rate_limited");
+ assertEquals(limited.calls.map(c=>new URL(c.url).pathname),["/rest/v1/rpc/bump_rate"]);
+ const closed=await invoke({turnstileClosed:true});assertEquals(closed.status,403);assert(String(closed.body.error).includes("Bot check failed"));
+ assert(!closed.calls.some(c=>["/rest/v1/renders","/rest/v1/listings","/rest/v1/leads"].includes(new URL(c.url).pathname)));
+ // The honeypot still answers its plain shape ahead of the Turnstile gate so bots learn nothing from a closed gate either.
+ const honey=await invoke({turnstileClosed:true,honey:true});assertEquals(honey.status,200);assertEquals(honey.body,{ok:true});
 });
 Deno.test("sample and deleted listings never create unmanageable buyer records",async()=>{
  for(const opts of [{slug:"estate-demo"},{slug:"demo"},{deleted:true}]){const out=await invoke(opts);assert([400,404].includes(out.status));assert(!out.calls.some(c=>new URL(c.url).pathname==="/rest/v1/leads"&&c.method==="POST"));}

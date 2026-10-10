@@ -45,6 +45,14 @@ export const LISTING_ACTIONS: ReadonlySet<ActionType> = new Set([
   "share_tour",
 ]);
 
+/** Actions the app no longer offers a screen for. They stay in ACTION_TYPES so
+ *  the three-way contract (server / iOS / docs) keeps the same enum, but a
+ *  model that still emits one is dropped here — never shown as a chip. Build
+ *  57 marks Measurements "Coming soon" on Home and in every listing's toolbox
+ *  (FlythroughDetailView.swift), and its route now lands on the listing itself
+ *  (RendpropApp.swift routeDestination), so a chip would open nothing. */
+export const RETIRED_ACTIONS: ReadonlySet<ActionType> = new Set(["open_floor_plan"]);
+
 /** A short, sane label the app can show on the chip even if the model's own
  *  label was missing, empty, or absurdly long. Mirrors CoachAction.defaultLabel
  *  on iOS — see the lockstep note above. */
@@ -227,6 +235,7 @@ export function sanitizeCoachOutput(
     const o = raw as Record<string, unknown>;
     if (!isActionType(o.type)) continue; // out-of-enum — dropped, never coerced
     const type = o.type;
+    if (RETIRED_ACTIONS.has(type)) continue; // Coming-soon screen — dropped, never shown
 
     let listingId: string | undefined;
     if (LISTING_ACTIONS.has(type)) {

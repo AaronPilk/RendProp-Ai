@@ -1,5 +1,16 @@
 # Floor plans and measurements
 
+> **Build 57 (2026-10-10): Measurements is Coming soon everywhere the user can
+> reach.** The listing toolbox tile is a non-interactive card
+> (`detail.measurementsComingSoon`, `FlythroughDetailView.swift`), the Home tile
+> was already Coming soon, the coach `open_floor_plan` chip is retired
+> server-side (`coach/actions.ts` `RETIRED_ACTIONS`) and `routeDestination`
+> lands `.floorPlan` on the listing itself. `FloorPlanView` /
+> `FloorMeasurementsView` stay compiled and unreachable; the two
+> `BetaPolishUITests` measurement journeys are parked behind
+> `measurementsToolboxLinkRestored`. App Store metadata and the public site say
+> the same. The description below is the state the feature will return to.
+
 The October 5 feedback source separates the **Measurements** card (manual entry,
 worksheet and blueprint upload) from **3D floor plan — Coming soon**. New automatic
 scans are disabled in the ordinary flow; saved scans remain viewable and exportable.
