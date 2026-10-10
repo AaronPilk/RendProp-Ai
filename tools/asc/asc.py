@@ -51,7 +51,7 @@ TEAM_ID = "5F5C5G25Y6"
 APP_NAME = "Rendprop"
 APP_NAME_FALLBACK = "Rendprop: AI Property Tours"
 PRIMARY_LOCALE = "en-US"
-VERSION_STRING = "1.0"
+VERSION_STRING = "1.0.4"
 COPYRIGHT = "2026 Rendprop"
 PLATFORM = "IOS"
 
@@ -2325,7 +2325,7 @@ def ensure_app_price_free(client, app_id, plan):
 
 
 def find_editable_version(client, app_id):
-    """Find the 1.0 iOS App Store version that is still editable."""
+    """Find only the configured iOS App Store version when it is editable."""
     versions = client.get_all(
         "/v1/apps/%s/appStoreVersions" % app_id,
         params={"filter[platform]": PLATFORM, "limit": 200},
@@ -2335,10 +2335,6 @@ def find_editable_version(client, app_id):
         if attrs.get("versionString") != VERSION_STRING:
             continue
         state = attrs.get("appVersionState") or attrs.get("appStoreState")
-        if state in EDITABLE_VERSION_STATES:
-            return version
-    for version in versions:
-        state = attributes_of(version).get("appVersionState") or attributes_of(version).get("appStoreState")
         if state in EDITABLE_VERSION_STATES:
             return version
     return None
@@ -4158,7 +4154,7 @@ def build_parser():
                      "the set becomes exactly the files in the directory, in "
                      "filename order" % SCREENSHOT_DISPLAY_TYPE)
 
-    # `build attach` links the newest processed build to the 1.0 version. It is
+    # `build attach` links the newest processed build to the release version. It is
     # not part of the bridge because a build only exists after
     # bridge-600-archive-upload.sh has run and Apple has finished processing.
     build = sub.add_parser("build", help="attach the newest processed build to version %s"

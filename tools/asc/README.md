@@ -14,11 +14,12 @@ need Xcode and XcodeGen. The Python utility uses the standard library only.
 
 ## Release target caution
 
-Reviewed against repository source on 4 October 2026. `asc.py` still declares
-`VERSION_STRING = "1.0"` and has **no `--version` option**. It can fall back to
-another editable version; `--build` selects a build, not an App Store version.
-Its broad apply bridge can change prices, territories, subscription screenshots
-and review state. Do not run it for maintenance of the shipped app.
+Updated 10 October 2026: `asc.py` targets **1.0.4** and selects only that exact
+editable version; it no longer falls back to another draft. `--build` selects a
+build, not an App Store version. Review the actual target version ID and build
+marketing version before writing. The broad apply bridge can change prices,
+territories, subscription screenshots and review state; use individual commands
+for this release. Historical examples below may refer to the original 1.0 launch.
 
 Current internal TestFlight **1.0.4 (46) is AVAILABLE**, verified by Apple at
 **2026-10-07 00:47:51 UTC** (6 October locally) from `7f5879e`. The
