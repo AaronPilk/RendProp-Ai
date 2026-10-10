@@ -6,6 +6,14 @@
 
 Machine receipt: `docs/releases/TESTFLIGHT-57-20261010.json`. Private evidence: `/Users/pilksclaes/LocalRendpropAudits/build57-ship-20261010/`. This documentation is a descendant of the frozen archive source, not a different product build.
 
+## Final independent review update
+
+Read `CLAUDE-BUILD57-FINAL-20261010.md` in full. Claude concludes the submitted artifact is the reviewed code, and classifies the hosted export refusal as environment underrun handled correctly. **Leave build 57 in review; do not withdraw, resubmit, redeploy or press Release until phone and remaining model/invoice acceptance evidence is complete.** Apple approval alone does not lift the manual-release hold.
+
+Fresh GitHub readback confirms #224 is completed: **11/12 jobs passed**; tour-host remains failed. This is classified evidence, not a green CI run or a product fix. Claude's stored experiment is preserved in `docs/releases/build57-starvation-evidence/`. The narrative reports 24 runs; the supplied JSON/table contains 18 rows (nine would-refuse, nine would-pass). Independently recalculating those 18 summaries confirms every would-refuse row fails at least one gap/pitch/duration oracle and every would-pass row stays within the stated oracles. The six other claimed runs and raw clock traces/media are not present in that supplied directory, so this record does not claim to have independently verified 24 runs. The exact hosted loss readings were not attached to the original error; the classification relies on the mechanism and independent experiment.
+
+Deferred follow-ups, outside the current review: attach measured clock loss/readings to refusal errors; make only the transient-waiting control retry once when its own measurements prove underrun, preserving all real-stall/RMS/pitch/duration oracles; assess the threshold separately later. Studio has 223 B gzip headroom. Redeploy the six older logging bundles only with a subsequent functional change. No production code, deployment, credentials, funding or John Apple changes were made for this review reconciliation.
+
 ## Signed artifact and Apple
 
 - Clean source: `d5ed053e472594e94c408f9798d1fe30c705d4dd`, branch `fix/build57-portable-integration-20261010`.
