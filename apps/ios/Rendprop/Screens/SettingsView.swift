@@ -1429,6 +1429,8 @@ struct SettingsView: View {
         //    industry; real estate uses the legacy bare keys) + brand bookkeeping.
         let d = UserDefaults.standard
         PersonalCardStore.eraseDeviceCache(defaults: d)
+        AccountLocalPreferences.eraseDeviceCache(defaults: d)
+        PurchaseManager.shared.clearAccountPresentation()
         for type in SpaceType.allCases {
             for field in AgentCard.fieldNames {
                 d.removeObject(forKey: AgentCard.key(field, for: type))

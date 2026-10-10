@@ -74,7 +74,7 @@ export async function deliverPush(
   if (!apns.configured()) {
     return { state: "skipped", reason: apns.missingReason(), providerId: null, deadTokens: [] };
   }
-  if (devices.length === 0) {
+  if (devices.length === 0 || !row.user_id) {
     // The device was disabled or removed between enqueue and drain. A push with
     // no device is not a failure worth retrying five times.
     return {
@@ -103,6 +103,7 @@ export async function deliverPush(
       body: message.body,
       deepLink: link,
       category: row.category,
+      recipientUserId: row.user_id,
       data,
       collapseId: row.dedupe_key,
     }, fetchImpl);

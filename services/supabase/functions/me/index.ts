@@ -38,6 +38,9 @@ async function servingEnvelope(admin: { rpc: (name: string, args: Record<string,
 //   POST   /me/devices          -> { ok, device: { id, environment, bundle_id, last_seen_at } }
 //                                  { device_token, environment?, bundle_id?, locale?, app_version? }
 //                                  Registers this phone's APNs token for the CALLER (0047).
+//   DELETE /me/devices          -> { ok, unregistered: true }; exact device/environment.
+//                                  Both routes use the Auth-verified session; sign-out
+//                                  tombstones keep delayed old registrations inert.
 //   PATCH  /me/notifications    -> { ok, notifications }
 //                                  any of { lead_received, render_ready, upload_stuck,
 //                                  free_week_ending, allowance_low, first_tour_nudge } as
@@ -100,6 +103,7 @@ async function servingEnvelope(admin: { rpc: (name: string, args: Record<string,
 // that echoes the error text.
 
 import { deleteAccount, sweepAccounts } from "./deletion.ts";
+import { deviceBinding } from "./devices.ts";
 import { saveProfileRole } from "./profile.ts";
 import { personalCard } from "./card.ts";
 import { memberPortfolio } from "./portfolio.ts";
@@ -253,8 +257,8 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg[0] === "apple-code") {
       return await handleAppleCode(req, user.id);
     }
-    if (req.method === "POST" && seg[0] === "devices") {
-      return await handleDeviceRegister(req, user.id);
+    if (seg.length === 1 && seg[0] === "devices") {
+      return await deviceBinding(req, adminClient(), user.id);
     }
     if (req.method === "POST" && seg[0] === "entitlement") {
       return await handleEntitlement(req, user.id);
@@ -530,53 +534,6 @@ const NOTIFICATION_CATEGORIES = [
   "lead_received", "render_ready", "upload_stuck",
   "free_week_ending", "allowance_low", "first_tour_nudge",
 ] as const;
-
-const APNS_TOKEN_RE = /^[0-9a-fA-F]{16,400}$/;
-
-async function handleDeviceRegister(req: Request, userId: string): Promise<Response> {
-  const body = await readJson<Record<string, unknown>>(req);
-  const token = String(body.device_token ?? "").trim();
-  assert(APNS_TOKEN_RE.test(token), 400, "device_token must be the hexadecimal APNs token");
-
-  const environment = String(body.environment ?? "production").trim().toLowerCase();
-  assert(
-    environment === "sandbox" || environment === "production",
-    400,
-    "environment must be sandbox or production",
-  );
-
-  const clip = (v: unknown, n: number) => {
-    const s = typeof v === "string" ? v.trim() : "";
-    return s ? s.slice(0, n) : null;
-  };
-
-  const { data, error } = await adminClient().rpc("notification_register_device", {
-    p_user: userId,
-    p_token: token,
-    p_bundle_id: clip(body.bundle_id, 120),
-    p_environment: environment,
-    p_locale: clip(body.locale, 32),
-    p_app_version: clip(body.app_version, 40),
-  });
-  if (error) {
-    if (/RP\d{3}:/.test(error.message)) throwRpc(error.message);
-    console.error("notification_register_device failed:", error.message);
-    throw new HttpError(503, "Could not register this device — try again.", "upstream");
-  }
-
-  const row = (data ?? {}) as Record<string, unknown>;
-  // The token itself is NEVER echoed: it is a device credential, and a response
-  // body is the easiest place for one to end up in a log.
-  return json({
-    ok: true,
-    device: {
-      id: row.id ?? null,
-      bundle_id: row.bundle_id ?? null,
-      environment: row.environment ?? environment,
-      last_seen_at: row.last_seen_at ?? null,
-    },
-  });
-}
 
 async function handleNotificationsPatch(req: Request, userId: string): Promise<Response> {
   const body = await readJson<Record<string, unknown>>(req);

@@ -19,6 +19,8 @@ final class UserDefaults {
  func data(forKey key: String) -> Data? { storage.data(forKey: key) }
  func set(_ value: Any?, forKey key: String) { storage.set(value, forKey: key) }
  func synchronize() -> Bool { storage.synchronize() }
+ func dictionaryRepresentation() -> [String: Any] { storage.dictionaryRepresentation() }
+ func removeObject(forKey key: String) { storage.removeObject(forKey: key) }
  static func clear() { Foundation.UserDefaults(suiteName: suite)!.removePersistentDomain(forName: suite) }
 }
 enum Config { static let useLiveBackend = true; static let apiBaseURL: URL? = URL(string: "https://fixture.invalid/functions/v1"); static let supabaseAnonKey = "fixture" }

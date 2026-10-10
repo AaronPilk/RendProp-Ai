@@ -18,7 +18,7 @@ for fault in ignore-geometry ignore-conflict ignore-facts-review phone-as-manual
         omit-room-records) expected='FAIL: actual PDF loop emits every floor worksheet, room record and outline wall page' ;;
         ignore-media-actor) expected='FAIL: changed actor invalidates actual media context' ;;
         ignore-media-revision) expected='FAIL: changed session revision invalidates actual media context' ;;
-        ignore-media-workspace) expected='FAIL: foreign workspace cannot capture media context' ;;
+        ignore-media-workspace) expected='FAIL: changed workspace invalidates actual media context' ;;
     esac
     if [ "$status" -ne 1 ] || ! grep -F -q "$expected" "$artifacts/$fault.log"; then
         cat "$artifacts/$fault.log" >&2

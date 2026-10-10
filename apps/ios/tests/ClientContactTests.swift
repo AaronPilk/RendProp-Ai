@@ -44,7 +44,10 @@ enum FileStore { static func url(fromRelativePath path: String) -> URL { URL(fil
         reset(); AuthStore.shared.userID = "not-a-uuid"
         try rejectsIdentity("Malformed actor cannot capture media context") { _ = try CloudMediaAccessContext.capture(orgID: org) }
         reset(); WorkspaceContext.selectedOrgID = UUID(uuidString: otherOwner)
-        try rejectsIdentity("Foreign workspace cannot capture media context") { _ = try CloudMediaAccessContext.capture(orgID: org) }
+        let retainedLegacyContext = try CloudMediaAccessContext.capture(orgID: org)
+        try expect(retainedLegacyContext.orgID == org && retainedLegacyContext.selectedLibraryID == UUID(uuidString: otherOwner),
+                   "Physical media org remains separate from logical selected library")
+        try retainedLegacyContext.check()
         reset(); WorkspaceContext.selectedOrgID = nil
         try rejectsIdentity("Unselected workspace cannot capture media context") { _ = try CloudMediaAccessContext.capture(orgID: org) }
         reset(); AuthStore.shared.isIdentified = false

@@ -23,11 +23,11 @@ async function invoke(options:{duplicate?:boolean,deleted?:boolean,slug?:string,
  finally{globalThis.fetch=old;for(const[key,value]of saved)if(value===undefined)Deno.env.delete(key);else Deno.env.set(key,value);}
 }
 Deno.test("actual lead capture stores buyer in exact workspace without global CRM upsert or identity response",async()=>{
- const out=await invoke();assertEquals(out.status,201);assertEquals(out.body,{ok:true});const insert=out.calls.find(c=>new URL(c.url).pathname==="/rest/v1/leads"&&c.method==="POST")!.body!;
+ const out=await invoke();assertEquals(out.status,201);assertEquals(out.body,{ok:true,accepted:true});const insert=out.calls.find(c=>new URL(c.url).pathname==="/rest/v1/leads"&&c.method==="POST")!.body!;
  assertEquals(insert.org_id,ORG);assertEquals(insert.listing_id,LISTING);assertEquals(insert.render_id,RENDER);assertEquals(insert.synced_crm,false);assertEquals(insert.email,"buyer@fixture.invalid");assert(out.calls.every(c=>new URL(c.url).hostname==="lead-privacy-fixture.invalid"));
 });
 Deno.test("actual duplicate and honeypot replies contain no lead identity or deduplication oracle",async()=>{
- for(const opts of [{duplicate:true},{honey:true}]){const out=await invoke(opts);assertEquals(out.status,200);assertEquals(out.body,{ok:true});assert(!out.calls.some(c=>new URL(c.url).pathname==="/rest/v1/leads"&&c.method==="POST"));}
+ for(const opts of [{duplicate:true},{honey:true}]){const out=await invoke(opts);assertEquals(out.status,200);assertEquals(out.body,opts.honey?{ok:true}:{ok:true,accepted:true});assert(!out.calls.some(c=>new URL(c.url).pathname==="/rest/v1/leads"&&c.method==="POST"));}
 });
 Deno.test("sample and deleted listings never create unmanageable buyer records",async()=>{
  for(const opts of [{slug:"estate-demo"},{slug:"demo"},{deleted:true}]){const out=await invoke(opts);assert([400,404].includes(out.status));assert(!out.calls.some(c=>new URL(c.url).pathname==="/rest/v1/leads"&&c.method==="POST"));}

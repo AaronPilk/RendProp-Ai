@@ -203,6 +203,20 @@ final class PurchaseManager: ObservableObject {
         }
     }
 
+    /// Clear account-owned presentation immediately on logout/switch. The
+    /// original-transaction binding and StoreKit unfinished queue are retained.
+    func clearAccountPresentation() {
+        billingRefreshGeneration &+= 1
+        refreshTask?.cancel(); refreshTask = nil
+        activePlan = nil; activeProductID = nil; activeOriginalTransactionID = nil; activeExpiresAt = nil
+        billingContext = nil; billingError = nil
+        preparedTrialReservation = nil; preparedTrialSnapshot = nil
+        lastError = nil; notice = nil
+        syncedThisSession.removeAll()
+        unsynced.removeAll(); unsyncedCount = 0
+        activeBillingOwner = nil
+    }
+
     // MARK: - Products
 
     /// Ask StoreKit for the subscription products we currently sell

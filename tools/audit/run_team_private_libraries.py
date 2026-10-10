@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime,timezone
 from decimal import Decimal
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
-ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase';TARGET=SQL/'migrations/20261009192550_team_private_listing_libraries.sql'
+ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase';TARGET=SQL/'migrations/20261010000032_private_library_adoption_and_serving_safety.sql'
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-team-private-final-',dir='/tmp'));DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC'};BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb']};assert all(BIN.values())
 CONN=['-h',str(SOCK),'-p','55478','-U','postgres'];PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']

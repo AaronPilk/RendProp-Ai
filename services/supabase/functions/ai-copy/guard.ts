@@ -35,8 +35,8 @@ import { HttpError } from "../_shared/http.ts";
 import { assertFairHousing, assertMarketingCopy } from "../_shared/fairhousing.ts";
 import { analyzeCustomPhotoPrompt, CUSTOM_PHOTO_CHOICES, customPhotoOutputMatchesInput } from "../_shared/custom-photo-prompt.ts";
 
-export function assertCustomPhotoPrompt(text: string, spaceType: string | null) {
-  const result = analyzeCustomPhotoPrompt(text, spaceType);
+export function assertCustomPhotoPrompt(text: string, spaceType: string | null, mode: "custom" | "furnishing" = "custom") {
+  const result = analyzeCustomPhotoPrompt(text, spaceType, mode);
   if (result.status === "blocked") throw new HttpError(400, result.message, "unsupported_edit", {
     category: "permanent_property_change", no_charge: true,
   });

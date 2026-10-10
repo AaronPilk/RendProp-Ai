@@ -92,11 +92,11 @@ def main():
     context_faults = {
         'ignore-media-actor': 'AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == actorID',
         'ignore-media-revision': 'AuthStore.shared.syncSessionRevision == revision',
-        'ignore-media-workspace': 'WorkspaceContext.selectedOrgID == orgID else',
+        'ignore-media-workspace': 'WorkspaceContext.selectedOrgID == (selectedLibraryID ?? orgID) else',
     }
     if args.inject_fault in context_faults:
         before = context_faults[args.inject_fault]
-        assert actual_context.count(before) == (2 if args.inject_fault == 'ignore-media-workspace' else 1)
+        assert actual_context.count(before) == 1
         after = 'true else' if args.inject_fault == 'ignore-media-workspace' else 'true'
         compiled_context = actual_context.replace(before, after)
         modified_wire = out / 'ActualWorkspaceSync.swift'

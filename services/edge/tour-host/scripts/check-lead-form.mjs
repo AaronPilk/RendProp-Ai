@@ -24,7 +24,7 @@ for (const slug of ["estate-demo", "demo"]) {
 }
 function deferred() { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 async function flush() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
-const good = (status = 201, extra = {}) => ({ ok: true, status, async json() { return { ok: true, id: ID, ...extra }; } });
+const good = (status = 201, extra = {}) => ({ ok: true, status, async json() { return { ok: true, accepted: true, ...extra }; } });
 
 function harness(label, { fetch: stub = () => Promise.resolve(good()), hp = "", handoff = false, turnstile = true } = {}) {
   const tour = { ...buildDemoTour(), slug: "synthetic-lead-form", cta: {
@@ -124,7 +124,7 @@ async function run(label, fn) {
 
 for (const [label, response, hp] of [
   ["created", good(), ""], ["deduplicated", good(200, { deduplicated: true }), ""],
-  ["honeypot deliberately accepted without ID", { ok: true, status: 200, async json() { return { ok: true }; } }, "bot"],
+  ["honeypot deliberately accepted without capture receipt", { ok: true, status: 200, async json() { return { ok: true }; } }, "bot"],
   ["whitespace honeypot preserves API truthiness", { ok: true, status: 200, async json() { return { ok: true }; } }, " "],
 ]) await run(label, async (name) => {
   const h = harness(name, { fetch: () => Promise.resolve(response), hp });
@@ -142,11 +142,11 @@ for (const [label, response, hp] of [
 });
 
 for (const [label, body] of [
-  ["empty object", {}], ["false ok", { ok: false, id: ID }], ["string ok", { ok: "true", id: ID }],
-  ["missing ok", { id: ID }], ["null", null], ["array", []], ["number", 1],
-  ["normal missing ID", { ok: true }], ["empty ID", { ok: true, id: "" }],
-  ["whitespace ID", { ok: true, id: " " }], ["numeric ID", { ok: true, id: 1 }],
-  ["not a lead ID", { ok: true, id: "not-a-lead-id" }],
+  ["empty object", {}], ["false ok", { ok: false, accepted: true }], ["string ok", { ok: "true", accepted: true }],
+  ["missing ok", { accepted: true }], ["null", null], ["array", []], ["number", 1],
+  ["normal missing acceptance", { ok: true }], ["legacy id without acceptance", { ok: true, id: ID }],
+  ["false acceptance", { ok: true, accepted: false }], ["string acceptance", { ok: true, accepted: "true" }],
+  ["numeric acceptance", { ok: true, accepted: 1 }],
 ]) await run(label, async (name) => {
   const h = harness(name, { fetch: () => Promise.resolve({ ok: true, status: 200, async json() { return body; } }), handoff: true });
   h.submit(); await flush(); h.failure();

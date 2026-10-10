@@ -2,7 +2,7 @@ import {assert,assertEquals,assertRejects,AssertionError} from "https://deno.lan
 const actor="ea100606-0000-4000-8000-000000000001",org="ea100606-0000-4000-8000-000000000002",listing="ea100606-0000-4000-8000-000000000003";
 const encode=(source:string)=>`data:application/typescript;base64,${btoa(unescape(encodeURIComponent(source)))}`;
 const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|null=null){
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|null=null){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
@@ -16,11 +16,17 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   const anchor="const prepared = assertCustomPhotoPrompt(userText, promptSpace);";
   assert(source.includes(anchor));source=source.replace(anchor,"const prepared = {prompt:userText};");
  }
+ if(removeAdmission==="stage"){
+  const anchor='assertCustomPhotoPrompt(brief, promptSpace, "furnishing");';
+  assert(source.includes(anchor));source=source.replace(anchor,"");
+ }
  const start=source.indexOf("Deno.serve(async (req) => {")+"Deno.serve(".length,end=source.indexOf("\n});\n\n// ── helper modes",start);
  assert(start>0&&end>start,"Extract actual handler callback");
  const locksStart=source.indexOf("const CONDITION_LOCK ="),locksEnd=source.indexOf("\n/**\n * The photographer",locksStart);
  const customStart=source.indexOf("function customPrompt("),customEnd=source.indexOf("\nDeno.serve(",customStart);
+ const stageStart=source.indexOf("const RE_STAGE_STYLES:"),stageEnd=source.indexOf("\nfunction prompts(",stageStart);
  assert(locksStart>0&&locksEnd>locksStart&&customStart>0&&customEnd>customStart,"Extract actual fixed-feature locks and custom compiler wrapper");
+ assert(stageStart>0&&stageEnd>stageStart,"Extract actual staging styles and prompt compiler");
  let helper=url("./photo-result.ts");
  if(removeFinalAuthority){
   const original=await Deno.readTextFile(new URL("./photo-result.ts",import.meta.url));
@@ -46,6 +52,8 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}},RE_PROMPTS={twilight:"Synthetic"};
  ${source.slice(locksStart,locksEnd)}
  ${source.slice(customStart,customEnd)}
+ ${source.slice(stageStart,stageEnd)}
+ const STAGE_STYLES=RE_STAGE_STYLES;
  const assertFairHousing=()=>{},listingSpaceType=async()=>"real_estate",userClient=()=>({});
  const spaceTypeOf=()=>"real_estate",getUser=async()=>({id:state.actor}),requireEditorRole=async()=>state.org,guardrailsFor=()=>"",provenanceKind=()=>"photo_edit",disclosureFallback=()=>"Synthetic disclosure";
  const MAX_IMPROVE_INPUT=MAX_PROMPT_INPUT,TEXT_MODEL="gemini-3.6-flash";
@@ -123,6 +131,44 @@ Deno.test("actual custom photo handler clarifies or refuses before operation adm
  for(const [prompt,status,code] of [["make it nicer",409,"photo_clarification_required"],["clean garage",409,"photo_clarification_required"],["modernize garage",409,"photo_clarification_required"],["repaint garage white",400,"unsupported_edit"],["make the garage door white",400,"unsupported_edit"],["hide wall crack",400,"unsupported_edit"],["re\u200Bpaint the garage and improve lighting",400,"unsupported_edit"],["chànge trím color and improve lighting",400,"unsupported_edit"]] as const){
   const f=await fixture();try{const response=await f.run(f.request({edit:"custom",prompt}));assertEquals(response.status,status);const body=await response.json();assertEquals(body.code,code);assertEquals(body.no_charge,true);if(status===409)assertEquals(body.clarification_options.length,4);assertEquals(f.state.started,false);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);assertEquals(f.state.submits,0);}finally{f.close();}
  }
+});
+Deno.test("actual photo handler refuses staging brief and compound custom safety bypasses before any paid work",async()=>{
+ for(const [edit,prompts] of [
+  ["stage",["modern sofa, and paint the walls white","beige chairs and get rid of the water damage","wood table; new hardwood floors"]],
+  ["custom",["remove the boxes and the water stain on the ceiling","declutter the counters and get rid of the water damage","brighten the kitchen and swap the countertops for marble","remove the toys, new hardwood floors"]],
+ ] as const){for(const prompt of prompts){const f=await fixture();try{
+  const response=await f.run(f.request({edit,prompt}));assert(response.status===400||response.status===409,`${edit}: ${prompt} must be refused before dispatch`);
+  const body=await response.json();assertEquals(body.no_charge,true);assertEquals(f.state.started,false);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);assertEquals(f.state.submits,0);
+ }finally{f.close();}}}
+});
+Deno.test("actual staging handler accepts furniture noun briefs and retains all 600 characters and fixed-feature locks",async()=>{
+ const prefix="cream sofa, oak table and wall art. ",tail=" Keep walls, ceilings and floors unchanged.";
+ const full=prefix+"soft linen ".repeat(60).slice(0,600-prefix.length-tail.length)+tail;assertEquals(full.length,600);
+ for(const prompt of ["modern sofa","a painted white chair and floor lamp; keep all original finishes.",full]){
+  for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
+   const response=await f.run(f.request({edit:"stage",prompt}));assertEquals(response.status,200,await response.text());
+   assertEquals(f.state.charges,1);assertEquals(f.state.holds,1);assertEquals(f.state.submits,1);
+   assert(f.state.prompts[0].includes(JSON.stringify(prompt)));assert(f.state.prompts[0].includes("garage-door color and finish"));
+   assert(f.state.prompts[0].includes("trim color and finish"));assert(f.state.prompts[0].includes("quoted data for movable furniture only"));
+  }finally{f.close();}}
+ }
+});
+Deno.test("actual optional photo polisher refuses compound input before charging and smuggled output after its one helper attempt",async()=>{
+ for(const prompt of ["Remove boxes and the water stain on the ceiling.","Improve lighting and swap countertops for marble."]){const f=await fixture();try{
+  const response=await f.run(f.request({edit:"improve_prompt",prompt}));assert(response.status===400||response.status===409);assertEquals((await response.json()).no_charge,true);
+  assertEquals(f.state.started,false);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);assertEquals(f.state.helperDispatch,0);
+ }finally{f.close();}}
+ for(const [prompt,output] of [["Remove boxes only.","Remove boxes and the water stain on the ceiling."],["Improve lighting only.","Improve lighting and swap countertops for marble."]]){const f=await fixture();try{
+  f.state.helperText=output;const response=await f.run(f.request({edit:"improve_prompt",prompt}));assertEquals(response.status,502);
+  const body=await response.json();assertEquals(body.code,"upstream");assertEquals(body.prompt,undefined);assertEquals(body.no_charge,undefined);
+  assertEquals(f.state.helperDispatch,1);assertEquals(f.state.holds,1);assertEquals(f.state.submits,0);
+ }finally{f.close();}}
+});
+Deno.test("compiled removal of staging brief gate fails unchanged pre-charge safety oracle",async()=>{
+ const f=await fixture(false,"stage");try{
+  await assertRejects(async()=>{const response=await f.run(f.request({edit:"stage",prompt:"modern sofa and paint the walls white"}));assertEquals(response.status,400);assertEquals(f.state.holds,0);assertEquals(f.state.submits,0);},AssertionError);
+  assertEquals(f.state.holds,1);assertEquals(f.state.charges,1);assertEquals(f.state.submits,1);
+ }finally{f.close();}
 });
 Deno.test("actual custom handler automatically prepares the complete request and locks garage, trim and paint on both routing modes",async()=>{
  const prefix="Improve brightness and exposure only. ",tail=" Preserve the garage door and trim colors exactly.";

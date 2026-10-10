@@ -132,3 +132,23 @@ enum WorkspaceContext {
 extension Notification.Name {
     static let rendpropWorkspaceChanged = Notification.Name("rendprop.workspaceChanged")
 }
+
+/// Non-secret industry preferences belong to the account. Appearance remains
+/// a device preference, and transaction recovery bindings are not erased here.
+enum AccountLocalPreferences {
+    private static let allowedSpaces = ["real_estate", "venue", "restaurant", "retail", "fitness", "other"]
+    static func activate(previous: UUID?, next: UUID, defaults: UserDefaults = .standard) {
+        if let previous, let raw = defaults.string(forKey: "space.type"), allowedSpaces.contains(raw) {
+            defaults.set(raw, forKey: "account.space.type.v1." + previous.uuidString.lowercased())
+        }
+        let saved = defaults.string(forKey: "account.space.type.v1." + next.uuidString.lowercased())
+        defaults.set(saved.flatMap { allowedSpaces.contains($0) ? $0 : nil } ?? "real_estate", forKey: "space.type")
+    }
+    static func eraseDeviceCache(defaults: UserDefaults = .standard) {
+        for key in defaults.dictionaryRepresentation().keys where
+            key.hasPrefix("workspace.selection.v1.") || key.hasPrefix("workspace.") || key.hasPrefix("account.space.type.v1.") {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.removeObject(forKey: "space.type")
+    }
+}

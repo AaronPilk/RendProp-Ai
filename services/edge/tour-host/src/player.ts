@@ -1809,7 +1809,6 @@ const ENGINE_LEADFORM_JS = `
     try { if (window.turnstile && window.turnstile.reset) window.turnstile.reset(); } catch (e) {}
   }
   var leadSubmitting = false;
-  var LEAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   var LEAD_UNCONFIRMED = "We couldn't confirm your request. Your details are still here. Please wait a moment before trying again.";
   function sendLead(top){
     var controller = new AbortController(), timer;
@@ -1833,11 +1832,12 @@ const ENGINE_LEADFORM_JS = `
           err.status = res.status;
           throw err;
         }
-        // Ordinary creation and dedup both return {ok:true,id}. Only a filled
-        // honeypot intentionally receives {ok:true} without inserting a lead.
+        // Ordinary creation and dedup both acknowledge {ok:true,accepted:true}
+        // without exposing a lead identity. A filled honeypot receives only
+        // {ok:true} and intentionally inserts no lead.
         // A proxy's empty/HTML 2xx must never masquerade as a buyer enquiry.
         if (!body || typeof body !== 'object' || Array.isArray(body) || body.ok !== true ||
-            (!top._hp && (typeof body.id !== 'string' || !LEAD_ID_RE.test(body.id)))) throw new Error(LEAD_UNCONFIRMED);
+            (!top._hp && body.accepted !== true)) throw new Error(LEAD_UNCONFIRMED);
         return body;
       });
     });

@@ -142,6 +142,10 @@ jobs:
         run: python3 apps/ios/tests/run-native-ux-audit.py --evidence-dir "$RUNNER_TEMP/rendprop-native-ux-audit"
       - name: Native client verification and lead deletion require scoped receipts
         run: python3 apps/ios/tests/run-native-lead-privacy.py --evidence-dir "$RUNNER_TEMP/rendprop-native-lead-privacy"
+      - name: Private library identity, delegation, purchase scope and refusal controls
+        run: python3 apps/ios/tests/run-private-library-context.py --out "$RUNNER_TEMP/rendprop-private-library-context"
+      - name: Push account switch cleanup, stale acknowledgments and recipient fences
+        run: python3 apps/ios/tests/run-push-account-isolation.py --out "$RUNNER_TEMP/rendprop-push-account-isolation"
       - name: Account downloads verify manifests, account changes and private generation-owned files
         run: python3 apps/ios/tests/run-account-export.py --evidence-dir "$RUNNER_TEMP/rendprop-native-account-export"
       - name: Photo lens, orientation, level and failed-save handling
@@ -320,6 +324,10 @@ jobs:
             ${{ runner.temp }}/rendprop-native-ux-audit/*.log
             ${{ runner.temp }}/rendprop-native-lead-privacy/receipt.json
             ${{ runner.temp }}/rendprop-native-lead-privacy/*.log
+            ${{ runner.temp }}/rendprop-private-library-context/receipt.json
+            ${{ runner.temp }}/rendprop-private-library-context/**/*.log
+            ${{ runner.temp }}/rendprop-push-account-isolation/receipt.json
+            ${{ runner.temp }}/rendprop-push-account-isolation/**/*.log
           retention-days: 7
           if-no-files-found: warn
 
@@ -893,6 +901,8 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/ops_deleted_workspace.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/private_library_adoption_safety.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/notification_session_fencing.sql
 
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
@@ -942,6 +952,8 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_grace.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/serving_settlement_identity.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/ops_deleted_workspace.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/private_library_adoption_safety.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/notification_session_fencing.sql
 
       - name: Invariants after the replay (all270 must pass)
         env:
@@ -1051,6 +1063,7 @@ jobs:
           python3 tools/audit/test_workspace_handler_inventory.py --out "$RUNNER_TEMP/rendprop-workspace-inventory"
           python3 tools/audit/run_workspace_selection.py
           python3 tools/audit/run_team_private_libraries.py
+          python3 tools/audit/run_account_library_safety.py
           python3 tools/audit/run_internal_testing_grants.py
           python3 tools/audit/run_private_internal_testing.py
           python3 services/supabase/tests/funded_serving_pg.py

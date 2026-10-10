@@ -200,6 +200,32 @@ struct AdoptionLocalBindingsTests {
         check(switchDrafts.prepareWorkspaceSwitch(), "Workspace switch resumes after client-contact work settles")
         WorkspaceContext.selectedOrgID = nil
 
+        let legacyDraftModel = try await fresh()
+        var legacyDraft = original
+        legacyDraft.serverID = nil; legacyDraft.serverOrgID = nil
+        legacyDraft.cloudDraftOrgID = nil; legacyDraft.cloudSyncOwnerID = nil
+        legacyDraftModel.listings = [legacyDraft]
+        WorkspaceContext.selectedOrgID = org
+        AuthStore.shared.userID = source.uuidString
+        legacyDraftModel.forgetServerIdentities(for: foreign)
+        let preservedDraft = legacyDraftModel.listings[0]
+        check(preservedDraft.cloudSyncOwnerID == source && preservedDraft.cloudDraftOrgID == org,
+              "Unstamped guest draft retains outgoing account and library custody")
+        check(preservedDraft.id == legacyDraft.id && preservedDraft.address == legacyDraft.address,
+              "Custody fencing preserves the original local draft")
+        AuthStore.shared.userID = foreign.uuidString
+        Config.useLiveBackend = true
+        check(!legacyDraftModel.isInSelectedWorkspace(preservedDraft), "Other account cannot see outgoing guest draft")
+        check(!CloudDraftCreation.canAutoSync(preservedDraft, userID: foreign), "Other account cannot auto-create outgoing guest draft")
+        let retainedDraft = PersistentStore.load().listings[0]
+        check(retainedDraft.cloudSyncOwnerID == source && retainedDraft.cloudDraftOrgID == org,
+              "Outgoing guest custody survives actual disk reload")
+        AuthStore.shared.userID = source.uuidString
+        check(legacyDraftModel.isInSelectedWorkspace(preservedDraft) && CloudDraftCreation.canAutoSync(preservedDraft, userID: source),
+              "Returning owner recovers the same preserved draft")
+        Config.useLiveBackend = false
+        WorkspaceContext.selectedOrgID = nil
+
         let empty = try await fresh()
         empty.listings = []
         check(empty.prepareLocalAdoption(pending()), "empty workspace can journal without inventing listings")

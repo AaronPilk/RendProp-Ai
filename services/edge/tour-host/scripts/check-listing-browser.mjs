@@ -167,7 +167,7 @@ try {
     }
     if (url.pathname === "/api/leads") {
       let body = ""; req.on("data", (chunk) => { body += chunk; });
-      req.on("end", () => { record.payload = JSON.parse(body); send(201, JSON.stringify({ ok: true, id: "11111111-1111-4111-8111-111111111111" }), { "Content-Type": "application/json" }); });
+      req.on("end", () => { record.payload = JSON.parse(body); send(201, JSON.stringify({ ok: true, accepted: true }), { "Content-Type": "application/json" }); });
       return;
     }
     if (url.pathname.startsWith("/f/") || url.pathname.startsWith("/u/")) {

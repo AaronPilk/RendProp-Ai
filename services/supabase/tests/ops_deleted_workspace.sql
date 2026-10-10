@@ -36,14 +36,36 @@ set local role service_role;
 select prepare_account_deletion('f6100000-0000-4000-8000-000000000002','synthetic-uploads','synthetic-renders');
 reset role;
 select pg_temp.ok(not exists(select 1 from orgs where id='f6200000-0000-4000-8000-000000000003'),'real solo account-deletion path retires its workspace');
-select pg_temp.ok(not exists(select 1 from cost_ledger where id='f6400000-0000-4000-8000-000000000001'),'real deletion removes the fixture ledger as designed');
-select pg_temp.ok((select state='succeeded'and ledger_id is null and hold_cents=8.3584 from serving_cost_reservations where id='f6300000-0000-4000-8000-000000000003'),'deletion retains charged liability and clears only the deleted ledger reference');
+select pg_temp.ok((select org_id is null and job_id is null and meta='{}'::jsonb and idempotency_key is null and total_cents=6.7 and billing_org_id='f6200000-0000-4000-8000-000000000003'from cost_ledger where id='f6400000-0000-4000-8000-000000000001'),'real deletion anonymizes exact ledger references and preserves original amount and immutable billing identity');
+select pg_temp.ok((select state='succeeded'and ledger_id='f6400000-0000-4000-8000-000000000001'and hold_cents=8.3584 from serving_cost_reservations where id='f6300000-0000-4000-8000-000000000003'),'deletion retains the settled exact hold-to-ledger link and charged liability');
 select pg_temp.ok((select(data->>'holds')::integer=1 from ops_health_findings()where code='holds_unledgered'),'hard-deleted orphan does not add an alert while active gap still does');
 insert into cost_ledger(org_id,feature,provider,model,units,unit_cost_cents,total_cents,meta)values
  ('f6200000-0000-4000-8000-000000000001','photo_edit','gemini','gemini-3.1-flash-image',1,6.7,6.7,'{"request_key":"live-photo-cost","stage":"photo.declutter:0"}');
 select pg_temp.ok(not exists(select 1 from ops_health_findings()where code='holds_unledgered'),'exact active receipt clears the warning without forgiving deleted liabilities');
 select pg_temp.ok((select state='succeeded'and hold_cents=8.3584 from serving_cost_reservations where id='f6300000-0000-4000-8000-000000000002'),'soft-deleted liability also remains unchanged');
--- Counterfactual: the pre-fix criterion reports both retired liabilities.
+select pg_temp.ok(serving_ceiling_spent_cents('f6200000-0000-4000-8000-000000000003',null,null)=6.7,'deleted account lifetime liability is still counted exactly once by its original amount');
+-- Child account deletion retains the originally charged Team parent amount.
+insert into auth.users(id,email,is_anonymous)values('f6100000-0000-4000-8000-000000000003','ops-child@fixture.invalid',false);
+update orgs set plan='team',plan_source='manual'where id='f6200000-0000-4000-8000-000000000001';
+set local role service_role;
+select create_org_invite('f6100000-0000-4000-8000-000000000001','f6200000-0000-4000-8000-000000000001',null,'agent',repeat('5f',32));
+select accept_org_invite('f6100000-0000-4000-8000-000000000003',repeat('5f',32));
+select serving_cost_reserve('f6100000-0000-4000-8000-000000000003',agent_private_library('f6100000-0000-4000-8000-000000000003'),'delete-child-cost','copy.caption:0','gemini','fixture',repeat('f',64),17.5,'synthetic');
+select serving_cost_finish('f6100000-0000-4000-8000-000000000003',agent_private_library('f6100000-0000-4000-8000-000000000003'),'delete-child-cost','copy.caption:0','succeeded',null);
+reset role;
+insert into cost_ledger(id,org_id,feature,provider,model,units,unit_cost_cents,total_cents,idempotency_key,meta)
+select 'f6400000-0000-4000-8000-000000000002',agent_private_library('f6100000-0000-4000-8000-000000000003'),'copy','gemini','fixture',1,12.4,12.4,'delete-child-cost','{"request_key":"delete-child-cost","stage":"copy.caption:0","email":"synthetic@example.invalid"}';
+select pg_temp.ok((select ledger_id='f6400000-0000-4000-8000-000000000002'from serving_cost_reservations where request_key='delete-child-cost'),'child hold binds exact parent-stamped ledger before removal');
+set local role service_role;
+select prepare_account_deletion('f6100000-0000-4000-8000-000000000003','synthetic-uploads','synthetic-renders');
+reset role;
+select pg_temp.ok((select org_id is null and job_id is null and idempotency_key is null and meta='{}'::jsonb and total_cents=12.4 and billing_org_id='f6200000-0000-4000-8000-000000000001'from cost_ledger where id='f6400000-0000-4000-8000-000000000002'),'child deletion anonymizes references while retaining exact parent booked amount');
+select pg_temp.ok((select ledger_id='f6400000-0000-4000-8000-000000000002'and billing_org_id='f6200000-0000-4000-8000-000000000001'from serving_cost_reservations where request_key='delete-child-cost'),'child deletion preserves original parent hold-ledger link');
+-- Parent already has one booked live photo and the two unbound 8.3584-cent
+-- liabilities (young succeeded and uncertain); no second copy of child hold.
+select pg_temp.ok(serving_ceiling_spent_cents('f6200000-0000-4000-8000-000000000001',null,null)=35.8168,'parent aggregate retains actual child ledger once after account deletion');
+-- Counterfactual: the pre-fix criterion still reports a soft-retired gap.
+-- The hard-deleted account now retains its exact anonymous ledger binding.
 do $$declare current_definition text;old_definition text;begin
  current_definition:=pg_get_functiondef('public.ops_health_findings()'::regprocedure);
  old_definition:=replace(current_definition,
@@ -51,7 +73,7 @@ do $$declare current_definition text;old_definition text;begin
   $old$select count(*) into n from public.serving_cost_reservations where budget_source='ceiling' and state='succeeded' and ledger_id is null and settled_at<now()-interval '1 hour';$old$);
  perform pg_temp.ok(old_definition<>current_definition,'negative control reinstates the exact prior criterion');
  execute old_definition;
- perform pg_temp.ok((select(data->>'holds')::integer=2 from public.ops_health_findings()where code='holds_unledgered'),'prior criterion reproduces the false warning for both retired workspaces');
+ perform pg_temp.ok((select(data->>'holds')::integer=1 from public.ops_health_findings()where code='holds_unledgered'),'prior criterion still reproduces the false warning for the soft-retired workspace');
  execute current_definition;
 end$$;
 select pg_temp.ok(not has_function_privilege('anon','public.ops_health_findings()','execute')and not has_function_privilege('authenticated','public.ops_health_findings()','execute'),'admin finding privileges unchanged');

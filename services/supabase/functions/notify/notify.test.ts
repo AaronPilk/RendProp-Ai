@@ -188,6 +188,7 @@ Deno.test("apns.send with no secrets resolves rather than throwing", async () =>
     body: "b",
     deepLink: null,
     category: "render_ready",
+    recipientUserId: "test-user",
     data: {},
   }, forbiddenFetch);
   assertEquals(result.ok, false);
@@ -227,6 +228,7 @@ Deno.test("a 410 Unregistered marks the token dead and does not report success",
     body: "b",
     deepLink: null,
     category: "lead_received",
+    recipientUserId: "test-user",
     data: {},
   }, fake410);
 
@@ -327,12 +329,18 @@ Deno.test("the push payload carries the alert, the category and the deep link", 
     return Promise.resolve(apnsResponse(200));
   };
 
-  await deliverPush(row(), [device], BASE, fake);
+  const sourceRow = row();
+  sourceRow.payload.recipient_user_id = "wrong-account";
+  sourceRow.payload.data = { ...(sourceRow.payload.data as Record<string,unknown>), recipient_user_id: "wrong-account" };
+  await deliverPush(sourceRow, [device], BASE, fake);
 
   const aps = body.aps as { alert: { title: string; body: string } };
-  assertEquals(aps.alert.title, "Nina Patel asked about 412 Marina Blvd");
+  assertEquals(aps.alert, {title:"Rendprop update",body:"Open Rendprop to review it."});
+  assert(!JSON.stringify(aps).includes("Nina Patel"));
+  assert(!JSON.stringify(aps).includes("412 Marina Blvd"));
   assertEquals(body.category, "lead_received");
   assertEquals(body.deep_link, "https://rendprop.com/f/abc123xyz9");
+  assertEquals(body.recipient_user_id, row().user_id);
   assertEquals(headers["apns-topic"], "com.rendprop.app");
   assertEquals(headers["apns-push-type"], "alert");
   clearSecrets();

@@ -226,8 +226,9 @@ final class AppModel: ObservableObject {
         lastCloudSyncAt = nil
         let wasRestoring = isRestoring
         isRestoring = true
-        let previousOwner = identityOwnerUserID
-        adoptionBindings = adoptionBindings?.detaching(listings, owner: identityOwnerUserID)
+        let previousOwner = identityOwnerUserID ?? AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
+        let previousOrg = WorkspaceContext.selectedOrgID
+        adoptionBindings = adoptionBindings?.detaching(listings, owner: previousOwner)
         identityOwnerUserID = userID
         // Rows first loaded from another device belong to that account. Their
         // downloaded files stay on disk; signing back in restores the same IDs.
@@ -237,6 +238,12 @@ final class AppModel: ObservableObject {
         tours = tours.filter { !cloudOnly.contains($0.key) }
         renders = renders.filter { !cloudOnly.contains($0.key) }
         for i in listings.indices {
+            if !listings[i].isSample {
+                // Even an old guest/offline draft has outgoing-account custody.
+                // Preserve it on disk; never let the next login claim/upload it.
+                listings[i].cloudSyncOwnerID = listings[i].cloudSyncOwnerID ?? previousOwner
+                listings[i].cloudDraftOrgID = listings[i].cloudDraftOrgID ?? listings[i].serverOrgID ?? previousOrg
+            }
             if let sid = listings[i].serverID {
                 listings[i].cloudDetachedServerID = sid
                 listings[i].cloudSyncOwnerID = listings[i].cloudSyncOwnerID ?? previousOwner
@@ -1067,6 +1074,8 @@ final class AppModel: ObservableObject {
 
     func isInSelectedWorkspace(_ listing: Listing) -> Bool {
         guard Config.useLiveBackend else { return true }
+        if !listing.isSample, let owner = listing.cloudSyncOwnerID,
+           owner != AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) { return false }
         guard let selected = WorkspaceContext.selectedOrgID,
               WorkspaceStore.shared.canViewLibrary(selected) else { return false }
         guard !listing.isSample, let org = listing.serverOrgID ?? listing.cloudDraftOrgID else { return true }
@@ -2871,6 +2880,7 @@ struct RendpropApp: App {
     }
     @State private var rootSheet: RootSheet?
     @State private var incomingQueue = NativeIncomingQueue()
+    @State private var incomingAccountOwner: String? = AuthStore.shared.userID
     @State private var incomingLinkError = false
     @ObservedObject private var push = PushManager.shared
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -3037,10 +3047,14 @@ struct RendpropApp: App {
             }
             // A different account (an Apple sign-in after an anonymous week) is
             // a different org, which has not heard the business type yet.
-            .onChange(of: analyticsAuth.userID) { _ in
+            .onChange(of: analyticsAuth.userID) { nextOwner in
                 incomingLink = nil
                 rootSheet = nil
                 incomingLinkError = false
+                if let previousOwner = incomingAccountOwner, previousOwner != nextOwner {
+                    incomingQueue = NativeIncomingQueue()
+                }
+                incomingAccountOwner = nextOwner
                 PaywallRouter.shared.dismiss()
                 model.syncSpaceTypeIfNeeded()
                 Task { await model.refreshCloudWorkspace() }

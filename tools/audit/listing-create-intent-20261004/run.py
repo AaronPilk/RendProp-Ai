@@ -35,6 +35,7 @@ def main():
     bodies = {"__WIRE__": block(source, "enum ListingWireDetails"),
               "__CREATE__": block(source, "@MainActor enum CloudDraftCreation"),
               "__ERROR__": block(source, "enum CloudSyncError:"),
+              "__IS_IN_WORKSPACE__": block(captured[APP].decode(), "    func isInSelectedWorkspace(_ listing: Listing)"),
               "__MODIFY__": block(captured[APP].decode(), "    func modify(_ id: UUID,"),
               "__SET_SOLD__": block(captured[APP].decode(), "    func setSold(_ sold: Bool,")}
     actual_bodies = bodies.copy()

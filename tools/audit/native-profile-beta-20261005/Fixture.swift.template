@@ -16,6 +16,10 @@
     func cloudBrand() async throws -> CloudBrand { await Task.yield(); onExecute?(); return brand }
 // END LIVE SUPPORT
 // FIXTURE START
+@MainActor final class WorkspaceStore {
+    static let shared = WorkspaceStore()
+    func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID }
+}
 enum Config { static let useLiveBackend = true }
 enum UserFacingError { static func message(_ error: Error, fallback: String) -> String { error.localizedDescription } }
 extension Notification.Name { static let rendpropCloudBrandUpdated = Notification.Name("isolated.profile.updated") }

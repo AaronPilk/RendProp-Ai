@@ -93,24 +93,31 @@ extension MockAPIClient: NotificationPrefsAPI {
 // headers, same auth, same error mapping, no new concepts.
 
 enum PushHTTP {
-    static func send(path: [String], method: String, body: [String: Any]?) async throws -> Data {
-        guard let base = Config.apiBaseURL else { throw APIError.notConfigured }
+    @MainActor static func send(path: [String], method: String, body: [String: Any]?) async throws -> Data {
+        guard let identity = PushManager.currentIdentity,
+              let token = await AuthStore.validAccessToken(),
+              PushManager.currentIdentity == identity else { throw CloudSyncError.identityChanged }
+        let data = try await sendCaptured(path: path, method: method, body: body, accessToken: token)
+        guard PushManager.currentIdentity == identity else { throw CloudSyncError.identityChanged }
+        return data
+    }
+
+    /// A sign-out cleanup uses only its captured credential. It must never
+    /// obtain the replacement account's token or send client-supplied owners.
+    static func sendCaptured(path: [String], method: String, body: [String: Any]?, accessToken: String) async throws -> Data {
+        guard let base = Config.apiBaseURL, !accessToken.isEmpty else { throw APIError.notConfigured }
         var url = base
         for component in path { url.appendPathComponent(component) }
-
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        if let token = await AuthStore.validAccessToken() {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         request.timeoutInterval = 20
-
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else {
@@ -118,6 +125,21 @@ enum PushHTTP {
         }
         return data
     }
+}
+
+/// Registration acknowledgment belongs to a specific login, not just a token.
+struct PushAccountIdentity: Equatable {
+    let owner: UUID
+    let revision: UInt64
+}
+
+/// Credential-bearing cleanup is retained in Keychain until the exact server
+/// tombstone is acknowledged. Never written to preferences, logs or analytics.
+struct PendingPushUnregister: Codable, Equatable {
+    let owner: UUID
+    let deviceToken: String
+    let environment: String
+    let accessToken: String
 }
 
 // MARK: - Where a tapped notification goes
@@ -164,11 +186,26 @@ final class PushManager: ObservableObject {
     /// The last device token this launch handed to the server, so a
     /// re-registration with an unchanged token costs nothing.
     private var registeredToken: String?
+    private var registeredIdentity: PushAccountIdentity?
+    private var registrationTask: Task<Void, Never>?
+    private var registrationOperation: UUID?
+    private var unregisterTask: Task<Bool, Never>?
+    private var unregisterBlockedInMemory = false
+    private var lastDeviceToken: String? {
+        get { UserDefaults.standard.string(forKey: "push.deviceToken.v1") }
+        set { UserDefaults.standard.set(newValue, forKey: "push.deviceToken.v1") }
+    }
+
+    static var currentIdentity: PushAccountIdentity? {
+        guard AuthStore.shared.isSignedIn,
+              let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return nil }
+        return .init(owner: owner, revision: AuthStore.shared.syncSessionRevision)
+    }
     /// `POST /me/devices` answered 404 — this deployment has no such route.
     /// Not retried this launch; no error is shown, because nothing is wrong
     /// with the phone.
     private var deviceRouteMissing = false
-    private var isRegistering = false
+
 
     /// "Not now" at ONBOARDING, which is deliberately not the same as
     /// `hasAsked`. Declining a sheet before anything has been built is a
@@ -228,7 +265,7 @@ final class PushManager: ObservableObject {
         let status = await Self.currentAuthorization()
         authorization = status
         if registerIfAllowed, Self.allowsNotifications(status) {
-            registerWithAPNs()
+            accountDidChange()
         }
     }
 
@@ -358,11 +395,25 @@ final class PushManager: ObservableObject {
         let hex = token.map { String(format: "%02x", $0) }.joined()
         guard !hex.isEmpty else { return }
         guard !Self.isSuppressed, Config.useLiveBackend else { return }
-        guard !deviceRouteMissing, !isRegistering, registeredToken != hex else { return }
-        isRegistering = true
-        Task {
-            defer { isRegistering = false }
-            guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
+        lastDeviceToken = hex
+        registerDeviceToken(hex)
+    }
+
+    private func registerDeviceToken(_ hex: String) {
+        guard let identity = Self.currentIdentity, !deviceRouteMissing,
+              registrationOperation == nil,
+              registeredToken != hex || registeredIdentity != identity else { return }
+        let operation = UUID()
+        registrationOperation = operation
+        registrationTask = Task {
+            defer {
+                if registrationOperation == operation {
+                    registrationOperation = nil
+                    registrationTask = nil
+                }
+            }
+            guard await finishPendingUnregisters(), !Task.isCancelled,
+                  Self.currentIdentity == identity, registrationOperation == operation else { return }
             let body: [String: Any] = [
                 "device_token": hex,
                 "environment": Self.apnsEnvironment,
@@ -371,17 +422,68 @@ final class PushManager: ObservableObject {
             ]
             do {
                 _ = try await PushHTTP.send(path: ["me", "devices"], method: "POST", body: body)
+                guard !Task.isCancelled, Self.currentIdentity == identity,
+                      registrationOperation == operation else { return }
                 registeredToken = hex
+                registeredIdentity = identity
             } catch let error as APIError where error.isNotFound {
-                // The route is not deployed yet. That is a fact about the
-                // server, not a failure of this phone: stop for this launch,
-                // say nothing, and try again next launch.
+                guard Self.currentIdentity == identity, registrationOperation == operation else { return }
                 deviceRouteMissing = true
-            } catch {
-                // Offline, a blinked connection, an expired token. The next
-                // launch registers again; nothing is shown and nothing loops.
-            }
+            } catch { }
         }
+    }
+
+    /// Called BEFORE replacing or erasing the outgoing credential. Cancel
+    /// old acknowledgments synchronously, then retain its exact cleanup.
+    func accountWillChange() {
+        registrationTask?.cancel()
+        registrationTask = nil
+        registrationOperation = nil
+        registeredToken = nil
+        registeredIdentity = nil
+        deviceRouteMissing = false
+        pendingRoute = nil
+        showPrePrompt = false
+        if !Self.isSuppressed {
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        }
+        guard !Self.isSuppressed, Config.useLiveBackend,
+              let identity = Self.currentIdentity, let hex = lastDeviceToken,
+              let access = AuthStore.storedAccessToken(), !access.isEmpty else { return }
+        let cleanup = PendingPushUnregister(owner: identity.owner, deviceToken: hex,
+            environment: Self.apnsEnvironment, accessToken: access)
+        unregisterBlockedInMemory = !AuthStore.retainPushUnregister(cleanup)
+        Task { _ = await finishPendingUnregisters() }
+    }
+
+    func accountDidChange() {
+        guard !Self.isSuppressed else { return }
+        if let hex = lastDeviceToken { registerDeviceToken(hex) }
+        if isAllowed { registerWithAPNs() }
+    }
+
+    private func finishPendingUnregisters() async -> Bool {
+        if let task = unregisterTask { return await task.value }
+        guard !unregisterBlockedInMemory,
+              !UserDefaults.standard.bool(forKey: "push.unregisterStorageBlocked.v1") else { return false }
+        let task = Task { @MainActor () -> Bool in
+            do {
+                while let next = try AuthStore.pendingPushUnregisters().first {
+                    let bytes = try await PushHTTP.sendCaptured(path: ["me", "devices"], method: "DELETE",
+                        body: ["device_token": next.deviceToken, "environment": next.environment],
+                        accessToken: next.accessToken)
+                    guard let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+                          object["ok"] as? Bool == true, object["unregistered"] as? Bool == true,
+                          AuthStore.removePushUnregister(next) else { return false }
+                }
+                return true
+            } catch { return false }
+        }
+        unregisterTask = task
+        let succeeded = await task.value
+        unregisterTask = nil
+        return succeeded
     }
 
     /// iOS could not get a token (no network, no APNs entitlement on this
@@ -406,24 +508,32 @@ final class PushManager: ObservableObject {
     /// Universal Link path would have rejected (an empty slug, a 4 KB slug, a
     /// host this app does not answer for, or the `/u/` unbranded shape, which
     /// `DeepLink` deliberately refuses to open in-app).
+    static func accepts(payload: [AnyHashable: Any], identity: PushAccountIdentity?) -> Bool {
+        guard let identity,
+              let raw = payload["recipient_user_id"] as? String,
+              UUID(uuidString: raw) == identity.owner else { return false }
+        return true
+    }
+
     func handle(payload: [AnyHashable: Any]) {
-        guard !Self.isSuppressed else { return }
+        guard !Self.isSuppressed, Self.accepts(payload: payload, identity: Self.currentIdentity) else { return }
         let bag = (payload["rp"] as? [AnyHashable: Any]) ?? payload
-        let type = (bag["type"] as? String)?.lowercased() ?? ""
+        let type = ((payload["category"] as? String) ?? (bag["type"] as? String))?.lowercased() ?? ""
+        let facts = (payload["data"] as? [AnyHashable: Any]) ?? bag
 
         // A lead belongs to the account's inbox, not to one page — and that is
         // the screen the person actually needs to act on it.
-        if type == "lead" || type == "leads" {
+        if type == "lead" || type == "leads" || type == "lead_received" {
             pendingRoute = .leads
             return
         }
-        if let raw = (bag["url"] as? String) ?? (bag["link"] as? String),
+        if let raw = (payload["deep_link"] as? String) ?? (bag["url"] as? String) ?? (bag["link"] as? String),
            let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
            let link = DeepLink.parse(url) {
             pendingRoute = .tour(link)
             return
         }
-        if let slug = (bag["slug"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let slug = (facts["slug"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !slug.isEmpty,
            let encoded = slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
            let url = URL(string: "rendprop://f/\(encoded)"),
@@ -507,7 +617,11 @@ final class PushDelegate: NSObject, UNUserNotificationCenterDelegate {
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler:
                                     @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .list, .sound])
+        let payload = notification.request.content.userInfo
+        Task { @MainActor in
+            completionHandler(PushManager.accepts(payload: payload, identity: PushManager.currentIdentity)
+                ? [.banner, .list, .sound] : [])
+        }
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,

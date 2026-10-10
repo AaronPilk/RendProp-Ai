@@ -120,6 +120,7 @@ final class AuthStore: ObservableObject {
         // whose ownership it cannot establish.
         static let pendingAppleAuthCodeOwnerPrefix = "auth.pendingAppleAuthCode.owner.v2."
         static let pendingAdoption = "auth.pendingAnonymousAdoption.v1"
+        static let pendingPushUnregisters = "auth.pendingPushUnregisters.v1"
     }
 
     // MARK: - Keychain-backed secret storage
@@ -392,6 +393,44 @@ final class AuthStore: ObservableObject {
         d.removeObject(forKey: Keys.expiresAt)
     }
 
+    /// Persist outgoing push cleanup with the existing credential store, not
+    /// plain preferences. A malformed/unreadable queue never means empty.
+    @MainActor static func pendingPushUnregisters() throws -> [PendingPushUnregister] {
+        guard let raw = try SecureStore.getChecked(Keys.pendingPushUnregisters) else { return [] }
+        guard let bytes = raw.data(using: .utf8),
+              let values = try? JSONDecoder().decode([PendingPushUnregister].self, from: bytes),
+              values.count <= 32,
+              values.allSatisfy({ !$0.accessToken.isEmpty && !$0.deviceToken.isEmpty && ["sandbox", "production"].contains($0.environment) }) else {
+            throw APIError.decoding
+        }
+        return values
+    }
+
+    @MainActor static func retainPushUnregister(_ value: PendingPushUnregister) -> Bool {
+        do {
+            var values = try pendingPushUnregisters()
+            if !values.contains(value) { values.append(value) }
+            guard values.count <= 32, let bytes = try? JSONEncoder().encode(values),
+                  let raw = String(data: bytes, encoding: .utf8), SecureStore.set(Keys.pendingPushUnregisters, raw) else {
+                UserDefaults.standard.set(true, forKey: "push.unregisterStorageBlocked.v1"); return false
+            }
+            return true
+        } catch {
+            UserDefaults.standard.set(true, forKey: "push.unregisterStorageBlocked.v1"); return false
+        }
+    }
+
+    @MainActor static func removePushUnregister(_ value: PendingPushUnregister) -> Bool {
+        do {
+            var values = try pendingPushUnregisters()
+            values.removeAll { $0 == value }
+            if values.isEmpty { return SecureStore.remove(Keys.pendingPushUnregisters) }
+            let bytes = try JSONEncoder().encode(values)
+            guard let raw = String(data: bytes, encoding: .utf8) else { return false }
+            return SecureStore.set(Keys.pendingPushUnregisters, raw)
+        } catch { return false }
+    }
+
     // MARK: - Session lifecycle
 
     /// Read-only fence for a multi-request cloud sync. Includes sign-out and
@@ -418,6 +457,14 @@ final class AuthStore: ObservableObject {
         if let sub = Self.jwtSubject(accessToken) {
             let previous = UserDefaults.standard.string(forKey: Keys.userID)
             let switched = (previous != nil && previous != sub)
+            if !sameIdentityRefresh {
+                PushManager.shared.accountWillChange()
+                PurchaseManager.shared.clearAccountPresentation()
+            }
+            if switched, let id = UUID(uuidString: sub) {
+                onAccountChanged?(id)
+                AccountLocalPreferences.activate(previous: previous.flatMap(UUID.init(uuidString:)), next: id)
+            }
             UserDefaults.standard.set(sub, forKey: Keys.userID)
             userID = sub
             if switched {
@@ -427,13 +474,13 @@ final class AuthStore: ObservableObject {
                 orgName = ""
                 UserDefaults.standard.removeObject(forKey: Keys.userName)
                 UserDefaults.standard.removeObject(forKey: Keys.orgName)
-                if let id = UUID(uuidString: sub) { onAccountChanged?(id) }
             }
         }
         // Scheduling metadata cannot extend the JWT's actual validity.
         Self.persistTokens(access: accessToken, refresh: refreshToken, expiresAt: min(expiry, expiresAt ?? expiry))
         isSignedIn = true
         isIdentified = Self.tokenIsIdentified(accessToken)
+        if !sameIdentityRefresh { PushManager.shared.accountDidChange() }
         scheduleAutoRefresh()   // re-arm for the new expiry
         return true
     }
@@ -448,6 +495,8 @@ final class AuthStore: ObservableObject {
     /// previously saved guest work after reauthentication.
     @MainActor
     func signOut(preservingAdoption: Bool = false) {
+        PushManager.shared.accountWillChange()
+        PurchaseManager.shared.clearAccountPresentation()
         // Cancel any in-flight refresh FIRST — otherwise a refresh that resolves
         // after sign-out would call applySession and re-persist tokens, silently
         // signing the user back in (audit 2026-08-26).

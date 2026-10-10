@@ -174,6 +174,7 @@ final class PhotoEditService {
             content.title = job.failures.isEmpty ? "Your photos are ready" : "Photo edits finished with an issue"
             content.body = "\(job.title): \(job.done) of \(job.total) photos changed. Open Rendprop to review them."
             content.sound = .default
+            if let owner = self.owner { content.userInfo = ["recipient_user_id": owner] }
             try? await center.add(UNNotificationRequest(identifier: "photo-work.\(job.id.uuidString)",
                                                        content: content, trigger: nil))
         }

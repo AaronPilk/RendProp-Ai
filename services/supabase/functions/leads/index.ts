@@ -265,7 +265,7 @@ Deno.serve(async (req) => {
       let dq = admin.from("leads").select("id").eq("render_id", renderId).gte("created_at", tenMinAgo).limit(1);
       dq = body.email ? dq.eq("email", body.email) : dq.eq("phone", body.phone as string);
       const { data: dup } = await dq.maybeSingle();
-      if (dup?.id) return json({ ok: true });
+      if (dup?.id) return json({ ok: true, accepted: true });
     }
 
     const { data: lead, error: insErr } = await admin
@@ -299,7 +299,7 @@ Deno.serve(async (req) => {
     // (This replaces decision A13's "the Leads screen is the delivery channel
     // for now" — GET /leads is still where the details live, but silence until
     // the agent happens to open the app is no longer how they find out.)
-    return json({ ok: true }, 201);
+    return json({ ok: true, accepted: true }, 201);
   } catch (err) {
     return respondError(err);
   }

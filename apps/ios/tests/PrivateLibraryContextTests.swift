@@ -12,6 +12,23 @@ import Foundation
         let qa = UUID(uuidString: "20000000-0000-4000-8000-000000000004")!
         let ownRow = WorkspaceMembership(id: own, name: "My listings", role: "owner", accessMode: "own", libraryOwnerUserID: actor, billingOrgID: own, canRead: true, canWrite: true, canManageSubscription: true)
         let agentRow = WorkspaceMembership(id: other, name: "Agent", role: "team_owner", accessMode: "team_owner", libraryOwnerUserID: agent, billingOrgID: qa, canRead: true, canWrite: true, canManageSubscription: false)
+        let preferences = UserDefaults()
+        preferences.set("restaurant", forKey: "space.type")
+        AccountLocalPreferences.activate(previous: actor, next: agent, defaults: preferences)
+        check(preferences.string(forKey: "space.type") == "real_estate", "Other account inherited business type")
+        preferences.set("venue", forKey: "space.type")
+        AccountLocalPreferences.activate(previous: agent, next: actor, defaults: preferences)
+        check(preferences.string(forKey: "space.type") == "restaurant", "Returning account lost own business type")
+        preferences.set("saved-intent", forKey: "purchase-workspace.v1.fixture")
+        preferences.set("saved-workspace", forKey: "workspace.selection.v1.fixture")
+        preferences.set("saved-brand", forKey: "workspace.fixture.brand")
+        AccountLocalPreferences.eraseDeviceCache(defaults: preferences)
+        check(preferences.string(forKey: "workspace.selection.v1.fixture") == nil && preferences.string(forKey: "workspace.fixture.brand") == nil,
+              "Explicit device wipe retained account display cache")
+        check(preferences.string(forKey: "space.type") == nil && preferences.string(forKey: "account.space.type.v1." + actor.uuidString.lowercased()) == nil,
+              "Explicit device wipe retained account business type")
+        check(preferences.string(forKey: "purchase-workspace.v1.fixture") == "saved-intent",
+              "Display cleanup discarded an unfinished purchase recovery binding")
         let ownerDirectory = WorkspaceDirectory(actorID: actor, ownOrgID: own, billingOrgID: own, canSwitchAgentLibraries: true, activeOrgID: own, workspaces: [ownRow, agentRow])
         let privateDirectory = WorkspaceDirectory(actorID: actor, ownOrgID: own, billingOrgID: own, canSwitchAgentLibraries: false, activeOrgID: own, workspaces: [ownRow])
         check(ownerDirectory.checked(actor: actor) != nil, "Valid owner directory rejected")

@@ -431,7 +431,9 @@ changes or refunds from replenishing usage. They record account, workspace, oper
 and funding identities, task, input fingerprint and timing; they do not contain the
 photo or a downloadable media link. Workspace package allocations and operator
 startup-funding evidence are separate accounting records, and are not another
-member's personal export. Contact us for help with retained accounting records.
+member's personal export. Anonymized provider-cost totals also remain after account deletion;
+their account, job and request references are removed. They do not contain photos or videos.
+Contact us for help with retained accounting records.
 Backups, operational logs and provider copies follow their applicable retention settings;
 we do not promise immediate removal from every backup or a single fixed retention period.
 Public files already downloaded or copied by someone else cannot be recalled by Rendprop.</p>

@@ -158,7 +158,7 @@ struct UIBackgroundTaskIdentifier: Equatable {
 enum UNAuthorizationStatus { case authorized, provisional, denied }
 struct UNNotificationSettings { var authorizationStatus = UNAuthorizationStatus.denied }
 struct UNNotificationSound { static let `default` = Self() }
-final class UNMutableNotificationContent { var title = ""; var body = ""; var sound: UNNotificationSound? }
+final class UNMutableNotificationContent { var title = ""; var body = ""; var sound: UNNotificationSound?; var userInfo: [AnyHashable: Any] = [:] }
 struct UNNotificationRequest { let identifier: String; let content: UNMutableNotificationContent; let trigger: String? }
 @MainActor final class UNUserNotificationCenter {
     static func current() -> UNUserNotificationCenter { Self() }

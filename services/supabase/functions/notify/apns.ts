@@ -40,6 +40,8 @@ export interface ApnsMessage {
   /** Goes in the custom payload so the app can route the tap. */
   deepLink: string | null;
   category: string;
+  /** Server-bound outbox recipient; never copied from arbitrary payload data. */
+  recipientUserId: string;
   /** Arbitrary facts the app may use; kept small. */
   data: Record<string, unknown>;
   /** APNs collapses same-id notifications — the outbox dedupe key, truncated. */
@@ -181,12 +183,16 @@ export async function send(
 
   const aps = {
     aps: {
-      alert: { title: message.title, body: message.body },
+      // iOS can display aps.alert while the app is suspended, before its
+      // recipient fence can run. Keep private names, addresses and account
+      // budgets off the lock screen, including during offline sign-out.
+      alert: { title: "Rendprop update", body: "Open Rendprop to review it." },
       sound: "default",
       "interruption-level": "active",
     },
     category: message.category,
     deep_link: message.deepLink,
+    recipient_user_id: message.recipientUserId,
     data: message.data,
   };
 

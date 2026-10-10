@@ -42,7 +42,7 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
   const out = mkdtempSync(join(tmpdir(), 'rendprop-local-binding-swift-'));
   const methods = ['struct RenderedTour', 'struct UploadedRenderAsset', 'enum PublishError',
     'func forgetServerIdentities(', 'func prepareLocalAdoption(', 'func confirmLocalAdoption(',
-    'func restoreAdoptedProductionLibrary(', 'func pendingAdoptionBlocksServerListing(', 'var workspaceSwitchIsBusy:', 'func prepareWorkspaceSwitch(', 'func ensureServerListing(', 'func index(of ', 'func load()',
+    'func restoreAdoptedProductionLibrary(', 'func pendingAdoptionBlocksServerListing(', 'var workspaceSwitchIsBusy:', 'func prepareWorkspaceSwitch(', 'func isInSelectedWorkspace(', 'func ensureServerListing(', 'func index(of ', 'func load()',
     'func reconcileAfterRestore()', 'func reseedSamples()', 'func persist()'].map(declaration).join('\n');
   const store = app.slice(app.indexOf('enum PersistentStore {'), app.indexOf('// MARK: - Entry'));
   assert.ok(store.includes('extension PersistentStore.PersistedState'));
@@ -50,9 +50,9 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
   // dependencies are inert. Full model types and the current CloudDraftCreation
   // implementation are real; do not replace its identity/fingerprint/save logic.
   const scaffold = `import Foundation
-enum Config { static let useLiveBackend = false }
+enum Config { static var useLiveBackend = false }
 enum WorkspaceContext { static var selectedOrgID: UUID? = nil }
-@MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func refresh() async {} }
+@MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func refresh() async {}; func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID } }
 enum FileStore {
  static var documents = URL(fileURLWithPath: "/nonexistent/fixture-not-initialized")
  static func url(fromRelativePath p:String)->URL { documents.appendingPathComponent(p) }
@@ -131,6 +131,9 @@ ${store}
   assert.match(result.stdout, /PASS: \d+ local binding assertions/);
   console.log(result.stdout.trim());
   for (const [name, needle, replacement, count] of [
+    ['leave-unstamped-draft-custody', 'listings[i].cloudSyncOwnerID = listings[i].cloudSyncOwnerID ?? previousOwner',
+      '// missing outgoing draft custody', 2],
+    ['show-other-actor-draft', 'if !listing.isSample, let owner = listing.cloudSyncOwnerID,\n           owner != AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) { return false }', '', 1],
     ['omit-rebound-identities', 'listings = restored; adoptionBindings = confirmed; identityOwnerUserID = pending.destinationUserID',
       'adoptionBindings = confirmed; identityOwnerUserID = pending.destinationUserID', 1],
     ['ignore-persistence-failure', 'if persist() { return true }', 'if (persist() || true) { return true }', 2],
@@ -148,12 +151,12 @@ ${store}
     assert.equal(rejected.status, 1, `actual mutation must fail: ${name}`);
     assert.match(rejected.stdout, /FAIL: [1-9]\d*\/\d+ local binding assertions/);
   }
-  console.log('PASS: 3 actual AppModel metadata mutants compiled then failed assertions/exit1');
+  console.log('PASS: 5 actual AppModel metadata mutants compiled then failed assertions/exit1');
   const checked = [...files, root + 'apps/ios/Rendprop/RendpropApp.swift', root + 'apps/ios/Rendprop/Auth/AuthStore.swift',
     root + 'tests/phase1/AdoptionLocalBindingsTests.swift', fileURLToPath(import.meta.url)];
   writeFileSync(join(out, 'receipt.json'), JSON.stringify({ accepted: true,
     runtimeScope: 'Mechanically extracted actual AppModel metadata methods and complete PersistentStore; complete production WorkspaceSync/NativeReelDraft and model types; inert Auth/transport/FileStore/background refresh dependencies',
-    negativeControlExit: negative.status, actualExit: result.status, actualMutantsRejected: 3,
+    negativeControlExit: negative.status, actualExit: result.status, actualMutantsRejected: 5,
     sourceHashes: Object.fromEntries(checked.map(path => [path.slice(root.length), createHash('sha256').update(readFileSync(path)).digest('hex')])),
     extractedSourceSHA256: createHash('sha256').update(scaffold).digest('hex'),
   }, null, 2) + '\n', { flag: 'wx' });

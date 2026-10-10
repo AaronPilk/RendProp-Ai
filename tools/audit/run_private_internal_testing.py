@@ -20,7 +20,7 @@ MASTER = SQL / 'migrations/20261005195004_workspace_internal_testing_grants.sql'
 MIGRATIONS = sorted(p for p in (SQL / 'migrations').glob('*.sql') if p.name <= TARGET.name)
 TEST = SQL / 'tests/private_internal_testing.sql'
 LEGACY_TEST = SQL / 'tests/private_internal_testing_legacy.sql'
-FINAL_TARGET = SQL / 'migrations/20261009192550_team_private_listing_libraries.sql'
+FINAL_TARGET = SQL / 'migrations/20261010000032_private_library_adoption_and_serving_safety.sql'
 FINAL_MIGRATIONS = sorted((SQL / 'migrations').glob('*.sql'))
 OUT = Path(tempfile.mkdtemp(prefix='rendprop-private-testing-', dir='/tmp'))
 DATA, SOCK = OUT / 'cluster', OUT / 'socket'

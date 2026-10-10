@@ -59,7 +59,8 @@ insert into org_internal_testing_grants(org_id,owner_user_id,unmetered_business_
 select pg_temp.private_ok('configured active host mode is explicit',(private_internal_testing_host_mode(host,host_org)->>'active')::boolean and(private_internal_testing_host_mode(host,host_org)->>'access_mode')='private_testing')from private_fixture;
 select pg_temp.private_denied('private host refuses admin invitations',format('select create_org_invite(%L,%L,null,''admin'',%L)',host,host_org,repeat('1',64)),'RP400:')from private_fixture;
 select pg_temp.private_denied('private host refuses marketing invitations',format('select create_org_invite(%L,%L,null,''marketing'',%L)',host,host_org,repeat('2',64)),'RP400:')from private_fixture;
-select create_org_invite(foreign_user,host_org,null,'agent',repeat('3',64))from private_fixture;
+select pg_temp.private_denied('only actual owner may issue a private-testing Team invite',format('select create_org_invite(%L,%L,null,''agent'',%L)',foreign_user,host_org,repeat('3',64)),'RP403:')from private_fixture;
+select create_org_invite(host,host_org,null,'agent',repeat('3',64))from private_fixture;
 select pg_temp.private_ok('new invitation captures private mode',(select private_testing from org_invites where token_hash=repeat('3',64)));
 select accept_org_invite(benef,repeat('3',64))from private_fixture;
 reset role;
@@ -80,7 +81,7 @@ select pg_temp.private_denied('allocation rejects a foreign private workspace',f
 select pg_temp.private_denied('allocation rejects an anonymous beneficiary',format('select enroll_private_internal_tester(%L,%L,%L,null)',host,host_org,guest),'RP403:')from private_fixture;
 select pg_temp.private_denied('anonymous cannot accept private seat',format('select accept_org_invite(%L,%L)',guest,repeat('3',64)),'RP403:')from private_fixture;
 select pg_temp.private_denied('foreign user cannot replay accepted private code',format('select accept_org_invite(%L,%L)',foreign_user,repeat('3',64)),'RP404:')from private_fixture;
-select pg_temp.private_denied('private single-seat org cannot invite another',format('select create_org_invite(%L,%L,null,''agent'',%L)',benef,private_org,repeat('4',64)),'RP402:')from private_fixture;
+select pg_temp.private_denied('private beneficiary cannot host another Team',format('select create_org_invite(%L,%L,null,''agent'',%L)',benef,private_org,repeat('4',64)),'RP403:')from private_fixture;
 select pg_temp.private_denied('accepted private receipt cannot be retargeted',format('update org_invites set accepted_private_org_id=%L where token_hash=%L',foreign_org,repeat('3',64)),'RP400:')from private_fixture;
 select pg_temp.private_denied('accepted private receipt cannot be erased early',format('update org_invites set accepted_private_org_id=null where token_hash=%L',repeat('3',64)),'RP400:')from private_fixture;
 select pg_temp.private_denied('accepted private receipt cannot be rewritten','update org_invites set private_testing_receipt=''{}''where token_hash=repeat(''3'',64)','RP400:');
@@ -194,7 +195,11 @@ select accept_org_invite(foreign_user,repeat('8',64))from private_fixture;
 select pg_temp.private_ok('ordinary customer marketing seat keeps private library',exists(select 1 from memberships where user_id=f.foreign_user and org_id=f.retail_org and role='marketing')and(select not private_testing from org_invites where token_hash=repeat('8',64))and exists(select 1 from team_private_libraries where team_org_id=f.retail_org and agent_user_id=f.foreign_user and private_org_id=f.foreign_org)and not library_content_access(f.foreign_user,f.retail_org,false))from private_fixture f;
 select pg_temp.private_denied('ordinary Team third seat still refused',format('select create_org_invite(%L,%L,null,''agent'',%L)',retail_user,retail_org,repeat('9',64)),'RP402:')from private_fixture;
 reset role;
-delete from auth.users where id=(select foreign_user from private_fixture);
+-- The positive invite now comes from its actual owner. Remove only that
+-- owner's synthetic listing (whose protection was asserted above) before the
+-- isolated Auth/profile FK cleanup; beneficiary content stays untouched.
+delete from listings where id=(select host_listing from private_fixture);
+delete from auth.users where id=(select host from private_fixture);
 select pg_temp.private_ok('real inviter profile FK cleanup preserves receipt',(select invited_by is null and private_testing_receipt is not null from org_invites where token_hash=repeat('3',64)));
 select count(*)as private_testing_assertions from private_checks;
 select 'PASS: private internal testing SQL assertions; fixtures rolled back.';

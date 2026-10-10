@@ -2802,14 +2802,14 @@ begin
   insert into memberships (user_id, org_id, role) values (uNA, oNO, 'admin'), (uNM, oNO, 'marketing');
 
   -- ── (a) posture ───────────────────────────────────────────────────────────
-  -- The four tables hold push tokens, message queues and a delivery history
+  -- The five tables hold push tokens, session fences, queues and delivery history
   -- across every tenant. A single SELECT grant to `authenticated` would let one
   -- signed-in customer enumerate another's device tokens.
   insert into _inv(name, pass, note)
-    values ('the four notification tables are service-role only, with RLS on and no tenant grants',
+    values ('the five notification tables are service-role only, with RLS on and no tenant grants',
             not exists (select 1 from unnest(array[
                   'public.notification_devices','public.notification_preferences',
-                  'public.notification_outbox','public.notification_log']) t
+                  'public.notification_outbox','public.notification_log','public.notification_device_session_tombstones']) t
                  cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']) p
                  where has_table_privilege('authenticated', t, p)
                     or has_table_privilege('anon', t, p))
@@ -2817,7 +2817,8 @@ begin
                     where c.oid in ('public.notification_devices'::regclass,
                                     'public.notification_preferences'::regclass,
                                     'public.notification_outbox'::regclass,
-                                    'public.notification_log'::regclass))
+                                    'public.notification_log'::regclass,
+                                    'public.notification_device_session_tombstones'::regclass))
               -- The drain reads devices and the queue with the service role;
               -- every WRITE still goes through an RPC.
               and has_table_privilege('service_role', 'public.notification_devices', 'SELECT')
@@ -2830,7 +2831,7 @@ begin
             -- Callable RPCs and trigger functions have different privilege models.
             -- Redaction is deliberately SECURITY INVOKER; it can only be fired
             -- through its terminal-state outbox trigger, never called as an RPC.
-            (select count(*)=12 and bool_and(p.prosecdef
+            (select count(*)=14 and bool_and(p.prosecdef
                     and not has_function_privilege('authenticated',p.oid,'EXECUTE')
                     and not has_function_privilege('anon',p.oid,'EXECUTE')
                     and has_function_privilege('service_role',p.oid,'EXECUTE'))

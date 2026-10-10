@@ -133,7 +133,13 @@ __DRAW_TEXT__
         auth.userID = actor.uuidString; auth.syncSessionRevision += 1
         try check(refusesIdentity { try mediaContext.check() }, "changed session revision invalidates actual media context")
         auth.syncSessionRevision = 40; WorkspaceContext.selectedOrgID = otherOrg
-        try check(refusesIdentity { _ = try CloudMediaAccessContext.capture(orgID: org) }, "foreign workspace cannot capture media context")
+        let legacyContext = try CloudMediaAccessContext.capture(orgID: org)
+        try check(legacyContext.orgID == org && legacyContext.selectedLibraryID == otherOrg,
+                  "physical media org and logical selected library remain separate")
+        try legacyContext.check()
+        WorkspaceContext.selectedOrgID = nil
+        try check(refusesIdentity { _ = try CloudMediaAccessContext.capture(orgID: org) }, "missing workspace cannot capture media context")
+        WorkspaceContext.selectedOrgID = otherOrg
         try check(refusesIdentity { try mediaContext.check() }, "changed workspace invalidates actual media context")
         WorkspaceContext.selectedOrgID = org
         auth.userID = otherActor.uuidString; auth.syncSessionRevision = 41
