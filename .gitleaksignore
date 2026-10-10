@@ -88,3 +88,8 @@ a326780c43f8ec458eaa42e2ccd62c2451f74af2:services/supabase/functions/ai-chapters
 
 # The same reviewed synthetic marker in the historical explanation comment.
 5342c2f0fb7dd795fd406066227ac8d05d2ed433:.gitleaksignore:generic-api-key:86
+
+# Exact historical false positive: the final-audit receipt records a migration
+# file checksum. Recomputed from the unchanged SQL source; no credential value.
+# Preserve the immutable receipt and every other secret-scan finding.
+d46f3dfedb6e5f86b9234e275a50395fddf967ab:docs/releases/TESTFLIGHT-55-FINAL-AUDIT-REMEDIATION-20261009.json:generic-api-key:1184
