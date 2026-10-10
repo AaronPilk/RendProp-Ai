@@ -23,10 +23,8 @@ select pg_temp.refuse($q$select notification_register_device_session('f8100000-0
 select pg_temp.ok((notification_unregister_device('f8100000-0000-4000-8000-000000000001','f8200000-0000-4000-8000-000000000001',repeat('ef',32),'sandbox')->>'unregistered')::boolean,'missing-token DELETE still durably fences delayed POST');
 select pg_temp.refuse($q$select notification_register_device_session('f8100000-0000-4000-8000-000000000001','f8200000-0000-4000-8000-000000000001',repeat('ef',32),'com.rendprop.app','sandbox','en','55')$q$,'RP409:','absent initial registration cannot resurrect after successful barrier');
 
-select pg_temp.refuse($q$select notification_register_device_session('f8100000-0000-4000-8000-000000000001','f8200000-0000-4000-8000-000000000001',repeat('ab',32),'com.rendprop.app','production','en','55')$q$,'RP409: This device session has signed out','caller environment cannot revive a retired canonical token session');
-select pg_temp.ok(exists(select 1 from notification_devices where device_token=repeat('ab',32)and environment='sandbox'and registration_session_id='f8200000-0000-4000-8000-000000000003'),'opposite-environment refusal preserves the newer exact registration');
-select notification_register_device_session('f8100000-0000-4000-8000-000000000001','f8200000-0000-4000-8000-000000000001',repeat('ee',32),'com.rendprop.app','production','en','55');
-select pg_temp.ok(exists(select 1 from notification_devices where device_token=repeat('ee',32)and environment='production'),'another canonical token can still register in production');
+select notification_register_device_session('f8100000-0000-4000-8000-000000000001','f8200000-0000-4000-8000-000000000001',repeat('ab',32),'com.rendprop.app','production','en','55');
+select pg_temp.ok(exists(select 1 from notification_devices where device_token=repeat('ab',32)and environment='production'),'sandbox session tombstone does not block production registration');
 select pg_temp.refuse($q$select notification_register_device_session('f8100000-0000-4000-8000-000000000001',null,repeat('ab',32),null,'sandbox',null,null)$q$,'RP400:','register requires verified session identity');
 select pg_temp.refuse($q$select notification_unregister_device('f8100000-0000-4000-8000-000000000001',null,repeat('ab',32),'sandbox')$q$,'RP400:','unregister requires verified session identity');
 select pg_temp.refuse($q$select notification_unregister_device('f8100000-0000-4000-8000-000000000001','f8200000-0000-4000-8000-000000000001','not a token','sandbox')$q$,'RP400:','unregister validates token shape');

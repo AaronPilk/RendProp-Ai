@@ -10,7 +10,6 @@ select notification_register_device_session('fa200000-0000-4000-8000-00000000000
 -- Simulate the reachable offline/expired DELETE: there is no unregister call.
 select notification_register_device_session('fa200000-0000-4000-8000-000000000002','fa210000-0000-4000-8000-000000000002',upper(repeat('91',32)),null,'sandbox');
 select pg_temp.refuse($q$select notification_register_device_session('fa200000-0000-4000-8000-000000000001','fa210000-0000-4000-8000-000000000001',repeat('91',32),null,'sandbox')$q$,'RP409: This device session has signed out','late displaced A POST is fenced without prior DELETE');
-select pg_temp.refuse($q$select notification_register_device_session('fa200000-0000-4000-8000-000000000001','fa210000-0000-4000-8000-000000000001',repeat('91',32),null,'production')$q$,'RP409: This device session has signed out','caller environment cannot reclaim a globally owned token');
 select pg_temp.ok(exists(select 1 from notification_devices where device_token=repeat('91',32)and user_id='fa200000-0000-4000-8000-000000000002'),'B retains physical token after late A POST');
 select pg_temp.ok(not(notification_unregister_device('fa200000-0000-4000-8000-000000000001','fa210000-0000-4000-8000-000000000001',repeat('91',32),'sandbox')->>'removed')::boolean,'late A DELETE cannot erase B');
 select notification_register_device_session('fa200000-0000-4000-8000-000000000001','fa210000-0000-4000-8000-000000000003',repeat('91',32),null,'sandbox');

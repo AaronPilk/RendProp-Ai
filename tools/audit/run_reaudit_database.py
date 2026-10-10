@@ -6,11 +6,14 @@ from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
-SUITES={'reaudit_library_selection':12,'reaudit_device_takeover':9,'reaudit_deleted_team_video':20}
+FINAL_OVERLAY=SQL/'migrations/20261010042000_legacy_notification_session_retirement.sql'
+HISTORICAL_DEVICE_SUITE=SQL/'tests/reaudit_device_takeover_pre_canonical.sql'
+assert hashlib.sha256(HISTORICAL_DEVICE_SUITE.read_bytes()).hexdigest()=='d30a807bc79ace9983c7ad75adc44f6265bdbe4ff5ec155eb9aae6f8e4d3e80b','Historical device fixture must retain its exact reviewed nine cases'
+SUITES={'reaudit_library_selection':12,'reaudit_device_takeover':10,'reaudit_deleted_team_video':20}
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rp-reaudit-db-',dir='/tmp'));DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC'};BIN={n:shutil.which(n)for n in['initdb','pg_ctl','psql','createdb']};assert all(BIN.values())
 CONN=['-h',str(SOCK),'-p','55491','-U','postgres'];PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
-SOURCES=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',*[SQL/'tests'/f'{n}.sql'for n in SUITES],pathlib.Path(__file__).resolve()]
+SOURCES=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',HISTORICAL_DEVICE_SUITE,*[SQL/'tests'/f'{n}.sql'for n in SUITES],pathlib.Path(__file__).resolve()]
 HASHES={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in SOURCES}
 R={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':HASHES,'commands':[],'passed':False,'productionMutations':0,'providerCalls':0,'limitations':['Synthetic Auth and owned socket-only PostgreSQL; no hosted JWT, physical phone, provider or invoice evidence']}
 def run(name,args,body=None,expected=0):
@@ -18,8 +21,9 @@ def run(name,args,body=None,expected=0):
  R['commands'].append({'name':name,'exit':p.returncode,'log':str(log),'sha256':hashlib.sha256(log.read_bytes()).hexdigest()});assert p.returncode==expected,(name,p.returncode,log.read_text()[-1800:]);print(name,p.returncode,flush=True);return log.read_text()
 def q(name,body,expected=0):return run(name,PSQL,body,expected)
 def definition(name,sig):return q('definition-'+name,f"select pg_get_functiondef('public.{sig}'::regprocedure);")
-def suite(name,phase):
- r=q(name+'-'+phase,(SQL/'tests'/f'{name}.sql').read_text());rows=[json.loads(l)for l in r.splitlines()if l.startswith('{')and'"suite"'in l];assert rows==[{'suite':name,'assertions':SUITES[name]}],rows
+CATALOG="select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|'order by oid::regprocedure::text))from pg_proc where pronamespace='public'::regnamespace;"
+def suite(name,phase,source=None,count=None):
+ r=q(name+'-'+phase,(source or SQL/'tests'/f'{name}.sql').read_text());rows=[json.loads(l)for l in r.splitlines()if l.startswith('{')and'"suite"'in l];assert rows==[{'suite':name,'assertions':SUITES[name]if count is None else count}],rows
 
 def locked_race(label,locker_prefix,operation,locker_finish,expected_deadlock,expected_refusal=None):
  b=subprocess.Popen(PSQL,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(ENV,PGAPPNAME='locker-'+label));a=None;prefix=[]
@@ -86,10 +90,33 @@ try:
     refusal=q(name+'-historical-negative',(SQL/'tests'/f'{name}.sql').read_text(),3);assert label in refusal
    R['oldFirstInviteDeletionRace']=invite_race('old-first-invite',True)
   q('migration-'+p.stem,p.read_text())
- catalog="select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|'order by oid::regprocedure::text))from pg_proc where pronamespace='public'::regnamespace;"
+  if p==TARGET:
+   # Historical runtime and predecessor proofs belong at this overlay's own
+   # schema point, before the append-only legacy-session overlay supersedes it.
+   historical=q('historical-followup-catalog',CATALOG)
+   q('historical-followup-exact-replay',TARGET.read_text())
+   assert q('historical-followup-replayed-catalog',CATALOG)==historical
+   for name in SUITES:
+    # The later canonical-environment regression intentionally fails on this
+    # historical function. Retain all nine exact prior cases here; require all
+    # ten current cases in every final fresh/replay/restored acceptance phase.
+    suite(name,'historical-followup-replay',HISTORICAL_DEVICE_SUITE if name=='reaudit_device_takeover'else None,9 if name=='reaudit_device_takeover'else None)
+   pins=re.findall(r"oid='public\.([^']+)'::regprocedure",TARGET.read_text());assert len(pins)==6
+   for i,sig in enumerate(pins):
+    current=definition('historical-pin-'+str(i),sig);marker=re.search(r'AS (\$[^$]*\$)',current)[0]
+    q('historical-unknown-'+str(i)+'-install',current.replace(marker,marker+'\n-- unreviewed predecessor\n',1))
+    mutant_catalog=q('historical-unknown-'+str(i)+'-catalog',CATALOG)
+    refused=q('historical-unknown-'+str(i)+'-refused',TARGET.read_text(),3);assert'Review changed function'in refused
+    assert q('historical-unknown-'+str(i)+'-after-refusal',CATALOG)==mutant_catalog,'Refusal must be atomic'
+    q('historical-unknown-'+str(i)+'-restore',current)
+   assert q('historical-followup-restored-catalog',CATALOG)==historical
+ catalog=CATALOG
  before=q('final-catalog',catalog)
+ refused=q('superseded-followup-refused',TARGET.read_text(),3)
+ assert'Review changed function notification_register_device_session'in refused
+ assert q('superseded-followup-refusal-catalog',catalog)==before,'Historical replay must not overwrite newer reviewed functions'
  for phase in['fresh','replay']:
-  if phase=='replay':q('exact-followup-replay',TARGET.read_text());assert q('replayed-catalog',catalog)==before
+  if phase=='replay':q('exact-final-overlay-replay',FINAL_OVERLAY.read_text());assert q('replayed-catalog',catalog)==before
   for name in SUITES:suite(name,phase)
  R['firstInviteDeletionRace']=invite_race('fixed-first-invite',False)
  new_push=definition('push-current','notification_register_device_session(uuid,uuid,text,text,text,text,text)')
@@ -101,16 +128,10 @@ try:
  for function,suite_name,label in [('workspace_directory','reaudit_library_selection','bound non-switcher default aligns'),('cost_ledger_settle_serving_hold','reaudit_deleted_team_video','exact late deleted-child receipt binds'),('notification_register_device_session','reaudit_device_takeover','late displaced A POST')]:
   sig={'workspace_directory':'workspace_directory(uuid,uuid)','cost_ledger_settle_serving_hold':'cost_ledger_settle_serving_hold()','notification_register_device_session':'notification_register_device_session(uuid,uuid,text,text,text,text,text)'}[function]
   current=definition(function+'-current',sig);q(function+'-remove-fix',old[function]);refused=q(function+'-negative',(SQL/'tests'/f'{suite_name}.sql').read_text(),3);assert label in refused;q(function+'-restore',current)
- # Unknown predecessor cannot accidentally apply a reviewed patch to new code.
- pins=re.findall(r"oid='public\.([^']+)'::regprocedure",TARGET.read_text());assert len(pins)==6
- for i,sig in enumerate(pins):
-  current=definition('pin-'+str(i),sig);marker=re.search(r'AS (\$[^$]*\$)',current)[0]
-  q('unknown-'+str(i)+'-install',current.replace(marker,marker+'\n-- unreviewed predecessor\n',1))
-  refused=q('unknown-'+str(i)+'-refused',TARGET.read_text(),3);assert'Review changed function'in refused;q('unknown-'+str(i)+'-restore',current)
  assert q('final-restored-catalog',catalog)==before
  for name in SUITES:suite(name,'restored')
- R.update(passed=True,sqlAssertions=SUITES,exactReplay=True,predecessorsRefused=6,originalBugsReproduced=3,compiledNegativeControls=4)
+ R.update(passed=True,sqlAssertions=SUITES,historicalSqlAssertions={**SUITES,'reaudit_device_takeover':9},historicalDeviceSuite=HISTORICAL_DEVICE_SUITE.name,exactReplay=True,predecessorsRefused=6,originalBugsReproduced=3,compiledNegativeControls=4,historicalFollowupReplayAtOwnSchemaPoint=True,supersededFollowupRefusedAtomic=True,finalOverlay=FINAL_OVERLAY.name)
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','fast','-w','stop'])
  R['sourceHashesAfter']={n:hashlib.sha256((ROOT/n).read_bytes()).hexdigest()for n in HASHES};R['sourceUnchanged']=R['sourceHashesAfter']==HASHES;R['passed']=R['passed']and R['sourceUnchanged'];R['finishedAt']=datetime.now(timezone.utc).isoformat();(OUT/'receipt.json').write_text(json.dumps(R,indent=2)+'\n')
-assert R['passed'];print('PASS: 41 SQL assertions fresh/replay/restored, four real races, six predecessor guards and original runtime regressions',flush=True)
+assert R['passed'];print('PASS: 42 SQL assertions fresh/replay/restored, historical 41 retained, four real races, six predecessor guards and original runtime regressions',flush=True)

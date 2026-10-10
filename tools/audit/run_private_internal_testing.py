@@ -21,6 +21,7 @@ MIGRATIONS = sorted(p for p in (SQL / 'migrations').glob('*.sql') if p.name <= T
 TEST = SQL / 'tests/private_internal_testing.sql'
 LEGACY_TEST = SQL / 'tests/private_internal_testing_legacy.sql'
 FINAL_TARGET = SQL / 'migrations/20261010030225_reaudit_library_session_settlement.sql'
+FINAL_OVERLAY = SQL / 'migrations/20261010042000_legacy_notification_session_retirement.sql'
 FINAL_MIGRATIONS = sorted((SQL / 'migrations').glob('*.sql'))
 OUT = Path(tempfile.mkdtemp(prefix='rendprop-private-testing-', dir='/tmp'))
 DATA, SOCK = OUT / 'cluster', OUT / 'socket'
@@ -272,14 +273,25 @@ try:
  run('drop-historical-clone', [*psql('postgres'), '-c', f'drop database {DB};'])
  run('create-current-final', [BINS['createdb'], '--no-password', *CONN, DB])
  run('current-bootstrap', [*psql(), '-q', '-f', SQL / 'tests/ci-bootstrap.sql'])
- for migration in FINAL_MIGRATIONS:run('current-' + migration.stem, [*psql(), '-q', '-f', migration])
+ for migration in FINAL_MIGRATIONS:
+  run('current-' + migration.stem, [*psql(), '-q', '-f', migration])
+  if migration == FINAL_TARGET:
+   historical_followup = json.loads(query('historical-followup-functions', SNAPSHOT))
+   run('historical-followup-exact-replay', [*psql(), '-q', '-f', FINAL_TARGET])
+   assert json.loads(query('historical-followup-replayed-functions', SNAPSHOT)) == historical_followup
+   receipt['historicalFollowupSQLAssertions'] = positive('historical-followup-private-positive', TEST)
+   receipt['historicalFollowupReplayAtOwnSchemaPoint'] = True
  receipt['currentMigrationCount'] = len(FINAL_MIGRATIONS)
  receipt['currentSQLAssertions'] = positive('current-final-private-positive', TEST)
  current_snapshot = json.loads(query('current-final-functions', SNAPSHOT))
- run('replay-current-private-authority', [*psql(), '-q', '-f', FINAL_TARGET])
+ refused = run('superseded-followup-refused', [*psql(), '-q', '-f', FINAL_TARGET], 3)
+ assert 'Review changed function notification_register_device_session' in refused
+ assert json.loads(query('superseded-followup-refusal-functions', SNAPSHOT)) == current_snapshot, 'Historical overlay must not overwrite newer reviewed functions'
+ receipt['supersededFollowupRefusedAtomic'] = True
+ run('replay-current-private-authority', [*psql(), '-q', '-f', FINAL_OVERLAY])
  assert json.loads(query('current-final-replayed-functions', SNAPSHOT)) == current_snapshot
  receipt['currentReplaySQLAssertions'] = positive('current-final-private-replayed', TEST)
- receipt['currentAuthorityReplayOnly'] = FINAL_TARGET.name
+ receipt['currentAuthorityReplayOnly'] = FINAL_OVERLAY.name
 
  assert all(hashlib.sha256((ROOT / n).read_bytes()).hexdigest() == h for n, h in hashes.items()), 'Consumed source changed during proof'
  receipt['sourceBoundAtEnd'] = True;receipt['passed'] = True

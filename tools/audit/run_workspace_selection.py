@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
+FINAL_OVERLAY=SQL/'migrations/20261010042000_legacy_notification_session_retirement.sql'
+CATALOG="select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|'order by oid::regprocedure::text))from pg_proc where pronamespace='public'::regnamespace;"
 UPLOAD_SUPPORT=['transport.ts','gateway_contract.ts','content_type.ts']
 STUDIO_SUPPORT=['handler.ts','property-music.ts','project-media.ts','context.ts']
 # Exact audited registration inventory, including current trial reservation and
@@ -69,9 +71,20 @@ try:
  run('start',[BIN['pg_ctl'],'-D',DATA,'-l',OUT/'server.log','-w','-t','30','-o',f"-k {SOCK} -p 55453 -c listen_addresses='' -c shared_buffers=16MB -c max_connections=15",'start'])
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit']);assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):query('migration-'+p.stem,p.read_text())
+ for p in sorted((SQL/'migrations').glob('*.sql')):
+  query('migration-'+p.stem,p.read_text())
+  if p==TARGET:
+   historical=query('historical-followup-catalog',CATALOG)
+   query('historical-followup-exact-replay',TARGET.read_text())
+   assert query('historical-followup-replayed-catalog',CATALOG)==historical
+   result=query('workspace-historical-followup-replay',(SQL/'tests/workspace_selection.sql').read_text());assert '\n28\n'in result and result.count('|t')==28
+ before=query('final-catalog',CATALOG)
+ refused=query('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function notification_register_device_session'in refused
+ assert query('superseded-followup-refusal-catalog',CATALOG)==before,'Historical overlay must not overwrite newer reviewed functions'
  for phase in ['after','replayed']:
-  if phase=='replayed':query('replay',TARGET.read_text())
+  if phase=='replayed':
+   query('replay-final-overlay',FINAL_OVERLAY.read_text())
+   assert query('final-replayed-catalog',CATALOG)==before,'Replay changes final authority/ACL/body'
   result=query('workspace-'+phase,(SQL/'tests/workspace_selection.sql').read_text());assert '\n28\n'in result and result.count('|t')==28
  # SQL negative control proves membership authorization is tested semantically.
  source=TARGET.read_text()
@@ -112,7 +125,7 @@ try:
  path.write_text(text.replace(anchor,'const org_id = await orgForUser(user.id);'))
  output=run('request-drift-control',deno+['--filter','bound listing create and retry',mutant/'me/workspaces.test.ts'],expected=1);assert re.search(r'0 passed \| 1 failed',output)and 'AssertionError'in output
  assert all(hashlib.sha256((ROOT/name).read_bytes()).hexdigest()==digest for name,digest in hashes.items()),'Source changed during verification'
- receipt.update(passed=True,sqlAssertions=28,handlerTests=HANDLER_TESTS,handlerInventory=HANDLER_INVENTORY,realConnectionRaces=2,missingMembershipDetected=True,requestDriftDetected=True)
+ receipt.update(passed=True,sqlAssertions=28,handlerTests=HANDLER_TESTS,handlerInventory=HANDLER_INVENTORY,realConnectionRaces=2,missingMembershipDetected=True,requestDriftDetected=True,historicalFollowupReplayAtOwnSchemaPoint=True,supersededFollowupRefusedAtomic=True,finalOverlay=FINAL_OVERLAY.name)
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  receipt['sourceHashesAfter']={name:hashlib.sha256((ROOT/name).read_bytes()).hexdigest() for name in hashes}

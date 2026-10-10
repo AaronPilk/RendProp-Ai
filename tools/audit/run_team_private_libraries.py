@@ -9,6 +9,7 @@ from datetime import datetime,timezone
 from decimal import Decimal
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase';TARGET=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
+FINAL_OVERLAY=SQL/'migrations/20261010042000_legacy_notification_session_retirement.sql'
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-team-private-final-',dir='/tmp'));DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC'};BIN={n:shutil.which(n)for n in ['initdb','pg_ctl','psql','createdb']};assert all(BIN.values())
 CONN=['-h',str(SOCK),'-p','55478','-U','postgres'];PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
@@ -42,11 +43,20 @@ try:
  run('start',[BIN['pg_ctl'],'-D',DATA,'-l',OUT/'server.log','-w','-t','30','-o',f"-k {SOCK} -p 55478 -c listen_addresses='' -c shared_buffers=16MB -c max_connections=20",'start'])
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit']);assert q('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  q('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):q('migration-'+p.stem,p.read_text())
  snapshot="select json_object_agg(p.oid::regprocedure::text,json_build_object('definition',pg_get_functiondef(p.oid),'acl',p.proacl,'owner',p.proowner,'config',p.proconfig,'definer',p.prosecdef))from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public';"
+ for p in sorted((SQL/'migrations').glob('*.sql')):
+  q('migration-'+p.stem,p.read_text())
+  if p==TARGET:
+   historical=json.loads(q('historical-followup-catalog',snapshot))
+   q('historical-followup-exact-replay',TARGET.read_text())
+   assert json.loads(q('historical-followup-replayed-catalog',snapshot))==historical
+   for name,count in [('team_private_libraries',92),('workspace_selection',28),('team_readiness',34)]:
+    r=q(name+'-historical-followup-replay',(SQL/'tests'/f'{name}.sql').read_text());assert re.search(rf'^({count})$',r,re.M)and len(re.findall(r'\|(?:true|t)$',r,re.M))==count,(name,'complete historical inventory')
  before=json.loads(q('definitions-before-replay',snapshot))
+ refused=q('superseded-followup-refused',TARGET.read_text(),3);assert 'Review changed function notification_register_device_session'in refused
+ assert json.loads(q('superseded-followup-refusal-catalog',snapshot))==before,'Historical overlay must not overwrite newer reviewed functions'
  for phase in ['fresh','replay']:
-  if phase=='replay':q('migration-exact-replay',TARGET.read_text());assert json.loads(q('definitions-after-replay',snapshot))==before,'Replay changes authority/ACL/body'
+  if phase=='replay':q('migration-exact-final-overlay-replay',FINAL_OVERLAY.read_text());assert json.loads(q('definitions-after-replay',snapshot))==before,'Replay changes authority/ACL/body'
   for name,count in [('team_private_libraries',92),('workspace_selection',28),('team_readiness',34)]:
    r=q(name+'-'+phase,(SQL/'tests'/f'{name}.sql').read_text());assert re.search(rf'^({count})$',r,re.M)and len(re.findall(r'\|(?:true|t)$',r,re.M))==count,(name,'complete inventory')
  # A compiled exact-listing authorization defect is caught by independent raw RLS tests.
@@ -76,7 +86,7 @@ try:
  lines=final.strip().splitlines();row=lines[0].split('|');spent=lines[1].split('|');assert row[:2]==['1',org]and Decimal(row[2])==Decimal(ceiling)and len(spent)==2 and all(Decimal(v)==Decimal(ceiling)for v in spent),('shared immutable liability',final,ceiling)
  # Exact source remains frozen throughout schema/replay/race verification.
  assert all(hashlib.sha256((ROOT/n).read_bytes()).hexdigest()==h for n,h in HASHES.items()),'Source changed during verification'
- RECEIPT.update(passed=True,sqlAssertions={'team_private_libraries':92,'workspace_selection':28,'team_readiness':34},replayIdentical=True,rawRLSNegativeControlDetected=True,sharedReflectionMeterNegativeControlDetected=True,realParentChildLastDollarRace=True,raceResult='one admit, one RP402; single immutable parent liability')
+ RECEIPT.update(passed=True,sqlAssertions={'team_private_libraries':92,'workspace_selection':28,'team_readiness':34},replayIdentical=True,rawRLSNegativeControlDetected=True,sharedReflectionMeterNegativeControlDetected=True,realParentChildLastDollarRace=True,raceResult='one admit, one RP402; single immutable parent liability',historicalFollowupReplayAtOwnSchemaPoint=True,supersededFollowupRefusedAtomic=True,finalOverlay=FINAL_OVERLAY.name)
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  RECEIPT['finishedAt']=datetime.now(timezone.utc).isoformat();RECEIPT['sourceHashesAfter']={n:hashlib.sha256((ROOT/n).read_bytes()).hexdigest()for n in HASHES};RECEIPT['sourceUnchanged']=RECEIPT['sourceHashesAfter']==HASHES;RECEIPT['passed']=RECEIPT['passed']and RECEIPT['sourceUnchanged'];(OUT/'receipt.json').write_text(json.dumps(RECEIPT,indent=2)+'\n')

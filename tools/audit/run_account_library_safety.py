@@ -9,19 +9,22 @@ import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010000032_private_library_adoption_and_serving_safety.sql'
 FOLLOWUP=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
-FIXTURES={'private_library_adoption_safety':32,'notification_session_fencing':27,'ops_deleted_workspace':16}
+FINAL_OVERLAY=SQL/'migrations/20261010042000_legacy_notification_session_retirement.sql'
+HISTORICAL_DEVICE_SUITE=SQL/'tests/notification_session_fencing_pre_canonical.sql'
+assert hashlib.sha256(HISTORICAL_DEVICE_SUITE.read_bytes()).hexdigest()=='dcf14b70d2d839537784c6d9417be852ea464d11596497ad5bf2eb77a2c807ae','Historical device fixture must retain its exact reviewed 27 cases'
+FIXTURES={'private_library_adoption_safety':32,'notification_session_fencing':29,'ops_deleted_workspace':16}
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-account-library-safety-',dir='/tmp'));OUT.chmod(0o700);DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC'};BIN={n:shutil.which(n)for n in['initdb','pg_ctl','psql','createdb']};assert all(BIN.values())
 CONN=['-h',str(SOCK),'-p','55475','-U','postgres'];PSQL=[BIN['psql'],'-X','--no-password',*CONN,'-d','rendprop_audit','-v','ON_ERROR_STOP=1','-Atq']
-SOURCES=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',*[SQL/'tests'/f'{n}.sql'for n in FIXTURES],pathlib.Path(__file__).resolve()]
+SOURCES=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',HISTORICAL_DEVICE_SUITE,*[SQL/'tests'/f'{n}.sql'for n in FIXTURES],pathlib.Path(__file__).resolve()]
 HASHES={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()for p in SOURCES}
 RECEIPT={'startedAt':datetime.now(timezone.utc).isoformat(),'sourceHashes':HASHES,'commands':[],'passed':False,'productionMutations':0,'providerCalls':0}
 def run(name,args,body=None,expected=0):
  r=subprocess.run(list(map(str,args)),input=body,text=True,cwd=ROOT,env=ENV,capture_output=True,timeout=120);log=OUT/(name+'.log');log.write_text(r.stdout+r.stderr);log.chmod(0o600)
  RECEIPT['commands'].append({'name':name,'exit':r.returncode,'log':str(log),'sha256':hashlib.sha256(log.read_bytes()).hexdigest()});assert r.returncode==expected,(name,r.returncode,log.read_text()[-1600:]);print(name,r.returncode,flush=True);return log.read_text()
 def q(name,body,expected=0):return run(name,PSQL,body,expected)
-def suite(name,phase):
- r=q(name+'-'+phase,(SQL/'tests'/f'{name}.sql').read_text());rows=[json.loads(line)for line in r.splitlines()if line.startswith('{')and '"suite"'in line];assert rows==[{'suite':name,'assertions':FIXTURES[name],**({'no_content_moved':True,'real_auth_adoption_acceptance':True}if name=='private_library_adoption_safety'else{'late_registration_refused':True,'late_delete_keeps_new_account':True}if name=='notification_session_fencing'else{'real_account_delete_used':True,'provider_liabilities_preserved':True,'prior_criterion_negative_control':True})}]
+def suite(name,phase,source=None,count=None):
+ r=q(name+'-'+phase,(source or SQL/'tests'/f'{name}.sql').read_text());rows=[json.loads(line)for line in r.splitlines()if line.startswith('{')and '"suite"'in line];assert rows==[{'suite':name,'assertions':FIXTURES[name]if count is None else count,**({'no_content_moved':True,'real_auth_adoption_acceptance':True}if name=='private_library_adoption_safety'else{'late_registration_refused':True,'late_delete_keeps_new_account':True}if name=='notification_session_fencing'else{'real_account_delete_used':True,'provider_liabilities_preserved':True,'prior_criterion_negative_control':True})}]
 def definition(sig):return q('definition-'+sig.split('(')[0],f"select pg_get_functiondef('public.{sig}'::regprocedure);")
 def child_race(label,agent,child,expect_deadlock):
  b=subprocess.Popen(PSQL,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(ENV,PGAPPNAME='safety-operation'))
@@ -104,10 +107,27 @@ try:
     q(f'unknown-predecessor-{i}-restore',current)
    assert q('historical-restored-catalog',catalog)==historical_before
    historical_accept=definition('accept_org_invite(uuid,text)')
+  if p==FOLLOWUP:
+   historical_followup=q('historical-followup-catalog',catalog)
+   q('historical-followup-exact-replay',FOLLOWUP.read_text())
+   assert q('historical-followup-replayed-catalog',catalog)==historical_followup
+   for name in FIXTURES:
+    # Preserve the exact pre-canonical 27 cases at the old overlay's schema
+    # point; final phases require all 29 current canonical-environment cases.
+    suite(name,'historical-followup-replay',HISTORICAL_DEVICE_SUITE if name=='notification_session_fencing'else None,27 if name=='notification_session_fencing'else None)
+   historical_final_accept=definition('accept_org_invite(uuid,text)')
+   q('unknown-followup-body-install',historical_final_accept.replace('AS $function$','AS $function$\n-- unreviewed fixture predecessor\n',1))
+   unknown_followup=q('unknown-followup-catalog',catalog)
+   refused=q('unknown-followup-body-refused',FOLLOWUP.read_text(),3);assert 'Review changed function accept_org_invite'in refused
+   assert q('unknown-followup-refusal-catalog',catalog)==unknown_followup,'Unknown predecessor refusal must be atomic'
+   q('restore-historical-followup-body',historical_final_accept)
+   assert q('historical-followup-restored-catalog',catalog)==historical_followup
  assert historical_accept is not None
  before=q('final-catalog',catalog)
+ refused=q('superseded-followup-refused',FOLLOWUP.read_text(),3);assert 'Review changed function notification_register_device_session'in refused
+ assert q('superseded-followup-refusal-catalog',catalog)==before,'Historical overlay must not overwrite newer reviewed functions'
  for phase in['fresh','replay']:
-  if phase=='replay':q('exact-final-selection-replay',FOLLOWUP.read_text());assert q('replayed-catalog',catalog)==before,'Replay changed final bodies or privileges'
+  if phase=='replay':q('exact-final-overlay-replay',FINAL_OVERLAY.read_text());assert q('replayed-catalog',catalog)==before,'Replay changed final bodies or privileges'
   for name in FIXTURES:suite(name,phase)
  # Actual adoption fails if the deterministic private selection is removed.
  current=definition('agent_private_library(uuid)');anchor='public.resolve_actor_owned_library(p_actor,false)';assert current.count(anchor)==1
@@ -118,7 +138,7 @@ try:
  q('install-ledger-deletion-negative-control',current.replace(anchor,'delete from public.cost_ledger where org_id=any(solo) or job_id=any(job_ids);'))
  r=q('ledger-deletion-negative-control',(SQL/'tests/ops_deleted_workspace.sql').read_text(),3);assert 'real deletion anonymizes exact ledger references'in r;q('restore-ledger-anonymization',current)
  # A session tombstone is meaningful: removing its check must admit late A.
- current=definition('notification_register_device_session(uuid,uuid,text,text,text,text,text)');anchor="if exists(select 1 from public.notification_device_session_tombstones t where t.user_id=p_user and t.session_id=p_session and t.token_sha256=digest and t.environment=v_env)";assert current.count(anchor)==1
+ current=definition('notification_register_device_session(uuid,uuid,text,text,text,text,text)');anchor="if exists(select 1 from public.notification_device_session_tombstones t where t.user_id=p_user and t.session_id=p_session and t.token_sha256=digest)";assert current.count(anchor)==1
  q('install-device-resurrection-negative-control',current.replace(anchor,'if false'))
  r=q('device-resurrection-negative-control',(SQL/'tests/notification_session_fencing.sql').read_text(),3);assert 'allowed late A POST cannot resurrect after B register'in r;q('restore-session-fence',current)
  # The actual two-child-lock inversion must deadlock if its early return is lost.
@@ -147,15 +167,12 @@ try:
  q('early-read-negative-install',early)
  early_replay=replay_selection_race('early-read-accepted-replay',agent,child,second,False)
  q('restore-final-accepted-replay-after-negative',final_accept)
- q('accepted-replay-exact-final-overlay',FOLLOWUP.read_text())
+ q('accepted-replay-exact-final-overlay',FINAL_OVERLAY.read_text())
  replayed=replay_selection_race('exact-replayed-accepted-replay',agent,child,second,True)
- q('unknown-followup-body-install',final_accept.replace('AS $function$','AS $function$\n-- unreviewed fixture predecessor\n',1))
- refused=q('unknown-followup-body-refused',FOLLOWUP.read_text(),3);assert 'Review changed function accept_org_invite'in refused
- q('restore-final-followup-body',final_accept)
  assert q('after-controls-catalog',catalog)==before
  for name in FIXTURES:suite(name,'restored')
- RECEIPT.update(passed=True,sqlAssertions=FIXTURES,exactReplay=True,unknownPredecessorsRefused=len(pins)+1,compiledNegativeControls=['two-org adoption','ledger deletion','device resurrection','actual child deadlock','accepted-invite early active read'],childRaceNegative=negative,childRacePositive=positive,acceptedReplayOld=old_replay,acceptedReplayCorrect=new_replay,acceptedReplayEarlyReadNegative=early_replay,acceptedReplayAfterExactReplay=replayed,historicalSafetyReplayAtOwnSchemaPoint=True)
+ RECEIPT.update(passed=True,sqlAssertions=FIXTURES,historicalSqlAssertions={**FIXTURES,'notification_session_fencing':27},historicalDeviceSuite=HISTORICAL_DEVICE_SUITE.name,exactReplay=True,unknownPredecessorsRefused=len(pins)+1,compiledNegativeControls=['two-org adoption','ledger deletion','device resurrection','actual child deadlock','accepted-invite early active read'],childRaceNegative=negative,childRacePositive=positive,acceptedReplayOld=old_replay,acceptedReplayCorrect=new_replay,acceptedReplayEarlyReadNegative=early_replay,acceptedReplayAfterExactReplay=replayed,historicalSafetyReplayAtOwnSchemaPoint=True,historicalFollowupReplayAtOwnSchemaPoint=True,supersededFollowupRefusedAtomic=True,finalOverlay=FINAL_OVERLAY.name)
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  RECEIPT['sourceHashesAfter']={n:hashlib.sha256((ROOT/n).read_bytes()).hexdigest()for n in HASHES};RECEIPT['sourceUnchanged']=RECEIPT['sourceHashesAfter']==HASHES;RECEIPT['passed']=RECEIPT['passed']and RECEIPT['sourceUnchanged'];RECEIPT['finishedAt']=datetime.now(timezone.utc).isoformat();(OUT/'receipt.json').write_text(json.dumps(RECEIPT,indent=2)+'\n');(OUT/'receipt.json').chmod(0o600)
-assert RECEIPT['passed'];print('PASS: 75 SQL assertions fresh/replay/restored, eight predecessor controls, actual child deadlock and four accepted-replay races',flush=True)
+assert RECEIPT['passed'];print('PASS: 77 SQL assertions fresh/replay/restored, historical 75 retained, eight predecessor controls, actual child deadlock and four accepted-replay races',flush=True)

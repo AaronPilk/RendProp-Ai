@@ -71,6 +71,9 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20261008220411_launch_blockers.sql",
     "20261008235218_launch_round2.sql",
     "20261009005727_launch_settlement_identity.sql",
+    # Superseded function overlay: focused drivers preserve its historical
+    # replay proof and verify it refuses the later reviewed device functions.
+    "20261010030225_reaudit_library_session_settlement.sql",
 })
 
 
