@@ -1073,6 +1073,10 @@
     {
       "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/testflight56/asc-draft-dry-run.json",
       "sha256": "76dd9ee0ebd42432836e4f5520d77532c3588a2c5357f045b7cb0d76999c350a"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/ci-final-dispatch.json",
+      "sha256": "2aa6a658a295ef90753d5da131cdadf5e903913aa0ebfcb8c0ef5b9bb965178a"
     }
   ],
   "limitations": [
@@ -1097,10 +1101,16 @@
   "previous_branch": "audit/launch-alignment-20261008",
   "final_branch_ci": {
     "branch": "fix/build56-final-reaudit-20261010",
-    "pending_normal_push_trigger": true,
+    "run_id": 38023826741,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38023826741",
+    "head_sha": "740438fc8d8b5fad8ff067af02734bc4697f1804",
     "source_checkpoint": "6d320d623d800fdb42b1e56dce51756cd45fad9f",
+    "trigger": "explicit workflow_dispatch (push trigger is main-only)",
+    "status_at_readback": "in_progress",
+    "conclusion_at_readback": null,
     "native_and_asc_source_matches_existing_archive": true,
     "all_required_jobs_and_steps_preserved": true,
-    "full_final_tip_hosted_success_not_yet_proven": true
+    "full_final_tip_hosted_success_not_yet_proven": true,
+    "later_commit_scope": "Only these three release handoff/manifest/prompt documentation files; product/test/workflow source is unchanged from this CI checkpoint."
   }
 }
