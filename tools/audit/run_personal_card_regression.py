@@ -92,14 +92,23 @@ try:
    adoption_before=query('adoption-before-definition',"select pg_get_functiondef('adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure);")
    adoption_acl=query('adoption-before-acl',"select json_build_object('acl',proacl,'owner',proowner,'definer',prosecdef,'config',proconfig)from pg_proc where oid='adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure;")
   run('apply-'+p.stem,[*PSQL,'-q','-1','-f',p])
+  if p==ADOPTION_MIGRATION:
+   # Bind the historical transform oracle to its own migration boundary.
+   # Later reviewed migrations may legitimately change adoption lock ordering
+   # or library selection; they must not erase this exact-additions proof.
+   historical_after=query('adoption-historical-after-definition',"select pg_get_functiondef('adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure);")
+   assert historical_after.count(ADOPTION_COPY)==1
+   adoption_stripped=historical_after.replace(ADOPTION_COPY,'').replace(ADOPTION_DECLARATION+' v_personal_card_disposition text;',ADOPTION_DECLARATION).replace(ADOPTION_RECEIPT.replace('true);',"true,'personal_card_disposition',v_personal_card_disposition);"),ADOPTION_RECEIPT)
+   assert adoption_stripped==adoption_before,'Unrelated adoption body changed'
+   assert query('adoption-historical-after-acl',"select json_build_object('acl',proacl,'owner',proowner,'definer',prosecdef,'config',proconfig)from pg_proc where oid='adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure;")==adoption_acl,'Adoption ACL/owner/definer/config changed'
+   run('adoption-historical-migration-replay',[*PSQL,'-q','-1','-f',ADOPTION_MIGRATION])
+   assert query('adoption-historical-replayed-definition',"select pg_get_functiondef('adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure);")==historical_after
  adoption_after=query('adoption-after-definition',"select pg_get_functiondef('adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure);")
  assert adoption_after.count(ADOPTION_COPY)==1
- adoption_stripped=adoption_after.replace(ADOPTION_COPY,'').replace(ADOPTION_DECLARATION+' v_personal_card_disposition text;',ADOPTION_DECLARATION).replace(ADOPTION_RECEIPT.replace('true);',"true,'personal_card_disposition',v_personal_card_disposition);"),ADOPTION_RECEIPT)
- assert adoption_stripped==adoption_before,'Unrelated adoption body changed'
  assert query('adoption-after-acl',"select json_build_object('acl',proacl,'owner',proowner,'definer',prosecdef,'config',proconfig)from pg_proc where oid='adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure;")==adoption_acl,'Adoption ACL/owner/definer/config changed'
  run('adoption-migration-replay',[*PSQL,'-q','-1','-f',ADOPTION_MIGRATION])
- assert query('adoption-replayed-definition',"select pg_get_functiondef('adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure);")==adoption_after
- receipt['adoptionWriter']={'onlyThreeReviewedAdditions':True,'ACLAndDefinerUnchanged':True,'exactReplayNoOp':True}
+ assert query('adoption-replayed-definition',"select pg_get_functiondef('adopt_anonymous_org(uuid,uuid,uuid,uuid)'::regprocedure);")==adoption_after,'Historical card replay changed current adoption definition'
+ receipt['adoptionWriter']={'onlyThreeReviewedAdditions':True,'historicalBoundaryVerified':True,'ACLAndDefinerUnchanged':True,'exactHistoricalReplayNoOp':True,'exactReplayNoOp':True,'currentDefinitionReplayNoOp':True}
  adoption_positive=run('card-adoption-positive',[*PSQL,'-At','-f',ADOPTION_TEST]);assert 'PASS: personal card adoption SQL assertions; all fixtures rolled back.'in adoption_positive
  adoption_controls=[]
  for name,anchor,replacement,reason in[

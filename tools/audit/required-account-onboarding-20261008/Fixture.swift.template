@@ -32,7 +32,7 @@ enum APIError: Error { case badResponse }
     }
 }
 // The push cleanup and purchase presentation side effects are checked separately.
-@MainActor final class PushManager { static let shared = PushManager(); func accountWillChange() {}; func accountDidChange() {} }
+@MainActor final class PushManager { static let shared = PushManager(); func accountWillChange(retainCleanup: Bool = true) {}; func accountDidChange() {} }
 @MainActor final class PurchaseManager { static let shared = PurchaseManager(); func clearAccountPresentation() {} }
 @MainActor enum AccountLocalPreferences { static func activate(previous: UUID?, next: UUID) {} }
 @MainActor final class AuthStore {

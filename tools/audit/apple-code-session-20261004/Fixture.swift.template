@@ -21,7 +21,7 @@ enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malf
 // their own actual-source privacy suites verify registration and local custody.
 @MainActor final class PushManager {
     static let shared = PushManager()
-    func accountWillChange() {}
+    func accountWillChange(retainCleanup: Bool = true) {}
     func accountDidChange() {}
 }
 @MainActor final class PurchaseManager {

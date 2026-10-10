@@ -14,7 +14,7 @@ const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
 const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", ...["export", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = { sourceHashes, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const receipt = { sourceHashes, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -51,6 +51,20 @@ fixture.requestExportFrame=callback=>{
 };
 const NativeRecorder=MediaRecorder;
 function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...extra});}
+// The exporter uses detached video elements, so observe them directly without
+// retiming events. A refused export has no MP4 to inspect; keep its media state.
+const observedVideo=new WeakSet();
+function observeVideo(video){
+  if(!(video instanceof HTMLVideoElement)||observedVideo.has(video))return;
+  observedVideo.add(video);
+  for(const event of ["waiting","stalled","playing","canplay","canplaythrough","ended"])
+    video.addEventListener(event,()=>{
+      if(!fixture.exporting)return;
+      log("media."+event,{sourceTime:video.currentTime,duration:video.duration,rate:video.playbackRate,
+        readyState:video.readyState,networkState:video.networkState,paused:video.paused,ended:video.ended,
+        buffered:Array.from({length:video.buffered.length},(_,index)=>[video.buffered.start(index),video.buffered.end(index)])});
+    });
+}
 window.MediaRecorder=class extends NativeRecorder {
   constructor(...args){super(...args);fixture.tracks.push(...args[0].getTracks());for(const event of ["start","resume","pause","stop"])
     super.addEventListener(event,()=>log(event+".native",{state:this.state}));}
@@ -64,7 +78,7 @@ window.MediaRecorder=class extends NativeRecorder {
   }
 };
 const nativePlay=HTMLMediaElement.prototype.play;
-HTMLMediaElement.prototype.play=function(...args){fixture.playingMedia=this;log("play.call",{time:this.currentTime,rate:this.playbackRate});return nativePlay.apply(this,args).then(result=>{log("play.resolved",{time:this.currentTime,rate:this.playbackRate});return result;});};
+HTMLMediaElement.prototype.play=function(...args){observeVideo(this);fixture.playingMedia=this;log("play.call",{time:this.currentTime,rate:this.playbackRate});return nativePlay.apply(this,args).then(result=>{log("play.resolved",{time:this.currentTime,rate:this.playbackRate});return result;});};
 document.querySelector("#sources").onchange=async event=>{fixture.ready=false;try{sources=[];for(const file of event.target.files)sources.push(await inspectFile(file,new AbortController().signal));fixture.ready=true;}catch(error){fixture.error=error.message;}};
 document.querySelector("#voice").onchange=event=>{voice=event.target.files[0];};
 document.querySelector("#run").onclick=async()=>{
@@ -189,7 +203,17 @@ document.querySelector("#run").onclick=async()=>{
     await page.locator("#voice").setInputFiles(narration); await expect.poll(() => page.evaluate(() => window.fixture.ready)).toBe(true);
     for (const narrated of [true, false]) {
       await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
-      await expect.poll(() => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending")), { timeout: 20000 }).toBe("done");
+      try {
+        await expect.poll(() => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending")), { timeout: 20000 }).toBe("done");
+      } finally {
+        // Retain failures before rethrowing the unchanged completion assertion.
+        // In particular, a broken control must never erase the event that caused
+        // a genuine production stall refusal. No variant accepts that refusal.
+        const attempt = await page.evaluate(() => ({ error: window.fixture.error, result: window.fixture.result,
+          trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
+          tracks: window.fixture.tracks.map(track => track.readyState) }));
+        receipt.attempts.push({ variant, narrated, ...attempt }); await persist();
+      }
       const download = page.waitForEvent("download"); await page.locator("#download").click(); const output = join(artifacts, `${variant}-${narrated ? "narrated" : "original"}.mp4`); await (await download).saveAs(output);
       const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", output], { encoding: "utf8" }));
       const trace = await page.evaluate(() => window.fixture.trace), duration = Number(probe.format.duration);
