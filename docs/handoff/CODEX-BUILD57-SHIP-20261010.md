@@ -1,6 +1,8 @@
 # Build 57 shipped to TestFlight — 2026-10-10
 
-**TestFlight 1.0.4 (57) is available for internal testing. App Store submission remains NO-GO.** Claude's supplied review was read in full and preserved as `CLAUDE-BUILD57-REVIEW-20261010.md`. Its archive GO was acted on; no review submission was sent.
+**Update: the owner subsequently instructed “submit to the app store.” Apple accepted 1.0.4 (57) at 2026-10-10 17:53:19 UTC; both version and submission read back WAITING_FOR_REVIEW, with MANUAL release. See `docs/releases/APPSTORE-57-20261010.json`. The outstanding acceptance items below remain open; submission does not certify them as passed.**
+
+**Historical pre-submission snapshot: TestFlight 1.0.4 (57) was available for internal testing; App Store submission was held.** Claude's supplied review was read in full and preserved as `CLAUDE-BUILD57-REVIEW-20261010.md`. Its archive GO was acted on; no review submission was sent.
 
 Machine receipt: `docs/releases/TESTFLIGHT-57-20261010.json`. Private evidence: `/Users/pilksclaes/LocalRendpropAudits/build57-ship-20261010/`. This documentation is a descendant of the frozen archive source, not a different product build.
 
