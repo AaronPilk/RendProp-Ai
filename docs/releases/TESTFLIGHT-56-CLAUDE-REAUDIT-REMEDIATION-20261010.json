@@ -1,0 +1,1106 @@
+{
+  "schema": "rendprop-build56-reaudit-remediation-v1",
+  "recorded_at_utc": "2026-10-10T04:20:12.170913+00:00",
+  "branch": "fix/build56-final-reaudit-20261010",
+  "code_checkpoint": "6d320d623d800fdb42b1e56dce51756cd45fad9f",
+  "archive_source_commit": "362693653060070ed42feb7cf5875d9b60960e43",
+  "native_runtime_byte_equivalence": true,
+  "post_archive_changes": [
+    ".github/workflows/ci.yml",
+    ".gitleaksignore",
+    "apps/studio/tests/export-resume-browser.mjs",
+    "services/supabase/migrations/20261010042000_legacy_notification_session_retirement.sql",
+    "services/supabase/tests/ci-bootstrap.sql",
+    "services/supabase/tests/legacy_notification_sessions.sql",
+    "services/supabase/tests/notification_session_fencing.sql",
+    "services/supabase/tests/notification_session_fencing_pre_canonical.sql",
+    "services/supabase/tests/reaudit_device_takeover.sql",
+    "services/supabase/tests/reaudit_device_takeover_pre_canonical.sql",
+    "tools/audit/apple-code-session-20261004/Fixture.swift.template",
+    "tools/audit/required-account-onboarding-20261008/Fixture.swift.template",
+    "tools/audit/run_account_library_safety.py",
+    "tools/audit/run_database_regression.py",
+    "tools/audit/run_legacy_notification_sessions.py",
+    "tools/audit/run_personal_card_regression.py",
+    "tools/audit/run_private_internal_testing.py",
+    "tools/audit/run_reaudit_database.py",
+    "tools/audit/run_team_private_libraries.py",
+    "tools/audit/run_workspace_selection.py"
+  ],
+  "apple": {
+    "app_id": "6808982413",
+    "build_id": "4c8413bc-1a73-4ccb-aeee-3c9e3286571f",
+    "marketing_version": "1.0.4",
+    "build_number": "56",
+    "processing": "VALID",
+    "audience": "APP_STORE_ELIGIBLE",
+    "autoNotifyEnabled": true,
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "READY_FOR_BETA_SUBMISSION",
+    "submitted_to_app_review": false,
+    "draft_prepared": {
+      "version_id": "39ff74df-71d4-4bf1-92f4-9c709e7f4366",
+      "linked_build_id": "4c8413bc-1a73-4ccb-aeee-3c9e3286571f",
+      "build_number": "56",
+      "review_id": "ecf0a17a-6fdd-40c9-8e0b-39f345b1b830",
+      "review_state": "READY_FOR_REVIEW",
+      "version_state": "READY_FOR_REVIEW",
+      "items": [
+        {
+          "id": "ZWNmMGExN2EtNmZkZC00MGM5LThlMGItMzlmMzQ1YjFiODMwfDE4fDJlMDUyNGU2LTQ5Y2EtNDQ3Yi04Mjg0LTA1ZWVlMWE2NDI2Yw",
+          "kind": "subscriptionVersion",
+          "resourceId": "2e0524e6-49ca-447b-8284-05eee1a6426c"
+        },
+        {
+          "id": "ZWNmMGExN2EtNmZkZC00MGM5LThlMGItMzlmMzQ1YjFiODMwfDE4fDlmMGIwZWFkLTdlODUtNGMzOC04NTJlLTI2MTdhMjc3ZDc4YQ",
+          "kind": "subscriptionVersion",
+          "resourceId": "9f0b0ead-7e85-4c38-852e-2617a277d78a"
+        },
+        {
+          "id": "ZWNmMGExN2EtNmZkZC00MGM5LThlMGItMzlmMzQ1YjFiODMwfDE4fDczYjZmZjNhLWUxNWMtNDQ1MS04YTg4LTk0YmZjNjk2Y2E1NA",
+          "kind": "subscriptionVersion",
+          "resourceId": "73b6ff3a-e15c-4451-8a88-94bfc696ca54"
+        },
+        {
+          "id": "ZWNmMGExN2EtNmZkZC00MGM5LThlMGItMzlmMzQ1YjFiODMwfDZ8ODkyODM4NTQz",
+          "kind": "appStoreVersion",
+          "resourceId": "39ff74df-71d4-4bf1-92f4-9c709e7f4366"
+        }
+      ],
+      "submitted_to_app_review": false,
+      "permitted_mutations_only": [
+        "attach exact build56",
+        "add exact version1.0.4 to existing draft review"
+      ]
+    }
+  },
+  "artifacts": {
+    "ipa_sha256": "d90670982499286bfd2ac86c9300669e7f66fa4bff64f535cdf4e396de845a15",
+    "archived_binary_sha256": "3687f863daf6d560c195d2f49882c59dbc49ca5fca53f0dd996991c5b47048e9",
+    "archive_export_dsym_uuid": "5AC13992-2087-3E56-9650-458A80B20589",
+    "exported_profile": "App Store distribution",
+    "exported_get_task_allow": false,
+    "exported_apns_environment": "production",
+    "archive_signing": "development",
+    "tracked_compiled_swift_inputs": 135,
+    "generated_swift_inputs": 1
+  },
+  "ci": {
+    "run_id": 38021265572,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38021265572",
+    "head_sha": "317309ad5c065fa19f6d25a0eb8f87c472884686",
+    "status": "in_progress",
+    "final_success_not_yet_proven": true,
+    "scope": "Exact hosted checkpoint317309a before final legacy notification SQL. Final code6d320d6 has source-bound local SQL/control proofs; native archive inputs remain equal. A pushed-tip run is triggered normally and must be inspected separately.",
+    "original_branch_kept_unchanged_to_avoid_cancellation": true
+  },
+  "supabase": {
+    "project_id": "ymgqpbnjpztwjsyvceld",
+    "repository_migration": "services/supabase/migrations/20261010030225_reaudit_library_session_settlement.sql",
+    "repository_migration_sha256": "eca6c6354bd2c9a0f4b0bbf3e96ab6078f9d14799ada0fa401f7d0edd21ef5ba",
+    "live_migration_version": "20261010031507",
+    "live_migration_name": "reaudit_library_session_settlement",
+    "functions": [
+      {
+        "md5": "09979c64b6c436674113a1de271dfe6a",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "accept_org_invite(uuid,text)",
+        "anon_execute": false,
+        "public_execute": false,
+        "service_execute": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "f386a4f2a7d578ceb1cbbdbee8a69349",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "adopt_anonymous_org(uuid,uuid,uuid,uuid)",
+        "anon_execute": false,
+        "public_execute": false,
+        "service_execute": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "746cc680332190d8338147f67308ce22",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "workspace_directory(uuid,uuid)",
+        "anon_execute": false,
+        "public_execute": false,
+        "service_execute": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "922f967fa624cc026dbe6f60ad922a0e",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "select_workspace(uuid,uuid)",
+        "anon_execute": false,
+        "public_execute": false,
+        "service_execute": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "b02d5dc9f5a6196e9c658ab236c90475",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "cost_ledger_settle_serving_hold()",
+        "anon_execute": false,
+        "public_execute": false,
+        "service_execute": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "1864eeb90382f6e43ecb140ae2b29fed",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "notification_register_device_session(uuid,uuid,text,text,text,text,text)",
+        "anon_execute": false,
+        "public_execute": false,
+        "service_execute": true,
+        "authenticated_execute": false
+      },
+      {
+        "md5": "a3c0fcb96cc119bb0130aa4449a77430",
+        "config": [
+          "search_path=\"\""
+        ],
+        "definer": true,
+        "signature": "notification_unregister_device(uuid,uuid,text,text)",
+        "anon_execute": false,
+        "public_execute": false,
+        "service_execute": true,
+        "authenticated_execute": false
+      }
+    ],
+    "edge_functions": [
+      {
+        "name": "ai-photo",
+        "live_version": 68,
+        "verify_jwt": true,
+        "readback_runtime_files": 36,
+        "mismatches": [],
+        "type_only_omissions": [],
+        "package_sha256": "0c60a2e27ecf35a96c320aad64933a333b669a152dbe37d709c7481db4a2bd53",
+        "packaged_source_files": [
+          {
+            "path": "services/supabase/functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "path": "services/supabase/functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "path": "services/supabase/functions/_shared/custom-photo-prompt.ts",
+            "sha256": "033e6157ccfa532796d83b3d2ebcdd139c8f6367be0e28914bffa8f765cc9867"
+          },
+          {
+            "path": "services/supabase/functions/_shared/entitlements.ts",
+            "sha256": "ae2edbe28130cdcb50312ab6a149da4dca335805767c3a8d076a3b858125674e"
+          },
+          {
+            "path": "services/supabase/functions/_shared/fairhousing.ts",
+            "sha256": "fb98d1dcd99dba48a698ad4a90d853032afcf23eac5e25d89094c33560234647"
+          },
+          {
+            "path": "services/supabase/functions/_shared/funded-serving.ts",
+            "sha256": "91bd5d946b443ffa34602c77631c2eb6a0308d330da0f5399be2949a04c02ba7"
+          },
+          {
+            "path": "services/supabase/functions/_shared/hosting-retention.ts",
+            "sha256": "b701b3e991f3f97d522505f661c4ca3fd9caab8ab6f0e33966ad5728cec82f75"
+          },
+          {
+            "path": "services/supabase/functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "path": "services/supabase/functions/_shared/idempotency.ts",
+            "sha256": "f24927ffe48602c7a8a8e9995c0ebc70156bdf8932276d75999d6a3b6b9b9b87"
+          },
+          {
+            "path": "services/supabase/functions/_shared/ledger.ts",
+            "sha256": "99ea700b397dbcdc45cc2799c48c1936c72f9eb73e55b8311bc9e8eee2703224"
+          },
+          {
+            "path": "services/supabase/functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "path": "services/supabase/functions/_shared/media-delivery-admission.ts",
+            "sha256": "de0b928251b92bc63e90e0ceb951b7bd17dc812391e5aa1f8a353b25d3d34569"
+          },
+          {
+            "path": "services/supabase/functions/_shared/provenance.ts",
+            "sha256": "b87cd250d2bc28f93ebab7dbb4b81c804bb53fc0ad08978729119fb810eb8b7a"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/anthropic.ts",
+            "sha256": "9a871009005094617f666df505e11d48df9c659834de1f814672131618ccf792"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/chain.ts",
+            "sha256": "4ecb52ce2c58f304dca74b4f06320a479486db0042add3ce00d5f65580320d49"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/common.ts",
+            "sha256": "05e826ac2b523e6022815e8d6177784bbced327c79cacc2050830dfada46aacd"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/elevenlabs.ts",
+            "sha256": "e8aec5792e94316a01a0f9d262a4245bdfec210ccd1b4d47e28bb25ad037f4e3"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/fal.ts",
+            "sha256": "784f441e4af6a2c3f7337ebb4db522d57e4849d825af5831654f0ef0f1b34b93"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/gemini.ts",
+            "sha256": "5c07f0f1fbc71775f1eec113ded79dde00f9875b959aa6c58286556752faf0a7"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/higgsfield.ts",
+            "sha256": "e3fdfaf46164e12863592e475f337b2d747f559eb77eb03b3f62c64f07528faf"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/index.ts",
+            "sha256": "fb7e8a959cfcbbf2e7075ffb0bce3b61f04455d47db4b67a611c70960e264b9f"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/kie.ts",
+            "sha256": "012e5b0b5edc8746affa8bf0a3b1b2ba6f024f70a6184143089b35305dfb2967"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/openai.ts",
+            "sha256": "8eee34f0570dba9a7df26834f1d4ce090301a1e3bfd6ca8edf79ca461c06444c"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/params.ts",
+            "sha256": "3835bd34b45a9eee4aac46b708764db4f8fd73341c3d7bdf98921580f16b9a6c"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/types.ts",
+            "sha256": "1c61ebecdf29e0511b7a5bee6a13d30b7ea5f6f770c43fd95fefd25a0ba82bcd"
+          },
+          {
+            "path": "services/supabase/functions/_shared/r2.ts",
+            "sha256": "b1e601028cb7d2fb88309c6f979a723a639c3ffbf084c757656f085a85988219"
+          },
+          {
+            "path": "services/supabase/functions/_shared/ratelimit.ts",
+            "sha256": "61671b0b7c9ee05b19bbd565cf5778c44126f7b4a050942c4d14d26fdb1a2e61"
+          },
+          {
+            "path": "services/supabase/functions/_shared/router.ts",
+            "sha256": "c58aa1d32a1b8e33b40e935000f6b8be68ddc49adc47b2bb5c2dea51868b7010"
+          },
+          {
+            "path": "services/supabase/functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "path": "services/supabase/functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "path": "services/supabase/functions/ai-copy/guard.ts",
+            "sha256": "b670cd06bbfb4024714cf0e09daa08d6e4001422748ba182440cb23c71954a01"
+          },
+          {
+            "path": "services/supabase/functions/ai-copy/prompt.ts",
+            "sha256": "5595355894f3c26f57508c39b447aeefcbedd838d7448ca63b59c445b43dce6c"
+          },
+          {
+            "path": "services/supabase/functions/ai-photo/helper-policy.ts",
+            "sha256": "97ef99e93559b093ff6525f956118b83c0f1ed90ad8fa775fb071fc545599b0a"
+          },
+          {
+            "path": "services/supabase/functions/ai-photo/index.ts",
+            "sha256": "054d53e912840ac181fba456d19a84419d5f004d1c29f42ea9e74acbf9a55fd9"
+          },
+          {
+            "path": "services/supabase/functions/ai-photo/input-policy.ts",
+            "sha256": "d8ac5e2130e4724b29924bc6d0bde570345651d6a7848a960de5e06e74cce543"
+          },
+          {
+            "path": "services/supabase/functions/ai-photo/photo-result.ts",
+            "sha256": "ed85579b941d9d7cd2e09c9e22ad637f8cc53cf62c33fab081248b9641c62ded"
+          }
+        ]
+      },
+      {
+        "name": "ai-copy",
+        "live_version": 35,
+        "verify_jwt": true,
+        "readback_runtime_files": 25,
+        "mismatches": [],
+        "type_only_omissions": [
+          "_shared/providers/types.ts"
+        ],
+        "package_sha256": "716d3bbdd81842c3bd795ef9a95ac53711ead012841e96e455643825606b1947",
+        "packaged_source_files": [
+          {
+            "path": "services/supabase/functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "path": "services/supabase/functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "path": "services/supabase/functions/_shared/custom-photo-prompt.ts",
+            "sha256": "033e6157ccfa532796d83b3d2ebcdd139c8f6367be0e28914bffa8f765cc9867"
+          },
+          {
+            "path": "services/supabase/functions/_shared/entitlements.ts",
+            "sha256": "ae2edbe28130cdcb50312ab6a149da4dca335805767c3a8d076a3b858125674e"
+          },
+          {
+            "path": "services/supabase/functions/_shared/fairhousing.ts",
+            "sha256": "fb98d1dcd99dba48a698ad4a90d853032afcf23eac5e25d89094c33560234647"
+          },
+          {
+            "path": "services/supabase/functions/_shared/funded-serving.ts",
+            "sha256": "91bd5d946b443ffa34602c77631c2eb6a0308d330da0f5399be2949a04c02ba7"
+          },
+          {
+            "path": "services/supabase/functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "path": "services/supabase/functions/_shared/ledger.ts",
+            "sha256": "99ea700b397dbcdc45cc2799c48c1936c72f9eb73e55b8311bc9e8eee2703224"
+          },
+          {
+            "path": "services/supabase/functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/anthropic.ts",
+            "sha256": "9a871009005094617f666df505e11d48df9c659834de1f814672131618ccf792"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/chain.ts",
+            "sha256": "4ecb52ce2c58f304dca74b4f06320a479486db0042add3ce00d5f65580320d49"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/common.ts",
+            "sha256": "05e826ac2b523e6022815e8d6177784bbced327c79cacc2050830dfada46aacd"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/gemini.ts",
+            "sha256": "5c07f0f1fbc71775f1eec113ded79dde00f9875b959aa6c58286556752faf0a7"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/openai.ts",
+            "sha256": "8eee34f0570dba9a7df26834f1d4ce090301a1e3bfd6ca8edf79ca461c06444c"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/params.ts",
+            "sha256": "3835bd34b45a9eee4aac46b708764db4f8fd73341c3d7bdf98921580f16b9a6c"
+          },
+          {
+            "path": "services/supabase/functions/_shared/providers/types.ts",
+            "sha256": "1c61ebecdf29e0511b7a5bee6a13d30b7ea5f6f770c43fd95fefd25a0ba82bcd"
+          },
+          {
+            "path": "services/supabase/functions/_shared/r2.ts",
+            "sha256": "b1e601028cb7d2fb88309c6f979a723a639c3ffbf084c757656f085a85988219"
+          },
+          {
+            "path": "services/supabase/functions/_shared/ratelimit.ts",
+            "sha256": "61671b0b7c9ee05b19bbd565cf5778c44126f7b4a050942c4d14d26fdb1a2e61"
+          },
+          {
+            "path": "services/supabase/functions/_shared/router.ts",
+            "sha256": "c58aa1d32a1b8e33b40e935000f6b8be68ddc49adc47b2bb5c2dea51868b7010"
+          },
+          {
+            "path": "services/supabase/functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "path": "services/supabase/functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "path": "services/supabase/functions/ai-copy/agentreel.ts",
+            "sha256": "f9fb1b0a9d1b9e22ffe9b2a7735f9661edd0b20df33a55f9c86afb58aed1dc88"
+          },
+          {
+            "path": "services/supabase/functions/ai-copy/guard.ts",
+            "sha256": "b670cd06bbfb4024714cf0e09daa08d6e4001422748ba182440cb23c71954a01"
+          },
+          {
+            "path": "services/supabase/functions/ai-copy/index.ts",
+            "sha256": "a159d7b76c799a14b6c184b72ed818c0dde03ba52340420d56791678b3156850"
+          },
+          {
+            "path": "services/supabase/functions/ai-copy/prompt.ts",
+            "sha256": "5595355894f3c26f57508c39b447aeefcbedd838d7448ca63b59c445b43dce6c"
+          },
+          {
+            "path": "services/supabase/functions/ai-copy/shotlist.ts",
+            "sha256": "5bafc014c41f9702b42e436ba39a35bc34d733f8727029bf8b27d31bab58d2de"
+          }
+        ]
+      },
+      {
+        "name": "notify",
+        "live_version": 24,
+        "verify_jwt": false,
+        "readback_runtime_files": 14,
+        "mismatches": [],
+        "type_only_omissions": [],
+        "package_sha256": "4c69e444a9478d321de5430b118bc44f6fa8dc5bd5d589cb6a6b9ee67794e4dc",
+        "packaged_source_files": [
+          {
+            "path": "services/supabase/functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "path": "services/supabase/functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "path": "services/supabase/functions/_shared/hosting-retention.ts",
+            "sha256": "b701b3e991f3f97d522505f661c4ca3fd9caab8ab6f0e33966ad5728cec82f75"
+          },
+          {
+            "path": "services/supabase/functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "path": "services/supabase/functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "path": "services/supabase/functions/_shared/ops-alert.ts",
+            "sha256": "eaffe41657a613e66bb8009381140f8b5dee6c02110f4fe9935f21d9d48613e6"
+          },
+          {
+            "path": "services/supabase/functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "path": "services/supabase/functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "path": "services/supabase/functions/notify/apns.ts",
+            "sha256": "e4021554fc174e23aadb8c0b443228634d9346997654504d7c7bd769b03ea7cb"
+          },
+          {
+            "path": "services/supabase/functions/notify/client-delivery.ts",
+            "sha256": "231576760dd51ca01867545fc4cfdeb23c1c90adb4c5f16cdaf6a8af78875206"
+          },
+          {
+            "path": "services/supabase/functions/notify/copy.ts",
+            "sha256": "b95c402df23530316541b5221a8b4f19432cd62259ef267a9e5a276aa6bbe0ae"
+          },
+          {
+            "path": "services/supabase/functions/notify/deliver.ts",
+            "sha256": "62836873303e071b854df082b16f1108d2ccfd5fcc3eabb82192abd1ca29abbd"
+          },
+          {
+            "path": "services/supabase/functions/notify/email.ts",
+            "sha256": "886b9da2dea3de8bd5dbe0bf0e528a59eca08f2ec4215bcacba0d984fd8a7ed5"
+          },
+          {
+            "path": "services/supabase/functions/notify/index.ts",
+            "sha256": "78e993e72213c332c5b8dc14f37f079f3e1cf36954fe25e35dbf1db1645adcf4"
+          }
+        ]
+      },
+      {
+        "name": "leads",
+        "live_version": 48,
+        "verify_jwt": false,
+        "readback_runtime_files": 13,
+        "mismatches": [],
+        "type_only_omissions": [],
+        "package_sha256": "d5c3378472a0aadb224a81f79d06d244ff4478153f3f251714d5f4cc6bffd928",
+        "packaged_source_files": [
+          {
+            "path": "services/supabase/functions/_shared/api-key-config.ts",
+            "sha256": "7ac4d7a03330b34f7bf7292256b1a72b47c4f9592603de19d69d9ce7ca432512"
+          },
+          {
+            "path": "services/supabase/functions/_shared/cors.ts",
+            "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+          },
+          {
+            "path": "services/supabase/functions/_shared/http.ts",
+            "sha256": "8588456cbcf68e159ad426a77c48125aa79ab270cf82a612f56f23fec366bcad"
+          },
+          {
+            "path": "services/supabase/functions/_shared/library-access.ts",
+            "sha256": "15b029e62ebbc3011db7cf40e71537f5d916fb7fb4cff2ef3cda018f80e84693"
+          },
+          {
+            "path": "services/supabase/functions/_shared/library-leads.ts",
+            "sha256": "690a46b170b2fab113458b721cad6fd3795a201a9cea1b358d556cfb42a3ea92"
+          },
+          {
+            "path": "services/supabase/functions/_shared/ratelimit.ts",
+            "sha256": "61671b0b7c9ee05b19bbd565cf5778c44126f7b4a050942c4d14d26fdb1a2e61"
+          },
+          {
+            "path": "services/supabase/functions/_shared/supabase.ts",
+            "sha256": "c0058f5aba53d52d15c1296b92a99703a887b2d74dc853e9486527e5e826605a"
+          },
+          {
+            "path": "services/supabase/functions/_shared/workspaces.ts",
+            "sha256": "3799968d8c3d503059c049fb88d24ad854fc991c029681a139e8d52365320579"
+          },
+          {
+            "path": "services/supabase/functions/leads/client-delivery.ts",
+            "sha256": "a6439e155b373b3f32d99fbd90c928a09ca0167b2ce40892b4a6b164bf30e3b6"
+          },
+          {
+            "path": "services/supabase/functions/leads/deletion.ts",
+            "sha256": "3de2e2f57eae0f875949ec06827878d80497c2ff88571c5259e5a02bc641b8cb"
+          },
+          {
+            "path": "services/supabase/functions/leads/index.ts",
+            "sha256": "eac7379876e42c484e6cb9a66f9f341d0096b9df376ffc95d2acaab114574708"
+          },
+          {
+            "path": "services/supabase/functions/leads/recipient-verification.ts",
+            "sha256": "b516bf27c36879da7ba7af4cd7bb7d9aeebf6a01ad127392d7242ec1ec2e0156"
+          },
+          {
+            "path": "services/supabase/functions/leads/turnstile.ts",
+            "sha256": "3a7d750b0427271cf6a3c921647bb571d41265b7ef0bfbbbbd7ecf0f8f0012c8"
+          }
+        ]
+      }
+    ],
+    "advisors_no_new_groups": true,
+    "first_migration_notification_register_md5": "496ab4845be208fa8e59ed40100d3d70",
+    "appended_notification_migration": {
+      "repository_path": "services/supabase/migrations/20261010042000_legacy_notification_session_retirement.sql",
+      "repository_sha256": "129072d9d7ae456ef0fb248e85764cea73faa66ee4e11b3b9c576612471d1b35",
+      "live_version": "20261010040603",
+      "live_name": "legacy_notification_session_retirement",
+      "schema_and_function_readback_verified": true,
+      "private_table": "notification_legacy_device_retirements",
+      "rls": true,
+      "policies": 0,
+      "direct_client_and_service_table_access": false,
+      "no_existing_auth_or_device_rows_rewritten": true,
+      "prior_device_aggregate": {
+        "total": 3,
+        "legacy_null_session_id": 3
+      },
+      "new_security_WARN_ERROR": []
+    }
+  },
+  "cloudflare": {
+    "tour_host_version": "721537d4-9327-4d0c-b572-66a8876861ff",
+    "studio_version": "ebce398f-5cf5-4b86-8caa-c9f9ced4a084",
+    "site_routes": [
+      "/features",
+      "/terms",
+      "/privacy",
+      "/support"
+    ],
+    "site_raw_equal": false,
+    "site_normalized_equal": true,
+    "site_normalization": "Only exact observed 938-byte Cloudflare JSD insertion before closing body; dynamic ray and timestamp fields allowed",
+    "studio_assets_checked": 31,
+    "studio_get_requests": 35,
+    "authenticated_studio_login_verified": false,
+    "studio_tests": 478,
+    "gzip_bytes": 349053,
+    "unchanged_gzip_ceiling": 350000
+  },
+  "automated": {
+    "edge": {
+      "passed": 1885,
+      "failed": 0,
+      "ignored": 1
+    },
+    "native_adoption": {
+      "assertions": 124,
+      "compiled_faults": 9,
+      "optimized_assertions": 124,
+      "production_library_assertions": 16
+    },
+    "native_push": {
+      "assertions": 67,
+      "compiled_faults": 10
+    },
+    "native_deletion": {
+      "assertions": 144,
+      "compiled_faults": 9
+    },
+    "phase1": {
+      "passed": 35,
+      "failed": 0,
+      "skipped": 0
+    },
+    "required_account": {
+      "assertions": 50,
+      "compiled_faults": 12
+    },
+    "apple_code": {
+      "assertions": 29,
+      "compiled_faults": 5
+    },
+    "new_database": {
+      "assertions_per_boundary": 42,
+      "boundaries": [
+        "fresh",
+        "replayed",
+        "restored"
+      ],
+      "real_connection_races": 4,
+      "unknown_predecessor_guards": 6,
+      "restored_old_function_controls": 3,
+      "historical_assertions_per_boundary": 41,
+      "superseded_migration_refused_atomically": true
+    },
+    "invariants": {
+      "passed": 270,
+      "failed": 0
+    },
+    "personal_card_fixture": {
+      "sql_assertions": 96,
+      "compiled_function_controls": 5,
+      "actual_races": 8,
+      "downstream_commands_passed": 19
+    },
+    "browser_export_trace_only_local": {
+      "exports": 12,
+      "preparation_cancellation_cases": 4,
+      "fixed_forced_stall_control_rejected": true,
+      "hosted_previous_failure_cause_still_unproven": true,
+      "tolerances_relaxed": false,
+      "app_changed": false
+    },
+    "secret_scan": {
+      "exact_historical_source_checksum_exception_only": true,
+      "broad_exclusion_added": false,
+      "synthetic_generic_key_negative_control_rejected": true
+    },
+    "account_safety_final": {
+      "assertions_per_boundary": 77,
+      "historical_assertions": 75,
+      "unknown_predecessor_guards": 8,
+      "compiled_faults_and_actual_races_preserved": true
+    },
+    "legacy_notifications_final": {
+      "legacy_assertions": 23,
+      "modern_takeover_assertions": 10,
+      "canonical_session_assertions": 29,
+      "boundaries": [
+        "fresh",
+        "replayed",
+        "restored"
+      ],
+      "compiled_function_controls": 8,
+      "unknown_predecessor_guards": 2,
+      "source_unchanged": true,
+      "exact_historical_fixtures_retained": [
+        9,
+        27
+      ]
+    },
+    "remaining_final_schema_drivers": {
+      "source_checkpoint": "6d320d623d800fdb42b1e56dce51756cd45fad9f",
+      "workspace_assertions": 28,
+      "workspace_handler_tests": 35,
+      "team_assertions": 154,
+      "private_testing_historical_assertions": 81,
+      "private_testing_final_assertions": 82,
+      "mutants_and_races_preserved": true,
+      "all_five_final_driver_source_hashes_match": true,
+      "hosted_ci_claim": false
+    }
+  },
+  "prior_failed_runs": [
+    {
+      "id": 38020036391,
+      "reason": "Exact historical migration SHA checksum false-positive; exception only after recomputation"
+    },
+    {
+      "id": 38020286893,
+      "reason": "Native stub signature, historical card migration boundary and sequential browser-control stall; original failure evidence retained"
+    }
+  ],
+  "changed_source_files": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "2283a63ca585efc9a909c1803133e1aa77ca2c8ae948d34ff5523702bc990fe6"
+    },
+    {
+      "path": ".gitleaksignore",
+      "sha256": "0247b907d48b26b81e6cd6d7eff9c54037c1914fc800e837b0287c90b38d9628"
+    },
+    {
+      "path": "apps/ios/Rendprop.xcodeproj/project.pbxproj",
+      "sha256": "67709d755017754168ac7a1cc33599e2ad9f090115e2860bc0a0eb6477c7638e"
+    },
+    {
+      "path": "apps/ios/Rendprop/Auth/AdoptionLocalBindings.swift",
+      "sha256": "564fbf5a6c1141d816e90cb64d1413b42a540461aed067f67a55cf2c8707a911"
+    },
+    {
+      "path": "apps/ios/Rendprop/Auth/AuthStore.swift",
+      "sha256": "9b4c66d37ea48e697f798c335e841673ecb256fb022bd493673a4697a3db94be"
+    },
+    {
+      "path": "apps/ios/Rendprop/Push/PushManager.swift",
+      "sha256": "c6a27a08e00ec431ac55360006e477010c8a327a5aabae9fda9984630502e66f"
+    },
+    {
+      "path": "apps/ios/Rendprop/RendpropApp.swift",
+      "sha256": "fafbee30b76db9f00273fd3c5ebfa8b607f4fce20d0eeba0828756fa66f3d9ce"
+    },
+    {
+      "path": "apps/ios/Rendprop/Screens/SettingsView.swift",
+      "sha256": "97d156c0ff1c6cb9fe49e59095a83baeb815bef71efaf3b2b5ec1fefd03c530b"
+    },
+    {
+      "path": "apps/ios/project.yml",
+      "sha256": "65c2d4fa80e037f2355bc06445bb6f4779dcbd2ecb34aca9811548b4ab29cec2"
+    },
+    {
+      "path": "apps/ios/tests/PushAccountIsolationTests.swift",
+      "sha256": "528c22ff545877ec2fc31b2a50f63b1965cde13661869037b913b7f09da53eb5"
+    },
+    {
+      "path": "apps/ios/tests/run-push-account-isolation.py",
+      "sha256": "cece347ad125a5415b9db697dbf20b5d524ef8179571a10ffb02e0efbd873dde"
+    },
+    {
+      "path": "apps/studio/tests/export-resume-browser.mjs",
+      "sha256": "3ac0703950abffee274115048a62118e9bbb3ae566461d085bd870e6098250d8"
+    },
+    {
+      "path": "services/edge/tour-host/public/features.html",
+      "sha256": "15449a5cba358c2a5f3357d10aa30b70c1847d0028c13cd72ba86233243968f3"
+    },
+    {
+      "path": "services/edge/tour-host/scripts/check-lead-form.mjs",
+      "sha256": "38df38090748ef97043299c3c84abc3551c16752cf96ef23f5d86520e6998e53"
+    },
+    {
+      "path": "services/supabase/functions/_shared/custom-photo-prompt.test.ts",
+      "sha256": "32522a7ea6910db10645659bca74c1a6553ce54cb87a1125504fd681c7c46583"
+    },
+    {
+      "path": "services/supabase/functions/_shared/custom-photo-prompt.ts",
+      "sha256": "033e6157ccfa532796d83b3d2ebcdd139c8f6367be0e28914bffa8f765cc9867"
+    },
+    {
+      "path": "services/supabase/functions/ai-copy/guard.ts",
+      "sha256": "b670cd06bbfb4024714cf0e09daa08d6e4001422748ba182440cb23c71954a01"
+    },
+    {
+      "path": "services/supabase/functions/ai-copy/guard_test.ts",
+      "sha256": "50f866ceb25d70c1efb5f67fe66742e9715f2c7a96a67c10c1efb92460ee96e9"
+    },
+    {
+      "path": "services/supabase/functions/ai-photo/photo-result-handler.test.ts",
+      "sha256": "d5b06e836e4376051de70d7271ce6621fc8d6c4ea076f8e8c5c1875b07c20c1e"
+    },
+    {
+      "path": "services/supabase/functions/leads/index.ts",
+      "sha256": "eac7379876e42c484e6cb9a66f9f341d0096b9df376ffc95d2acaab114574708"
+    },
+    {
+      "path": "services/supabase/functions/notify/apns.ts",
+      "sha256": "e4021554fc174e23aadb8c0b443228634d9346997654504d7c7bd769b03ea7cb"
+    },
+    {
+      "path": "services/supabase/functions/notify/deliver.ts",
+      "sha256": "62836873303e071b854df082b16f1108d2ccfd5fcc3eabb82192abd1ca29abbd"
+    },
+    {
+      "path": "services/supabase/functions/notify/notify.test.ts",
+      "sha256": "7aa45f0994d866d73554f2165562602cfd647b734148f7219c17de6e4f15fca1"
+    },
+    {
+      "path": "services/supabase/migrations/20261010030225_reaudit_library_session_settlement.sql",
+      "sha256": "eca6c6354bd2c9a0f4b0bbf3e96ab6078f9d14799ada0fa401f7d0edd21ef5ba"
+    },
+    {
+      "path": "services/supabase/migrations/20261010042000_legacy_notification_session_retirement.sql",
+      "sha256": "129072d9d7ae456ef0fb248e85764cea73faa66ee4e11b3b9c576612471d1b35"
+    },
+    {
+      "path": "services/supabase/tests/ci-bootstrap.sql",
+      "sha256": "f489f4201a9c461d02a238ddbf5286469972d859fec2a10c69d35ede25b68094"
+    },
+    {
+      "path": "services/supabase/tests/legacy_notification_sessions.sql",
+      "sha256": "fc12a4a6251d7b8f8a450967b2147396d06f5fd47fa9f1c90ebf17e601a4c753"
+    },
+    {
+      "path": "services/supabase/tests/notification_session_fencing.sql",
+      "sha256": "abd47035ace49599611737765a2ded8612f91f08ba1c8bd314851d990b0f8544"
+    },
+    {
+      "path": "services/supabase/tests/notification_session_fencing_pre_canonical.sql",
+      "sha256": "dcf14b70d2d839537784c6d9417be852ea464d11596497ad5bf2eb77a2c807ae"
+    },
+    {
+      "path": "services/supabase/tests/reaudit_deleted_team_video.sql",
+      "sha256": "458f587143dcdde2496836b3a911d8791355edcf73ce0862e7cd019406b51330"
+    },
+    {
+      "path": "services/supabase/tests/reaudit_device_takeover.sql",
+      "sha256": "88e5ca264e7529bd489df02cb96b0b06dde010fec9e09d9ed43fb0571b34b5dd"
+    },
+    {
+      "path": "services/supabase/tests/reaudit_device_takeover_pre_canonical.sql",
+      "sha256": "d30a807bc79ace9983c7ad75adc44f6265bdbe4ff5ec155eb9aae6f8e4d3e80b"
+    },
+    {
+      "path": "services/supabase/tests/reaudit_library_selection.sql",
+      "sha256": "fef832b994d53d05aee4c44c378d4df942f00cb99c4978e45c48d514a568a3ba"
+    },
+    {
+      "path": "tests/phase1/AccountDeletionContextTests.swift",
+      "sha256": "25d6e0597cbe6f6d084148ca2497ec9ce8fa7ccdc32179725921333517ed3552"
+    },
+    {
+      "path": "tests/phase1/AdoptionLocalBindingsTests.swift",
+      "sha256": "56fa9f286c629155d82ed161cc3f81b57bb0da75bda268fd50b895adf498f4ac"
+    },
+    {
+      "path": "tests/phase1/adoption-local-bindings.test.mjs",
+      "sha256": "55a947a06d567e737b562f90f82386d3840307a3563835b83935d7c6a2b5df80"
+    },
+    {
+      "path": "tests/phase1/auth-sync-identity.test.mjs",
+      "sha256": "987ceafb0de0166d8ddca6c3999fa1a249e52c73aefe3fb1c5bb02d79d36f5d8"
+    },
+    {
+      "path": "tools/audit/apple-code-session-20261004/Fixture.swift.template",
+      "sha256": "e52e095389782ead16468b788e57f934d0777103e4ddc1d1dfcd8f53d6a3cbd1"
+    },
+    {
+      "path": "tools/audit/required-account-onboarding-20261008/Fixture.swift.template",
+      "sha256": "49a34d6a866671e081f320c05f66514ab2001aeb7d01378acf6b6cbe92c0b144"
+    },
+    {
+      "path": "tools/audit/run_account_library_safety.py",
+      "sha256": "5af33e885230b5eb900d60069d8454b403fefb10b1cc2cec48d6a79a3a0a31a2"
+    },
+    {
+      "path": "tools/audit/run_database_regression.py",
+      "sha256": "1fa92fe15bb765fd2a2f8ab185116060829724bbe43829b56d72a3857188ce2c"
+    },
+    {
+      "path": "tools/audit/run_legacy_notification_sessions.py",
+      "sha256": "c2e00b893a3eb20a7a448ede2b3c203ce64ce7e373ce572d7343b8a3914e35d4"
+    },
+    {
+      "path": "tools/audit/run_native_account_deletion.py",
+      "sha256": "4fd774295724ba8efa4de84eaf7fc5849ada5b9f7570c976abea9d83adbcc45c"
+    },
+    {
+      "path": "tools/audit/run_personal_card_regression.py",
+      "sha256": "d95e416ed8b9346c5c7d3f7099954361b59f8dd7f7cfae66a33af173d966fa40"
+    },
+    {
+      "path": "tools/audit/run_private_internal_testing.py",
+      "sha256": "2f105aa18bd9733dec877eeecb7e3a20ce19c3f07f0cccbb5dd2d85f2852a472"
+    },
+    {
+      "path": "tools/audit/run_reaudit_database.py",
+      "sha256": "9b8d19d71e08d7dcfec1d22392f9bbc5cbe230208789503bb48ee3a1ccbb7be3"
+    },
+    {
+      "path": "tools/audit/run_team_private_libraries.py",
+      "sha256": "60a4d31adbdeefb12a2b15ee3c24e0adac29e849525e891c0f3e9604c8d04ecf"
+    },
+    {
+      "path": "tools/audit/run_workspace_selection.py",
+      "sha256": "95ca0d964b0144889f09882707ecff9dd167c06c72aa6c9adf0a6c2cba021d3a"
+    }
+  ],
+  "private_proofs": [
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/adoption/receipt.json",
+      "sha256": "b70b2aaf1f19c523fc49f15c7b2756387c873b46f39a586b89a1a1391df646ab"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/push-frozen/receipt.json",
+      "sha256": "fa2a43ba6af5931ee19df1e1b8f5c90097b2e9530ef24552265ae1ec50deb0bc"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/deletion-final/receipt.json",
+      "sha256": "d1ce9d26ba8c007b2c94bd52eacdbbd811effa71f8558d29866eb29efa05373d"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/database/final-receipt.json",
+      "sha256": "3b3e5abedcf2a031b7c8b20bc3becd1fbd28d0906b81f340a47e648ab0905d25"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/prompts-site/receipt.json",
+      "sha256": "d571d4813143c9b4a3193aaf97baf1d294d8aea189fdc9685be8ed2dde334288"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/apns-data-control/receipt.json",
+      "sha256": "56aeb9cd841ade9ea1247264cd6e23eafb0e6c54a3770c9dd157717c98826b9a"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/site-readback/receipt.json",
+      "sha256": "43b1c3c4bdc2fbfefc9c429ca7708745c1627753a63085a4ffedb2d021889a24"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/testflight56/independent-verification/receipt.json",
+      "sha256": "479dcf17609ec96c8e32b07111e6223e41319cb089bdd21b10c5b51c144592f5"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/testflight56/asc-readiness-readonly.json",
+      "sha256": "335d952bc9a5ea9268b6654994b2309321b3849d63b4c9feb6b28c27b59171ab"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/apple-code-fixture-final/fixture-repair-receipt.json",
+      "sha256": "ab624006f3471eb5d4617aad96115b2535d9b214f55bcddb88549b8f65eb8908"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/required-account-fixture-final/receipt.json",
+      "sha256": "f69e4ff9602c0929b7bd27df22f936c402de087820ad9e8185be403e34c50e1d"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/ci-38020286893/personal-card-final-receipt.json",
+      "sha256": "47bb59dc236c6fecc3e825d8796aeb72f34370844d12b657b7b384322f84c4d1"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/ci-38020286893/postgres-remaining-results.json",
+      "sha256": "c0f9269ce0b7bc0ce18d1a945cc5c338781a654d80b7dfd50910128e48b7f18d"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/prompts-site/exporter-investigation-receipt.json",
+      "sha256": "92b3cb38f3e6bc43445a4c5be63038ba0685df9c789e79a68a55636f7a09ac8e"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/gitleaks/receipt.json",
+      "sha256": "18fabead8262299d4b8cd3d4471af4703747f95efae6ecfab0e1ce5bbe72c9c3"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/local-source-checks-final.json",
+      "sha256": "989419f9b3237979b4d10376635e984f9d3f86db86bb6a2499198a25179c13a3"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/testflight56/source-binding-317309a.json",
+      "sha256": "f46a2ce5466e2c6de85da955ac114899f33c0de1e46d60d4bc2d570159e6c6b0"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-push/final-all-suites-receipt.json",
+      "sha256": "dbd29851cab4262b631091b31834f7f6d5ff0a89c7cb0f26119ed80e86bef39c"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-push/final-invariants.log",
+      "sha256": "807107f5680f9b1b08e5963a3beaf0a3f6d489f656f9030a207eaa7c7054679b"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-push/live-apply.json",
+      "sha256": "2009f43f81ed0e9275edcb44eea7c32e106a522483a98035b84c39e47b6aa694"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-push/live-rpcs.json",
+      "sha256": "e6453d614836fba6235c7044a0d737c7189d48f999d9d052a91f4594055794c1"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-push/live-table.json",
+      "sha256": "ff50b415e3ea41750cf2ce6584d8ac693dc50d620273b547d2c284f358d433da"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-push/live-after.json",
+      "sha256": "9259ee447789f8930580ece9e62c2c1350913ed23c23d93a5bc1761e006ba8a0"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-push/auth-access-readback.json",
+      "sha256": "c5f23d08743f0b99b1f250e4644bc4a0facf9e7d259edd677b92281d2565f474"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-push/advisors-comparison.json",
+      "sha256": "5d4c06961dcbb05b92097a9b2e9980a1f8015a384793bbc64cf03e851fe6787b"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-replay-drivers/modern-final/receipt.json",
+      "sha256": "5ac36747f98734b273b1b2cadc123eb7555f6b05f14bb8bdd8e714f1020351c5"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-replay-drivers/modern-final/evidence/receipt.json",
+      "sha256": "ba2cc6ea196243f05b55852a4c72b3bffea29da85493e7751cf3e0bcbb67822f"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-replay-drivers/modern-final/account-exact29-final/evidence/receipt.json",
+      "sha256": "66c54d1f550080238ad5e71115eca0e4fbf0d689fb76b8639fd940c811d1f1be"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/testflight56/source-binding-final-code.json",
+      "sha256": "9b94043412cc46415a34c1d94ef5b3068f130033ddecb0e6544c173f6c3c3b99"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/testflight56/asc-draft-preparation.json",
+      "sha256": "dc6fef2d27a96aa3b7a1c8a9f5b99ed0c2ec15980fba9f609bffc8b630cb0388"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/legacy-replay-drivers/final6d320d6-remaining/receipt.json",
+      "sha256": "32cb7d5700d97be998f8817c04f2c73ae8f1e2275589161bcfbaddbd4eadfb1a"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/gitleaks/history-final-code.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/gitleaks/history-final-code.log",
+      "sha256": "d534c73479857304af5fcba1e4c1eaef3fdc56b24e7509ada0d0544b770e7160"
+    },
+    {
+      "path": "/Users/pilksclaes/LocalRendpropAudits/claude-reaudit-remediation-20261010/testflight56/asc-draft-dry-run.json",
+      "sha256": "76dd9ee0ebd42432836e4f5520d77532c3588a2c5357f045b7cb0d76999c350a"
+    }
+  ],
+  "limitations": [
+    "Private unmounted logs are missing independent evidence",
+    "No actual phone camera, StoreKit, APNs, Files/Photos or Team-acceptance certification",
+    "No paid provider generation, real buyer lead or supplier invoice verification in this remediation",
+    "Native photo manual retry can create another operation UUID after a lost response",
+    "Uncertain/non-winning historical holds lack evidence-backed reconciliation",
+    "Multiple content-bearing owned libraries/nonselected paid entitlement need separate grouping solution",
+    "Catalog-based 75-percent net margin still requires supplier receipts and Apple payout validation"
+  ],
+  "boundaries": {
+    "approved_home_design_unchanged": true,
+    "listing_toolbox_unchanged": true,
+    "john_apple_untouched": true,
+    "credentials_and_visibility_unchanged": true,
+    "funding_and_commission_schedule_unchanged": true,
+    "paid_provider_calls": 0,
+    "real_customer_data_backfill_or_move": false
+  },
+  "native_inventory_scope": "Tracked apps/ios and tools/asc files excluding apps/ios/tests and tools/asc/tests; includes README and root tools/asc/test_asc.py. Compiled Swift inputs verified separately.",
+  "previous_branch": "audit/launch-alignment-20261008",
+  "final_branch_ci": {
+    "branch": "fix/build56-final-reaudit-20261010",
+    "pending_normal_push_trigger": true,
+    "source_checkpoint": "6d320d623d800fdb42b1e56dce51756cd45fad9f",
+    "native_and_asc_source_matches_existing_archive": true,
+    "all_required_jobs_and_steps_preserved": true,
+    "full_final_tip_hosted_success_not_yet_proven": true
+  }
+}
