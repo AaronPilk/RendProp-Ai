@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010000032_private_library_adoption_and_serving_safety.sql'
+FOLLOWUP=SQL/'migrations/20261010000700_preserve_replayed_library_selection.sql'
 FIXTURES={'private_library_adoption_safety':32,'notification_session_fencing':27,'ops_deleted_workspace':16}
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-account-library-safety-',dir='/tmp'));OUT.chmod(0o700);DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC'};BIN={n:shutil.which(n)for n in['initdb','pg_ctl','psql','createdb']};assert all(BIN.values())
@@ -48,27 +49,66 @@ def child_race(label,agent,child,expect_deadlock):
  finally:
   for process in [a,b]:
    if process is not None and process.poll()is None:process.kill();process.wait()
+def replay_selection_race(label,agent,child,second,expect_retained):
+ q(label+'-initial-selection',f"set role service_role;select public.select_workspace('{agent}','{child}');")
+ b=subprocess.Popen(PSQL,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(ENV,PGAPPNAME='selector-'+label))
+ a=None;prefix=[]
+ try:
+  b.stdin.write(f"begin;select pg_backend_pid();select 1 from public.profiles where id='{agent}'for update;select 'SELECTOR_LOCKED';\n");b.stdin.flush()
+  while True:
+   line=b.stdout.readline();prefix.append(line)
+   if line.strip()=='SELECTOR_LOCKED':break
+   assert line,'Selector must acknowledge its actual profile lock'
+  blocker=int(prefix[0].strip())
+  a=subprocess.Popen(PSQL,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,env=dict(ENV,PGAPPNAME='accepted-replay-'+label))
+  a.stdin.write(f"set role service_role;select public.accept_org_invite('{agent}',repeat('8f',32));\n");a.stdin.close()
+  observed=False;end=time.monotonic()+8
+  while time.monotonic()<end:
+   observed=q(label+'-exact-blocker',f"select exists(select 1 from pg_stat_activity where application_name='accepted-replay-{label}'and wait_event_type='Lock'and {blocker}=any(pg_blocking_pids(pid)));").strip()=='t'
+   if observed:break
+   assert a.poll()is None,'Replay finished before actual selector overlap'
+   time.sleep(.03)
+  assert observed,'Actual replay must wait on the selector profile lock'
+  b.stdin.write(f"set local role service_role;select public.select_workspace('{agent}','{second}');commit;\n");b.stdin.close();b.wait(15);a.wait(15)
+  ao=a.stdout.read()+a.stderr.read();bo=''.join(prefix)+b.stdout.read()+b.stderr.read()
+  retained=q(label+'-retained',f"select active_org_id='{second}'::uuid from public.user_workspace_state where user_id='{agent}';").strip()=='t'
+  result={'actualProfileBlockerObserved':observed,'selectorExit':b.returncode,'replayExit':a.returncode,'newSelectionRetained':retained,'selectorOutput':bo,'replayOutput':ao}
+  log=OUT/(label+'.json');log.write_text(json.dumps(result,indent=2));log.chmod(0o600)
+  assert a.returncode==b.returncode==0 and retained==expect_retained,result
+  return {k:v for k,v in result.items()if 'Output'not in k}
+ finally:
+  for process in[a,b]:
+   if process is not None and process.poll()is None:process.kill();process.wait()
 started=False;print('EVIDENCE:',OUT,flush=True)
 try:
  run('init',[BIN['initdb'],'-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
  run('start',[BIN['pg_ctl'],'-D',DATA,'-l',OUT/'server.log','-w','-t','30','-o',f"-k {SOCK} -p 55475 -c listen_addresses='' -c shared_buffers=16MB -c max_connections=20",'start']);started=True
  run('create',[BIN['createdb'],'--no-password',*CONN,'rendprop_audit']);assert q('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  q('bootstrap',(SQL/'tests/ci-bootstrap.sql').read_text())
- for p in sorted((SQL/'migrations').glob('*.sql')):q('migration-'+p.stem,p.read_text())
  catalog="select md5(string_agg(oid::regprocedure::text||prosrc||coalesce(proacl::text,'')||proowner::text||prosecdef::text||coalesce(proconfig::text,''),'|'order by oid::regprocedure::text))from pg_proc where pronamespace='public'::regnamespace;"
+ pins=re.findall(r"oid='public\.([^']+)'::regprocedure\)not in\(",TARGET.read_text());assert len(pins)==7,pins
+ historical_accept=None
+ for p in sorted((SQL/'migrations').glob('*.sql')):
+  q('migration-'+p.stem,p.read_text())
+  if p==TARGET:
+   # Replay and predecessor controls belong at this migration's historical
+   # schema point. Never replay its body over the later selection fix.
+   historical_before=q('historical-safety-catalog',catalog)
+   q('historical-safety-exact-replay',TARGET.read_text())
+   assert q('historical-safety-replayed-catalog',catalog)==historical_before
+   for i,sig in enumerate(pins):
+    current=definition(sig);assert current.count('$function$')==2
+    mutant=current.replace('AS $function$','AS $function$\n-- unreviewed fixture predecessor\n',1)
+    q(f'unknown-predecessor-{i}-install',mutant)
+    rejected=q(f'unknown-predecessor-{i}-refused',TARGET.read_text(),3);assert 'Review changed function'in rejected
+    q(f'unknown-predecessor-{i}-restore',current)
+   assert q('historical-restored-catalog',catalog)==historical_before
+   historical_accept=definition('accept_org_invite(uuid,text)')
+ assert historical_accept is not None
  before=q('final-catalog',catalog)
  for phase in['fresh','replay']:
-  if phase=='replay':q('exact-safety-replay',TARGET.read_text());assert q('replayed-catalog',catalog)==before,'Replay changed final bodies or privileges'
+  if phase=='replay':q('exact-final-selection-replay',FOLLOWUP.read_text());assert q('replayed-catalog',catalog)==before,'Replay changed final bodies or privileges'
   for name in FIXTURES:suite(name,phase)
- # Every pinned body refuses unknown predecessor changes, with atomic rollback.
- pins=re.findall(r"oid='public\.([^']+)'::regprocedure\)not in\(",TARGET.read_text());assert len(pins)==7,pins
- for i,sig in enumerate(pins):
-  current=definition(sig);assert current.count('$function$')==2
-  mutant=current.replace('AS $function$','AS $function$\n-- unreviewed fixture predecessor\n',1)
-  q(f'unknown-predecessor-{i}-install',mutant)
-  rejected=q(f'unknown-predecessor-{i}-refused',TARGET.read_text(),3);assert 'Review changed function'in rejected
-  q(f'unknown-predecessor-{i}-restore',current)
- assert q('restored-catalog',catalog)==before
  # Actual adoption fails if the deterministic private selection is removed.
  current=definition('agent_private_library(uuid)');anchor='public.resolve_actor_owned_library(p_actor,false)';assert current.count(anchor)==1
  mutant=current.replace(anchor,"(select min(m.org_id::text)::uuid from public.memberships m join public.orgs o on o.id=m.org_id and o.deleted_at is null where m.user_id=p_actor and m.role='owner' having count(*)=1)")
@@ -90,10 +130,32 @@ try:
  current=definition('serving_photo_partition_guard()');anchor='if new.funding_id is null then return new;end if;';assert current.count(anchor)==1
  q('install-child-lock-negative-control',current.replace(anchor,''));negative=child_race('negative-child-lock',agent,child,True);q('restore-photo-partition-guard',current)
  positive=child_race('correct-child-lock',agent,child,False)
+ # Old accepted receipt replay reads active selection before acquiring the
+ # selector's profile lock. Prove its overwrite and the compiled early-read
+ # mutation, then verify the final function and its supported exact replay.
+ second='f9300000-0000-4000-8000-000000000099'
+ q('replay-race-second-owned-library',f"insert into public.orgs(id,name)values('{second}','Replay selection fixture');insert into public.memberships(user_id,org_id,role)values('{agent}','{second}','owner');")
+ final_accept=definition('accept_org_invite(uuid,text)')
+ q('old-accepted-replay-install',historical_accept)
+ old_replay=replay_selection_race('old-accepted-replay',agent,child,second,False)
+ q('restore-final-accepted-replay',final_accept)
+ new_replay=replay_selection_race('correct-accepted-replay',agent,child,second,True)
+ active_read=' select active_org_id into prior_active from public.user_workspace_state where user_id=p_user;\n'
+ anchor=' was_accepted:=i.accepted_at is not null;\n'
+ assert final_accept.count(active_read)==final_accept.count(anchor)==1
+ early=final_accept.replace(active_read,'').replace(anchor,anchor+active_read)
+ q('early-read-negative-install',early)
+ early_replay=replay_selection_race('early-read-accepted-replay',agent,child,second,False)
+ q('restore-final-accepted-replay-after-negative',final_accept)
+ q('accepted-replay-exact-final-overlay',FOLLOWUP.read_text())
+ replayed=replay_selection_race('exact-replayed-accepted-replay',agent,child,second,True)
+ q('unknown-followup-body-install',final_accept.replace('AS $function$','AS $function$\n-- unreviewed fixture predecessor\n',1))
+ refused=q('unknown-followup-body-refused',FOLLOWUP.read_text(),3);assert 'Review changed function accept_org_invite'in refused
+ q('restore-final-followup-body',final_accept)
  assert q('after-controls-catalog',catalog)==before
  for name in FIXTURES:suite(name,'restored')
- RECEIPT.update(passed=True,sqlAssertions=FIXTURES,exactReplay=True,unknownPredecessorsRefused=len(pins),compiledNegativeControls=['two-org adoption','ledger deletion','device resurrection','actual child deadlock'],childRaceNegative=negative,childRacePositive=positive)
+ RECEIPT.update(passed=True,sqlAssertions=FIXTURES,exactReplay=True,unknownPredecessorsRefused=len(pins)+1,compiledNegativeControls=['two-org adoption','ledger deletion','device resurrection','actual child deadlock','accepted-invite early active read'],childRaceNegative=negative,childRacePositive=positive,acceptedReplayOld=old_replay,acceptedReplayCorrect=new_replay,acceptedReplayEarlyReadNegative=early_replay,acceptedReplayAfterExactReplay=replayed,historicalSafetyReplayAtOwnSchemaPoint=True)
 finally:
  if started and(DATA/'postmaster.pid').exists():run('stop',[BIN['pg_ctl'],'-D',DATA,'-m','immediate','-w','stop'])
  RECEIPT['sourceHashesAfter']={n:hashlib.sha256((ROOT/n).read_bytes()).hexdigest()for n in HASHES};RECEIPT['sourceUnchanged']=RECEIPT['sourceHashesAfter']==HASHES;RECEIPT['passed']=RECEIPT['passed']and RECEIPT['sourceUnchanged'];RECEIPT['finishedAt']=datetime.now(timezone.utc).isoformat();(OUT/'receipt.json').write_text(json.dumps(RECEIPT,indent=2)+'\n');(OUT/'receipt.json').chmod(0o600)
-assert RECEIPT['passed'];print('PASS: 75 SQL assertions fresh/replay/restored, seven predecessor controls, three compiled lifecycle defects and real child deadlock control',flush=True)
+assert RECEIPT['passed'];print('PASS: 75 SQL assertions fresh/replay/restored, eight predecessor controls, actual child deadlock and four accepted-replay races',flush=True)

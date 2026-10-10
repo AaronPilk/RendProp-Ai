@@ -119,12 +119,13 @@ struct Listing {
     var belongsToCurrentType = true; var isSold = false
     var isInactive: Bool { isSold }
     var serverOrgID: UUID? = nil; var serverLibraryOrgID: UUID? = nil; var cloudDraftOrgID: UUID? = nil; var cloudUnavailable = false
+    var cloudSyncOwnerID: UUID? = nil
 }
-final class InventoryPolicyFixture {
+@MainActor final class InventoryPolicyFixture {
     var listings: [Listing] = []; func refreshCloudWorkspace() async {}
 '''
 common += block(app, 'func isInSelectedWorkspace(') + '\n}\n'
-common += '\nstruct HomePolicyFixture {\n let model: InventoryPolicyFixture; var search = ""; let workspaceStore = WorkspaceStore()\n'
+common += '\n@MainActor struct HomePolicyFixture {\n let model: InventoryPolicyFixture; var search = ""; let workspaceStore = WorkspaceStore()\n'
 common += block(homes, 'private var filtered:') + '\n' + block(homes, 'private var needsWorkspaceSelection:')
 common += '\n' + block(homes, 'private var workspaceSelectionPrompt:')
 common += '\nvar visibleIDs: [UUID] { filtered.map(\\.id) }\nvar needsSelection: Bool { needsWorkspaceSelection }\n'
@@ -160,6 +161,8 @@ controls = [
     ('missing-workspace-prompt', 'Config.useLiveBackend && workspaceStore.selected == nil', 'false', 'nil live workspace offers explicit selection'),
     ('home-ignores-workspace', '&& model.isInSelectedWorkspace($0)', '', 'actual Home hides old host inventory after private selection'),
     ('revoked-directory-cache', 'WorkspaceStore.shared.canViewLibrary(selected)', 'true', 'revoked directory delegation exposed cached cards'),
+    ('foreign-owner-local-draft', 'if !listing.isSample, let owner = listing.cloudSyncOwnerID,\n           owner != AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) { return false }',
+        '', 'foreign-owner local draft exposed after account switch'),
     ('private-invite-role-picker', 'private var showsRolePicker: Bool { !privateTesting }',
         'private var showsRolePicker: Bool { true }', 'private invites hide shared-team role selection'),
     ('private-invite-role-dispatch', 'await send(email.isEmpty ? nil : email, invitationRole)',

@@ -20,7 +20,7 @@ Deno.test("unconfirmed registration/removal is not acknowledged and database err
 const env={SUPABASE_URL:"https://device-fixture.invalid",SUPABASE_ANON_KEY:"fixture-public",SUPABASE_SERVICE_ROLE_KEY:"fixture-service"};
 const saved=new Map(Object.keys(env).map(k=>[k,Deno.env.get(k)]));for(const[k,v]of Object.entries(env))Deno.env.set(k,v);
 let handler!:(req:Request)=>Promise<Response>;const serve=Object.getOwnPropertyDescriptor(Deno,"serve")!;
-Object.defineProperty(Deno,"serve",{...serve,value:(fn:typeof handler)=>{handler=fn;return{};}});
+Object.defineProperty(Deno,"serve",{configurable:serve.configurable,enumerable:serve.enumerable,writable:true,value:(fn:typeof handler)=>{handler=fn;return{};}});
 try{await import("./index.ts?actual-device-route");}finally{Object.defineProperty(Deno,"serve",serve);for(const[k,v]of saved)if(v===undefined)Deno.env.delete(k);else Deno.env.set(k,v);}
 Deno.test("actual me authenticates before session mutation and DELETE devices never deletes account",async()=>{
  const fetchOld=globalThis.fetch;let deny=false;const calls:Array<{path:string,method:string,body:any}>=[];

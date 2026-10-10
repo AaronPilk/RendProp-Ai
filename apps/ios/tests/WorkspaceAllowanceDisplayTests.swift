@@ -160,6 +160,19 @@ import Foundation
         let hostOrg = UUID(uuidString: "bfaf0000-0000-4000-8000-000000000002")!
         let privateID = UUID(), hostID = UUID(), draftID = UUID()
         let inventory = InventoryPolicyFixture()
+        let actor = UUID(uuidString: "bfaf0000-0000-4000-8000-000000000003")!
+        let priorActor = UUID(uuidString: "bfaf0000-0000-4000-8000-000000000004")!
+        AuthStore.shared.userID = actor.uuidString
+        Config.useLiveBackend = true; WorkspaceContext.selectedOrgID = privateOrg
+        let ownDraft = Listing(id: UUID(), cloudSyncOwnerID: actor)
+        let priorDraft = Listing(id: UUID(), cloudSyncOwnerID: priorActor)
+        check(inventory.isInSelectedWorkspace(ownDraft), "current-owner local draft stays in its selected library")
+        check(!inventory.isInSelectedWorkspace(priorDraft), "foreign-owner local draft exposed after account switch")
+        check(priorDraft.serverOrgID == nil && priorDraft.cloudDraftOrgID == nil,
+              "foreign draft refusal does not depend on a server or draft org binding")
+        AuthStore.shared.userID = priorActor.uuidString
+        check(inventory.isInSelectedWorkspace(priorDraft), "retained draft remains available to its actual owner")
+        AuthStore.shared.userID = "synthetic-owner"
         inventory.listings = [Listing(id: privateID, serverOrgID: privateOrg),
             Listing(id: hostID, serverOrgID: hostOrg, cloudUnavailable: true),
             Listing(id: draftID, cloudDraftOrgID: privateOrg)]

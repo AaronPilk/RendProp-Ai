@@ -19,7 +19,6 @@ ROOT = Path(__file__).resolve().parents[3]
 SQL = ROOT / "services/supabase"
 MIGRATION = SQL / "migrations/20261003020955_app_video_cost_reservations.sql"
 RELEASE = SQL / "migrations/20261004215403_app_video_rejected_submission_release.sql"
-TEAM = SQL / "migrations/20261009192550_team_private_listing_libraries.sql"
 TOOLS = {name: shutil.which(name) or str(Path("/opt/homebrew/opt/postgresql@17/bin") / name)
          for name in ("initdb", "pg_ctl", "psql", "createdb")}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), "Use existing PostgreSQL binaries"
@@ -191,7 +190,7 @@ begin
   delete from orgs where id=o;
   perform pg_temp.check_video((select count(*)=5 from public.app_video_cost_reservations where org_id=o),'hard deletion retains cost-only tombstones');
   r:=public.app_video_cost_settle(u,o,'old-month-key','late-hard-delete');
-  perform pg_temp.check_video((r->>'settled')::boolean and (select org_id is null and meta->>'billing_org_id'=o::text from public.cost_ledger where id=(r->>'ledger_id')::uuid),'hard-deleted org late cost books with nullable ledger FK');
+  perform pg_temp.check_video((r->>'settled')::boolean and (select org_id is null and meta->>'billing_org_id'=o::text and billing_org_id=o and total_cents=80 from public.cost_ledger where id=(r->>'ledger_id')::uuid),'hard-deleted org late cost books with nullable ledger FK and immutable financial owner');
   insert into auth.users(id,email) values(gone,'deleted-actor@example.invalid');
   insert into orgs(id,name,plan) values(gone_org,'Synthetic deleted actor','pro');
   insert into memberships(user_id,org_id,role) values(gone,gone_org,'owner');
@@ -223,8 +222,8 @@ begin
   update plan_entitlements set cogs_ceiling_cents=110 where plan='pro';
   perform pg_temp.video_refuses(format('select public.app_video_cost_reserve(%L,%L,%L,''reel'',''fal'',''synthetic/reel'',%L,8,1,8,''{}'')',u,o,gen_random_uuid(),repeat('3',64)),'RP402');
 end $$;
--- Exercise the ACTUAL account purge, including its explicit ledger DELETE;
--- deleting orgs alone would miss a receipt FK that obstructs this workflow.
+-- Exercise the ACTUAL account purge. Financial totals and exact receipt links
+-- remain anonymous; deleting orgs alone would miss the real lifecycle.
 create temporary table app_video_purge_fixture(actor uuid,org uuid,settled_key text,unresolved_key text,
   ledger uuid,unresolved uuid,receipt jsonb);
 grant select,update on app_video_purge_fixture to service_role;
@@ -249,14 +248,25 @@ declare f app_video_purge_fixture; r jsonb;
 begin
   select * into f from app_video_purge_fixture;
   perform pg_temp.check_video((f.receipt->>'ok')::boolean and not exists(select 1 from orgs where id=f.org),'actual account purge succeeds');
-  perform pg_temp.check_video(not exists(select 1 from cost_ledger where id=f.ledger) and
-    (select count(*)=2 from app_video_cost_reservations where org_id=f.org),'ledger purged; immutable cost-only receipts retained');
+  perform pg_temp.check_video((select org_id is null and job_id is null and meta='{}'::jsonb
+      and idempotency_key is null and total_cents=24 and billing_org_id=f.org from cost_ledger where id=f.ledger)
+    and (select count(*)=2 from app_video_cost_reservations where org_id=f.org),
+    'ledger anonymized; exact amount, billing identity and immutable cost-only receipts retained');
+  perform pg_temp.check_video((select cost_ledger_id=f.ledger and hold_cents=24 from app_video_cost_reservations
+      where org_id=f.org and idempotency_key=f.settled_key) and public.serving_ceiling_spent_cents(f.org,null,null)=104,
+    'retained booked amount plus unresolved hold counted once after account removal');
   r:=public.app_video_cost_settle(f.actor,f.org,f.settled_key,'purge-paid-receipt');
-  perform pg_temp.check_video((r->>'ledger_id')::uuid=f.ledger and not exists(select 1 from cost_ledger where id=f.ledger),'settled tombstone replay does not recreate purged ledger');
+  perform pg_temp.check_video((r->>'ledger_id')::uuid=f.ledger and
+    (select count(*)=1 from cost_ledger where id=f.ledger) and public.serving_ceiling_spent_cents(f.org,null,null)=104,
+    'settled tombstone replay preserves original anonymous ledger without a duplicate charge');
   delete from auth.users where id=f.actor;
   r:=public.app_video_cost_settle(f.actor,f.org,f.unresolved_key,'late-after-actual-purge');
   perform pg_temp.check_video((r->>'settled')::boolean and
-    (select org_id is null and meta->>'billing_org_id'=f.org::text from cost_ledger where id=(r->>'ledger_id')::uuid),'late paid receipt survives actual purge and auth deletion');
+    (select org_id is null and meta->>'billing_org_id'=f.org::text and total_cents=80 and billing_org_id=f.org
+      from cost_ledger where id=(r->>'ledger_id')::uuid),'late paid receipt survives actual purge and auth deletion');
+  perform pg_temp.check_video(public.serving_ceiling_spent_cents(f.org,null,null)=104
+    and (select count(*)=2 from cost_ledger where billing_org_id=f.org),
+    'late settlement swaps retained hold for exact booked amount without losing or doubling liability');
 end $$;
 select 'PASS ordinary video SQL: '||n||' assertions' from app_video_assertions;
 rollback;
@@ -289,11 +299,29 @@ try:
     assert receipt["syntheticFundedMode"] == "funded"
     receipt["rejections-fresh"] = run("rejections-fresh", [*psql, "-Atq", "-f", SQL / "tests/app_video_rejections.sql"]).strip()
     receipt["ordinary-fresh"] = run("ordinary-fresh", [*psql, "-Atq"], FIXTURE).strip()
-    # Historical video migrations replay at their own schema in the full DB
-    # runner. Reinstalling them here would overwrite current Team authority.
-    run("replay-current-team-authority", [*psql, "-q", "-1", "-f", TEAM])
+    # Replay the ACTUAL final definitions, not predecessor Team DDL which
+    # would undo subsequent account-safety and financial-authority fixes.
+    current_definitions = run("capture-final-video-authority", [*psql, "-Atq"], """
+select pg_get_functiondef(p.oid)||';' from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+where n.nspname='public' and p.proname in ('app_video_cost_reserve','app_video_cost_settle',
+ 'app_video_cost_release_rejected','app_video_cost_pin_receipt','app_video_held_cents',
+ 'prepare_account_deletion') order by p.proname;
+""")
+    assert current_definitions.count("CREATE OR REPLACE FUNCTION") == 6, "Exact final authority inventory changed"
+    receipt["replayedAuthoritySHA256"] = hashlib.sha256(current_definitions.encode()).hexdigest()
+    run("replay-final-video-authority", [*psql, "-q", "-1"], current_definitions)
     receipt["rejections-replay"] = run("rejections-replay", [*psql, "-Atq", "-f", SQL / "tests/app_video_rejections.sql"]).strip()
     receipt["ordinary-replay"] = run("ordinary-replay", [*psql, "-Atq"], FIXTURE).strip()
+    deletion_definition = run("capture-final-deletion-authority", [*psql, "-Atq"],
+                              "select pg_get_functiondef('public.prepare_account_deletion(uuid,text,text)'::regprocedure);")
+    retention = "update public.cost_ledger set org_id=null,job_id=null,meta='{}'::jsonb,idempotency_key=null"
+    assert deletion_definition.count(retention) == 1, "Exact anonymization guard changed"
+    deletion_mutant = deletion_definition.replace(retention, "delete from public.cost_ledger", 1)
+    run("install-deleted-ledger-negative-control", [*psql, "-q", "-1"], deletion_mutant)
+    run("deleted-ledger-negative-control-refused", [*psql, "-Atq"], FIXTURE,
+        refuses="FAIL: ledger anonymized; exact amount, billing identity and immutable cost-only receipts retained")
+    run("restore-final-deletion-authority", [*psql, "-q", "-1"], deletion_definition)
+    receipt["ordinary-restored"] = run("ordinary-restored", [*psql, "-Atq"], FIXTURE).strip()
 
     u, outsider, o, foreign, k1, k2 = [str(uuid.uuid4()) for _ in range(6)]
     run("race-setup", [*psql, "-q"], f"""
