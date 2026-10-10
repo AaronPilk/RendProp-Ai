@@ -93,3 +93,8 @@ a326780c43f8ec458eaa42e2ccd62c2451f74af2:services/supabase/functions/ai-chapters
 # file checksum. Recomputed from the unchanged SQL source; no credential value.
 # Preserve the immutable receipt and every other secret-scan finding.
 d46f3dfedb6e5f86b9234e275a50395fddf967ab:docs/releases/TESTFLIGHT-55-FINAL-AUDIT-REMEDIATION-20261009.json:generic-api-key:1184
+
+# Build57 receipt: exact imported-commit SHA256 entries, recomputed from source.
+# These are file checksums; no path-wide or rule-wide exclusion.
+796bf86d05661c3cdbe77f072bb6b86688ba0861:docs/releases/BUILD57-BACKEND-DEPLOY-20261010.json:generic-api-key:22
+796bf86d05661c3cdbe77f072bb6b86688ba0861:docs/releases/BUILD57-BACKEND-DEPLOY-20261010.json:generic-api-key:32
