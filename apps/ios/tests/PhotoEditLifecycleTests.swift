@@ -77,6 +77,7 @@ struct UNNotificationSettings { var authorizationStatus: UNAuthorizationStatus }
 struct UNNotificationSound { static let `default` = Self() }
 final class UNMutableNotificationContent {
     var title = ""; var body = ""; var sound: UNNotificationSound?
+    var userInfo: [AnyHashable: Any] = [:]
 }
 struct UNNotificationRequest {
     let identifier: String; let content: UNMutableNotificationContent; let trigger: String?
@@ -135,6 +136,8 @@ struct UNNotificationRequest {
         check(calls == ["one"] && PhotoWorkQueue.shared.job?.done == 1, "Leaving a screen does not cancel its edit")
         check(UIApplication.shared.ended.count == 1 && IdleTimer.releases == IdleTimer.holds, "Normal completion ends the exact leases once")
         check(UNUserNotificationCenter.shared.delivered[0].content.body.contains("1 of 1 photos changed"), "Notification uses completed output count")
+        check(UNUserNotificationCenter.shared.delivered[0].content.userInfo["recipient_user_id"] as? String == AuthStore.shared.userID,
+              "Completion notification is tagged to its actual account")
 
         let stoppingFailures: [any Error] = [SyntheticFailure.quota, SyntheticFailure.unauthorized,
             SyntheticFailure.serviceUnavailable, SyntheticFailure.trialCapacityUnavailable,
