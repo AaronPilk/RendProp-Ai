@@ -17,6 +17,20 @@ enum Config {
 }
 enum APIError: Error { case notConfigured, badResponse(Int), decoding, server(status: Int, code: String, message: String) }
 enum AnonymousAdoptionRecovery { enum RecoveryError: Error { case conflict, malformed, storage } }
+// Account-switch side effects are closed boundaries in this Apple-code harness;
+// their own actual-source privacy suites verify registration and local custody.
+@MainActor final class PushManager {
+    static let shared = PushManager()
+    func accountWillChange() {}
+    func accountDidChange() {}
+}
+@MainActor final class PurchaseManager {
+    static let shared = PurchaseManager()
+    func clearAccountPresentation() {}
+}
+@MainActor enum AccountLocalPreferences {
+    static func activate(previous: UUID?, next: UUID) {}
+}
 @MainActor final class AdoptionBoundary {
     func prepare(sourceAccess: String, sourceRefresh: String?, destinationAccess: String) throws {}
     func discard() -> Bool { true }
