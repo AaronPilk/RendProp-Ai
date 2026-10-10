@@ -1,6 +1,6 @@
 # Codex build57 cross-check — 2026-10-10
 
-Status: source imported and pushed; targeted Mac checks passed; full CI pending. No App Store GO or new TestFlight upload is recorded by this document.
+Historical audit snapshot. Subsequent archive, TestFlight availability, website/connected Studio deployments and Apple draft evidence are in [CODEX-BUILD57-SHIP-20261010.md](CODEX-BUILD57-SHIP-20261010.md). This audit itself predates those actions; its pending statuses below are historical.
 
 ## Source recovery
 
