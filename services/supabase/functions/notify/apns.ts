@@ -42,7 +42,7 @@ export interface ApnsMessage {
   category: string;
   /** Server-bound outbox recipient; never copied from arbitrary payload data. */
   recipientUserId: string;
-  /** Arbitrary facts the app may use; kept small. */
+  /** Input is filtered to validated routing identifiers before APNs dispatch. */
   data: Record<string, unknown>;
   /** APNs collapses same-id notifications — the outbox dedupe key, truncated. */
   collapseId?: string;
@@ -151,6 +151,19 @@ function hostFor(environment: string): string {
   return environment === "sandbox" ? "api.sandbox.push.apple.com" : "api.push.apple.com";
 }
 
+/** APNs custom data is visible to iOS before the signed-in recipient check.
+ * Keep only identifiers needed for navigation; never buyer or account facts. */
+export function pushRouteData(input: Record<string, unknown>): Record<string, string> {
+  const data: Record<string, string> = {};
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  for (const key of ["lead_id", "listing_id", "render_id"]) {
+    const value = input[key];
+    if (typeof value === "string" && uuid.test(value)) data[key] = value;
+  }
+  if (typeof input.slug === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(input.slug)) data.slug = input.slug;
+  return data;
+}
+
 /**
  * Send one notification. NEVER throws: a transport failure is reported as
  * `{ ok: false, reason }` so one unreachable host cannot take the drain down.
@@ -193,7 +206,7 @@ export async function send(
     category: message.category,
     deep_link: message.deepLink,
     recipient_user_id: message.recipientUserId,
-    data: message.data,
+    data: pushRouteData(message.data),
   };
 
   const headers: Record<string, string> = {

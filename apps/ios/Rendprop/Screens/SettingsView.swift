@@ -1300,7 +1300,7 @@ struct SettingsView: View {
         //    signOut() also drops any saved workspace-transfer handoff (and the
         //    anonymous refresh token inside it) — the account it was for is gone.
         if uploads.state != nil { uploads.cancel() }
-        auth.signOut()
+        auth.signOut(serverAccountDeleted: serverAccountsEnabled)
         wipeLocalData()
         Haptics.success()
         showAccountDeleted = true   // OK → hasOnboarded = false
@@ -1372,6 +1372,7 @@ struct SettingsView: View {
     /// ──────────────────────────────────────────────────────────────────────────────
     @MainActor
     private func wipeLocalData() {
+        PushManager.shared.discardPendingCleanup()
         // Stop any render/publish first — a job finishing after the wipe would
         // write a tour for a listing that no longer exists.
         for id in Array(model.renderCoordinator.jobs.keys) { model.renderCoordinator.cancel(listingID: id) }

@@ -7,7 +7,7 @@ import Foundation
   let a=UUID(uuidString:"11000000-0000-4000-8000-000000000001")!
   let b=UUID(uuidString:"11000000-0000-4000-8000-000000000002")!
   func identity(_ owner:UUID,_ revision:UInt64){AuthStore.shared.userID=owner.uuidString;AuthStore.shared.isSignedIn=true;AuthStore.shared.syncSessionRevision=revision;AuthStore.access=owner==a ? "synthetic-A" : "synthetic-B"}
-  func reset(){PushHTTP.reset();SecureStore.values=[:];SecureStore.failSet=false;SecureStore.failRead=false;UserDefaults.standard.values=[:];identity(a,1)}
+  func reset(){PushHTTP.reset();SecureStore.values=[:];SecureStore.failSet=false;SecureStore.failRead=false;SecureStore.failRemove=false;UserDefaults.standard.values=[:];identity(a,1)}
   reset()
   let push=PushManager();PushHTTP.pausedOwner=a
   push.handleDeviceToken(Data([0xab,0xcd]));await tick()
@@ -29,6 +29,14 @@ import Foundation
   push.handleDeviceToken(Data([0xab,0xcd]));await tick()
   check(PushHTTP.requests.filter{$0.method=="POST"}.count==2,"Same B token registered repeatedly")
   check(PushHTTP.requests.last{$0.method=="POST"}?.credential=="synthetic-B","B registration used A credential")
+  reset();UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1");PushHTTP.holdDelete=true
+  let overlapping=PushManager();overlapping.accountWillChange();identity(b,2);overlapping.accountDidChange();await tick()
+  SecureStore.failSet=true;overlapping.accountWillChange();identity(a,3);overlapping.accountDidChange();await tick()
+  PushHTTP.holdDelete=false;PushHTTP.deleteContinuation?.resume();PushHTTP.deleteContinuation=nil;await tick()
+  check(PushHTTP.requests.filter{$0.method=="POST"}.isEmpty,"Cleanup admitted replacement across new failed retention")
+  SecureStore.failSet=false;overlapping.accountDidChange();await tick()
+  check(overlapping.acknowledgedOwner==a,"Overlapping failed retention did not recover")
+  check(PushHTTP.requests.filter{$0.method=="DELETE"}.map{$0.credential}==["synthetic-A","synthetic-B"],"Overlapping cleanup lost original credentials")
   reset();identity(b,3)
   let cleanup=PendingPushUnregister(owner:a,deviceToken:"abcd",environment:"sandbox",accessToken:"synthetic-A")
   check(AuthStore.retainPushUnregister(cleanup),"Could not persist synthetic pending cleanup")
@@ -38,16 +46,53 @@ import Foundation
   check(try AuthStore.pendingPushUnregisters()==[cleanup],"Incomplete acknowledgment erased durable barrier")
   reset();identity(b,4);UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1")
   check(AuthStore.retainPushUnregister(cleanup),"Could not persist retry cleanup")
-  PushHTTP.deleteFails=true;let expired=PushManager();expired.accountDidChange();await tick()
-  check(PushHTTP.requests.filter{$0.method=="POST"}.isEmpty,"Expired cleanup credential permitted B POST")
-  check(try AuthStore.pendingPushUnregisters()==[cleanup],"Expired credential erased old cleanup")
+  for error in [APIError.badResponse(401),APIError.badResponse(403),APIError.server(400,"RP401")] {
+   PushHTTP.deleteError=error;let expired=PushManager();expired.accountDidChange();await tick()
+   check(expired.acknowledgedOwner==b,"Terminal cleanup prevented replacement registration")
+   check(try AuthStore.pendingPushUnregisters().isEmpty,"Terminal credential remained queued")
+   check(PushHTTP.requests.first{$0.method=="DELETE"}?.credential=="synthetic-A","Terminal cleanup used replacement credential")
+   PushHTTP.reset();check(AuthStore.retainPushUnregister(cleanup),"Could not retain next terminal fixture")
+  }
+  reset();identity(b,4);UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1")
+  check(AuthStore.retainPushUnregister(cleanup),"Could not persist transient fixture")
+  let transient=PushManager()
+  for error:Error in [APIError.badResponse(503),URLError(.notConnectedToInternet)] {
+   PushHTTP.deleteError=error;transient.accountDidChange();await tick()
+   check(PushHTTP.requests.filter{$0.method=="POST"}.isEmpty,"Transient cleanup allowed replacement registration")
+   check(try AuthStore.pendingPushUnregisters()==[cleanup],"Transient failure discarded cleanup")
+  }
+  PushHTTP.deleteError=nil;transient.accountDidChange();await tick()
+  check(transient.acknowledgedOwner==b,"Transient cleanup could not recover")
   reset();UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1");SecureStore.failSet=true
   let failedStorage=PushManager();failedStorage.accountWillChange();identity(b,5);failedStorage.accountDidChange();await tick()
   check(PushHTTP.requests.isEmpty,"Failed secure retention permitted registration")
   check(UserDefaults.standard.bool(forKey:"push.unregisterStorageBlocked.v1"),"Secure storage failure was not durable")
+  SecureStore.failSet=false;failedStorage.accountDidChange();await tick()
+  check(failedStorage.acknowledgedOwner==b,"Recovered storage flag stranded replacement")
+  check(!UserDefaults.standard.bool(forKey:"push.unregisterStorageBlocked.v1"),"Recovered storage flag remained sticky")
+  check(PushHTTP.requests.first{$0.method=="DELETE"}?.credential=="synthetic-A","Failed-write recovery lost captured cleanup")
   reset();SecureStore.values[AuthStore.Keys.pendingPushUnregisters]="corrupt";identity(b,6);UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1")
   let corrupt=PushManager();corrupt.accountDidChange();await tick()
-  check(PushHTTP.requests.isEmpty,"Corrupt cleanup queue permitted registration")
+  check(corrupt.acknowledgedOwner==b,"Readable corrupt queue stranded replacement")
+  check(try AuthStore.pendingPushUnregisters().isEmpty,"Corrupt queue not reset")
+  reset();identity(b,6);UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1");check(AuthStore.retainPushUnregister(cleanup),"Locked fixture unavailable")
+  SecureStore.failRead=true;let locked=PushManager();locked.accountDidChange();await tick()
+  check(PushHTTP.requests.isEmpty,"Locked Keychain was treated as empty")
+  SecureStore.failRead=false;locked.accountDidChange();await tick()
+  check(locked.acknowledgedOwner==b,"Unlocked Keychain did not recover")
+  reset();check(AuthStore.retainPushUnregister(cleanup),"Startup cleanup fixture unavailable");AuthStore.shared.isSignedIn=false
+  let signedOut=PushManager();signedOut.start();await tick()
+  check(PushHTTP.requests.count==1 && PushHTTP.requests[0].method=="DELETE","Signed-out startup did not retry cleanup")
+  check(try AuthStore.pendingPushUnregisters().isEmpty,"Signed-out retry did not drain queue")
+  reset();UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1")
+  let deleted=PushManager();deleted.accountWillChange(retainCleanup:false);await tick()
+  check(PushHTTP.requests.isEmpty,"Confirmed account deletion queued dead credential")
+  check(try AuthStore.pendingPushUnregisters().isEmpty,"Confirmed deletion left cleanup record")
+  check(AuthStore.retainPushUnregister(cleanup),"Wipe fixture unavailable");UserDefaults.standard.set(true,forKey:"push.unregisterStorageBlocked.v1")
+  deleted.discardPendingCleanup()
+  check(try AuthStore.pendingPushUnregisters().isEmpty,"Device erasure retained captured credential")
+  check(!UserDefaults.standard.bool(forKey:"push.unregisterStorageBlocked.v1"),"Device erasure retained blocked flag")
+  identity(b,6)
   let bid=PushAccountIdentity(owner:b,revision:6)
   check(!PushManager.accepts(payload:["recipient_user_id":a.uuidString,"rp":["type":"leads"]],identity:bid),"Other account notification accepted")
   check(!PushManager.accepts(payload:["rp":["type":"leads"]],identity:bid),"Legacy unbound notification accepted")

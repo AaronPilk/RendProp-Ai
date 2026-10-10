@@ -393,8 +393,10 @@ final class AuthStore: ObservableObject {
         d.removeObject(forKey: Keys.expiresAt)
     }
 
-    /// Persist outgoing push cleanup with the existing credential store, not
-    /// plain preferences. A malformed/unreadable queue never means empty.
+    /// Outgoing credentials are only used for their captured account. A
+    /// temporarily locked Keychain remains a retryable barrier; a readable but
+    /// malformed record can be discarded because the server atomically retires
+    /// displaced registration sessions when this physical token is rebound.
     @MainActor static func pendingPushUnregisters() throws -> [PendingPushUnregister] {
         guard let raw = try SecureStore.getChecked(Keys.pendingPushUnregisters) else { return [] }
         guard let bytes = raw.data(using: .utf8),
@@ -406,6 +408,26 @@ final class AuthStore: ObservableObject {
         return values
     }
 
+    @MainActor static func recoverPushUnregisterStorage() -> Bool {
+        do {
+            let values: [PendingPushUnregister]
+            do { values = try pendingPushUnregisters() }
+            catch APIError.decoding {
+                guard SecureStore.remove(Keys.pendingPushUnregisters),
+                      try SecureStore.getChecked(Keys.pendingPushUnregisters) == nil else { return false }
+                values = []
+            }
+            // Prove writes work again before clearing a prior failed-write flag.
+            if UserDefaults.standard.bool(forKey: "push.unregisterStorageBlocked.v1") {
+                guard let bytes = try? JSONEncoder().encode(values),
+                      let raw = String(data: bytes, encoding: .utf8),
+                      SecureStore.set(Keys.pendingPushUnregisters, raw) else { return false }
+            }
+            UserDefaults.standard.removeObject(forKey: "push.unregisterStorageBlocked.v1")
+            return true
+        } catch { return false }
+    }
+
     @MainActor static func retainPushUnregister(_ value: PendingPushUnregister) -> Bool {
         do {
             var values = try pendingPushUnregisters()
@@ -414,6 +436,7 @@ final class AuthStore: ObservableObject {
                   let raw = String(data: bytes, encoding: .utf8), SecureStore.set(Keys.pendingPushUnregisters, raw) else {
                 UserDefaults.standard.set(true, forKey: "push.unregisterStorageBlocked.v1"); return false
             }
+            UserDefaults.standard.removeObject(forKey: "push.unregisterStorageBlocked.v1")
             return true
         } catch {
             UserDefaults.standard.set(true, forKey: "push.unregisterStorageBlocked.v1"); return false
@@ -429,6 +452,12 @@ final class AuthStore: ObservableObject {
             guard let raw = String(data: bytes, encoding: .utf8) else { return false }
             return SecureStore.set(Keys.pendingPushUnregisters, raw)
         } catch { return false }
+    }
+
+    @MainActor static func discardPendingPushUnregisters() -> Bool {
+        guard SecureStore.remove(Keys.pendingPushUnregisters) else { return false }
+        UserDefaults.standard.removeObject(forKey: "push.unregisterStorageBlocked.v1")
+        return true
     }
 
     // MARK: - Session lifecycle
@@ -494,8 +523,8 @@ final class AuthStore: ObservableObject {
     /// preserves its source credentials so the same Apple account can recover
     /// previously saved guest work after reauthentication.
     @MainActor
-    func signOut(preservingAdoption: Bool = false) {
-        PushManager.shared.accountWillChange()
+    func signOut(preservingAdoption: Bool = false, serverAccountDeleted: Bool = false) {
+        PushManager.shared.accountWillChange(retainCleanup: !serverAccountDeleted)
         PurchaseManager.shared.clearAccountPresentation()
         // Cancel any in-flight refresh FIRST — otherwise a refresh that resolves
         // after sign-out would call applySession and re-persist tokens, silently

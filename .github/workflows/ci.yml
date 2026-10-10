@@ -903,6 +903,9 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/ops_deleted_workspace.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/private_library_adoption_safety.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/notification_session_fencing.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_library_selection.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_device_takeover.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_deleted_team_video.sql
 
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
@@ -954,6 +957,9 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/ops_deleted_workspace.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/private_library_adoption_safety.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/notification_session_fencing.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_library_selection.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_device_takeover.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/reaudit_deleted_team_video.sql
 
       - name: Invariants after the replay (all270 must pass)
         env:
@@ -1064,6 +1070,7 @@ jobs:
           python3 tools/audit/run_workspace_selection.py
           python3 tools/audit/run_team_private_libraries.py
           python3 tools/audit/run_account_library_safety.py
+          python3 tools/audit/run_reaudit_database.py
           python3 tools/audit/run_internal_testing_grants.py
           python3 tools/audit/run_private_internal_testing.py
           python3 services/supabase/tests/funded_serving_pg.py

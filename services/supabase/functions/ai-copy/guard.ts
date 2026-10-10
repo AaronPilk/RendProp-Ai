@@ -41,7 +41,7 @@ export function assertCustomPhotoPrompt(text: string, spaceType: string | null, 
     category: "permanent_property_change", no_charge: true,
   });
   if (result.status === "clarify") throw new HttpError(409, result.message, "photo_clarification_required", {
-    clarification_options: CUSTOM_PHOTO_CHOICES, no_charge: true,
+    clarification_options: mode === "furnishing" ? CUSTOM_PHOTO_CHOICES.filter((choice) => choice.id === "furniture") : CUSTOM_PHOTO_CHOICES, no_charge: true,
   });
   return result;
 }

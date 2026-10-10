@@ -9,6 +9,7 @@ import Foundation
     var syncSessionRevision: UInt64 = 1
     var isSignedIn = true
     var signOutCalls = 0
+    var serverDeletionConfirmed = false
     static var suspendToken = false
     static var tokenOverride: String?
     static var pendingToken: CheckedContinuation<Void, Never>?
@@ -20,10 +21,10 @@ import Foundation
         if suspendToken { await withCheckedContinuation { pendingToken = $0 } }
         return tokenOverride ?? shared.userID.map(token)
     }
-    func signOut() { signOutCalls += 1; isSignedIn = false; syncSessionRevision += 1 }
+    func signOut(serverAccountDeleted: Bool = false) { signOutCalls += 1; serverDeletionConfirmed = serverAccountDeleted; isSignedIn = false; syncSessionRevision += 1 }
     static func reset() {
         shared.userID = "account-a"; shared.syncSessionRevision = 1
-        shared.isSignedIn = true; shared.signOutCalls = 0
+        shared.isSignedIn = true; shared.signOutCalls = 0; shared.serverDeletionConfirmed = false
         suspendToken = false; tokenOverride = nil; pendingToken = nil
     }
     __JWT_SUBJECT__
@@ -120,6 +121,7 @@ enum Haptics { static func success() {} }
             try check(AuthStore.jwtSubject(String(request.value(forHTTPHeaderField: "Authorization")!.dropFirst(7))) == "account-a", "Current deletion bearer belongs to original actor")
             URLSession.shared.finish(body: body); await task.value
             try check(h.wipeCalls == 1 && h.wipedOwner == "account-a" && h.auth.signOutCalls == 1, "Current success wipes only its original session")
+            try check(h.auth.serverDeletionConfirmed, "Confirmed server erasure cannot queue a dead push credential")
             try check(h.showAccountDeleted && h.uploads.cancelCalls == 1, "Current success retains original deletion completion flow")
             try check(h.deletionPendingCleanup == !body.contains("\"cleanup_complete\":true"), "Queued or missing cleanup stays honestly pending")
         }

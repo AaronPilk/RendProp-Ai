@@ -185,7 +185,7 @@ for (const stage of ["headers", "JSON"]) await run(`${stage} deadline`, async (n
   expect(h.state.fetches[0]?.init.signal?.aborted === true, `${name}: original fetch aborted`);
   expect(h.msg.textContent.includes("confirm") && !h.msg.textContent.includes("not sent"), `${name}: unknown acceptance, not a false rejection claim`);
   expect(h.state.fetches.length === 1, `${name}: no automatic retry`);
-  wait.resolve(stage === "headers" ? good() : { ok: true, id: ID });
+  wait.resolve(stage === "headers" ? good() : await good().json());
   await flush(); h.failure(); // A late response cannot hide the retained form.
 });
 

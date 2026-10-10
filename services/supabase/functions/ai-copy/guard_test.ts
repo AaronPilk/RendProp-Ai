@@ -279,3 +279,18 @@ Deno.test("photo polisher retries invented scopes and never returns the model's 
   assertEquals(error.status,502); assertEquals(error.code,"upstream"); assertEquals(broken.calls.length,2);
   assert(!error.message.includes("Repaint"));
 });
+
+Deno.test("photo writing assistant refuses preservation evasions before any model call",async()=>{
+ for(const input of ["Remove toys; keep the stain hidden.","Brighten lighting; don't show the water stain.","Add a sofa; keep the vibe and patch the hole in the wall.","Improve exposure; remove the stove."]){
+  const model=fakeModel([CLEAN_PROMPT]);const error=await assertRejects(()=>guardedCopy({...base,gate:"image_prompt",input,attempt:model.attempt}),HttpError);
+  assert(error.status===400||error.status===409);assertEquals(error.details?.no_charge,true);assertEquals(model.calls.length,0);
+ }
+});
+Deno.test("photo writing assistant retries unsafe preservation output without returning it",async()=>{
+ for(const unsafe of ["Improve lighting; keep the stain hidden.","Improve lighting; don't show the water stain.","Improve lighting; marble on the counters."]){
+  const model=fakeModel([unsafe,CLEAN_PROMPT]);const result=await guardedCopy({...base,gate:"image_prompt",input:"Improve lighting only.",attempt:model.attempt});
+  assertEquals(result.text,CLEAN_PROMPT);assertEquals(model.calls,[false,true]);
+  const broken=fakeModel([unsafe]);const error=await assertRejects(()=>guardedCopy({...base,gate:"image_prompt",input:"Improve lighting only.",attempt:broken.attempt}),HttpError);
+  assertEquals(error.status,502);assertEquals(broken.calls.length,2);assert(!error.message.includes(unsafe));
+ }
+});

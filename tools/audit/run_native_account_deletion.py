@@ -88,6 +88,7 @@ def main():
     second = request.index(token_guard, first + len(token_guard))
     no_token_guard = request[:second] + request[second:].replace(token_guard, "        // synthetic removed post-token session guard", 1)
     controls = [
+        ("queue-deleted-push-session", generated.replace("signOut(serverAccountDeleted: serverAccountsEnabled)", "signOut(serverAccountDeleted: false)", 1), "Confirmed server erasure cannot queue a dead push credential"),
         ("drop-actor", generated.replace(predicate, "signedIn && self.revision == revision", 1), "Deletion context requires original actor"),
         ("drop-revision", generated.replace(predicate, "signedIn && self.owner == owner", 1), "Deletion context requires original revision"),
         ("drop-signed-in", generated.replace(predicate, "self.owner == owner && self.revision == revision", 1), "Deletion context requires signed-in session"),

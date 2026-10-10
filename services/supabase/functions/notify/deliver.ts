@@ -104,7 +104,7 @@ export async function deliverPush(
       deepLink: link,
       category: row.category,
       recipientUserId: row.user_id,
-      data,
+      data: apns.pushRouteData(data),
       collapseId: row.dedupe_key,
     }, fetchImpl);
 

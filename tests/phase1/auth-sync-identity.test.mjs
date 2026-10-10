@@ -60,7 +60,7 @@ enum Config {
  func release() { waiter?.resume(); waiter = nil }
 }
 // Push cleanup and purchase presentation have a separate executable account-switch harness.
-@MainActor final class PushManager { static let shared = PushManager(); func accountWillChange() {}; func accountDidChange() {} }
+@MainActor final class PushManager { static let shared = PushManager(); func accountWillChange(retainCleanup: Bool = true) {}; func accountDidChange() {} }
 @MainActor final class PurchaseManager { static let shared = PurchaseManager(); func clearAccountPresentation() {} }
 @MainActor enum AccountLocalPreferences { static func activate(previous: UUID?, next: UUID) {} }
 @MainActor final class AuthStore {

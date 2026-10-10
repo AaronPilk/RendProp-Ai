@@ -227,7 +227,10 @@ final class AppModel: ObservableObject {
         let wasRestoring = isRestoring
         isRestoring = true
         let previousOwner = identityOwnerUserID ?? AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
-        let previousOrg = WorkspaceContext.selectedOrgID
+        // A restored snapshot can belong to A while the active login is B.
+        // Read A's routing metadata rather than stamping A's draft with B's org.
+        let previousOrg = previousOwner.flatMap { WorkspaceContext.read(owner: $0)?.selectedOrgID }
+            ?? (previousOwner == AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) ? WorkspaceContext.selectedOrgID : nil)
         adoptionBindings = adoptionBindings?.detaching(listings, owner: previousOwner)
         identityOwnerUserID = userID
         // Rows first loaded from another device belong to that account. Their
@@ -305,14 +308,18 @@ final class AppModel: ObservableObject {
             return restoreAdoptedProductionLibrary(personalReceipt: verifiedCard)
         }
         do {
-            var restored = try journal.restoring(listings, pending: pending,
+            let scopedJournal = journal.scopedToLocalCustody(listings)
+            let adoptedIDs = Set(scopedJournal.productionLocalIDs ?? scopedJournal.entries.map(\.localID))
+            var restored = try scopedJournal.restoring(listings, pending: pending,
                 currentUserID: pending.destinationUserID, orgID: orgID)
-            for i in restored.indices where restored[i].serverID != nil {
+            for i in restored.indices where !restored[i].isSample && adoptedIDs.contains(restored[i].id) {
                 restored[i].cloudSyncOwnerID = pending.destinationUserID
                 restored[i].cloudDetachedServerID = nil
+                restored[i].cloudDraftOrgID = orgID
+                if restored[i].serverID != nil { restored[i].serverOrgID = orgID }
             }
             let previousListings = listings, previousOwner = identityOwnerUserID
-            var confirmed = journal; confirmed.confirmedOrgID = orgID; confirmed.appliedToCurrentState = true
+            var confirmed = scopedJournal; confirmed.confirmedOrgID = orgID; confirmed.appliedToCurrentState = true
             confirmed.personalCardDisposition = pending.personalCardDisposition
             try AdoptionProductionLibrary.restore(confirmed, survivingIDs: Set(restored.filter { !$0.isSample }.map(\.id)),
                 documents: FileStore.documents)
@@ -340,10 +347,22 @@ final class AppModel: ObservableObject {
     /// their known server-backed properties; new bindings also name offline drafts.
     @discardableResult func restoreAdoptedProductionLibrary(personalReceipt: PersonalCardReceipt? = nil) -> Bool {
         guard var journal = adoptionBindings, journal.appliedToCurrentState,
-              journal.confirmedOrgID != nil, identityOwnerUserID == journal.destinationUserID,
+              let orgID = journal.confirmedOrgID, identityOwnerUserID == journal.destinationUserID,
               AuthStore.shared.isIdentified,
               AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == journal.destinationUserID else { return false }
-        if journal.productionTransferred == true && journal.ownedIdentityTransferred == true { return true }
+        journal = journal.scopedToLocalCustody(listings)
+        let ids = Set(journal.productionLocalIDs ?? journal.entries.map(\.localID))
+        var repairedListings = listings
+        // Repair a completed build-55 adoption too: its production cache may
+        // have transferred while an offline listing retained the guest owner.
+        for i in repairedListings.indices where !repairedListings[i].isSample && ids.contains(repairedListings[i].id) && repairedListings[i].cloudSyncOwnerID != journal.destinationUserID {
+            repairedListings[i].cloudSyncOwnerID = journal.destinationUserID
+            repairedListings[i].cloudDraftOrgID = orgID
+            repairedListings[i].cloudDetachedServerID = nil
+            if repairedListings[i].serverID != nil { repairedListings[i].serverOrgID = orgID }
+        }
+        if journal.productionTransferred == true && journal.ownedIdentityTransferred == true,
+           journal == adoptionBindings, repairedListings == listings { return true }
         do {
             let surviving = Set(listings.filter { !$0.isSample }.map(\.id))
             if journal.productionTransferred != true {
@@ -357,15 +376,19 @@ final class AppModel: ObservableObject {
                     destinationCardWasVerified: personalReceipt != nil)
                 journal.ownedIdentityTransferred = true
             }
-            let previous = adoptionBindings
-            adoptionBindings = journal
+            let previous = adoptionBindings, previousListings = listings
+            let wasRestoring = isRestoring
+            isRestoring = true
+            listings = repairedListings; adoptionBindings = journal
+            isRestoring = wasRestoring
             if persist() {
-                let ids = Set(journal.productionLocalIDs ?? journal.entries.map(\.localID))
                 ProductionVideoLibrary.shared.reloadAdopted(owner: journal.destinationUserID.uuidString.lowercased(), listingIDs: ids)
                 for id in ids { ProductionPlanSyncStore.shared.remove(id) }
                 return true
             }
-            adoptionBindings = previous
+            isRestoring = true
+            listings = previousListings; adoptionBindings = previous
+            isRestoring = wasRestoring
         } catch { }
         AuthStore.shared.reportProductionRecoveryProblem()
         return false

@@ -336,8 +336,9 @@ Deno.test("the push payload carries the alert, the category and the deep link", 
 
   const aps = body.aps as { alert: { title: string; body: string } };
   assertEquals(aps.alert, {title:"Rendprop update",body:"Open Rendprop to review it."});
-  assert(!JSON.stringify(aps).includes("Nina Patel"));
-  assert(!JSON.stringify(aps).includes("412 Marina Blvd"));
+  assert(!JSON.stringify(body).includes("Nina Patel"));
+  assert(!JSON.stringify(body).includes("412 Marina Blvd"));
+  assertEquals(body.data, { lead_id: "44444444-4444-4444-4444-444444444444" });
   assertEquals(body.category, "lead_received");
   assertEquals(body.deep_link, "https://rendprop.com/f/abc123xyz9");
   assertEquals(body.recipient_user_id, row().user_id);
@@ -483,4 +484,23 @@ Deno.test("admin copy has honest fallbacks and leaves unrelated or ordinary mess
   const ordinary={title:"Maintenance",body:"Back soon.",code:"holds_unledgered",data:{holds:1}};
   assertEquals(render("render_ready",ordinary),{title:"Maintenance",body:"Back soon."});
   assertEquals(render("ops_alert",{...ordinary,code:"other-alert"}),{title:"Maintenance",body:"Back soon."});
+});
+
+Deno.test("final APNs serializer strips personal fields even when bypassing the delivery helper", async () => {
+  clearSecrets(); await withApnsSecrets();
+  let emitted: Record<string, unknown> = {};
+  try {
+    const id = "de550103-0000-4000-8000-000000000001";
+    const result = await apns.send({deviceToken:device.device_token,environment:"sandbox",
+      title:"Synthetic buyer",body:"Synthetic property",category:"lead_received",deepLink:null,
+      recipientUserId:id,data:{lead_id:id,listing_id:"Synthetic property",render_id:"not-a-uuid",
+        slug:"abc123xyz9",lead_name:"Synthetic buyer",listing_address:"Synthetic property",
+        email:"private@fixture.invalid",phone:"555-private",nested:{private:"private-snapshot"}}},
+      (_url, init) => { emitted=JSON.parse(String((init as RequestInit)?.body)); return Promise.resolve(apnsResponse(200)); });
+    assert(result.ok); assertEquals(emitted.data,{lead_id:id,slug:"abc123xyz9"});
+    assertEquals(emitted.recipient_user_id,id);
+    const raw=JSON.stringify(emitted);
+    for(const value of ["Synthetic buyer","Synthetic property","private@fixture.invalid","555-private","private-snapshot"]) assert(!raw.includes(value));
+    assertEquals(apns.pushRouteData({slug:"invalid path/with private name",lead_id:{id},unknown:id}),{});
+  } finally { clearSecrets(); }
 });

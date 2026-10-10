@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
 TARGET=SQL/'migrations/20261010000032_private_library_adoption_and_serving_safety.sql'
-FOLLOWUP=SQL/'migrations/20261010000700_preserve_replayed_library_selection.sql'
+FOLLOWUP=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
 FIXTURES={'private_library_adoption_safety':32,'notification_session_fencing':27,'ops_deleted_workspace':16}
 OUT=pathlib.Path(tempfile.mkdtemp(prefix='rendprop-account-library-safety-',dir='/tmp'));OUT.chmod(0o700);DATA=OUT/'cluster';SOCK=OUT/'socket';SOCK.mkdir(mode=0o700)
 ENV={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LC_ALL':'C','TZ':'UTC'};BIN={n:shutil.which(n)for n in['initdb','pg_ctl','psql','createdb']};assert all(BIN.values())
@@ -69,7 +69,7 @@ def replay_selection_race(label,agent,child,second,expect_retained):
    assert a.poll()is None,'Replay finished before actual selector overlap'
    time.sleep(.03)
   assert observed,'Actual replay must wait on the selector profile lock'
-  b.stdin.write(f"set local role service_role;select public.select_workspace('{agent}','{second}');commit;\n");b.stdin.close();b.wait(15);a.wait(15)
+  b.stdin.write(f"update public.user_workspace_state set active_org_id='{second}'where user_id='{agent}';commit;\n");b.stdin.close();b.wait(15);a.wait(15)
   ao=a.stdout.read()+a.stderr.read();bo=''.join(prefix)+b.stdout.read()+b.stderr.read()
   retained=q(label+'-retained',f"select active_org_id='{second}'::uuid from public.user_workspace_state where user_id='{agent}';").strip()=='t'
   result={'actualProfileBlockerObserved':observed,'selectorExit':b.returncode,'replayExit':a.returncode,'newSelectionRetained':retained,'selectorOutput':bo,'replayOutput':ao}

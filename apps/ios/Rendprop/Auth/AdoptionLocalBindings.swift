@@ -50,15 +50,29 @@ struct AdoptionLocalBindings: Codable, Equatable {
 
     static func capture(_ pending: AnonymousAdoptionRecovery.Pending,
                         listings: [Listing]) throws -> Self {
+        // Local custody can include drafts preserved from an earlier login.
+        // A guest's receipt authorizes only this guest's local production IDs.
+        let owned = listings.filter { !$0.isSample && ($0.cloudSyncOwnerID == nil || $0.cloudSyncOwnerID == pending.sourceUserID) }
         var value = Self(version: 1, operationID: pending.operationID,
                          sourceUserID: pending.sourceUserID, destinationUserID: pending.destinationUserID,
-                         entries: listings.filter { !$0.isSample && $0.serverID != nil }.map {
+                         entries: owned.filter { $0.serverID != nil }.map {
             Entry(localID: $0.id, serverID: $0.serverID!, shareSlug: $0.shareSlug,
                   shareURL: $0.shareURL, unbrandedShareURL: $0.unbrandedShareURL,
                   publishedRenderID: $0.publishedRenderID)
         }, confirmedOrgID: nil)
-        value.productionLocalIDs = listings.filter { !$0.isSample }.map(\.id)
+        value.productionLocalIDs = owned.map(\.id)
         try value.validate()
+        return value
+    }
+
+    /// Older receipts may have captured a retained foreign account's draft.
+    /// Keep absent IDs as history, but exclude every present sample/foreign row
+    /// before restoring identities or production caches. Never expand a journal.
+    func scopedToLocalCustody(_ listings: [Listing]) -> Self {
+        let excluded = Set(listings.filter { $0.isSample || ($0.cloudSyncOwnerID != nil && $0.cloudSyncOwnerID != sourceUserID && $0.cloudSyncOwnerID != destinationUserID) }.map(\.id))
+        var value = self
+        value.entries = entries.filter { !excluded.contains($0.localID) }
+        value.productionLocalIDs = productionLocalIDs.map { $0.filter { !excluded.contains($0) } }
         return value
     }
 

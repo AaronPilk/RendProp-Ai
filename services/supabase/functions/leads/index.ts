@@ -1,6 +1,6 @@
 // leads — PUBLIC lead capture from the tour end-card + the agent's inbox (owner).
 //
-//   POST  /leads                        PUBLIC { slug, name, phone, email?, extra?, _hp? } -> { ok, id }
+//   POST  /leads                        PUBLIC { slug, name, phone, email?, extra?, _hp? } -> { ok, accepted } (honeypot: { ok })
 //   GET   /leads?listing_id=&since=&limit=   OWNER -> { leads: [ … ] }   (member-scoped via RLS)
 //   PATCH /leads/:id  { status }        OWNER -> { ok, lead }             (new|contacted|won|lost)
 //

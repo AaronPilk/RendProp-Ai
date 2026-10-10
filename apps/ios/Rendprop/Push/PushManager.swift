@@ -190,7 +190,7 @@ final class PushManager: ObservableObject {
     private var registrationTask: Task<Void, Never>?
     private var registrationOperation: UUID?
     private var unregisterTask: Task<Bool, Never>?
-    private var unregisterBlockedInMemory = false
+    private var unretainedCleanups: [PendingPushUnregister] = []
     private var lastDeviceToken: String? {
         get { UserDefaults.standard.string(forKey: "push.deviceToken.v1") }
         set { UserDefaults.standard.set(newValue, forKey: "push.deviceToken.v1") }
@@ -255,6 +255,7 @@ final class PushManager: ObservableObject {
     func start() {
         guard !Self.isSuppressed else { return }
         UNUserNotificationCenter.current().delegate = PushDelegate.shared
+        retryPendingCleanup()
         Task { await refreshAuthorization(registerIfAllowed: true) }
     }
 
@@ -262,6 +263,7 @@ final class PushManager: ObservableObject {
     /// the background, in both directions).
     func refreshAuthorization(registerIfAllowed: Bool = false) async {
         guard !Self.isSuppressed else { return }
+        retryPendingCleanup()
         let status = await Self.currentAuthorization()
         authorization = status
         if registerIfAllowed, Self.allowsNotifications(status) {
@@ -435,7 +437,7 @@ final class PushManager: ObservableObject {
 
     /// Called BEFORE replacing or erasing the outgoing credential. Cancel
     /// old acknowledgments synchronously, then retain its exact cleanup.
-    func accountWillChange() {
+    func accountWillChange(retainCleanup: Bool = true) {
         registrationTask?.cancel()
         registrationTask = nil
         registrationOperation = nil
@@ -448,12 +450,14 @@ final class PushManager: ObservableObject {
             UNUserNotificationCenter.current().removeAllDeliveredNotifications()
             UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         }
-        guard !Self.isSuppressed, Config.useLiveBackend,
+        guard retainCleanup, !Self.isSuppressed, Config.useLiveBackend,
               let identity = Self.currentIdentity, let hex = lastDeviceToken,
               let access = AuthStore.storedAccessToken(), !access.isEmpty else { return }
         let cleanup = PendingPushUnregister(owner: identity.owner, deviceToken: hex,
             environment: Self.apnsEnvironment, accessToken: access)
-        unregisterBlockedInMemory = !AuthStore.retainPushUnregister(cleanup)
+        if !AuthStore.retainPushUnregister(cleanup), !unretainedCleanups.contains(cleanup) {
+            unretainedCleanups.append(cleanup)
+        }
         Task { _ = await finishPendingUnregisters() }
     }
 
@@ -463,27 +467,55 @@ final class PushManager: ObservableObject {
         if isAllowed { registerWithAPNs() }
     }
 
+    func retryPendingCleanup() {
+        guard !Self.isSuppressed else { return }
+        Task { _ = await finishPendingUnregisters() }
+    }
+
     private func finishPendingUnregisters() async -> Bool {
-        if let task = unregisterTask { return await task.value }
-        guard !unregisterBlockedInMemory,
-              !UserDefaults.standard.bool(forKey: "push.unregisterStorageBlocked.v1") else { return false }
+        if let existing = unregisterTask { return await existing.value }
         let task = Task { @MainActor () -> Bool in
+            guard AuthStore.recoverPushUnregisterStorage() else { return false }
+            for cleanup in unretainedCleanups {
+                guard AuthStore.retainPushUnregister(cleanup) else { return false }
+            }
+            unretainedCleanups.removeAll()
             do {
-                while let next = try AuthStore.pendingPushUnregisters().first {
-                    let bytes = try await PushHTTP.sendCaptured(path: ["me", "devices"], method: "DELETE",
-                        body: ["device_token": next.deviceToken, "environment": next.environment],
-                        accessToken: next.accessToken)
-                    guard let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-                          object["ok"] as? Bool == true, object["unregistered"] as? Bool == true,
-                          AuthStore.removePushUnregister(next) else { return false }
+                while let cleanup = try AuthStore.pendingPushUnregisters().first {
+                    do {
+                        let data = try await PushHTTP.sendCaptured(path: ["me", "devices"], method: "DELETE",
+                            body: ["device_token": cleanup.deviceToken, "environment": cleanup.environment],
+                            accessToken: cleanup.accessToken)
+                        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                        guard object?["ok"] as? Bool == true,
+                              object?["unregistered"] as? Bool == true,
+                              AuthStore.removePushUnregister(cleanup) else { return false }
+                    } catch let api as APIError where api.isUnauthorized || api.isForbidden || api.code == "RP401" {
+                        // This captured credential cannot authenticate again.
+                        // Rebinding the token retires its displaced server
+                        // session; no replacement credential is used to DELETE.
+                        guard AuthStore.removePushUnregister(cleanup) else { return false }
+                    }
                 }
+                // Another account change can append a failed-write cleanup
+                // while this task awaits DELETE. Do not acknowledge that new
+                // barrier as drained; its next retry retains the exact record.
+                guard unretainedCleanups.isEmpty,
+                      !UserDefaults.standard.bool(forKey: "push.unregisterStorageBlocked.v1") else { return false }
                 return true
-            } catch { return false }
+            } catch { return false } // network/5xx/incomplete ack: keep and retry
         }
         unregisterTask = task
-        let succeeded = await task.value
+        let result = await task.value
         unregisterTask = nil
-        return succeeded
+        return result
+    }
+
+    /// Called only by the user's explicit device-data erasure path. Token
+    /// takeover on the server fences any old session whose cleanup was lost.
+    func discardPendingCleanup() {
+        unretainedCleanups.removeAll()
+        _ = AuthStore.discardPendingPushUnregisters()
     }
 
     /// iOS could not get a token (no network, no APNs entitlement on this

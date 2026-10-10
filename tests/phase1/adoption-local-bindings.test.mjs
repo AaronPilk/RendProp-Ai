@@ -30,6 +30,8 @@ test('source bindings are fail-closed, synchronous and source-before-session / r
   assert.ok(auth.includes('self?.onPrepareAdoption?(pending) == true'));
   assert.ok(auth.includes('self?.onConfirmAdoption?(pending, orgID, cardData) == true'));
   assert.ok(auth.includes('guard onAdoptionStorageReady?() == true else { return }'));
+  const session = auth.slice(auth.indexOf('private func applySession('), auth.indexOf('    /// Sign out:'));
+  assert.ok(session.indexOf('onAccountChanged?(id)') < session.indexOf('userID = sub'), 'outgoing custody callback runs before the active subject changes');
   const core = readFileSync(root + 'apps/ios/Rendprop/Auth/AnonymousAdoptionRecovery.swift', 'utf8');
   assert.ok(core.indexOf('finishLocal(verifiedValue, receipt.org_id, cardData)') < core.indexOf('guard remove()'));
   assert.ok(core.indexOf('let (cardData, cardResponse) = try await send(cardRequest)') < core.indexOf('finishLocal(verifiedValue, receipt.org_id, cardData)'));
@@ -40,6 +42,8 @@ test('source bindings are fail-closed, synchronous and source-before-session / r
 });
 test('actual AppModel method bodies + complete PersistentStore execute durable local recovery', () => {
   const out = mkdtempSync(join(tmpdir(), 'rendprop-local-binding-swift-'));
+  const initializer = app.slice(app.indexOf('    init()'), app.indexOf('    /// Clear every per-account'));
+  const accountChanged = initializer.slice(initializer.indexOf('        AuthStore.shared.onAccountChanged'), initializer.indexOf('        AuthStore.shared.onPrepareAdoption'));
   const methods = ['struct RenderedTour', 'struct UploadedRenderAsset', 'enum PublishError',
     'func forgetServerIdentities(', 'func prepareLocalAdoption(', 'func confirmLocalAdoption(',
     'func restoreAdoptedProductionLibrary(', 'func pendingAdoptionBlocksServerListing(', 'var workspaceSwitchIsBusy:', 'func prepareWorkspaceSwitch(', 'func isInSelectedWorkspace(', 'func ensureServerListing(', 'func index(of ', 'func load()',
@@ -51,7 +55,13 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
   // implementation are real; do not replace its identity/fingerprint/save logic.
   const scaffold = `import Foundation
 enum Config { static var useLiveBackend = false }
-enum WorkspaceContext { static var selectedOrgID: UUID? = nil }
+enum WorkspaceContext {
+ struct Snapshot { var selectedOrgID: UUID? }
+ static var selectedOrgID: UUID? = nil
+ static var ownerSelections: [UUID: UUID] = [:]
+ static func read(owner: UUID) -> Snapshot? { ownerSelections[owner].map { Snapshot(selectedOrgID: $0) } }
+}
+enum AccountExportFiles { static func purge() {} }
 @MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func refresh() async {}; func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID } }
 enum FileStore {
  static var documents = URL(fileURLWithPath: "/nonexistent/fixture-not-initialized")
@@ -63,6 +73,7 @@ enum FileStore {
  var userID:String? { didSet { if userID != oldValue { syncSessionRevision &+= 1 } } }
  var syncSessionRevision:UInt64=0; var isIdentified:Bool { userID != nil }
  var errors=0; var pendingExists=true; var pendingReadFails=false
+ var onAccountChanged: ((UUID) -> Void)?
  static func validAccessToken() async -> String? { nil }
  func retryPendingAdoptionIfNeeded() async {}
  func reportUnreadableAdoptionBindings() { errors += 1 }
@@ -98,6 +109,9 @@ enum FileStore {
  var cloudSyncError:String?; var lastCloudSyncAt:Date?
  var serverCreationInFlight:Set<UUID>=[]; var identityOwnerUserID:UUID?
  var adoptionBindings:AdoptionLocalBindings?; var adoptionBindingsUnreadable=false; let api=FixtureAPI()
+ init() {
+${accountChanged}
+ }
  // Business-type preferences/notifications are outside metadata adoption.
  // Keep this dependency inert instead of touching the host's preferences.
  static func markSpaceTypeOutOfSync() {}
@@ -138,6 +152,14 @@ ${store}
       'adoptionBindings = confirmed; identityOwnerUserID = pending.destinationUserID', 1],
     ['ignore-persistence-failure', 'if persist() { return true }', 'if (persist() || true) { return true }', 2],
     ['evict-pending-binding', 'if let old = adoptionBindings, old.confirmedOrgID == nil, !old.matches(pending) { return false }', '', 1],
+    ['skip-offline-custody-rebind', 'for i in restored.indices where !restored[i].isSample && adoptedIDs.contains(restored[i].id)',
+      'for i in restored.indices where restored[i].serverID != nil', 1],
+    ['skip-completed-draft-repair', 'for i in repairedListings.indices where !repairedListings[i].isSample && ids.contains(repairedListings[i].id) && repairedListings[i].cloudSyncOwnerID != journal.destinationUserID',
+      'for i in repairedListings.indices where repairedListings[i].serverID != nil', 1],
+    ['use-current-owner-library', 'let previousOrg = previousOwner.flatMap { WorkspaceContext.read(owner: $0)?.selectedOrgID }\n            ?? (previousOwner == AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) ? WorkspaceContext.selectedOrgID : nil)',
+      'let previousOrg = WorkspaceContext.selectedOrgID', 1],
+    ['adopt-unjournaled-drafts', 'for i in restored.indices where !restored[i].isSample && adoptedIDs.contains(restored[i].id)',
+      'for i in restored.indices where !restored[i].isSample', 1],
   ]) {
     assert.equal(scaffold.split(needle).length - 1, count, `actual mutation target ${name}`);
     const path = join(out, name + '.swift'), mutant = join(out, name);
@@ -151,12 +173,12 @@ ${store}
     assert.equal(rejected.status, 1, `actual mutation must fail: ${name}`);
     assert.match(rejected.stdout, /FAIL: [1-9]\d*\/\d+ local binding assertions/);
   }
-  console.log('PASS: 5 actual AppModel metadata mutants compiled then failed assertions/exit1');
+  console.log('PASS: 9 actual AppModel metadata mutants compiled then failed assertions/exit1');
   const checked = [...files, root + 'apps/ios/Rendprop/RendpropApp.swift', root + 'apps/ios/Rendprop/Auth/AuthStore.swift',
     root + 'tests/phase1/AdoptionLocalBindingsTests.swift', fileURLToPath(import.meta.url)];
   writeFileSync(join(out, 'receipt.json'), JSON.stringify({ accepted: true,
     runtimeScope: 'Mechanically extracted actual AppModel metadata methods and complete PersistentStore; complete production WorkspaceSync/NativeReelDraft and model types; inert Auth/transport/FileStore/background refresh dependencies',
-    negativeControlExit: negative.status, actualExit: result.status, actualMutantsRejected: 5,
+    negativeControlExit: negative.status, actualExit: result.status, actualMutantsRejected: 9,
     sourceHashes: Object.fromEntries(checked.map(path => [path.slice(root.length), createHash('sha256').update(readFileSync(path)).digest('hex')])),
     extractedSourceSHA256: createHash('sha256').update(scaffold).digest('hex'),
   }, null, 2) + '\n', { flag: 'wx' });

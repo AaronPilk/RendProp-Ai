@@ -265,3 +265,40 @@ Deno.test("actual saved photo recovery preserves a historical input now refused 
   const changed=await f.run(f.request({image_b64:"QUFB",mime:"image/heic",label:"different"}));assertEquals(changed.status,409);assertEquals(f.state.gets,1);
  }finally{f.close();}
 });
+
+Deno.test("actual custom, staging and polishing input refuse preservation evasions before any money or provider work", async()=>{
+ const cases={
+  custom:["remove the toys, keep the stain hidden","brighten the room; don't show the water stain","Add a grey sofa; keep the vibe and patch the hole in the wall","Improve lighting and remove the fireplace","Brighten exposure; marble on the counters"],
+  stage:["grey sofa, keep the vibe and patch the hole in the wall","cream sofa; keep the stain hidden","white chair; take out the bathtub","oak table; lay hardwood","a rug; no mildew"],
+  improve_prompt:["remove the toys, keep the stain hidden","brighten the room; don't show the water stain","Add a grey sofa; keep the vibe and patch the hole in the wall","Remove boxes and scratches","Improve lighting; granite instead of laminate"],
+ };
+ for(const [edit,prompts] of Object.entries(cases))for(const prompt of prompts){const f=await fixture();try{
+  const response=await f.run(f.request({edit,prompt}));assert(response.status===400||response.status===409,`${edit}: ${prompt}`);
+  const body=await response.json();assertEquals(body.no_charge,true);assertEquals(f.state.started,false);assertEquals(f.state.holds,0);assertEquals(f.state.charges,0);assertEquals(f.state.submits,0);assertEquals(f.state.helperDispatch,0);
+  if(edit==="stage"){assert(body.error.includes("furniture")||body.error.includes("staging"));if(response.status===409)assertEquals(body.clarification_options.map((x:{id:string})=>x.id),["furniture"]);}
+ }finally{f.close();}}
+});
+Deno.test("actual polisher suppresses preservation evasions in its response after exactly one paid helper",async()=>{
+ for(const [prompt,output] of [
+  ["Remove toys.","Remove toys; keep the stain hidden."],
+  ["Brighten lighting.","Brighten lighting; don't show the water stain."],
+  ["Add a grey sofa.","Add a grey sofa; keep the vibe and patch the hole in the wall."],
+ ]){const f=await fixture();try{
+  f.state.helperText=output;const response=await f.run(f.request({edit:"improve_prompt",prompt}));assertEquals(response.status,502);
+  const body=await response.json();assertEquals(body.code,"upstream");assertEquals(body.prompt,undefined);assertEquals(body.no_charge,undefined);
+  assertEquals(f.state.helperDispatch,1);assertEquals(f.state.holds,1);assertEquals(f.state.charges,1);assertEquals(f.state.submits,0);
+ }finally{f.close();}}
+});
+Deno.test("actual handler still admits safe glass, wood, painted furniture and fixed-feature preservation on both routes",async()=>{
+ for(const [edit,prompt] of [
+  ["custom","Add a grey sofa; keep the walls white."],
+  ["custom","Remove toys from the carpet; keep scratches visible and unchanged."],
+  ["custom","Brighten the fireplace with natural illumination; do not change its finish."],
+  ["stage","cream sofa, oak table and painted white chairs; preserve all original finishes."],
+  ["stage","a rug beside the fireplace and a floor lamp near the staircase; keep walls white."],
+ ])for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
+  const response=await f.run(f.request({edit,prompt}));assertEquals(response.status,200,await response.text());
+  assertEquals(f.state.holds,1);assertEquals(f.state.charges,1);assertEquals(f.state.submits,1);assertEquals(f.state.helperDispatch,0);
+  assert(f.state.prompts[0].includes(JSON.stringify(prompt)));assert(f.state.prompts[0].includes("garage-door color and finish"));
+ }finally{f.close();}}
+});

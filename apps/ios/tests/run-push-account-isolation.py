@@ -23,8 +23,8 @@ def block(s,anchor):
    if depth==0:return s[start:i+1]
  raise RuntimeError('Unclosed '+anchor)
 identity=block(push,'struct PushAccountIdentity');pending=block(push,'struct PendingPushUnregister')
-methods='\n'.join(block(push,x)for x in ['    static var currentIdentity','    func handleDeviceToken','    private func registerDeviceToken','    func accountWillChange','    func accountDidChange','    private func finishPendingUnregisters','    static func accepts','    func handle(payload:'])
-authmethods='\n'.join(block(auth,x)for x in ['    @MainActor static func pendingPushUnregisters','    @MainActor static func retainPushUnregister','    @MainActor static func removePushUnregister'])
+methods='\n'.join(block(push,x)for x in ['    static var currentIdentity','    func start','    func retryPendingCleanup','    func discardPendingCleanup','    func handleDeviceToken','    private func registerDeviceToken','    func accountWillChange','    func accountDidChange','    private func finishPendingUnregisters','    static func accepts','    func handle(payload:'])
+authmethods='\n'.join(block(auth,x)for x in ['    @MainActor static func pendingPushUnregisters','    @MainActor static func recoverPushUnregisterStorage','    @MainActor static func retainPushUnregister','    @MainActor static func removePushUnregister','    @MainActor static func discardPendingPushUnregisters'])
 http=block(push,'    @MainActor static func send(path:')
 route=block(app,'            .onChange(of: analyticsAuth.userID)')
 routebody=route[route.index('{ nextOwner in')+len('{ nextOwner in'):-1]
@@ -39,15 +39,20 @@ import Foundation
 final class UserDefaults {static let standard=UserDefaults();var values:[String:Any]=[:]
  func bool(forKey key:String)->Bool{values[key]as?Bool ?? false};func string(forKey key:String)->String?{values[key]as?String}
  func set(_ value:Any,forKey key:String){values[key]=value};func removeObject(forKey key:String){values.removeValue(forKey:key)}}
-enum APIError:Error {case decoding,badResponse(Int),notConfigured;var isNotFound:Bool{if case .badResponse(404)=self{return true};return false}}
+enum APIError:Error {case decoding,badResponse(Int),notConfigured,server(Int,String)
+ var status:Int?{switch self{case .badResponse(let s),.server(let s,_):return s;default:return nil}}
+ var code:String?{if case .server(_,let c)=self{return c};return nil}
+ var isNotFound:Bool{status==404};var isUnauthorized:Bool{status==401};var isForbidden:Bool{status==403}}
+enum StorageFailure:Error{case locked}
 enum CloudSyncError:Error{case identityChanged}
 enum Config{static let enablePush=true;static let isUITesting=false;static let isSessionNetworkTesting=false;static let useLiveBackend=true}
 enum Analytics{static let appVersion="synthetic"}
-@MainActor final class UNUserNotificationCenter {static let center=UNUserNotificationCenter();var removed=0;static func current()->UNUserNotificationCenter{center};func removeAllDeliveredNotifications(){removed+=1};func removeAllPendingNotificationRequests(){removed+=1}}
-@MainActor enum SecureStore {static var values:[String:String]=[:];static var failSet=false;static var failRead=false
- static func getChecked(_ key:String)throws->String?{if failRead{throw APIError.decoding};return values[key]}
+@MainActor final class UNUserNotificationCenter {static let center=UNUserNotificationCenter();var removed=0;var delegate:Any?;static func current()->UNUserNotificationCenter{center};func removeAllDeliveredNotifications(){removed+=1};func removeAllPendingNotificationRequests(){removed+=1}}
+@MainActor final class PushDelegate{static let shared=PushDelegate()}
+@MainActor enum SecureStore {static var values:[String:String]=[:];static var failSet=false;static var failRead=false;static var failRemove=false
+ static func getChecked(_ key:String)throws->String?{if failRead{throw StorageFailure.locked};return values[key]}
  static func set(_ key:String,_ value:String)->Bool{if failSet{return false};values[key]=value;return true}
- static func remove(_ key:String)->Bool{values.removeValue(forKey:key);return true}}
+ static func remove(_ key:String)->Bool{if failRemove{return false};values.removeValue(forKey:key);return true}}
 @MainActor final class AuthStore {static let shared=AuthStore();var userID:String?;var isSignedIn=true;var syncSessionRevision:UInt64=1;static var access="synthetic-A"
  enum Keys{static let pendingPushUnregisters="auth.pendingPushUnregisters.v1"}
  static func storedAccessToken()->String?{access};static func validAccessToken()async->String?{access}
@@ -57,33 +62,39 @@ __AUTH__
  struct Request {let method:String;let owner:UUID?;let credential:String;let body:[String:Any]?}
  static var requests:[Request]=[];static var pausedOwner:UUID?;static var postContinuation:CheckedContinuation<Void,Never>?
  static var holdDelete=false;static var deleteContinuation:CheckedContinuation<Void,Never>?
- static var deleteResponse=Data(#"{"ok":true,"unregistered":true}"#.utf8);static var deleteFails=false
+ static var deleteResponse=Data(#"{"ok":true,"unregistered":true}"#.utf8);static var deleteError:Error?
 __HTTP__
  static func sendCaptured(path:[String],method:String,body:[String:Any]?,accessToken:String)async throws->Data{
   let owner=PushManager.currentIdentity?.owner
   requests.append(Request(method:method,owner:owner,credential:accessToken,body:body))
-  if method=="DELETE"{if holdDelete{await withCheckedContinuation{deleteContinuation=$0}};if deleteFails{throw APIError.badResponse(401)};return deleteResponse}
+  if method=="DELETE"{if holdDelete{await withCheckedContinuation{deleteContinuation=$0}};if let deleteError{throw deleteError};return deleteResponse}
   if method=="POST",owner==pausedOwner{await withCheckedContinuation{postContinuation=$0}}
   return Data(#"{"ok":true}"#.utf8)
  }
- static func reset(){requests=[];pausedOwner=nil;postContinuation=nil;holdDelete=false;deleteContinuation=nil;deleteResponse=Data(#"{"ok":true,"unregistered":true}"#.utf8);deleteFails=false}
+ static func reset(){requests=[];pausedOwner=nil;postContinuation=nil;holdDelete=false;deleteContinuation=nil;deleteResponse=Data(#"{"ok":true,"unregistered":true}"#.utf8);deleteError=nil}
 }
 enum PushRoute:Equatable {case leads,tour(DeepLink)}
 @MainActor final class PushManager {static let shared=PushManager()
  var pendingRoute:PushRoute?;var showPrePrompt=false;var isAllowed=false
  private var registeredToken:String?;private var registeredIdentity:PushAccountIdentity?
  private var registrationTask:Task<Void,Never>?;private var registrationOperation:UUID?
- private var unregisterTask:Task<Bool,Never>?;private var unregisterBlockedInMemory=false;private var deviceRouteMissing=false
+ private var unregisterTask:Task<Bool,Never>?;private var unretainedCleanups:[PendingPushUnregister]=[];private var deviceRouteMissing=false
  private var lastDeviceToken:String?{get{UserDefaults.standard.string(forKey:"push.deviceToken.v1")} set{UserDefaults.standard.set(newValue as Any,forKey:"push.deviceToken.v1")}}
  private static var isSuppressed:Bool{!Config.enablePush || Config.isUITesting || Config.isSessionNetworkTesting}
- static let apnsEnvironment="sandbox";func registerWithAPNs(){}
+ static let apnsEnvironment="sandbox";func registerWithAPNs(){};func refreshAuthorization(registerIfAllowed:Bool=false) async{}
  var acknowledgedOwner:UUID?{registeredIdentity?.owner};var acknowledgedToken:String?{registeredToken}
 __METHODS__
 }
 '''
 body='import Foundation\n'+paths[5].read_text()+'\n'+identity+'\n'+pending+'\n'+stub.replace('__AUTH__',authmethods).replace('__HTTP__',http).replace('__METHODS__',methods)
 body+='\n@MainActor final class IncomingModel {func syncSpaceTypeIfNeeded(){};func refreshCloudWorkspace()async{}}\n@MainActor final class PaywallRouter {static let shared=PaywallRouter();func dismiss(){}}\n@MainActor final class RootIncomingHarness {var incomingLink:DeepLink?;var rootSheet:String?;var incomingLinkError=false;var incomingQueue=NativeIncomingQueue();var incomingAccountOwner:String?;let model=IncomingModel()\nfunc accountChanged(nextOwner:String?) {\n'+routebody+'\n}\n}\n'
-faults=[('actual',None,None,None),('retain-root-queue','incomingQueue = NativeIncomingQueue()','_ = incomingQueue','A queued account route survived owner change'),('skip-cleanup-barrier','guard await finishPendingUnregisters(), !Task.isCancelled,','guard true, !Task.isCancelled,','B POST crossed unacknowledged A cleanup'),('accept-incomplete-ack','object["unregistered"] as? Bool == true,','true,','Incomplete cleanup acknowledgment permitted B POST'),('drop-server-category',' || type == "lead_received"','', 'Actual emitted lead notification did not open inbox'),('accept-foreign-payload','UUID(uuidString: raw) == identity.owner','!raw.isEmpty','Other account notification accepted'),('late-acknowledgment',None,None,'Late A acknowledgment replaced B binding')]
+faults=[('actual',None,None,None),('retain-root-queue','incomingQueue = NativeIncomingQueue()','_ = incomingQueue','A queued account route survived owner change'),('skip-cleanup-barrier','guard await finishPendingUnregisters(), !Task.isCancelled,','guard true, !Task.isCancelled,','B POST crossed unacknowledged A cleanup'),('accept-incomplete-ack','object?["unregistered"] as? Bool == true,','true,','Incomplete cleanup acknowledgment permitted B POST'),('drop-server-category',' || type == "lead_received"','', 'Actual emitted lead notification did not open inbox'),('accept-foreign-payload','UUID(uuidString: raw) == identity.owner','!raw.isEmpty','Other account notification accepted'),('late-acknowledgment',None,None,'Late A acknowledgment replaced B binding')]
+assert 'retryPendingCleanup()' in block(push,'    func refreshAuthorization')
+settings=(ROOT/'apps/ios/Rendprop/Screens/SettingsView.swift').read_text()
+assert 'auth.signOut(serverAccountDeleted: serverAccountsEnabled)' in block(settings,'    private func deleteAccount(')
+assert 'PushManager.shared.discardPendingCleanup()' in block(settings,'    private func wipeLocalData(')
+assert 'accountWillChange(retainCleanup: !serverAccountDeleted)' in block(auth,'    func signOut(')
+faults += [('ignore-new-retention-barrier','guard unretainedCleanups.isEmpty,\n                      !UserDefaults.standard.bool(forKey: "push.unregisterStorageBlocked.v1") else { return false }','guard true else { return false }','Cleanup admitted replacement across new failed retention'),('retain-terminal-cleanup','where api.isUnauthorized || api.isForbidden || api.code == "RP401"','where false','Terminal cleanup prevented replacement registration'),('discard-transient-cleanup','where api.isUnauthorized || api.isForbidden || api.code == "RP401"','where true','Transient cleanup allowed replacement registration'),('skip-corrupt-recovery','catch APIError.decoding {','catch APIError.notConfigured {','Readable corrupt queue stranded replacement')]
 results=[]
 for name,old,new,expected in faults:
  current=body
@@ -99,5 +110,5 @@ for name,old,new,expected in faults:
  passed=r.returncode==0 if expected is None else r.returncode!=0 and expected in r.stdout+r.stderr
  results.append({'case':name,'compileExit':c.returncode,'runtimeExit':r.returncode,'passed':passed,'expected':expected})
  if not passed:raise RuntimeError('Oracle failed '+str(folder/'runtime.log'))
-receipt={'passed':before==hashes()and all(x['passed']for x in results),'sourceHashes':before,'sourceUnchanged':before==hashes(),'results':results,'externalRequests':0,'limitations':'Actual native state/queue methods with synthetic Keychain, OS and HTTP; no live APNs, real credential, camera or provider proof. Expired outgoing JWT or unreadable cleanup queue deliberately blocks new account registration; previously delivered OS notifications cannot be recalled offline.'}
+receipt={'passed':before==hashes()and all(x['passed']for x in results),'sourceHashes':before,'sourceUnchanged':before==hashes(),'results':results,'externalRequests':0,'limitations':'Actual native state/queue methods with synthetic Keychain, OS and HTTP; no live APNs, real credential, camera or provider proof. Expired/forbidden outgoing credentials and readable corruption recover; transient network/5xx and locked Keychain remain retryable barriers. Token takeover safety also requires the separately tested server session-retirement RPC. Previously delivered OS notifications cannot be recalled offline.'}
 (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps({'passed':receipt['passed'],'receipt':str(out/'receipt.json'),'actual':(out/'actual/runtime.log').read_text(),'controls':len(results)-1}))

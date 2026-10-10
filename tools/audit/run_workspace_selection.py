@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib,json,os,pathlib,re,shutil,subprocess,tempfile,time
 ROOT=pathlib.Path(__file__).resolve().parents[2];SQL=ROOT/'services/supabase'
-TARGET=SQL/'migrations/20261010000700_preserve_replayed_library_selection.sql'
+TARGET=SQL/'migrations/20261010030225_reaudit_library_session_settlement.sql'
 UPLOAD_SUPPORT=['transport.ts','gateway_contract.ts','content_type.ts']
 STUDIO_SUPPORT=['handler.ts','property-music.ts','project-media.ts','context.ts']
 # Exact audited registration inventory, including current trial reservation and
