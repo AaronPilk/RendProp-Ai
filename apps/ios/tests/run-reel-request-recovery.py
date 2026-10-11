@@ -103,7 +103,7 @@ try:
     cases = space[space.index('    case realEstate =',space.index('enum SpaceType:')):space.index('    var id:',space.index('enum SpaceType:'))]
     review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
     actual = 'import Foundation\nimport CryptoKit\n' + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
-    for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(']:
+    for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(']:
         actual += block(source, anchor).replace('private static', 'static', 1) + '\n'
     actual += '''    static func generationGuard(auth: AuthStore, model: GuardModel, listingID: UUID, targetServerID: UUID?) -> (@MainActor @Sendable () throws -> Void) {
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
@@ -138,6 +138,7 @@ try:
     variants = [
         ('actual', actual, None),
         ('negative-quality-gate-accepts-changed-property', actual.replace('guard verdict.mayUse else { throw AIImagePrep.error(verdict.refusal) }', '// omitted property gate'), 'changed property must not be retained'),
+        ('negative-refusal-keeps-marker', actual.replace('if Self.isDefinitiveRefusal(error) { submission.clear() }', '// marker kept on a definitive refusal'), 'a definitive refusal retires the unconfirmed marker'),
         ('actual-lab-dispatch', actual, None),
         ('negative-dropped-receipt', actual.replace('try pending.save()', '// dropped accepted receipt'), 'pending receipt after poll failure'),
         ('negative-duplicate-submit', actual.replace('if PendingReelRequest.exists(recoveryContext) {', 'if false && PendingReelRequest.exists(recoveryContext) {'), 'existing receipt blocks second POST'),

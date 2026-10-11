@@ -3457,6 +3457,9 @@ struct HomeDashboardView: View {
     /// A home chosen while a sheet was still up. Pushed in the sheet's
     /// `onDismiss`, so the navigation never races the dismissal.
     @State private var queued: ProjectRoute?
+    /// "Start a new home" chosen inside the picker sheet: the name-it sheet is
+    /// presented from the picker's `onDismiss`, never over it.
+    @State private var queuedStart: ProjectFeature?
     /// What the pushed destination shows.
     @State private var route: ProjectRoute?
     @State private var showRoute = false
@@ -3711,6 +3714,13 @@ struct HomeDashboardView: View {
     /// Runs after the gate sheet closes. Cancelling leaves `queued` nil, so
     /// cancelling really does mean nothing happens.
     private func flushQueuedRoute() {
+        if let feature = queuedStart {
+            // "Start a new home" from the picker: the name-it sheet opens once
+            // the picker is fully gone (two sheets cannot overlap).
+            queuedStart = nil
+            gate = .start(feature)
+            return
+        }
         guard let q = queued else { return }
         queued = nil
         go(q.listing, q.feature)
@@ -3728,9 +3738,14 @@ struct HomeDashboardView: View {
             }
             .environmentObject(model)
         case .pick(let feature):
-            ProjectPickerSheet(feature: feature, projects: projects) { listing in
+            ProjectPickerSheet(feature: feature, projects: projects, onPick: { listing in
                 queued = ProjectRoute(listing: listing, feature: feature)
-            }
+            }, onNew: {
+                // Same door a first home opens: name it, then straight into the
+                // feature. Presented after this sheet has closed (see
+                // flushQueuedRoute's sibling below).
+                queuedStart = feature
+            })
             .environmentObject(model)
         case .aerial(let listing):
             // The aerial is grounded on a REAL home's exterior photo.
@@ -4934,6 +4949,11 @@ struct ProjectPickerSheet: View {
     let projects: [Listing]
     /// Called with the chosen home; the sheet dismisses itself right after.
     var onPick: (Listing) -> Void
+    /// Build 60: "Get started" with homes already on the phone offered only
+    /// those homes (TestFlight 56, Stephenie: "not letting you start a new
+    /// listing"). The first row now starts a new one; the sheet dismisses and
+    /// the caller opens the same name-it sheet a first home gets.
+    var onNew: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -4942,6 +4962,34 @@ struct ProjectPickerSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if let onNew {
+                    Section {
+                        Button {
+                            onNew()
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.title2).foregroundStyle(Theme.accent)
+                                    .frame(width: 56, height: 56)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Start a new \(noun)")
+                                        .font(.rpHeadline).foregroundStyle(Theme.ink)
+                                    Text("Name it, then \(feature.actionTitle.lowercased()) right away")
+                                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                        .lineLimit(2)
+                                }
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right")
+                                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.inkDim)
+                            }
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("home.picker.newProject")
+                    }
+                }
                 Section {
                     ForEach(projects) { listing in
                         Button {
@@ -4953,7 +5001,7 @@ struct ProjectPickerSheet: View {
                         .buttonStyle(.plain)
                     }
                 } header: {
-                    Text("\(feature.actionTitle) for which \(noun)?")
+                    Text(onNew == nil ? "\(feature.actionTitle) for which \(noun)?" : "Or pick a \(noun) you already have")
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                         .textCase(nil)

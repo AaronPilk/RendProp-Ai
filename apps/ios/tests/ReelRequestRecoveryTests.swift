@@ -15,10 +15,10 @@ protocol APIClient {func aiVideoReelClip(imageBase64:String,mime:String,prompt:S
 final class ClipAPI:APIClient {
  var expectedContext:PendingReelRequest.Context?;var lastKey:String?
  var beforeReply:(() throws -> Void)?
- var rejectsDrift=false;var unavailableDrift=false;var checksDrift=0;var posts=0,polls=0;var throwPoll=false;var throwSubmit=false;var terminal=false;var url:URL
+ var rejectsDrift=false;var unavailableDrift=false;var checksDrift=0;var posts=0,polls=0;var throwPoll=false;var throwSubmit=false;var refuseSubmit=false;var terminal=false;var url:URL
  let job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel")
  init(_ u:URL){url=u}
- func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob{if let context=expectedContext {let marker=PendingReelRequest.load(context);precondition(marker?.submissionUnconfirmed==true && marker?.operationID==idempotencyKey && marker?.inputDigest?.count==64,"durable operation marker exists before POST")};lastKey=idempotencyKey;posts+=1;precondition(seconds==5&&mime=="image/jpeg"&&aspect=="9:16"&&presetVersion==1&&motion=="fly_through"&&prompt==nil);if throwSubmit{throw URLError(.networkConnectionLost)};try beforeReply?();return job}
+ func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob{if let context=expectedContext {let marker=PendingReelRequest.load(context);precondition(marker?.submissionUnconfirmed==true && marker?.operationID==idempotencyKey && marker?.inputDigest?.count==64,"durable operation marker exists before POST")};lastKey=idempotencyKey;posts+=1;precondition(seconds==5&&mime=="image/jpeg"&&aspect=="9:16"&&presetVersion==1&&motion=="fly_through"&&prompt==nil);if throwSubmit{throw URLError(.networkConnectionLost)};if refuseSubmit{throw APIError.server(status:400,code:"validation",message:"Unsupported video accounting metadata")};try beforeReply?();return job}
  func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict { checksDrift+=1;precondition(!r.sourceBase64.isEmpty && r.frames.count==3 && r.requestID==job.requestId);if unavailableDrift { throw URLError(.timedOut) };return DriftVerdict(mayUse:!rejectsDrift,refusal:"Property changed; held.") }
  func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus{polls+=1;precondition(j.requestId==job.requestId);if throwPoll{throw URLError(.networkConnectionLost)};return terminal ? .failed("synthetic definitive failure"):.completed(videoURL:url)}
 }
@@ -256,6 +256,23 @@ final class ClosedVideoProtocol:URLProtocol {
   check(unknownAPI.polls==0,"unconfirmed operation cannot poll a fabricated job")
   PendingReelRequest.forget(unknownContext)
   check(!PendingReelRequest.exists(unknownContext),"explicit forget retires unknown marker")
+  // A definitive refusal — the server answered 4xx before admitting the job,
+  // nothing was counted — retires the marker so the next attempt may POST.
+  // TestFlight 59 refused every preset reel with 400 and the marker then kept
+  // Generate dead behind "submission needs review".
+  let refusedContext=PendingReelRequest.Context(listingID:UUID(),serverListingID:UUID(),owner:ctx.owner,workspace:ctx.workspace)
+  let refusedAPI=ClipAPI(clip.url);refusedAPI.expectedContext=refusedContext;refusedAPI.refuseSubmit=true
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:refusedAPI,listingServerID:refusedContext.serverListingID,into:root,index:0,recoveryContext:refusedContext);preconditionFailure("a refusal must surface")}catch{checks+=1}
+  check(refusedAPI.posts==1 && !PendingReelRequest.exists(refusedContext),"a definitive refusal retires the unconfirmed marker")
+  refusedAPI.refuseSubmit=false
+  let afterRefusal=try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:refusedAPI,listingServerID:refusedContext.serverListingID,into:root,index:0,recoveryContext:refusedContext)
+  check(refusedAPI.posts==2 && FileManager.default.fileExists(atPath:afterRefusal.path),"after a definitive refusal the next attempt may POST and completes")
+  // The transport-loss case keeps its marker exactly as before.
+  let lostContext=PendingReelRequest.Context(listingID:UUID(),serverListingID:UUID(),owner:ctx.owner,workspace:ctx.workspace)
+  let lostAPI=ClipAPI(clip.url);lostAPI.expectedContext=lostContext;lostAPI.throwSubmit=true
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:lostAPI,listingServerID:lostContext.serverListingID,into:root,index:0,recoveryContext:lostContext);preconditionFailure("a lost response must surface")}catch{checks+=1}
+  check(PendingReelRequest.load(lostContext)?.submissionUnconfirmed==true,"a lost response still keeps its unconfirmed marker")
+  PendingReelRequest.forget(lostContext)
   // Actual filesystem blocker prevents a first POST, rather than hoping a
   // record can be persisted after accepting a charged job.
   let requestDirectory=PendingReelRequest.file(ctx).deletingLastPathComponent()

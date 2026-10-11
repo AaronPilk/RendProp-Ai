@@ -25,6 +25,23 @@ enum PhotoExportRenderer {
         let images: [URL]
         let files: [URL]
     }
+    /// A file that rides along with the photos in a listing package (build 60:
+    /// "Share everything"): the walkthrough tour, a reel, the aerial opening,
+    /// a moving photo, the 3D scan, or the listing-details note. `name` is the
+    /// file name inside the archive; `note` is one line for the README.
+    struct Extra: Identifiable, Hashable, Sendable {
+        let id = UUID()
+        let name: String
+        let url: URL
+        let note: String
+    }
+    /// An empty prepared directory for a package with no photos — a listing
+    /// that only has videos still has something worth handing over.
+    static func prepareEmpty() throws -> Prepared {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-photos-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return Prepared(directory: directory, images: [], files: [])
+    }
     struct Failure: LocalizedError {
         let message: String
         var errorDescription: String? { message }
@@ -102,30 +119,52 @@ enum PhotoExportRenderer {
     /// that says what the numbers and the disclosure files are. The prepared
     /// files stay in place; the archive sits beside them in the same temporary
     /// directory so the usual cleanup removes both.
-    static func package(_ prepared: Prepared, archiveName: String, now: Date = Date()) throws -> URL {
-        guard !prepared.files.isEmpty else { throw Failure(message: "There are no photos to package.") }
+    static func package(_ prepared: Prepared, archiveName: String, extras: [Extra] = [], now: Date = Date()) throws -> URL {
+        guard !prepared.files.isEmpty || !extras.isEmpty else { throw Failure(message: "There are no photos to package.") }
         let photoCount = prepared.files.filter { ["jpg", "jpeg"].contains($0.pathExtension.lowercased()) && !$0.lastPathComponent.contains("retained-original") }.count
         let originalCount = prepared.files.filter { $0.lastPathComponent.contains("retained-original") }.count
         let disclosureCount = prepared.files.filter { $0.lastPathComponent.hasSuffix("-disclosure.txt") }.count
         let title = ZipArchive.safeFileName(archiveName, fallback: "Rendprop")
         let formatter = DateFormatter(); formatter.dateStyle = .long; formatter.timeStyle = .none
-        var readme = "\(title)\nPhotos exported from Rendprop on \(formatter.string(from: now)).\n\n"
-        readme += "\(prepared.files.count) file\(prepared.files.count == 1 ? "" : "s"): "
+        let whole = !extras.isEmpty
+        var readme = "\(title)\n\(whole ? "Listing package" : "Photos") exported from Rendprop on \(formatter.string(from: now)).\n\n"
+        let total = prepared.files.count + extras.count
+        readme += "\(total) file\(total == 1 ? "" : "s"): "
         readme += "\(photoCount) photo\(photoCount == 1 ? "" : "s") (numbered in gallery order)"
         if originalCount > 0 { readme += ", \(originalCount) retained original\(originalCount == 1 ? "" : "s") (same number, '-retained-original')" }
         if disclosureCount > 0 { readme += ", \(disclosureCount) disclosure note\(disclosureCount == 1 ? "" : "s") (same number, '-disclosure.txt')" }
+        if whole { readme += ", \(extras.count) more file\(extras.count == 1 ? "" : "s") listed below" }
         readme += ".\n\n"
         if disclosureCount > 0 {
             readme += "Each -disclosure.txt describes the edits recorded for the photo with the same number, including virtual staging and decluttering. "
             readme += "Add those captions wherever the photo is published; MLS and advertising rules differ, so check yours before uploading.\n"
-        } else {
+        } else if photoCount > 0 || originalCount > 0 {
             readme += "These are source files as retained by Rendprop. Check your MLS or advertising platform's rules before publishing.\n"
+        }
+        if whole {
+            readme += "\nAlso in this package:\n"
+            for extra in extras { readme += "  \(extra.name) — \(extra.note)\n" }
+            readme += "\nVideos made with AI motion (a reel, an aerial opening, a moving photo) are AI-generated and should be described as such wherever they are published.\n"
         }
         let readmeURL = prepared.directory.appendingPathComponent("README.txt")
         try Data(readme.utf8).write(to: readmeURL, options: .atomic)
         var entries = [ZipArchive.Entry(name: "README.txt", url: readmeURL)]
         for file in prepared.files { entries.append(ZipArchive.Entry(name: file.lastPathComponent, url: file)) }
-        let archiveURL = prepared.directory.appendingPathComponent("\(title) photos.zip")
+        var used = Set(entries.map { $0.name.lowercased() })
+        for extra in extras {
+            // The archive reads straight from the extra's own file: nothing is
+            // copied, nothing is moved, the listing's files stay where they are.
+            var name = ZipArchive.safeFileName(extra.name, fallback: "file")
+            var attempt = 1
+            while used.contains(name.lowercased()) {
+                attempt += 1
+                let base = (extra.name as NSString).deletingPathExtension, ext = (extra.name as NSString).pathExtension
+                name = ZipArchive.safeFileName(ext.isEmpty ? "\(base)-\(attempt)" : "\(base)-\(attempt).\(ext)", fallback: "file-\(attempt)")
+            }
+            used.insert(name.lowercased())
+            entries.append(ZipArchive.Entry(name: name, url: extra.url))
+        }
+        let archiveURL = prepared.directory.appendingPathComponent(whole ? "\(title) listing.zip" : "\(title) photos.zip")
         try ZipArchive.write(entries, to: archiveURL, modified: now)
         return archiveURL
     }
@@ -191,19 +230,27 @@ struct PhotoExportSheet: View {
     /// Names the ZIP archive ("2050 Laney Pond Dr photos.zip"); the listing's
     /// address where the caller has one.
     let archiveName: String
+    /// Build 60 "Share everything": the listing's videos, 3D scan and details
+    /// note that travel with the photos. Empty for an ordinary photo export.
+    let extras: [PhotoExportRenderer.Extra]
     private let canExport: () -> Bool
     init(photos: [EnhancedPhoto], original: Bool = false, includeOriginals: Bool = true,
-         archiveName: String = "Rendprop", canExport: @escaping () -> Bool = { true }) {
+         archiveName: String = "Rendprop", extras: [PhotoExportRenderer.Extra] = [],
+         canExport: @escaping () -> Bool = { true }) {
         self.photos = photos
         self.archiveName = archiveName
+        self.extras = extras
         self.canExport = canExport
         _original = State(initialValue: original)
         _includeOriginals = State(initialValue: includeOriginals)
         // Several photos default to one archive: that is the shape a
         // transaction coordinator or office can actually receive. One photo
         // stays a plain file so AirDrop and Messages show the image itself.
-        _asArchive = State(initialValue: photos.count > 1)
+        // A whole-listing package is always offered as one archive first.
+        _asArchive = State(initialValue: photos.count > 1 || !extras.isEmpty)
     }
+    private var wholeListing: Bool { !extras.isEmpty }
+    private var canArchive: Bool { photos.count > 1 || wholeListing }
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthStore.shared
     @State private var destination: PhotoExportRenderer.Destination = .mls
@@ -228,7 +275,7 @@ struct PhotoExportSheet: View {
         photos.map(\.savedVersion)
     }
     private var verifiedOriginals: Bool { !photos.isEmpty && versions.allSatisfy { $0?.originalVerified == true } }
-    private var hasSources: Bool { photos.allSatisfy { $0.originalURL != $0.enhancedURL } }
+    private var hasSources: Bool { !photos.isEmpty && photos.allSatisfy { $0.originalURL != $0.enhancedURL } }
     private var currentContext: Bool {
         didCaptureContext && canExport() && AuthStore.shared.userID == owner && AuthStore.shared.syncSessionRevision == revision
             && WorkspaceContext.selectedOrgID == workspace
@@ -243,8 +290,15 @@ struct PhotoExportSheet: View {
                         Image(uiImage: preview).resizable().scaledToFit().frame(maxHeight: 240)
                             .frame(maxWidth: .infinity).accessibilityLabel("Export preview of the first photo")
                     }
-                    Text(photos.count == 1 ? "Export this photo" : "Export \(photos.count) photos")
+                    Text(wholeListing
+                         ? "Export the whole listing — \(photos.count) photo\(photos.count == 1 ? "" : "s") and \(extras.count) more file\(extras.count == 1 ? "" : "s")"
+                         : (photos.count == 1 ? "Export this photo" : "Export \(photos.count) photos"))
                         .font(.headline)
+                    if wholeListing {
+                        Text(extras.map(\.name).joined(separator: " · "))
+                            .font(.caption).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("export.packageExtras")
+                    }
                     if !original, versions.contains(where: { $0?.needsCustomReview == true }) {
                         Text("A selected custom edit still needs comparison. Open Photo versions, compare it with its source and complete the checks before downloading the edited copy. You can still export its earlier source.")
                             .font(.caption).foregroundStyle(.orange)
@@ -309,7 +363,7 @@ struct PhotoExportSheet: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if photos.count > 1 {
+                if canArchive {
                     Section("Deliver as") {
                         Picker("Deliver as", selection: $asArchive) {
                             Text("One ZIP file").tag(true)
@@ -318,19 +372,23 @@ struct PhotoExportSheet: View {
                         .pickerStyle(.segmented)
                         .accessibilityIdentifier("export.deliverAs")
                         Text(asArchive
-                             ? "One file with every photo, its disclosure note and a short README — the easiest thing to send to a transaction coordinator, your office or a client. It opens on any Mac, PC or phone."
-                             : "Each photo, original and disclosure note is shared as its own file. Better for AirDrop to another iPhone.")
+                             ? (wholeListing
+                                ? "One file with the tour, every photo, its disclosure note, the other videos, a listing-details note and a short README — everything a transaction coordinator, your office or a client needs. It opens on any Mac, PC or phone."
+                                : "One file with every photo, its disclosure note and a short README — the easiest thing to send to a transaction coordinator, your office or a client. It opens on any Mac, PC or phone.")
+                             : "Each photo, original, disclosure note\(wholeListing ? ", video" : "") is shared as its own file. Better for AirDrop to another iPhone.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Section {
                     Button { start(saveToPhotos: false) } label: {
-                        Label(asArchive && photos.count > 1 ? "Share one ZIP file" : (original ? "Share or save source files" : "Download JPEGs · Share or save to Files"),
+                        Label(asArchive && canArchive ? "Share one ZIP file" : (original ? "Share or save source files" : "Download JPEGs · Share or save to Files"),
                               systemImage: "square.and.arrow.up")
                     }
                     .accessibilityIdentifier("export.share")
-                    Button { start(saveToPhotos: true) } label: { Label("Save to Photos", systemImage: "square.and.arrow.down") }
-                    Text(asArchive && photos.count > 1
+                    if !photos.isEmpty {
+                        Button { start(saveToPhotos: true) } label: { Label("Save to Photos", systemImage: "square.and.arrow.down") }
+                    }
+                    Text(asArchive && canArchive
                          ? "The ZIP keeps the .jpg files and matching disclosure captions together for MLS uploads. Saving to Photos adds the images to your camera roll instead."
                          : "For MLS uploads, choose Share or save to Files to keep the .jpg files and matching disclosure captions. Saving to Photos adds images to your camera roll.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -343,7 +401,7 @@ struct PhotoExportSheet: View {
                 }
             }
             .disabled(working)
-            .navigationTitle("Export photos").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(wholeListing ? "Share everything" : "Export photos").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.disabled(working) } }
             .task {
                 guard !didCaptureContext else { return }
@@ -395,17 +453,18 @@ struct PhotoExportSheet: View {
         let options = PhotoExportRenderer.Options(destination: destination, includeLabel: includeLabel,
             includeOriginals: includeOriginals, original: original, aspect: aspect, framing: framing, levelDegrees: levelDegrees)
         // Package only for a share: Photos receives the images themselves.
-        let wantsArchive = asArchive && photos.count > 1 && !saveToPhotos
+        let wantsArchive = asArchive && canArchive && !saveToPhotos
         let archiveTitle = archiveName
+        let packageExtras = saveToPhotos ? [] : extras
         Task { @MainActor in
             defer { working = false }
             var output: PhotoExportRenderer.Prepared?
             do {
                 let input = photos
                 let (result, archive) = try await Task.detached(priority: .userInitiated) { () -> (PhotoExportRenderer.Prepared, URL?) in
-                    let prepared = try PhotoExportRenderer.prepare(input, options: options)
+                    let prepared = input.isEmpty ? try PhotoExportRenderer.prepareEmpty() : try PhotoExportRenderer.prepare(input, options: options)
                     do {
-                        let archive = wantsArchive ? try PhotoExportRenderer.package(prepared, archiveName: archiveTitle) : nil
+                        let archive = wantsArchive ? try PhotoExportRenderer.package(prepared, archiveName: archiveTitle, extras: packageExtras) : nil
                         return (prepared, archive)
                     } catch {
                         try? FileManager.default.removeItem(at: prepared.directory)
@@ -430,7 +489,13 @@ struct PhotoExportSheet: View {
                     // The share sheet receives the one archive; the loose files
                     // stay in the same directory until the temporary cleanup.
                     prepared = PhotoExportRenderer.Prepared(directory: result.directory, images: result.images, files: [archive])
-                } else { prepared = result }
+                } else if packageExtras.isEmpty { prepared = result }
+                else {
+                    // Separate files: the videos and the details note go into the
+                    // same share sheet as the photos, straight from where they live.
+                    prepared = PhotoExportRenderer.Prepared(directory: result.directory, images: result.images,
+                                                            files: result.files + packageExtras.map(\.url))
+                }
             } catch {
                 if let output { try? FileManager.default.removeItem(at: output.directory) }
                 self.error = error.localizedDescription

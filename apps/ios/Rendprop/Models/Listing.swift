@@ -1774,12 +1774,31 @@ enum ListingFactsSync {
                 "details_expected": state.details.mapValues { ["present": $0.expectedPresent ?? ($0.expected != .null), "value": $0.expected.json] },
                 "details_changes": state.details.mapValues { $0.value.json }]
     }
+    /// The server renders a timestamp as `2026-10-11T14:52:52.261+00:00`; the
+    /// phone sends `2026-10-11T14:52:52.261Z`. Same instant, different text.
+    /// An acknowledgement that compared the text never cleared a sold marker,
+    /// so the listing re-sent its facts three times on every refresh ("1
+    /// listing update is waiting to sync", TestFlight 59). Timestamps are
+    /// acknowledged by instant, to the millisecond the phone can express; the
+    /// baseline keeps the server's exact text for compare-and-set.
+    static func sameFact(_ key: String, _ received: ListingFactValue?, _ sent: ListingFactValue) -> Bool {
+        if received == sent { return true }
+        guard key == "sold_at", case .text(let a)? = received, case .text(let b) = sent,
+              let x = parseTimestamp(a), let y = parseTimestamp(b) else { return false }
+        return abs(x.timeIntervalSince(y)) < 0.001
+    }
+    static func parseTimestamp(_ text: String) -> Date? {
+        let fractional = ISO8601DateFormatter(); fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: text) { return date }
+        let plain = ISO8601DateFormatter(); plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: text)
+    }
     static func acknowledge(submitted: Listing, receipt: Listing, current: inout Listing) {
         guard var state = current.factsSync else { return }
         let received = receipt.factsSync?.baseline ?? values(receipt)
         let receivedDetails = receipt.factsSync?.detailBaseline ?? detailFacts(receipt)
         for (key,sent) in submitted.factsSync?.fields ?? [:] {
-            guard received[key] == sent.value else { continue }
+            guard sameFact(key, received[key], sent.value) else { continue }
             if state.fields[key]?.value == sent.value { state.fields.removeValue(forKey: key) }
             else { state.fields[key]?.expected = sent.value }
         }

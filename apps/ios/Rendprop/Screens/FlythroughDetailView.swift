@@ -185,6 +185,11 @@ private struct ListingToolboxGrid: View {
     let openReel: () -> Void
     let openRoomTagger: () -> Void
     let openAerial: () -> Void
+    /// Build 60: one tap for the whole listing — tour, photos, originals,
+    /// disclosures, videos and a details note — as one ZIP (TestFlight 59:
+    /// "the share all feature is supposed to be the FULL package").
+    let sharePackage: () -> Void
+    let hasAnythingToShare: Bool
 
     private var sample: Bool { listing.isSample }
     private var createFirst: String { "Create a \(space.spaceNoun) first" }
@@ -232,9 +237,29 @@ private struct ListingToolboxGrid: View {
                     ListingToolUnavailableTile()
                 }
             }
+            // The aerial sits beside the fly-through tools it feeds (build 60;
+            // TestFlight 59: "Aerial intro needs to be next to re-render").
+            ListingToolButtonTile(
+                card: ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : (hasAerial ? "Aerial ready" : "AI opening shot"),
+                                      icon: "airplane.departure", gradient: RPGradient.aerial, ai: true, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.aerialIntro", action: openAerial
+            )
+            ListingToolButtonTile(
+                card: ListingToolCard(title: "Share everything",
+                                      sub: sample ? createFirst : (hasAnythingToShare ? "Tour · photos · videos · one ZIP" : "Add photos or a tour first"),
+                                      icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
+                disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
+            )
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "Listing contact", sub: "Your client or your own account card",
+                                      icon: "person.text.rectangle.fill", gradient: RPGradient.agent),
+                disabled: sample, accessibilityID: "detail.clientContact",
+                destination: { AnyView(ListingClientContactEditor(listing: destinationListing())) }
+            )
             // Measurements is "Coming soon" on the listing page, exactly like Home
             // (`home.comingSoon.floorPlan`): a card, never a link. `FloorPlanView`
-            // stays compiled for the build that re-enables it.
+            // stays compiled for the build that re-enables it. The three
+            // placeholders close the grid so working tools come first.
             ListingToolCard(title: "Measurements", sub: "Coming soon",
                             icon: "ruler", gradient: RPGradient.plan, dimmed: true)
                 .accessibilityElement(children: .combine)
@@ -247,17 +272,6 @@ private struct ListingToolboxGrid: View {
                             icon: "rotate.3d", gradient: RPGradient.drone, dimmed: true)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("detail.spatialComingSoon")
-            ListingToolButtonTile(
-                card: ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : (hasAerial ? "Aerial ready" : "AI opening shot"),
-                                      icon: "airplane.departure", gradient: RPGradient.aerial, ai: true, dimmed: sample),
-                disabled: sample, accessibilityID: "detail.aerialIntro", action: openAerial
-            )
-            ListingToolLinkTile(
-                card: ListingToolCard(title: "Listing contact", sub: "Your client or your own account card",
-                                      icon: "person.text.rectangle.fill", gradient: RPGradient.agent),
-                disabled: sample, accessibilityID: "detail.clientContact",
-                destination: { AnyView(ListingClientContactEditor(listing: destinationListing())) }
-            )
         }
     }
 }
@@ -537,6 +551,9 @@ struct FlythroughDetailView: View {
     @State private var openedFile: ListingMediaItem?
     @State private var filePhotoExport: PhotoExportSelection?
     @State private var filePhotoExportAdmission: (() -> Bool)?
+    /// Build 60 "Share everything": the videos, scan and details note that
+    /// ride along with the photos in the export sheet. Empty for photos only.
+    @State private var filePackageExtras: [PhotoExportRenderer.Extra] = []
     /// Result of a Save-to-Photos from the files list (success or the reason it
     /// failed), shown under the section rather than in an alert. `filesNoteOK`
     /// only decides the icon and the colour — a green tick reads as done from
@@ -581,7 +598,7 @@ struct FlythroughDetailView: View {
     private func invalidatePresentation() {
         filesTask?.cancel(); filesTask = nil; filesStamp = nil
         mediaItems = []; availableRerenderSource = nil; openedFile = nil
-        filePhotoExport = nil; filePhotoExportAdmission = nil
+        filePhotoExport = nil; filePhotoExportAdmission = nil; filePackageExtras = []
         provenance = []; provenanceCanExport = nil; auditExport = nil
         showPhotosScreen = false; showRoomTagger = false; showReelStudio = false
         showAerialIntro = false; showEdit = false; showListingFactsReview = false
@@ -804,11 +821,12 @@ struct FlythroughDetailView: View {
         .fullScreenCover(item: $openedFile, onDismiss: { loadFiles(force: true) }) { item in
             ListingFileViewer(item: item, listingID: listing.id)
         }
-        .sheet(item: $filePhotoExport) { selection in
+        .sheet(item: $filePhotoExport, onDismiss: { filePackageExtras = [] }) { selection in
             // Build 58: originals ride along by default (the toggle stays) — a
             // download should carry the AI disclosure AND the unaltered source.
+            // Build 60: "Share everything" adds the videos and a details note.
             PhotoExportSheet(photos: selection.photos, includeOriginals: true,
-                             archiveName: currentListing.address,
+                             archiveName: currentListing.address, extras: filePackageExtras,
                              canExport: filePhotoExportAdmission ?? { false })
         }
         .onChange(of: auth.userID) { _ in
@@ -1374,7 +1392,9 @@ struct FlythroughDetailView: View {
                 tagsBeforeEdit = asset?.roomTags ?? []
                 showRoomTagger = true
             },
-            openAerial: { showAerialIntro = true }
+            openAerial: { showAerialIntro = true },
+            sharePackage: { shareListingPackage() },
+            hasAnythingToShare: !mediaItems.isEmpty
         ))
     }
 
@@ -1470,7 +1490,81 @@ struct FlythroughDetailView: View {
             return EnhancedPhoto(id: photoID, originalURL: item.originalURL ?? item.url, enhancedURL: item.url)
         }
         filePhotoExportAdmission = admission
+        filePackageExtras = []
         filePhotoExport = PhotoExportSelection(photos: photos)
+    }
+
+    /// Build 60 — "Share everything": the whole listing as one hand-over. Every
+    /// file the FILES card already lists (the same background scan, no disk
+    /// reads here) plus a details note: address, the facts, the share links.
+    /// Photos go through the ordinary export (JPEG copies, disclosure notes,
+    /// retained originals); videos and the scan are read straight from where
+    /// they live, never copied or moved.
+    @MainActor private func shareListingPackage() {
+        let admission = mediaExportAdmission(for: currentListing)
+        let items = mediaItems
+        guard !items.isEmpty, admission() else { return }
+        let photos = items.filter { $0.kind == .photo }.map { item -> EnhancedPhoto in
+            let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
+            return EnhancedPhoto(id: photoID, originalURL: item.originalURL ?? item.url, enhancedURL: item.url)
+        }
+        var extras: [PhotoExportRenderer.Extra] = []
+        var counts: [ListingMediaItem.Kind: Int] = [:]
+        for item in items.sorted(by: { $0.createdAt < $1.createdAt }) where item.kind != .photo {
+            guard FileManager.default.fileExists(atPath: item.url.path) else { continue }
+            counts[item.kind, default: 0] += 1
+            let n = counts[item.kind] ?? 1
+            let ext = item.url.pathExtension.isEmpty ? (item.isVideo ? "mp4" : "bin") : item.url.pathExtension
+            let stem: String
+            switch item.kind {
+            case .tour:       stem = n == 1 ? "walkthrough-tour" : "walkthrough-tour-\(n)"
+            case .reel:       stem = "reel-\(String(format: "%02d", n))"
+            case .aerial:     stem = n == 1 ? "aerial-intro" : "aerial-intro-\(n)"
+            case .motionClip: stem = "moving-photo-\(String(format: "%02d", n))"
+            case .floorPlan:  stem = n == 1 ? "3d-floor-plan" : "3d-floor-plan-\(n)"
+            case .photo:      continue
+            }
+            let note: String
+            switch item.kind {
+            case .tour:       note = "the walkthrough tour video people scroll through on the listing page"
+            case .reel:       note = "a social reel (AI motion from the listing photos)"
+            case .aerial:     note = "the AI-generated aerial opening — not real drone footage"
+            case .motionClip: note = "one photo turned into a short AI-motion clip"
+            case .floorPlan:  note = "the 3D scan (open on a Mac, PC or phone that can show 3D files)"
+            case .photo:      continue
+            }
+            extras.append(PhotoExportRenderer.Extra(name: "\(stem).\(ext)", url: item.url, note: note))
+        }
+        if let note = Self.listingDetailsNote(for: currentListing) {
+            extras.append(PhotoExportRenderer.Extra(name: "listing-details.txt", url: note,
+                                                    note: "the address, the facts on the listing page and the share links"))
+        }
+        guard !photos.isEmpty || !extras.isEmpty else { return }
+        filePhotoExportAdmission = admission
+        filePackageExtras = extras
+        filePhotoExport = PhotoExportSelection(photos: photos)
+    }
+
+    /// A plain-text note for the package: what the listing says about itself,
+    /// in the words on the listing page, plus the public links. Written to the
+    /// temporary directory; the usual cleanup removes it.
+    private static func listingDetailsNote(for listing: Listing) -> URL? {
+        var lines: [String] = [listing.address.isEmpty ? "Untitled listing" : listing.address, ""]
+        if let tagline = listing.tagline?.trimmingCharacters(in: .whitespacesAndNewlines), !tagline.isEmpty { lines.append(tagline); lines.append("") }
+        let chips = listing.cardChips
+        if !chips.isEmpty { lines.append(chips.joined(separator: " · ")); lines.append("") }
+        if let url = listing.serverShareURL { lines.append("Listing page: \(url.absoluteString)") }
+        if let url = listing.serverUnbrandedURL { lines.append("MLS-safe page (no branding): \(url.absoluteString)") }
+        if let sold = listing.soldAt {
+            let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .none
+            lines.append("Marked sold on \(f.string(from: sold))")
+        }
+        let f = DateFormatter(); f.dateStyle = .long; f.timeStyle = .short
+        lines.append("")
+        lines.append("Exported from Rendprop on \(f.string(from: Date())). Photos made or changed with AI carry their own disclosure notes in this package.")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-details-\(UUID().uuidString).txt")
+        do { try Data(lines.joined(separator: "\n").utf8).write(to: url, options: .atomic) } catch { return nil }
+        return url
     }
 
     private var filesHeader: some View {
@@ -9347,6 +9441,9 @@ struct ReelStudioView: View {
 
     private var generateTitle: String {
         if canGenerate { return "Make my reel" }
+        // A retained request is the reason, not the photo count — say so.
+        if pendingRequest != nil || unreadablePendingContext != nil { return "Review the saved request first" }
+        if totalSelected > 9 { return "Pick 9 photos at most" }
         if !selectedExtras.isEmpty { return "Pick 1 more photo" }
         return "Pick 2 photos first"
     }
@@ -11078,7 +11175,9 @@ struct ReelStudioView: View {
             sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType)
         try submission.save() // Atomic marker and readback BEFORE any paid POST.
         try await requireCurrent()
-        let job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
+        let job: AIVideoJob
+        do {
+            job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
                                                 mime: "image/jpeg", prompt: nil, seconds: 5,
                                                 aspect: aspect, presetVersion: 1,
                                                 motion: motion, room: shot?.room,
@@ -11086,6 +11185,17 @@ struct ReelStudioView: View {
                                                 listingServerID: listingServerID,
                                                 label: Self.clipLabel(shot: shot, index: index),
                                                 idempotencyKey: operationID)
+        } catch {
+            // The marker exists for an UNKNOWN outcome: a lost response may
+            // already count a clip, so it stays and blocks a second POST. A
+            // definitive refusal is the opposite case — the server answered,
+            // nothing was admitted or charged — and keeping the marker only
+            // locked Generate behind "submission needs review" (TestFlight 59:
+            // every preset reel was refused with 400 and the button stayed
+            // dead). Transport errors, timeouts and 5xx keep the marker.
+            if Self.isDefinitiveRefusal(error) { submission.clear() }
+            throw error
+        }
         let pending = PendingReelRequest(context: recoveryContext, photoNumber: index + 1, job: job,
             operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
             sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType)
@@ -11096,6 +11206,13 @@ struct ReelStudioView: View {
         let retained = try retainRecoveredClip(clip, for: pending.context.listingID)
         pending.clear()
         return retained
+    }
+
+    /// A 4xx the server itself produced before admitting the request. 408 is a
+    /// timeout and therefore unknown; everything 5xx or non-HTTP is unknown.
+    nonisolated private static func isDefinitiveRefusal(_ error: Error) -> Bool {
+        guard let api = error as? APIError, let status = api.status else { return false }
+        return (400...499).contains(status) && status != 408
     }
 
     nonisolated private static func retrieveClip(job: AIVideoJob, pending: PendingReelRequest?, api: APIClient,
