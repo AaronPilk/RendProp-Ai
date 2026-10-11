@@ -315,7 +315,7 @@ final class AuthStore: ObservableObject {
         let args = ProcessInfo.processInfo.arguments
         guard Config.isOfflineAccountFixture,
               let i = args.firstIndex(of: "-ui.detailMetadataFixture"),
-              i + 1 < args.count, args[i + 1] == "republish" else { return false }
+              i + 1 < args.count, ["republish", "republish-stale"].contains(args[i + 1]) else { return false }
         userID = "b5800000-0000-4000-8000-000000000010"
         UserDefaults.standard.set(userID, forKey: "auth.supabase.userID")
         return true
