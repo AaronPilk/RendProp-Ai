@@ -184,6 +184,21 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         attach("build58-recently-deleted-empty")
     }
 
+    func testRepublishClearsStaleWarningAndKeepsSameLink() {
+        launch("republish-stale")
+        let warning = app.staticTexts["build59.fixture.warning"]
+        let link = app.staticTexts["build59.fixture.link"]
+        XCTAssertEqual(warning.label, "Warning: stale")
+        let originalLink = "https://example.invalid/f/metadata-fixture"
+        XCTAssertEqual(link.label, originalLink)
+        let publish = app.buttons["detail.republish"]; scrollTo(publish)
+        XCTAssertTrue(publish.isEnabled); publish.tap()
+        XCTAssertTrue(app.staticTexts["detail.republished"].waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertEqual(warning.label, "Warning: none", "The actual listing warning must clear after republish")
+        XCTAssertEqual(link.label, originalLink, "Republish must preserve the original link")
+        attach("build59-republish-stale-warning-cleared")
+    }
+
     private func launch(_ fixture: String) {
         app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", fixture == "venue" ? "venue" : "real_estate",
                                "-appearance", "light", "-ai.thirdPartyProcessing.consent.v3", "YES",

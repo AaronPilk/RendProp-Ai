@@ -280,7 +280,7 @@ private struct ListingToolboxSection: View {
 /// flag. It never restores/persists a customer's library or invokes capture/AI.
 struct DetailMetadataRegressionHost: View {
     private static let cases: Set<String> = ["empty", "capture", "rich", "missing-source",
-                                             "published-no-source", "sample", "venue", "republish"]
+                                             "published-no-source", "sample", "venue", "republish", "republish-stale"]
     static var requestedCase: String? {
         guard Config.isUITesting else { return nil }
         let arguments = ProcessInfo.processInfo.arguments
@@ -295,6 +295,13 @@ struct DetailMetadataRegressionHost: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if Self.requestedCase == "republish-stale", let listing,
+               let current = model.listings.first(where: { $0.id == listing.id }) {
+                Text("Warning: \(current.lastError ?? "none")")
+                    .accessibilityIdentifier("build59.fixture.warning")
+                Text(current.shareURL ?? "missing link")
+                    .accessibilityIdentifier("build59.fixture.link")
+            }
             if Config.isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.photoWorkFixture") {
                 PhotoWorkBanner()
             }
@@ -356,7 +363,7 @@ struct DetailMetadataRegressionHost: View {
             model.tours[value.id] = AppModel.RenderedTour(url: video, durationS: 2, speedFactor: 1.25)
             value.status = .ready
         }
-        if name == "published-no-source" || name == "republish" {
+        if ["published-no-source", "republish", "republish-stale"].contains(name) {
             // A syntactically valid fake share link selects the share branch.
             // The suite never opens a browser, QR, share sheet or publish action.
             value.shareSlug = "metadata-fixture"
@@ -383,13 +390,14 @@ struct DetailMetadataRegressionHost: View {
                 try jpeg.write(to: directory.appendingPathComponent("orig-fixture-\(index).jpg"), options: .atomic)
             }
         }
-        if name == "republish" {
+        if ["republish", "republish-stale"].contains(name) {
             guard model.api is MockAPIClient else { throw FixtureError.image }
             try WorkspaceStore.shared.prepareBuild58FixtureLibrary()
             value.serverID = UUID(uuidString: "b5800000-0000-4000-8000-000000000001")
             value.serverOrgID = WorkspaceContext.selectedOrgID
             value.cloudSyncOwnerID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
             value.needsServerSync = false
+            if name == "republish-stale" { value.lastError = "stale" }
         }
         // AppModel.load is deliberately never called by this host. Its
         // hasLoaded guard keeps these transient fixtures out of PersistentStore.
