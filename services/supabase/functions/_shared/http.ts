@@ -128,11 +128,26 @@ function logServerError(status: number, code: ErrorCode, kind: "handled" | "unex
 
 /** Parse a JSON request body, or throw a 400. */
 export async function readJson<T = Record<string, unknown>>(req: Request): Promise<T> {
+  let parsed: unknown;
   try {
-    return (await req.json()) as T;
+    parsed = await req.json();
   } catch {
     throw new HttpError(400, "Request body must be valid JSON");
   }
+  return canonicalBodyIds(parsed) as T;
+}
+
+/** Top-level body keys that always carry a database uuid identity. A client's
+ * uppercase casing of these must never fail a `===` against a returned row.
+ * Idempotency keys, batch ids, tokens and storage keys are deliberately NOT
+ * here: their stored text must stay byte-identical to what the client sent. */
+export const CANONICAL_ID_KEYS = Object.freeze([
+  "listing_id", "org_id", "lead_id", "asset_id", "source_asset_id", "original_asset_id",
+  "capture_asset_id", "render_id", "job_id", "workspace_id", "photo_id", "contact_asset_id",
+] as const);
+function canonicalBodyIds(parsed: unknown): unknown {
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) canonicalIds(parsed as Record<string, unknown>, CANONICAL_ID_KEYS);
+  return parsed;
 }
 
 /**
@@ -189,11 +204,30 @@ export async function readJsonLimited<T = Record<string, unknown>>(
     at += c.byteLength;
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(new TextDecoder().decode(joined)) as T;
+    parsed = JSON.parse(new TextDecoder().decode(joined));
   } catch {
     throw new HttpError(400, "Request body must be valid JSON");
   }
+  return canonicalBodyIds(parsed) as T;
+}
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Lowercase a UUID the way Postgres renders it. The phone sends
+ * `UUID.uuidString` (uppercase) in paths, queries and JSON; every `===`
+ * against a row the database returned must see the canonical form, or a
+ * legitimate request fails as "inconsistent identity" (2026-10-11 incident).
+ * Non-UUID values pass through untouched so existing validation still runs.
+ */
+export function canonicalUuid<T>(value: T): T {
+  return typeof value === "string" && UUID_SHAPE.test(value) ? value.toLowerCase() as unknown as T : value;
+}
+/** `canonicalUuid` applied in place to the named keys of a parsed body. */
+export function canonicalIds<T extends Record<string, unknown>>(body: T, keys: readonly string[]): T {
+  if (body && typeof body === "object") for (const key of keys) if (key in body) (body as Record<string, unknown>)[key] = canonicalUuid(body[key]);
+  return body;
 }
 
 /**
@@ -208,7 +242,9 @@ export function pathSegments(req: Request, functionName: string): string[] {
   if (parts[0] === "functions") parts.shift();
   if (parts[0] === "v1") parts.shift();
   if (parts[0] === functionName) parts.shift();
-  return parts;
+  // A uuid in the path is a database identity (listing, lead, render, invite);
+  // tour slugs and handles are not uuid-shaped and pass through unchanged.
+  return parts.map((part) => canonicalUuid(part));
 }
 
 // URL-safe (base64url) alphabet — 64 chars so `byte & 63` is unbiased.

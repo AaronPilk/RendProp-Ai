@@ -16,6 +16,8 @@ export interface LibraryUsageSummary {
  * immutable billing stamp. Removing a seat cannot reset the old Team's meter. */
 export async function libraryUsageSummary(admin: Authority, actor: string, org: string, since: string): Promise<LibraryUsageSummary> {
   const access = await libraryAccess(admin, actor, org);
+  // Compare against the database's canonical lowercase form (library-access.ts).
+  actor = access.actor_id; org = access.org_id;
   const {data, error} = await admin.rpc("library_usage_summary", {p_actor: actor, p_org: org, p_since: since});
   if (error) rpcError(error);
   const row = data as Record<string, unknown> | null;
@@ -29,7 +31,9 @@ export async function libraryUsageSummary(admin: Authority, actor: string, org: 
 
 export async function libraryProvenance(admin: Authority, actor: string, org: string, options: {from: string | null; to: string | null; listing: string | null; limit: number}): Promise<Array<Record<string, unknown>>> {
   assert(Number.isSafeInteger(options.limit) && options.limit >= 1 && options.limit <= 5001 && (!options.listing || UUID.test(options.listing)), 400, "Choose a bounded disclosure export.");
-  await libraryAccess(admin, actor, org);
+  const access = await libraryAccess(admin, actor, org);
+  actor = access.actor_id; org = access.org_id;
+  options = {...options, listing: options.listing ? options.listing.toLowerCase() : null};
   const {data, error} = await admin.rpc("list_library_provenance", {p_actor: actor, p_org: org, p_from: options.from, p_to: options.to, p_listing: options.listing, p_limit: options.limit});
   if (error) rpcError(error);
   assert(Array.isArray(data) && data.length <= options.limit, 503, "Disclosure export returned inconsistent data.", "upstream");

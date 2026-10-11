@@ -12,7 +12,9 @@ export async function listLibraryListings(admin: any, actor: string, org: string
   };
   assert([...params.keys()].every(key => ["library", "limit", "offset"].includes(key)), 400, "Library sync uses complete, unfiltered listing pages.");
   const limit = integer("limit", 500, 500), offset = integer("offset", 0, 100_000);
-  await libraryAccess(admin, actor, org);
+  const access = await libraryAccess(admin, actor, org);
+  // Canonical lowercase for the identity comparisons below (library-access.ts).
+  actor = access.actor_id; org = access.org_id;
   const { data, error } = await admin.rpc("list_library_listings", { p_actor: actor, p_org: org, p_limit: limit, p_offset: offset });
   if (error) throwRpc(error.message);
   assert(data && data.actor_id === actor && Array.isArray(data.listings) && data.listings.length <= limit &&

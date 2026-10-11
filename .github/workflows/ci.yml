@@ -809,6 +809,8 @@ jobs:
         run: deno test --allow-all --node-modules-dir=auto ../../../tools/audit/uploads_*_test.ts
       - name: Actual listing intent handler against closed transport
         run: deno run --cached-only --allow-env --allow-read tools/audit/listing-facts-handler-20261004.ts
+      - name: Uppercase phone ids save facts; the 2026-10-11 503 stays reproduced by its negative control
+        run: deno run --cached-only --allow-env --allow-read tools/audit/listing-uppercase-ids-20261011.ts
 
   db-migrations:
     name: Supabase migrations (fresh replay + invariants)

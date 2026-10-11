@@ -797,7 +797,9 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
 
   const from = isoParam(params.get("from"), "from");
   const to = isoParam(params.get("to"), "to");
-  const listingId = (params.get("listing_id") ?? "").trim();
+  // Lowercase: the phone sends `UUID.uuidString` (uppercase) and every row
+  // filter below compares against Postgres' lowercase uuid text.
+  const listingId = (params.get("listing_id") ?? "").trim().toLowerCase();
   if (listingId) {
     assert(UUID_RE.test(listingId), 400, "listing_id must be a UUID");
   }

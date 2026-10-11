@@ -117,3 +117,35 @@ Deno.test("retained legacy financial scope follows the actor after Team removal;
     assert(caller.includes("libraryBillingOrg(adminClient(), orgId, user.id)"));
   }
 });
+
+// ── Canonical uuid casing (2026-10-11 incident) ───────────────────────────────
+// The phone sends uppercase uuids; Postgres answers in lowercase. The real
+// authority compare failed as 503 "Listing identity returned inconsistent
+// data." for every facts save, compliance read, upload and AI photo edit.
+Deno.test("uppercase ids from the client resolve to the same authority as lowercase ids",async()=>{
+  const f=fixture();
+  // The RPC mock mirrors Postgres: any casing in, canonical lowercase out.
+  const admin={rpc:(name:string,args:Record<string,unknown>)=>f.admin.rpc(name,Object.fromEntries(Object.entries(args).map(([k,v])=>[k,typeof v==="string"?v.toLowerCase():v])))};
+  const up=(s:string)=>s.toUpperCase();
+  const scope=await listingLibraryScope(admin,up(sally),up(listing),true);
+  assertEquals([scope.actor_id,scope.listing_id,scope.org_id,scope.library_org_id],[sally,listing,team,sallyOrg]);
+  const access=await libraryAccess(admin,up(sally),up(sallyOrg));
+  assertEquals([access.actor_id,access.org_id],[sally,sallyOrg]);
+  await requireContentWrite(admin,up(sally),up(team),up(listing));
+  await requireContentWrite(admin,up(owner),up(team),up(listing));
+  assertEquals(await libraryBillingOrg(admin,up(sallyOrg)),team);
+  // The wrong library is still refused, whatever the casing.
+  assertEquals((await assertRejects(()=>requireContentWrite(admin,up(sally),up(tomOrg),up(listing)),HttpError)).status,404);
+  assertEquals((await assertRejects(()=>listingLibraryScope(admin,up(tom),up(listing),true),HttpError)).status,404);
+});
+Deno.test("without canonicalisation an uppercase listing id is a 503 identity mismatch (negative control)",async()=>{
+  const f=fixture();
+  const admin={rpc:(name:string,args:Record<string,unknown>)=>f.admin.rpc(name,Object.fromEntries(Object.entries(args).map(([k,v])=>[k,typeof v==="string"?v.toLowerCase():v])))};
+  const source=await Deno.readTextFile(new URL("./library-access.ts",import.meta.url));
+  assert(source.includes("function canonical(id: string): string { return id.toLowerCase(); }"));
+  const mutant=await import("data:application/typescript,"+encodeURIComponent(source.replaceAll("./http.ts",new URL("./http.ts",import.meta.url).href)
+    .replace("function canonical(id: string): string { return id.toLowerCase(); }","function canonical(id: string): string { return id; }")));
+  const e=await assertRejects(()=>mutant.listingLibraryScope(admin,sally,listing.toUpperCase(),true),HttpError);
+  assertEquals([e.status,e.message],[503,"Listing identity returned inconsistent data."]);
+  assertEquals((await listingLibraryScope(admin,sally,listing.toUpperCase(),true)).listing_id,listing);
+});

@@ -1,6 +1,13 @@
 import { assert, HttpError, throwRpc } from "./http.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Postgres returns uuid text in lowercase; the phone sends `UUID.uuidString`
+ * in UPPERCASE through URL paths, query strings and JSON. Every identity
+ * comparison below is against the database's canonical form, so a client's
+ * casing must be normalised first — a mismatch here is not forged authority,
+ * it is the 503 "Listing identity returned inconsistent data." incident of
+ * 2026-10-11 (facts, compliance, uploads and AI photo edits all refused). */
+function canonical(id: string): string { return id.toLowerCase(); }
 export interface LibraryAccess {
   actor_id: string;
   org_id: string;
@@ -25,6 +32,7 @@ function rpcError(error: unknown): never {
  * on every call. Billing authority remains distinct from the viewed library. */
 export async function libraryAccess(admin: Authority, actor: string, org: string): Promise<LibraryAccess> {
   assert(UUID.test(actor) && UUID.test(org), 400, "Choose a valid listing library.");
+  actor = canonical(actor); org = canonical(org);
   const { data, error } = await admin.rpc("library_access", { p_actor: actor, p_org: org });
   if (error) rpcError(error);
   if (!data || typeof data !== "object" || Array.isArray(data)) {
@@ -54,6 +62,7 @@ export async function requireLibraryWrite(admin: Authority, actor: string, org: 
  * rows share an org ID, but an invited agent may access only their own rows. */
 export async function requireListingAccess(admin: Authority, actor: string, listing: string, write = false): Promise<void> {
   assert(UUID.test(actor) && UUID.test(listing), 400, "Choose a valid listing.");
+  actor = canonical(actor); listing = canonical(listing);
   const { data, error } = await admin.rpc(write ? "can_write_listing" : "can_read_listing", { p_actor: actor, p_listing: listing });
   if (error) rpcError(error);
   assert(data === true, 404, "This listing is not available in your library.", "not_found");
@@ -66,6 +75,7 @@ export interface ListingLibraryScope extends LibraryAccess {
 }
 export async function listingLibraryScope(admin: Authority, actor: string, listing: string, write = false): Promise<ListingLibraryScope> {
   assert(UUID.test(actor) && UUID.test(listing), 400, "Choose a valid listing.");
+  actor = canonical(actor); listing = canonical(listing);
   const { data, error } = await admin.rpc("listing_library_scope", { p_actor: actor, p_listing: listing });
   if (error) rpcError(error);
   const value = data as ListingLibraryScope | null;
@@ -92,7 +102,7 @@ export async function requireContentWrite(admin: Authority, actor: string, org: 
   assert(admin && typeof admin.rpc === "function",503,"Listing editing is temporarily unavailable.","upstream");
   if (listing === null) { await requireLibraryWrite(admin, actor, org); return; }
   const scope = await listingLibraryScope(admin, actor, listing, true);
-  assert(scope.org_id === org, 404, "Listing and upload library do not match.", "not_found");
+  assert(typeof org === "string" && scope.org_id === canonical(org), 404, "Listing and upload library do not match.", "not_found");
 }
 
 /** Financial counters are pooled at the subscription's Team org. This is only
@@ -100,6 +110,7 @@ export async function requireContentWrite(admin: Authority, actor: string, org: 
 export async function libraryBillingOrg(admin: Authority, org: string, actor?: string): Promise<string> {
   assert(UUID.test(org), 400, "Choose a valid listing library.");
   assert(actor === undefined || UUID.test(actor),400,"Sign in to a valid account.");
+  org = canonical(org); if (actor !== undefined) actor = canonical(actor);
   const { data, error } = await admin.rpc(actor ? "library_actor_billing_org" : "library_billing_org", actor ? {p_actor:actor,p_org:org} : { p_org: org });
   if (error) rpcError(error);
   assert(typeof data === "string" && UUID.test(data), 503, "Team billing authority could not be verified.", "upstream");

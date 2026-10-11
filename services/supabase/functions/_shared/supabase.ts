@@ -130,7 +130,12 @@ export async function contentOrgForUser(userId: string, preferredOrgId?: string,
 
 /** Read an optional preferred org from the request header. */
 export function preferredOrg(req: Request): string | undefined {
-  return req.headers.get("x-org-id") ?? undefined;
+  const raw = req.headers.get("x-org-id");
+  if (raw === null) return undefined;
+  // A uuid is compared against Postgres' lowercase text downstream; anything
+  // else is left untouched so validation still rejects it as before. Kept
+  // self-contained on purpose: coach/admission_test.ts inlines this function.
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw.trim()) ? raw.trim().toLowerCase() : raw;
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

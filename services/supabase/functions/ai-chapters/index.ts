@@ -384,7 +384,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 function requiredUuid(v: unknown, name: string): string {
   assert(typeof v === "string" && UUID_RE.test(v.trim()), 400, `${name} must be a UUID`);
-  return (v as string).trim();
+  return (v as string).trim().toLowerCase(); // Postgres' canonical form (2026-10-11 incident)
 }
 
 /**

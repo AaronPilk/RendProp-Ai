@@ -13,6 +13,10 @@ function rpcError(error: unknown): never {
  * never a new owner for a historic inquiry or its delivery receipt. */
 export async function leadLibraryScope(admin: Authority, actor: string, lead: string, selected: string | null | undefined, write = false): Promise<ListingLibraryScope> {
   assert(UUID.test(actor) && UUID.test(lead), 400, "Choose a valid inquiry.");
+  // Canonical lowercase before any identity comparison: the phone sends
+  // uppercase UUIDs, Postgres answers in lowercase (see library-access.ts).
+  actor = actor.toLowerCase(); lead = lead.toLowerCase();
+  if (typeof selected === "string") selected = selected.toLowerCase();
   const {data, error} = await admin.rpc("lead_library_scope", {p_actor: actor, p_lead: lead});
   if (error) rpcError(error);
   const row = data as Record<string, unknown> | null;
@@ -25,6 +29,8 @@ export async function leadLibraryScope(admin: Authority, actor: string, lead: st
 
 export async function listLibraryLeads(admin: Authority, actor: string, org: string, options: {limit: number; since: string | null; status: string | null; listing: string | null}): Promise<Array<Record<string, unknown>>> {
   assert(Number.isSafeInteger(options.limit) && options.limit >= 1 && options.limit <= 500 && (options.listing === null || UUID.test(options.listing)), 400, "Choose a bounded inquiry list.");
+  actor = actor.toLowerCase(); org = org.toLowerCase();
+  options = {...options, listing: options.listing === null ? null : options.listing.toLowerCase()};
   await libraryAccess(admin, actor, org);
   const {data, error} = await admin.rpc("list_library_leads", {p_actor: actor, p_org: org, p_limit: options.limit, p_since: options.since, p_status: options.status, p_listing: options.listing});
   if (error) rpcError(error);
