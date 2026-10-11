@@ -174,6 +174,43 @@ __SYNC_LISTING__
   rawRow["details"]=["capacitySeated":20,"is247":false,"hours":NSNull(),"floorplan_asset_id":"office-plan"] as [String:Any]
   let rawMapped=try client.mapped(JSONSerialization.data(withJSONObject:rawRow))
   try check(rawMapped.factsSync?.baseline["sold_at"] == .text("2026-10-04T12:00:00.123456+00:00"),"Sold timestamp retains exact server precision")
+  // Build 60: the raw PostgreSQL timestamp and phone timestamp may express
+  // the same instant differently. Execute the real model acknowledgement.
+  let phoneSold="2026-10-11T14:52:52.261Z",serverSold="2026-10-11T14:52:52.261+00:00"
+  try check(ListingFactsSync.sameFact("sold_at",.text(serverSold),.text(phoneSold)),"Equivalent timestamp text acknowledges the same instant")
+  try check(ListingFactsSync.sameFact("sold_at",.text("2026-10-11T10:52:52.261-04:00"),.text(phoneSold)),"Sold timezone offset preserves instant")
+  try check(ListingFactsSync.sameFact("sold_at",.text("2026-10-11T14:52:52.2615Z"),.text(phoneSold)),"Sub-millisecond server precision fits phone precision")
+  try check(!ListingFactsSync.sameFact("sold_at",.text("2026-10-11T14:52:52.271Z"),.text(phoneSold)),"A different timestamp instant remains a different fact")
+  try check(!ListingFactsSync.sameFact("sold_at",.text("malformed"),.text(phoneSold)),"Malformed sold timestamp does not acknowledge an edit")
+  try check(!ListingFactsSync.sameFact("address",.text(serverSold),.text(phoneSold)),"Timestamp tolerance applies only to sold_at")
+  try check(ListingFactsSync.sameFact("sold_at",.null,.null) && !ListingFactsSync.sameFact("sold_at",nil,.null),"Explicit cleared sold marker differs from missing value")
+  try check(ListingFactsSync.parseTimestamp("2026-10-11T14:52:52Z") != nil,"Plain ISO timestamps remain supported")
+  var sentSold=base;sentSold.soldAt=ListingFactsSync.parseTimestamp(phoneSold)
+  sentSold.factsSync?.fields["sold_at"]=ListingFactEdit(expected:.null,value:.text(phoneSold));sentSold.needsServerSync=true
+  var soldReceipt=base;soldReceipt.soldAt=sentSold.soldAt;soldReceipt.factsSync?.baseline["sold_at"] = .text(serverSold)
+  var soldCurrent=sentSold
+  ListingFactsSync.acknowledge(submitted:sentSold,receipt:soldReceipt,current:&soldCurrent)
+  try check(soldCurrent.factsSync?.fields["sold_at"]==nil && soldCurrent.needsServerSync==false,"Equivalent sold acknowledgement clears dirty marker")
+  try check(soldCurrent.factsSync?.baseline["sold_at"] == .text(serverSold),"Server baseline preserves exact timestamp text")
+  var mismatchedSold=soldReceipt;mismatchedSold.factsSync?.baseline["sold_at"] = .text("2026-10-11T14:52:52.271Z")
+  soldCurrent=sentSold
+  ListingFactsSync.acknowledge(submitted:sentSold,receipt:mismatchedSold,current:&soldCurrent)
+  try check(soldCurrent.factsSync?.fields["sold_at"]?.value == .text(phoneSold) && soldCurrent.needsServerSync==true,"Different sold instant leaves pending intent")
+  let newSold="2026-10-11T15:00:00.000Z"
+  soldCurrent=sentSold;soldCurrent.soldAt=ListingFactsSync.parseTimestamp(newSold)
+  soldCurrent.factsSync?.fields["sold_at"]?.value = .text(newSold)
+  ListingFactsSync.acknowledge(submitted:sentSold,receipt:soldReceipt,current:&soldCurrent)
+  try check(soldCurrent.factsSync?.fields["sold_at"]?.value == .text(newSold) && soldCurrent.needsServerSync==true,"Newer local sold marker remains pending after older reply")
+  try check(soldCurrent.factsSync?.fields["sold_at"]?.expected == .text(phoneSold),"Newer sold marker expects accepted prior instant")
+  try check(soldCurrent.factsSync?.baseline["sold_at"] == .text(serverSold),"Late sold acknowledgement retains exact server baseline")
+  var sentUnsold=sentSold;sentUnsold.soldAt=nil;sentUnsold.factsSync?.fields["sold_at"] = ListingFactEdit(expected:.text(phoneSold),value:.null)
+  var unsoldReceipt=base;unsoldReceipt.factsSync?.baseline["sold_at"] = .null
+  soldCurrent=sentUnsold
+  ListingFactsSync.acknowledge(submitted:sentUnsold,receipt:unsoldReceipt,current:&soldCurrent)
+  try check(soldCurrent.needsServerSync==false && soldCurrent.factsSync?.fields.isEmpty==true,"Explicit unsold acknowledgement clears edit")
+  soldCurrent=sentSold;soldCurrent.factsSync?.reviewRequired=true
+  ListingFactsSync.acknowledge(submitted:sentSold,receipt:soldReceipt,current:&soldCurrent)
+  try check(soldCurrent.needsServerSync==true && soldCurrent.factsSync?.reviewRequired==true,"Review-required state remains dirty after sold acknowledgement")
   var rawEdited=rawMapped;rawEdited.details?["capacitySeated"]="25";rawEdited.details?["is247"]="true";rawEdited.details?["hours"]="9-5";rawEdited.details?["website"]="https://fixture.invalid"
   ListingFactsSync.stage(from:rawMapped,in:&rawEdited)
   let rawBody=try ListingFactsSync.body(rawEdited),rawExpected=rawBody["details_expected"] as! [String:[String:Any]]

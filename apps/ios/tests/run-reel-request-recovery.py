@@ -139,6 +139,7 @@ try:
         ('actual', actual, None),
         ('negative-quality-gate-accepts-changed-property', actual.replace('guard verdict.mayUse else { throw AIImagePrep.error(verdict.refusal) }', '// omitted property gate'), 'changed property must not be retained'),
         ('negative-refusal-keeps-marker', actual.replace('if Self.isDefinitiveRefusal(error) { submission.clear() }', '// marker kept on a definitive refusal'), 'a definitive refusal retires the unconfirmed marker'),
+        ('negative-duplicate-refusal-clears-marker', actual.replace(' && status != 409', ''), 'duplicate refusal preserves the already-started operation marker'),
         ('actual-lab-dispatch', actual, None),
         ('negative-dropped-receipt', actual.replace('try pending.save()', '// dropped accepted receipt'), 'pending receipt after poll failure'),
         ('negative-duplicate-submit', actual.replace('if PendingReelRequest.exists(recoveryContext) {', 'if false && PendingReelRequest.exists(recoveryContext) {'), 'existing receipt blocks second POST'),

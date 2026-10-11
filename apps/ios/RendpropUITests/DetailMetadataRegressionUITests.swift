@@ -33,6 +33,8 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     func testSampleHasAllSixToolsDisabledAndComingSoonCards() {
         launch("sample")
         assertTiles(sample: true, hasCapture: false)
+        let share = app.buttons["detail.sharePackage"]; scrollTo(share)
+        XCTAssertFalse(share.isEnabled, "Sample listings cannot export a package")
         XCTAssertFalse(element("detail.rerenderTour").exists)
         XCTAssertFalse(element("detail.rerenderUnavailable").exists)
         XCTAssertFalse(app.buttons["listing.clientContact"].exists)
@@ -41,6 +43,8 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     func testEmptyListingStillOpensPhotoLibraryAndStudioWhileMeasurementsIsComingSoon() {
         launch("empty")
         assertTiles(sample: false, hasCapture: false)
+        let share = app.buttons["detail.sharePackage"]; scrollTo(share)
+        XCTAssertFalse(share.isEnabled, "An empty listing has nothing to package")
         XCTAssertFalse(element("detail.rerenderTour").exists)
         XCTAssertFalse(element("detail.rerenderUnavailable").exists)
         openLink("detail.photos", title: "Photos")
@@ -73,6 +77,9 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let rerender = app.buttons["detail.rerenderTour"]
         scrollTo(rerender)
         XCTAssertTrue(rerender.isEnabled)
+        XCTAssertEqual(rerender.frame.minY, aerial.frame.minY, accuracy: 2,
+            "Aerial intro must sit beside Re-render fly-through")
+        XCTAssertLessThan(rerender.frame.minX, aerial.frame.minX)
         XCTAssertFalse(element("detail.rerenderUnavailable").exists)
         attach("detail-rich-toolbox")
 
@@ -168,6 +175,30 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         revealActive(app.buttons["export.share"])
         XCTAssertTrue(app.buttons["export.share"].isEnabled)
         attach("build58-zip-and-separate-photo-delivery")
+    }
+
+    func testShareEverythingIncludesTourAndListingDetailsAsDefaultZIP() {
+        launch("rich")
+        let share = app.buttons["detail.sharePackage"]
+        scrollTo(share)
+        XCTAssertTrue(share.isEnabled, app.debugDescription)
+        share.tap()
+        XCTAssertTrue(app.navigationBars["Share everything"].waitForExistence(timeout: 15), app.debugDescription)
+        let extras = app.staticTexts["export.packageExtras"]
+        revealActive(extras)
+        XCTAssertTrue(extras.label.contains("walkthrough-tour.mp4"), extras.label)
+        XCTAssertTrue(extras.label.contains("listing-details.txt"), extras.label)
+        XCTAssertTrue(extras.label.contains("aerial-intro.mp4"), extras.label)
+        let delivery = app.segmentedControls["export.deliverAs"]
+        revealActive(delivery)
+        XCTAssertEqual(delivery.buttons.count, 2)
+        XCTAssertTrue(delivery.buttons["One ZIP file"].isSelected, app.debugDescription)
+        delivery.buttons["Separate files"].tap()
+        XCTAssertTrue(delivery.buttons["Separate files"].isSelected)
+        delivery.buttons["One ZIP file"].tap()
+        revealActive(app.buttons["export.share"])
+        XCTAssertTrue(app.buttons["export.share"].isEnabled, app.debugDescription)
+        attach("build60-whole-listing-default-zip")
     }
 
     func testRepublishSameLinkAndRecentlyDeletedNavigation() {

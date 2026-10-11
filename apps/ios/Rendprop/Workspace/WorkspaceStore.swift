@@ -143,6 +143,17 @@ import Combine
             canManageSubscription: true)
         try apply(WorkspaceContext.Snapshot(selectedOrgID: org, workspaces: [member]), owner: owner)
     }
+
+    func prepareBuild60HomeFixtureLibrary() throws {
+        guard HomeProjectCreationFixtureHost.isRequested,
+              AuthStore.shared.prepareBuild60HomeFixtureOwner(),
+              let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        let org = UUID(uuidString: "b6000000-0000-4000-8000-000000000020")!
+        let member = WorkspaceMembership(id: org, name: "Synthetic Home creation library", role: "owner",
+            accessMode: "own", libraryOwnerUserID: owner, billingOrgID: org, canRead: true, canWrite: true,
+            canManageSubscription: true)
+        try apply(WorkspaceContext.Snapshot(selectedOrgID: org, workspaces: [member]), owner: owner)
+    }
     #endif
 
     private func request(path: String, method: String, body: [String: Any]?, owner: UUID, revision: UInt64) async throws -> Data {

@@ -13,6 +13,12 @@ python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault broad-wire
 python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault wrong-workspace
 python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault late-conflict
 python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault drop-receipt-scope
+python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault sold-strings-only
+python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault sold-wide-tolerance
+python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault sold-canonical-baseline
+python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault sold-clear-newer
 ```
 
 The separate `tools/audit/listing-facts-handler-20261004.ts` executes the entire actual Deno handler with a closed Auth/PostgREST transport. `tools/audit/run_listing_facts_cas.py` applies the real migrations in an owned socket-only PostgreSQL cluster, tests fresh/replayed SQL and runs real simultaneous clients. Neither native/handler doubles nor database fixtures certify physical-phone UI, live deployment, camera, provider output or paid purchases.
+
+Build 60 also executes real-model sold timestamp acknowledgement across timezone and precision differences, mismatched instants, newer local sold edits, cleared sold markers and review-required state. The CAS baseline retains the server's exact timestamp text. Four sold-specific compiled mutants must fail at their named assertions.

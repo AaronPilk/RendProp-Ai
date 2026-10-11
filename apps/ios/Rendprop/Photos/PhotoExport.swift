@@ -375,13 +375,15 @@ struct PhotoExportSheet: View {
                              ? (wholeListing
                                 ? "One file with the tour, every photo, its disclosure note, the other videos, a listing-details note and a short README — everything a transaction coordinator, your office or a client needs. It opens on any Mac, PC or phone."
                                 : "One file with every photo, its disclosure note and a short README — the easiest thing to send to a transaction coordinator, your office or a client. It opens on any Mac, PC or phone.")
-                             : "Each photo, original, disclosure note\(wholeListing ? ", video" : "") is shared as its own file. Better for AirDrop to another iPhone.")
+                             : (wholeListing
+                                ? "Photos, originals, disclosure notes, videos and listing details are shared as separate files. Better for AirDrop to another iPhone."
+                                : "Each photo, original and disclosure note is shared as its own file. Better for AirDrop to another iPhone."))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Section {
                     Button { start(saveToPhotos: false) } label: {
-                        Label(asArchive && canArchive ? "Share one ZIP file" : (original ? "Share or save source files" : "Download JPEGs · Share or save to Files"),
+                        Label(asArchive && canArchive ? "Share one ZIP file" : (wholeListing ? "Share all files · Save to Files" : (original ? "Share or save source files" : "Download JPEGs · Share or save to Files")),
                               systemImage: "square.and.arrow.up")
                     }
                     .accessibilityIdentifier("export.share")
@@ -392,7 +394,7 @@ struct PhotoExportSheet: View {
                          ? "The ZIP keeps the .jpg files and matching disclosure captions together for MLS uploads. Saving to Photos adds the images to your camera roll instead."
                          : "For MLS uploads, choose Share or save to Files to keep the .jpg files and matching disclosure captions. Saving to Photos adds images to your camera roll.")
                         .font(.caption).foregroundStyle(.secondary)
-                    if working { ProgressView("Preparing photos…") }
+                    if working { ProgressView(wholeListing ? "Preparing listing package…" : "Preparing photos…") }
                     if saved {
                         Label("Saved to Photos", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                         if !original { Text("Copy the disclosure captions above when you upload. Photos does not carry the text files into your listing.").font(.caption) }

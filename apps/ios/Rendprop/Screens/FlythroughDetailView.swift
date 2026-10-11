@@ -554,6 +554,7 @@ struct FlythroughDetailView: View {
     /// Build 60 "Share everything": the videos, scan and details note that
     /// ride along with the photos in the export sheet. Empty for photos only.
     @State private var filePackageExtras: [PhotoExportRenderer.Extra] = []
+    @State private var packageError: String?
     /// Result of a Save-to-Photos from the files list (success or the reason it
     /// failed), shown under the section rather than in an alert. `filesNoteOK`
     /// only decides the icon and the colour — a green tick reads as done from
@@ -598,7 +599,7 @@ struct FlythroughDetailView: View {
     private func invalidatePresentation() {
         filesTask?.cancel(); filesTask = nil; filesStamp = nil
         mediaItems = []; availableRerenderSource = nil; openedFile = nil
-        filePhotoExport = nil; filePhotoExportAdmission = nil; filePackageExtras = []
+        filePhotoExport = nil; filePhotoExportAdmission = nil; filePackageExtras = []; packageError = nil
         provenance = []; provenanceCanExport = nil; auditExport = nil
         showPhotosScreen = false; showRoomTagger = false; showReelStudio = false
         showAerialIntro = false; showEdit = false; showListingFactsReview = false
@@ -820,6 +821,11 @@ struct FlythroughDetailView: View {
         }
         .fullScreenCover(item: $openedFile, onDismiss: { loadFiles(force: true) }) { item in
             ListingFileViewer(item: item, listingID: listing.id)
+        }
+        .alert("Couldn't prepare the listing package", isPresented: Binding(get: { packageError != nil }, set: { if !$0 { packageError = nil } })) {
+            Button("OK", role: .cancel) { packageError = nil }
+        } message: {
+            Text(packageError ?? "")
         }
         .sheet(item: $filePhotoExport, onDismiss: { filePackageExtras = [] }) { selection in
             // Build 58: originals ride along by default (the toggle stays) — a
@@ -1504,6 +1510,12 @@ struct FlythroughDetailView: View {
         let admission = mediaExportAdmission(for: currentListing)
         let items = mediaItems
         guard !items.isEmpty, admission() else { return }
+        // A stale scan must not silently turn "everything" into a partial
+        // handover. Preparation also rechecks sources while reading the ZIP.
+        guard items.allSatisfy({ FileManager.default.fileExists(atPath: $0.url.path) }) else {
+            packageError = "A listing file is no longer available on this phone. Reopen the listing to refresh its files, then try again."
+            return
+        }
         let photos = items.filter { $0.kind == .photo }.map { item -> EnhancedPhoto in
             let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
             return EnhancedPhoto(id: photoID, originalURL: item.originalURL ?? item.url, enhancedURL: item.url)
@@ -1511,7 +1523,6 @@ struct FlythroughDetailView: View {
         var extras: [PhotoExportRenderer.Extra] = []
         var counts: [ListingMediaItem.Kind: Int] = [:]
         for item in items.sorted(by: { $0.createdAt < $1.createdAt }) where item.kind != .photo {
-            guard FileManager.default.fileExists(atPath: item.url.path) else { continue }
             counts[item.kind, default: 0] += 1
             let n = counts[item.kind] ?? 1
             let ext = item.url.pathExtension.isEmpty ? (item.isVideo ? "mp4" : "bin") : item.url.pathExtension
@@ -1535,9 +1546,13 @@ struct FlythroughDetailView: View {
             }
             extras.append(PhotoExportRenderer.Extra(name: "\(stem).\(ext)", url: item.url, note: note))
         }
-        if let note = Self.listingDetailsNote(for: currentListing) {
+        do {
+            let note = try Self.listingDetailsNote(for: currentListing)
             extras.append(PhotoExportRenderer.Extra(name: "listing-details.txt", url: note,
                                                     note: "the address, the facts on the listing page and the share links"))
+        } catch {
+            packageError = "Couldn't save the listing details for this package. Free some space and try again."
+            return
         }
         guard !photos.isEmpty || !extras.isEmpty else { return }
         filePhotoExportAdmission = admission
@@ -1548,7 +1563,7 @@ struct FlythroughDetailView: View {
     /// A plain-text note for the package: what the listing says about itself,
     /// in the words on the listing page, plus the public links. Written to the
     /// temporary directory; the usual cleanup removes it.
-    private static func listingDetailsNote(for listing: Listing) -> URL? {
+    private static func listingDetailsNote(for listing: Listing) throws -> URL {
         var lines: [String] = [listing.address.isEmpty ? "Untitled listing" : listing.address, ""]
         if let tagline = listing.tagline?.trimmingCharacters(in: .whitespacesAndNewlines), !tagline.isEmpty { lines.append(tagline); lines.append("") }
         let chips = listing.cardChips
@@ -1563,7 +1578,7 @@ struct FlythroughDetailView: View {
         lines.append("")
         lines.append("Exported from Rendprop on \(f.string(from: Date())). Photos made or changed with AI carry their own disclosure notes in this package.")
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-details-\(UUID().uuidString).txt")
-        do { try Data(lines.joined(separator: "\n").utf8).write(to: url, options: .atomic) } catch { return nil }
+        try Data(lines.joined(separator: "\n").utf8).write(to: url, options: .atomic)
         return url
     }
 
@@ -11192,7 +11207,8 @@ struct ReelStudioView: View {
             // nothing was admitted or charged — and keeping the marker only
             // locked Generate behind "submission needs review" (TestFlight 59:
             // every preset reel was refused with 400 and the button stayed
-            // dead). Transport errors, timeouts and 5xx keep the marker.
+            // dead). A 409 duplicate can mean this same operation already
+            // started. Conflicts, transport errors, timeouts and 5xx keep it.
             if Self.isDefinitiveRefusal(error) { submission.clear() }
             throw error
         }
@@ -11209,10 +11225,11 @@ struct ReelStudioView: View {
     }
 
     /// A 4xx the server itself produced before admitting the request. 408 is a
-    /// timeout and therefore unknown; everything 5xx or non-HTTP is unknown.
+    /// timeout and 409 can report an already-started operation, so neither is
+    /// proof of non-admission. Everything 5xx or non-HTTP is also unknown.
     nonisolated private static func isDefinitiveRefusal(_ error: Error) -> Bool {
         guard let api = error as? APIError, let status = api.status else { return false }
-        return (400...499).contains(status) && status != 408
+        return (400...499).contains(status) && status != 408 && status != 409
     }
 
     nonisolated private static func retrieveClip(job: AIVideoJob, pending: PendingReelRequest?, api: APIClient,

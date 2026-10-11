@@ -4,7 +4,7 @@ Owned synthetic transport; no network, camera, credentials, or Photos writes.
 """
 from pathlib import Path
 import argparse,hashlib,importlib.util,json,re,subprocess,tempfile
-parser=argparse.ArgumentParser();parser.add_argument('--inject-fault',choices=['broad-wire','wrong-workspace','late-conflict','drop-receipt-scope','drop-archive-restore']);opts=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--inject-fault',choices=['broad-wire','wrong-workspace','late-conflict','drop-receipt-scope','drop-archive-restore','sold-strings-only','sold-wide-tolerance','sold-canonical-baseline','sold-clear-newer']);opts=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[3]
 COMPILE_SECONDS=180
 RUNTIME_SECONDS=90
@@ -42,6 +42,15 @@ assert not re.search(r'__[A-Z_]+__',source)
 fixture=OUT/'ActualListingFactsSync.swift';fixture.write_text(source)
 models=[ROOT/('apps/ios/Rendprop/'+p) for p in ['Models/Listing.swift','Models/ListingClientContact.swift','Models/Money.swift','Networking/NativeReelDraft.swift','Auth/AnonymousAdoptionRecovery.swift','Auth/AdoptionLocalBindings.swift','Networking/WorkspaceSync.swift']]
 files=[*models,client,app,Path(__file__).resolve(),Path(__file__).parent/'Fixture.swift.template',ROOT/'tools/audit/floor-measurement-sync-20261004/run.py']
+if opts.inject_fault and opts.inject_fault.startswith('sold-'):
+ before,after={
+  'sold-strings-only':('return abs(x.timeIntervalSince(y)) < 0.001','return false'),
+  'sold-wide-tolerance':('return abs(x.timeIntervalSince(y)) < 0.001','return abs(x.timeIntervalSince(y)) < 1.0'),
+  'sold-canonical-baseline':('state.baseline = received;','state.baseline = received.mapValues { if case .text(let text) = $0 { return .text(text.replacingOccurrences(of: "+00:00", with: "Z")) }; return $0 };'),
+  'sold-clear-newer':('if state.fields[key]?.value == sent.value {','if true {'),
+ }[opts.inject_fault]
+ model_source=models[0].read_text();assert model_source.count(before)==1
+ changed=OUT/'ChangedListing.swift';changed.write_text(model_source.replace(before,after));models[0]=changed
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 receipt={'output':str(OUT),'fault':opts.inject_fault,'sourceHashes':{str(p.relative_to(ROOT)):sha(p) for p in files},'originalExtractedHashes':originalHashes,'extractedHashes':{k:hashlib.sha256(v.encode()).hexdigest() for k,v in extracted.items()},'fixtureSHA256':sha(fixture),'scope':'Actual native methods; synthetic transport/Auth/workspace. SQL races and real phone acceptance separate.','commands':[]}
 for name,args in [('compile',['xcrun','swiftc','-swift-version','5','-parse-as-library',*map(str,models),str(fixture),'-o',str(OUT/'checks')]),('run',[str(OUT/'checks')])]:
@@ -56,7 +65,7 @@ for name,args in [('compile',['xcrun','swiftc','-swift-version','5','-parse-as-l
  log.write_text(p.stdout)
  receipt['commands'].append({'name':name,'exit':p.returncode,'timeoutSeconds':timeout,'logSHA256':sha(log)})
  if name=='run' and p.returncode==0:receipt['assertions']=int(re.search(r'(\d+) assertions',p.stdout)[1])
- expected={'broad-wire':'Actual wire contains only explicit intent','wrong-workspace':'Actual facts write is workspace-bound','late-conflict':'Late conflict cannot poison an explicitly adopted shared version','drop-receipt-scope':'Ordinary facts receipt must match submitted listing and workspace','drop-archive-restore':'Clearing sold restores a Studio-archived listing explicitly'}.get(opts.inject_fault)
+ expected={'broad-wire':'Actual wire contains only explicit intent','wrong-workspace':'Actual facts write is workspace-bound','late-conflict':'Late conflict cannot poison an explicitly adopted shared version','drop-receipt-scope':'Ordinary facts receipt must match submitted listing and workspace','drop-archive-restore':'Clearing sold restores a Studio-archived listing explicitly','sold-strings-only':'Equivalent timestamp text acknowledges the same instant','sold-wide-tolerance':'A different timestamp instant remains a different fact','sold-canonical-baseline':'Late sold acknowledgement retains exact server baseline','sold-clear-newer':'Newer local sold marker remains pending after older reply'}.get(opts.inject_fault)
  receipt['passed']=name=='run' and (p.returncode==1 and expected in p.stdout if expected else p.returncode==0)
  if expected:receipt['expectedRejection']=expected
  if name=='run':

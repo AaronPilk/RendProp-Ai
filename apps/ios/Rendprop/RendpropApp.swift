@@ -466,6 +466,12 @@ final class AppModel: ObservableObject {
     }
 
     func load() async {
+#if targetEnvironment(simulator)
+        // The Home creation regression owns only transient synthetic listings.
+        // Neither this root task nor Home's own task may restore or persist a
+        // previous simulator library while that closed fixture is running.
+        if HomeProjectCreationFixtureHost.isRequested { return }
+#endif
         guard !hasLoaded else { return }
         hasLoaded = true
 
@@ -3022,6 +3028,8 @@ private struct RendpropLaunchContent: View {
                 ProfileFeedbackFixtureHost()
             } else if DetailMetadataRegressionHost.requestedCase != nil {
                 DetailMetadataRegressionHost()
+            } else if HomeProjectCreationFixtureHost.isRequested {
+                HomeProjectCreationFixtureHost()
             } else {
                 normalContent
             }
@@ -3428,6 +3436,59 @@ struct RootTabView: View {
 }
 
 // MARK: - Home dashboard
+#if targetEnvironment(simulator)
+/// The actual Home dashboard and creation sheets with exactly two synthetic
+/// listings. It accepts no arbitrary actor, library or network client, and is
+/// absent from physical archives. AppModel.load deliberately remains inactive.
+struct HomeProjectCreationFixtureHost: View {
+    static var isRequested: Bool {
+        guard Config.isOfflineAccountFixture else { return false }
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-ui.homeProjectCreationFixture"),
+              index + 1 < arguments.count else { return false }
+        return arguments[index + 1] == "two-homes"
+    }
+
+    @EnvironmentObject private var model: AppModel
+    @State private var seeded = false
+    @State private var failure: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if seeded {
+                Text("\(model.realProjects.count) synthetic homes")
+                    .accessibilityIdentifier("home.fixture.projectCount")
+                NavigationStack { HomeDashboardView() }
+            } else if let failure {
+                Text(failure).accessibilityIdentifier("home.fixture.failure")
+            } else {
+                ProgressView("Preparing synthetic Home fixture")
+            }
+        }
+        .task {
+            guard !seeded, failure == nil, Self.isRequested else { return }
+            guard model.api is MockAPIClient else { failure = "Home fixture requires offline transport"; return }
+            do {
+                try WorkspaceStore.shared.prepareBuild60HomeFixtureLibrary()
+                let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
+                model.listings = ["100 First Fixture Lane", "200 Second Fixture Lane"].map { address in
+                    var listing = Listing(address: address, beds: 0, baths: 0, sqft: 0,
+                                          price: Money(cents: 0), status: .draft,
+                                          spaceTypeRaw: SpaceType.realEstate.rawValue)
+                    listing.cloudDraftOrgID = WorkspaceContext.selectedOrgID
+                    listing.cloudSyncOwnerID = owner
+                    // Avoid geocoder or map tile requests in any later screen.
+                    listing.latitude = .nan; listing.longitude = .nan
+                    listing.regionLabel = "Synthetic fixture"
+                    return listing
+                }
+                seeded = true
+            } catch { failure = "Home fixture failed to prepare its private library" }
+        }
+    }
+}
+#endif
+
 // PROJECT-FIRST. Home is the user's list of homes plus ONE big obvious action:
 // add another one. Every feature tile below runs the "Which home?" gate first
 // (ProjectFeature / ProjectGateSheet, bottom of this file), so nothing the app
@@ -5084,6 +5145,7 @@ struct StartProjectSheet: View {
                         }
                         dismiss()
                     }
+                    .accessibilityIdentifier("home.startProject.save")
                     if let creationError { Text(creationError).font(.rpCaption).foregroundStyle(Theme.warn) }
                     Text("You can add the walkthrough video later.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -5119,6 +5181,7 @@ struct StartProjectSheet: View {
                       ? "Type the home's address"
                       : "Name or address of your \(space.spaceNoun)",
                       text: $name)
+                .accessibilityIdentifier("home.startProject.name")
                 .textContentType(space.showsPropertyDetails ? .fullStreetAddress : .organizationName)
                 .textInputAutocapitalization(.words)
                 .submitLabel(.done)

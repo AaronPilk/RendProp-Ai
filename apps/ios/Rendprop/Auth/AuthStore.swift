@@ -320,6 +320,14 @@ final class AuthStore: ObservableObject {
         UserDefaults.standard.set(userID, forKey: "auth.supabase.userID")
         return true
     }
+
+    /// Only the fixed two-home simulator host may synthesize this identity.
+    @MainActor func prepareBuild60HomeFixtureOwner() -> Bool {
+        guard HomeProjectCreationFixtureHost.isRequested else { return false }
+        userID = "b6000000-0000-4000-8000-000000000010"
+        UserDefaults.standard.set(userID, forKey: "auth.supabase.userID")
+        return true
+    }
     #endif
 
     // MARK: - Token access (read by LiveAPIClient, any thread)

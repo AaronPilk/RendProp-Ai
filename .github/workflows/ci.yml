@@ -168,6 +168,16 @@ jobs:
         run: bash apps/ios/tests/run-reel-clip-failures.sh
       - name: Paid reel requests survive lost responses and retain downloaded clips
         run: python3 apps/ios/tests/run-reel-request-recovery.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-request-recovery-$GITHUB_RUN_ATTEMPT"
+      - name: Whole listing package preserves sources and refuses incomplete handovers
+        run: python3 apps/ios/tests/run-listing-package-assembly.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-package-assembly"
+      - name: Retain whole listing package assembly and guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: listing-package-assembly-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-listing-package-assembly/receipt.json
+            ${{ runner.temp }}/rendprop-listing-package-assembly/*.log
       - name: Reflection permission revocation fences pending requests
         run: python3 tools/audit/call-20260919/reflection-controller/run.py
       - name: Photo work survives navigation and fences account transitions
@@ -189,7 +199,7 @@ jobs:
       - name: Ordinary listing intent and shared-version review
         run: |
           python3 tools/audit/listing-facts-sync-20261004/run.py
-          for fault in broad-wire wrong-workspace late-conflict drop-receipt-scope drop-archive-restore; do
+          for fault in broad-wire wrong-workspace late-conflict drop-receipt-scope drop-archive-restore sold-strings-only sold-wide-tolerance sold-canonical-baseline sold-clear-newer; do
             python3 tools/audit/listing-facts-sync-20261004/run.py --inject-fault "$fault"
           done
           python3 tools/audit/listing-facts-review-20261004/run.py --output-dir "$RUNNER_TEMP/rendprop-listing-facts-review-positive"

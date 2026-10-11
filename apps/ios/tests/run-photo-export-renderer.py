@@ -30,6 +30,8 @@ variants = {
     'negative-jpeg-is-png': (base.replace('rendered.jpegData(compressionQuality: 0.97)', 'rendered.pngData()'), 'PNG input is encoded as actual JPEG bytes'),
     'negative-level-no-crop': (base.replace('let cropScale = min(', 'let cropScale = 1.0; let unusedCropScale = min('), 'manual level crops without enlarging the photograph'),
     'negative-archive-drops-disclosures': (base.replace('for file in prepared.files { entries.append(ZipArchive.Entry(name: file.lastPathComponent, url: file)) }', 'for file in prepared.images { entries.append(ZipArchive.Entry(name: file.lastPathComponent, url: file)) }'), 'ZIP carries every prepared file including disclosure notes'),
+    'negative-archive-drops-extras': (base.replace('entries.append(ZipArchive.Entry(name: name, url: extra.url))', '/* omitted non-photo extra */'), 'listing ZIP includes exact walkthrough bytes'),
+    'negative-video-only-refused': (base.replace('guard !prepared.files.isEmpty || !extras.isEmpty else', 'guard !prepared.files.isEmpty else'), 'video-only listing must package without photos'),
     'negative-crop-stretches': (base.replace('let drawWidth = CGFloat(fullWidth) * scale, drawHeight = CGFloat(fullHeight) * scale', 'let drawWidth = size.width, drawHeight = size.height'), 'center crop actually excludes left red strip'),
 }
 architecture = 'arm64' if platform.machine() == 'arm64' else 'x86_64'

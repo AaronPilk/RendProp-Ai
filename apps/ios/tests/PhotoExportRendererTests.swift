@@ -203,6 +203,61 @@ import ImageIO
         check(readme.contains("disclosure") && readme.contains("2 photos"), "README explains the numbering and the disclosure notes")
         check(directoryOffset == storedBytes + names.reduce(0) { $0 + 30 + $1.utf8.count }, "local headers and stored bytes fill the archive up to the central directory")
         check(bundle.files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }, "packaging leaves the prepared files in place")
+        // Build 60: parse the actual listing package back through its headers,
+        // central directory and CRC fields; the video bytes are synthetic.
+        func storedEntries(_ url: URL) throws -> [String: Data] {
+            let data = try Data(contentsOf: url)
+            func u16(_ p: Int) -> Int { Int(data[p]) | Int(data[p+1]) << 8 }
+            func u32(_ p: Int) -> UInt32 { data[p..<p+4].reversed().reduce(UInt32(0)) { $0 << 8 | UInt32($1) } }
+            let end = data.count - 22
+            check(u32(end) == 0x06054b50, "listing package closes its central directory")
+            var p = Int(u32(end + 16)), result: [String: Data] = [:]
+            for _ in 0..<u16(end + 10) {
+                check(u32(p) == 0x02014b50 && u16(p + 10) == 0, "listing extra uses stored ZIP entry")
+                let nameLength = u16(p + 28), size = Int(u32(p + 24)), local = Int(u32(p + 42))
+                let name = String(decoding: data[p+46..<p+46+nameLength], as: UTF8.self)
+                check(result[name] == nil, "listing package never duplicates an archive name")
+                check(u32(local) == 0x04034b50 && u32(local + 14) == u32(p + 16), "listing extra header and directory agree on CRC")
+                let start = local + 30 + u16(local + 26) + u16(local + 28)
+                let body = Data(data[start..<start+size])
+                check(ZipArchive.crc32(body) == u32(p + 16), "listing extra CRC matches its preserved bytes")
+                result[name] = body
+                p += 46 + nameLength + u16(p + 30) + u16(p + 32)
+            }
+            return result
+        }
+        let video = root.appendingPathComponent("source-walkthrough.mp4")
+        let videoBytes = Data([0,0,0,24,102,116,121,112]) + Data("synthetic walkthrough bytes".utf8)
+        let details = root.appendingPathComponent("details-note.txt")
+        let detailsBytes = Data("2050 Laney Pond Dr.\nListing page: https://example.invalid/s/one\nMLS-safe page (no branding): https://example.invalid/u/one".utf8)
+        try videoBytes.write(to: video); try detailsBytes.write(to: details)
+        let extras = [PhotoExportRenderer.Extra(name:"walkthrough-tour.mp4",url:video,note:"walkthrough tour"),
+                      PhotoExportRenderer.Extra(name:"listing-details.txt",url:details,note:"address and share links"),
+                      PhotoExportRenderer.Extra(name:"README.txt",url:details,note:"a colliding source name")]
+        let listingArchive = try PhotoExportRenderer.package(bundle, archiveName:"Complete listing", extras:extras)
+        let listingEntries = try storedEntries(listingArchive)
+        check(listingArchive.lastPathComponent == "Complete listing listing.zip", "complete package is named as a listing ZIP")
+        check(listingEntries["walkthrough-tour.mp4"] == videoBytes, "listing ZIP includes exact walkthrough bytes")
+        check(listingEntries["listing-details.txt"] == detailsBytes, "listing ZIP includes exact details note")
+        check(listingEntries["README-2.txt"] == detailsBytes, "extra colliding with README receives a unique safe name")
+        check(bundle.files.allSatisfy { listingEntries[$0.lastPathComponent] == (try? Data(contentsOf:$0)) }, "whole package preserves every photo original and disclosure")
+        let listingReadme = String(decoding: listingEntries["README.txt"]!, as:UTF8.self)
+        check(listingReadme.contains("walkthrough-tour.mp4") && listingReadme.contains("listing-details.txt") && listingReadme.contains("AI-generated"), "listing README describes extras and generated-media disclosure")
+        check((try? Data(contentsOf:video)) == videoBytes && (try? Data(contentsOf:details)) == detailsBytes, "listing package leaves extra files byte exact in place")
+        let videosOnly = try PhotoExportRenderer.prepareEmpty()
+        defer { try? FileManager.default.removeItem(at:videosOnly.directory) }
+        let videoArchive: URL
+        do { videoArchive = try PhotoExportRenderer.package(videosOnly,archiveName:"Video only",extras:Array(extras.prefix(2))) }
+        catch { check(false, "video-only listing must package without photos"); fatalError("unreachable") }
+        let videoEntries = try storedEntries(videoArchive)
+        check(Set(videoEntries.keys) == ["README.txt","walkthrough-tour.mp4","listing-details.txt"], "video-only listing ZIP contains all files without photos")
+        check(videoEntries["walkthrough-tour.mp4"] == videoBytes, "video-only package retains exact source video bytes")
+        let missing = PhotoExportRenderer.Extra(name:"gone.mp4",url:root.appendingPathComponent("missing.mp4"),note:"missing source")
+        do {
+            _ = try PhotoExportRenderer.package(videosOnly,archiveName:"Missing source",extras:[missing])
+            preconditionFailure("a missing extra cannot be silently dropped from the listing package")
+        } catch { checks += 1 }
+        check((try? Data(contentsOf:video)) == videoBytes, "failed packaging cannot remove the listing video")
         print("Actual UIKit rendering and export packaging: \(checks) passed")
     }
 }
