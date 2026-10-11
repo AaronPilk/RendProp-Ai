@@ -93,7 +93,8 @@ async function streamResponse(req:Request,env:Env,slug:string,uid:string,path:st
   const origin=`https://customer-${env.CLOUDFLARE_STREAM_CUSTOMER_CODE}.cloudflarestream.com`,target=new URL(`${origin}/${token}/${path}`);
   const range=req.headers.get("Range"),conditions=new Headers();
   for(const name of ["Range","If-None-Match","If-Match","If-Modified-Since","If-Unmodified-Since","If-Range"]){const value=req.headers.get(name);if(value)conditions.set(name,value);}
-  const upstream=await fetch(target,{method:req.method,headers:conditions,cache:"no-store",redirect:"error",signal:AbortSignal.timeout(15000),cf:{cacheTtl:0,cacheEverything:false}});
+  // `cache:"no-store"` alone: pairing it with cf.cacheTtl makes the runtime throw (see upstream.ts).
+  const upstream=await fetch(target,{method:req.method,headers:conditions,cache:"no-store",redirect:"error",signal:AbortSignal.timeout(15000)});
   if(![200,206,304,412,416].includes(upstream.status)){void upstream.body?.cancel().catch(()=>{});return unavailable(upstream.status===404?404:503);}
   const h=new Headers(headers);for(const name of ["Content-Type","Content-Length","Content-Range","ETag","Accept-Ranges","Last-Modified"]){const value=upstream.headers.get(name);if(value)h.set(name,value);}
   const fresh=await revalidate();if(fresh!==200){void upstream.body?.cancel().catch(()=>{});return unavailable(fresh);}

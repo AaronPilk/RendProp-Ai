@@ -10,7 +10,7 @@ const env={SUPABASE_FUNCTIONS_URL:"https://api.fixture.invalid/functions/v1",SUP
 globalThis.fetch=async(raw,init)=>{
  const url=new URL(raw);
  if(url.hostname==="api.fixture.invalid"){
-  authReads++;const privateRead=url.pathname==="/functions/v1/tours/private-media";if(privateRead){assert.equal(init.method,"POST");assert.deepEqual(Object.keys(JSON.parse(init.body)).sort(),["bytes","cap"]);admissions.push(JSON.parse(init.body).bytes);}else admissions.push(Number(url.searchParams.get("bytes")||0));const brand=url.pathname===`/functions/v1/tours/business-logo/${brandOrg}`;if(brand)assert.equal(url.searchParams.get("key"),brandKey);else if(!privateRead)assert.equal(url.pathname,`/functions/v1/tours/${slug}/delivery`);assert.equal(init.cf.cacheTtl,0);assert.equal(init.cache,"no-store");assert.equal(init.redirect,"manual");assert.equal(init.headers["X-Rendprop-Media-Gateway"],"d".repeat(64));
+  authReads++;const privateRead=url.pathname==="/functions/v1/tours/private-media";if(privateRead){assert.equal(init.method,"POST");assert.deepEqual(Object.keys(JSON.parse(init.body)).sort(),["bytes","cap"]);admissions.push(JSON.parse(init.body).bytes);}else admissions.push(Number(url.searchParams.get("bytes")||0));const brand=url.pathname===`/functions/v1/tours/business-logo/${brandOrg}`;if(brand)assert.equal(url.searchParams.get("key"),brandKey);else if(!privateRead)assert.equal(url.pathname,`/functions/v1/tours/${slug}/delivery`);assert.equal(init.cf?.cacheTtl,undefined,"cf.cacheTtl must not accompany cache:no-store (runtime TypeError)");assert.equal(init.cache,"no-store");assert.equal(init.redirect,"manual");assert.equal(init.headers["X-Rendprop-Media-Gateway"],"d".repeat(64));
   if(fixtureFault==="budget"&&admissions.at(-1)>0)return new Response(null,{status:429});
   if(privateRead)return Response.json({schema:1,slug:"private",objects:{[key]:"renders"},stream_uid:null});
   if(fixtureFault==="outage")return new Response(null,{status:503});
@@ -20,7 +20,7 @@ globalThis.fetch=async(raw,init)=>{
  }
  if(url.hostname==="api.cloudflare.com"){streamReads++;assert.equal(init.headers.Authorization,"Bearer private-fixture-secret");assert.equal(init.method,"POST");assert(JSON.parse(init.body).exp<=Math.floor(Date.now()/1000)+60);return Response.json({success:true,result:{token:"internal.private.token"}});}
  if(url.hostname==="customer-fixture.cloudflarestream.com"){
-  streamReads++;assert.equal(init.redirect,"error");assert.equal(init.cf.cacheTtl,0);assert.equal(init.cache,"no-store");
+  streamReads++;assert.equal(init.redirect,"error");assert.equal(init.cache,"no-store");assert.equal(init.cf?.cacheTtl,undefined,"cf.cacheTtl must not accompany cache:no-store (runtime TypeError)");
   if(url.pathname.endsWith("video.m3u8"))return new Response(fixtureFault==="external-manifest"?'#EXTM3U\nhttps://attacker.invalid/media.ts':'#EXTM3U\n#EXT-X-MAP:URI="../init.mp4"\n../segment.ts',{headers:{"Content-Type":"application/vnd.apple.mpegurl"}});
   return new Response("protected segment",{headers:{"Content-Type":"video/mp2t"}});
  }

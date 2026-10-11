@@ -49,13 +49,17 @@ export async function fetchUpstreamJSON(path: string, env: Env, gateway = false,
         ...(gateway ? { "X-Rendprop-Media-Gateway": env.MEDIA_GATEWAY_SECRET! } : {}),
         ...(payload ? { "Content-Type": "application/json" } : {}) },
       ...(payload ? {body:JSON.stringify(payload)} : {}),
+      // Publication state must remain fresh; HTML also bypasses customer caches.
+      // `cache: "no-store"` is the whole cache policy for this subrequest. It
+      // must NOT be combined with `cf.cacheTtl`/`cf.cacheEverything`: the
+      // Workers runtime throws `TypeError: CacheTtl: 0, is not compatible with
+      // cache: no-store header` before the request leaves the Worker, which
+      // turned every published tour into a 503 (2026-10-11 incident).
       cache: "no-store",
       signal: controller.signal,
       // The fixed API route should not redirect. Never forward its auth headers
       // to a Location selected by a bad upstream response.
       redirect: "manual",
-      // Publication state must remain fresh; HTML also bypasses customer caches.
-      cf: { cacheTtl: 0, cacheEverything: false },
     });
     // A nonconforming fetch may resolve after its abort. Do not read late data.
     if (controller.signal.aborted) { cancelBody(); return unavailable; }

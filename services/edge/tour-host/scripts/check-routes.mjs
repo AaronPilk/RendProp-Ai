@@ -96,8 +96,11 @@ async function checkRevocation(worker, realTour) {
       calls++;
       expect(url === ENV.SUPABASE_FUNCTIONS_URL + fixture.upstreamPath,
         `[revocation ${fixture.path}] current upstream path`);
-      expect(init.cf.cacheTtl === 0 && init.cf.cacheEverything === false,
-        `[revocation ${fixture.path}] upstream caching remains disabled`);
+      // `cache: "no-store"` is the only cache policy allowed on this request.
+      // The runtime throws when it is paired with cf.cacheTtl/cacheEverything
+      // (every tour 503'd on 2026-10-11), so the cf cache keys must stay absent.
+      expect(init.cache === "no-store" && init.cf?.cacheTtl === undefined && init.cf?.cacheEverything === undefined,
+        `[revocation ${fixture.path}] upstream caching is disabled with cache:"no-store" alone`);
       return new Response(upstreamStatus === 200 ? JSON.stringify(upstreamData) : "not published", {
         status: upstreamStatus, headers: { "Content-Type": "application/json" },
       });
