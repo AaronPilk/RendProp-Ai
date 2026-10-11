@@ -22,9 +22,10 @@ struct NativeReelDraft: Codable, Hashable, Sendable {
     let photos: [Photo]
     let localExtraClipCount: Int
     let updatedAt: String
+    var motionPreset: String? = nil
 
     func checked() throws -> Self {
-        guard schema == 1, kind == "native-reel-setup", ["off", "lowerThird", "punchCard", "highlightBox"].contains(captionStyle),
+        guard motionPreset == nil || ["fly_through", "push_in", "side_glide", "pull_back"].contains(motionPreset!), schema == 1, kind == "native-reel-setup", ["off", "lowerThird", "punchCard", "highlightBox"].contains(captionStyle),
               ["cut", "dissolve", "whip"].contains(transition), ["warm", "punchy", "luxury"].contains(tone),
               ["off", "myVoice", "aiVoice"].contains(voiceMode), motionPrompt.count <= 4000, script.count <= 100_000,
               photos.count <= 100, Set(photos.map(\.localId)).count == photos.count,

@@ -127,16 +127,23 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
       duration: String(secondsOf(input, 5)), // Seedance takes duration as a string
       num_frames: secondsOf(input, 5) * 24 + 1,
       aspect_ratio: input.aspect ?? "16:9",
+      camera_fixed: false,
     };
   }
 
-  // Hailuo 02 standard i2v — the different-model failover for the reel. 768p,
-  // 6 s ceiling: the row advertises that, and we clamp rather than 400.
+  // Hailuo 02 accepts 6 or 10 seconds, not Seedance's 5-second default.
+  // Refuse before dispatch instead of secretly generating/billing a longer clip.
+  // This does not enable a 768p fallback for a route that requires 1080p.
   if (model.includes("hailuo")) {
+    const duration = secondsOf(input, 6);
+    if (duration !== 6 && duration !== 10) {
+      throw new ProviderError(PROVIDER, "validation", "This model requires a six- or ten-second clip.", 400, true);
+    }
     return {
       prompt: input.prompt,
       image_url: input.image_url,
-      duration: String(Math.min(6, secondsOf(input, 5))),
+      duration: String(duration),
+      prompt_optimizer: false,
     };
   }
 

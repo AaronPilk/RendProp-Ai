@@ -137,6 +137,7 @@ try:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     variants = [
         ('actual', actual, None),
+        ('negative-quality-gate-accepts-changed-property', actual.replace('guard verdict.mayUse else { throw AIImagePrep.error(verdict.refusal) }', '// omitted property gate'), 'changed property must not be retained'),
         ('actual-lab-dispatch', actual, None),
         ('negative-dropped-receipt', actual.replace('try pending.save()', '// dropped accepted receipt'), 'pending receipt after poll failure'),
         ('negative-duplicate-submit', actual.replace('if PendingReelRequest.exists(recoveryContext) {', 'if false && PendingReelRequest.exists(recoveryContext) {'), 'existing receipt blocks second POST'),

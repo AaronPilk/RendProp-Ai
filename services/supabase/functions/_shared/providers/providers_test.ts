@@ -71,6 +71,7 @@ Deno.test("fal reel-clip payload pins bounded frame count and aspect for price a
       duration: "5",
       num_frames:121,
       aspect_ratio:"16:9",
+      camera_fixed: false,
     }),
   );
 });

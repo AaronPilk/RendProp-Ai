@@ -143,6 +143,45 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         back(from: "Review & Submit")
     }
 
+    func testReelCameraPresetsAndPhotoZIPDeliveryChoice() {
+        launch("rich")
+        let reel = app.buttons["detail.reelStudio"]; scrollTo(reel); reel.tap()
+        for move in ["fly_through", "push_in", "side_glide", "pull_back"] {
+            let button = app.buttons["reel.motion.\(move)"]; scrollTo(button)
+            XCTAssertTrue(button.exists && button.isEnabled, app.debugDescription)
+            button.tap(); XCTAssertTrue(button.isSelected)
+        }
+        XCTAssertFalse(app.textFields["e.g. 'slow push-in, golden-hour feel'"].exists)
+        attach("build58-four-camera-presets")
+        app.navigationBars["Reel Studio"].buttons["Close"].tap()
+        openLink("detail.photos", title: "Photos")
+        let all = app.buttons["photos.shareAll"]; scrollTo(all); all.tap()
+        let delivery = app.segmentedControls["export.deliverAs"]
+        XCTAssertTrue(delivery.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(delivery.buttons.count, 2)
+        XCTAssertTrue(delivery.buttons.element(boundBy: 0).isSelected)
+        delivery.buttons.element(boundBy: 1).tap()
+        XCTAssertTrue(delivery.buttons.element(boundBy: 1).isSelected)
+        delivery.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(delivery.buttons.element(boundBy: 0).isSelected)
+        XCTAssertTrue(app.buttons["export.share"].isEnabled)
+        attach("build58-zip-and-separate-photo-delivery")
+    }
+
+    func testRepublishSameLinkAndRecentlyDeletedNavigation() {
+        launch("republish")
+        let publish = app.buttons["detail.republish"]; scrollTo(publish)
+        XCTAssertTrue(publish.isEnabled); publish.tap()
+        XCTAssertTrue(app.staticTexts["detail.republished"].waitForExistence(timeout: 20), app.debugDescription)
+        attach("build58-republished-receipt")
+        let settings = app.buttons["build58.fixture.settings"]
+        XCTAssertTrue(settings.exists, app.debugDescription); settings.tap()
+        let trash = app.buttons["settings.recentlyDeleted"]; scrollTo(trash); trash.tap()
+        XCTAssertTrue(app.navigationBars["Recently deleted"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["recentlyDeleted.empty"].exists)
+        attach("build58-recently-deleted-empty")
+    }
+
     private func launch(_ fixture: String) {
         app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", fixture == "venue" ? "venue" : "real_estate",
                                "-appearance", "light", "-ai.thirdPartyProcessing.consent.v3", "YES",

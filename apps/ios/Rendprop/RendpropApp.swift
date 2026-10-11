@@ -1606,12 +1606,35 @@ final class AppModel: ObservableObject {
         publishInFlight.insert(id)
         defer { publishInFlight.remove(id) }
 
+        let actor = AuthStore.shared.userID, epoch = AuthStore.shared.syncSessionRevision
+        let library = WorkspaceContext.selectedOrgID
+        func requireCurrent() throws {
+            guard actor == AuthStore.shared.userID, epoch == AuthStore.shared.syncSessionRevision,
+                  library == WorkspaceContext.selectedOrgID,
+                  listings.first(where: { $0.id == id })?.serverID == serverID else {
+                throw CloudSyncError.identityChanged
+            }
+        }
+
         // 1. Facts, contact, photos. Each is best effort by construction; a
         //    sync that cannot complete leaves the listing dirty for next time
         //    and is reported on the listing, never swallowed into the video step.
         await syncListing(id)
+        try requireCurrent()
+        guard let synced = listings.first(where: { $0.id == id }), synced.needsServerSync != true,
+              synced.measurementSync?.pending != true, synced.factsSync?.conflict != true,
+              synced.factsSync?.reviewRequired != true, synced.lastError == nil,
+              !syncInFlight.contains(id) else {
+            throw AIImagePrep.error("Your listing changes haven't reached the live page yet. Review the listing's attention message and retry. Its existing link is unchanged.")
+        }
         try await syncClientContactBeforePublish(id, requireClient: false)
+        try requireCurrent()
         await syncGalleryPhotos(listingLocalID: id, listingServerID: serverID)
+        try requireCurrent()
+        guard !gallerySyncInFlight.contains(id), !gallerySyncPending.contains(id),
+              listings.first(where: { $0.id == id })?.lastError == nil else {
+            throw AIImagePrep.error("Your photos haven't reached the live page yet. Open Photos to review the upload, then retry. Its existing link is unchanged.")
+        }
 
         // A cloud listing with no walkthrough on this phone (restored, or synced
         // from Studio/another device) has nothing more to push: the page reads
@@ -1659,6 +1682,7 @@ final class AppModel: ObservableObject {
             throw error
         }
         // 3. The whole point: the link did not move.
+        try requireCurrent()
         guard published.slug == currentSlug else {
             setLastError("The server answered with a different tour link. The original link is unchanged; try again.", for: id)
             throw PublishError.noShareURL

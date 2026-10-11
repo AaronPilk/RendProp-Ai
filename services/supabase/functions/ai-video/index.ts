@@ -252,6 +252,8 @@ import {
   AERIAL_MOTIONS,
   type AerialMotion,
   buildReelPrompt,
+  buildSeedanceReelPreset,
+  REEL_PRESETS,
   chooseReelMotion,
   groundedAerialMotion,
   normalizeRoom,
@@ -726,7 +728,7 @@ function guardedUserPrompt(userText: string, space: SpaceType, verb: string): st
   return (
     `${verb} this exact photographed ${SCENE_NOUN[space]} as follows: ${userText.trim()}. ` +
     "Stay photorealistic and true to the space — it is a real place being marketed. " +
-    "Keep the architecture, fixtures, materials and camera perspective identical. " + GUARDRAILS
+    "Keep the architecture, fixtures, materials, colors and room layout identical. Only the camera framing may change within the photographed space. " + GUARDRAILS
   );
 }
 
@@ -844,6 +846,7 @@ interface AerialBody {
   label?: string;
 }
 interface ReelBody {
+  preset_version?: number;
   asset_id?: string;
   image_b64?: string;
   mime?: string;
@@ -1333,7 +1336,17 @@ Deno.serve(async (req) => {
         shotMotion = chooseReelMotion({ room, shotIndex });
       }
 
-      const reelText = userMotion
+      const presetVersion = body.preset_version;
+      if (presetVersion !== undefined) {
+        assert(presetVersion === 1, 400, "Choose a supported camera preset.");
+        assert(!userMotion && (REEL_PRESETS as readonly string[]).includes(shotMotion), 400,
+               "Choose Fly-through, Slow push-in, Side glide or Pull-back.");
+        assert(body.aspect === "9:16" || body.aspect === "16:9", 400, "Choose portrait or landscape.");
+        assert(secs === 5, 400, "These camera presets use five-second shots.");
+      }
+      const reelText = presetVersion === 1
+        ? buildSeedanceReelPreset(SCENE_NOUN[space], shotMotion as typeof REEL_PRESETS[number])
+        : userMotion
         ? guardedUserPrompt(userMotion, space, "Animate")
         : buildReelPrompt({ sceneNoun: SCENE_NOUN[space], motion: shotMotion });
       // When the caller supplied free text, the camera move came from THEIR
@@ -1380,7 +1393,7 @@ Deno.serve(async (req) => {
           allowance: { monthlyWindowStart: charge.monthlyReceipt.windowStart, burstWindowStart: charge.burstReceipt.windowStart },
           listingId: body.listing_id ?? reelListingId,
           feature: "reel", steps, input: genInput, seconds: secs,
-          meta: { seconds: secs, ...(chosenMotion ? { motion: chosenMotion } : {}) },
+          meta: { seconds: secs, ...(chosenMotion ? { motion: chosenMotion } : {}), ...(presetVersion === 1 ? { preset_version: 1, aspect: reelAspect } : {}) },
         }, {
           rpc: async (name, args) => await adminClient().rpc(name, args),
           submit: (selected) => runChain(task, [selected], async (step) => {

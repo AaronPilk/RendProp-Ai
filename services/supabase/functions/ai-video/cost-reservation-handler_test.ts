@@ -114,7 +114,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {GUARDRAILS,FAIR_HOUSING_LOCK,assertFairHousing} from ${
     JSON.stringify(new URL("../_shared/fairhousing.ts", import.meta.url).href)
   };
-    import {AERIAL_MOTION_TEXT,AERIAL_MOTIONS,buildReelPrompt,chooseReelMotion,groundedAerialMotion,normalizeRoom,parseReelMotion,REEL_MOTION_LABEL,REEL_MOTIONS} from ${
+    import {AERIAL_MOTION_TEXT,AERIAL_MOTIONS,buildReelPrompt,buildSeedanceReelPreset,REEL_PRESETS,chooseReelMotion,groundedAerialMotion,normalizeRoom,parseReelMotion,REEL_MOTION_LABEL,REEL_MOTIONS} from ${
     JSON.stringify(new URL("./motion.ts", import.meta.url).href)
   };
     import {APP_AI_UNIT_CENTS,assertDroneWithinLimits,droneReservation,DRONE_TIER_CENTS,DRONE_TIERS} from ${
@@ -567,4 +567,26 @@ Deno.test("dropping actual rejection evidence is caught by the same release/refu
     caught = true;
   }
   assert(caught, "Control must fail the production release/refund invariant");
+});
+
+Deno.test("actual reel handler rejects invalid presets before admission and dispatch", async () => {
+  const f = await fixture();
+  for (const extra of [
+    {preset_version:2,motion:"fly_through",aspect:"9:16"},
+    {preset_version:1,motion:"orbit_left",aspect:"9:16"},
+    {preset_version:1,motion:"fly_through",aspect:"square"},
+    {preset_version:1,motion:"fly_through",aspect:"9:16",prompt:"repaint the house"},
+    {preset_version:1,motion:"fly_through",aspect:"9:16",seconds:6},
+  ]) {
+    f.reset(); const response = await f.handler(req("reel-clip", "bad-preset", extra));
+    assertEquals(response.status, 400); assertEquals(f.state.events, []);
+    assertEquals(f.state.posts.length, 0);
+  }
+});
+Deno.test("actual reel handler sends a server prompt and portrait format through the funded dispatch", async () => {
+  const f = await fixture(); f.reset();
+  const response = await f.handler(req("reel-clip", "portrait-preset", {preset_version:1,motion:"fly_through",aspect:"9:16"}));
+  assertEquals(response.status, 202); assertEquals(f.state.events, ["reserve", "POST", "settle"]);
+  assertEquals(f.state.posts[0].input.aspect, "9:16");
+  assert(f.state.posts[0].input.prompt.includes("garage door and trim colors"));
 });

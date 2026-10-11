@@ -4,18 +4,22 @@ import Foundation
 // Isolated preference domain; no application or customer preferences are touched.
 enum UserDefaults { static let name = "com.rendprop.offline-reel-recovery." + UUID().uuidString; static let standard = Foundation.UserDefaults(suiteName:name)! }
 enum FileStore { static let documents=FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-reel-retained-"+UUID().uuidString);static func relativePath(for u:URL)->String{String(u.path.dropFirst(documents.path.count+1))};static func url(fromRelativePath p:String)->URL{documents.appendingPathComponent(p)} }
+struct DriftVerdict {let mayUse:Bool;let refusal:String}
+struct DriftCheckRequest {let requestID:String;let kind:String;let sourceBase64:String;let frames:[(at:String,jpeg:Data)];let seconds:Int?;let spaceType:String;let listingServerID:UUID?}
+enum ClipFrames {static func extract(from u:URL) async -> [(at:String,jpeg:Data)] { ["first","middle","last"].map { ($0, Data("frame".utf8)) } } }
 struct EnhancedPhoto { let enhancedURL:URL }
 struct AIShot { let motion:String?;let room:String? }
 struct UIImage { static var onPreparation:(() -> Void)?;let bytes:Data;init?(contentsOfFile:String){guard let d=try? Data(contentsOf:URL(fileURLWithPath:contentsOfFile)) else{return nil};bytes=d};func jpegData(compressionQuality:Double)->Data?{Self.onPreparation?();return bytes} }
-enum AIImagePrep {static func downscaled(_ i:UIImage,maxDimension:Int)->UIImage{i};static func error(_ m:String)->Error{NSError(domain:"synthetic",code:1,userInfo:[NSLocalizedDescriptionKey:m])} }
-protocol APIClient {func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob;func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus}
+enum AIImagePrep {static func downscaled(_ i:UIImage,maxDimension:Int)->UIImage{i};static func reelSource(_ i:UIImage,aspect:String)->UIImage{i};static func error(_ m:String)->Error{NSError(domain:"synthetic",code:1,userInfo:[NSLocalizedDescriptionKey:m])} }
+protocol APIClient {func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob;func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus;func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict}
 final class ClipAPI:APIClient {
  var expectedContext:PendingReelRequest.Context?;var lastKey:String?
  var beforeReply:(() throws -> Void)?
- var posts=0,polls=0;var throwPoll=false;var throwSubmit=false;var terminal=false;var url:URL
+ var rejectsDrift=false;var unavailableDrift=false;var checksDrift=0;var posts=0,polls=0;var throwPoll=false;var throwSubmit=false;var terminal=false;var url:URL
  let job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel")
  init(_ u:URL){url=u}
- func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob{if let context=expectedContext {let marker=PendingReelRequest.load(context);precondition(marker?.submissionUnconfirmed==true && marker?.operationID==idempotencyKey && marker?.inputDigest?.count==64,"durable operation marker exists before POST")};lastKey=idempotencyKey;posts+=1;precondition(seconds==5&&mime=="image/jpeg");if throwSubmit{throw URLError(.networkConnectionLost)};try beforeReply?();return job}
+ func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob{if let context=expectedContext {let marker=PendingReelRequest.load(context);precondition(marker?.submissionUnconfirmed==true && marker?.operationID==idempotencyKey && marker?.inputDigest?.count==64,"durable operation marker exists before POST")};lastKey=idempotencyKey;posts+=1;precondition(seconds==5&&mime=="image/jpeg"&&aspect=="9:16"&&presetVersion==1&&motion=="fly_through"&&prompt==nil);if throwSubmit{throw URLError(.networkConnectionLost)};try beforeReply?();return job}
+ func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict { checksDrift+=1;precondition(!r.sourceBase64.isEmpty && r.frames.count==3 && r.requestID==job.requestId);if unavailableDrift { throw URLError(.timedOut) };return DriftVerdict(mayUse:!rejectsDrift,refusal:"Property changed; held.") }
  func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus{polls+=1;precondition(j.requestId==job.requestId);if throwPoll{throw URLError(.networkConnectionLost)};return terminal ? .failed("synthetic definitive failure"):.completed(videoURL:url)}
 }
 @MainActor final class AIConsent {
@@ -88,7 +92,7 @@ final class ClosedVideoProtocol:URLProtocol {
    check((try? Data(contentsOf:manifest))==nil&&FileManager.default.fileExists(atPath:incoming.path),"parking preserves unreadable manifest and unretained temporary bytes")
    let historyContext=PendingReelRequest.Context(listingID:historyID,serverListingID:UUID(),owner:ctx.owner,workspace:ctx.workspace)
    let historyAPI=ClipAPI(URL(string:CommandLine.arguments[1]+"/history")!);historyAPI.expectedContext=historyContext
-   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:historyAPI,listingServerID:historyContext.serverListingID,into:temp,index:0,recoveryContext:historyContext);preconditionFailure("unreadable history must block generation")}catch{checks+=1}
+   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:historyAPI,listingServerID:historyContext.serverListingID,into:temp,index:0,recoveryContext:historyContext);preconditionFailure("unreadable history must block generation")}catch{checks+=1}
    check(historyAPI.posts==0 && !PendingReelRequest.exists(historyContext),"unreadable history prevents any new paid POST")
    try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:manifest.path)
    let restoredManifest=try Data(contentsOf:manifest)
@@ -143,26 +147,34 @@ final class ClosedVideoProtocol:URLProtocol {
   let model=GuardModel(.init(id:ctx.listingID,serverID:ctx.serverListingID))
   let dispatchGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID)
   UIImage.onPreparation={DispatchQueue.main.sync {MainActor.assumeIsolated {AIConsent.shared.revokeAndGrant()}}}
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:dispatchGuard);preconditionFailure("preparation revocation must reject paid dispatch")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:dispatchGuard);preconditionFailure("preparation revocation must reject paid dispatch")}catch{checks+=1}
   UIImage.onPreparation=nil
   check(clip.posts==0 && !PendingReelRequest.exists(ctx),"revocation during preparation permits no paid POST")
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("poll failure must surface")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("poll failure must surface")}catch{checks+=1}
   check(clip.posts==1&&clip.polls==1,"one accepted submit and one failed poll")
   check(PendingReelRequest.load(ctx)?.job.requestId==clip.job.requestId,"pending receipt after poll failure")
   check(PendingReelRequest.load(.init(listingID:ctx.listingID,serverListingID:ctx.serverListingID,owner:"other-owner",workspace:ctx.workspace))==nil,"receipt hidden from other account")
   check(PendingReelRequest.load(.init(listingID:ctx.listingID,serverListingID:ctx.serverListingID,owner:ctx.owner,workspace:UUID()))==nil,"receipt hidden from other workspace")
   check(PendingReelRequest.load(.init(listingID:ctx.listingID,serverListingID:UUID(),owner:ctx.owner,workspace:ctx.workspace))==nil,"receipt refuses changed server binding")
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("existing receipt blocks second POST")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("existing receipt blocks second POST")}catch{checks+=1}
   check(clip.posts==1&&clip.polls==1,"existing receipt blocks second POST")
   clip.throwPoll=false
   do{_ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("HTTP500 surfaced")}catch{checks+=1}
   check(PendingReelRequest.load(ctx) != nil&&clip.posts==1,"HTTP500 preserves receipt without submitting")
+  clip.rejectsDrift=true
+  do { _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("changed property must not be retained") } catch {checks+=1}
+  check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"QC refusal keeps the paid receipt without a generation retry")
+  check(!FileManager.default.fileExists(atPath:root.appendingPathComponent("clip-0.mp4").path),"QC failure leaves no unchecked clip")
+  clip.rejectsDrift=false;clip.unavailableDrift=true
+  do { _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("unavailable check must hold") } catch {checks+=1}
+  check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"unavailable QC holds accepted receipt")
+  clip.unavailableDrift=false
   let result=try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0)
   let resultBytes=try Data(contentsOf:result)
   check(resultBytes==Data("synthetic nonempty retained clip".utf8),"recover saves exact downloaded clip bytes")
-  check(clip.posts==1&&clip.polls==3,"recovery only polls same accepted request")
+  check(clip.posts==1&&clip.polls==5,"recovery only polls same accepted request")
   check(PendingReelRequest.load(ctx) != nil,"temporary successful download keeps request")
-  let old=PendingReelRequest(context:ctx,photoNumber:1,job:clip.job);try old.save()
+  let old=PendingReelRequest(context:ctx,photoNumber:1,job:clip.job,sourceJPEGBase64:Data("source photo".utf8).base64EncodedString(),sourceSpaceType:"real_estate");try old.save()
   let newer=PendingReelRequest(context:ctx,photoNumber:2,job:.init(requestId:"newer",statusUrl:"s",responseUrl:"r",kind:"reel"));try newer.save();old.clear()
   check(PendingReelRequest.load(ctx)?.job.requestId=="newer","late completion cannot clear new receipt")
   newer.clear();try old.save();clip.terminal=true
@@ -176,7 +188,7 @@ final class ClosedVideoProtocol:URLProtocol {
   check(PendingReelRequest.load(ctx)==nil,"invalid photo receipt cannot resume")
   try Data("broken".utf8).write(to:PendingReelRequest.file(ctx),options:.atomic)
   check(PendingReelRequest.exists(ctx)&&PendingReelRequest.load(ctx)==nil,"corrupt receipt fails closed")
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("unreadable receipt blocks another POST")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("unreadable receipt blocks another POST")}catch{checks+=1}
   check(clip.posts==1,"unreadable receipt blocks another POST")
   // A finished download is still temporary. Keep the receipt until durable
   // retention succeeds, and retry only this accepted job after a disk failure.
@@ -228,17 +240,17 @@ final class ClosedVideoProtocol:URLProtocol {
   PendingReelRequest.forget(ctx)
   PendingReelClips.retire([retained],for:ctx.listingID)
   check(PendingReelClips.load(for:ctx.listingID)?.clipURLs == [earlier1,earlier2],"finished run retires only its copies and preserves earlier order")
-  let normal=try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:clip,listingServerID:ctx.serverListingID,into:recoveryDir,index:0,recoveryContext:ctx)
+  let normal=try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:recoveryDir,index:0,recoveryContext:ctx)
   check(normal.deletingLastPathComponent().standardizedFileURL == parkedDir.standardizedFileURL,"ordinary accepted clip returns durable storage rather than temporary file")
   check(PendingReelRequest.load(ctx)==nil && PendingReelClips.load(for:ctx.listingID)?.clipURLs.contains(normal)==true,"ordinary receipt retires only after verified metadata and bytes")
   // Lost POST response cannot be replayed by this server. Retain a durable
   // operation marker, prohibit both new submission and bogus GET recovery.
   let unknownContext=PendingReelRequest.Context(listingID:UUID(),serverListingID:UUID(),owner:ctx.owner,workspace:ctx.workspace)
   let unknownAPI=ClipAPI(clip.url);unknownAPI.expectedContext=unknownContext;unknownAPI.throwSubmit=true
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"unknown outcome",shot:nil,shotCount:1,api:unknownAPI,listingServerID:unknownContext.serverListingID,into:root,index:0,recoveryContext:unknownContext);preconditionFailure("unknown submission must surface")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"unknown outcome",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:unknownAPI,listingServerID:unknownContext.serverListingID,into:root,index:0,recoveryContext:unknownContext);preconditionFailure("unknown submission must surface")}catch{checks+=1}
   let marker=PendingReelRequest.load(unknownContext)!
   check(marker.submissionUnconfirmed==true&&marker.operationID==unknownAPI.lastKey&&marker.inputDigest?.count==64,"unknown response retains exact durable operation identity")
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"different input",shot:nil,shotCount:1,api:unknownAPI,listingServerID:unknownContext.serverListingID,into:root,index:0,recoveryContext:unknownContext);preconditionFailure("unknown operation blocks fresh submission")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"different input",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:unknownAPI,listingServerID:unknownContext.serverListingID,into:root,index:0,recoveryContext:unknownContext);preconditionFailure("unknown operation blocks fresh submission")}catch{checks+=1}
   check(unknownAPI.posts==1&&unknownAPI.polls==0,"unknown operation blocks fresh submission")
   do{_ = try await ReelReceiptHarness.retrieveClip(job:marker.job,pending:marker,api:unknownAPI,into:root,index:0);preconditionFailure("unknown operation has no recoverable receipt")}catch{checks+=1}
   check(unknownAPI.polls==0,"unconfirmed operation cannot poll a fabricated job")
@@ -250,14 +262,14 @@ final class ClosedVideoProtocol:URLProtocol {
   let preserved=requestDirectory.deletingLastPathComponent().appendingPathComponent("requests-preserved")
   try FileManager.default.moveItem(at:requestDirectory,to:preserved)
   try Data("synthetic request-directory blocker".utf8).write(to:requestDirectory)
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:unknownAPI,listingServerID:unknownContext.serverListingID,into:root,index:0,recoveryContext:unknownContext);preconditionFailure("pre-dispatch storage must succeed")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:unknownAPI,listingServerID:unknownContext.serverListingID,into:root,index:0,recoveryContext:unknownContext);preconditionFailure("pre-dispatch storage must succeed")}catch{checks+=1}
   check(unknownAPI.posts==1,"pre-dispatch disk blocker permits no paid POST")
   try FileManager.default.removeItem(at:requestDirectory)
   try FileManager.default.moveItem(at:preserved,to:requestDirectory)
   let attachContext=PendingReelRequest.Context(listingID:UUID(),serverListingID:UUID(),owner:ctx.owner,workspace:ctx.workspace)
   let attachAPI=ClipAPI(clip.url);attachAPI.expectedContext=attachContext
   attachAPI.beforeReply={try FileManager.default.setAttributes([.posixPermissions:0o555],ofItemAtPath:requestDirectory.path)}
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:attachAPI,listingServerID:attachContext.serverListingID,into:root,index:0,recoveryContext:attachContext);preconditionFailure("accepted attachment storage failure must surface")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:attachAPI,listingServerID:attachContext.serverListingID,into:root,index:0,recoveryContext:attachContext);preconditionFailure("accepted attachment storage failure must surface")}catch{checks+=1}
   try FileManager.default.setAttributes([.posixPermissions:0o755],ofItemAtPath:requestDirectory.path)
   check(attachAPI.posts==1&&attachAPI.polls==0&&PendingReelRequest.load(attachContext)?.submissionUnconfirmed==true,"accepted receipt save failure retains unconfirmed durable marker")
   // Normal Generate obeys the same durable-retention rule as Recover.
@@ -265,7 +277,7 @@ final class ClosedVideoProtocol:URLProtocol {
   let blockedAPI=ClipAPI(clip.url);blockedAPI.expectedContext=blockedContext
   let blockedParked=PendingReelClips.directory(for:blockedContext.listingID)
   try Data("synthetic parked-directory blocker".utf8).write(to:blockedParked)
-  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,api:blockedAPI,listingServerID:blockedContext.serverListingID,into:root,index:0,recoveryContext:blockedContext);preconditionFailure("ordinary retention blocker must surface")}catch{checks+=1}
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:blockedAPI,listingServerID:blockedContext.serverListingID,into:root,index:0,recoveryContext:blockedContext);preconditionFailure("ordinary retention blocker must surface")}catch{checks+=1}
   check(blockedAPI.posts==1&&PendingReelRequest.load(blockedContext)?.job.requestId==blockedAPI.job.requestId,"ordinary retention failure keeps accepted receipt")
   try FileManager.default.removeItem(at:blockedParked)
   let accepted=PendingReelRequest.load(blockedContext)!

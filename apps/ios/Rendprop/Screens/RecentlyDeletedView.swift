@@ -137,16 +137,17 @@ struct RecentlyDeletedView: View {
             rows = []; loadError = nil; return
         }
         if !force, loadedFor == org, !rows.isEmpty { return }
+        let owner = auth.userID, epoch = auth.syncSessionRevision
         loading = true; loadError = nil
         defer { loading = false }
         do {
             let fetched = try await model.api.trashedListings()
-            guard workspace.selected?.id == org else { return }
+            guard workspace.selected?.id == org, auth.userID == owner, auth.syncSessionRevision == epoch else { return }
             rows = fetched.filter { $0.restorableUntil > Date() }
             loadedFor = org
         } catch is CancellationError {
         } catch {
-            guard workspace.selected?.id == org else { return }
+            guard workspace.selected?.id == org, auth.userID == owner, auth.syncSessionRevision == epoch else { return }
             loadError = "Couldn't load Recently deleted — \(AppModel.userMessage(for: error))"
         }
     }
@@ -155,12 +156,12 @@ struct RecentlyDeletedView: View {
         guard restoring == nil else { return }
         restoring = row.id; restoreError = nil; restored = nil
         Haptics.selection()
-        let org = workspace.selected?.id
+        let org = workspace.selected?.id, owner = auth.userID, epoch = auth.syncSessionRevision
         Task {
             do {
                 let result = try await model.restoreListing(serverID: row.id)
                 await MainActor.run {
-                    guard workspace.selected?.id == org else { restoring = nil; return }
+                    guard workspace.selected?.id == org, auth.userID == owner, auth.syncSessionRevision == epoch else { restoring = nil; return }
                     rows.removeAll { $0.id == row.id }
                     restored = result
                     restoring = nil
@@ -169,6 +170,7 @@ struct RecentlyDeletedView: View {
             } catch {
                 await MainActor.run {
                     restoring = nil
+                    guard workspace.selected?.id == org, auth.userID == owner, auth.syncSessionRevision == epoch else { return }
                     let message = AppModel.userMessage(for: error)
                     restoreError = "Couldn't restore \(row.address.isEmpty ? "this listing" : row.address) — \(message)"
                     // A window that closed while the list was open: drop the row.

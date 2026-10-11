@@ -280,7 +280,7 @@ private struct ListingToolboxSection: View {
 /// flag. It never restores/persists a customer's library or invokes capture/AI.
 struct DetailMetadataRegressionHost: View {
     private static let cases: Set<String> = ["empty", "capture", "rich", "missing-source",
-                                             "published-no-source", "sample", "venue"]
+                                             "published-no-source", "sample", "venue", "republish"]
     static var requestedCase: String? {
         guard Config.isUITesting else { return nil }
         let arguments = ProcessInfo.processInfo.arguments
@@ -301,6 +301,14 @@ struct DetailMetadataRegressionHost: View {
             NavigationStack {
                 if let listing {
                     FlythroughDetailView(listing: listing)
+                        .toolbar {
+                            if Self.requestedCase == "republish" {
+                                ToolbarItem(placement: .navigationBarLeading) {
+                                    NavigationLink("Fixture Settings") { SettingsView() }
+                                        .accessibilityIdentifier("build58.fixture.settings")
+                                }
+                            }
+                        }
                 } else if let failure {
                     Text(failure).accessibilityIdentifier("detail.fixtureFailure")
                 } else {
@@ -348,7 +356,7 @@ struct DetailMetadataRegressionHost: View {
             model.tours[value.id] = AppModel.RenderedTour(url: video, durationS: 2, speedFactor: 1.25)
             value.status = .ready
         }
-        if name == "published-no-source" {
+        if name == "published-no-source" || name == "republish" {
             // A syntactically valid fake share link selects the share branch.
             // The suite never opens a browser, QR, share sheet or publish action.
             value.shareSlug = "metadata-fixture"
@@ -374,6 +382,11 @@ struct DetailMetadataRegressionHost: View {
                 try jpeg.write(to: directory.appendingPathComponent("enh-fixture-\(index).jpg"), options: .atomic)
                 try jpeg.write(to: directory.appendingPathComponent("orig-fixture-\(index).jpg"), options: .atomic)
             }
+        }
+        if name == "republish" {
+            guard model.api is MockAPIClient else { throw FixtureError.image }
+            value.serverID = UUID(uuidString: "b5800000-0000-4000-8000-000000000001")
+            value.needsServerSync = false
         }
         // AppModel.load is deliberately never called by this host. Its
         // hasLoaded guard keeps these transient fixtures out of PersistentStore.
@@ -2869,6 +2882,22 @@ enum AIImagePrep {
         format.scale = 1
         return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: size))
+        }
+    }
+
+    /// Center crop to the selected reel format without outpainting. The exact
+    /// cropped JPEG is also the quality-check reference and recovery input.
+    static func reelSource(_ image: UIImage, aspect: String) -> UIImage {
+        let width = image.size.width, height = image.size.height
+        guard width > 0, height > 0, width.isFinite, height.isFinite else { return image }
+        let ratio: CGFloat = aspect == "9:16" ? 9.0 / 16.0 : 16.0 / 9.0
+        let size = width / height > ratio ? CGSize(width: floor(height * ratio), height: height)
+            : CGSize(width: width, height: floor(width / ratio))
+        guard size.width >= 1, size.height >= 1 else { return image }
+        let format = UIGraphicsImageRendererFormat.default(); format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2,
+                                  width: width, height: height))
         }
     }
 
@@ -8420,6 +8449,8 @@ private struct PendingReelRequest: Codable, Sendable {
     var operationID: String? = nil
     var inputDigest: String? = nil
     var submissionUnconfirmed: Bool? = nil
+    var sourceJPEGBase64: String? = nil
+    var sourceSpaceType: String? = nil
     static func key(_ context: Context) -> String {
         "reel.request.\(context.listingID).\(context.owner).\(context.workspace?.uuidString ?? "local")"
     }
@@ -8576,7 +8607,8 @@ struct ReelStudioView: View {
     @State private var bigCaptionStyle: ReelComposer.ShotCaptionStyle = .lowerThird
     /// Defaults to hard cuts, and the copy under the picker says why.
     @State private var reelTransition: ReelComposer.Transition = .cut
-    @State private var motionPrompt = ""
+    @State private var motionPrompt = "" // Legacy draft field; never dispatched by preset UI.
+    @State private var cameraMove: ReelCameraMove = .flyThrough
     @State private var completedClips = 0
     @State private var totalClips = 0
     @State private var clipIssues: [ReelClipIssue] = []
@@ -8914,7 +8946,8 @@ struct ReelStudioView: View {
                     voiceMode: voiceMode == .off ? "off" : (voiceMode == .myVoice ? "myVoice" : "aiVoice"), voiceResultId: voiceID,
                     localNarration: voiceMode != .off && voiceover != nil && voiceID == nil,
                     photos: sharedPhotos,
-                    localExtraClipCount: selectedExtras.count, updatedAt: ISO8601DateFormatter().string(from: Date()))
+                    localExtraClipCount: selectedExtras.count, updatedAt: ISO8601DateFormatter().string(from: Date()),
+                    motionPreset: cameraMove.rawValue)
                 let document = try await cloud.saveCloudNativeReel(draft, listingID: sid, orgID: org, revision: nativeSetupRevision)
                 guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
                 nativeSetupRevision = document.revision
@@ -8929,7 +8962,7 @@ struct ReelStudioView: View {
                 portrait = draft.portrait; captionsOn = draft.titleCard; bigCaptionsOn = draft.shotCaptions
                 bigCaptionStyle = ReelComposer.ShotCaptionStyle(rawValue: draft.captionStyle) ?? .lowerThird
                 reelTransition = ReelComposer.Transition(rawValue: draft.transition) ?? .cut
-                motionPrompt = draft.motionPrompt; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
+                motionPrompt = ""; cameraMove = draft.motionPreset.flatMap(ReelCameraMove.init(rawValue:)) ?? .flyThrough; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
                 wordCaptionsOn = draft.wordCaptions
                 let available = Set(reelPhotos.map(\.id))
                 selected = draft.photos.compactMap { photo in
@@ -9134,17 +9167,26 @@ struct ReelStudioView: View {
     }
 
     private var motionRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("HOW IT MOVES (OPTIONAL)")
-                .font(.rpKicker).foregroundStyle(Theme.inkDim)
-            TextField("e.g. 'slow push-in, golden-hour feel'",
-                      text: $motionPrompt, axis: .vertical)
-                .lineLimit(2...4)
-                .textFieldStyle(.roundedBorder)
-            Text("Leave it blank for a smooth push-in.")
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
-            Text(costText)
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("HOW IT MOVES").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                ForEach(ReelCameraMove.allCases, id: \.rawValue) { move in
+                    Button { cameraMove = move; Haptics.selection() } label: {
+                        HStack {
+                            Text(move.title).font(.rpCaption.weight(.semibold))
+                            Spacer(minLength: 4)
+                            if cameraMove == move { Image(systemName: "checkmark.circle.fill") }
+                        }.padding(12).frame(maxWidth: .infinity)
+                            .foregroundStyle(cameraMove == move ? Theme.accent : Theme.ink)
+                            .background(cameraMove == move ? Theme.accent.opacity(0.12) : Theme.fillSubtle)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }.buttonStyle(.plain).accessibilityIdentifier("reel.motion.\(move.rawValue)")
+                        .accessibilityAddTraits(cameraMove == move ? .isSelected : [])
+                }
+            }
+            Text("Fly-through adds a short, smooth glide to each photo. It does not map a connected route through the house. Pull-back stays within the original photo. Photos are cropped to your selected format, so check the framing first.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+            Text(costText).font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -9163,7 +9205,7 @@ struct ReelStudioView: View {
     }
 
     private var aiDisclosureLine: some View {
-        Text("Made with AI motion — the photos themselves are unchanged. Any aerial clip is AI-generated scenery, not real drone footage.")
+        Text("Made with AI motion. Review the finished video against your photos before publishing. Aerial clips are AI-generated, not real drone footage.")
             .font(.rpCaption)
             .foregroundStyle(Theme.inkDim)
             .fixedSize(horizontal: false, vertical: true)
@@ -10450,7 +10492,7 @@ struct ReelStudioView: View {
                     Text("The submission ended without a usable receipt. It may already count a clip. There is no automatic retry or result lookup. Review your usage before forgetting this request; generating again may count another clip.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 } else {
-                    Text("Check this existing request before generating again. Recovery checks its status and downloads its clip; it sends no new generation. Remote results can expire.")
+                    Text("Check this existing request before generating again. Recovery checks its status, downloads its clip and checks it against the saved source photo; it sends no new generation. Remote results can expire.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     Button("Recover saved request") { connection.run { recoverPendingRequest(request) } }
                         .disabled(isWorking).accessibilityIdentifier("reel.recover-request")
@@ -10473,10 +10515,11 @@ struct ReelStudioView: View {
     private func recoverPendingRequest(_ request: PendingReelRequest) {
         guard !isWorking, request.submissionUnconfirmed != true,
               pendingRequest?.job.requestId == request.job.requestId else { return }
-        let api = model.api, revision = auth.syncSessionRevision
+        let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
         let validate: @MainActor @Sendable () throws -> Void = {
             try Task.checkCancellation()
-            guard auth.userID == request.context.owner, auth.syncSessionRevision == revision,
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent,
+                  auth.userID == request.context.owner, auth.syncSessionRevision == revision,
                   WorkspaceContext.selectedOrgID == request.context.workspace,
                   let current = model.listings.first(where: { $0.id == request.context.listingID }),
                   current.cloudUnavailable != true, current.serverID == request.context.serverListingID else {
@@ -10630,7 +10673,8 @@ struct ReelStudioView: View {
         guard chosen.count + extras.count >= 2 else { return }
         let api = model.api                       // snapshot on the main actor
         let isPortrait = portrait
-        let prompt = motionPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = "" // Closed presets keep free text from replacing property-preservation rules.
+        let selectedMove = cameraMove.rawValue
         let listingID = listing.id
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
         let reelWorkspace = WorkspaceContext.selectedOrgID
@@ -10741,6 +10785,7 @@ struct ReelStudioView: View {
                     do {
                         let clip = try await Self.makeClip(photo: photo, prompt: prompt,
                                                            shot: shot, shotCount: ordered.count,
+                                                           motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw,
                                                            api: api, listingServerID: reelListingServerID,
                                                            into: tmpDir, index: i, recoveryContext: recoveryContext,
                                                            requireCurrent: requireCurrent)
@@ -10986,6 +11031,7 @@ struct ReelStudioView: View {
     /// and trimming 5 s down on-device is free.
     nonisolated private static func makeClip(photo: EnhancedPhoto, prompt: String,
                                              shot: AIShot?, shotCount: Int,
+                                             motion: String, aspect: String, spaceType: String,
                                              api: APIClient, listingServerID: UUID?,
                                              into dir: URL, index: Int,
                                              recoveryContext: PendingReelRequest.Context? = nil,
@@ -10999,7 +11045,7 @@ struct ReelStudioView: View {
         guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else {
             throw AIImagePrep.error("Couldn't read that photo.")
         }
-        let scaled = AIImagePrep.downscaled(ui, maxDimension: 1280)
+        let scaled = AIImagePrep.downscaled(AIImagePrep.reelSource(ui, aspect: aspect), maxDimension: 1280)
         guard let jpeg = scaled.jpegData(compressionQuality: 0.85) else {
             throw AIImagePrep.error("Couldn't prepare that photo.")
         }
@@ -11011,24 +11057,27 @@ struct ReelStudioView: View {
         let typed: String? = prompt.isEmpty ? nil : prompt
         try await requireCurrent()
         let operationID = UUID().uuidString
-        var intent = try JSONEncoder().encode([typed ?? "", shot?.motion ?? "", shot?.room ?? "",
+        var intent = try JSONEncoder().encode([typed ?? "", motion, aspect, "preset-v1", shot?.room ?? "",
             String(index), String(shotCount), listingServerID?.uuidString ?? ""])
         intent.append(jpeg)
         let digest = SHA256.hash(data: intent).map { String(format: "%02x", $0) }.joined()
         let submission = PendingReelRequest(context: recoveryContext, photoNumber: index + 1,
             job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"),
-            operationID: operationID, inputDigest: digest, submissionUnconfirmed: true)
+            operationID: operationID, inputDigest: digest, submissionUnconfirmed: true,
+            sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType)
         try submission.save() // Atomic marker and readback BEFORE any paid POST.
         try await requireCurrent()
         let job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
-                                                mime: "image/jpeg", prompt: typed, seconds: 5,
-                                                motion: shot?.motion, room: shot?.room,
+                                                mime: "image/jpeg", prompt: nil, seconds: 5,
+                                                aspect: aspect, presetVersion: 1,
+                                                motion: motion, room: shot?.room,
                                                 shotIndex: index, shotCount: shotCount,
                                                 listingServerID: listingServerID,
                                                 label: Self.clipLabel(shot: shot, index: index),
                                                 idempotencyKey: operationID)
         let pending = PendingReelRequest(context: recoveryContext, photoNumber: index + 1, job: job,
-            operationID: operationID, inputDigest: digest, submissionUnconfirmed: false)
+            operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
+            sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType)
         try pending.save()
         let clip = try await retrieveClip(job: job, pending: pending, api: api, into: dir, index: index,
                                          clearReceiptOnDownload: false, requireCurrent: requireCurrent)
@@ -11074,6 +11123,20 @@ struct ReelStudioView: View {
         guard ((try? tmp.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 else {
             throw AIImagePrep.error("The completed clip was empty. Recover the saved request to download it again.")
         }
+        // No unchecked clip enters the parked library or the final composition.
+        // Recovery reuses the accepted generation receipt and exact source; it
+        // never submits another paid clip. Legacy receipts without a source hold.
+        guard let source = pending?.sourceJPEGBase64, !source.isEmpty,
+              let spaceType = pending?.sourceSpaceType else {
+            throw AIImagePrep.error("This older request has no saved source photo for its quality check. It has been kept, but cannot be added to a reel unchecked.")
+        }
+        let frames = await ClipFrames.extract(from: tmp)
+        try await requireCurrent()
+        let verdict = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
+            kind: "reel", sourceBase64: source, frames: frames, seconds: 5,
+            spaceType: spaceType, listingServerID: pending?.context.serverListingID))
+        try await requireCurrent()
+        guard verdict.mayUse else { throw AIImagePrep.error(verdict.refusal) }
         let dest = dir.appendingPathComponent("clip-\(index).mp4")
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tmp, to: dest)

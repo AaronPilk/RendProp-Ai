@@ -607,6 +607,16 @@ struct AIScriptResult: Sendable, Hashable {
 // the kitchen, pull back on the great room, tilt up the staircase, hold on the
 // view. That variety is one short text call away and it costs nothing.
 
+/// Server-authored, versioned five-second camera presets. A photo reel does
+/// not infer the property's connected floor plan or unseen surfaces.
+enum ReelCameraMove: String, CaseIterable, Codable, Sendable {
+    case flyThrough = "fly_through", pushIn = "push_in", sideGlide = "side_glide", pullBack = "pull_back"
+    var title: String {
+        switch self { case .flyThrough: return "Fly-through"; case .pushIn: return "Slow push-in"
+        case .sideGlide: return "Side glide"; case .pullBack: return "Pull-back" }
+    }
+}
+
 /// One shot in the plan.
 struct AIShot: Sendable, Hashable, Identifiable {
     /// Echoed back untouched from the request — the app's own local photo id,
@@ -652,7 +662,7 @@ struct AIShot: Sendable, Hashable, Identifiable {
     /// variety, nothing broken. If instead we passed anything through, the same
     /// mismatch would be a hard failure on every clip of the reel.
     static let renderableMotions: Set<String> = [
-        "push_in", "pull_back", "tilt_up", "tilt_down",
+        "fly_through", "side_glide", "push_in", "pull_back", "tilt_up", "tilt_down",
         "orbit_left", "orbit_right", "rack_focus", "static_parallax",
     ]
 }
@@ -1120,7 +1130,7 @@ protocol APIClient: Sendable {
     /// skips that stronger default and writes its own words into the listing's
     /// provenance log as if the agent had typed them.
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
-                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         aspect: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob
 
@@ -1342,6 +1352,15 @@ extension APIClient {
 
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
         try await aiVideoDrone(assetID: assetID, tier: tier, targetFps: targetFps, idempotencyKey: nil)
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         listingServerID: UUID?, label: String?,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
+        try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt, seconds: seconds,
+            aspect: nil, presetVersion: nil, motion: motion, room: room, shotIndex: shotIndex, shotCount: shotCount,
+            listingServerID: listingServerID, label: label, idempotencyKey: idempotencyKey)
     }
 
     /// Source-compatible reel clip with no shot plan — every planning field nil,

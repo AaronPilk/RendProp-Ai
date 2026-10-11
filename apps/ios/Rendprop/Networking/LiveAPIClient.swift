@@ -1377,10 +1377,15 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
-                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         aspect: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "seconds": seconds]
+        if let aspect {
+            guard aspect == "9:16" || aspect == "16:9" else { throw CloudSyncError.invalidResponse }
+            body["aspect"] = aspect
+        }
+        if let presetVersion { body["preset_version"] = presetVersion }
         if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
             body["prompt"] = prompt
         }
