@@ -144,6 +144,9 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     func testVenueKeepsIndustryAreaNounsAndRerenderNavigation() {
         launch("venue")
         assertTiles(sample: false, hasCapture: true)
+        // The Coming soon checks finish below this lazy-grid row. Bring the
+        // actual area-tagging tile back into view before reading its label.
+        scrollTo(app.buttons["detail.roomTags"])
         XCTAssertTrue(app.buttons["detail.roomTags"].label.contains("Tag areas"))
         openSheet("detail.roomTags", title: "Tag areas", close: "Done")
         openLink("detail.rerenderTour", title: "Review & Submit")
