@@ -98,3 +98,10 @@ d46f3dfedb6e5f86b9234e275a50395fddf967ab:docs/releases/TESTFLIGHT-55-FINAL-AUDIT
 # These are file checksums; no path-wide or rule-wide exclusion.
 796bf86d05661c3cdbe77f072bb6b86688ba0861:docs/releases/BUILD57-BACKEND-DEPLOY-20261010.json:generic-api-key:22
 796bf86d05661c3cdbe77f072bb6b86688ba0861:docs/releases/BUILD57-BACKEND-DEPLOY-20261010.json:generic-api-key:32
+
+# Build59 feedback deployment receipt: four exact source SHA256 checksums,
+# recomputed from the files. Historical fingerprints only; no path/rule exclusion.
+7d0533a0f95d55823603201a977ca413b9fea067:docs/releases/BUILD59-FEEDBACK-BACKEND-20261011.json:generic-api-key:18
+7d0533a0f95d55823603201a977ca413b9fea067:docs/releases/BUILD59-FEEDBACK-BACKEND-20261011.json:generic-api-key:28
+7d0533a0f95d55823603201a977ca413b9fea067:docs/releases/BUILD59-FEEDBACK-BACKEND-20261011.json:generic-api-key:31
+7d0533a0f95d55823603201a977ca413b9fea067:docs/releases/BUILD59-FEEDBACK-BACKEND-20261011.json:generic-api-key:43

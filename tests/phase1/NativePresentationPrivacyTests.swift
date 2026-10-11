@@ -73,6 +73,7 @@ import Foundation
         check(valid.filesStamp == 1 && valid.dismissals == 0, "Current listing can display its local files")
 
         let switchedAccount = host(); switchedAccount.mediaItems = [99]; switchedAccount.loadFiles()
+        switchedAccount.filePackageExtras = [101]; switchedAccount.packageError = "Old account package error"
         let accountScan = switchedAccount.filesTask
         await waitFor { ScanFixture.pending.count == 1 }
         switchedAccount.auth.userID = "actor-b"
@@ -81,8 +82,12 @@ import Foundation
         check(switchedAccount.mediaItems == [99] && switchedAccount.filesStamp == nil,
               "Late file scan cannot publish after account switch")
         check(!switchedAccount.hasCurrentPresentationContext, "Old detail content is hidden immediately after account switch")
+        switchedAccount.invalidatePresentation()
+        check(switchedAccount.filePackageExtras.isEmpty, "Account invalidation clears old listing package extras")
+        check(switchedAccount.packageError == nil, "Account invalidation clears old listing package error")
 
         let switchedOrg = host(); switchedOrg.mediaItems = [99]; switchedOrg.loadFiles()
+        switchedOrg.filePackageExtras = [202]; switchedOrg.packageError = "Old workspace package error"
         let orgScan = switchedOrg.filesTask
         await waitFor { ScanFixture.pending.count == 1 }
         WorkspaceContext.selectedOrgID = orgB
@@ -91,9 +96,13 @@ import Foundation
         check(switchedOrg.mediaItems == [99] && switchedOrg.filesStamp == nil,
               "Late file scan cannot publish after workspace switch")
         check(!switchedOrg.hasCurrentPresentationContext, "Old detail content is hidden immediately after workspace switch")
+        switchedOrg.invalidatePresentation()
+        check(switchedOrg.filePackageExtras.isEmpty && switchedOrg.packageError == nil,
+              "Workspace invalidation clears old listing package state")
 
         let cleared = host(); cleared.mediaItems = [44]; cleared.openedFile = 1
         cleared.filePhotoExport = 1; cleared.filePhotoExportAdmission = { true }
+        cleared.filePackageExtras = [303]; cleared.packageError = "Old package failure"
         cleared.provenance = [1]; cleared.provenanceCanExport = { true }; cleared.auditExport = 1
         cleared.showPhotosScreen = true; cleared.showReelStudio = true; cleared.showRoomTagger = true
         cleared.availableRerenderSource = URL(fileURLWithPath: "/synthetic.mov")
@@ -104,6 +113,8 @@ import Foundation
               "Invalidation clears old local-file presentation")
         check(cleared.filePhotoExport == nil && cleared.filePhotoExportAdmission == nil && cleared.auditExport == nil,
               "Invalidation clears old export presentations")
+        check(cleared.filePackageExtras.isEmpty && cleared.packageError == nil,
+              "Invalidation clears package extras and package error alongside export presentation")
         check(cleared.provenance.isEmpty && cleared.provenanceCanExport == nil && cleared.availableRerenderSource == nil,
               "Invalidation clears old listing-derived details")
         check(!cleared.showPhotosScreen && !cleared.showReelStudio && !cleared.showRoomTagger && cleared.dismissals == 1,

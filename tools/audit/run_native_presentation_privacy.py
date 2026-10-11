@@ -81,6 +81,7 @@ INDEXING
     var listing: FixtureListing { currentListing }; let model = FixtureModel()
     var filesTask: Task<Void, Never>?; var filesStamp: Int?; var mediaItems: [Int] = []
     var availableRerenderSource: URL?; var openedFile: Int?; var filePhotoExport: Int?; var filePhotoExportAdmission: (() -> Bool)?
+    var filePackageExtras: [Int] = []; var packageError: String?
     var provenance: [Int] = []; var provenanceCanExport: (() -> Bool)?; var auditExport: Int?
     var showPhotosScreen = false, showRoomTagger = false, showReelStudio = false, showAerialIntro = false, showEdit = false, showListingFactsReview = false
     var qrTarget: Int?; let connection = FixtureConnection(); var dismissals = 0; var sharedAdmittedJobs = 7
@@ -105,6 +106,8 @@ CONTACT
         ("no-workspace-fence", "self.actorID == actorID && self.orgID == orgID", "self.actorID == actorID", "Another workspace invalidates presentation"),
         ("late-scan-publishes", "hasCurrentPresentationContext else { return }", "true else { return }", "Late file scan cannot publish after account switch"),
         ("keeps-local-files", "mediaItems = []; availableRerenderSource", "availableRerenderSource", "Invalidation clears old local-file presentation"),
+        ("keeps-package-extras", "filePackageExtras = []; packageError = nil", "packageError = nil", "Account invalidation clears old listing package extras"),
+        ("keeps-package-error", "filePackageExtras = []; packageError = nil", "filePackageExtras = []", "Account invalidation clears old listing package error"),
         ("ignores-scan-cancellation", "!Task.isCancelled, expectedScope", "true, expectedScope", "Cancelled scan cannot restore files after invalidation"),
         ("stale-contact-dispatch", "!Task.isCancelled, hasCurrentPresentationContext, !currentListing.isSample", "!Task.isCancelled, !currentListing.isSample", "Stale account cannot dispatch listing contact request"),
         ("actor-global-indexing", 'return "\\(actor.lowercased()):\\(org.uuidString.lowercased())"', 'return actor.lowercased()', "Indexing opt-in cannot carry into another workspace"),
