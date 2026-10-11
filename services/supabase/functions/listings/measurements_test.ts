@@ -24,7 +24,7 @@ async function fixture() {
   const responseEnd=source.indexOf("\n    };",responseStart)+7;
   assert(responseStart>0&&responseEnd>responseStart);
   const body =
-    `import {HttpError,assert,json,readJsonLimited,respondError}from ${http};
+    `import {HttpError,assert,canonicalTimestamps,json,readJsonLimited,respondError}from ${http};
     import {listingLibraryScope} from ${scope};
     export const state:any={calls:[],authority:[],org:'22222222-2222-4222-8222-222222222222',actor:'11111111-1111-4111-8111-111111111111',deleting:false,error:null};
     const assertNotDeleting=async(user:string)=>{if(state.deleting)throw new HttpError(409,'Deleting');};

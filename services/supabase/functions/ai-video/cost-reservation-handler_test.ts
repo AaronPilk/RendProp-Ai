@@ -589,4 +589,17 @@ Deno.test("actual reel handler sends a server prompt and portrait format through
   assertEquals(response.status, 202); assertEquals(f.state.events, ["reserve", "POST", "settle"]);
   assertEquals(f.state.posts[0].input.aspect, "9:16");
   assert(f.state.posts[0].input.prompt.includes("garage door and trim colors"));
+  // The reservation's accounting metadata must stay inside the SQL allow-list
+  // (app_video_cost_reserve, migration 20261009192550): an unknown key such as
+  // `preset_version` is RP400 "Unsupported video accounting metadata" and the
+  // reel fails before any provider POST — TestFlight 59, 2026-10-11.
+  const reserve = f.state.rpcs.find((r: {name: string}) => r.name === "app_video_cost_reserve_v2");
+  assert(reserve, "reel admission must go through app_video_cost_reserve_v2");
+  const meta = (reserve as {args: {p_meta: Record<string, unknown>}}).args.p_meta;
+  for (const key of Object.keys(meta)) assert(SQL_ACCOUNTING_META_KEYS.has(key), `accounting metadata key ${key} is not allow-listed in SQL`);
+  assertEquals(meta.aspect, "9:16"); assertEquals(meta.motion, "fly_through"); assertEquals(meta.seconds, 5);
+  assert(!("preset_version" in meta));
 });
+// Mirror of the allow-list in public.app_video_cost_reserve (SQL). Keep in sync.
+const SQL_ACCOUNTING_META_KEYS = new Set(["tier","upscale_factor","target_fps","interpolated","estimate_cents","output_fps",
+  "grounded","seconds","aspect","motion","motion_requested","space_type","route_id","task","unit","price_estimated"]);

@@ -34,9 +34,32 @@ insert into capture_assets(id,listing_id,kind,storage_key,bucket,uploaded,bytes)
 insert into listings(id,org_id,agent_id,status,address)values('fe581000-0000-4000-8000-000000000003',(select org from b58),'fe580000-0000-4000-8000-000000000001','draft','3 First Publish Ct');
 insert into capture_assets(id,listing_id,kind,storage_key,bucket,uploaded,bytes,duration_s)values('fe582000-0000-4000-8000-000000000004','fe581000-0000-4000-8000-000000000003','video','renders/'||(select org from b58)||'/fe581000-0000-4000-8000-000000000003/a4.mp4','renders',true,10,12);
 
--- ── Trash: the delete route's write ──────────────────────────────────────────
+-- ── Trash: the delete route's write (build 59: the service-only trash_listing RPC) ──
+-- Build 58 wrote deleted_at + trash_expires_at through the tenant client. The
+-- tenant role has no column grant on trash_expires_at, so every delete on
+-- TestFlight 58/59 failed with "permission denied for table listings". The
+-- suite ran that write as service_role and never saw it; now it proves the
+-- grant model first, then the RPC the route actually calls.
+select set_config('request.jwt.claim.sub','fe580000-0000-4000-8000-000000000001',true);
+set local role authenticated;
+do $$begin
+ begin
+  update listings set deleted_at=now(),trash_expires_at=now()+interval '30 days' where id='fe581000-0000-4000-8000-000000000001';
+  raise exception 'BUILD58 FAIL: the tenant role could write trash_expires_at';
+ exception when insufficient_privilege then perform pg_temp.ok(true,'the tenant role cannot write trash_expires_at (the build-58 delete failed here)');
+ end;
+end$$;
+select pg_temp.ok((select deleted_at is null and trash_expires_at is null from listings where id='fe581000-0000-4000-8000-000000000001'),'the refused tenant write changed nothing');
+reset role;
 set local role service_role;
-update listings set deleted_at=now(),trash_expires_at=now()+interval '30 days' where id='fe581000-0000-4000-8000-000000000001';
+select pg_temp.refuse($q$select trash_listing('fe580000-0000-4000-8000-000000000002','fe581000-0000-4000-8000-000000000001')$q$,'RP403','a stranger cannot delete another library''s listing');
+select pg_temp.refuse($q$select trash_listing('fe580000-0000-4000-8000-000000000003','fe581000-0000-4000-8000-000000000001')$q$,'RP403','a marketing seat cannot delete');
+select pg_temp.refuse($q$select trash_listing('fe580000-0000-4000-8000-000000000001','00000000-0000-4000-8000-00000000dead')$q$,'RP404','deleting an unknown listing is not found');
+create temp table b58_trash as select trash_listing('fe580000-0000-4000-8000-000000000001','fe581000-0000-4000-8000-000000000001') r;
+grant select on b58_trash to service_role,authenticated;
+select pg_temp.ok((select (r->>'ok')::boolean and r->>'listing_id'='fe581000-0000-4000-8000-000000000001' and r->>'address'='1 Restore Lane' and (r->>'restorable_until')::timestamptz between now()+interval '29 days 23 hours' and now()+interval '30 days 1 hour' from b58_trash),'trash_listing answers with the listing and a 30-day window');
+select pg_temp.ok((select deleted_at is not null and trash_expires_at=(select (r->>'restorable_until')::timestamptz from b58_trash) from listings where id='fe581000-0000-4000-8000-000000000001'),'the row carries the same window the route reports');
+select pg_temp.refuse($q$select trash_listing('fe580000-0000-4000-8000-000000000001','fe581000-0000-4000-8000-000000000001')$q$,'RP404','a trashed listing answers not found, as the build-57 route did');
 select pg_temp.ok((select published_at is null and unpublished_by_delete_at is not null from renders where id='fe584000-0000-4000-8000-000000000001'),'delete takes the tour down and remembers it was live');
 select pg_temp.ok(not exists(select 1 from privacy_cleanup_jobs where kind='listing'and source_id='fe581000-0000-4000-8000-000000000001'),'an open restore window queues no storage cleanup');
 select pg_temp.ok((select (list_trashed_listings('fe580000-0000-4000-8000-000000000001',org)->'listings'->0->>'id')='fe581000-0000-4000-8000-000000000001' from b58),'Recently deleted lists the trashed listing');
@@ -120,5 +143,7 @@ select pg_temp.ok(has_function_privilege('authenticated','public.republish_rende
 select pg_temp.ok(not has_function_privilege('authenticated','public.restore_listing(uuid,uuid)','execute') and not has_function_privilege('anon','public.restore_listing(uuid,uuid)','execute') and has_function_privilege('service_role','public.restore_listing(uuid,uuid)','execute'),'restore is service-only');
 select pg_temp.ok(not has_function_privilege('authenticated','public.list_trashed_listings(uuid,uuid)','execute') and has_function_privilege('service_role','public.list_trashed_listings(uuid,uuid)','execute'),'trash listing is service-only');
 select pg_temp.ok(not has_function_privilege('authenticated','public.listing_trash_sweep()','execute') and not has_function_privilege('anon','public.queue_listing_media_cleanup(uuid)','execute'),'sweep and enqueue are service-only');
+select pg_temp.ok(not has_function_privilege('authenticated','public.trash_listing(uuid,uuid)','execute') and not has_function_privilege('anon','public.trash_listing(uuid,uuid)','execute') and has_function_privilege('service_role','public.trash_listing(uuid,uuid)','execute'),'trash_listing is service-only');
+select pg_temp.ok(not has_column_privilege('authenticated','public.listings','trash_expires_at','update') and has_column_privilege('authenticated','public.listings','deleted_at','update'),'the tenant column grants are unchanged: deleted_at yes, trash_expires_at no');
 select jsonb_build_object('suite','build58_db_controls','assertions',n)from b58_checks;
 rollback;

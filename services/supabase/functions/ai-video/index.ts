@@ -1393,7 +1393,12 @@ Deno.serve(async (req) => {
           allowance: { monthlyWindowStart: charge.monthlyReceipt.windowStart, burstWindowStart: charge.burstReceipt.windowStart },
           listingId: body.listing_id ?? reelListingId,
           feature: "reel", steps, input: genInput, seconds: secs,
-          meta: { seconds: secs, ...(chosenMotion ? { motion: chosenMotion } : {}), ...(presetVersion === 1 ? { preset_version: 1, aspect: reelAspect } : {}) },
+          // Accounting metadata is allow-listed in SQL (app_video_cost_reserve:
+          // tier, seconds, aspect, motion, ...). `preset_version` is not on that
+          // list — sending it made every preset reel fail with
+          // "Unsupported video accounting metadata" before any provider POST
+          // (TestFlight 59, 2026-10-11). The preset is identified by `motion`.
+          meta: { seconds: secs, ...(chosenMotion ? { motion: chosenMotion } : {}), ...(presetVersion === 1 && reelAspect ? { aspect: reelAspect } : {}) },
         }, {
           rpc: async (name, args) => await adminClient().rpc(name, args),
           submit: (selected) => runChain(task, [selected], async (step) => {

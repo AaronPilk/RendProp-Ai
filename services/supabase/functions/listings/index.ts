@@ -19,7 +19,7 @@
 // Errors carry { error, code } (see _shared/http.ts).
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
+import { HttpError, assert, canonicalTimestamps, json, pathSegments, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
 import { SPACE_TYPES } from "../_shared/spacetypes.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
@@ -30,7 +30,9 @@ import { clientContact, saveClientContact } from "./client-contact.ts";
 import { appendPublishedPhotos, publishedPhotoPatch } from "../_shared/property-cover.ts";
 
 /** How long a deleted listing can be restored (build 58). Mirrors the app copy. */
-const TRASH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+// The 30-day restore window is opened by the trash_listing RPC (build 59);
+// the number lives in SQL so the sweep and the route cannot disagree.
+
 
 // Creation fields; ordinary updates use explicit per-field intent at PUT /:id/facts.
 // The legacy PATCH route accepts only the dedicated photo/gallery operations.
@@ -191,7 +193,7 @@ Deno.serve(async (req) => {
       assert(typeof row?.id === "string" && typeof row.org_id === "string", 503, "Listing update returned inconsistent data.");
       const fresh = await listingLibraryScope(adminClient(), user.id, row.id);
       assert(fresh.org_id === row.org_id, 503, "Listing identity changed during this request.");
-      return {...row, library_org_id: fresh.library_org_id};
+      return {...canonicalTimestamps(row), library_org_id: fresh.library_org_id};
     };
 
     if (seg.length === 2 && seg[1] === "facts") {
@@ -281,7 +283,8 @@ Deno.serve(async (req) => {
       const url = new URL(req.url);
       if (url.searchParams.get("library") === "1") {
         assert(explicitOrg, 409, "Choose your listing library before syncing.");
-        return json(await listLibraryListings(adminClient(), user.id, explicitOrg, url.searchParams));
+        const page = await listLibraryListings(adminClient(), user.id, explicitOrg, url.searchParams);
+        return json({ ...page, listings: (page.listings as Record<string, unknown>[]).map(canonicalTimestamps) });
       }
       let q = db.from("listings").select("*").is("deleted_at", null);
       if (explicitOrg) q = q.eq("org_id", explicitOrg);
@@ -291,7 +294,7 @@ Deno.serve(async (req) => {
       if (spaceType) q = q.eq("space_type", spaceType);
       const { data, error } = await q.order("created_at", { ascending: false });
       if (error) throw new HttpError(400, `List failed: ${error.message}`);
-      return json(data ?? []);
+      return json((data ?? []).map(canonicalTimestamps));
     }
 
     if (req.method === "GET" && id && seg.length === 1) {
@@ -347,20 +350,22 @@ Deno.serve(async (req) => {
         .from("listings").select("id, org_id").eq("id", id).is("deleted_at", null).maybeSingle();
       if (eErr) throw new HttpError(400, `Listing lookup failed: ${eErr.message}`);
       if (!existing || (explicitOrg && existing.org_id !== explicitOrg)) throw new HttpError(404, "Listing not found in this workspace");
+      await assertNotDeleting(user.id);
 
-      // Build 58: the delete opens a 30-day restore window. The 0011 trigger
-      // still takes the tour down at once; storage cleanup is queued when the
-      // window closes (listing_trash_sweep) instead of an hour from now.
-      const now = Date.now();
-      const { data, error } = await db
-        .from("listings")
-        .update({ deleted_at: new Date(now).toISOString(), trash_expires_at: new Date(now + TRASH_WINDOW_MS).toISOString() })
-        .eq("id", id)
-        .is("deleted_at", null)
-        .select("id")
-        .maybeSingle();
-      if (error) throw new HttpError(400, `Delete failed: ${error.message}`);
-      if (!data) throw new HttpError(403, "Your role does not permit deleting listings");
+      // Build 58 opened a 30-day restore window here with a tenant-client
+      // update of deleted_at + trash_expires_at. `authenticated` has no column
+      // grant on trash_expires_at, so every delete on TestFlight 58/59 came
+      // back "permission denied" (400) and the phone, which fires and forgets
+      // this call, showed an empty Recently deleted. Build 59: the window is
+      // opened by the service-only trash_listing RPC, which applies the same
+      // authority the RLS policy did (listing_content_access, write). The
+      // unpublish trigger still takes the tour down at once; storage cleanup is
+      // queued when the window closes (listing_trash_sweep).
+      const { data, error } = await adminClient().rpc("trash_listing", { p_actor: user.id, p_listing: id });
+      if (error) throwRpc(error.message);
+      assert(data && typeof data === "object" && (data as Record<string, unknown>).ok === true
+        && typeof (data as Record<string, unknown>).restorable_until === "string", 503, "Delete returned inconsistent data.");
+      const restorableUntil = new Date((data as Record<string, unknown>).restorable_until as string).toISOString();
 
       // Take the hosted tour down now (service role: tenants can't write
       // renders). The 0011 trigger already did this in the same transaction;
@@ -371,7 +376,7 @@ Deno.serve(async (req) => {
         .eq("listing_id", id)
         .not("published_at", "is", null);
       if (uErr) console.error("unpublish after delete failed:", uErr.message);
-      return json({ ok: true, unpublished: !uErr, restorable_until: new Date(now + TRASH_WINDOW_MS).toISOString() });
+      return json({ ok: true, unpublished: !uErr, restorable_until: restorableUntil });
     }
 
     throw new HttpError(405, `Method ${req.method} not allowed on this path`);

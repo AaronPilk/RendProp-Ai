@@ -15,7 +15,7 @@ for (const [k, v] of Object.entries({ SUPABASE_URL: "https://trash-fixture.inval
 
 type Handler = (req: Request) => Promise<Response>;
 type Call = { path: string; method: string; body: unknown; search: string; headers: Record<string, string> };
-const state = { calls: [] as Call[], trashed: true, restoreRefusal: null as string | null, listTrash: null as unknown, deletePatch: null as Record<string, unknown> | null, deleting: false };
+const state = { calls: [] as Call[], trashed: true, restoreRefusal: null as string | null, trashRefusal: null as string | null, trashCall: null as Record<string, unknown> | null, listTrash: null as unknown, deletePatch: null as Record<string, unknown> | null, deleting: false, listRows: null as Record<string, unknown>[] | null };
 const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json" } });
 const lower = (v: unknown) => typeof v === "string" ? v.toLowerCase() : v;
 const trashRow = () => ({ id: ID, org_id: ORG, library_org_id: ORG, agent_id: USER, address: "855 Central Ave", space_type: "real_estate", main_photo_key: null, deleted_at: "2026-10-11T15:00:00Z", trash_expires_at: "2026-11-10T15:00:00Z", had_published_tour: true, can_restore: true });
@@ -43,8 +43,25 @@ globalThis.fetch = async (input, init) => {
     if (state.trashed) return response({ code: "P0001", message: "RP404: Listing not found" }, 400);
     return response({ actor_id: USER, listing_id: ID, org_id: ORG, library_org_id: ORG, library_owner_user_id: USER, listing_owner_user_id: USER, role: "owner", access_mode: "own", can_read: true, can_write: true, can_manage_subscription: true, billing_org_id: ORG, team_org_id: null });
   }
+  if (u.pathname.endsWith("/rpc/trash_listing")) {
+    assert(r.headers.get("authorization") === "Bearer fixture-service", "trash_listing is service-only; the tenant client must never call it");
+    assertEquals(body, { p_actor: USER, p_listing: ID });
+    state.trashCall = body;
+    if (state.trashRefusal) return response({ code: "P0001", message: state.trashRefusal }, 400);
+    return response({ ok: true, actor_id: USER, listing_id: ID, org_id: ORG, address: "855 Central Ave", restorable_until: "2026-11-10T22:27:43.265+00:00" });
+  }
+  if (u.pathname === "/rest/v1/listings" && r.method === "GET" && u.search.includes("order=")) return response(state.listRows ?? []);
   if (u.pathname === "/rest/v1/listings" && r.method === "GET") return response({ id: ID, org_id: ORG });
-  if (u.pathname === "/rest/v1/listings" && r.method === "PATCH") { state.deletePatch = body; return response({ id: ID }); }
+  if (u.pathname === "/rest/v1/listings" && r.method === "PATCH") {
+    state.deletePatch = body;
+    // Production grants `authenticated` column UPDATE on listings for deleted_at,
+    // gallery_asset_ids, main_photo_key, mls_ref and source only. A tenant write
+    // of trash_expires_at is what broke every delete on TestFlight 58/59.
+    if (r.headers.get("authorization") !== "Bearer fixture-service" && body && Object.hasOwn(body, "trash_expires_at")) {
+      return response({ code: "42501", message: "permission denied for table listings" }, 403);
+    }
+    return response({ id: ID });
+  }
   if (u.pathname === "/rest/v1/renders" && r.method === "PATCH") return response([]);
   throw new Error("Unmodeled transport " + r.method + " " + u.pathname + u.search);
 };
@@ -54,20 +71,57 @@ try { Object.defineProperty(Deno, "serve", { configurable: true, writable: true,
 finally { Object.defineProperty(Deno, "serve", serve); }
 const call = (path: string, method = "GET", headers: Record<string, string> = { "X-Org-Id": ORG }) =>
   handler(new Request("https://edge.fixture.invalid/listings" + path, { method, headers: { authorization: "Bearer fixture", "content-type": "application/json", ...headers } }));
-const reset = () => { state.calls = []; state.trashed = true; state.restoreRefusal = null; state.listTrash = null; state.deletePatch = null; state.deleting = false; };
+const reset = () => { state.calls = []; state.trashed = true; state.restoreRefusal = null; state.trashRefusal = null; state.trashCall = null; state.listTrash = null; state.deletePatch = null; state.deleting = false; state.listRows = null; };
 
-Deno.test("DELETE opens a 30-day restore window and says so", async () => {
+Deno.test("DELETE opens the 30-day restore window through the service-only trash_listing RPC (build 59)", async () => {
   reset(); state.trashed = false;
-  const before = Date.now();
   const r = await call(`/${ID.toUpperCase()}`, "DELETE");
   assertEquals(r.status, 200);
   const value = await r.json();
   assertEquals(value.ok, true);
-  assert(state.deletePatch && typeof state.deletePatch.deleted_at === "string" && typeof state.deletePatch.trash_expires_at === "string");
-  const window = Date.parse(state.deletePatch.trash_expires_at as string) - Date.parse(state.deletePatch.deleted_at as string);
-  assertEquals(window, 30 * 24 * 60 * 60 * 1000);
-  assert(Date.parse(value.restorable_until) >= before + 30 * 24 * 60 * 60 * 1000 - 1000);
-  assertEquals(state.deletePatch.trash_expires_at, value.restorable_until);
+  assertEquals(value.restorable_until, "2026-11-10T22:27:43.265Z");
+  assert(state.trashCall, "the window is opened by the RPC");
+  assertEquals(state.deletePatch, null, "the tenant client writes nothing to listings on delete (no column grant on trash_expires_at)");
+  assert(state.calls.some((c) => c.path === "/rest/v1/renders" && c.method === "PATCH"), "the hosted tour is still taken down at once");
+});
+
+Deno.test("DELETE keeps the SQL refusals: stranger 403, already trashed 404, account being deleted 409", async () => {
+  reset(); state.trashed = false; state.trashRefusal = "RP403: Your role does not permit deleting listings";
+  assertEquals((await call(`/${ID}`, "DELETE")).status, 403);
+  reset(); state.trashed = false; state.trashRefusal = "RP404: Listing not found";
+  assertEquals((await call(`/${ID}`, "DELETE")).status, 404);
+  reset(); state.trashed = false; state.deleting = true;
+  const r = await call(`/${ID}`, "DELETE");
+  assertEquals(r.status, 409);
+  assertEquals(state.trashCall, null, "an account being deleted never reaches the RPC");
+});
+
+Deno.test("build-58 negative control: a tenant write of trash_expires_at is refused by the column grant", async () => {
+  // The transport models production's grant. The pre-fix route did exactly this
+  // write; the test proves the model would have caught it.
+  reset();
+  const r = await fetch("https://trash-fixture.invalid/rest/v1/listings?id=eq." + ID, { method: "PATCH", headers: { authorization: "Bearer fixture", "content-type": "application/json" }, body: JSON.stringify({ deleted_at: "2026-10-11T22:27:43.265Z", trash_expires_at: "2026-11-10T22:27:43.265Z" }) });
+  assertEquals(r.status, 403);
+  assertEquals((await r.json()).message, "permission denied for table listings");
+});
+
+Deno.test("every listing payload carries sold_at in the phone's shape when lossless (build 59)", async () => {
+  reset();
+  state.listRows = [
+    { id: ID, org_id: ORG, sold_at: "2026-10-11T14:52:52.261+00:00" },
+    { id: ID, org_id: ORG, sold_at: "2026-10-11T14:52:52.261345+00:00" },
+    { id: ID, org_id: ORG, sold_at: "2026-10-11T14:52:52.261000+00:00" },
+    { id: ID, org_id: ORG, sold_at: null },
+  ];
+  const r = await call("", "GET");
+  assertEquals(r.status, 200);
+  const rows = await r.json();
+  assertEquals(rows.map((x: { sold_at: unknown }) => x.sold_at), [
+    "2026-10-11T14:52:52.261Z",          // Postgres offset form → the ISO 8601 form the phone sends
+    "2026-10-11T14:52:52.261345+00:00",  // finer than a millisecond: left exactly as stored (compare-and-set)
+    "2026-10-11T14:52:52.261Z",          // trailing zeros are lossless
+    null,
+  ]);
 });
 
 Deno.test("GET /listings/trash lists the selected library's Recently deleted", async () => {

@@ -42,7 +42,7 @@ async function fixture(bypassFilter = false) {
   );
   assert(ownerStart > 0 && ownerEnd > ownerStart);
   const body = `
-    import {HttpError,json,pathSegments,respondError} from ${
+    import {HttpError,canonicalTimestamps,json,pathSegments,respondError} from ${
     JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)
   };
     import {handleOptions} from ${

@@ -48,7 +48,7 @@ REFLECTION_FIXTURES = (
     ("video_erase_direct_bria.sql", "PASS direct Bria SQL: 40 assertions", 40),
     ("member_portfolios.sql", "PASS: member portfolio SQL assertions; all fixtures rolled back.", 23),
     # Build 58: Recently deleted (30-day restore window) and republish in place.
-    ("build58_db_controls.sql", '{"suite": "build58_db_controls", "assertions": 42}', 42),
+    ("build58_db_controls.sql", '{"suite": "build58_db_controls", "assertions": 52}', 52),
 )
 
 # These already-shipped transactional Studio migrations intentionally create

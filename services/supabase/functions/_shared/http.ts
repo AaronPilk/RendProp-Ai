@@ -325,3 +325,25 @@ export function clientIp(req: Request): string {
   if (xff) return xff.split(",")[0].trim();
   return "unknown";
 }
+
+// Postgres renders a timestamptz as `2026-10-11T14:52:52.261+00:00`. The phone
+// keeps that raw string as its facts baseline and compares it with the ISO 8601
+// `…Z` form it sends (ListingFactsSync.values), so a sold marker was never
+// acknowledged and the listing re-sent its facts three times on every refresh
+// ("1 listing update is waiting to sync", TestFlight 59, 2026-10-11). Every
+// listing payload now carries sold_at in the phone's own shape — millisecond
+// precision with `Z` — when that is lossless; a value with finer precision is
+// left exactly as stored so the phone's compare-and-set still matches it.
+export function canonicalTimestamps<T extends Record<string, unknown>>(row: T): T {
+  const raw = row?.sold_at;
+  if (typeof raw !== "string") return row;
+  // Only a full timestamptz rendering (date, time, zone) is reshaped; anything
+  // else is some other writer's value and is passed through untouched.
+  const m = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[.,](\d+))?(?:Z|[+-]\d{2}:?\d{2})$/.exec(raw);
+  if (!m) return row;
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return row;
+  const fraction = m[1] ?? "";
+  if (fraction.length > 3 && /[1-9]/.test(fraction.slice(3))) return row;
+  return { ...row, sold_at: new Date(t).toISOString() };
+}
