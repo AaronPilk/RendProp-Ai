@@ -1,0 +1,190 @@
+{
+  "schema": 1,
+  "date": "2026-10-11",
+  "sourceCommit": "fe25aea697ceb98e6dbdea7ac75877db154819db",
+  "branch": "fix/build58-reel-integration-20261011",
+  "claudeTip": "f3a919089f6cfbf3ea3c9c59379df4e340a59e92",
+  "version": "1.0.4",
+  "build": 58,
+  "ci": {
+    "runId": 38159516867,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38159516867",
+    "commit": "6ddc21d00943191252040d348e6941e7e396f79b",
+    "status": "in_progress",
+    "priorRun": {
+      "runId": 38157543430,
+      "conclusion": "failure",
+      "cause": "Reel batch test fixture omitted the new preset/aspect/space arguments; production app compiled. Fixed test fixture only; 119 actual-loop assertions pass and swallowed-error negative control still rejects."
+    },
+    "firstAttemptTourHostFailure": {
+      "jobID": 114529314090,
+      "stage": "export-resume-browser cadence-baseline (narrated)",
+      "error": "Original audio playback stalled during export; no blob and tracks stopped",
+      "evidence": "/Users/pilksclaes/Rendprop AI/_bridge/build58-hosted-tour-first-attempt/rendprop-export-resume-J4SVAd/receipt.json",
+      "mediaTrace": "At 3662.3 ms, video sourceTime 3.046854 at rate 2 after play resolved at 1904.9 ms; source behind observed elapsed time by approximately 234 ms. A waiting event and subsequent resume are recorded.",
+      "disposition": "Measured playback lag during deliberately faulty timing control; retain failure. One bounded hosted retry pending; no detector, RMS, pitch or duration oracle changes.",
+      "retryAdmission": "GitHub refuses job rerun while the other native job is still in progress; no retry has started."
+    }
+  },
+  "testflight": {
+    "status": "available_internal",
+    "buildID": "24350e1c-d2e3-421e-8a73-9246559cc1fc",
+    "processingState": "VALID",
+    "groupAssignment": "Apple automatic internal distribution; confirmed by relationship readback",
+    "internalBuildState": "IN_BETA_TESTING",
+    "internalGroup": "Rendprop team",
+    "internalGroupID": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+    "usesNonExemptEncryption": false,
+    "testingNotesVerified": true,
+    "ciReady": false
+  },
+  "archive": {
+    "path": "/Users/pilksclaes/Rendprop AI/_bridge/build58-archive-work/rendprop-archive/Rendprop.xcarchive",
+    "signatureVerified": true,
+    "executableSHA256": "f705ecec67d22971385aaa171ece272146ecc16af50c3b1974b3000f89adaa76",
+    "ipa": "/Users/pilksclaes/Rendprop AI/_bridge/build58-archive-work/rendprop-archive/ipa/Rendprop.ipa",
+    "ipaSHA256": "05921f830345865d6816ca88eaee19c43e511dbf82fac4d03c2324abaec681d7",
+    "dSYM": "/Users/pilksclaes/Rendprop AI/_bridge/build58-archive-work/rendprop-archive/Rendprop.xcarchive/dSYMs/Rendprop.app.dSYM",
+    "dSYMMachOUUID": "409C9ADA-21FE-352B-9E81-A660B6FA66BA",
+    "ciNativeTreeBinding": {
+      "matches": true,
+      "appTree": "a12abde69a876a6e6df664aa999063d1eb77af6d",
+      "projectYMLBlob": "b5615deb5886ac1567b8d9f1e151c412e4ccaa29",
+      "xcodeprojTree": "e52281ecd5c29d72ddf2a46dc7eb8632e9337983",
+      "archiveCommit": "fe25aea697ceb98e6dbdea7ac75877db154819db",
+      "ciCommit": "6ddc21d00943191252040d348e6941e7e396f79b"
+    }
+  },
+  "production": {
+    "tourHostVersion": "58485feb-d7eb-4e20-a2ae-35d31076cfe6",
+    "tourReadback": {
+      "/f/g2afbgmv32": 200,
+      "/u/g2afbgmv32": 200,
+      "/f/zz-no-such-slug": 404,
+      "/a/zz": 404
+    },
+    "studioVersion": "c37971ca-0403-42c3-bde8-89b47d2b11c1",
+    "studioReadbackGETs": 35,
+    "studioGzipBytes": 349807,
+    "functions": {
+      "ai-video": {
+        "version": 65,
+        "verifyJWT": true,
+        "matchedSourceFiles": 46
+      },
+      "ai-copy": {
+        "version": 38,
+        "verifyJWT": true,
+        "matchedSourceFiles": 25
+      }
+    },
+    "migration": {
+      "repoFile": "20261011183000_build58_trash_sweep_lock.sql",
+      "liveVersion": "20261011164805",
+      "definitionMD5": "b2b09ba982a9f74b8e5e4ab48043fc9c",
+      "clientExecutable": false
+    },
+    "otherBackend": "Claude UUID/trash/republish deployment left intact",
+    "unauthenticatedPOST": {
+      "ai-video/reel-clip": 401,
+      "ai-copy/shotlist": 401
+    }
+  },
+  "validation": {
+    "deno": {
+      "passed": 1907,
+      "failed": 0,
+      "ignored": 1
+    },
+    "database": {
+      "migrations": 135,
+      "freshInvariants": 270,
+      "replayInvariants": 270,
+      "build58AssertionsPerSchema": 42,
+      "receipt": "/tmp/rendprop-db-audit-zu05u0md/receipt.json"
+    },
+    "photoExport": {
+      "assertions": 87,
+      "compiledNegativeControls": 10,
+      "receipt": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-photo-export-renderer-1e7svb6a/receipt.json"
+    },
+    "reelRecovery": {
+      "assertions": 94,
+      "compiledNegativeControls": 14,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build58-reel-recovery-ship/receipt.json"
+    },
+    "nativePhotoPackage": {
+      "assertions": 160,
+      "compiledNegativeControls": 12
+    },
+    "ASC": {
+      "tests": 213
+    },
+    "UITests": {
+      "passed": 2,
+      "resultBundle": "/Users/pilksclaes/Rendprop AI/_bridge/build58-ui-final.xcresult",
+      "scope": [
+        "four preset selections; ZIP default and separate-files choices",
+        "mock same-link republish and Recently deleted navigation/empty state"
+      ]
+    },
+    "stylePolicy": "101 tests, unchanged legacy motion-text digest and 510 combination checks; synthetic judgments only",
+    "studio": {
+      "passed": 480,
+      "failed": 0,
+      "connectedReadbackPassed": true
+    },
+    "reelBatch": {
+      "assertions": 119,
+      "swallowedErrorControlRejected": true,
+      "log": "/tmp/rendprop-build58-clip-failure-final.log"
+    },
+    "nativeTail": {
+      "passed": true,
+      "steps": 20,
+      "log": "/tmp/rendprop-build58-native-tail.log",
+      "scope": "Exact remaining hosted native steps from reflection revocation through saved panorama, including compiled negative controls; exit 0."
+    },
+    "exportResumeLocal": {
+      "status": "passed",
+      "checks": 7,
+      "runs": 12,
+      "receipt": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-export-resume-PtJLUc/receipt.json",
+      "browser": "locked full Chromium from Playwright package",
+      "sourceHashes": {
+        "tests/export-resume-browser.mjs": "6a5cb3c98c3b798b56b93c4067e54dbc3e71768cdef5d88830b26b96fad5087b",
+        "src/editor/export.ts": "038376c9ee5059964e2e0fb9627fd15e9a1473f0a8594460b2b80f3d981a7a7e",
+        "src/editor/media.ts": "82353070aaa85733ad89583fc52dedef36a9296cd6e4f594910571e7597b939b",
+        "src/editor/model.ts": "9696653581899e097d0b0e8ce395c9c80d5e6f264cd8f17411a6ff5545dfa8dd",
+        "src/editor/music.ts": "c3ec1ecc81a7b7337bb1f56ab51713312fa80e6e9c848f16a3b3318fbfe7c203",
+        "src/editor/finishing.ts": "6e57bfe7397decf591732f5411c244f3c6ffcf4745820a2efba5f36d5548a789",
+        "src/editor/overlay-renderer.ts": "a926d2621fc31e2753859c7c7fd66be019a93262cb34c8973126b11cf9ae8832"
+      },
+      "oracleChanges": false
+    }
+  },
+  "review57": {
+    "versionID": "39ff74df-71d4-4bf1-92f4-9c709e7f4366",
+    "buildID": "46e2df20-e688-4e14-afa7-88655f28e8ba",
+    "state": "WAITING_FOR_REVIEW",
+    "releaseType": "MANUAL",
+    "changed": false,
+    "reverifiedAt": "2026-10-11T17:48:00Z"
+  },
+  "limitations": [
+    "No paid four-preset quality benchmark, real phone acceptance, vendor-motion or property-geometry guarantee.",
+    "Whole-house continuity cannot be reconstructed from unrelated single images by these prompts.",
+    "Veo 3.1 Fast image-to-video retirement on 2026-10-22 still requires a separately tested cost/privacy/quality cutover.",
+    "Recently deleted restore is covered in SQL/handler fixtures; simulator UI test checks navigation and empty state, not a real restoration."
+  ],
+  "readiness": {
+    "internalTestFlight": "available for acceptance testing",
+    "publicRelease": "not cleared",
+    "pending": [
+      "hosted native audit completion",
+      "hosted audio-export failure disposition; no retry started",
+      "physical-phone acceptance",
+      "real four-preset quality comparison"
+    ]
+  }
+}
