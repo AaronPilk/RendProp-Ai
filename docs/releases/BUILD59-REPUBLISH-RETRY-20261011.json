@@ -95,7 +95,7 @@
     },
     "audioOracleChanges": false,
     "conclusion": "",
-    "observedAt": "2026-10-11T20:42:58.193644+00:00",
+    "observedAt": "2026-10-11T20:44:19.575596+00:00",
     "jobs": [
       {
         "name": "Web parity inventory and design-token contracts (offline)",
@@ -134,8 +134,8 @@
       },
       {
         "name": "Cloudflare Worker (tour-host)",
-        "status": "in_progress",
-        "conclusion": ""
+        "status": "completed",
+        "conclusion": "success"
       },
       {
         "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
@@ -144,8 +144,8 @@
       },
       {
         "name": "Disposable PostgreSQL publication, invariant and deletion regression",
-        "status": "in_progress",
-        "conclusion": ""
+        "status": "completed",
+        "conclusion": "success"
       },
       {
         "name": "Python workers (render, spatial, training adapter)",
@@ -157,7 +157,8 @@
         "status": "completed",
         "conclusion": "success"
       }
-    ]
+    ],
+    "currentTourHost": "passed on unchanged exporter/test source; prior duration failure retained, no code fix claim"
   },
   "archive": {
     "status": "passed",
@@ -204,6 +205,6 @@
   ],
   "readiness": {
     "internalTestFlight": "GO for phone acceptance testing",
-    "publicRelease": "NO-GO pending physical acceptance and hosted export discrepancy; no all-green CI claim"
+    "publicRelease": "NO-GO pending physical acceptance and remaining hosted native audit completion; earlier export discrepancy remains recorded"
   }
 }

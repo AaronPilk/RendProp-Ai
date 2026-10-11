@@ -82,7 +82,12 @@ internal Rendprop team group includes it (relationship readback), and testing
 notes were written and read back. Non-exempt encryption is false. The original
 App Store build 57 association remains unchanged, WAITING_FOR_REVIEW / MANUAL.
 
-The exact-source CI run remains in progress at this handoff snapshot; nine
+The exact-source CI run remains in progress at this handoff snapshot; eleven
 jobs are green and none has failed yet. Its new republish gate passed. The
 receipt has the per-job snapshot and the prior hosted export failure; it must
 not be read as an all-green final run.
+
+The exact-source tour-host job has now passed, including the full unchanged
+audio/export checks. The earlier duration failure remains in the receipt;
+this is a passing verification run, not an exporter code fix. Only the hosted
+native audit remains in progress. Physical-phone acceptance is still pending.
