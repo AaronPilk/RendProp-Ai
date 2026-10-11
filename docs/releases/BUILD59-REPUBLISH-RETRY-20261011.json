@@ -1,0 +1,209 @@
+{
+  "schema": 1,
+  "date": "2026-10-11",
+  "version": "1.0.4",
+  "build": 59,
+  "branch": "fix/build58-reel-integration-20261011",
+  "claudeFix": "61695274f6e66a2d2dfd3950c5f365f247859c81",
+  "sourceCommit": "d40c7f7e99d3ba68aa4a67e74bd355dc7604a044",
+  "sourceTrees": {
+    "apps/ios/Rendprop": "70585a5eb8341ecb1ac12f9406707e108a30792b",
+    "apps/ios/project.yml": "e47dced003a4975d05b29aa925d99ece554f5cda",
+    "apps/ios/Rendprop.xcodeproj": "569516490aee08e972a372796de8fd99615d8cbc",
+    "apps/ios/RendpropUITests": "835a15defc0117ab1e0005250afef05ebaf29e63"
+  },
+  "changes": [
+    "Clear stale listing warning after the in-flight guard and before facts/gallery sync. Fresh sync refusals and account/library fences remain.",
+    "Simulator-only stale-warning fixture exposes actual listing warning and link; UI test invokes the production action.",
+    "Build number 59 in project.yml and both pbxproj configurations."
+  ],
+  "worktrees": {
+    "activeStatusClean": true,
+    "macPrunable": 0,
+    "sandboxPrunable": 2,
+    "disposition": "The two prunable entries are sandbox /sessions paths, not repaired Mac worktrees; no prune/remove performed."
+  },
+  "validation": {
+    "republishSourceGate": {
+      "tests": 5,
+      "passed": true,
+      "missingClearLateClearAndDroppedRefusalControlsRejected": true
+    },
+    "shippingBoundaries": {
+      "passed": true,
+      "log": "/tmp/rendprop-build59-boundaries.log",
+      "evidence": "/tmp/rendprop-app-store-boundaries-amTp0S"
+    },
+    "uiInitialAttempt": {
+      "resultBundle": "/Users/pilksclaes/Rendprop AI/_bridge/build59-ui.xcresult",
+      "sameLinkExistingTest": "passed",
+      "newStaleTest": "fixture failed before action because the pre-rebuild binary lacked the new closed fixture actor case; corrected and rebuilt, not counted as passing"
+    },
+    "uiFinal": {
+      "status": "passed",
+      "resultBundle": "/Users/pilksclaes/Rendprop AI/_bridge/build59-ui-final.xcresult",
+      "tests": 2,
+      "failed": 0,
+      "cases": [
+        "Stale warning cleared by actual cloud-only republish action; same URL",
+        "Existing same-link republish and Recently deleted navigation"
+      ]
+    },
+    "cloudEditorLocal": {
+      "status": "passed",
+      "checks": 16,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build59-cloud-editor-local/receipt.json",
+      "agentExportSeconds": 4.019833,
+      "oracleChanges": false,
+      "limitation": "Local success does not erase or by itself classify the hosted 4.862-second export failure."
+    }
+  },
+  "ci": {
+    "runId": 38172803786,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38172803786",
+    "commit": "d40c7f7e99d3ba68aa4a67e74bd355dc7604a044",
+    "status": "in_progress",
+    "priorBuild59Run": {
+      "runId": 38172230262,
+      "commit": "3f102fe",
+      "newSourceGate": "passed",
+      "audioResume": "passed, 7 checks",
+      "originalAudio": "passed, 7 checks",
+      "negativeAudioControl": "correctly failed on RMS0",
+      "tourHostFailure": {
+        "kind": "cloud editor agent export duration",
+        "plannedSeconds": 4,
+        "encodedVideoSeconds": 4.862,
+        "encodedAudioSeconds": 3.988958,
+        "evidence": "/Users/pilksclaes/Rendprop AI/_bridge/build59-hosted-tour-retest/rendprop-cloud-editor-pePhCD/receipt.json",
+        "disposition": "Different failure from earlier narrated cadence stall; not classified as fixed or environment-only. No more ad-hoc retries or oracle changes."
+      },
+      "nativeStatus": "superseded by exact archive-source CI"
+    },
+    "priorBuild58Run": {
+      "runId": 38159516867,
+      "attempt": 1,
+      "completedJobsPassed": 11,
+      "failedJobs": 1,
+      "failure": "Measured audio playback stall during narrated cadence control; refusal retained with no corrupted download."
+    },
+    "interruptedRetry": {
+      "runId": 38159516867,
+      "attempt": 2,
+      "status": "cancelled",
+      "reason": "Superseded by the build-59 tip workflow on the same branch; not counted as a completed retry."
+    },
+    "audioOracleChanges": false,
+    "conclusion": "",
+    "observedAt": "2026-10-11T20:42:58.193644+00:00",
+    "jobs": [
+      {
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "status": "in_progress",
+        "conclusion": ""
+      },
+      {
+        "name": "Supabase edge functions (deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "iOS static gates",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Secret scan",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (tour-host)",
+        "status": "in_progress",
+        "conclusion": ""
+      },
+      {
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "status": "in_progress",
+        "conclusion": ""
+      },
+      {
+        "name": "Python workers (render, spatial, training adapter)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Studio contracts, build and property workflows (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "archive": {
+    "status": "passed",
+    "path": "/Users/pilksclaes/Rendprop AI/_bridge/build59-archive-work/rendprop-archive/Rendprop.xcarchive",
+    "signatureVerified": true,
+    "executableSHA256": "99f5915b46fad7469f42f6669793bdc25d0a0d73cd64d09b9a7be3ef43544de5",
+    "dSYM": "/Users/pilksclaes/Rendprop AI/_bridge/build59-archive-work/rendprop-archive/Rendprop.xcarchive/dSYMs/Rendprop.app.dSYM",
+    "dSYMMachOUUID": "999C26CE-1FA1-37CD-9716-1E17BE85B71A",
+    "ipa": "/Users/pilksclaes/Rendprop AI/_bridge/build59-archive-work/rendprop-archive/ipa/Rendprop.ipa",
+    "ipaSHA256": "39f5601dd8a8ea18b49deaa83e47551aad6fadfa88c5cfb5881180e0ac923c10",
+    "ipaBytes": 23992669
+  },
+  "testflight": {
+    "status": "available_internal",
+    "uploadID": "58c681f5-8464-4689-a690-49b08bc0de26",
+    "uploadState": "COMPLETE",
+    "uploadErrors": [],
+    "uploadWarnings": [],
+    "uploadedAt": "2026-10-11T20:35:28Z",
+    "buildID": "58c681f5-8464-4689-a690-49b08bc0de26",
+    "processingState": "VALID",
+    "usesNonExemptEncryption": false,
+    "internalBuildState": "IN_BETA_TESTING",
+    "internalGroup": "Rendprop team",
+    "internalGroupID": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+    "groupAssignment": "Apple automatic; confirmed by relationship readback",
+    "testingNotesVerified": true,
+    "notesLocalizationID": "8cd6c37a-2c07-4e77-88c6-8e6cac6688b8"
+  },
+  "appStore57": {
+    "changed": false,
+    "releaseHold": "manual; do not replace, withdraw, resubmit or release",
+    "state": "WAITING_FOR_REVIEW",
+    "releaseType": "MANUAL",
+    "buildID": "46e2df20-e688-4e14-afa7-88655f28e8ba",
+    "versionID": "39ff74df-71d4-4bf1-92f4-9c709e7f4366",
+    "reverifiedAt": "2026-10-11T20:42:57.026463+00:00"
+  },
+  "deployments": "No backend, website or Studio deployment required or performed for this native retry fix.",
+  "limitations": [
+    "Offline cloud-only republish UI fixture cannot certify real video upload or physical-phone network recovery.",
+    "No additional paid four-preset quality benchmark performed.",
+    "Physical-phone acceptance remains required before public release."
+  ],
+  "readiness": {
+    "internalTestFlight": "GO for phone acceptance testing",
+    "publicRelease": "NO-GO pending physical acceptance and hosted export discrepancy; no all-green CI claim"
+  }
+}

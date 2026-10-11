@@ -10,7 +10,7 @@
     "runId": 38159516867,
     "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38159516867",
     "commit": "6ddc21d00943191252040d348e6941e7e396f79b",
-    "status": "in_progress",
+    "status": "completed",
     "priorRun": {
       "runId": 38157543430,
       "conclusion": "failure",
@@ -22,9 +22,12 @@
       "error": "Original audio playback stalled during export; no blob and tracks stopped",
       "evidence": "/Users/pilksclaes/Rendprop AI/_bridge/build58-hosted-tour-first-attempt/rendprop-export-resume-J4SVAd/receipt.json",
       "mediaTrace": "At 3662.3 ms, video sourceTime 3.046854 at rate 2 after play resolved at 1904.9 ms; source behind observed elapsed time by approximately 234 ms. A waiting event and subsequent resume are recorded.",
-      "disposition": "Measured playback lag during deliberately faulty timing control; retain failure. One bounded hosted retry pending; no detector, RMS, pitch or duration oracle changes.",
-      "retryAdmission": "GitHub refuses job rerun while the other native job is still in progress; no retry has started."
-    }
+      "disposition": "Failure retained. Build-59 follow-up run 38172230262 passed this unchanged resume suite and the original-audio suite, then failed later on cloud-editor agent duration. No audio oracle changed; no all-green claim.",
+      "retryAdmission": "The initial isolated retry started after native completion but was cancelled when the build-59 workflow superseded the same branch; it is not counted as a completed retry."
+    },
+    "conclusion": "failure",
+    "jobsPassed": 11,
+    "jobsFailed": 1
   },
   "testflight": {
     "status": "available_internal",
@@ -186,5 +189,11 @@
       "physical-phone acceptance",
       "real four-preset quality comparison"
     ]
+  },
+  "supersedingNativeFix": {
+    "build": 59,
+    "sourceCommit": "d40c7f7e99d3ba68aa4a67e74bd355dc7604a044",
+    "issue": "Stale listing warning could permanently refuse republish retries. Clear before sync; preserve fresh failures and fences.",
+    "receipt": "docs/releases/BUILD59-REPUBLISH-RETRY-20261011.json"
   }
 }
