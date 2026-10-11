@@ -157,6 +157,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         openLink("detail.photos", title: "Photos")
         let all = app.buttons["photos.shareAll"]; revealActive(all); all.tap()
         let delivery = app.segmentedControls["export.deliverAs"]
+        revealActive(delivery)
         XCTAssertTrue(delivery.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(delivery.buttons.count, 2)
         XCTAssertTrue(delivery.buttons.element(boundBy: 0).isSelected)
@@ -164,6 +165,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(delivery.buttons.element(boundBy: 1).isSelected)
         delivery.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(delivery.buttons.element(boundBy: 0).isSelected)
+        revealActive(app.buttons["export.share"])
         XCTAssertTrue(app.buttons["export.share"].isEnabled)
         attach("build58-zip-and-separate-photo-delivery")
     }

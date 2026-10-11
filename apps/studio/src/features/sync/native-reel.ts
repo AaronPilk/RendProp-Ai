@@ -23,7 +23,7 @@ export type NativeReel = {
   updatedAt: string;
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const invalid = () => new Error("Cannot read this iPhone setup. Open it on your iPhone and save it again.");
+const invalid = () => new Error("This iPhone setup could not be read. Save it again on your iPhone.");
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid();
   return value as Record<string, unknown>;
@@ -74,7 +74,7 @@ export function nativeCaptionStyle(style: NativeReel["captionStyle"]): CaptionSt
 export function nativeReelShots(recipe: NativeReel): Shot[] {
   // Revalidate so callers cannot accidentally bypass completeness checks with a cast.
   const checked = decodeNativeReel(recipe);
-  if (checked.localExtraClipCount > 0) throw new Error("Upload the extra iPhone clips to this listing before building the full sequence in Studio, or save a setup without them.");
+  if (checked.localExtraClipCount > 0) throw new Error("Upload those clips from your iPhone to this listing, or save a setup without extra clips.");
   if (!checked.photos.length) throw new Error("Choose photos on your iPhone and save the setup again before importing a sequence.");
   if (checked.photos.some(photo => photo.sourcePhotoId === null)) throw new Error("Some selected photos are saved only on the iPhone. Choose Upload photos on your iPhone, let the upload finish, and choose Save setup again. No photos were skipped.");
   return checked.photos.map((photo, index) => ({
