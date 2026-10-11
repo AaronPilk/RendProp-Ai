@@ -39,6 +39,8 @@ jobs:
         run: python3 tools/audit/test_database_runner.py
       - name: Invariant source registration contracts
         run: python3 tools/audit/test_database_invariant_sources.py
+      - name: Republish retry clears a stale warning before its sync refusals (source gate)
+        run: python3 tools/audit/test_republish_retry_source.py
       - name: Native account and workspace presentation privacy
         run: python3 tools/audit/run_native_presentation_privacy.py --out "$RUNNER_TEMP/native-presentation-privacy"
       - name: Native deletion confirmation and late-response account privacy

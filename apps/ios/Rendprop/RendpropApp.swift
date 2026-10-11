@@ -1606,6 +1606,16 @@ final class AppModel: ObservableObject {
         publishInFlight.insert(id)
         defer { publishInFlight.remove(id) }
 
+        // `lastError` is the listing's best-effort warning line — a poster that
+        // didn't upload, a photo that didn't land, an edit's missing "View
+        // original", the previous republish's own failure. It is a report, not
+        // sync state, and nothing in the app clears it on a successful facts
+        // sync. The guards below read it as "something is still wrong", so a
+        // stale line would refuse every retry before the retry ran. Clear it
+        // here: the syncs below re-raise anything that is actually still wrong,
+        // and a republish that fails writes its own fresh reason.
+        setLastError(nil, for: id)
+
         let actor = AuthStore.shared.userID, epoch = AuthStore.shared.syncSessionRevision
         let library = WorkspaceContext.selectedOrgID
         func requireCurrent() throws {
