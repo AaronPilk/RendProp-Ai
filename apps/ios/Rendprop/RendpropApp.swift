@@ -1147,9 +1147,10 @@ final class AppModel: ObservableObject {
     // MARK: - Cloud publish (local-first + cloud-publish, contract §4)
 
     enum PublishError: LocalizedError {
-        case sampleListing, listingMissing, noLocalTour, noShareURL, workspaceRecoveryPending, serverIdentityBusy
+        case sampleListing, listingMissing, noLocalTour, noShareURL, workspaceRecoveryPending, serverIdentityBusy, inFlight
         var errorDescription: String? {
             switch self {
+            case .inFlight:       return "This tour is already being published. Give it a moment."
             case .sampleListing:  return "Sample tours can't be published — create your own first."
             case .listingMissing: return "That listing no longer exists on this phone."
             case .noLocalTour:    return "There's no rendered tour to publish yet — create the tour first."
@@ -1580,6 +1581,112 @@ final class AppModel: ObservableObject {
         if let url = URL(string: published.shareURL) { return url }
         if let url = listings.first(where: { $0.id == id })?.serverShareURL { return url }
         throw PublishError.noShareURL
+    }
+
+    /// "Republish tour" (build 58): push everything this phone knows about an
+    /// ALREADY published listing to its live page without changing the link.
+    ///
+    ///   1. facts, client contact and the gallery selection — `syncListing` and
+    ///      `syncGalleryPhotos` are the same best-effort syncs every edit runs;
+    ///      here they run first so the page is right when the agent checks it;
+    ///   2. the walkthrough video — when the local render differs from the one
+    ///      that was uploaded for this listing, it is uploaded and the server
+    ///      moves the public tour onto it IN PLACE (`/renders/republish-app`);
+    ///      an unchanged video replays the same job and costs nothing;
+    ///   3. the server's answer must carry the SAME slug the listing already has.
+    ///
+    /// A listing that was never published goes through the ordinary publish.
+    func republishExisting(listingID id: UUID, cellularApproved: Bool = false) async throws -> URL {
+        guard let listing = listings.first(where: { $0.id == id }) else { throw PublishError.listingMissing }
+        guard !listing.isSample else { throw PublishError.sampleListing }
+        guard let serverID = listing.serverID, let currentSlug = listing.shareSlug, let shareURL = listing.serverShareURL else {
+            return try await publishExisting(listingID: id, cellularApproved: cellularApproved)
+        }
+        guard !publishInFlight.contains(id) else { throw PublishError.inFlight }
+        publishInFlight.insert(id)
+        defer { publishInFlight.remove(id) }
+
+        // 1. Facts, contact, photos. Each is best effort by construction; a
+        //    sync that cannot complete leaves the listing dirty for next time
+        //    and is reported on the listing, never swallowed into the video step.
+        await syncListing(id)
+        try await syncClientContactBeforePublish(id, requireClient: false)
+        await syncGalleryPhotos(listingLocalID: id, listingServerID: serverID)
+
+        // A cloud listing with no walkthrough on this phone (restored, or synced
+        // from Studio/another device) has nothing more to push: the page reads
+        // the facts and photos live, so the sync above IS the republish.
+        guard let tour = tours[id] else {
+            if let i = index(of: id) {
+                var l = listings[i]
+                l.lastRepublishedAt = Date()
+                listings[i] = l
+            }
+            return shareURL
+        }
+
+        // 2. The video. Re-upload only when the file behind the tour changed.
+        let relPath = FileStore.relativePath(for: tour.url)
+        let render = renders[id] ?? Render(listingID: id, tier: .smooth, durationS: tour.durationS)
+        let tags = assets[id]?.roomTags ?? []
+        let assetID: String
+        if let remembered = uploadedRenderAssets[id], remembered.relPath == relPath {
+            assetID = remembered.assetID
+        } else {
+            let bytes = FileStore.fileSize(tour.url)
+            assetID = try await UploadManager.shared.upload(
+                fileURL: tour.url, listingID: serverID, listingLocalID: id, role: "render",
+                metadata: UploadMetadata(durationS: tour.durationS, bytes: bytes), cellularApproved: cellularApproved)
+        }
+        uploadedRenderAssets[id] = UploadedRenderAsset(relPath: relPath, assetID: assetID)
+        var posterAssetID: String? = nil
+        var posterFile: URL? = nil
+        if let poster = await PosterMaker.makePoster(from: tour.url, listingID: id) {
+            posterFile = poster
+            posterAssetID = try? await UploadManager.shared.uploadPoster(fileURL: poster, listingID: serverID)
+        }
+        defer { if let posterFile { try? FileManager.default.removeItem(at: posterFile) } }
+        let published: PublishedTour
+        do {
+            published = try await api.republishApp(
+                listingID: serverID, assetID: assetID, durationS: tour.durationS,
+                speedFactor: tour.speedFactor, tier: render.tier, enhancements: Enhancements(),
+                chapters: Self.chapters(from: tags, speedFactor: tour.speedFactor),
+                posterAssetID: posterAssetID)
+        } catch {
+            if !(error is CancellationError) { setLastError(Self.userMessage(for: error), for: id) }
+            if let api = error as? APIError, api.isNotFound || api.isValidation { uploadedRenderAssets.removeValue(forKey: id) }
+            throw error
+        }
+        // 3. The whole point: the link did not move.
+        guard published.slug == currentSlug else {
+            setLastError("The server answered with a different tour link. The original link is unchanged; try again.", for: id)
+            throw PublishError.noShareURL
+        }
+        if let i = index(of: id) {
+            var l = listings[i]
+            if let unbranded = published.unbrandedURL, !unbranded.isEmpty { l.unbrandedShareURL = unbranded }
+            if let rid = published.renderID { l.publishedRenderID = rid }
+            l.lastRepublishedAt = Date()
+            l.lastError = nil
+            l.status = .ready
+            listings[i] = l
+        }
+        Analytics.track("tour_republished", ["space_type": SpaceType.current.rawValue, "ok": "true"])
+        if let url = URL(string: published.shareURL) { return url }
+        if let url = listings.first(where: { $0.id == id })?.serverShareURL { return url }
+        throw PublishError.noShareURL
+    }
+
+    /// Recently deleted (build 58): bring a listing back inside its 30-day
+    /// window, then refresh the library so it reappears with its cloud files.
+    /// The local video and captures were removed when it was deleted; the tour
+    /// itself is served from the cloud copy, which came back with the listing.
+    func restoreListing(serverID: UUID) async throws -> RestoredListing {
+        guard Config.useLiveBackend else { throw CloudSyncError.identityChanged }
+        let restored = try await api.restoreListing(serverID: serverID)
+        await refreshCloudWorkspace()
+        return restored
     }
 
     /// Queue a listing for publish (idempotent). Used by the coordinator when

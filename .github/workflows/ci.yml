@@ -811,6 +811,10 @@ jobs:
         run: deno run --cached-only --allow-env --allow-read tools/audit/listing-facts-handler-20261004.ts
       - name: Uppercase phone ids save facts; the 2026-10-11 503 stays reproduced by its negative control
         run: deno run --cached-only --allow-env --allow-read tools/audit/listing-uppercase-ids-20261011.ts
+      - name: Build 58 Recently deleted routes (actual listings handler, own process)
+        run: deno test --no-lock --allow-env --allow-read --allow-net=trash-fixture.invalid tools/audit/listing-trash-routes-20261011_test.ts
+      - name: Build 58 republish-app route (actual renders handler, own process)
+        run: deno test --no-lock --allow-env --allow-read --allow-net=republish-fixture.invalid tools/audit/renders-republish-route-20261011_test.ts
 
   db-migrations:
     name: Supabase migrations (fresh replay + invariants)

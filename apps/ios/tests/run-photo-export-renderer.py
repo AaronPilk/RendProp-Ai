@@ -29,12 +29,13 @@ variants = {
     'negative-original-mutated': (base.replace('try FileManager.default.copyItem(at: photo.originalURL, to: originalURL)', 'try Data("mutated-original".utf8).write(to: originalURL, options: .atomic)'), 'exported retained original byte exact'),
     'negative-jpeg-is-png': (base.replace('rendered.jpegData(compressionQuality: 0.97)', 'rendered.pngData()'), 'PNG input is encoded as actual JPEG bytes'),
     'negative-level-no-crop': (base.replace('let cropScale = min(', 'let cropScale = 1.0; let unusedCropScale = min('), 'manual level crops without enlarging the photograph'),
+    'negative-archive-drops-disclosures': (base.replace('for file in prepared.files { entries.append(ZipArchive.Entry(name: file.lastPathComponent, url: file)) }', 'for file in prepared.images { entries.append(ZipArchive.Entry(name: file.lastPathComponent, url: file)) }'), 'ZIP carries every prepared file including disclosure notes'),
     'negative-crop-stretches': (base.replace('let drawWidth = CGFloat(fullWidth) * scale, drawHeight = CGFloat(fullHeight) * scale', 'let drawWidth = size.width, drawHeight = size.height'), 'center crop actually excludes left red strip'),
 }
 architecture = 'arm64' if platform.machine() == 'arm64' else 'x86_64'
 fixture = root / 'apps/ios/tests/PhotoExportRendererTests.swift'
 stubs = root / 'apps/ios/tests/PhotoExportPlatformStubs.swift'
-consumed = [source, fixture, stubs, Path(__file__).resolve(), root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift', root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift']
+consumed = [source, fixture, stubs, Path(__file__).resolve(), root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift', root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift', root / 'apps/ios/Rendprop/Support/ZipArchive.swift']
 receipt = {
     'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
     'consumed_sha256': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed},
@@ -173,7 +174,7 @@ try:
         # on that runner. Keep bounded cold/warm deadlines with headroom;
         # a timeout still fails the entire gate.
         compile_timeout = receipt['compile_deadlines_seconds']['cold_actual' if name == 'actual' else 'warm_controls']
-        compile_result = command(f'{name}-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', f'{architecture}-apple-ios16.0-simulator', '-sdk', sdk, str(stubs), str(root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift'), str(path), str(fixture), '-o', str(binary)], compile_timeout)
+        compile_result = command(f'{name}-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', f'{architecture}-apple-ios16.0-simulator', '-sdk', sdk, str(stubs), str(root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift'), str(root / 'apps/ios/Rendprop/Support/ZipArchive.swift'), str(path), str(fixture), '-o', str(binary)], compile_timeout)
         # A successful actual run does not bound later process startup or
         # crash reporting on a cold hosted simulator. Await the real result;
         # neither a timeout nor partial assertion text can satisfy a control.

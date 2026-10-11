@@ -843,7 +843,14 @@ protocol APIClient: Sendable {
     func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws
     func addListingPhotos(serverID: UUID, assetIDs: [String], mainAssetID: String?) async throws
     /// DELETE `listings/<serverID>` — soft-deletes and unpublishes its tours.
+    /// Build 58: the server keeps the listing restorable for 30 days.
     func deleteListing(serverID: UUID) async throws
+    /// GET `listings/trash` — the selected library's Recently deleted listings
+    /// (build 58). Only listings still inside their restore window are returned.
+    func trashedListings() async throws -> [TrashedListing]
+    /// POST `listings/<serverID>/restore` — undeletes a listing inside its
+    /// window and brings the SAME public tour link back (build 58).
+    func restoreListing(serverID: UUID) async throws -> RestoredListing
 
     // MARK: Uploads (contract §2)
 
@@ -916,6 +923,15 @@ protocol APIClient: Sendable {
                     speedFactor: Double, tier: RenderTier,
                     enhancements: Enhancements, chapters: [ChapterInput],
                     posterAssetID: String?) async throws -> PublishedTour
+
+    /// POST /renders/republish-app — same body as `publishApp`, but the server
+    /// moves the listing's CURRENT public tour onto the new upload in place:
+    /// the slug, the share link, QR codes and the MLS field never change. A
+    /// listing with no tour yet gets an ordinary first publish (build 58).
+    func republishApp(listingID: UUID, assetID: String, durationS: Double,
+                      speedFactor: Double, tier: RenderTier,
+                      enhancements: Enhancements, chapters: [ChapterInput],
+                      posterAssetID: String?) async throws -> PublishedTour
 
     /// PATCH /renders/:id/chapters — replace the published tour's tap-to-jump
     /// chapters (room tags retimed to the rendered timeline) without re-publishing.
@@ -1435,6 +1451,33 @@ enum AIVideoStatus: Sendable {
 
 /// Result of `POST /renders/publish-app` — the app-published tour's public
 /// identity. `slug`/`shareURL` are the REAL server values (never fabricated).
+/// One row of Recently deleted (`GET /listings/trash`, build 58).
+struct TrashedListing: Sendable, Hashable, Identifiable {
+    let id: UUID
+    let orgID: UUID
+    let address: String
+    let spaceType: SpaceType?
+    let mainPhotoKey: String?
+    let deletedAt: Date
+    /// After this moment the listing is gone for good (storage cleanup runs).
+    let restorableUntil: Date
+    /// The delete took a live tour down; restoring brings the same link back.
+    let hadPublishedTour: Bool
+    /// The signed-in member may restore it (owner/admin/agent of that library).
+    let canRestore: Bool
+}
+
+/// `POST /listings/:id/restore` (build 58).
+struct RestoredListing: Sendable, Hashable {
+    let id: UUID
+    let orgID: UUID
+    let address: String?
+    /// How many public tours came back online with their original links.
+    let republishedRenders: Int
+    /// Client-delivery emails that were skipped by the delete and are NOT re-sent.
+    let cancelledClientDeliveries: Int
+}
+
 struct PublishedTour: Sendable, Hashable {
     let slug: String
     let shareURL: String

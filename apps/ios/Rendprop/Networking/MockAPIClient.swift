@@ -75,7 +75,29 @@ actor MockAPIClient: APIClient {
     }
 
     func deleteListing(serverID: UUID) async throws {
+        // Offline Recently deleted: keep what the server would keep for 30 days.
+        if let row = created.first(where: { $0.value.serverID == serverID || $0.key == serverID })?.value {
+            mockTrash[serverID] = TrashedListing(id: serverID, orgID: row.serverOrgID ?? UUID(uuidString: "00000000-0000-4000-8000-00000000c0de")!,
+                                                 address: row.address, spaceType: row.spaceType, mainPhotoKey: nil,
+                                                 deletedAt: Date(), restorableUntil: Date().addingTimeInterval(30 * 86_400),
+                                                 hadPublishedTour: row.serverShareURL != nil, canRestore: true)
+            mockTrashRows[serverID] = row
+        }
         created = created.filter { $0.value.serverID != serverID && $0.key != serverID }
+    }
+
+    private var mockTrash: [UUID: TrashedListing] = [:]
+    private var mockTrashRows: [UUID: Listing] = [:]
+    func trashedListings() async throws -> [TrashedListing] {
+        mockTrash.values.filter { $0.restorableUntil > Date() }.sorted { $0.deletedAt > $1.deletedAt }
+    }
+    func restoreListing(serverID: UUID) async throws -> RestoredListing {
+        guard let trashed = mockTrash.removeValue(forKey: serverID) else {
+            throw APIError.server(status: 410, code: "gone", message: "The restore window for this listing has closed.")
+        }
+        if let row = mockTrashRows.removeValue(forKey: serverID) { created[row.serverID ?? serverID] = row }
+        return RestoredListing(id: serverID, orgID: trashed.orgID, address: trashed.address,
+                               republishedRenders: trashed.hadPublishedTour ? 1 : 0, cancelledClientDeliveries: 0)
     }
 
     func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws {}
@@ -158,6 +180,19 @@ actor MockAPIClient: APIClient {
         // which uses LiveAPIClient). Deterministic per (listing, asset) — like the
         // server's idempotent replay — so a retry yields the same slug.
         let seed = DirectUploader.sha256Hex("publish:\(listingID.uuidString):\(assetID)")
+        let slug = String(seed.prefix(8))
+        return PublishedTour(slug: slug, shareURL: "https://rendprop.com/f/\(slug)",
+                             durationS: durationS, staged: enhancements.isActive,
+                             renderID: UUID())
+    }
+
+    func republishApp(listingID: UUID, assetID: String, durationS: Double,
+                      speedFactor: Double, tier: RenderTier,
+                      enhancements: Enhancements, chapters: [ChapterInput],
+                      posterAssetID: String?) async throws -> PublishedTour {
+        // Offline: the link never changes on a republish — the slug is derived
+        // from the listing alone, exactly what the server guarantees in place.
+        let seed = DirectUploader.sha256Hex("publish:\(listingID.uuidString)")
         let slug = String(seed.prefix(8))
         return PublishedTour(slug: slug, shareURL: "https://rendprop.com/f/\(slug)",
                              durationS: durationS, staged: enhancements.isActive,

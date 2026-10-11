@@ -169,6 +169,40 @@ import ImageIO
         check(sourceExport.images[0].pathExtension == "png", "retained original keeps its supplied original format")
         let exportCaption = try String(contentsOf:pngExport.files.first(where:{$0.pathExtension == "txt"})!,encoding:.utf8)
         check(exportCaption.contains("manually leveled and cropped"), "framing adjustment is recorded without claiming generative geometry")
+        // One ZIP for the whole export (build 58): every prepared file plus a
+        // README, stored uncompressed, readable by any unarchiver. The archive
+        // is parsed back here from its central directory, not trusted blindly.
+        let bundle = try PhotoExportRenderer.prepare([photo, pngPhoto], options: .init(includeOriginals: true))
+        defer { try? FileManager.default.removeItem(at: bundle.directory) }
+        let archive = try PhotoExportRenderer.package(bundle, archiveName: "2050 Laney Pond Dr., Unit #4 / Apt \"B\"", now: Date(timeIntervalSince1970: 1_791_700_000))
+        check(archive.lastPathComponent == "2050 Laney Pond Dr., Unit #4 Apt B photos.zip", "archive is named after the listing with unsafe characters dropped")
+        check(archive.deletingLastPathComponent().standardizedFileURL.path == bundle.directory.standardizedFileURL.path, "archive sits beside the prepared files for the same cleanup")
+        let zipBytes = try Data(contentsOf: archive)
+        func le32(_ at: Int) -> UInt32 { zipBytes[at..<at+4].reversed().reduce(UInt32(0)) { $0 << 8 | UInt32($1) } }
+        func le16(_ at: Int) -> Int { Int(zipBytes[at]) | Int(zipBytes[at+1]) << 8 }
+        let eocd = zipBytes.count - 22
+        check(le32(eocd) == 0x06054b50 && le16(eocd + 20) == 0, "end of central directory record closes the archive")
+        let entryCount = le16(eocd + 10), directoryOffset = Int(le32(eocd + 16))
+        check(entryCount == bundle.files.count + 1, "ZIP carries every prepared file including disclosure notes")
+        var cursor = directoryOffset, names: [String] = [], storedBytes = 0
+        for _ in 0..<entryCount {
+            check(le32(cursor) == 0x02014b50 && le16(cursor + 10) == 0, "central directory entry uses the store method")
+            let nameLength = le16(cursor + 28), size = Int(le32(cursor + 24)), localOffset = Int(le32(cursor + 42))
+            let name = String(decoding: zipBytes[cursor + 46..<cursor + 46 + nameLength], as: UTF8.self)
+            names.append(name); storedBytes += size
+            check(le32(localOffset) == 0x04034b50, "local header offset points at a local file header")
+            let localNameLength = le16(localOffset + 26), dataStart = localOffset + 30 + localNameLength
+            if let original = bundle.files.first(where: { $0.lastPathComponent == name }) {
+                check((try? Data(contentsOf: original)) == zipBytes[dataStart..<dataStart + size], "stored bytes equal the prepared file \(name)")
+            }
+            cursor += 46 + nameLength + le16(cursor + 30) + le16(cursor + 32)
+        }
+        check(names.first == "README.txt" && Set(names).count == names.count, "README first, no duplicate names")
+        check(bundle.files.allSatisfy { names.contains($0.lastPathComponent) }, "every disclosure note, original and JPEG is in the archive")
+        let readme = String(decoding: zipBytes[(30 + "README.txt".utf8.count)..<(30 + "README.txt".utf8.count + Int(le32(18)))], as: UTF8.self)
+        check(readme.contains("disclosure") && readme.contains("2 photos"), "README explains the numbering and the disclosure notes")
+        check(directoryOffset == storedBytes + names.reduce(0) { $0 + 30 + $1.utf8.count }, "local headers and stored bytes fill the archive up to the central directory")
+        check(bundle.files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }, "packaging leaves the prepared files in place")
         print("Actual UIKit rendering and export packaging: \(checks) passed")
     }
 }

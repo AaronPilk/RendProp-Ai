@@ -9,12 +9,17 @@
 //   DELETE /listings/:id         soft delete (sets deleted_at) AND takes the hosted
 //                                tour down (renders.published_at = null) — the
 //                                0011 trigger does the same, this is belt and braces
-//                                (decision A3, audit F-supabase-07)
+//                                (decision A3, audit F-supabase-07). Build 58: also
+//                                opens a 30-day restore window (trash_expires_at);
+//                                storage cleanup waits for the window to close.
+//   GET    /listings/trash       the selected library's Recently deleted listings
+//   POST   /listings/:id/restore undelete within the window; brings the same tour
+//                                link back (build 58)
 //
 // Errors carry { error, code } (see _shared/http.ts).
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, readJsonLimited, respondError } from "../_shared/http.ts";
+import { HttpError, assert, json, pathSegments, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
 import { SPACE_TYPES } from "../_shared/spacetypes.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
@@ -23,6 +28,9 @@ import { listLibraryListings } from "../_shared/library-listings.ts";
 import { listingLibraryScope, requireLibraryWrite } from "../_shared/library-access.ts";
 import { clientContact, saveClientContact } from "./client-contact.ts";
 import { appendPublishedPhotos, publishedPhotoPatch } from "../_shared/property-cover.ts";
+
+/** How long a deleted listing can be restored (build 58). Mirrors the app copy. */
+const TRASH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Creation fields; ordinary updates use explicit per-field intent at PUT /:id/facts.
 // The legacy PATCH route accepts only the dedicated photo/gallery operations.
@@ -142,6 +150,39 @@ Deno.serve(async (req) => {
     // No header keeps the complete cross-workspace snapshot older native sync
     // merges depend on. Explicit selection is validated and never falls back.
     const requested = requestedWorkspace(req);
+
+    // ---- Recently deleted (build 58) ----
+    // A trashed listing is invisible to listingLibraryScope on purpose (every
+    // live-content predicate refuses it), so these two routes resolve their own
+    // authority through the service-only RPCs before the ordinary scope lookup.
+    if (seg.length === 1 && id === "trash") {
+      assert(req.method === "GET", 405, "Use GET for Recently deleted.");
+      assert(requested !== undefined, 409, "Choose a workspace to see Recently deleted.");
+      const { data, error } = await adminClient().rpc("list_trashed_listings", { p_actor: user.id, p_org: requested });
+      if (error) throwRpc(error.message);
+      const value = data as { actor_id?: unknown; org_id?: unknown; listings?: unknown } | null;
+      assert(value && value.actor_id === user.id && value.org_id === requested && Array.isArray(value.listings), 503, "Recently deleted returned inconsistent data.", "upstream");
+      return json({ org_id: requested, listings: value.listings });
+    }
+    if (seg.length === 2 && seg[1] === "restore") {
+      assert(req.method === "POST", 405, "Use POST to restore a listing.");
+      assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), 400, "Choose a valid listing.");
+      await assertNotDeleting(user.id);
+      const { data, error } = await adminClient().rpc("restore_listing", { p_actor: user.id, p_listing: id });
+      if (error) throwRpc(error.message);
+      const value = data as Record<string, unknown> | null;
+      assert(value && value.ok === true && value.actor_id === user.id && value.listing_id === id && typeof value.org_id === "string" && typeof value.library_org_id === "string", 503, "Listing restore returned inconsistent data.", "upstream");
+      if (requested !== undefined) assert(requested === value.org_id || requested === value.library_org_id, 404, "This listing belongs to another library.");
+      // The restored row must now answer to the ordinary authority, or the app would show a listing it cannot open.
+      const fresh = await listingLibraryScope(adminClient(), user.id, id);
+      assert(fresh.org_id === value.org_id, 503, "Listing identity changed during restore.", "upstream");
+      return json({
+        ok: true, id, org_id: value.org_id, library_org_id: value.library_org_id, address: value.address ?? null,
+        republished_renders: Number(value.republished_renders ?? 0), cancelled_client_deliveries: Number(value.cancelled_client_deliveries ?? 0),
+        restored_at: value.restored_at ?? null,
+      });
+    }
+
     const scope = id ? await listingLibraryScope(adminClient(), user.id, id, req.method !== "GET") : null;
     if (scope && requested !== undefined) assert(requested === scope.org_id || requested === scope.library_org_id, 404, "This listing belongs to another library.");
     const explicitOrg = scope?.org_id ?? (requested === undefined ? undefined :
@@ -307,9 +348,13 @@ Deno.serve(async (req) => {
       if (eErr) throw new HttpError(400, `Listing lookup failed: ${eErr.message}`);
       if (!existing || (explicitOrg && existing.org_id !== explicitOrg)) throw new HttpError(404, "Listing not found in this workspace");
 
+      // Build 58: the delete opens a 30-day restore window. The 0011 trigger
+      // still takes the tour down at once; storage cleanup is queued when the
+      // window closes (listing_trash_sweep) instead of an hour from now.
+      const now = Date.now();
       const { data, error } = await db
         .from("listings")
-        .update({ deleted_at: new Date().toISOString() })
+        .update({ deleted_at: new Date(now).toISOString(), trash_expires_at: new Date(now + TRASH_WINDOW_MS).toISOString() })
         .eq("id", id)
         .is("deleted_at", null)
         .select("id")
@@ -326,7 +371,7 @@ Deno.serve(async (req) => {
         .eq("listing_id", id)
         .not("published_at", "is", null);
       if (uErr) console.error("unpublish after delete failed:", uErr.message);
-      return json({ ok: true, unpublished: !uErr });
+      return json({ ok: true, unpublished: !uErr, restorable_until: new Date(now + TRASH_WINDOW_MS).toISOString() });
     }
 
     throw new HttpError(405, `Method ${req.method} not allowed on this path`);

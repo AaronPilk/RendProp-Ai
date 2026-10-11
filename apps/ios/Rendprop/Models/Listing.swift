@@ -103,6 +103,9 @@ struct Listing: Identifiable, Codable, Hashable {
     var measurementSync: FloorMeasurementSyncState? = nil
     /// Server `renders.id` of the published tour (from /renders/publish-app).
     var publishedRenderID: UUID? = nil
+    /// When "Republish tour" last pushed this phone's facts, photos and video to
+    /// the live page (build 58). nil = never republished since the first publish.
+    var lastRepublishedAt: Date? = nil
 
     // MARK: - Added 2026-09-04 (compliance wave W2-C). ALL optional → older snapshots decode.
     /// The MLS-safe UNBRANDED link (`/u/<slug>`) the server returns as
@@ -335,7 +338,7 @@ extension Listing {
              createdAt, soldAt, cloudArchived, zillowURL, mainPhotoRelPath, latitude, longitude,
              tagline, details, floorMeasurements, serverID, serverOrgID, serverLibraryOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateFactsFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
-             lastError, needsServerSync, factsSync, measurementSync, publishedRenderID,
+             lastError, needsServerSync, factsSync, measurementSync, publishedRenderID, lastRepublishedAt,
              unbrandedShareURL, stateCode, allowSearchIndexing,
              clientContact, clientContactDirty, clientContactLoaded, clientPhotoRelPath, clientPhotoDirty
     }
@@ -403,6 +406,7 @@ extension Listing {
         factsSync = try c.decodeIfPresent(ListingFactsSyncState.self, forKey: .factsSync)
         measurementSync = try c.decodeIfPresent(FloorMeasurementSyncState.self, forKey: .measurementSync)
         publishedRenderID = try c.decodeIfPresent(UUID.self,  forKey: .publishedRenderID)
+        lastRepublishedAt = try c.decodeIfPresent(Date.self,  forKey: .lastRepublishedAt)
         unbrandedShareURL = try c.decodeIfPresent(String.self, forKey: .unbrandedShareURL)
         stateCode        = try c.decodeIfPresent(String.self, forKey: .stateCode)
         allowSearchIndexing = try c.decodeIfPresent(Bool.self, forKey: .allowSearchIndexing)

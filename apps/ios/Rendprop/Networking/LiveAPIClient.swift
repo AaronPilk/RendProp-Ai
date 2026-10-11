@@ -636,6 +636,37 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                                           method: "DELETE"))
     }
 
+    func trashedListings() async throws -> [TrashedListing] {
+        // Recently deleted is per library: the route refuses without a selection.
+        guard let workspace = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(["listings", "trash"]))
+        request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+        })
+        let dto: TrashListDTO = try decode(data)
+        guard let org = UUID(uuidString: dto.orgId ?? ""), org == workspace else { throw APIError.decoding }
+        return (dto.listings ?? []).compactMap { row in
+            guard let id = UUID(uuidString: row.id ?? ""), let rowOrg = UUID(uuidString: row.orgId ?? ""),
+                  let deleted = Self.parseDate(row.deletedAt), let until = Self.parseDate(row.trashExpiresAt) else { return nil }
+            return TrashedListing(id: id, orgID: rowOrg, address: row.address ?? "", spaceType: row.spaceType.flatMap(SpaceType.init(rawValue:)),
+                                  mainPhotoKey: row.mainPhotoKey, deletedAt: deleted, restorableUntil: until,
+                                  hadPublishedTour: row.hadPublishedTour ?? false, canRestore: row.canRestore ?? false)
+        }
+    }
+
+    func restoreListing(serverID: UUID) async throws -> RestoredListing {
+        var request = makeRequest(url: url(["listings", serverID.uuidString, "restore"]), method: "POST", json: [:])
+        if let workspace = WorkspaceContext.selectedOrgID { request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+        let data = try await execute(request)
+        let dto: RestoreDTO = try decode(data)
+        guard dto.ok == true, let id = UUID(uuidString: dto.id ?? ""), id == serverID,
+              let org = UUID(uuidString: dto.orgId ?? "") else { throw APIError.decoding }
+        return RestoredListing(id: id, orgID: org, address: dto.address,
+                               republishedRenders: dto.republishedRenders ?? 0,
+                               cancelledClientDeliveries: dto.cancelledClientDeliveries ?? 0)
+    }
+
     func selectListingPhotos(serverID: UUID, galleryAssetIDs: [String]?, mainAssetID: String?) async throws {
         var body: [String: Any] = ["main_photo_asset_id": mainAssetID.map { $0 as Any } ?? NSNull()]
         if let galleryAssetIDs { body["gallery_asset_ids"] = galleryAssetIDs }
@@ -793,6 +824,26 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                     speedFactor: Double, tier: RenderTier,
                     enhancements: Enhancements, chapters: [ChapterInput],
                     posterAssetID: String?) async throws -> PublishedTour {
+        try await publishApp(route: "publish-app", listingID: listingID, assetID: assetID, durationS: durationS,
+                             speedFactor: speedFactor, tier: tier, enhancements: enhancements, chapters: chapters,
+                             posterAssetID: posterAssetID)
+    }
+
+    func republishApp(listingID: UUID, assetID: String, durationS: Double,
+                      speedFactor: Double, tier: RenderTier,
+                      enhancements: Enhancements, chapters: [ChapterInput],
+                      posterAssetID: String?) async throws -> PublishedTour {
+        // Same idempotency as a first publish: a retry of the same (listing,
+        // asset) replays the same job and therefore the same (unchanged) link.
+        try await publishApp(route: "republish-app", listingID: listingID, assetID: assetID, durationS: durationS,
+                             speedFactor: speedFactor, tier: tier, enhancements: enhancements, chapters: chapters,
+                             posterAssetID: posterAssetID)
+    }
+
+    private func publishApp(route: String, listingID: UUID, assetID: String, durationS: Double,
+                            speedFactor: Double, tier: RenderTier,
+                            enhancements: Enhancements, chapters: [ChapterInput],
+                            posterAssetID: String?) async throws -> PublishedTour {
         var body: [String: Any] = [
             "listing_id": listingID.uuidString,
             "asset_id": assetID,
@@ -814,7 +865,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // Stable per (listing, asset): a retry after a lost response replays the
         // SAME job + slug instead of publishing a second public tour.
         let key = "publish:\(listingID.uuidString.lowercased()):\(assetID)"
-        let data = try await execute(makeRequest(url: url(["renders", "publish-app"]),
+        let data = try await execute(makeRequest(url: url(["renders", route]),
                                                  method: "POST", json: body, idempotency: .key(key)))
         let dto: PublishAppDTO = try decode(data)
         guard let slug = dto.slug, let share = dto.shareUrl else {
@@ -2333,6 +2384,31 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             let videoUrl: String?
             let poster: String?
         }
+    }
+
+    private struct TrashListDTO: Decodable {
+        struct Row: Decodable {
+            let id: String?
+            let orgId: String?
+            let address: String?
+            let spaceType: String?
+            let mainPhotoKey: String?
+            let deletedAt: String?
+            let trashExpiresAt: String?
+            let hadPublishedTour: Bool?
+            let canRestore: Bool?
+        }
+        let orgId: String?
+        let listings: [Row]?
+    }
+
+    private struct RestoreDTO: Decodable {
+        let ok: Bool?
+        let id: String?
+        let orgId: String?
+        let address: String?
+        let republishedRenders: Int?
+        let cancelledClientDeliveries: Int?
     }
 
     private struct PublishAppDTO: Decodable {

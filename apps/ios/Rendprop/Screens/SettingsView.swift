@@ -287,6 +287,12 @@ struct SettingsView: View {
                 LabeledContent("Account", value: accountStatusLabel)
                 if serverAccountsEnabled {
                     if auth.isIdentified {
+                        // Build 58: deleted listings wait 30 days before storage
+                        // cleanup; this is where they come back from.
+                        NavigationLink { RecentlyDeletedView() } label: {
+                            Label("Recently deleted", systemImage: "trash.slash")
+                        }
+                        .accessibilityIdentifier("settings.recentlyDeleted")
                         NavigationLink { AccountDataExportView() } label: {
                             Label("Download account data", systemImage: "square.and.arrow.down")
                         }

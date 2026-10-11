@@ -480,6 +480,11 @@ struct FlythroughDetailView: View {
     @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
+    /// "Republish tour" (build 58): pushes this phone's facts, photos and video
+    /// to the live page without changing the link.
+    @State private var isRepublishing = false
+    @State private var republishFailure: AIFailure?
+    @State private var republishedAt: Date?
     @ObservedObject private var publishUploads = UploadManager.shared
     /// "List this tour on Google". Seeded in `onAppear` from this listing's own
     /// answer, or from the workspace default when it has never been asked.
@@ -776,7 +781,10 @@ struct FlythroughDetailView: View {
             ListingFileViewer(item: item, listingID: listing.id)
         }
         .sheet(item: $filePhotoExport) { selection in
-            PhotoExportSheet(photos: selection.photos, includeOriginals: false,
+            // Build 58: originals ride along by default (the toggle stays) — a
+            // download should carry the AI disclosure AND the unaltered source.
+            PhotoExportSheet(photos: selection.photos, includeOriginals: true,
+                             archiveName: currentListing.address,
                              canExport: filePhotoExportAdmission ?? { false })
         }
         .onChange(of: auth.userID) { _ in
@@ -965,8 +973,75 @@ struct FlythroughDetailView: View {
                     .foregroundStyle(Theme.inkDim)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            republishCard
         }
     }
+
+    /// Build 58. Facts and photos already reach the page as they sync, but an
+    /// agent who just changed something wants to SEE it go live, and a re-shot
+    /// walkthrough has to be pushed on purpose. One button does all of it and
+    /// keeps the link: the server moves the tour in place (republish_render).
+    private var republishCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Made changes?")
+                        .font(.rpHeadline)
+                        .foregroundStyle(Theme.ink)
+                    Text("Republish sends this phone's latest details, photos and walkthrough to the live page. Your links stay the same — flyers, QR codes and the MLS field keep working.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            if let failure = republishFailure {
+                AIFailureCard(failure: failure,
+                              retryHint: "Tap Republish tour to try again.",
+                              quotaFeature: "renders",
+                              onReconnect: { republishNow() })
+            }
+            if isRepublishing {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text(tour == nil
+                         ? "Republishing — sending your latest details and photos."
+                         : "Republishing — sending your latest details, photos and walkthrough. Keep the app open.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+                .accessibilityIdentifier("detail.republishing")
+            } else {
+                Button { republishNow() } label: {
+                    Label(republishFailure == nil ? "Republish tour" : "Retry republish", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Theme.accentSoft)
+                        .foregroundStyle(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(ScalePressStyle())
+                .disabled(!model.isInSelectedWorkspace(currentListing) || currentListing.cloudUnavailable == true || isPublishing)
+                .accessibilityIdentifier("detail.republish")
+            }
+            if let stamp = republishedAt ?? currentListing.lastRepublishedAt {
+                Label("Live page updated \(Self.republishStamp.localizedString(for: stamp, relativeTo: Date()))", systemImage: "checkmark.circle.fill")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.good)
+                    .accessibilityIdentifier("detail.republished")
+            }
+        }
+        .padding(14)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+    private static let republishStamp = RelativeDateTimeFormatter()
 
     /// One labelled link: what it is, the URL itself, Copy / QR, and Share.
     /// `warning` renders the MLS one-liner under the row.
@@ -1334,6 +1409,7 @@ struct FlythroughDetailView: View {
                     Text("Everything you've made for this \(space.spaceNoun), saved on this phone. Tap one to open it. Tap Save to put it in your Photos app.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
+                    if filePhotos.count > 1 { shareAllFilePhotosButton }
                     ForEach(fileRows) { item in fileRow(item) }
                     filePhotoGrid
                 }
@@ -1342,6 +1418,35 @@ struct FlythroughDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .card()
         }
+    }
+
+    /// Richard's ask after the first listings went out: "transfer a house with
+    /// pictures out to my transaction coordinator… you have to make it easy so
+    /// an agent can just share it with a person that handles their file." One
+    /// tap here opens the export sheet with every photo of this listing and
+    /// packages them as a single ZIP (with the disclosure notes) by default.
+    private var shareAllFilePhotosButton: some View {
+        Button { shareAllFilePhotos() } label: {
+            Label("Share all \(filePhotos.count) photos", systemImage: "square.and.arrow.up")
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 12)
+                .background(Theme.accent).foregroundStyle(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .accessibilityIdentifier("detail.files.shareAllPhotos")
+        .accessibilityHint(Text("Opens the export sheet with every photo as one ZIP file to send to a transaction coordinator or client."))
+    }
+
+    @MainActor private func shareAllFilePhotos() {
+        let admission = mediaExportAdmission(for: currentListing)
+        let items = filePhotos
+        guard !items.isEmpty, admission() else { return }
+        let photos = items.map { item -> EnhancedPhoto in
+            let photoID = item.id.hasPrefix("photo-") ? String(item.id.dropFirst("photo-".count)) : item.id
+            return EnhancedPhoto(id: photoID, originalURL: item.originalURL ?? item.url, enhancedURL: item.url)
+        }
+        filePhotoExportAdmission = admission
+        filePhotoExport = PhotoExportSelection(photos: photos)
     }
 
     private var filesHeader: some View {
@@ -1867,9 +1972,16 @@ struct FlythroughDetailView: View {
     }
 
     private var deleteMessage: String {
-        var text = currentListing.serverShareURL != nil
-            ? "Removes the video, photos and tour from this phone and takes both share links offline. This can't be undone."
-            : "Removes the video, photos and tour from this phone. This can't be undone."
+        // Build 58: a cloud listing sits in Recently deleted for 30 days, so the
+        // copy promises exactly what the server does — and no more for a local-only one.
+        var text: String
+        if currentListing.serverID != nil, Config.useLiveBackend {
+            text = currentListing.serverShareURL != nil
+                ? "Removes the video, photos and tour from this phone and takes both share links offline. You can restore it from Settings › Recently deleted for 30 days; the same links come back."
+                : "Removes the video, photos and tour from this phone. You can restore the cloud copy from Settings › Recently deleted for 30 days."
+        } else {
+            text = "Removes the video, photos and tour from this phone. This can't be undone."
+        }
         // W2-C3: an original that backs a disclosed AI edit is evidence. Deleting
         // the listing wipes this phone's copy of it, so say so BEFORE the tap —
         // "Download originals" in COMPLIANCE is one scroll away.
@@ -2081,6 +2193,37 @@ struct FlythroughDetailView: View {
         connection.run {
             guard context.isCurrent, !cellularApproved || publishCellularParked else { return }
             publishWithSession(cellularApproved: cellularApproved)
+        }
+    }
+
+    /// Build 58. Same session fence as a first publish; the model decides
+    /// whether the video has to go up again or only the details and photos.
+    private func republishNow() {
+        guard !isRepublishing, !isPublishing, !currentListing.isSample,
+              model.isInSelectedWorkspace(currentListing), currentListing.cloudUnavailable != true else { return }
+        let context = NativeMediaExportContext()
+        connection.run {
+            guard context.isCurrent else { return }
+            isRepublishing = true
+            republishFailure = nil
+            Haptics.selection()
+            let id = listing.id
+            Task {
+                do {
+                    _ = try await model.republishExisting(listingID: id)
+                    await MainActor.run {
+                        isRepublishing = false
+                        republishedAt = Date()
+                        playerRefresh = UUID()
+                        Haptics.success()
+                    }
+                } catch {
+                    await MainActor.run {
+                        isRepublishing = false
+                        republishFailure = AIFailure(error, title: "Couldn't republish")
+                    }
+                }
+            }
         }
     }
 
@@ -4554,14 +4697,18 @@ struct PhotoStudioView: View {
         .padding(.vertical, 8)
     }
 
+    /// Every photo in the library as ONE share: the export sheet packages
+    /// several photos into a single ZIP by default, which is what an agent
+    /// can actually hand to the person who runs their file.
     private var shareAllButton: some View {
         Button { exportingPhotos = PhotoExportSelection(photos: libraryPhotos) } label: {
-            Label(libraryKind == .latest ? "Download photos" : "Download \(libraryKind.rawValue.lowercased()) photos", systemImage: "square.and.arrow.down")
+            Label(libraryKind == .latest ? "Share all photos" : "Share all \(libraryKind.rawValue.lowercased()) photos", systemImage: "square.and.arrow.up")
                 .font(.rpBody.weight(.semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(Theme.accent).foregroundStyle(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .accessibilityIdentifier("photos.shareAll")
         .disabled(libraryPhotos.isEmpty)
     }
 
@@ -4754,7 +4901,7 @@ struct PhotoStudioView: View {
         .fullScreenCover(item: $compare, onDismiss: { loadExisting() }) { presentation in
             PhotoCompareView(photo: presentation.photo, requestedCover: presentation.requestedCover)
         }
-        .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
+        .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original, archiveName: listing.address) }
         .sheet(item: $stagingSetup) { setup in
             PhotoStagingSetupView(setup: setup) { referenceID, brief in
                 stagingSetup = nil

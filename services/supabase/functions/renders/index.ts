@@ -21,6 +21,10 @@
 //   POST  /renders/:job_id/publish { duration_s?, speed_factor?, chapters?, poster_asset_id? } -> render
 //   POST  /renders/publish-app     { listing_id, asset_id, duration_s?, speed_factor?, tier?, enhancements?,
 //                                    chapters?, poster_asset_id? } -> { ...render, id, job_id, share_url, unbranded_url }
+//   POST  /renders/republish-app   same body as publish-app. Build 58: moves the
+//                                    listing's CURRENT public tour onto the new
+//                                    upload IN PLACE (same slug, same links). A
+//                                    listing with no tour gets a first publish.
 //   PATCH /renders/:render_id/chapters { chapters:[{label,t_ms,sort}] } -> { ok, count, chapters }
 
 import { assertMediaVisible } from "../_shared/media-source-access.ts";
@@ -166,7 +170,8 @@ Deno.serve(async (req) => {
     // job_id). If publish throws, the job is marked failed right here so it
     // never lingers as `created` (which used to lock the workspace after three
     // failures — audit F-supabase-05).
-    if (req.method === "POST" && seg.length === 1 && seg[0] === "publish-app") {
+    if (req.method === "POST" && seg.length === 1 && (seg[0] === "publish-app" || seg[0] === "republish-app")) {
+      const republish = seg[0] === "republish-app";
       const body = await readJson<Record<string, unknown>>(req);
       assert(body.listing_id, 400, "listing_id is required");
       assert(body.asset_id, 400, "asset_id is required");
@@ -196,7 +201,7 @@ Deno.serve(async (req) => {
       });
       if (jErr) throwRpc(jErr.message);
 
-      const { data: render, error: pErr } = await db.rpc("publish_render", {
+      const { data: render, error: pErr } = await db.rpc(republish ? "republish_render" : "publish_render", {
         p_job: job.id,
         p_duration: duration,
         p_speed: speed,
@@ -215,6 +220,9 @@ Deno.serve(async (req) => {
         throwRpc(pErr.message);
       }
       await assertMediaVisible(db, render.listing_id, { renders: [render.id] });
+      // A republish answers 200 with the SAME render id/slug the app already
+      // holds; the first publish of a listing (through either route) is 201.
+      assert(!republish || render.job_id === job.id, 503, "Republish returned a render for a different job.", "upstream");
       return json({
         ...render,
         id: render.id,
@@ -222,7 +230,8 @@ Deno.serve(async (req) => {
         share_url: shareUrl(render.slug as string),
         unbranded_url: unbrandedUrl(render.slug as string),
         poster: publishedR2Url(render.slug as string,render.poster_key as string | null),
-      }, 201);
+        republished: republish,
+      }, republish ? 200 : 201);
     }
 
     // ---- PATCH /renders/:render_id/chapters ----
