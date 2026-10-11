@@ -144,9 +144,9 @@ class FoundationTests(unittest.TestCase):
         # photographer/client, photo selection, distinct personal-card/logo methods
         # and the account-owned JSON inventory export.
         # Inventory coverage does not establish browser, phone or live parity.
-        self.assertEqual(result["apiMethods"], 73)
-        self.assertEqual(result["apiDeclarations"], 74)
-        self.assertEqual(result["capabilityGroups"], 22)
+        self.assertEqual(result["apiMethods"], 76)
+        self.assertEqual(result["apiDeclarations"], 77)
+        self.assertEqual(result["capabilityGroups"], 24)
         self.assertEqual(result["outsideProtocol"], 24)
         self.assertEqual(result["browserVerified"], 0)
 

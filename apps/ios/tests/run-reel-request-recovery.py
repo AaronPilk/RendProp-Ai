@@ -179,7 +179,7 @@ finally:
         server.server_close()
     receipt['end_source_sha256'] = hashes()
     receipt['source_binding_matches'] = receipt['start_source_sha256'] == receipt['end_source_sha256']
-    receipt['passed'] = 'failure' not in receipt and len(receipt['runs']) == 15 and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches']
+    receipt['passed'] = 'failure' not in receipt and len(receipt['runs']) == len(variants) and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches']
     (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 assert receipt['passed'], 'Gate source changed during verification or a required run failed'
 print(f'Evidence: {out}')

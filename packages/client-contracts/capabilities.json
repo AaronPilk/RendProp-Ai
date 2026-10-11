@@ -24,7 +24,9 @@
     {"id":"audio","methods":["aiVoices","aiVoiceTTS"],"web":"Same licensed voice list and metered voiceover route","status":"planned"},
     {"id":"assistance","methods":["aiChapters","coach"],"web":"Chapter suggestions and coach with exact wire keys","status":"planned"},
     {"id":"admin-read","methods":["adminSpend","adminProviders","adminUsage","adminHealth","adminRouting"],"web":"Server-authorized operations console; not a brokerage role","status":"planned"},
-    {"id":"admin-write","methods":["adminSetRoutingFlag","adminSetRouteStep"],"web":"Inventory only; disabled provider rows must not be enabled by this work","status":"restricted"}
+    {"id":"admin-write","methods":["adminSetRoutingFlag","adminSetRouteStep"],"web":"Inventory only; disabled provider rows must not be enabled by this work","status":"restricted"},
+    {"id":"listing-trash-restore","methods":["trashedListings","restoreListing"],"status":"native-handoff","web":"Native Settings lists and restores the authenticated private library’s deleted listings within the server-controlled 30-day window. Studio has no trash UI; browser/device recovery parity is unverified."},
+    {"id":"republish-same-link","methods":["republishApp"],"status":"native-handoff","web":"Native Republish updates an existing public render in place through POST /renders/republish-app. Studio continues its separate publication path; this inventory proves no live browser parity."}
   ],
   "outsideProtocol": [
     {"id":"anonymous-session","source":"apps/ios/Rendprop/Auth/AuthStore.swift","web":"Same anonymous Supabase identity and one-refresh retry semantics; no registration wall","status":"planned"},

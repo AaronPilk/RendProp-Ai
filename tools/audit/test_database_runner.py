@@ -121,6 +121,8 @@ class RunnerCase(unittest.TestCase):
                           'PASS direct Bria SQL: 40 assertions' if sqlfile == 'video_erase_direct_bria.sql' else
                           'PASS: member portfolio SQL assertions; all fixtures rolled back.')
                 output, rc = scenario.get('reflection', {}).get(sqlfile, (marker + '\n', 0))
+            elif sqlfile == 'build58_db_controls.sql':
+                output, rc = scenario.get('reflection', {}).get(sqlfile, ('{"suite": "build58_db_controls", "assertions": 42}\n', 0))
             elif sqlfile == 'negative_astra_paid_gates.sql':
                 output, rc = scenario.get('paid', (PAID_MARKER + '\n', 0))
             elif sqlfile in ('worker_publish_transaction.sql', 'negative_upload_publication.sql'):
@@ -236,7 +238,7 @@ class InventoryTests(RunnerCase):
             {'phase': phase, 'fixture': filename, 'assertions': count,
              'rolledBack': True, 'database': database}
             for phase, database in [('initial', 'rendprop_audit'), ('replayed', 'rendprop_replay')]
-            for filename, count in [('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23)]])
+            for filename, count in [('video_erase.sql', 51), ('video_erase_direct_bria.sql', 40), ('member_portfolios.sql', 23), ('build58_db_controls.sql', 42)]])
         commands = {row['name']: row for row in result.receipt['commands']}
         self.assertIn('replay-20261002225458_video_erase_direct_bria', commands)
         for phase in ('initial', 'replayed'):

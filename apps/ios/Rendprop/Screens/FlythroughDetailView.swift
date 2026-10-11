@@ -385,7 +385,10 @@ struct DetailMetadataRegressionHost: View {
         }
         if name == "republish" {
             guard model.api is MockAPIClient else { throw FixtureError.image }
+            try WorkspaceStore.shared.prepareBuild58FixtureLibrary()
             value.serverID = UUID(uuidString: "b5800000-0000-4000-8000-000000000001")
+            value.serverOrgID = WorkspaceContext.selectedOrgID
+            value.cloudSyncOwnerID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:))
             value.needsServerSync = false
         }
         // AppModel.load is deliberately never called by this host. Its
@@ -4930,7 +4933,6 @@ struct PhotoStudioView: View {
         .fullScreenCover(item: $compare, onDismiss: { loadExisting() }) { presentation in
             PhotoCompareView(photo: presentation.photo, requestedCover: presentation.requestedCover)
         }
-        .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original, archiveName: listing.address) }
         .sheet(item: $stagingSetup) { setup in
             PhotoStagingSetupView(setup: setup) { referenceID, brief in
                 stagingSetup = nil
@@ -5076,6 +5078,7 @@ struct PhotoStudioView: View {
 
     var body: some View {
         editFeedbackDialogs
+        .sheet(item: $exportingPhotos) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original, archiveName: listing.address) }
         // Third-party processing consent is asked at AI entry or immediately
         // before an edit; viewing, importing and exporting ordinary photos
         // remains available without opting into AI processing.

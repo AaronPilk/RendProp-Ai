@@ -155,7 +155,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         attach("build58-four-camera-presets")
         app.navigationBars["Reel Studio"].buttons["Close"].tap()
         openLink("detail.photos", title: "Photos")
-        let all = app.buttons["photos.shareAll"]; scrollTo(all); all.tap()
+        let all = app.buttons["photos.shareAll"]; revealActive(all); all.tap()
         let delivery = app.segmentedControls["export.deliverAs"]
         XCTAssertTrue(delivery.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertEqual(delivery.buttons.count, 2)
@@ -176,7 +176,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         attach("build58-republished-receipt")
         let settings = app.buttons["build58.fixture.settings"]
         XCTAssertTrue(settings.exists, app.debugDescription); settings.tap()
-        let trash = app.buttons["settings.recentlyDeleted"]; scrollTo(trash); trash.tap()
+        let trash = app.buttons["settings.recentlyDeleted"]; revealActive(trash); trash.tap()
         XCTAssertTrue(app.navigationBars["Recently deleted"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.staticTexts["recentlyDeleted.empty"].exists)
         attach("build58-recently-deleted-empty")
@@ -279,6 +279,18 @@ final class DetailMetadataRegressionUITests: XCTestCase {
 
     private func element(_ id: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+
+    private func revealActive(_ element: XCUIElement) {
+        // A pushed Photos screen supplies its own toolbar. Do not calculate
+        // its viewport using the underlying detail navigation bar.
+        for _ in 0..<14 {
+            if element.exists, element.isHittable, element.frame.midY > 150,
+               element.frame.midY < app.frame.maxY - 70 { return }
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.82))
+                .press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.28)))
+        }
+        XCTFail("Active screen did not reveal \(element.identifier): \(app.debugDescription)")
     }
 
     private func scrollTo(_ element: XCUIElement) {

@@ -309,6 +309,19 @@ final class AuthStore: ObservableObject {
     }
     #endif
 
+    #if targetEnvironment(simulator)
+    /// Only the closed build-58 UI host may use this fixed synthetic actor.
+    @MainActor func prepareBuild58FixtureOwner() -> Bool {
+        let args = ProcessInfo.processInfo.arguments
+        guard Config.isOfflineAccountFixture,
+              let i = args.firstIndex(of: "-ui.detailMetadataFixture"),
+              i + 1 < args.count, args[i + 1] == "republish" else { return false }
+        userID = "b5800000-0000-4000-8000-000000000010"
+        UserDefaults.standard.set(userID, forKey: "auth.supabase.userID")
+        return true
+    }
+    #endif
+
     // MARK: - Token access (read by LiveAPIClient, any thread)
 
     /// Current Supabase JWT, or nil when signed out. Read at request-build time.

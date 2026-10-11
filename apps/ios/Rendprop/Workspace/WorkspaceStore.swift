@@ -132,6 +132,19 @@ import Combine
         }
     }
 
+    #if targetEnvironment(simulator)
+    func prepareBuild58FixtureLibrary() throws {
+        guard Config.isOfflineAccountFixture,
+              AuthStore.shared.prepareBuild58FixtureOwner(),
+              let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+        let org = UUID(uuidString: "b5800000-0000-4000-8000-000000000020")!
+        let member = WorkspaceMembership(id: org, name: "Synthetic private library", role: "owner",
+            accessMode: "own", libraryOwnerUserID: owner, billingOrgID: org, canRead: true, canWrite: true,
+            canManageSubscription: true)
+        try apply(WorkspaceContext.Snapshot(selectedOrgID: org, workspaces: [member]), owner: owner)
+    }
+    #endif
+
     private func request(path: String, method: String, body: [String: Any]?, owner: UUID, revision: UInt64) async throws -> Data {
         guard let base = Config.apiBaseURL, let token = await AuthStore.validAccessToken() else { throw APIError.notConfigured }
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == owner, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
