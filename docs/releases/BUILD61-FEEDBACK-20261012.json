@@ -197,11 +197,11 @@
   },
   "ci": {
     "runId": 38267819835,
-    "observedAt": "2026-10-12T15:34:36.663199Z",
+    "observedAt": "2026-10-12T16:13:40.022148Z",
     "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38267819835",
     "headSha": "fbcecded04075d664867cfbdca35a4152ce3f241",
-    "status": "in_progress",
-    "conclusion": null,
+    "status": "completed",
+    "conclusion": "success",
     "jobs": [
       {
         "name": "Web parity inventory and design-token contracts (offline)",
@@ -225,8 +225,8 @@
       },
       {
         "name": "Offline audit evidence, consent and adoption source gates",
-        "status": "in_progress",
-        "conclusion": null
+        "status": "completed",
+        "conclusion": "success"
       },
       {
         "name": "Cloudflare Worker (tour-host)",
@@ -399,6 +399,81 @@
     "focusedUiLog": {
       "path": "/tmp/rendprop-build61-ui-share-fixed.log",
       "sha256": "ab8eec9fb1c8110f1683d5e13b0382c171bd31a89b0594212f6b4cdbe9c03626"
+    },
+    "ciCompleted": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-apple/ci-completed-snapshot.json",
+      "sha256": "7dedfa52f6c20305b89d7ba7da4425992a6f40062dccc380e1ab9ddfe415b69d"
     }
-  }
+  },
+  "ciBeforeCompletion": {
+    "runId": 38267819835,
+    "observedAt": "2026-10-12T15:34:36.663199Z",
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38267819835",
+    "headSha": "fbcecded04075d664867cfbdca35a4152ce3f241",
+    "status": "in_progress",
+    "conclusion": null,
+    "jobs": [
+      {
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "iOS static gates",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "status": "in_progress",
+        "conclusion": null
+      },
+      {
+        "name": "Cloudflare Worker (tour-host)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Studio contracts, build and property workflows (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Python workers (render, spatial, training adapter)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase edge functions (deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Secret scan",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "ciCompletedRecordedAt": "2026-10-12T16:13:40.022148Z"
 }

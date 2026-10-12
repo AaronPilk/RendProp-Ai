@@ -95,8 +95,9 @@ the captured observation explicitly confirmed MapKit suggestions appeared for
 count also passed.
 
 CI was dispatched once on the archive/code checkpoint: run `38267819835`.
-At the receipt's last snapshot, 11 jobs passed and the native audit job
-was still running; this is not an all-green CI claim. Its timestamped status,
+The final GitHub readback is **completed / success: all 12 jobs passed**.
+No retries were requested. The receipt preserves the earlier 11/12 snapshot
+and the later completed state on the same archive commit. Its timestamped status,
 Apple processing/group readbacks, source trees,
 IPA digest, gate receipts and initial failed controls belong in
 `docs/releases/BUILD61-FEEDBACK-20261012.json`. Upload success alone does not
