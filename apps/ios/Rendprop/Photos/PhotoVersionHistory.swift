@@ -178,6 +178,26 @@ enum PhotoVersionHistory {
             }
         }
 
+        /// The label an exported copy of this version carries in its file
+        /// name: what the image is, readable off a file list by whoever
+        /// receives the package. Lower-case letters, digits and dashes only.
+        var exportSlug: String {
+            let base: String
+            switch edit {
+            case "capture": base = "enhanced"
+            case "legacy": base = "earlier-unverified"
+            case "stage": base = "virtually-staged" + (style.map { "-" + $0 } ?? "")
+            case "declutter": base = "decluttered"
+            case "twilight": base = "twilight-sky"
+            case "sky": base = "blue-sky"
+            case "lawn": base = "green-lawn"
+            default: base = "ai-edit"
+            }
+            let allowed = Set("abcdefghijklmnopqrstuvwxyz0123456789-")
+            let cleaned = String(base.lowercased().map { allowed.contains($0) ? $0 : "-" })
+            return cleaned.isEmpty ? "version" : cleaned
+        }
+
         /// An old import may lack an orig-* file, but its retained pre-edit
         /// version is still a useful, explicitly unverified review source.
         func reviewSourceFile(in index: Index) -> String {

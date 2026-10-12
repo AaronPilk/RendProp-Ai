@@ -32,6 +32,9 @@ variants = {
     'negative-archive-drops-disclosures': (base.replace('for file in prepared.files { entries.append(ZipArchive.Entry(name: file.lastPathComponent, url: file)) }', 'for file in prepared.images { entries.append(ZipArchive.Entry(name: file.lastPathComponent, url: file)) }'), 'ZIP carries every prepared file including disclosure notes'),
     'negative-archive-drops-extras': (base.replace('entries.append(ZipArchive.Entry(name: name, url: extra.url))', '/* omitted non-photo extra */'), 'listing ZIP includes exact walkthrough bytes'),
     'negative-video-only-refused': (base.replace('guard !prepared.files.isEmpty || !extras.isEmpty else', 'guard !prepared.files.isEmpty else'), 'video-only listing must package without photos'),
+    'negative-versions-dropped': (base.replace('for (position, other) in others.enumerated() {', 'for (position, other) in others.enumerated() where false {'), 'reviewed custom exports with its original, its enhancement and both disclosures'),
+    'negative-unreviewed-version-exported': (base.replace('(try? PhotoVersionHistory.requireDownloadReview(imageURL: stored)) != nil else', 'true else'), 'an unreviewed custom descendant is withheld from the package'),
+    'negative-version-bytes-mutated': (base.replace('try FileManager.default.copyItem(at: stored, to: copy)', 'try Data("mutated-version".utf8).write(to: copy, options: .atomic)'), 'an exported version is the exact stored bytes'),
     'negative-crop-stretches': (base.replace('let drawWidth = CGFloat(fullWidth) * scale, drawHeight = CGFloat(fullHeight) * scale', 'let drawWidth = size.width, drawHeight = size.height'), 'center crop actually excludes left red strip'),
 }
 architecture = 'arm64' if platform.machine() == 'arm64' else 'x86_64'

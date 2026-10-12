@@ -103,7 +103,7 @@ try:
     cases = space[space.index('    case realEstate =',space.index('enum SpaceType:')):space.index('    var id:',space.index('enum SpaceType:'))]
     review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
     actual = 'import Foundation\nimport CryptoKit\n' + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
-    for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(']:
+    for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(']:
         actual += block(source, anchor).replace('private static', 'static', 1) + '\n'
     actual += '''    static func generationGuard(auth: AuthStore, model: GuardModel, listingID: UUID, targetServerID: UUID?) -> (@MainActor @Sendable () throws -> Void) {
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
@@ -139,6 +139,10 @@ try:
         ('actual', actual, None),
         ('negative-quality-gate-accepts-changed-property', actual.replace('guard verdict.mayUse else { throw AIImagePrep.error(verdict.refusal) }', '// omitted property gate'), 'changed property must not be retained'),
         ('negative-refusal-keeps-marker', actual.replace('if Self.isDefinitiveRefusal(error) { submission.clear() }', '// marker kept on a definitive refusal'), 'a definitive refusal retires the unconfirmed marker'),
+        ('negative-tmp-download-read-as-is', actual.replace('let tmp = Self.clipPath(forDownloaded: downloaded)', 'let tmp = downloaded'), 'frames are read from an .mp4 path, never the .tmp download'),
+        ('negative-empty-frames-sent', actual.replace('guard !frames.isEmpty else {', 'guard frames.isEmpty || !frames.isEmpty else {'), 'a clip this phone cannot read is held locally without a drift call'),
+        ('negative-dropped-poll-fatal', actual.replace('} catch where Self.isDroppedPoll(error) && droppedPolls < 5 {', '} catch where false {'), 'one dropped poll must not fail a paid clip'),
+        ('negative-dropped-poll-bound', actual.replace('droppedPolls < 5', 'droppedPolls < 6'), 'a connection that stays down surfaces after six polls'),
         ('negative-duplicate-refusal-clears-marker', actual.replace(' && status != 409', ''), 'duplicate refusal preserves the already-started operation marker'),
         ('actual-lab-dispatch', actual, None),
         ('negative-dropped-receipt', actual.replace('try pending.save()', '// dropped accepted receipt'), 'pending receipt after poll failure'),
@@ -165,7 +169,7 @@ try:
         Handler.calls = 0
         mode = ['--dispatch-only'] if name in ['actual-lab-dispatch', 'negative-dispatch-consent', 'negative-dispatch-workspace', 'negative-401-retry-fence'] else []
         if name.startswith('negative-manifest-'): mode = ['--manifest-only']
-        result = subprocess.run([str(binary), f'http://127.0.0.1:{server.server_port}', *mode], capture_output=True, text=True, timeout=120)
+        result = subprocess.run([str(binary), f'http://127.0.0.1:{server.server_port}', *mode], capture_output=True, text=True, timeout=300)
         log = result.stdout + result.stderr
         (out / (name + '.log')).write_text(log)
         binary.unlink()
@@ -187,4 +191,4 @@ assert receipt['passed'], 'Gate source changed during verification or a required
 print(f'Evidence: {out}')
 print(receipt['runs'][0]['output'].strip())
 print(receipt['runs'][1]['output'].strip())
-print('PASSED: 13 compiled controls failed at their exact expected invariant')
+print(f"PASSED: {sum(1 for _, _, reason in variants if reason)} compiled controls failed at their exact expected invariant")

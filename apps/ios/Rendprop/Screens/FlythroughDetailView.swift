@@ -5585,10 +5585,13 @@ struct PhotoStudioView: View {
                     throw AIImagePrep.error("The AI didn't return a clip. Try again.")
                 }
 
-                let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
+                let (downloaded, resp) = try await URLSession.shared.download(from: remoteURL)
                 if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    try? FileManager.default.removeItem(at: downloaded)
                     throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)). Try again.")
                 }
+                // `.tmp` → `.mp4` before AVFoundation reads it (see ReelStudioView.clipPath).
+                let tmp = ReelStudioView.clipPath(forDownloaded: downloaded)
 
                 // ── THE QUALITY GATE ────────────────────────────────────────
                 // Judge the clip before the agent ever sees it. `POST
@@ -5606,18 +5609,27 @@ struct PhotoStudioView: View {
                 // the agent finds a week later, next to their listing.
                 await MainActor.run { processingText = "Checking it against your photo…" }
                 let verdict: DriftVerdict
-                do {
-                    verdict = try await api.aiVideoDrift(DriftCheckRequest(
-                        requestID: job.requestId,
-                        kind: "reel",
-                        sourceBase64: b64,
-                        frames: await ClipFrames.extract(from: tmp),
-                        seconds: 5,
-                        spaceType: spaceRawForDrift,
-                        listingServerID: serverListingID))
-                } catch {
-                    verdict = DriftVerdict(status: .unavailable, publishable: false,
-                                           action: "hold", message: "", reason: nil)
+                let frames = await ClipFrames.extract(from: tmp)
+                if frames.isEmpty {
+                    // A clip this phone cannot read is held locally; nothing is
+                    // sent for an empty judgement.
+                    verdict = DriftVerdict(status: .unavailable, publishable: false, action: "hold",
+                                           message: "Couldn't read the finished clip on this phone, so it is being held rather than published. Your photo is untouched. Try again.",
+                                           reason: "no_frames")
+                } else {
+                    do {
+                        verdict = try await api.aiVideoDrift(DriftCheckRequest(
+                            requestID: job.requestId,
+                            kind: "reel",
+                            sourceBase64: b64,
+                            frames: frames,
+                            seconds: 5,
+                            spaceType: spaceRawForDrift,
+                            listingServerID: serverListingID))
+                    } catch {
+                        verdict = DriftVerdict(status: .unavailable, publishable: false,
+                                               action: "hold", message: "", reason: nil)
+                    }
                 }
                 guard verdict.mayUse else {
                     try? FileManager.default.removeItem(at: tmp)
@@ -8668,6 +8680,7 @@ struct ReelClipIssue: Identifiable {
 
 struct ReelStudioView: View {
     @State private var idleHeld = false
+    @State private var backgroundHold: UIBackgroundTaskIdentifier = .invalid
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -8892,6 +8905,7 @@ struct ReelStudioView: View {
             let wantHold = (p == .generating || p == .stitching)
             if wantHold && !idleHeld { IdleTimer.hold(); idleHeld = true }
             else if !wantHold && idleHeld { IdleTimer.release(); idleHeld = false }
+            if wantHold { beginBackgroundHold() } else { endBackgroundHold() }
         }
         .onChange(of: voiceMode) { mode in
             // Leaving My voice mid-take drops the mic/session; a finished
@@ -8910,6 +8924,7 @@ struct ReelStudioView: View {
             voPlayer?.pause()
             if recorder.isRecording { recorder.cancel() }
             if idleHeld { IdleTimer.release(); idleHeld = false }
+            endBackgroundHold()
         }
         .onChange(of: auth.userID) { owner in
             if reelOwner != nil, reelOwner != owner { workTask?.cancel(); pendingRequest = nil; dismiss() }
@@ -10635,6 +10650,27 @@ struct ReelStudioView: View {
         }
     }
 
+    /// Keep the clip polling alive for a short while after the phone is locked
+    /// or the app is switched away mid-reel (iOS grants about 30 s). Without
+    /// this the app was suspended at once, the status poll in flight died, and
+    /// a clip that had already been paid for came back as a "saved video
+    /// request". When the grant runs out the system suspends the app; the poll
+    /// resumes when it comes back, and `isDroppedPoll` absorbs the request that
+    /// died in between. Finishing while the app is in the background posts the
+    /// local "Your reel is ready" banner.
+    private func beginBackgroundHold() {
+        guard backgroundHold == .invalid else { return }
+        backgroundHold = UIApplication.shared.beginBackgroundTask(withName: "rendprop.reel") {
+            Task { @MainActor in endBackgroundHold() }
+        }
+    }
+
+    private func endBackgroundHold() {
+        guard backgroundHold != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundHold)
+        backgroundHold = .invalid
+    }
+
     private func recoverPendingRequest(_ request: PendingReelRequest) {
         guard !isWorking, request.submissionUnconfirmed != true,
               pendingRequest?.job.requestId == request.job.requestId else { return }
@@ -10961,6 +10997,7 @@ struct ReelStudioView: View {
                     lastReel = outURL
                     phase = .done
                     Haptics.success()
+                    ReelCompletionNotice.post(success: true)
                     Analytics.track("reel_made", ["ok": "true", "clips": String(clipURLs.count),
                                                   "captions": shotStyle.rawValue,
                                                   "transition": transition.rawValue,
@@ -10998,6 +11035,7 @@ struct ReelStudioView: View {
                     reloadPendingRequest()
                     phase = .failed
                     failure = ReelClipIssue.failure(for: error, title: "Couldn't make the reel")
+                    if !(error is CancellationError) { ReelCompletionNotice.post(success: false) }
                 }
             }
         }
@@ -11224,6 +11262,17 @@ struct ReelStudioView: View {
         return retained
     }
 
+    /// Move a `URLSession.download` result (`….tmp`) next to itself as `….mp4`
+    /// so AVFoundation can open it. Falls back to the original path when the
+    /// move fails; the caller's frame check then holds the clip.
+    nonisolated static func clipPath(forDownloaded downloaded: URL) -> URL {
+        guard downloaded.pathExtension.lowercased() != "mp4" else { return downloaded }
+        let renamed = downloaded.deletingPathExtension().appendingPathExtension("mp4")
+        try? FileManager.default.removeItem(at: renamed)
+        do { try FileManager.default.moveItem(at: downloaded, to: renamed) } catch { return downloaded }
+        return renamed
+    }
+
     /// A 4xx the server itself produced before admitting the request. 408 is a
     /// timeout and 409 can report an already-started operation, so neither is
     /// proof of non-admission. Everything 5xx or non-HTTP is also unknown.
@@ -11232,19 +11281,44 @@ struct ReelStudioView: View {
         return (400...499).contains(status) && status != 408 && status != 409
     }
 
+    /// A status poll that failed to get an answer, as opposed to an answer:
+    /// transport loss, a timeout, or a 5xx/408/429 from the gateway. Anything
+    /// definitive (a 4xx, an identity change, cancellation) is not.
+    nonisolated static func isDroppedPoll(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let url = error as? URLError { return url.code != .cancelled }
+        if let api = error as? APIError, let status = api.status {
+            return status >= 500 || status == 408 || status == 429
+        }
+        return false
+    }
+
     nonisolated private static func retrieveClip(job: AIVideoJob, pending: PendingReelRequest?, api: APIClient,
         into dir: URL, index: Int, clearReceiptOnDownload: Bool = false,
         requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() }) async throws -> URL {
         guard pending?.submissionUnconfirmed != true else { throw AIImagePrep.error("That submission has no receipt to recover. Review it before generating again.") }
         let deadline = Date().addingTimeInterval(5 * 60)
         var remoteURL: URL?
+        var droppedPolls = 0
         while remoteURL == nil {
             guard Date() < deadline else {
                 throw AIImagePrep.error("The clip took too long.")
             }
             try await Task.sleep(nanoseconds: 5_000_000_000)
             try await requireCurrent()
-            switch try await api.aiVideoStatus(job) {
+            let status: AIVideoStatus
+            do {
+                status = try await api.aiVideoStatus(job)
+                droppedPolls = 0
+            } catch where Self.isDroppedPoll(error) && droppedPolls < 5 {
+                // The poll is read-only. A connection that dropped (the phone
+                // was locked mid-clip, a cell handoff, a gateway 5xx) is not
+                // an answer about the clip, so ask again. Six misses in a row
+                // surface exactly as one did before; the paid receipt stays.
+                droppedPolls += 1
+                continue
+            }
+            switch status {
             case .processing:
                 break   // keep polling — the caller shows "Clip X of N"
             case .completed(let videoURL):
@@ -11259,15 +11333,23 @@ struct ReelStudioView: View {
         }
 
         try await requireCurrent()
-        let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
-        defer { try? FileManager.default.removeItem(at: tmp) }
+        let (downloaded, resp) = try await URLSession.shared.download(from: remoteURL)
+        defer { try? FileManager.default.removeItem(at: downloaded) }
         if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)).")
         }
         try await requireCurrent()
-        guard ((try? tmp.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 else {
+        guard ((try? downloaded.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 else {
             throw AIImagePrep.error("The completed clip was empty. Recover the saved request to download it again.")
         }
+        // The download lands as `CFNetworkDownload_….tmp`. AVFoundation picks
+        // its demuxer from the extension and will not open a `.tmp`, so the
+        // frame extraction below answered with NO frames and the drift route
+        // refused every clip ("frames must hold between 1 and 3 entries" —
+        // TestFlight 60, 2026-10-12, after the clip had already been paid for).
+        // Give the bytes their real name before anything reads them.
+        let tmp = Self.clipPath(forDownloaded: downloaded)
+        defer { try? FileManager.default.removeItem(at: tmp) }
         // No unchecked clip enters the parked library or the final composition.
         // Recovery reuses the accepted generation receipt and exact source; it
         // never submits another paid clip. Legacy receipts without a source hold.
@@ -11276,6 +11358,11 @@ struct ReelStudioView: View {
             throw AIImagePrep.error("This older request has no saved source photo for its quality check. It has been kept, but cannot be added to a reel unchecked.")
         }
         let frames = await ClipFrames.extract(from: tmp)
+        // FAIL CLOSED, locally: a clip this phone cannot read is held, the
+        // receipt stays, and no empty judgement is sent to the server.
+        guard !frames.isEmpty else {
+            throw AIImagePrep.error("Couldn't read the finished clip on this phone, so it is being held rather than published. Recover the saved request to try again.")
+        }
         try await requireCurrent()
         let verdict = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
             kind: "reel", sourceBase64: source, frames: frames, seconds: 5,

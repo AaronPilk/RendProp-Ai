@@ -6,7 +6,7 @@ enum UserDefaults { static let name = "com.rendprop.offline-reel-recovery." + UU
 enum FileStore { static let documents=FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-reel-retained-"+UUID().uuidString);static func relativePath(for u:URL)->String{String(u.path.dropFirst(documents.path.count+1))};static func url(fromRelativePath p:String)->URL{documents.appendingPathComponent(p)} }
 struct DriftVerdict {let mayUse:Bool;let refusal:String}
 struct DriftCheckRequest {let requestID:String;let kind:String;let sourceBase64:String;let frames:[(at:String,jpeg:Data)];let seconds:Int?;let spaceType:String;let listingServerID:UUID?}
-enum ClipFrames {static func extract(from u:URL) async -> [(at:String,jpeg:Data)] { ["first","middle","last"].map { ($0, Data("frame".utf8)) } } }
+enum ClipFrames {static var lastURL:URL?;static var answerNoFrames=false;static func extract(from u:URL) async -> [(at:String,jpeg:Data)] { lastURL=u;if answerNoFrames{return []};return ["first","middle","last"].map { ($0, Data("frame".utf8)) } } }
 struct EnhancedPhoto { let enhancedURL:URL }
 struct AIShot { let motion:String?;let room:String? }
 struct UIImage { static var onPreparation:(() -> Void)?;let bytes:Data;init?(contentsOfFile:String){guard let d=try? Data(contentsOf:URL(fileURLWithPath:contentsOfFile)) else{return nil};bytes=d};func jpegData(compressionQuality:Double)->Data?{Self.onPreparation?();return bytes} }
@@ -15,12 +15,12 @@ protocol APIClient {func aiVideoReelClip(imageBase64:String,mime:String,prompt:S
 final class ClipAPI:APIClient {
  var expectedContext:PendingReelRequest.Context?;var lastKey:String?
  var beforeReply:(() throws -> Void)?
- var rejectsDrift=false;var unavailableDrift=false;var checksDrift=0;var posts=0,polls=0;var throwPoll=false;var throwSubmit=false;var refuseSubmit=false;var refusalStatus=400;var terminal=false;var url:URL
+ var rejectsDrift=false;var unavailableDrift=false;var checksDrift=0;var posts=0,polls=0;var throwPolls=0;var throwSubmit=false;var refuseSubmit=false;var refusalStatus=400;var terminal=false;var url:URL
  let job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel")
  init(_ u:URL){url=u}
  func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob{if let context=expectedContext {let marker=PendingReelRequest.load(context);precondition(marker?.submissionUnconfirmed==true && marker?.operationID==idempotencyKey && marker?.inputDigest?.count==64,"durable operation marker exists before POST")};lastKey=idempotencyKey;posts+=1;precondition(seconds==5&&mime=="image/jpeg"&&aspect=="9:16"&&presetVersion==1&&motion=="fly_through"&&prompt==nil);if throwSubmit{throw URLError(.networkConnectionLost)};if refuseSubmit{throw APIError.server(status:refusalStatus,code:refusalStatus == 409 ? "conflict" : "validation",message:refusalStatus == 409 ? "Duplicate submission — this job was already started." : "Unsupported video accounting metadata")};try beforeReply?();return job}
  func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict { checksDrift+=1;precondition(!r.sourceBase64.isEmpty && r.frames.count==3 && r.requestID==job.requestId);if unavailableDrift { throw URLError(.timedOut) };return DriftVerdict(mayUse:!rejectsDrift,refusal:"Property changed; held.") }
- func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus{polls+=1;precondition(j.requestId==job.requestId);if throwPoll{throw URLError(.networkConnectionLost)};return terminal ? .failed("synthetic definitive failure"):.completed(videoURL:url)}
+ func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus{polls+=1;precondition(j.requestId==job.requestId);if throwPolls>0{throwPolls-=1;throw URLError(.networkConnectionLost)};return terminal ? .failed("synthetic definitive failure"):.completed(videoURL:url)}
 }
 @MainActor final class AIConsent {
  static let shared=AIConsent();var isGranted=true;var revocationRevision:UInt64=0
@@ -141,7 +141,7 @@ final class ClosedVideoProtocol:URLProtocol {
   check(ClosedVideoProtocol.requests.first?.value(forHTTPHeaderField:"x-rendprop-ai-consent")==nil,"normal release never invents lab consent header")
 #endif
   if CommandLine.arguments.contains("--dispatch-only") { print("PASSED: \(checks) actual live video dispatch assertions; closed URLProtocol, no network"); return }
-  let clip=ClipAPI(URL(string:CommandLine.arguments[1]+"/recover")!);clip.expectedContext=ctx;clip.throwPoll=true
+  let clip=ClipAPI(URL(string:CommandLine.arguments[1]+"/recover")!);clip.expectedContext=ctx;clip.throwPolls=99
   // Execute the actual captured Reel Studio guard after synthetic preparation.
   let auth=AuthStore.shared;WorkspaceContext.selectedOrgID=ctx.workspace
   let model=GuardModel(.init(id:ctx.listingID,serverID:ctx.serverListingID))
@@ -151,14 +151,15 @@ final class ClosedVideoProtocol:URLProtocol {
   UIImage.onPreparation=nil
   check(clip.posts==0 && !PendingReelRequest.exists(ctx),"revocation during preparation permits no paid POST")
   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("poll failure must surface")}catch{checks+=1}
-  check(clip.posts==1&&clip.polls==1,"one accepted submit and one failed poll")
+  let staysDownPolls=clip.polls
+  check(clip.posts==1&&staysDownPolls>=1&&clip.throwPolls==99-staysDownPolls,"one accepted submit; every poll while the connection stayed down was a status poll")
   check(PendingReelRequest.load(ctx)?.job.requestId==clip.job.requestId,"pending receipt after poll failure")
   check(PendingReelRequest.load(.init(listingID:ctx.listingID,serverListingID:ctx.serverListingID,owner:"other-owner",workspace:ctx.workspace))==nil,"receipt hidden from other account")
   check(PendingReelRequest.load(.init(listingID:ctx.listingID,serverListingID:ctx.serverListingID,owner:ctx.owner,workspace:UUID()))==nil,"receipt hidden from other workspace")
   check(PendingReelRequest.load(.init(listingID:ctx.listingID,serverListingID:UUID(),owner:ctx.owner,workspace:ctx.workspace))==nil,"receipt refuses changed server binding")
   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("existing receipt blocks second POST")}catch{checks+=1}
-  check(clip.posts==1&&clip.polls==1,"existing receipt blocks second POST")
-  clip.throwPoll=false
+  check(clip.posts==1&&clip.polls==staysDownPolls,"existing receipt blocks second POST")
+  clip.throwPolls=0
   do{_ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("HTTP500 surfaced")}catch{checks+=1}
   check(PendingReelRequest.load(ctx) != nil&&clip.posts==1,"HTTP500 preserves receipt without submitting")
   clip.rejectsDrift=true
@@ -169,10 +170,23 @@ final class ClosedVideoProtocol:URLProtocol {
   do { _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("unavailable check must hold") } catch {checks+=1}
   check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"unavailable QC holds accepted receipt")
   clip.unavailableDrift=false
-  let result=try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0)
+  // The download is a `.tmp`; AVFoundation only opens the real extension.
+  ClipFrames.answerNoFrames=true
+  do { _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("an unreadable clip must be held") } catch {checks+=1;check(error.localizedDescription.contains("Couldn't read the finished clip on this phone"),"an unreadable clip is held with the local reason")}
+  check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"an unreadable clip keeps the paid receipt without a generation retry")
+  check(!FileManager.default.fileExists(atPath:root.appendingPathComponent("clip-0.mp4").path),"an unreadable clip is not retained")
+  ClipFrames.answerNoFrames=false
+  let driftCallsBeforeRead=clip.checksDrift
+  // One dropped poll (the phone was locked mid-clip) must not fail a paid clip.
+  clip.throwPolls=1
+  let result:URL
+  do { result=try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0) } catch { preconditionFailure("one dropped poll must not fail a paid clip") }
+  check(ClipFrames.lastURL?.pathExtension=="mp4","frames are read from an .mp4 path, never the .tmp download")
+  check(clip.checksDrift==driftCallsBeforeRead+1,"a clip this phone cannot read is held locally without a drift call")
   let resultBytes=try Data(contentsOf:result)
   check(resultBytes==Data("synthetic nonempty retained clip".utf8),"recover saves exact downloaded clip bytes")
-  check(clip.posts==1&&clip.polls==5,"recovery only polls same accepted request")
+  check(clip.posts==1&&clip.polls==staysDownPolls+6&&clip.throwPolls==0,"recovery only polls the same accepted request and resumes after one dropped poll")
+  check(staysDownPolls==6,"a connection that stays down surfaces after six polls")
   check(PendingReelRequest.load(ctx) != nil,"temporary successful download keeps request")
   let old=PendingReelRequest(context:ctx,photoNumber:1,job:clip.job,sourceJPEGBase64:Data("source photo".utf8).base64EncodedString(),sourceSpaceType:"real_estate");try old.save()
   let newer=PendingReelRequest(context:ctx,photoNumber:2,job:.init(requestId:"newer",statusUrl:"s",responseUrl:"r",kind:"reel"));try newer.save();old.clear()

@@ -93,20 +93,30 @@ import ImageIO
               "reviewing a download leaves publication and editing selections unchanged")
         let customPack = try PhotoExportRenderer.prepare([customPhoto], options: .init())
         defer { try? FileManager.default.removeItem(at: customPack.directory) }
-        check(customPack.images.count == 2 && customPack.files.count == 3, "reviewed exact custom exports with original and disclosure")
+        // Build 61: every other version of the photo rides along, named by what
+        // it is; a descendant that was never reviewed is withheld and noted.
+        check(!customPack.files.contains { $0.lastPathComponent.contains("-version-2-") }, "an unreviewed custom descendant is withheld from the package")
+        check(customPack.images.count == 3 && customPack.files.count == 5, "reviewed custom exports with its original, its enhancement and both disclosures")
+        check(customPack.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-edited.jpg"], "other versions sit between the original and the current edit")
+        let customNote = try String(contentsOf: customPack.directory.appendingPathComponent("01-disclosure.txt"), encoding: .utf8)
+        check(customNote.contains("1 other version of this photo was not included"), "the photo's note says a version was withheld")
+        let enhancedCopy = try Data(contentsOf: customPack.directory.appendingPathComponent("01-version-1-enhanced.jpg"))
+        check(enhancedCopy == original, "an exported version is the exact stored bytes")
+        let enhancedNote = try String(contentsOf: customPack.directory.appendingPathComponent("01-version-1-enhanced-disclosure.txt"), encoding: .utf8)
+        check(enhancedNote.hasPrefix("Original enhancement.") && enhancedNote.contains("enhanced on this phone"), "each exported version carries its own disclosure note")
         try rejectsCustom([descendantPhoto], "review of one custom output cannot approve a different descendant download")
         let mls = try PhotoExportRenderer.prepare([photo], options: .init())
         defer { try? FileManager.default.removeItem(at: mls.directory) }
-        check(mls.images.count == 2 && mls.files.count == 3, "MLS package includes current, original and disclosure")
-        check(mls.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-edited.jpg"], "Photos receives original before current edit")
+        check(mls.images.count == 3 && mls.files.count == 5, "MLS package includes current, original, the enhancement before staging and their disclosures")
+        check(mls.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-edited.jpg"], "Photos receives original before current edit")
         check(mls.images.last?.lastPathComponent == "01-edited.jpg", "current edit is the last photo added")
         let batch = try PhotoExportRenderer.prepare([photo, photo], options: .init())
         defer { try? FileManager.default.removeItem(at: batch.directory) }
-        check(batch.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-edited.jpg", "02-retained-original.jpg", "02-edited.jpg"],
+        check(batch.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-edited.jpg", "02-retained-original.jpg", "02-version-1-enhanced.jpg", "02-edited.jpg"],
               "batch Photos saves each original before its current edit")
-        check(batch.files.map(\.lastPathComponent) == ["01-disclosure.txt", "01-edited.jpg", "01-retained-original.jpg", "02-disclosure.txt", "02-edited.jpg", "02-retained-original.jpg"],
+        check(batch.files.map(\.lastPathComponent) == ["01-disclosure.txt", "01-edited.jpg", "01-retained-original.jpg", "01-version-1-enhanced-disclosure.txt", "01-version-1-enhanced.jpg", "02-disclosure.txt", "02-edited.jpg", "02-retained-original.jpg", "02-version-1-enhanced-disclosure.txt", "02-version-1-enhanced.jpg"],
               "batch Files retains alphabetical pairing independent of Photos order")
-        check(mls.files.map(\.lastPathComponent) == ["01-disclosure.txt", "01-edited.jpg", "01-retained-original.jpg"], "matching names pair metadata and source")
+        check(mls.files.map(\.lastPathComponent) == ["01-disclosure.txt", "01-edited.jpg", "01-retained-original.jpg", "01-version-1-enhanced-disclosure.txt", "01-version-1-enhanced.jpg"], "matching names pair metadata and source")
         let mlsImage = UIImage(contentsOfFile: mls.directory.appendingPathComponent("01-edited.jpg").path)!
         check(brightness(mlsImage, x: 380, y: 285) > 240, "MLS file is clean with no banned text overlay")
         let retained = try Data(contentsOf: mls.directory.appendingPathComponent("01-retained-original.jpg"))
@@ -201,6 +211,7 @@ import ImageIO
         check(bundle.files.allSatisfy { names.contains($0.lastPathComponent) }, "every disclosure note, original and JPEG is in the archive")
         let readme = String(decoding: zipBytes[(30 + "README.txt".utf8.count)..<(30 + "README.txt".utf8.count + Int(le32(18)))], as: UTF8.self)
         check(readme.contains("disclosure") && readme.contains("2 photos"), "README explains the numbering and the disclosure notes")
+        check(readme.contains("1 other version (same number, '-version-<n>-<what it is>'") && readme.contains("Every image Rendprop holds for a photo is here"), "README explains the version labels")
         check(directoryOffset == storedBytes + names.reduce(0) { $0 + 30 + $1.utf8.count }, "local headers and stored bytes fill the archive up to the central directory")
         check(bundle.files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }, "packaging leaves the prepared files in place")
         // Build 60: parse the actual listing package back through its headers,
