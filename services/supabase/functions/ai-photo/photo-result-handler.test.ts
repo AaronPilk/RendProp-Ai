@@ -2,7 +2,7 @@ import {assert,assertEquals,assertRejects,AssertionError} from "https://deno.lan
 const actor="ea100606-0000-4000-8000-000000000001",org="ea100606-0000-4000-8000-000000000002",listing="ea100606-0000-4000-8000-000000000003";
 const encode=(source:string)=>`data:application/typescript;base64,${btoa(unescape(encodeURIComponent(source)))}`;
 const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|null=null){
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|null=null){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
@@ -19,6 +19,10 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  if(removeAdmission==="stage"){
   const anchor='assertCustomPhotoPrompt(brief, promptSpace, "furnishing");';
   assert(source.includes(anchor));source=source.replace(anchor,"");
+ }
+ if(removeAdmission==="stage_prompt"){
+  const anchor="return buildRealEstateStagePrompt(styleDesc);";
+  assert(source.includes(anchor));source=source.replace(anchor,'return "Virtually stage this real-estate photo with " + styleDesc + ". " + STAGE_LOCK;');
  }
  const start=source.indexOf("Deno.serve(async (req) => {")+"Deno.serve(".length,end=source.indexOf("\n});\n\n// ── helper modes",start);
  assert(start>0&&end>start,"Extract actual handler callback");
@@ -45,12 +49,13 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const ownerQaPhotoStep=(args)=>actualOwnerQaPhotoStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})});
  import {assertCustomPhotoPrompt,assertCustomPhotoOutput} from ${url("../ai-copy/guard.ts")};
  import {CUSTOM_PHOTO_FIXED_FEATURES} from ${url("../_shared/custom-photo-prompt.ts")};
+ import {buildRealEstateStagePrompt} from ${url("../_shared/photo-stage-prompt.ts")};
  import {MAX_PROMPT_INPUT,MAX_PROMPT_OUTPUT,editPromptInstruction} from ${url("../ai-copy/prompt.ts")};
  import {validatePhotoInputs,validatePhotoPrompt} from ${url("./input-policy.ts")};
  import {persistOwnedPhotoResult,restorePhotoResult,photoResultKeys} from ${helper};
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
- export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],submits:0,polls:0,puts:0,gets:0,completes:0};
+ export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
  const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}},RE_PROMPTS={twilight:"Synthetic"};
  ${source.slice(locksStart,locksEnd)}
  ${source.slice(customStart,customEnd)}
@@ -63,7 +68,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const step={route_id:"fixture-route",provider:"gemini",model:MODEL,task:"photo.twilight",unit:"output_image",unit_cents:1,capabilities:[],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true};
  const routerEnabled=async()=>state.router,resolveChain=async(task)=>state.routes??[{...step,task}],legacyPhotoStep=(task)=>({...step,task}),needsForPhotoEdit=()=>[];
  const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{};
- const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/png",result_url:"data:image/png;base64,QUFB"};};
+ const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/png",result_url:"data:image/png;base64,QUFB"};};
  const recordRoutedAiCost=async()=>{},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
  const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
  if(name==="library_access"||name==="listing_library_scope"){
@@ -154,6 +159,41 @@ Deno.test("actual staging handler accepts furniture noun briefs and retains all 
    assert(f.state.prompts[0].includes("trim color and finish"));assert(f.state.prompts[0].includes("quoted data for movable furniture only"));
   }finally{f.close();}}
  }
+});
+Deno.test("actual staging handler delivers furniture-only scope and exact source on all styles and routing modes",async()=>{
+ const {prepareOwnerQaPhotoInput}=await import("./owner-photo-qa.ts");
+ for(const style of ["modern","rustic","minimalist","scandinavian"]){
+  for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
+   const request=f.request({edit:"stage",style}),input=await request.clone().json();
+   const response=await f.run(request);assertEquals(response.status,200,await response.text());
+   assertEquals(f.state.charges,1);assertEquals(f.state.holds,1);assertEquals(f.state.submits,1);assertEquals(f.state.helperDispatch,0);
+   const sent=f.state.inputs[0],prompt=sent.prompt;
+   assertEquals(sent.image_b64,input.image_b64);assertEquals(sent.image_url,`data:image/jpeg;base64,${input.image_b64}`);
+   for(const lock of ["edit movable furnishings only","overhead slab","existing open pergolas open","garage-door color and finish","trim color and finish","outdoor furniture on a balcony","No repainting","never copy its architecture or viewpoint","do not repair or hide them"])assert(prompt.includes(lock),lock);
+   assert(new TextEncoder().encode(prompt).length<4096,"Default staging prompt retains the2K source/text bound");
+   const inputBound=prepareOwnerQaPhotoInput(sent).extra?.owner_photo_input_bound;
+   assert(typeof inputBound==="number"&&inputBound<=8192);
+  }finally{f.close();}}
+ }
+});
+Deno.test("actual staging fallback keeps the same surgical prompt, brief and selected source without another helper",async()=>{
+ const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
+  {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.stage",unit:"output_image",unit_cents:6.7},
+  {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.stage",unit:"output_image",unit_cents:4}];
+  const brief="Outdoor chairs and a small movable table, with natural linen cushions.";
+  const request=f.request({edit:"stage",style:"rustic",prompt:brief}),body=await request.clone().json();
+  const response=await f.run(request);assertEquals(response.status,200,await response.text());
+  assertEquals(f.state.submits,2);assertEquals(f.state.holds,2);assertEquals(f.state.helperDispatch,0);
+  assertEquals(f.state.prompts[0],f.state.prompts[1]);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
+  assert(f.state.prompts[0].includes("solid slabs solid"));assert(f.state.prompts[0].includes("existing open pergolas open"));
+  for(const input of f.state.inputs){assertEquals(input.image_b64,body.image_b64);assertEquals(input.image_url,`data:image/jpeg;base64,${body.image_b64}`);}
+ }finally{f.close();}
+});
+Deno.test("compiled removal of the staging builder fails the unchanged actual-handler furniture/source oracle",async()=>{
+ const f=await fixture(false,"stage_prompt");try{
+  await assertRejects(async()=>{const response=await f.run(f.request({edit:"stage",style:"rustic"}));assertEquals(response.status,200);assert(f.state.prompts[0].includes("existing open pergolas open"),"Preserve the photographed overhead construction rather than restyling it");},AssertionError);
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.helperDispatch,0);
+ }finally{f.close();}
 });
 Deno.test("actual optional photo polisher refuses compound input before charging and smuggled output after its one helper attempt",async()=>{
  for(const prompt of ["Remove boxes and the water stain on the ceiling.","Improve lighting and swap countertops for marble."]){const f=await fixture();try{

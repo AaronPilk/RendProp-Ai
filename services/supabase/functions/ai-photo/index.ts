@@ -86,6 +86,7 @@ import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
 import { CUSTOM_PHOTO_FIXED_FEATURES } from "../_shared/custom-photo-prompt.ts";
+import { buildRealEstateStagePrompt } from "../_shared/photo-stage-prompt.ts";
 import { assertCustomPhotoPrompt, assertCustomPhotoOutput } from "../ai-copy/guard.ts";
 import { type ProvenanceKind, disclosureFallback, recordProvenance } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
@@ -452,15 +453,9 @@ const RE_STAGE_STYLES: Record<string, string> = {
 };
 
 function reStagePrompt(styleDesc: string): string {
-  return (
-    "Virtually stage this real-estate photo: furnish the room with " + styleDesc + ". " +
-    "Use realistic scale and placement appropriate to the room type, resting naturally on the " +
-    "existing floor. The furnishings must fit the photographed room's actual purpose: a bedroom " +
-    "needs bedroom furniture, not a living-room sofa arrangement; a kitchen needs no invented " +
-    "appliances or replacement cabinetry. Use fewer pieces when access is tight. If the room " +
-    "already has movable furniture, replace only those movable pieces cleanly with the new set. " +
-    STAGE_LOCK
-  );
+  // Style describes movable furnishings; it does not restyle the photographed
+  // building. This remains a prompt instruction, subject to manual review.
+  return buildRealEstateStagePrompt(styleDesc);
 }
 
 function prompts(p: Profile): Record<string, string> {
