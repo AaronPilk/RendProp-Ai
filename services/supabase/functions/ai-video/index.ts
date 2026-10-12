@@ -228,6 +228,7 @@ import { privateMediaUrl } from "../_shared/private-media.ts";
 import { createRoutedOutput } from "./routed-output.ts";
 import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
+import { ownerQaReelStep, prepareOwnerQaReelInput } from "./owner-reel-qa.ts";
 import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
@@ -1483,7 +1484,9 @@ Deno.serve(async (req) => {
       const task = "video.reel_clip";
       const routerOn = await routerEnabled();
       const reelAspect = body.aspect === "16:9" || body.aspect === "9:16" ? body.aspect : null;
-      const steps = await resolveChain(
+      const ownerQaStep = await ownerQaReelStep({ actorId: user.id, orgId,
+        listingId: body.listing_id ?? reelListingId, seconds: secs });
+      const steps = ownerQaStep ? [ownerQaStep] : await resolveChain(
         task,
         {
           plan,
@@ -1521,7 +1524,29 @@ Deno.serve(async (req) => {
           rpc: async (name, args) => await adminClient().rpc(name, args),
           submit: (selected) => runChain(task, [selected], async (step) => {
           try {
-            return await adapterFor(step.provider).submit(step, genInput);
+            const providerInput = ownerQaStep ? await prepareOwnerQaReelInput(
+              { actorId: user.id, orgId, listingId: String(body.listing_id ?? reelListingId) }, genInput, {
+                authorize: async () => {
+                  const liveOrg = await contentOrgForUser(user.id, orgId, body.listing_id ?? reelListingId ?? undefined, true);
+                  const live = await ownerQaReelStep({ actorId: user.id, orgId: liveOrg,
+                    listingId: body.listing_id ?? reelListingId, seconds: secs });
+                  return live?.provider === step.provider && live?.model === step.model;
+                },
+                register: async (key, bytes) => {
+                  const registered = await adminClient().rpc("register_private_ai_output", {
+                    p_user: user.id, p_org: orgId, p_listing: body.listing_id ?? reelListingId,
+                    p_bucket: "renders", p_key: key, p_bytes: bytes,
+                  });
+                  if (registered.error || registered.data?.ok !== true || registered.data.key !== key) throw new Error("QA source registration unavailable");
+                },
+                put: (key, bytes, mime) => putBytes(R2_BUCKET_RENDERS, key, bytes, mime, true),
+                head: key => headObject(R2_BUCKET_RENDERS, key),
+                // This vendor-only source capability is bounded by the same
+                // two-hour processing window as its job receipt. It is never
+                // returned to the app; app/download capabilities stay 600 s.
+                sign: key => presignGet(R2_BUCKET_RENDERS, key, 7200),
+              }) : genInput;
+            return await adapterFor(step.provider).submit(step, providerInput);
           } catch (error) {
             // Deliberate HttpErrors are returned without logging. Preserve the
             // provider's HTTP status before runChain maps it to our 502, so

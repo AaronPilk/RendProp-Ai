@@ -123,6 +123,9 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {submitReservedVideo,VideoDispatchUnconfirmed} from ${
     JSON.stringify(helperUrl)
   };
+    import {ownerQaReelStep as actualOwnerQaReelStep,prepareOwnerQaReelInput} from ${
+    JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)
+  };
     type RouteStep=any;type JobRef=any;type JobTokenOwner=any;type ChainResult<T>={value:T,step:any};type GenerateInput=any;type DroneBody=any;type AerialBody=any;type ReelBody=any;type DroneEstimate=any;type AerialMotion=any;type ReelMotion=any;
     export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]};
     export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]});}
@@ -131,6 +134,9 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     const orgForUser=async(..._a:any[])=>"org-synthetic";
     const assertPaidAiIdentity=async(..._a:any[])=>{};
     const preferredOrg=(_req:Request)=>undefined;
+    // The real helper is exercised against a closed, disabled QA grant. No
+    // live Supabase client/config can enter this ordinary-route harness.
+    const ownerQaReelStep=(args:any)=>actualOwnerQaReelStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})}as any);
     const extractEraseJob=(_req:Request)=>null;
     const eraseHandler=async(..._a:any[])=>{throw Error("Reflection route must not be reached");};
     const resolvePublicAsset=async(..._a:any[])=>({id:"asset-synthetic",org_id:"org-synthetic",listing_id:"listing-synthetic",kind:"video",url:"https://media-fixture.invalid/private-source-marker.mp4",duration_s:90,width:1920,height:1080,fps:60,space_type:"real_estate",transport_version:2,...state.options.asset});

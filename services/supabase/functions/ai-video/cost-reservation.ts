@@ -103,6 +103,12 @@ export async function submitReservedVideo<T extends { id: string }>(
   } else if (step.provider === "fal" && model === "minimax/hailuo-02/standard/image-to-video" && Number.isInteger(input.seconds) && input.seconds! >= 1 && input.seconds! <= 6) {
     // fal model page: Hailuo 02 Standard (768P) is $0.045 per generated second, 6 s maximum.
     quote = {cents: Math.max(hold, input.seconds! * 4.5),version:TARIFF_VERSION};
+  } else if (step.provider === "kie" && model === "bytedance/v1-pro-fast-image-to-video" &&
+      input.seconds === 5 && input.resolution === "1080p" && unitCents === 3.6 && step.unit === "second") {
+    // Official KIE catalog checked 2026-10-12: 36 credits = $0.18 at 1080p/5s.
+    // Only the temporary, explicitly authorized owner QA route selects this.
+    // https://kie.ai/seedance-1-0-pro-fast
+    quote = {cents: Math.max(hold, 18),version:TARIFF_VERSION};
   }
   try {
     // The same request must never reach a second provider after a timeout or

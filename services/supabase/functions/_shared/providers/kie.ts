@@ -207,6 +207,15 @@ export const kieAdapter: ProviderAdapter = {
       if (imageUrl) jobInput.image_url = imageUrl;
       jobInput.resolution = resolution;
       jobInput.duration = duration;
+      if (step.model === "bytedance/v1-pro-fast-image-to-video") {
+        // Official model schema has no aspect_ratio field: its source image
+        // controls framing. Never invent an unsupported provider parameter.
+        // https://docs.kie.ai/market/bytedance/v1-pro-fast-image-to-video
+        if (!["5", "10"].includes(duration) || !["720p", "1080p"].includes(resolution)) {
+          throw new ProviderError(PROVIDER, "validation", "Kie Seedance Fast needs a supported duration and resolution", 400);
+        }
+        jobInput.nsfw_checker = true;
+      }
       const data = await kieCall<{ taskId?: string }>(
         `${KIE_BASE}/api/v1/jobs/createTask`,
         {
