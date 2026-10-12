@@ -99,11 +99,21 @@ Apple completed processing: build `4d353aef-a30b-4c73-86d4-b12ac7f6268e` is
 group. Testing notes were written and read back exactly; non-exempt encryption
 is false. The App Store 57 association and manual release state remain unchanged.
 
-At the delivery snapshot, CI `38185550169` has **11 successful jobs and one
-still running** (the hosted native audit). The complete unchanged tour-host
-audio/export suite passed on this run. This is a passing verification, not a
-code repair of the earlier retained export discrepancy. The receipt is a
-timestamped snapshot, not a claim that all twelve jobs have completed.
+At the initial delivery snapshot, CI `38185550169` had 11 successful jobs and
+the hosted native audit still running. The run has now completed **SUCCESS,
+all 12 jobs green**, on `1a090bb`. The complete unchanged tour-host audio/export
+suite passed, and the hosted native audit completed successfully with no
+skipped steps. The tested app/project trees still match the signed archive.
+This is a passing verification, not a code repair of the earlier retained
+export discrepancy. The receipt preserves the earlier snapshot and records
+the final conclusion separately.
+
+The completed hosted receipts independently reproduce package assembly
+44 assertions / 4 negative controls, UIKit renderer 148 / 12, reel recovery
+125 plus 14 dispatch assertions / 16 controls, and facts 109 / 9. All source
+bindings pass; all 64 native-job steps succeeded without skips. Artifact IDs,
+receipt paths and digests are recorded in the release receipt. Nothing was
+rerun or deployed to update this final result.
 
 ## Phone acceptance on 60
 
@@ -138,8 +148,10 @@ production Swift bodies and listing models as well as actual UIKit/JPEG/ZIP
 code in an iOS simulator. A late failure could identify app behavior, fixture
 issues or infrastructure; the failed step and receipt determine its class.
 Running offline or extracting source does not establish that a failure is
-harmless. The job remains pending at this review snapshot; no ad-hoc rerun,
-product change or deployment was made to obtain a green result.
+harmless. The job was pending at Claude's review snapshot and subsequently
+completed successfully. No ad-hoc rerun, product change or deployment was made
+to obtain a green result. The duplicate review attachment received October 12
+is byte-identical to the previously reconciled review.
 
 After phone acceptance, the choice between keeping 57 as submitted or replacing
 it with 60 remains a separate submission decision. Neither review authorizes
