@@ -87,9 +87,7 @@ enum PhotoExportRenderer {
                         let caption = version?.caption ?? "Edit history is unavailable. Verify all edits and locate the unaltered source before publishing."
                         let captionURL = directory.appendingPathComponent(String(format: "%02d", offset + 1) + "-disclosure.txt")
                         let framingNote = options.levelDegrees == 0 ? "" : "\nExport copy manually leveled and cropped. The stored source is unchanged."
-                        try Data((caption + framingNote + "\nCheck your MLS or advertising platform's disclosure and original-photo rules.\n").utf8)
-                            .write(to: captionURL, options: .atomic)
-                        deliveryFiles.append(captionURL)
+                        var withheldNote = ""
                         if options.includeOriginals, version?.originalVerified == true,
                            photo.originalURL.standardizedFileURL != photo.enhancedURL.standardizedFileURL {
                             let originalURL = directory.appendingPathComponent(String(format: "%02d", offset + 1) + "-retained-original." + photo.originalURL.pathExtension)
@@ -97,6 +95,41 @@ enum PhotoExportRenderer {
                             try FileManager.default.copyItem(at: photo.originalURL, to: originalURL)
                             urls.append(originalURL); deliveryFiles.append(originalURL)
                         }
+                        // Build 61 — every other version the app holds for this
+                        // photo, not only the gallery one and its untouched
+                        // original: the enhancement made before any AI edit,
+                        // each earlier AI edit, a superseded staging ("it needs
+                        // to be EVERY image associated and labeled" — Aaron,
+                        // TestFlight 60). Oldest first, numbered by position in
+                        // the photo's history, named by what each one is, exact
+                        // stored bytes, each with its own disclosure note. The
+                        // gallery version keeps '-edited'. A custom output that
+                        // was never reviewed is withheld exactly as it is from a
+                        // direct download, and the photo's note says so.
+                        if options.includeOriginals, let version {
+                            let photoDirectory = photo.enhancedURL.deletingLastPathComponent()
+                            let others = history.history(for: version.id).filter { $0.id != version.id }
+                                .sorted { $0.createdAt != $1.createdAt ? $0.createdAt < $1.createdAt : $0.id < $1.id }
+                            var withheld = 0
+                            for (position, other) in others.enumerated() {
+                                let stored = photoDirectory.appendingPathComponent(other.imageFile)
+                                guard FileManager.default.fileExists(atPath: stored.path),
+                                      (try? PhotoVersionHistory.requireDownloadReview(imageURL: stored)) != nil else { withheld += 1; continue }
+                                let stem = String(format: "%02d", offset + 1) + "-version-\(position + 1)-" + other.exportSlug
+                                let copy = directory.appendingPathComponent(stem + "." + (stored.pathExtension.isEmpty ? "jpg" : stored.pathExtension))
+                                try FileManager.default.copyItem(at: stored, to: copy)
+                                let note = directory.appendingPathComponent(stem + "-disclosure.txt")
+                                try Data((other.title + ".\n" + other.caption + "\nCheck your MLS or advertising platform's disclosure and original-photo rules.\n").utf8)
+                                    .write(to: note, options: .atomic)
+                                urls.append(copy); deliveryFiles.append(copy); deliveryFiles.append(note)
+                            }
+                            if withheld > 0 {
+                                withheldNote = "\n\(withheld) other version\(withheld == 1 ? " of this photo was" : "s of this photo were") not included: not yet reviewed, or no longer on this phone."
+                            }
+                        }
+                        try Data((caption + framingNote + withheldNote + "\nCheck your MLS or advertising platform's disclosure and original-photo rules.\n").utf8)
+                            .write(to: captionURL, options: .atomic)
+                        deliveryFiles.append(captionURL)
                     }
                     return target
                 }
@@ -121,7 +154,8 @@ enum PhotoExportRenderer {
     /// directory so the usual cleanup removes both.
     static func package(_ prepared: Prepared, archiveName: String, extras: [Extra] = [], now: Date = Date()) throws -> URL {
         guard !prepared.files.isEmpty || !extras.isEmpty else { throw Failure(message: "There are no photos to package.") }
-        let photoCount = prepared.files.filter { ["jpg", "jpeg"].contains($0.pathExtension.lowercased()) && !$0.lastPathComponent.contains("retained-original") }.count
+        let versionCount = prepared.files.filter { $0.lastPathComponent.contains("-version-") && !$0.lastPathComponent.hasSuffix("-disclosure.txt") }.count
+        let photoCount = prepared.files.filter { ["jpg", "jpeg"].contains($0.pathExtension.lowercased()) && !$0.lastPathComponent.contains("retained-original") && !$0.lastPathComponent.contains("-version-") }.count
         let originalCount = prepared.files.filter { $0.lastPathComponent.contains("retained-original") }.count
         let disclosureCount = prepared.files.filter { $0.lastPathComponent.hasSuffix("-disclosure.txt") }.count
         let title = ZipArchive.safeFileName(archiveName, fallback: "Rendprop")
@@ -130,13 +164,18 @@ enum PhotoExportRenderer {
         var readme = "\(title)\n\(whole ? "Listing package" : "Photos") exported from Rendprop on \(formatter.string(from: now)).\n\n"
         let total = prepared.files.count + extras.count
         readme += "\(total) file\(total == 1 ? "" : "s"): "
-        readme += "\(photoCount) photo\(photoCount == 1 ? "" : "s") (numbered in gallery order)"
-        if originalCount > 0 { readme += ", \(originalCount) retained original\(originalCount == 1 ? "" : "s") (same number, '-retained-original')" }
-        if disclosureCount > 0 { readme += ", \(disclosureCount) disclosure note\(disclosureCount == 1 ? "" : "s") (same number, '-disclosure.txt')" }
+        readme += "\(photoCount) photo\(photoCount == 1 ? "" : "s") (numbered in gallery order; '-edited' is the version shown in the app)"
+        if originalCount > 0 { readme += ", \(originalCount) retained original\(originalCount == 1 ? "" : "s") (same number, '-retained-original': the untouched photo as captured or imported)" }
+        if versionCount > 0 { readme += ", \(versionCount) other version\(versionCount == 1 ? "" : "s") (same number, '-version-<n>-<what it is>', in the order they were made)" }
+        if disclosureCount > 0 { readme += ", \(disclosureCount) disclosure note\(disclosureCount == 1 ? "" : "s") (same name as the image, '-disclosure.txt')" }
         if whole { readme += ", \(extras.count) more file\(extras.count == 1 ? "" : "s") listed below" }
         readme += ".\n\n"
+        if versionCount > 0 {
+            readme += "Every image Rendprop holds for a photo is here: the untouched original, each enhancement or AI edit in the order it was made, and the version shown in the app. "
+            readme += "The label in the file name says what each one is (enhanced, virtually-staged-modern, decluttered, twilight-sky, ...).\n"
+        }
         if disclosureCount > 0 {
-            readme += "Each -disclosure.txt describes the edits recorded for the photo with the same number, including virtual staging and decluttering. "
+            readme += "Each -disclosure.txt describes the edits recorded for the image with the same name, including virtual staging and decluttering. "
             readme += "Add those captions wherever the photo is published; MLS and advertising rules differ, so check yours before uploading.\n"
         } else if photoCount > 0 || originalCount > 0 {
             readme += "These are source files as retained by Rendprop. Check your MLS or advertising platform's rules before publishing.\n"
@@ -345,7 +384,7 @@ struct PhotoExportSheet: View {
                             Text("Matching disclosure text files are included. On-photo labels describe recorded edits, including virtual staging and decluttering.")
                         }
                         if versions.contains(where: { $0?.originalVerified == true }) {
-                            Toggle("Include retained originals", isOn: $includeOriginals)
+                            Toggle("Include retained originals and every other version", isOn: $includeOriginals)
                             Text("Verified retained source files are paired by number in their original format, which may be HEIC or PNG. Turn this off for JPEG copies only. Imported sources may contain edits made before Rendprop.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
@@ -373,11 +412,11 @@ struct PhotoExportSheet: View {
                         .accessibilityIdentifier("export.deliverAs")
                         Text(asArchive
                              ? (wholeListing
-                                ? "One file with the tour, every photo, its disclosure note, the other videos, a listing-details note and a short README — everything a transaction coordinator, your office or a client needs. It opens on any Mac, PC or phone."
-                                : "One file with every photo, its disclosure note and a short README — the easiest thing to send to a transaction coordinator, your office or a client. It opens on any Mac, PC or phone.")
+                                ? "One file with the tour, every photo and every version of it, their disclosure notes, the other videos, a listing-details note and a short README — everything a transaction coordinator, your office or a client needs. It opens on any Mac, PC or phone."
+                                : "One file with every photo and every version of it, their disclosure notes and a short README — the easiest thing to send to a transaction coordinator, your office or a client. It opens on any Mac, PC or phone.")
                              : (wholeListing
-                                ? "Photos, originals, disclosure notes, videos and listing details are shared as separate files. Better for AirDrop to another iPhone."
-                                : "Each photo, original and disclosure note is shared as its own file. Better for AirDrop to another iPhone."))
+                                ? "Photos, originals, every other version, disclosure notes, videos and listing details are shared as separate files. Better for AirDrop to another iPhone."
+                                : "Each photo, original, other version and disclosure note is shared as its own file. Better for AirDrop to another iPhone."))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

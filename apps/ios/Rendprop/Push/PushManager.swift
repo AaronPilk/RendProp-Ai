@@ -635,6 +635,35 @@ final class PushManager: ObservableObject {
     }
 }
 
+// MARK: - "Your reel is ready" (build 61)
+
+/// A local banner when a reel finishes while the app is not in front — the
+/// agent asked to be able to leave the screen while clips generate
+/// (TestFlight 60 feedback). Posted only when notifications are ALREADY
+/// allowed: this app asks for that permission exactly once, at the first
+/// published tour (`PushManager.noteTourPublished`), and a second ask here
+/// would break that promise. No address, no names, nothing a lock screen
+/// should not show. Tapping it opens the app; `PushDelegate` routes nothing
+/// for this category, which is the whole point.
+enum ReelCompletionNotice {
+    @MainActor static func post(success: Bool) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        guard let owner = PushManager.currentIdentity?.owner else { return }
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else { return }
+            let content = UNMutableNotificationContent()
+            content.title = success ? "Your reel is ready" : "Your reel couldn't be made"
+            content.body = success
+                ? "Open Rendprop to watch it and share it."
+                : "Open Rendprop to see what happened. Finished clips are kept on this phone."
+            content.sound = .default
+            content.userInfo = ["recipient_user_id": owner.uuidString, "category": "reel_done"]
+            center.add(UNNotificationRequest(identifier: "reel-done-\(UUID().uuidString)", content: content, trigger: nil))
+        }
+    }
+}
+
 // MARK: - The notification-centre delegate
 
 /// Its own object rather than `AppDelegate` so the tap-handling rule sits next

@@ -1,6 +1,8 @@
 import SwiftUI
 import UIKit
 import AVFoundation
+import CoreLocation
+import MapKit
 // StoreKit is used for two things: `Storefront.current.countryCode` (see
 // `Storefronts` at the bottom of this file) and the in-app subscriptions in
 // `Purchases/` — six auto-renewable products in the `rendprop_plans` group.
@@ -1725,7 +1727,12 @@ final class AppModel: ObservableObject {
     func restoreListing(serverID: UUID) async throws -> RestoredListing {
         guard Config.useLiveBackend else { throw CloudSyncError.identityChanged }
         let restored = try await api.restoreListing(serverID: serverID)
-        await refreshCloudWorkspace()
+        // Build 61: the server has already brought the listing back, so the
+        // row can leave the screen now. The library refresh is a full
+        // workspace sync — several seconds on a big library — and it used to
+        // hold the Restore spinner the whole time ("it does restore, it just
+        // takes a while"). It runs behind the confirmation instead.
+        Task { [weak self] in await self?.refreshCloudWorkspace() }
         return restored
     }
 
@@ -5125,9 +5132,18 @@ struct StartProjectSheet: View {
     @State private var revision = AuthStore.shared.syncSessionRevision
     @State private var org = WorkspaceContext.selectedOrgID
     @FocusState private var focused: Bool
+    // Build 61 (TestFlight 60 feedback): the same address suggestions and
+    // "Use current location" the Listings-tab form has had, here on the door
+    // Home opens — the field was a plain text box and people typed "855
+    // Central" and stopped. Apple's on-device completer, no vendor, no key.
+    @StateObject private var completer = AddressCompleter()
+    @StateObject private var locator = OneShotLocation()
+    @State private var locating = false
+    @State private var locationNote: String?
 
     private var space: SpaceType { SpaceType.current }
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var offersAddressHelp: Bool { space.showsPropertyDetails }
 
     var body: some View {
         NavigationStack {
@@ -5184,13 +5200,106 @@ struct StartProjectSheet: View {
                 .accessibilityIdentifier("home.startProject.name")
                 .textContentType(space.showsPropertyDetails ? .fullStreetAddress : .organizationName)
                 .textInputAutocapitalization(.words)
+                .autocorrectionDisabled(offersAddressHelp)
                 .submitLabel(.done)
                 .focused($focused)
                 .font(.body)
                 .padding(14)
                 .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .onChange(of: name) { value in
+                    if offersAddressHelp { completer.update(query: value) }
+                }
+            if offersAddressHelp, !completer.suggestions.isEmpty {
+                suggestionList
+            }
+            if offersAddressHelp {
+                Button {
+                    useCurrentLocation()
+                } label: {
+                    HStack(spacing: 8) {
+                        if locating { ProgressView() } else { Image(systemName: "location.fill") }
+                        Text(locating ? "Finding you…" : "Use current location")
+                    }
+                    .font(.rpBody.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                }
+                .disabled(locating)
+                .accessibilityIdentifier("home.startProject.currentLocation")
+                if let locationNote {
+                    Text(locationNote).font(.rpCaption).foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Text("Next: \(feature.actionTitle.lowercased()).")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+    }
+
+    /// Up to four street-level matches as you type; one tap fills the field.
+    private var suggestionList: some View {
+        VStack(spacing: 0) {
+            ForEach(completer.suggestions, id: \.self) { item in
+                Button {
+                    Haptics.selection()
+                    completer.accept()
+                    name = AddressCompleter.fullAddress(item)
+                    focused = false
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "mappin.circle.fill").foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title).font(.rpBody).foregroundStyle(Theme.ink).lineLimit(1)
+                            if !item.subtitle.isEmpty {
+                                Text(item.subtitle).font(.rpCaption).foregroundStyle(Theme.inkDim).lineLimit(1)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 11)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Use \(AddressCompleter.fullAddress(item))"))
+                if item != completer.suggestions.last {
+                    Divider().overlay(Theme.border).padding(.leading, 40)
+                }
+            }
+        }
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.border))
+        .accessibilityIdentifier("home.startProject.suggestions")
+    }
+
+    /// One coarse fix → street address in the field. The precise fix is used
+    /// only to resolve the address and is never stored (the listing keeps a
+    /// three-decimal coordinate the same way NewListingView does).
+    private func useCurrentLocation() {
+#if targetEnvironment(simulator)
+        if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.currentLocationFixture") {
+            completer.accept()
+            name = "100 Synthetic Condo Way, Fixture City, NC 28000"
+            return
+        }
+#endif
+        locating = true; locationNote = nil
+        locator.request { loc in
+            guard let loc else {
+                locating = false
+                locationNote = "Location isn't available. Allow it in Settings → Rendprop → Location, or type the address."
+                return
+            }
+            completer.focus(on: loc.coordinate)
+            CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
+                if let p = placemarks?.first {
+                    let line = AddressCompleter.formatted(p)
+                    if !line.isEmpty { completer.accept(); name = line }
+                    else { locationNote = "Couldn't turn your location into a street address. Type it instead." }
+                } else {
+                    locationNote = "Couldn't turn your location into a street address. Type it instead."
+                }
+                locating = false
+            }
         }
     }
 }

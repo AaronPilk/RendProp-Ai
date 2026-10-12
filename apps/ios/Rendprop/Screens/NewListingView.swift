@@ -1476,6 +1476,19 @@ final class AddressCompleter: NSObject, ObservableObject, MKLocalSearchCompleter
         completer.queryFragment = ""
     }
 
+    /// A reverse-geocoded placemark as the one line a person would type:
+    /// "855 Central Ave, St. Petersburg, FL 33701". Shared by every address
+    /// field that offers "Use current location".
+    static func formatted(_ p: CLPlacemark) -> String {
+        var parts: [String] = []
+        let line1 = [p.subThoroughfare, p.thoroughfare].compactMap { $0 }.joined(separator: " ")
+        if !line1.isEmpty { parts.append(line1) }
+        if let city = p.locality { parts.append(city) }
+        let stateZip = [p.administrativeArea, p.postalCode].compactMap { $0 }.joined(separator: " ")
+        if !stateZip.isEmpty { parts.append(stateZip) }
+        return parts.joined(separator: ", ")
+    }
+
     /// `title` is the street line, `subtitle` the city/state/ZIP. Joined they
     /// are what a person would have typed.
     static func fullAddress(_ c: MKLocalSearchCompletion) -> String {
