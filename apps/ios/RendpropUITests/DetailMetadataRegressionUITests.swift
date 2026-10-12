@@ -196,10 +196,16 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         revealActive(allVersions)
         XCTAssertTrue(allVersions.exists, "A reviewed staged photo must offer its retained original and complete version history")
         XCTAssertEqual(allVersions.value as? String, "1", "Whole-listing export must include saved versions by default")
-        allVersions.tap()
-        XCTAssertEqual(allVersions.value as? String, "0")
-        allVersions.tap()
-        XCTAssertEqual(allVersions.value as? String, "1")
+        // SwiftUI exposes the labeled row and its UISwitch as nested Switch
+        // elements. The row center is the text label; tap the actual control.
+        let versionControl = allVersions.switches.firstMatch
+        XCTAssertTrue(versionControl.exists && versionControl.isHittable, app.debugDescription)
+        versionControl.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "0"), object: allVersions)], timeout: 5), .completed)
+        versionControl.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", "1"), object: allVersions)], timeout: 5), .completed)
         let delivery = app.segmentedControls["export.deliverAs"]
         revealActive(delivery)
         XCTAssertEqual(delivery.buttons.count, 2)
