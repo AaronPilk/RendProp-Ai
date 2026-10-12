@@ -29,7 +29,7 @@ enum OriginalPhotoMotion {
               renderSize.width >= 2, renderSize.height >= 2,
               renderSize.width <= 4096, renderSize.height <= 4096 else { throw CocoaError(.fileReadCorruptFile) }
         // Bake EXIF orientation once. Only pixels from the checked source JPEG
-        // are drawn; the entire source stays visible at every point in the move.
+        // are drawn. Center cropping fills the output without invented edges.
         let format = UIGraphicsImageRendererFormat.default(); format.scale = 1; format.opaque = true
         let normalized = UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: image.size))
@@ -59,7 +59,7 @@ enum OriginalPhotoMotion {
         guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         writer.startSession(atSourceTime: .zero)
         do {
-            let fit = min(renderSize.width / CGFloat(cg.width), renderSize.height / CGFloat(cg.height))
+            let fill = max(renderSize.width / CGFloat(cg.width), renderSize.height / CGFloat(cg.height))
             for frame in 0..<150 {
                 try Task.checkCancellation()
                 let deadline = Date().addingTimeInterval(15)
@@ -84,10 +84,11 @@ enum OriginalPhotoMotion {
                 guard let context else { CVPixelBufferUnlockBaseAddress(buffer, []); throw CocoaError(.fileWriteUnknown) }
                 context.setFillColor(UIColor.black.cgColor)
                 context.fill(CGRect(origin: .zero, size: renderSize))
-                // A gentle two-percent push within the source's original
-                // bounds. No crop, stretched geometry, or invented frame edges.
+                // A gentle two-percent push starts covering the output. Only
+                // center cropping removes edges; no black canvas is exposed,
+                // no geometry is stretched and no unseen pixels are invented.
                 let t = CGFloat(frame) / 149
-                let scale = fit * (0.98 + 0.02 * t * t * (3 - 2 * t))
+                let scale = fill * (1.0 + 0.02 * t * t * (3 - 2 * t))
                 let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)
                 context.interpolationQuality = .high
                 context.draw(cg, in: CGRect(x: (renderSize.width - size.width) / 2,

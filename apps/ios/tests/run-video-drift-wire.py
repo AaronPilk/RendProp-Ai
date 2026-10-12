@@ -11,6 +11,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--evidence-dir', '--out', dest='evidence_dir', type=Path)
+parser.add_argument('--source-jpeg', type=Path, help='Capture an actual procedural JPEG through the production serializer')
 args = parser.parse_args()
 out = args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-drift-wire-'))
 out.mkdir(parents=True, exist_ok=True)
@@ -42,6 +43,11 @@ receipt = {'passed': False, 'start_source_sha256': hashes(), 'commands': [], 'ru
         'Foundation URLSession dispatch is captured by URLProtocol, including the actual serialized JSON body and headers.',
         'Account/token access and server replies are closed fixtures; no real Auth, Keychain, vendor, external network or simulator UI.',
         'This proves the real HTTP attempt values and framing/provenance payload, not provider output quality or full-phone completion.']}
+if args.source_jpeg:
+    args.source_jpeg = args.source_jpeg.resolve()
+    data = args.source_jpeg.read_bytes()
+    receipt['actual_source_jpeg'] = {'path': str(args.source_jpeg), 'bytes': len(data),
+        'sha256': hashlib.sha256(data).hexdigest()}
 
 
 def command(name, argv, timeout):
@@ -88,7 +94,7 @@ try:
         swift.write_text(generated)
         code, output = command(name + '-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', str(swift), '-o', str(binary)], 120)
         assert code == 0, name + ' compile failed: ' + output
-        code, output = command(name, [str(binary)], 30)
+        code, output = command(name, [str(binary)] + ([str(args.source_jpeg)] if args.source_jpeg else []), 30)
         passed = code == 0 if expected_failure is None else code != 0 and ('Precondition failed: ' + expected_failure) in output
         receipt['runs'].append({'name': name, 'exit_code': code, 'expected_result': passed,
             'expected_failure': expected_failure, 'source_sha256': hashlib.sha256(generated.encode()).hexdigest(), 'output': output[:2500]})
@@ -98,9 +104,11 @@ except BaseException as error:
     receipt['failure'] = str(error)
     raise
 finally:
+    if args.source_jpeg:
+        receipt['source_jpeg_binding_matches'] = hashlib.sha256(args.source_jpeg.read_bytes()).hexdigest() == receipt['actual_source_jpeg']['sha256']
     receipt['end_source_sha256'] = hashes()
     receipt['source_binding_matches'] = receipt['start_source_sha256'] == receipt['end_source_sha256']
-    receipt['passed'] = 'failure' not in receipt and len(receipt['runs']) == 5 and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches']
+    receipt['passed'] = 'failure' not in receipt and len(receipt['runs']) == 5 and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches'] and receipt.get('source_jpeg_binding_matches', True)
     (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 assert receipt['passed'], 'QC wire source changed or a required control failed'
 print(receipt['runs'][0]['output'].strip())

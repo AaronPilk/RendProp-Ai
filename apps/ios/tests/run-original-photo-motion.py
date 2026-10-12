@@ -11,20 +11,37 @@ args = parser.parse_args()
 out = (args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-original-photo-motion-'))).resolve()
 out.mkdir(parents=True, exist_ok=True)
 source = root / 'apps/ios/Rendprop/Render/ReelComposer.swift'
+detail = root / 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift'
 fixture = root / 'apps/ios/tests/OriginalPhotoMotionTests.swift'
-paths = [source, fixture, Path(__file__).resolve()]
+wire_runner = root / 'apps/ios/tests/run-video-drift-wire.py'
+wire_fixture = root / 'apps/ios/tests/VideoDriftWireTests.swift'
+paths = [source, detail, fixture, wire_runner, wire_fixture, Path(__file__).resolve()]
 def hashes(): return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
-text = source.read_text(); start = text.index('enum OriginalPhotoMotion {'); opening = text.index('{', start)
-depth, end = 1, opening + 1
-while depth:
-    depth += (text[end] == '{') - (text[end] == '}'); end += 1
-body = 'import AVFoundation\nimport Foundation\nimport UIKit\n' + text[start:end] + '\n'
+def block(text, anchor):
+    assert text.count(anchor) == 1, anchor
+    start = text.index(anchor); opening = text.index('{', start)
+    depth, end = 1, opening + 1
+    while depth:
+        depth += (text[end] == '{') - (text[end] == '}'); end += 1
+    return text[start:end]
+text, view = source.read_text(), detail.read_text()
+prep = 'enum AIImagePrep {\n' + '\n'.join(block(view, anchor) for anchor in ['    static func error(_ message:', '    static func downscaled(', '    static func reelSource(']) + '\n}\n'
+prep += 'struct EnhancedPhoto { let enhancedURL: URL }\nenum ReelQualityPrep {\n'
+prep += block(view, '    nonisolated private static func preparedReelJPEG(').replace('private static', 'static', 1) + '\n'
+prep += block(view, '    nonisolated private static func reelDisplayAspect(').replace('private static', 'static', 1) + '\n}\n'
+body = 'import AVFoundation\nimport Foundation\nimport UIKit\n' + block(text, 'enum OriginalPhotoMotion {') + '\n' + prep
 variants = [
     ('actual', body, None),
     ('negative-wrong-photo', body.replace('context.draw(cg, in:', 'context.setFillColor(UIColor.magenta.cgColor); context.fill(CGRect(origin: .zero, size: renderSize)); if false { context.draw(cg, in:').replace('CVPixelBufferUnlockBaseAddress(buffer, [])\n                guard adaptor.append', '}\n                CVPixelBufferUnlockBaseAddress(buffer, [])\n                guard adaptor.append'), 'fallback uses the same selected photo pixels and orientation'),
-    ('negative-stretched-geometry', body.replace('let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)', 'let size = renderSize'), 'fallback aspect fits the source without stretching or inventing geometry'),
+    ('negative-stretched-geometry', body.replace('let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)', 'let size = renderSize'), 'fallback center crop preserves source geometry without stretching'),
+    ('negative-fit-bars', body.replace('let fill = max(', 'let fill = min('), 'fallback encodes source pixels to every edge without black bars'),
+    ('negative-subunit-zoom', body.replace('fill * (1.0 + 0.02 * t', 'fill * (0.98 + 0.02 * t'), 'fallback encodes source pixels to every edge without black bars'),
+    ('negative-source-1280', body.replace('maxDimension: 2048)', 'maxDimension: 1280)'), 'source JPEG retains the available full-resolution pixels up to 2048'),
+    ('negative-source-low-quality', body.replace('compressionQuality: 0.95)', 'compressionQuality: 0.85)'), 'source JPEG uses the actual high-quality 0.95 encoder'),
+    ('negative-source-upscale', body.replace('let scale = min(1, maxDimension / longest)', 'let scale = maxDimension / longest'), 'small source JPEG is never upscaled to pretend detail'),
+    ('negative-source-stretch', body.replace('image.draw(in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2,\n                                  width: width, height: height))', 'image.draw(in: CGRect(origin: .zero, size: size))'), 'source JPEG center crop preserves the selected photo geometry'),
 ]
-receipt = {'passed': False, 'start_source_sha256': hashes(), 'runs': [], 'limitations': ['Actual production UIKit/AVAssetWriter renderer and actual AVFoundation frame decoding with synthetic source JPEGs. No provider, physical TestFlight device, Photos export or real listing pixels. Admission/account/receipt paths are checked separately by the actual-body reel request gate.']}
+receipt = {'passed': False, 'start_source_sha256': hashes(), 'consumed_source_sha256': hashlib.sha256(body.encode()).hexdigest(), 'runs': [], 'limitations': ['Actual production UIKit source cropping/downsampling/JPEG encoder, AVAssetWriter renderer and AVFoundation frame decoding with synthetic source JPEGs. No provider, physical TestFlight device, Photos export or real listing pixels. Admission/account/receipt paths are checked separately by the actual-body reel request gate. Preview layout source is inspected separately; extracted measured display aspect runs on actual encoded tracks. No claim of invented detail or provider output quality.']}
 def command(name, argv, timeout=120, check=True):
     result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     (out / (name + '.log')).write_text(result.stdout + result.stderr)
@@ -43,13 +60,23 @@ try:
         path.write_text(code)
         command(name + '-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', architecture + '-apple-ios16.0-simulator', '-sdk', sdk, str(path), str(fixture), '-o', str(binary)], 180)
         media = out / (name + '-media')
-        result = command(name, ['xcrun', 'simctl', 'spawn', device['udid'], str(binary), str(media)], 120, False)
+        mode = ['--prep-only'] if name.startswith('negative-source-') else []
+        result = command(name, ['xcrun', 'simctl', 'spawn', device['udid'], str(binary), str(media)] + mode, 180, False)
         log = result.stdout + result.stderr
         expected = result.returncode == 0 if failure is None else result.returncode != 0 and 'Precondition failed: ' + failure in log
         receipt['runs'].append({'name': name, 'exit_code': result.returncode, 'expected_result': expected, 'expected_failure': failure, 'output': log[:2000]})
         binary.unlink()
         assert expected, name + ': ' + log
         if name == 'actual': receipt['observation'] = json.loads((media / 'result.json').read_text())
+    # Bind the actual UIImage-encoded, high-detail source through the real QC
+    # serializer/request/executor. The server source guard is tested separately
+    # against this same file; URLProtocol keeps this transport proof offline.
+    wire_out = out / 'actual-jpeg-wire'
+    command('actual-jpeg-wire', ['python3', str(wire_runner), '--source-jpeg', str(out / 'actual-media/source-high-detail-prepared.jpg'), '--evidence-dir', str(wire_out)], 180)
+    wire_receipt = json.loads((wire_out / 'receipt.json').read_text())
+    assert wire_receipt['passed'] and wire_receipt['source_jpeg_binding_matches']
+    receipt['actual_jpeg_wire_receipt'] = str(wire_out / 'receipt.json')
+    receipt['actual_jpeg_wire_sha256'] = hashlib.sha256((wire_out / 'receipt.json').read_bytes()).hexdigest()
 except BaseException as error:
     receipt['failure'] = str(error); raise
 finally:
@@ -58,4 +85,4 @@ finally:
     receipt['passed'] = 'failure' not in receipt and len(receipt['runs']) == len(variants) and all(r['expected_result'] for r in receipt['runs']) and receipt['source_binding_matches']
     (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
 print(receipt['runs'][0]['output'].strip())
-print(f'PASS: 2 compiled pixel/geometry controls; receipt: {out / "receipt.json"}')
+print(f'PASS: {len(variants) - 1} compiled pixel/geometry/source-quality controls; receipt: {out / "receipt.json"}')

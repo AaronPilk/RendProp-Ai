@@ -8856,6 +8856,7 @@ struct ReelStudioView: View {
     private var failedClips: Int { clipIssues.count }
     @State private var statusText = ""
     @State private var reelURL: URL?
+    @State private var measuredReelAspect: CGFloat?
     @State private var player: AVPlayer?
     @State private var savedToPhotos = false
     @State private var isSaving = false
@@ -9336,6 +9337,8 @@ struct ReelStudioView: View {
             bigCaptionsRow
             transitionRow
             motionRow
+            Text("Reels export at 1080p. Sharpness depends on the available photos; enlarging a small source cannot restore detail. Motion may crop the edges of a copy; saved photos stay unchanged.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
             makeButton
             aiDisclosureLine
         }
@@ -9650,6 +9653,10 @@ struct ReelStudioView: View {
         .padding(.vertical, 24)
     }
 
+    private var reelResultAspect: CGFloat {
+        measuredReelAspect ?? (portrait ? 9.0 / 16.0 : 16.0 / 9.0)
+    }
+
     @ViewBuilder private var doneSection: some View {
         VStack(spacing: 12) {
             Label("Your reel is ready", systemImage: "checkmark.circle.fill")
@@ -9668,9 +9675,18 @@ struct ReelStudioView: View {
             }
             if let player {
                 VideoPlayer(player: player)
-                    .frame(height: portrait ? 460 : 230)
+                    .aspectRatio(reelResultAspect, contentMode: .fit)
+                    .frame(maxWidth: 460 * reelResultAspect)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .onAppear { player.play() }
+                    .task(id: reelURL) {
+                        guard let url = reelURL else { return }
+                        measuredReelAspect = nil
+                        let owner = auth.userID, revision = auth.syncSessionRevision
+                        guard let ratio = await Self.reelDisplayAspect(url), !Task.isCancelled,
+                              reelURL == url, auth.userID == owner, auth.syncSessionRevision == revision else { return }
+                        measuredReelAspect = ratio
+                    }
             }
             if let reelURL {
                 Button { saveToPhotos(reelURL) } label: {
@@ -10984,6 +11000,19 @@ struct ReelStudioView: View {
         }
     }
 
+    /// Match the preview container to the actual encoded display shape, not a
+    /// fixed height across the sheet's width. Preferred rotation is included.
+    nonisolated private static func reelDisplayAspect(_ url: URL) async -> CGFloat? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let size = try? await track.load(.naturalSize),
+              let transform = try? await track.load(.preferredTransform) else { return nil }
+        let rect = CGRect(origin: .zero, size: size).applying(transform)
+        let width = abs(rect.width), height = abs(rect.height)
+        guard width > 0, height > 0, width.isFinite, height.isFinite else { return nil }
+        return width / height
+    }
+
     /// True when the video's displayed frame is taller than it is wide. Nil when
     /// the file can't be read — the caller then leaves the toggle alone.
     nonisolated private static func isPortraitVideo(_ url: URL) async -> Bool? {
@@ -11470,7 +11499,7 @@ struct ReelStudioView: View {
         Haptics.selection()
     }
 
-    /// One photo → 5 s AI motion clip: downscale ≤1280 → jpeg b64 → submit
+    /// One photo → 5 s AI motion clip: downscale ≤2048 → high-quality JPEG → submit
     /// `ai-video/reel-clip` → poll every 5 s (cap 5 min) → download the mp4 into
     /// `dir`. fal result URLs expire, so the download happens immediately.
     ///
@@ -11573,8 +11602,8 @@ struct ReelStudioView: View {
 
     nonisolated private static func preparedReelJPEG(photo: EnhancedPhoto, aspect: String) throws -> Data {
         guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else { throw AIImagePrep.error("Couldn't read that photo.") }
-        let scaled = AIImagePrep.downscaled(AIImagePrep.reelSource(ui, aspect: aspect), maxDimension: 1280)
-        guard let jpeg = scaled.jpegData(compressionQuality: 0.85), !jpeg.isEmpty else { throw AIImagePrep.error("Couldn't prepare that photo.") }
+        let scaled = AIImagePrep.downscaled(AIImagePrep.reelSource(ui, aspect: aspect), maxDimension: 2048)
+        guard let jpeg = scaled.jpegData(compressionQuality: 0.95), !jpeg.isEmpty else { throw AIImagePrep.error("Couldn't prepare that photo.") }
         return jpeg
     }
 

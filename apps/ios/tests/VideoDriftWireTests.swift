@@ -88,7 +88,15 @@ final class DriftWireClient {
             assertions += 1; precondition(condition(), message)
         }
         let client = DriftWireClient()
-        let source = Data("exact selected source JPEG".utf8).base64EncodedString()
+        let sourceData = try CommandLine.arguments.count > 1
+            ? Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
+            : Data("exact selected source JPEG".utf8)
+        let source = sourceData.base64EncodedString()
+        if CommandLine.arguments.count > 1 {
+            check(sourceData.starts(with: [0xff, 0xd8, 0xff]), "transport fixture uses the actual encoded JPEG")
+            check(source.count > 2_000_000, "actual full-quality source exceeds the former QC source bound")
+            check(source.count <= 12_000_000, "actual full-quality source fits the generation-aligned source bound")
+        }
         let frames = ["first", "middle", "last"].map { (at: $0, jpeg: Data("decoded-\($0)-JPEG".utf8)) }
         let listingID = UUID(uuidString: "10000000-0000-4000-8000-000000000001")!
         let provenance = "10000000-0000-4000-8000-000000000002"
@@ -111,6 +119,10 @@ final class DriftWireClient {
             let body = try JSONSerialization.jsonObject(with: wire.httpBody!) as! [String: Any]
             check(body["attempt"] as? Int == expected, "\(label) attempt is serialized as \(expected)")
             check(body["source_b64"] as? String == source, "serialized QC retains exact selected source bytes")
+            if CommandLine.arguments.count > 1 {
+                check(Data(base64Encoded: body["source_b64"] as! String) == sourceData, "actual QC HTTP body preserves every encoded source byte")
+                check(wire.httpBody!.count <= 19_000_000, "actual QC wire fits the source-plus-frames total body bound")
+            }
             check(body["source_mime"] as? String == "image/jpeg", "serialized QC retains source MIME")
             check(body["request_id"] as? String == "accepted-owned-job", "serialized QC retains accepted request identity")
             check(body["provenance_id"] as? String == provenance, "serialized QC forwards accepted provenance identity")
