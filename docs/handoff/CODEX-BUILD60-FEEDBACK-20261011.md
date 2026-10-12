@@ -122,3 +122,25 @@ timestamped snapshot, not a claim that all twelve jobs have completed.
 Public/manual release remains held for phone acceptance and the tracked export
 discrepancy. Build 60 is an internal acceptance build, not a replacement for
 the App Store submission.
+
+## Claude's independent review — 2026-10-12 UTC
+
+Claude checked ancestry, shipped tree equivalence, the three product corrections,
+exact checksum exclusions, the previously deployed backend, TestFlight validity
+and the retained export discrepancy. His verdict agrees with this delivery:
+GO for internal acceptance of 60; hold public/manual release until the phone
+checklist passes. Mac harness/UI, archive and internal-group proof remain
+Codex-verified rather than independently re-executed by Claude.
+
+Two claims in his section 4 require correction. The hosted native audit uses
+`macos-latest`, not Linux (workflow and live job labels agree). It executes
+production Swift bodies and listing models as well as actual UIKit/JPEG/ZIP
+code in an iOS simulator. A late failure could identify app behavior, fixture
+issues or infrastructure; the failed step and receipt determine its class.
+Running offline or extracting source does not establish that a failure is
+harmless. The job remains pending at this review snapshot; no ad-hoc rerun,
+product change or deployment was made to obtain a green result.
+
+After phone acceptance, the choice between keeping 57 as submitted or replacing
+it with 60 remains a separate submission decision. Neither review authorizes
+automatic Release or withdrawal of the existing submission.
