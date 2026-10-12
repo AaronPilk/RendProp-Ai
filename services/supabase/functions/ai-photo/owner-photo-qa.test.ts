@@ -1,11 +1,18 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput, OWNER_PHOTO_QA_CONSENT, OWNER_PHOTO_QA_KEY } from "./owner-photo-qa.ts";
 import { HttpError } from "../_shared/http.ts";
-import { geminiAdapter, geminiImageGenerationConfig, geminiImagePayload } from "../_shared/providers/gemini.ts";
-import { ceilingVerifiedQuote, mediaAttemptQuote, fundedAttempt, servingMode, resetServingModeCache, type FundingContext } from "../_shared/funded-serving.ts";
+import type { FundingContext } from "../_shared/funded-serving.ts";
 import { ProviderError } from "../_shared/providers/common.ts";
 import type { GenerateInput } from "../_shared/providers/types.ts";
 import type { ChainStep } from "../_shared/router.ts";
+
+// Deno's per-file worker owns these inert environment values. Set them before
+// importing actual clients so both this focused runner and the whole CI suite
+// enter the same closed serving-mode boundary. No real key is read or printed.
+for(const key of ["SUPABASE_SECRET_KEYS","RENDPROP_SECRET_KEY_NAME","SUPABASE_PUBLISHABLE_KEYS","RENDPROP_PUBLISHABLE_KEY_NAME"])Deno.env.delete(key);
+Deno.env.set("SUPABASE_URL","https://closed-fixture.invalid");Deno.env.set("SUPABASE_SERVICE_ROLE_KEY","closed-fixture-not-valid");Deno.env.set("SUPABASE_ANON_KEY","closed-fixture-not-valid");
+const { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput, OWNER_PHOTO_QA_CONSENT, OWNER_PHOTO_QA_KEY }=await import("./owner-photo-qa.ts");
+const { geminiAdapter, geminiImageGenerationConfig, geminiImagePayload }=await import("../_shared/providers/gemini.ts");
+const { ceilingVerifiedQuote, mediaAttemptQuote, fundedAttempt, servingMode, resetServingModeCache }=await import("../_shared/funded-serving.ts");
 
 // Actual production helpers, adapter and reservation authority execute. DB,
 // HTTP replies and vendor bytes are closed boundaries; no live quality claim.
