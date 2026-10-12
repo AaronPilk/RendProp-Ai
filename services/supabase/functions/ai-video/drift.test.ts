@@ -55,6 +55,7 @@ import {
   uncheckedDriftBlock,
 } from "../_shared/drift.ts";
 import { APP_AI_UNIT_CENTS } from "../_shared/ledger.ts";
+import { MAX_DRIFT_FRAME_B64_CHARS, MAX_DRIFT_SOURCE_B64_CHARS, MAX_DRIFT_REQUEST_BODY_BYTES } from "./drift-input.ts";
 import {
   AERIAL_INVENTS_SURFACE,
   AERIAL_MOTIONS,
@@ -787,7 +788,10 @@ Deno.test("wiring: the grounded aerial prompt forbids the surface it used to inv
 });
 
 Deno.test("wiring: the judge's inputs are bounded before they reach a provider", () => {
-  assertStringIncludes(INDEX_SRC, "const MAX_DRIFT_IMAGE_B64_CHARS = 2_000_000;");
+  assertEquals(MAX_DRIFT_FRAME_B64_CHARS, 2_000_000);
+  assertEquals(MAX_DRIFT_SOURCE_B64_CHARS, 12_000_000);
+  assertEquals(MAX_DRIFT_REQUEST_BODY_BYTES, 19_000_000);
+  assertStringIncludes(INDEX_SRC, "const MAX_DRIFT_IMAGE_B64_CHARS = MAX_DRIFT_FRAME_B64_CHARS;");
   assertStringIncludes(INDEX_SRC, "readJsonLimited<DriftBody>(req, MAX_DRIFT_BODY_BYTES)");
   assertStringIncludes(INDEX_SRC, "ALLOWED_IMAGE_MIMES.includes(m)");
 });

@@ -126,6 +126,9 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {ownerQaReelStep as actualOwnerQaReelStep,prepareOwnerQaReelInput} from ${
     JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)
   };
+    import {validateExtendedReelSource} from ${
+    JSON.stringify(new URL("./drift-input.ts", import.meta.url).href)
+  };
     type RouteStep=any;type JobRef=any;type JobTokenOwner=any;type ChainResult<T>={value:T,step:any};type GenerateInput=any;type DroneBody=any;type AerialBody=any;type ReelBody=any;type DroneEstimate=any;type AerialMotion=any;type ReelMotion=any;
     export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]};
     export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]});}

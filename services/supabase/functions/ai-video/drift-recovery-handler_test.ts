@@ -77,6 +77,9 @@ async function compiled(mutation?: Mutation) {
     import {AERIAL_MOTIONS,AERIAL_MOTION_TEXT,REEL_MOTION_TEXT,parseReelMotion,type AerialMotion} from ${
     JSON.stringify(new URL("./motion.ts", import.meta.url).href)
   };
+    import {MAX_DRIFT_FRAME_B64_CHARS,MAX_DRIFT_REQUEST_BODY_BYTES,MAX_DRIFT_SOURCE_B64_CHARS,validateExtendedReelSource} from ${
+    JSON.stringify(new URL("./drift-input.ts", import.meta.url).href)
+  };
     type GenKind="reel"|"aerial"|"drone"|"declutter";
     type PaidAiCaller={id:string};type DriftBody=Record<string,any>;
     interface DriftImage{b64:string;mime:string};interface DriftFrame extends DriftImage{at:DriftFramePosition};

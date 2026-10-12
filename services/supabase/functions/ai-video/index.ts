@@ -210,6 +210,13 @@ import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementFor, entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
 import { optionalUuid, recordProvenance } from "../_shared/provenance.ts";
+import {
+  DRIFT_SOURCE_EXTRA_INPUT_TOKENS,
+  MAX_DRIFT_FRAME_B64_CHARS,
+  MAX_DRIFT_REQUEST_BODY_BYTES,
+  MAX_DRIFT_SOURCE_B64_CHARS,
+  validateExtendedReelSource,
+} from "./drift-input.ts";
 import { APP_AI_UNIT_CENTS, recordAppAiCost, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute, routerEnabled } from "../_shared/router.ts";
@@ -1401,6 +1408,7 @@ Deno.serve(async (req) => {
                "image is too large — resize it before sending", "payload_too_large");
         const mime = String(body.mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
         assert(ALLOWED_IMAGE_MIMES.includes(mime), 400, `mime must be one of ${ALLOWED_IMAGE_MIMES.join(", ")}`);
+        validateExtendedReelSource(body.image_b64, mime);
         imageUrl = `data:${mime};base64,${body.image_b64}`;
       }
       const space = spaceTypeOf(body.space_type ?? assetSpace);
@@ -2145,17 +2153,13 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
 /**
  * Per-image and per-body ceilings.
  *
- * The generate routes allow 12,000,000 base64 characters for ONE image because
- * that image is the product. A judge frame is not: it exists to be looked at by
- * a vision model that down-samples it anyway, and the app already produces
- * exactly the right thing — PosterMaker writes a 1280 px JPEG at quality 0.8,
- * which is around 250 KB, i.e. ~340,000 base64 characters. 2,000,000 characters
- * is six times that headroom per image and still bounds a four-image body at
- * roughly 8 MB, which is what MAX_DRIFT_BODY_BYTES leaves room for. Sending
- * bigger frames buys no better verdict and costs input tokens on every call.
+ * Generated clip frames stay capped previews. The source retains the native
+ * prepared 2048 px JPEG without a paid generation followed by a QC 413. Larger
+ * sources receive complete-image/geometry validation before both dispatch
+ * and judging; the judge's prospective quote also covers 4096 source tokens.
  */
-const MAX_DRIFT_IMAGE_B64_CHARS = 2_000_000;
-const MAX_DRIFT_BODY_BYTES = 12_000_000;
+const MAX_DRIFT_IMAGE_B64_CHARS = MAX_DRIFT_FRAME_B64_CHARS;
+const MAX_DRIFT_BODY_BYTES = MAX_DRIFT_REQUEST_BODY_BYTES;
 
 /** The judge answers one small JSON object. 400 tokens is what the Python
  *  gate caps its own structured verdict at (QC_MAX_OUTPUT_TOKENS), and output
@@ -2183,13 +2187,16 @@ function requireDriftImage(b64: unknown, mime: unknown, field: string): DriftIma
   assert(typeof b64 === "string" && b64.length > 0, 400, `${field} is required`);
   const s = b64 as string;
   assert(
-    s.length <= MAX_DRIFT_IMAGE_B64_CHARS,
+    s.length <= (field === "source_b64" ? MAX_DRIFT_SOURCE_B64_CHARS : MAX_DRIFT_IMAGE_B64_CHARS),
     413,
-    `${field} is too large — send the 1280 px frame the app already makes, not the full-size image`,
+    field === "source_b64"
+      ? "source_b64 is too large — use the prepared 2048 px source photo."
+      : `${field} is too large — send the 1280 px preview frame the app makes.`,
     "payload_too_large",
   );
   const m = String(mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
   assert(ALLOWED_IMAGE_MIMES.includes(m), 400, `${field} mime must be one of ${ALLOWED_IMAGE_MIMES.join(", ")}`);
+  if (field === "source_b64") validateExtendedReelSource(s, m);
   return { b64: s, mime: m };
 }
 
@@ -2428,7 +2435,8 @@ async function judgeDrift(args: {
 
   const steps = await driftChain(args.plan);
   // Documented vision bound: one source still plus the judged frames.
-  const judgeInputTokens = visionInputTokenBound(1 + args.frames.length, new TextEncoder().encode(rubric).byteLength);
+  const judgeInputTokens = visionInputTokenBound(1 + args.frames.length, new TextEncoder().encode(rubric).byteLength)
+    + DRIFT_SOURCE_EXTRA_INPUT_TOKENS;
 
   let primary: ChainResult<string>;
   try {
