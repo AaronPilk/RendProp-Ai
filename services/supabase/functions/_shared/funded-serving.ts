@@ -253,8 +253,21 @@ export function ceilingVerifiedQuote(step:Pick<RouteStep,"provider"|"model">,inp
  const data=input&&typeof input==="object"&&!Array.isArray(input)?input as Record<string,unknown>:{};
  const model=step.model.replace(/^fal-ai\//,"");
  const bound=(cents:number)=>({cents:Math.ceil(cents*10000)/10000,version:"documented-bound-20261008"});
- if(step.provider==="gemini"&&model==="gemini-3.1-flash-image")return bound((8192*0.5+4096*3+1120*60)/10000);
- if(step.provider==="gemini"&&model==="gemini-3.1-flash-lite-image")return bound((8192*0.25+4096*1.5+1120*30)/10000);
+ if(step.provider==="gemini"&&model==="gemini-3.1-flash-image"){
+  const size=paramsOf(step as RouteStep)?.image_size;
+  if(size==="2K"){
+   const extra=data.extra as Record<string,unknown>|undefined;
+   return extra?.owner_photo_2k===true&&Number.isInteger(extra.owner_photo_input_bound)&&Number(extra.owner_photo_input_bound)>0&&Number(extra.owner_photo_input_bound)<=8192
+    ?bound((8192*0.5+4096*3+1680*60)/10000):null;
+  }
+  if(size!==undefined&&size!=="1K")return null;
+  return bound((8192*0.5+4096*3+1120*60)/10000);
+ }
+ if(step.provider==="gemini"&&model==="gemini-3.1-flash-lite-image"){
+  const size=paramsOf(step as RouteStep)?.image_size;
+  if(size!==undefined&&size!=="1K")return null;
+  return bound((8192*0.25+4096*1.5+1120*30)/10000);
+ }
  if(step.provider==="openai"&&model==="gpt-image-2")return bound((8192*8+1584*30)/10000);
  if(step.provider==="fal"&&model==="flux-pro/kontext")return bound(4);
  if(step.provider==="fal"&&model==="flux-pro/v1/fill"){
@@ -381,13 +394,19 @@ export function geminiImageGenerationQuote(config:Record<string,unknown>):Attemp
   ||config.candidateCount!==1||!Array.isArray(config.responseModalities)
   ||config.responseModalities.length!==1||config.responseModalities[0]!=="IMAGE"
   ||!config.imageConfig||typeof config.imageConfig!=="object"
-  ||(config.imageConfig as Record<string,unknown>).imageSize!=="1K")return null;
+  ||!["1K","2K"].includes(String((config.imageConfig as Record<string,unknown>).imageSize)))return null;
+ if((config.imageConfig as Record<string,unknown>).imageSize==="2K")return {cents:(8192*.5+output*3+1680*60)/10000,version:"owner-2k-standard-20261012"};
  return {cents:(131072*.5+output*60)/10000,version:TARIFF_VERSION};
 }
 
 export function mediaAttemptQuote(step:RouteStep,input:GenerateInput):AttemptQuote|null {
  if(step.provider==="gemini"&&step.model==="gemini-3.1-flash-image")
-  return geminiImageGenerationQuote(geminiImageGenerationConfig(step.model));
+  {
+   const size=paramsOf(step)?.image_size;
+   if(size==="2K"&&(input.extra?.owner_photo_2k!==true||!Number.isInteger(input.extra.owner_photo_input_bound)||Number(input.extra.owner_photo_input_bound)<=0||Number(input.extra.owner_photo_input_bound)>8192))return null;
+   if(size!==undefined&&size!=="1K"&&size!=="2K")return null;
+   return geminiImageGenerationQuote(geminiImageGenerationConfig(step.model,size==="2K"?"2K":"1K"));
+  }
  const model=step.model.replace(/^fal-ai\//,"");
  if(step.provider==="fal"&&model==="flux-pro/kontext"&&!input.mask_url)
   return {cents:4,version:TARIFF_VERSION};

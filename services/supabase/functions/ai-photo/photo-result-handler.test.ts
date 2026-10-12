@@ -41,6 +41,8 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {requiredIdempotencyKey} from ${url("../_shared/idempotency.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
+ import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput} from ${url("./owner-photo-qa.ts")};
+ const ownerQaPhotoStep=(args)=>actualOwnerQaPhotoStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})});
  import {assertCustomPhotoPrompt,assertCustomPhotoOutput} from ${url("../ai-copy/guard.ts")};
  import {CUSTOM_PHOTO_FIXED_FEATURES} from ${url("../_shared/custom-photo-prompt.ts")};
  import {MAX_PROMPT_INPUT,MAX_PROMPT_OUTPUT,editPromptInstruction} from ${url("../ai-copy/prompt.ts")};

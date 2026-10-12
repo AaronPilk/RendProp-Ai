@@ -9,12 +9,14 @@
 //  • THE MODEL COMES FROM THE ROUTE STEP. gemini-2.5-flash-image retires
 //    2026-10-02; the 3.1 migration has to be a row edit in ai_routes, not a
 //    deploy. Nothing in this file names a default model.
-//  • 3.x models get an EXPLICIT generationConfig.imageConfig.imageSize = "1K".
+//  • Normal 3.x routes explicitly request imageConfig.imageSize = "1K".
+//    An authorized, input-bounded owner comparison may explicitly request 2K.
 //    The 3.x image models bill by output resolution and their default is not 1K
 //    on every surface — an implicit default is how you silently start paying 4K
 //    rates for a 1K product.
 
 import type { RouteStep } from "../router.ts";
+import { paramsOf } from "../router.ts";
 import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter } from "./types.ts";
 import {
   BUDGETS,
@@ -40,7 +42,7 @@ function geminiKey(): string {
   return key;
 }
 
-/** true for gemini-3.x image models, which must be pinned to 1K output. */
+/** true for gemini-3.x image models, which must pin output resolution. */
 export function needsImageSizePin(model: string): boolean {
   return /^gemini-3(\.|-)/i.test(model.trim());
 }
@@ -50,16 +52,18 @@ export function supportsStagingReference(model: string): boolean {
   return ["gemini-2.5-flash-image", "gemini-3.1-flash-image", "gemini-3-pro-image-preview"].includes(model.trim());
 }
 
-export function geminiImageGenerationConfig(model: string): Record<string, unknown> {
+export function geminiImageGenerationConfig(model: string, imageSize: "1K" | "2K" = "1K"): Record<string, unknown> {
+  if (imageSize !== "1K" && (imageSize !== "2K" || model !== "gemini-3.1-flash-image"))
+    throw new ProviderError(PROVIDER, "validation", "This image model does not support the requested comparison resolution.");
   const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"], candidateCount: 1, maxOutputTokens: GEMINI_IMAGE_MAX_OUTPUT_TOKENS };
-  // Never pay 4K rates by accident: 3.x is pinned to 1K, explicitly.
-  if (needsImageSizePin(model)) generationConfig.imageConfig = { imageSize: "1K" };
+  // Normal output remains 1K; the bounded owner comparison explicitly requests 2K.
+  if (needsImageSizePin(model)) generationConfig.imageConfig = { imageSize };
   return generationConfig;
 }
 
 /** The exact generateContent body for an image edit. */
 export function geminiImagePayload(model: string, prompt: string, mime: string, imageB64: string,
-  reference?: { mime: string; b64: string }): Record<string, unknown> {
+  reference?: { mime: string; b64: string }, imageSize: "1K" | "2K" = "1K"): Record<string, unknown> {
   return {
     contents: [{
       role: "user",
@@ -72,7 +76,7 @@ export function geminiImagePayload(model: string, prompt: string, mime: string, 
         ] : []),
       ],
     }],
-    generationConfig: geminiImageGenerationConfig(model),
+    generationConfig: geminiImageGenerationConfig(model, imageSize),
   };
 }
 
@@ -128,13 +132,20 @@ export const geminiAdapter: ProviderAdapter = {
       reference = { mime: String(input.extra?.staging_reference_mime), b64: referenceB64 };
     }
 
+    const requestedSize = paramsOf(step)?.image_size;
+    if (requestedSize !== undefined && requestedSize !== "1K" && requestedSize !== "2K")
+      throw new ProviderError(PROVIDER, "validation", "Unknown image comparison resolution.");
+    const imageSize = requestedSize === "2K" ? "2K" : "1K";
+    if (imageSize === "2K" && (input.extra?.owner_photo_2k !== true ||
+        !Number.isInteger(input.extra?.owner_photo_input_bound) || Number(input.extra?.owner_photo_input_bound) <= 0 || Number(input.extra?.owner_photo_input_bound) > 8192))
+      throw new ProviderError(PROVIDER, "validation", "The 2K comparison input bound was not verified.");
     const data = await fetchJson<Record<string, unknown>>(
       PROVIDER,
       `${GEMINI_BASE}/${step.model}:generateContent`,
       {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": geminiKey() },
-        body: JSON.stringify(geminiImagePayload(step.model, input.prompt ?? "", mime, imageB64, reference)),
+        body: JSON.stringify(geminiImagePayload(step.model, input.prompt ?? "", mime, imageB64, reference, imageSize)),
       },
       BUDGETS.submitMs,
       classifyGemini,

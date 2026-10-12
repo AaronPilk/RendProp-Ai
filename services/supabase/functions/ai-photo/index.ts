@@ -94,6 +94,7 @@ import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
 import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
+import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput } from "./owner-photo-qa.ts";
 import { supportsStagingReference } from "../_shared/providers/gemini.ts";
 import {
   BUDGETS,
@@ -833,7 +834,7 @@ Deno.serve(async (req) => {
       throw e;
     }
 
-    const genInput: GenerateInput = {
+    let genInput: GenerateInput = {
       task,
       prompt,
       image_b64: body.image_b64,
@@ -864,6 +865,13 @@ Deno.serve(async (req) => {
       genInput.extra = { ...genInput.extra, staging_reference_b64: referenceB64, staging_reference_mime: referenceMime };
     }
 
+    const ownerPhotoStep = await ownerQaPhotoStep({actorId:user.id,orgId,listingId:body.listing_id,task});
+    if (ownerPhotoStep) {
+      try { genInput = prepareOwnerQaPhotoInput(genInput); }
+      catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
+      // Explicit comparison is one full Flash2K step, never a quiet 1K fallback.
+      chain = [ownerPhotoStep];
+    }
     try { chain = await boundedPhotoChain(funding, chain, genInput); }
     catch(error) {
       await refundEditCharge(charge);
@@ -879,6 +887,11 @@ Deno.serve(async (req) => {
     let attempt: ChainResult<{ b64: string; mime: string; local: DoneState }>;
     try {
       attempt = await runChain(task, chain, async (step) => {
+        if (ownerPhotoStep) {
+          const currentOrg = await requireEditorRole(user, req, "AI photo edits", body.listing_id);
+          if (currentOrg !== orgId || !(await ownerQaPhotoStep({actorId:user.id,orgId,listingId:body.listing_id,task})))
+            throw new HttpError(403,"The temporary 2K comparison authorization ended. No new edit was sent.","forbidden");
+        }
         const adapter = adapterFor(step.provider);
         const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), () => adapter.submit(step, genInput));
         const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
@@ -910,10 +923,13 @@ Deno.serve(async (req) => {
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
+      meta: { edit, space_type: space, ...(ownerPhotoStep ? {image_size:"2K",owner_quality_comparison:true,cost_basis:"complete_8192_input_4096_text_1680_image_bound"} : {}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
         ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
           cost_basis: "route_output_image_estimate_input_tokens_unmodeled" } : {}) },
     });
+
+    // The supplier was paid even when it ignored 2K; bind that real cost first.
+    if (ownerPhotoStep) assertOwnerQaPhotoOutput(outB64, outMime);
 
     // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
     // exact sentence the public tour will print. Best effort — never fatal (the
