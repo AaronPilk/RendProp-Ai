@@ -1626,7 +1626,7 @@ Deno.serve(async (req) => {
       const provenanceId = optionalUuid(body.provenance_id);
       const sourceAssetId = optionalUuid(body.asset_id);
       assert(body.listing_id == null || optionalUuid(body.listing_id) !== null,
-        400, "listing_id must be a valid listing identifier.", "bad_request");
+        400, "listing_id must be a valid listing identifier.", "validation");
 
       const orgId = await guardDriftCheck(user, req);
 
