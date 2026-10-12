@@ -1501,7 +1501,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                  "b64": f.jpeg.base64EncodedString(),
                  "mime": "image/jpeg"] as [String: Any]
             },
-            "attempt": max(1, min(3, request.attempt)),
+            "attempt": max(0, min(3, request.attempt)),
         ]
         if let s = request.seconds { body["seconds"] = s }
         if let m = request.motion, !m.isEmpty { body["motion"] = m }

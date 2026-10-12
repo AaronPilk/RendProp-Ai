@@ -1,6 +1,6 @@
 import XCTest
 
-/// Real screens + real loopback HTTP; the server cuts only signup connections.
+/// Real screens + real loopback HTTP; the server cuts identified-token refresh.
 /// Run only on a disposable simulator, never a device containing customer data.
 final class SessionNetworkFlow: XCTestCase {
     private let base = URL(string: "http://127.0.0.1:18765")!
@@ -34,7 +34,8 @@ final class SessionNetworkFlow: XCTestCase {
         app.launchEnvironment["RENDP_TEST_RUN"] = UUID().uuidString
         app.launchEnvironment["RENDP_TEST_SURFACE"] = surface
         app.launch()
-        XCTAssertFalse(app.staticTexts["phase1.fixture.error"].exists)
+        let fixtureError = app.staticTexts["phase1.fixture.error"].firstMatch
+        XCTAssertFalse(fixtureError.exists, "Fixture setup failed: \(fixtureError.label)\n\(app.debugDescription)")
     }
 
     private func tap(_ id: String, maxSwipes: Int = 12) throws {
@@ -56,8 +57,10 @@ final class SessionNetworkFlow: XCTestCase {
         let before = try control("state")
         XCTAssertEqual(before["blocked"] as? Bool, true)
         XCTAssertEqual(before["accepted"] as? Int, 0)
+        XCTAssertEqual(before["identifiedExchanges"] as? Int, 1)
         let beforeRequests = before["requests"] as? [String:Int] ?? [:]
-        XCTAssertGreaterThan(beforeRequests["/auth/v1/signup"] ?? 0, 0)
+        XCTAssertGreaterThan(beforeRequests["/auth/v1/token?grant_type=refresh_token"] ?? 0, 0)
+        XCTAssertEqual(beforeRequests["/auth/v1/signup"] ?? 0, 0, "An identified feature must not create a guest")
         XCTAssertEqual(beforeRequests[route] ?? 0, 0, "Feature ran before a session")
         XCTAssertEqual(try control("unblock")["ok"] as? Bool, true)
         // No tap after network recovery. Poll the local server, not the button.
@@ -69,7 +72,9 @@ final class SessionNetworkFlow: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         } while Date() < deadline
         XCTAssertEqual((state["requests"] as? [String:Int])?[route], expectedCalls, "Original action did not resume exactly once")
-        XCTAssertEqual(state["accepted"] as? Int, 1, "More than one anonymous session minted")
+        XCTAssertEqual(state["accepted"] as? Int, 1, "Identified refresh must be single-flight")
+        XCTAssertEqual(state["identifiedExchanges"] as? Int, 1, "Feature recovery must not repeat sign-in")
+        XCTAssertEqual((state["requests"] as? [String:Int])?["/auth/v1/signup"] ?? 0, 0)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label CONTAINS[c] %@", "Sign in with Apple")).firstMatch.exists)
     }
 

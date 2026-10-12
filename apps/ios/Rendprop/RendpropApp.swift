@@ -3071,7 +3071,7 @@ private struct RendpropLaunchContent: View {
     }
 
     @ViewBuilder private var normalContent: some View {
-#if DEBUG
+#if DEBUG && targetEnvironment(simulator)
         if Config.isSessionNetworkTesting {
             PhaseOneFixtureRoot()
         } else {
