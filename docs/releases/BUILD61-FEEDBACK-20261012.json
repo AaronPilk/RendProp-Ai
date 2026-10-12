@@ -1,0 +1,404 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-10-12T15:34:36.663199Z",
+  "scope": "iOS 1.0.4 (61), existing internal TestFlight group only",
+  "branch": "fix/build58-reel-integration-20261011",
+  "source": {
+    "archiveCommit": "fbcecded04075d664867cfbdca35a4152ce3f241",
+    "testSourceCommit": "56138592dae316f9cd20b5c72450ff0673245aa8",
+    "claudeBranch": "claude/build61-feedback-20261012",
+    "claudeTip": "329c617",
+    "claudeCode": "ac8d882",
+    "integrationMerge": "db42bb49df37bc9f37f89b039d4ce6d0eaa22fe5",
+    "mergeReason": "Both branches advanced; merge preserved completed build60 review records.",
+    "postArchiveChange": "UITest only: tap nested UISwitch instead of its labeled row; shipped app/project/project.yml identical.",
+    "shippedNativeTreesMatchTestTip": true
+  },
+  "archive": {
+    "sourceCommit": "fbcecded04075d664867cfbdca35a4152ce3f241",
+    "sourceTrees": {
+      "apps/ios/Rendprop": "ec3cec7c060a527cd267d3e7b174aa80a10d46a6",
+      "apps/ios/project.yml": "5e900f61132f301b7d5ed79e7c3069585bcd16cd",
+      "apps/ios/Rendprop.xcodeproj": "529db2d87e0932475ee4f1daf35687c6d47c46ec",
+      "apps/ios/RendpropUITests": "cda5730edd40b3c3f14e36c841585dbf8438d7b3"
+    },
+    "version": "1.0.4",
+    "build": "61",
+    "archive": "/Users/pilksclaes/Rendprop AI/_bridge/build61-archive-work/rendprop-archive/Rendprop.xcarchive",
+    "binarySHA256": "588f0e2c18627863111463837c20118284f64e17f929a3d78fcf127873b37551",
+    "machOUUID": "80A70D12-F559-3111-811A-4C1D6F218877",
+    "dSYMUUID": "80A70D12-F559-3111-811A-4C1D6F218877",
+    "signatureVerified": true,
+    "physicalFixtureMarkersAbsent": [
+      "HomeProjectCreationFixtureHost",
+      "-ui.homeProjectCreationFixture",
+      "prepareBuild60HomeFixtureOwner",
+      "prepareBuild60HomeFixtureLibrary",
+      "b6000000-0000-4000-8000-000000000010",
+      "b6000000-0000-4000-8000-000000000020",
+      "DetailMetadataRegressionHost",
+      "-ui.detailMetadataFixture",
+      "prepareBuild58FixtureOwner",
+      "Synthetic Home creation library",
+      "-ui.currentLocationFixture",
+      "100 Synthetic Condo Way, Fixture City, NC 28000"
+    ],
+    "appEncryptedDeclaration": false,
+    "buildNumberManagement": false,
+    "ipa": "/Users/pilksclaes/Rendprop AI/_bridge/build61-archive-work/rendprop-archive/ipa/Rendprop.ipa",
+    "ipaBytes": 24122669,
+    "ipaSHA256": "102a33b01c2a33deee0858f258f6194a28ca7ff1c9cc66196a13b31d4980ed43",
+    "shippedNativeTreesMatchTip": "56138592dae316f9cd20b5c72450ff0673245aa8",
+    "testSourceTip": "56138592dae316f9cd20b5c72450ff0673245aa8",
+    "uiTestCorrection": "5613859 taps the nested UISwitch rather than the surrounding label row; app source unchanged."
+  },
+  "gateResults": {
+    "reelRecovery": {
+      "passed": true,
+      "assertions": 157,
+      "labDispatchAssertions": 14,
+      "compiledNegativeControls": 24,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build61-native-checks/reel-request-recovery-complete-final/receipt.json"
+    },
+    "reelLifecycle": {
+      "passed": true,
+      "assertions": 34,
+      "negativeControls": 6,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build61-native-checks/reel-lifecycle-complete-final/receipt.json"
+    },
+    "movingPhotoIdentity": {
+      "passed": true,
+      "assertions": 22,
+      "negativeControls": 6,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build61-native-checks/moving-photo-identity-v2/receipt.json"
+    },
+    "actualSimulatorDecoder": {
+      "passed": true,
+      "assertions": 16,
+      "negativeControls": 2,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build61-native-checks/clip-frames/receipt.json",
+      "observation": {
+        "assertions": 16,
+        "mp4_bytes": 10369,
+        "mp4_frame_count": 3,
+        "normalized_frame_count": 3,
+        "sha256": "3b1a11eb785f0ca84518c3d48438ad2b0e3f6ac7e82d2e5994069dcd2746fb6b",
+        "tmp_decodes_identically": false,
+        "tmp_duration_seconds": -1,
+        "tmp_frame_count": 0
+      },
+      "exactConsumedBodiesMatchArchive": true
+    },
+    "deno_functions": {
+      "command": "deno test --allow-all --node-modules-dir=auto .",
+      "cwd": "services/supabase/functions",
+      "passed": 1907,
+      "failed": 0,
+      "ignored": 1,
+      "log": "/Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/deno-functions.log"
+    },
+    "actual_uikit_renderer": {
+      "command": "python3 apps/ios/tests/run-photo-export-renderer.py --simulator 362169C5-73E9-41CA-A78A-3438BA288FE1 --evidence-dir /Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/renderer-all-saved",
+      "assertions": 244,
+      "compiled_negative_controls": 20,
+      "source_binding_matches": true,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/renderer-all-saved/receipt.json"
+    },
+    "listing_package_assembly": {
+      "command": "python3 apps/ios/tests/run-listing-package-assembly.py --evidence-dir /Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/assembly-current",
+      "assertions": 44,
+      "compiled_negative_controls": 4,
+      "source_binding_matches": true,
+      "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/assembly-current/receipt.json"
+    },
+    "photo_history_and_geometry": {
+      "command": "bash apps/ios/tests/run-photo-delivery.sh",
+      "assertions": 536,
+      "log": "/Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/photo-delivery.log"
+    },
+    "homeAndRestore": {
+      "accepted": true,
+      "receipt": "_bridge/build61-home-checks/async-boundaries-actor-fixed/receipt.json",
+      "sha256": "ca151ea6832f4492a80a06e54b31768ac7ddd348eaaff5ba3002701889e9984d",
+      "assertions": 48,
+      "negative_controls": 11,
+      "isolation_compile_controls": 2,
+      "source_wiring_assertions": 11
+    },
+    "listingFacts": {
+      "passed": true,
+      "assertions": 109,
+      "negativeControls": 9,
+      "actualReceipt": "_bridge/build61-home-checks/listing-facts-actor-fixed/actual/receipt.json",
+      "controlsReceipt": "_bridge/build61-home-checks/listing-facts-actor-fixed/summary.json"
+    },
+    "presentationPrivacy": {
+      "accepted": true,
+      "receipt": "_bridge/build61-home-checks/presentation-privacy/receipt.json",
+      "sha256": "bd798cc6ea7a24d34e3e4fc433e70b61198180baa2785ba3d1cddc04212a315d",
+      "assertions": 36,
+      "negative_controls": 11
+    },
+    "republishSource": {
+      "accepted": true,
+      "tests": 5,
+      "log": "_bridge/build61-home-checks/republish-source.log"
+    },
+    "fullSimulatorCompile": {
+      "passed": true,
+      "firstAttemptFailed": true,
+      "repair": "Two off-main actor revision reads repaired with MainActor.run; harness isolation made production-equivalent; two compile controls reject old code."
+    },
+    "simulatorUi": {
+      "distinctCasesPassed": 14,
+      "firstFullRun": {
+        "passed": 13,
+        "failed": 1,
+        "resultBundle": "/Users/pilksclaes/Rendprop AI/_bridge/build61-ui.xcresult",
+        "failure": "New switch test tapped labeled parent row rather than nested UISwitch; evidence retained."
+      },
+      "focusedRerun": {
+        "passed": 1,
+        "failed": 0,
+        "resultBundle": "/Users/pilksclaes/Rendprop AI/_bridge/build61-ui-share-fixed.xcresult",
+        "testCorrectionCommit": "5613859",
+        "applicationUnchanged": true
+      },
+      "mapKitSuggestionsObserved": true,
+      "deterministicCurrentLocationPassed": true,
+      "fixtureAddressAbsentFromPhysicalBinary": true
+    },
+    "shippingBoundaries": {
+      "passed": true,
+      "receiptDirectory": "/tmp/rendprop-app-store-boundaries-RvmKER",
+      "signatureVerified": true,
+      "executableAndDsymUuidMatch": true,
+      "physicalFixtureMarkersAbsent": 12
+    }
+  },
+  "assemblyArchiveBinding": {
+    "archive_checkpoint": "fbcecde",
+    "current_head": "56138592dae316f9cd20b5c72450ff0673245aa8",
+    "passed": true,
+    "assertions": 44,
+    "negative_controls": 4,
+    "source_binding_matches": true,
+    "original_actual_method_bodies_match_current": true,
+    "original_value_types_and_Extra_match_current": true,
+    "consumed_files_match_archive_checkpoint": {
+      "apps/ios/Rendprop/Screens/FlythroughDetailView.swift": true,
+      "apps/ios/Rendprop/Photos/PhotoExport.swift": true,
+      "apps/ios/tests/ListingPackageAssemblyTests.swift": true,
+      "apps/ios/tests/run-listing-package-assembly.py": true
+    },
+    "receipt": "/Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/assembly-current/receipt.json",
+    "no_code_edits": true,
+    "no_simulator_use": true
+  },
+  "ci": {
+    "runId": 38267819835,
+    "observedAt": "2026-10-12T15:34:36.663199Z",
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/38267819835",
+    "headSha": "fbcecded04075d664867cfbdca35a4152ce3f241",
+    "status": "in_progress",
+    "conclusion": null,
+    "jobs": [
+      {
+        "name": "Web parity inventory and design-token contracts (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase migrations (fresh replay + invariants)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "iOS static gates",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline reel-style preservation and blind-evaluation contracts",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Offline audit evidence, consent and adoption source gates",
+        "status": "in_progress",
+        "conclusion": null
+      },
+      {
+        "name": "Cloudflare Worker (tour-host)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Studio contracts, build and property workflows (offline)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Python workers (render, spatial, training adapter)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Supabase edge functions (deno check + tests)",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Secret scan",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "appleDelivery": {
+    "appId": "6808982413",
+    "version": "1.0.4",
+    "buildNumber": "61",
+    "buildId": "ab02d80e-f2b4-4133-b8b6-cc58dfa4ee57",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "existingInternalGroup": "Rendprop team",
+    "groupId": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+    "groupContainsBuild61": true,
+    "autoNotifyEnabled": true,
+    "englishTestingNotesExactReadback": true,
+    "newTesterInvitations": false,
+    "uploadExitCode": 0
+  },
+  "appStore57Preserved": {
+    "versionId": "39ff74df-71d4-4bf1-92f4-9c709e7f4366",
+    "buildId": "46e2df20-e688-4e14-afa7-88655f28e8ba",
+    "state": "WAITING_FOR_REVIEW",
+    "releaseType": "MANUAL",
+    "beforeAfterAssociationUnchanged": true,
+    "releasePressed": false,
+    "withdrawalOrResubmission": false,
+    "johnAppleChanged": false
+  },
+  "unchangedProduction": {
+    "backend": true,
+    "migrations": true,
+    "website": true,
+    "studio": true,
+    "providerCredentials": true,
+    "funding": true,
+    "pricing": true,
+    "realProviderGenerationsDuringThisVerification": 0
+  },
+  "feedbackSource": {
+    "claudeHandoffReviewed": true,
+    "fiveReportedScenariosExercised": true,
+    "appScopedReadReturned": 63,
+    "build60SubmissionsReturned": 0,
+    "collectionWideFilterStatus": 403,
+    "allNewRawSubmissionsIndependentlyRetrieved": false,
+    "chantillyCyScreenshotExplanationIndependentlyCertified": false,
+    "rawFeedbackKeptOutsideGit": true
+  },
+  "exportSemantics": {
+    "toggle": "Include retained originals and every saved version",
+    "all_versions": "Includes each indexed stored version, including the version rendered for current delivery; stored bytes remain exact and use ImageIO/UTType-derived extensions. Current -edited.jpg remains a separate rendered copy with destination/aspect/level/label options.",
+    "originals": "Verified retained original bytes stay exact. Original-only export keeps original bytes and ignores framing/label. Legacy unknown source is not misrepresented as a verified original.",
+    "chronology": "Gallery prefixes pad to gallery size. Version positions remain version-1 for fewer than ten versions; larger histories use version-01 etc. Positions identify chronological order, including withheld positions, so repeated slugs do not collide.",
+    "withheld": "Unreviewed custom versions are excluded, as are unreviewed descendants (persisted inherited review requirement). Their omission is counted in the per-photo disclosure; README explicitly states this limitation. Direct current unreviewed export refuses the whole operation.",
+    "missing_files": "A missing or unreadable verified original or permitted stored version refuses all preparation, names the unavailable file, removes partial output, and says nothing was exported. Users may choose current-only export instead. Unknown legacy source is never invented.",
+    "races": "History is compared after export work against the initial full snapshot; a concurrent edit/review/selection refuses mixed delivery and removes the partial directory. ZIP checksum and copy passes compare sizes and CRC to refuse extra/prepared-file mutation.",
+    "zip_memory": "ZipArchive FileHandle checksum/copy each use 1 MiB chunks. Only central-directory metadata is retained; whole packages are not materialized in memory. Image export reads one image/version at a time within its photo autorelease pool. Classic ZIP >4GB fails explicitly."
+  },
+  "limitations": [
+    "Finite variable OS background grants; no guarantee of execution after suspension or termination. No durable server/APNs reel completion added.",
+    "Reel Studio retains accepted receipts for recovery. Legacy single-photo animation still has no durable accepted-job recovery.",
+    "Unreadable downloaded temporary bytes may be cleaned; retaining a receipt does not prove permanent local retention of an unchecked movie.",
+    "No new real-provider output or physical phone-lock acceptance claimed by closed fixtures or simulator tests.",
+    "Earlier unchanged Studio export timing discrepancy remains preserved in build60 evidence; a later green encode is not a repair."
+  ],
+  "evidence": {
+    "nativeSummary": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-native-checks/summary.json",
+      "sha256": "337ed2e3cac11b3de16474b72f6d974c384ebfe9c0bf9c02e44bede3f5e58b2b"
+    },
+    "exportSummary": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/summary.json",
+      "sha256": "26138f5d09b43aedc319406ad943d2b2fae81f98103ca8f7d445057bbefee69a"
+    },
+    "homeSummary": {
+      "path": "/Users/pilksclaes/Rendprop AI/build58-integration/_bridge/build61-home-checks/summary.json",
+      "sha256": "31ec19db04a6f16e538a1a00dc0f6d97b963126a519fe362a8918010a808cf39"
+    },
+    "assemblyCurrentBinding": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-export-checks/assembly-current/checkpoint-binding.json",
+      "sha256": "9127c7cf2698ec0df02ca4334d4a16626a4da6ea5e651eecb32a0c7919b3a70e"
+    },
+    "archive": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-apple/archive-verified.json",
+      "sha256": "d8ccf14adacf46c48cf69b301d8886a9dc22d387b8bbfe87d6c28a57d57a4cdf"
+    },
+    "appleBuild": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-apple/build61-latest.json",
+      "sha256": "68d53ec6ee377883f5002e3f4e3fa2a7d83ecc0c04b8eb9c3702f0dcd10c7782"
+    },
+    "internalGroup": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-apple/group-readback.json",
+      "sha256": "4191e4d186416759b35013dce76e584d23ae03284c5aa97139a58327363286a1"
+    },
+    "testingNotes": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-apple/testing-notes-readback.json",
+      "sha256": "d86667c4483b2c831e0f9135f55e54f5826209bd42611f7bf7dae53bb6e9a072"
+    },
+    "appStore57Before": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-apple/build57-before.json",
+      "sha256": "9fe4c7977d3d4e0c35cd630aee3071d30fad9d30d199a3f00705bde57a008133"
+    },
+    "appStore57After": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-apple/build57-after.json",
+      "sha256": "9fe4c7977d3d4e0c35cd630aee3071d30fad9d30d199a3f00705bde57a008133"
+    },
+    "ci": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-apple/ci-final-snapshot.json",
+      "sha256": "8b5fed561a0dbf54da56dcbf799adc8c5acbb25b422c05e8ca471ccbf9f393dd"
+    },
+    "tmpDecoderCurrentBinding": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-native-checks/clip-frames-current-binding.json",
+      "sha256": "2ba9ffac0e4f8f793bd0fcc17937682c746b0e191da91bfaadb8914149a41432"
+    },
+    "homeMapKitObservation": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build61-ui-home-case/F509AF90-57DF-467E-BBDC-1EEDDE2451C8.txt",
+      "sha256": "d56e7800b7489322bc9cdf5dde8fc28a218fc888aa5e3625a65a82ecb2fa8341"
+    },
+    "simulatorCompile": {
+      "path": "/tmp/rendprop-build61-build-for-testing-final.log",
+      "sha256": "8b6e6722bb544759ba2a04519dec8486aa1ca000293b50b155b7cf85fcf19cc2"
+    },
+    "initialCompileFailure": {
+      "path": "/tmp/rendprop-build61-build-for-testing.log",
+      "sha256": "47dcc96358e38a3120da1efd77d9ac4d65ffbc96a66158e84a186da88d3c1cf1"
+    },
+    "shippingBoundaries": {
+      "path": "/tmp/rendprop-build61-boundaries.log",
+      "sha256": "4d95b7f5af5e0759a4e0996cbf1bcbf00587c8747a38fd568a7264d85c49a1a3"
+    },
+    "firstUiLog": {
+      "path": "/tmp/rendprop-build61-ui.log",
+      "sha256": "5ff4584a3096c8362853c2b61be6d0ce953d35429aa6763bcfc85b29a69e72da"
+    },
+    "focusedUiLog": {
+      "path": "/tmp/rendprop-build61-ui-share-fixed.log",
+      "sha256": "ab8eec9fb1c8110f1683d5e13b0382c171bd31a89b0594212f6b4cdbe9c03626"
+    }
+  }
+}
