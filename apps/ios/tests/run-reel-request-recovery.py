@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 root = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--evidence-dir', type=Path)
+parser.add_argument('--choices-only', action='store_true', help='Run exact saved-quality choices and batch continuation with focused compiled controls')
 parser.add_argument('--quality-only', action='store_true', help='Compile/run only the new exact quality routing controls; full gate remains default')
 args = parser.parse_args()
 out = args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-reel-request-recovery-'))
@@ -108,8 +109,8 @@ try:
     review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
     drift = drift_path.read_text()
     drift_types = block(drift, 'struct DriftVerdict: Sendable, Equatable') + '\n' + block(drift, 'struct DriftCheckRequest: Sendable') + '\n' + block(source, 'private struct ReelQualityRefusal: Error, LocalizedError').replace('private struct', 'struct', 1) + '\n'
-    actual = 'import Foundation\nimport CryptoKit\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
-    for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(']:
+    actual = 'import Foundation\nimport CryptoKit\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n' + block(api, 'struct AIShot: Sendable, Hashable, Identifiable') + '\n' + block(source, 'private struct PendingReelBatch: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private enum ReelRecoveryChoice').replace('private enum', 'enum', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
+    for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(', '    nonisolated private static func preparedReelJPEG(', '    nonisolated private static func acknowledgeRecoveredClip(', '    nonisolated private static func resolveSavedQualityRetry(', '    nonisolated private static func completeSavedBatch(']:
         extracted = block(source, anchor).replace('private static', 'static', 1)
         if 'retrieveClip(' in anchor:
             assert extracted.count('Date()') == 4 and extracted.count('try await Task.sleep(nanoseconds: 5_000_000_000)') == 1
@@ -135,7 +136,10 @@ try:
     receipt['consumed_source_sha256'] = hashlib.sha256(actual.encode()).hexdigest()
     (out / 'Fixture.swift').write_text(fixture)
     assert 'clearReceiptOnDownload: false, requireCurrent: validate' in source
-    assert source.index('try Self.retainRecoveredClip(clip, for: request.context.listingID)') < source.index('request.clear()', source.index('private func recoverPendingRequest'))
+    assert 'reel.retry-saved-safer' in source and 'reel.use-saved-original' in source and 'reel.continue-saved-batch' in source
+    assert 'Nothing is generating now.' in source
+    ack = block(source, '    nonisolated private static func acknowledgeRecoveredClip(')
+    assert ack.index('try batch!.save()') < ack.rindex('request.clear()')
     class Handler(BaseHTTPRequestHandler):
         calls = 0
         def do_GET(self):
@@ -188,14 +192,26 @@ try:
         ('negative-quality-pre-local-fence', actual.replace('        try await requireCurrent()\n        guard verdict.mayUse else {', '        // omitted post-QC context fence\n        guard verdict.mayUse else {').replace('            try await requireCurrent()\n            let local = dir.appendingPathComponent("clip-photo-motion-', '            // omitted pre-local context fence\n            let local = dir.appendingPathComponent("clip-photo-motion-'), 'stale QC response never enters local fallback'),
         ('negative-quality-post-render-fence', actual.replace('try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)\n            try await requireCurrent()', 'try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)\n            // omitted post-render context fence'), 'post-render identity change must stop'),
         ('negative-quality-local-early-ack', actual.replace('            return local', '            pending?.clear()\n            return local'), 'local fallback keeps receipt until durable retention'),
-        ('negative-quality-retention-early-ack', actual.replace('                let retained = try retainRecoveredClip(clip, for: pending.context.listingID)', '                pending.clear()\n                let retained = try retainRecoveredClip(clip, for: pending.context.listingID)'), 'local fallback disk failure preserves its accepted receipt'),
+        ('negative-quality-retention-early-ack', actual.replace('        let retained = try retainRecoveredClip(clip, for: request.context.listingID)', '        request.clear()\n        let retained = try retainRecoveredClip(clip, for: request.context.listingID)'), 'local fallback disk failure preserves its accepted receipt'),
         ('negative-quality-retention-lost-label', actual.replace('let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-recovered-"', 'let prefix = "clip-recovered-"'), 'durable retention preserves original-motion bytes and label'),
         ('negative-quality-park-lost-label', actual.replace('let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-"', 'let prefix = "clip-"'), 'batch parking preserves original-motion labels for every retained copy'),
     ]
-    if args.quality_only:
+    choice_variants = [
+        ('negative-choice-generic-error-fallback', actual.replace('} catch let refusal as ReelQualityRefusal where refusal.mayRetry {', '} catch {'), 'unavailable recovery must remain held'),
+        ('negative-choice-wrong-source', actual.replace('api.aiVideoReelClip(imageBase64: source, mime:', 'api.aiVideoReelClip(imageBase64: Data("different choice JPEG".utf8).base64EncodedString(), mime:'), 'explicit safer retry uses exact saved JPEG'),
+        ('negative-choice-wrong-attempt', actual.replace('sourceSpaceType: spaceType, qualityAttempt: 1)', 'sourceSpaceType: spaceType, qualityAttempt: 2)'), 'explicit safer retry persists attempt one'),
+        ('negative-choice-original-wrong-source', actual.replace('OriginalPhotoMotion.render(jpeg: jpeg,\n                renderSize:', 'OriginalPhotoMotion.render(jpeg: Data("different original".utf8),\n                renderSize:'), 'explicit original choice renders exact saved JPEG'),
+        ('negative-choice-early-ack', actual.replace('        let retained = try retainRecoveredClip(clip, for: request.context.listingID)', '        request.clear()\n        let retained = try retainRecoveredClip(clip, for: request.context.listingID)'), 'explicit original disk failure keeps its paid receipt'),
+        ('negative-batch-progress-not-durable', actual.replace('            try batch!.save()', '            // omitted durable batch progress'), 'batch progress is durable before receipt acknowledgement'),
+        ('negative-batch-source-binding', actual.replace('saved.photos[request.photoNumber - 1].jpegBase64 == request.sourceJPEGBase64,', 'true,'), 'wrong source cannot advance progress'),
+        ('negative-batch-skips-photo', actual.replace('let index = batch.completedPaths.count, photo = batch.photos[index]', 'let index = batch.completedPaths.count + 1, photo = batch.photos[index]'), 'batch continuation generates each remaining photo in order'),
+    ]
+    if args.choices_only:
+        variants = [('actual-choices', actual, None)] + choice_variants
+    elif args.quality_only:
         variants = [('actual-quality', actual, None)] + quality_variants
     else:
-        variants += quality_variants
+        variants += quality_variants + choice_variants
     for name, text, reason in variants:
         assert reason is None or text != actual, name + ' mutation anchor missing'
         path, binary = out / (name + '.swift'), out / name
@@ -206,7 +222,8 @@ try:
         Handler.calls = 0
         mode = ['--dispatch-only'] if name in ['actual-lab-dispatch', 'negative-dispatch-consent', 'negative-dispatch-workspace', 'negative-401-retry-fence'] else []
         if name.startswith('negative-manifest-'): mode = ['--manifest-only']
-        if args.quality_only or name.startswith('negative-quality-') and name != 'negative-quality-gate-accepts-changed-property': mode = ['--quality-only']
+        if args.choices_only or name.startswith('negative-choice-') or name.startswith('negative-batch-'): mode = ['--choices-only']
+        elif args.quality_only or name.startswith('negative-quality-') and name != 'negative-quality-gate-accepts-changed-property': mode = ['--quality-only']
         result = subprocess.run([str(binary), f'http://127.0.0.1:{server.server_port}', *mode], capture_output=True, text=True, timeout=300)
         log = result.stdout + result.stderr
         (out / (name + '.log')).write_text(log)

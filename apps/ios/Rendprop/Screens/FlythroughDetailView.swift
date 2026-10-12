@@ -836,6 +836,7 @@ struct FlythroughDetailView: View {
             // Build 60: "Share everything" adds the videos and a details note.
             PhotoExportSheet(photos: selection.photos, includeOriginals: true,
                              archiveName: currentListing.address, extras: filePackageExtras,
+                             coordinatorPackage: !filePackageExtras.isEmpty,
                              canExport: filePhotoExportAdmission ?? { false })
         }
         .onChange(of: auth.userID) { _ in
@@ -8675,6 +8676,65 @@ private struct PendingReelRequest: Codable, Sendable {
     }
 }
 
+/// New runs keep their exact prepared photos and ordered progress. This is local
+/// owned recovery metadata, never an authorization or a substitute for server QC.
+/// Legacy single-photo receipts continue to recover without inventing a batch.
+private struct PendingReelBatch: Codable, Sendable {
+    struct Shot: Codable, Sendable {
+        let photoID: String; let order: Int; let motion: String?; let room: String?
+        let onScreenText: String?; let seconds: Double?; let voiceLine: String?
+        init(_ shot: AIShot) {
+            photoID = shot.photoID; order = shot.order; motion = shot.motion; room = shot.room
+            onScreenText = shot.onScreenText; seconds = shot.seconds; voiceLine = shot.voiceLine
+        }
+        var value: AIShot { AIShot(photoID: photoID, order: order, motion: motion, room: room,
+            onScreenText: onScreenText, seconds: seconds, voiceLine: voiceLine) }
+    }
+    struct Photo: Codable, Sendable {
+        let id: String; let jpegBase64: String; let shot: Shot?
+    }
+    let context: PendingReelRequest.Context
+    let id: UUID
+    let photos: [Photo]
+    let motion: String
+    let aspect: String
+    let spaceType: String
+    var completedPaths: [String]
+    static func file(_ context: PendingReelRequest.Context) -> URL {
+        FileStore.documents.appendingPathComponent("reels/\(context.listingID.uuidString)-batch", isDirectory: true)
+            .appendingPathComponent(PendingReelRequest.file(context).lastPathComponent)
+    }
+    static func exists(_ context: PendingReelRequest.Context) -> Bool { AdoptionOwnedIdentity.pathIsOccupied(file(context)) }
+    static func load(_ context: PendingReelRequest.Context) throws -> Self? {
+        guard exists(context) else { return nil }
+        let batch = try JSONDecoder().decode(Self.self, from: Data(contentsOf: file(context)))
+        guard batch.context == context, (1...8).contains(batch.photos.count),
+              Set(batch.photos.map(\.id)).count == batch.photos.count,
+              batch.completedPaths.count <= batch.photos.count,
+              Set(batch.completedPaths).count == batch.completedPaths.count,
+              ["9:16", "16:9"].contains(batch.aspect),
+              batch.photos.allSatisfy({ !$0.id.isEmpty && !(Data(base64Encoded: $0.jpegBase64)?.isEmpty ?? true) }),
+              batch.completedPaths.allSatisfy({ path in
+                  !path.hasPrefix("/") && !path.split(separator: "/").contains("..") &&
+                  FileStore.url(fromRelativePath: path).deletingLastPathComponent().standardizedFileURL == PendingReelClips.directory(for: context.listingID).standardizedFileURL &&
+                  ((try? FileStore.url(fromRelativePath: path).resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0
+              }) else { throw AIImagePrep.error("The saved reel batch could not be verified. Your saved requests and clips have been kept.") }
+        return batch
+    }
+    func save() throws {
+        let bytes = try JSONEncoder().encode(self), target = Self.file(context)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try bytes.write(to: target, options: .atomic)
+        guard try Data(contentsOf: target) == bytes else { throw AIImagePrep.error("Couldn't save reel progress. Your request has been kept.") }
+    }
+    func clear() {
+        guard (try? Self.load(context))?.id == id else { return }
+        try? FileManager.default.removeItem(at: Self.file(context))
+    }
+}
+
+private enum ReelRecoveryChoice { case saferRetry, originalPhoto }
+
 // MARK: - Reel Studio (multi-photo → AI motion clips → one stitched social video)
 // Pick 2–8 listing photos; each becomes a 5 s Seedance motion clip via
 // POST /ai-video/reel-clip (sequential submit → poll → download), then the
@@ -8706,7 +8766,9 @@ struct ReelClipIssue: Identifiable {
     static func failure(for error: Error, title: String) -> AIFailure {
         let original = AIFailure(error, title: title)
         let message: String
-        if let api = error as? APIError, (api.status ?? 0) >= 500 || api.code == "upstream" || api.code == "internal" {
+        if let refusal = error as? ReelQualityRefusal, refusal.mayRetry {
+            message = "The AI changed the property, so this clip was held. Choose one safer retry or use motion from your original photo."
+        } else if let api = error as? APIError, (api.status ?? 0) >= 500 || api.code == "upstream" || api.code == "internal" {
             message = "The video service is unavailable right now, so this clip wasn't made. If it keeps happening, contact support from Settings → Legal & support."
         } else if AIFailure.isOffline(error) {
             message = "The connection stopped. Check your connection before making more clips."
@@ -8810,6 +8872,9 @@ struct ReelStudioView: View {
     /// exactly like `AerialIntroSheet` resumes a `PendingAerialJob`.
     @State private var parkedClips: PendingReelClips?
     @State private var pendingRequest: PendingReelRequest?
+    @State private var pendingBatch: PendingReelBatch?
+    @State private var unreadableBatch = false
+    @State private var recoveredRetryRequestID: String?
     @State private var unreadablePendingContext: PendingReelRequest.Context?
     @State private var reelOwner = AuthStore.shared.userID
     /// Close was tapped while a job was running — ask before cancelling it, the
@@ -8859,7 +8924,7 @@ struct ReelStudioView: View {
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
-    private var canGenerate: Bool { totalSelected >= 2 && totalSelected <= 9 && pendingRequest == nil && unreadablePendingContext == nil }
+    private var canGenerate: Bool { totalSelected >= 2 && totalSelected <= 9 && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
     /// A job is in flight — AI clips are being generated, or the stitch is
     /// running. Closing now cancels it, so Close asks first (F-A-05 / the
     /// 4,000 sq ft field test).
@@ -8994,7 +9059,7 @@ struct ReelStudioView: View {
             Button("Discard clips", role: .destructive) { discardParkedClips() }
             Button("Keep them", role: .cancel) {}
         } message: {
-            Text("These clips were already generated and already charged. Deleting them means making them again costs another round of AI.")
+            Text("This deletes saved reel progress and finished clips. Remote requests are kept. Making the deleted clips again costs another round of AI.")
         }
         .confirmationDialog("Forget the saved request?", isPresented: $showDiscardPendingConfirm, titleVisibility: .visible) {
             Button("Forget request", role: .destructive) {
@@ -10666,15 +10731,34 @@ struct ReelStudioView: View {
     private func reloadPendingRequest() {
         guard !listing.isSample, let owner = auth.userID,
               let live = model.listings.first(where: { $0.id == listing.id }), live.cloudUnavailable != true else {
-            pendingRequest = nil; unreadablePendingContext = nil; return
+            pendingRequest = nil; unreadablePendingContext = nil; pendingBatch = nil; unreadableBatch = false; recoveredRetryRequestID = nil; return
         }
         let context = PendingReelRequest.Context(listingID: live.id, serverListingID: live.serverID,
             owner: owner, workspace: WorkspaceContext.selectedOrgID)
         pendingRequest = PendingReelRequest.load(context)
         unreadablePendingContext = pendingRequest == nil && PendingReelRequest.exists(context) ? context : nil
+        do { pendingBatch = try PendingReelBatch.load(context); unreadableBatch = false }
+        catch { pendingBatch = nil; unreadableBatch = true }
+        if recoveredRetryRequestID != pendingRequest?.job.requestId { recoveredRetryRequestID = nil }
     }
 
     @ViewBuilder private var pendingRequestCard: some View {
+        if unreadableBatch {
+            Text("Saved reel progress cannot be read. Your requests and clips are kept; new generation is paused until that progress can be recovered.")
+                .font(.rpCaption).foregroundStyle(Theme.warn)
+        }
+        if let batch = pendingBatch, pendingRequest == nil, unreadablePendingContext == nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Saved reel: \(batch.completedPaths.count) of \(batch.photos.count) photos finished")
+                    .font(.rpBody.weight(.semibold))
+                Text("Continue uses the saved photo order, keeps finished clips and generates only the remaining photos. You can finish a shorter reel from saved clips instead.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button(batch.completedPaths.count == batch.photos.count ? "Finish saved full reel" : "Continue saved reel") {
+                    connection.run { continueSavedBatch(batch) }
+                }.disabled(isWorking).accessibilityIdentifier("reel.continue-saved-batch")
+                Button("Discard saved batch…", role: .destructive) { showDiscardParkedConfirm = true }.disabled(isWorking)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        }
         if let request = pendingRequest {
             VStack(alignment: .leading, spacing: 10) {
                 Label(request.submissionUnconfirmed == true ? "Photo \(request.photoNumber) submission needs review" : "Photo \(request.photoNumber) has a saved video request", systemImage: "clock.arrow.circlepath")
@@ -10685,8 +10769,17 @@ struct ReelStudioView: View {
                 } else {
                     Text("Check this existing request before generating again. Recovery checks its status, downloads its clip and checks it against the saved source photo; it sends no new generation. Remote results can expire.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    Button("Recover saved request") { connection.run { recoverPendingRequest(request) } }
-                        .disabled(isWorking).accessibilityIdentifier("reel.recover-request")
+                    if recoveredRetryRequestID == request.job.requestId, request.qualityAttempt == 0 {
+                        Text("The first AI clip changed the property. Nothing is generating now. A safer retry sends this same photo once more; original photo motion happens on this iPhone without another AI generation.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        Button("Retry once with safer motion") { connection.run { resolveRecoveredRetry(request, choice: .saferRetry) } }
+                            .disabled(isWorking).accessibilityIdentifier("reel.retry-saved-safer")
+                        Button("Use original photo motion") { connection.run { resolveRecoveredRetry(request, choice: .originalPhoto) } }
+                            .disabled(isWorking).accessibilityIdentifier("reel.use-saved-original")
+                    } else {
+                        Button("Recover saved request") { connection.run { recoverPendingRequest(request) } }
+                            .disabled(isWorking).accessibilityIdentifier("reel.recover-request")
+                    }
                 }
                 Button("Forget request…") { showDiscardPendingConfirm = true }.disabled(isWorking)
             }.frame(maxWidth: .infinity, alignment: .leading).card()
@@ -10743,15 +10836,14 @@ struct ReelStudioView: View {
         let tmpDir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-recovery-\(UUID())", isDirectory: true)
         phase = .generating; completedClips = 0; totalClips = 1
         statusText = "Checking saved request for photo \(request.photoNumber)…"
-        failure = nil; clipIssues = []
+        failure = nil; clipIssues = []; recoveredRetryRequestID = nil
         workTask = Task {
             do {
                 try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
                 let clip = try await Self.retrieveClip(job: request.job, pending: request, api: api,
                     into: tmpDir, index: request.photoNumber - 1, clearReceiptOnDownload: false, requireCurrent: validate)
                 try validate()
-                _ = try Self.retainRecoveredClip(clip, for: request.context.listingID)
-                request.clear()
+                _ = try await Self.acknowledgeRecoveredClip(clip, request: request, requireCurrent: validate)
                 try? FileManager.default.removeItem(at: tmpDir)
                 parkedClips = PendingReelClips.load(for: request.context.listingID)
                 reloadPendingRequest(); phase = .setup
@@ -10759,8 +10851,109 @@ struct ReelStudioView: View {
                 try? FileManager.default.removeItem(at: tmpDir)
                 reloadPendingRequest()
                 if error is CancellationError || Task.isCancelled { return }
+                if let refusal = error as? ReelQualityRefusal, refusal.mayRetry, request.qualityAttempt == 0 {
+                    recoveredRetryRequestID = request.job.requestId
+                }
                 clipIssues = [ReelClipIssue(photoNumber: request.photoNumber, error: error)]
                 failure = ReelClipIssue.failure(for: error, title: "Couldn't recover the clip")
+                phase = .failed
+            }
+        }
+    }
+
+    /// Both choices are explicit. Recovery itself remains an existing-job lookup.
+    private func resolveRecoveredRetry(_ request: PendingReelRequest, choice: ReelRecoveryChoice) {
+        guard !isWorking, recoveredRetryRequestID == request.job.requestId, request.qualityAttempt == 0,
+              pendingRequest?.job.requestId == request.job.requestId else { return }
+        let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
+        let validate: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent,
+                  auth.userID == request.context.owner, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == request.context.workspace,
+                  let current = model.listings.first(where: { $0.id == request.context.listingID }),
+                  current.cloudUnavailable != true, current.serverID == request.context.serverListingID else { throw CancellationError() }
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-choice-\(UUID())", isDirectory: true)
+        failure = nil; clipIssues = []; phase = .generating
+        statusText = choice == .saferRetry ? "Photo \(request.photoNumber) — one safer retry…" : "Photo \(request.photoNumber) — using original photo motion…"
+        workTask = Task {
+            do {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                _ = try await Self.resolveSavedQualityRetry(request, choice: choice, api: api, into: dir, requireCurrent: validate)
+                try validate()
+                try? FileManager.default.removeItem(at: dir)
+                recoveredRetryRequestID = nil; reloadPendingRequest()
+                parkedClips = PendingReelClips.load(for: request.context.listingID)
+                phase = .setup
+            } catch {
+                try? FileManager.default.removeItem(at: dir)
+                reloadPendingRequest()
+                if error is CancellationError || Task.isCancelled { return }
+                if let refusal = error as? ReelQualityRefusal, refusal.mayRetry,
+                   pendingRequest?.qualityAttempt == 0 { recoveredRetryRequestID = pendingRequest?.job.requestId }
+                failure = ReelClipIssue.failure(for: error, title: "Couldn't finish this photo")
+                clipIssues = [ReelClipIssue(photoNumber: request.photoNumber, error: error)]; phase = .failed
+            }
+        }
+    }
+
+    /// Resume only this saved ordered batch. Finished positions come from its
+    /// durable progress; selected setup photos cannot reorder or replace it.
+    private func continueSavedBatch(_ saved: PendingReelBatch) {
+        guard !isWorking, pendingRequest == nil, unreadablePendingContext == nil,
+              pendingBatch?.id == saved.id else { return }
+        let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
+        let validate: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent,
+                  auth.userID == saved.context.owner, auth.syncSessionRevision == revision,
+                  WorkspaceContext.selectedOrgID == saved.context.workspace,
+                  let current = model.listings.first(where: { $0.id == saved.context.listingID }),
+                  current.cloudUnavailable != true, current.serverID == saved.context.serverListingID else { throw CancellationError() }
+        }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-resume-\(UUID())", isDirectory: true)
+        let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }
+        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
+        let voice: Voiceover? = voiceMode == .off ? nil : voiceover
+        let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
+        let shotStyle = bigCaptionsOn ? bigCaptionStyle : ReelComposer.ShotCaptionStyle.off
+        let transition = reelTransition
+        phase = .generating; failure = nil; clipIssues = []
+        totalClips = saved.photos.count; completedClips = saved.completedPaths.count
+        workTask = Task {
+            do {
+                try validate()
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let batch = try await Self.completeSavedBatch(saved, api: api, into: dir, requireCurrent: validate,
+                    progress: { number in completedClips = number; statusText = "Photo \(number + 1) of \(saved.photos.count) — making video…" })
+                try validate()
+                phase = .stitching
+                let photoClips = batch.completedPaths.map { FileStore.url(fromRelativePath: $0) }
+                let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
+                try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
+                let out = reelsDir.appendingPathComponent("\(saved.context.listingID.uuidString)-\(Int(Date().timeIntervalSince1970)).mp4")
+                try await ReelComposer.compose(shots: Self.shots(extras: extras, photoClips: photoClips,
+                    plan: batch.photos.map { $0.shot?.value }, captionsOn: shotStyle.isOn),
+                    renderSize: batch.aspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080),
+                    options: ReelComposer.Options(titleCard: captions, voiceover: voice, captionStyle: captionStyle,
+                        shotCaptionStyle: shotStyle, transition: transition), output: out)
+                try validate()
+                try OriginalPhotoMotion.saveSummary(count: photoClips.filter(OriginalPhotoMotion.isClip).count, for: out)
+                batch.clear()
+                PendingReelClips.retire(photoClips, for: saved.context.listingID)
+                try? FileManager.default.removeItem(at: dir)
+                reloadPendingRequest(); parkedClips = PendingReelClips.load(for: saved.context.listingID)
+                reelURL = out; lastReel = out; player = AVPlayer(url: out)
+                originalPhotoMotionShots = photoClips.filter(OriginalPhotoMotion.isClip).count
+                phase = .done; Haptics.success()
+            } catch {
+                // All completed shots already have durable progress. The current
+                // accepted/unknown receipt stays; no following photo is submitted.
+                try? FileManager.default.removeItem(at: dir)
+                reloadPendingRequest(); parkedClips = PendingReelClips.load(for: saved.context.listingID)
+                if error is CancellationError || Task.isCancelled { return }
+                failure = ReelClipIssue.failure(for: error, title: "Couldn't continue the saved reel")
                 phase = .failed
             }
         }
@@ -10992,6 +11185,20 @@ struct ReelStudioView: View {
                         throw CancellationError()
                     }
                 }
+                var batch: PendingReelBatch? = nil
+                if !ordered.isEmpty, let recoveryContext {
+                    try requireCurrent()
+                    guard !PendingReelBatch.exists(recoveryContext) else { throw AIImagePrep.error("Continue or discard the saved reel before starting another batch.") }
+                    let prepared = try ordered.map { photo in
+                        PendingReelBatch.Photo(id: photo.id,
+                            jpegBase64: try Self.preparedReelJPEG(photo: photo, aspect: isPortrait ? "9:16" : "16:9").base64EncodedString(),
+                            shot: Self.shot(for: photo, in: plan).map(PendingReelBatch.Shot.init))
+                    }
+                    batch = PendingReelBatch(context: recoveryContext, id: UUID(), photos: prepared,
+                        motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw, completedPaths: [])
+                    try requireCurrent()
+                    try batch?.save()
+                }
                 for (i, photo) in ordered.enumerated() {
                     try Task.checkCancellation()
                     try requireCurrent()
@@ -11006,7 +11213,11 @@ struct ReelStudioView: View {
                                                            motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw,
                                                            api: api, listingServerID: reelListingServerID,
                                                            into: tmpDir, index: i, recoveryContext: recoveryContext,
-                                                           requireCurrent: requireCurrent)
+                                                           requireCurrent: requireCurrent,
+                                                           preparedJPEG: batch.flatMap { Data(base64Encoded: $0.photos[i].jpegBase64) })
+                        if batch != nil {
+                            batch = try PendingReelBatch.load(recoveryContext!)
+                        }
                         clipURLs.append(clip)
                         usedShots.append(shot)
                         billedClips.append(clip)   // retained before its accepted receipt is cleared
@@ -11066,6 +11277,7 @@ struct ReelStudioView: View {
                                                   "transition": transition.rawValue,
                                                   "planned": wasPlanned])
                 }
+                batch?.clear()
                 PendingReelClips.retire(billedClips, for: listingID)
                 // The new reel is safely on disk AND on screen — now, and only
                 // now, trim the older ones so Documents/reels can't grow without
@@ -11221,6 +11433,8 @@ struct ReelStudioView: View {
                     // The clips now live inside a finished reel on disk, so the
                     // parked copy has done its job and can go. This is the ONLY
                     // automatic delete of paid clips in the whole flow.
+                    pendingBatch?.clear()
+                    pendingBatch = nil
                     PendingReelClips.retire(clips, for: listingID)
                     parkedClips = PendingReelClips.load(for: listingID)
                     reelURL = outURL
@@ -11249,8 +11463,10 @@ struct ReelStudioView: View {
 
     /// Delete the parked clips at the agent's explicit request (confirmed first).
     private func discardParkedClips() {
+        pendingBatch?.clear()
         PendingReelClips.clear(for: listing.id)
         parkedClips = nil
+        reloadPendingRequest()
         Haptics.selection()
     }
 
@@ -11275,19 +11491,22 @@ struct ReelStudioView: View {
                                              api: APIClient, listingServerID: UUID?,
                                              into dir: URL, index: Int,
                                              recoveryContext: PendingReelRequest.Context? = nil,
-                                             requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() }) async throws -> URL {
+                                             requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() },
+                                             preparedJPEG: Data? = nil) async throws -> URL {
         try await requireCurrent()
         guard let recoveryContext else { throw AIImagePrep.error("Reconnect your account before generating this clip.") }
         if PendingReelRequest.exists(recoveryContext) {
             throw AIImagePrep.error("Recover or forget the saved video request before generating again.")
         }
         _ = try PendingReelClips.readRecord(for: recoveryContext.listingID)
-        guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else {
-            throw AIImagePrep.error("Couldn't read that photo.")
-        }
-        let scaled = AIImagePrep.downscaled(AIImagePrep.reelSource(ui, aspect: aspect), maxDimension: 1280)
-        guard let jpeg = scaled.jpegData(compressionQuality: 0.85) else {
-            throw AIImagePrep.error("Couldn't prepare that photo.")
+        let jpeg = try preparedJPEG ?? Self.preparedReelJPEG(photo: photo, aspect: aspect)
+        guard !jpeg.isEmpty else { throw AIImagePrep.error("Couldn't prepare that photo.") }
+        if let batch = try PendingReelBatch.load(recoveryContext) {
+            guard batch.completedPaths.count == index, index < batch.photos.count,
+                  batch.photos[index].id == photo.id, batch.photos[index].jpegBase64 == jpeg.base64EncodedString(),
+                  batch.aspect == aspect, batch.spaceType == spaceType else {
+                throw AIImagePrep.error("This photo does not match the saved reel. Continue the saved batch instead.")
+            }
         }
         // No motion text → send NOTHING and let `/ai-video/reel-clip` use its own
         // space-aware anti-hallucination prompt (F-A-24). Sending a canned client
@@ -11340,10 +11559,7 @@ struct ReelStudioView: View {
                 let clip = try await retrieveClip(job: job, pending: pending, api: api, into: dir, index: index,
                                                  clearReceiptOnDownload: false, requireCurrent: requireCurrent)
                 try await requireCurrent()
-                let retained = try retainRecoveredClip(clip, for: pending.context.listingID)
-                try await requireCurrent()
-                pending.clear()
-                return retained
+                return try await acknowledgeRecoveredClip(clip, request: pending, requireCurrent: requireCurrent)
             } catch let refusal as ReelQualityRefusal where refusal.mayRetry && attempt == 0 {
                 try await requireCurrent()
                 // This is an explicit terminal judgement, never a dropped response.
@@ -11353,6 +11569,134 @@ struct ReelStudioView: View {
             }
         }
         throw AIImagePrep.error("The quality check requested more than one retry. The saved request has been kept.")
+    }
+
+    nonisolated private static func preparedReelJPEG(photo: EnhancedPhoto, aspect: String) throws -> Data {
+        guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else { throw AIImagePrep.error("Couldn't read that photo.") }
+        let scaled = AIImagePrep.downscaled(AIImagePrep.reelSource(ui, aspect: aspect), maxDimension: 1280)
+        guard let jpeg = scaled.jpegData(compressionQuality: 0.85), !jpeg.isEmpty else { throw AIImagePrep.error("Couldn't prepare that photo.") }
+        return jpeg
+    }
+
+    /// The clip and batch position are durable BEFORE the exact accepted receipt
+    /// is acknowledged. A repeated acknowledgement reuses its recorded clip.
+    nonisolated private static func acknowledgeRecoveredClip(_ clip: URL, request: PendingReelRequest,
+        requireCurrent: @MainActor @Sendable () throws -> Void) async throws -> URL {
+        try await requireCurrent()
+        guard PendingReelRequest.load(request.context)?.job.requestId == request.job.requestId else { throw CancellationError() }
+        var batch = try PendingReelBatch.load(request.context)
+        if let saved = batch {
+            guard (1...saved.photos.count).contains(request.photoNumber),
+                  saved.photos[request.photoNumber - 1].jpegBase64 == request.sourceJPEGBase64,
+                  saved.completedPaths.count == request.photoNumber - 1 || saved.completedPaths.count == request.photoNumber else {
+                throw AIImagePrep.error("The recovered photo does not match saved reel progress. Its request has been kept.")
+            }
+            if saved.completedPaths.count == request.photoNumber {
+                try await requireCurrent()
+                request.clear()
+                return FileStore.url(fromRelativePath: saved.completedPaths[request.photoNumber - 1])
+            }
+        }
+        let retained = try retainRecoveredClip(clip, for: request.context.listingID)
+        try await requireCurrent()
+        if batch != nil {
+            batch!.completedPaths.append(FileStore.relativePath(for: retained))
+            try batch!.save()
+        }
+        try await requireCurrent()
+        request.clear()
+        return retained
+    }
+
+    /// Only an explicit choice after the original job's confirmed first retry
+    /// verdict can send one safer POST or render the exact source locally.
+    nonisolated private static func resolveSavedQualityRetry(_ request: PendingReelRequest, choice: ReelRecoveryChoice,
+        api: APIClient, into dir: URL, requireCurrent: @MainActor @Sendable () throws -> Void) async throws -> URL {
+        try await requireCurrent()
+        guard request.qualityAttempt == 0, request.submissionUnconfirmed != true,
+              PendingReelRequest.load(request.context)?.job.requestId == request.job.requestId,
+              let source = request.sourceJPEGBase64, let jpeg = Data(base64Encoded: source), !jpeg.isEmpty,
+              let spaceType = request.sourceSpaceType else { throw AIImagePrep.error("Recover the saved request before choosing a safer retry.") }
+        // Re-read the existing owned job and cached judgment. An unavailable
+        // check or a changed session cannot open either fallback action.
+        do {
+            let already = try await retrieveClip(job: request.job, pending: request, api: api, into: dir,
+                index: request.photoNumber - 1, requireCurrent: requireCurrent)
+            return try await acknowledgeRecoveredClip(already, request: request, requireCurrent: requireCurrent)
+        } catch let refusal as ReelQualityRefusal where refusal.mayRetry {
+            // The only case which permits the two explicit choices below.
+        }
+        try await requireCurrent()
+        guard PendingReelRequest.load(request.context)?.job.requestId == request.job.requestId,
+              let shape = UIImage(data: jpeg)?.size, shape.width > 0, shape.height > 0 else { throw CancellationError() }
+        let batch = try PendingReelBatch.load(request.context)
+        if let batch {
+            guard batch.completedPaths.count == request.photoNumber - 1, request.photoNumber <= batch.photos.count,
+                  batch.photos[request.photoNumber - 1].jpegBase64 == source else { throw AIImagePrep.error("Saved reel progress does not match this photo. Your request has been kept.") }
+        }
+        let aspect = shape.width < shape.height ? "9:16" : "16:9"
+        if choice == .originalPhoto {
+            let local = dir.appendingPathComponent("clip-photo-motion-\(request.photoNumber - 1).mp4")
+            try await OriginalPhotoMotion.render(jpeg: jpeg,
+                renderSize: aspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080), output: local)
+            try await requireCurrent()
+            return try await acknowledgeRecoveredClip(local, request: request, requireCurrent: requireCurrent)
+        }
+        let operationID = UUID().uuidString
+        let digest = SHA256.hash(data: jpeg + Data("push_in|\(aspect)|\(request.photoNumber)|retry-1".utf8)).map { String(format: "%02x", $0) }.joined()
+        let submission = PendingReelRequest(context: request.context, photoNumber: request.photoNumber,
+            job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"), operationID: operationID,
+            inputDigest: digest, submissionUnconfirmed: true, sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1)
+        try submission.save()
+        try await requireCurrent()
+        let job: AIVideoJob
+        do {
+            job = try await api.aiVideoReelClip(imageBase64: source, mime: "image/jpeg", prompt: nil, seconds: 5,
+                aspect: aspect, presetVersion: 1, motion: "push_in", room: batch?.photos[request.photoNumber - 1].shot?.room,
+                shotIndex: request.photoNumber - 1, shotCount: batch?.photos.count ?? request.photoNumber,
+                listingServerID: request.context.serverListingID, label: "Reel shot \(request.photoNumber) — safer retry", idempotencyKey: operationID)
+        } catch {
+            if Self.isDefinitiveRefusal(error), PendingReelRequest.load(request.context)?.job.requestId == operationID {
+                // Restore the confirmed rejected job atomically, with no empty
+                // interval that could invite a third unknown submission.
+                try request.save()
+            }
+            throw error
+        }
+        let accepted = PendingReelRequest(context: request.context, photoNumber: request.photoNumber, job: job,
+            operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
+            sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1)
+        try accepted.save()
+        try await requireCurrent()
+        let clip = try await retrieveClip(job: job, pending: accepted, api: api, into: dir,
+            index: request.photoNumber - 1, requireCurrent: requireCurrent)
+        return try await acknowledgeRecoveredClip(clip, request: accepted, requireCurrent: requireCurrent)
+    }
+
+    /// Resume the exact prepared source for each remaining position. Retained
+    /// clips and their plan remain in order; a current receipt prevents any POST.
+    nonisolated private static func completeSavedBatch(_ saved: PendingReelBatch, api: APIClient, into dir: URL,
+        requireCurrent: @MainActor @Sendable () throws -> Void,
+        progress: @MainActor @Sendable (Int) -> Void) async throws -> PendingReelBatch {
+        try await requireCurrent()
+        guard var batch = try PendingReelBatch.load(saved.context), batch.id == saved.id,
+              !PendingReelRequest.exists(saved.context) else { throw AIImagePrep.error("Recover the saved photo before continuing this reel.") }
+        while batch.completedPaths.count < batch.photos.count {
+            try await requireCurrent()
+            let index = batch.completedPaths.count, photo = batch.photos[index]
+            guard let jpeg = Data(base64Encoded: photo.jpegBase64), !jpeg.isEmpty else { throw AIImagePrep.error("The saved source photo cannot be read. Your progress has been kept.") }
+            await progress(index)
+            let placeholder = dir.appendingPathComponent("saved-source-\(index).jpg")
+            _ = try await makeClip(photo: EnhancedPhoto(id: photo.id, originalURL: placeholder, enhancedURL: placeholder),
+                prompt: "", shot: photo.shot?.value, shotCount: batch.photos.count, motion: batch.motion,
+                aspect: batch.aspect, spaceType: batch.spaceType, api: api, listingServerID: batch.context.serverListingID,
+                into: dir, index: index, recoveryContext: batch.context, requireCurrent: requireCurrent, preparedJPEG: jpeg)
+            try await requireCurrent()
+            guard let updated = try PendingReelBatch.load(saved.context), updated.id == saved.id,
+                  updated.completedPaths.count == index + 1 else { throw AIImagePrep.error("Reel progress could not be confirmed. Your clips have been kept.") }
+            batch = updated
+        }
+        return batch
     }
 
     /// Give a downloaded clip an explicit media suffix before decoding it.

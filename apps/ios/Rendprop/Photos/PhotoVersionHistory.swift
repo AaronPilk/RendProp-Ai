@@ -633,12 +633,12 @@ enum PhotoVersionHistory {
 /// a listing service's requirements or upscales the photo's pixels.
 enum PhotoExportLayout {
     enum Aspect: String, CaseIterable, Identifiable, Sendable {
-        case original, landscape = "4:3", wide = "16:9", portrait = "9:16"
+        case original, landscape = "4:3", wide = "16:9", portrait = "9:16", feed = "4:5"
         var id: String { rawValue }
         var title: String { self == .original ? "Original aspect" : rawValue }
         var ratio: Double? {
             switch self { case .original: return nil; case .landscape: return 4 / 3
-            case .wide: return 16 / 9; case .portrait: return 9 / 16 }
+            case .wide: return 16 / 9; case .portrait: return 9 / 16; case .feed: return 4 / 5 }
         }
     }
     enum Framing: String, CaseIterable, Identifiable, Sendable {

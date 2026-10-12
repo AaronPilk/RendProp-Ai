@@ -404,6 +404,7 @@ import ImageIO
             preconditionFailure("a missing extra cannot be silently dropped from the listing package")
         } catch { checks += 1 }
         check((try? Data(contentsOf:video)) == videoBytes, "failed packaging cannot remove the listing video")
+        checks += try CoordinatorExportChecks.run()
         print("Actual UIKit rendering and export packaging: \(checks) passed")
     }
 }

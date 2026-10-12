@@ -25,6 +25,7 @@ enum PhotoExportRenderer {
         let directory: URL
         let images: [URL]
         let files: [URL]
+        var notes: [String] = []
     }
     /// A file that rides along with the photos in a listing package (build 60:
     /// "Share everything"): the walkthrough tour, a reel, the aerial opening,
@@ -171,6 +172,185 @@ enum PhotoExportRenderer {
         }
     }
 
+    /// The coordinator package is deliberately separate from ordinary photo
+    /// export. Masters keep exact saved bytes; upload copies are center crops
+    /// at available resolution, without borders, overlays or invented detail.
+    static func coordinatorSelectionNotes(_ photos: [EnhancedPhoto]) throws -> [String] {
+        var notes: [String] = []
+        for (offset, photo) in photos.enumerated() {
+            let history = try PhotoVersionHistory.load(directory: photo.enhancedURL.deletingLastPathComponent())
+            if let named = history.versions[photo.id], named.imageFile != photo.enhancedURL.lastPathComponent {
+                throw PhotoVersionHistory.Failure.changedVersion
+            }
+            guard let selected = history.versions.values.first(where: { $0.imageFile == photo.enhancedURL.lastPathComponent }) else {
+                throw PhotoVersionHistory.Failure.invalidHistory
+            }
+            let saved = history.history(for: selected.id).sorted {
+                $0.createdAt != $1.createdAt ? $0.createdAt < $1.createdAt : $0.id < $1.id
+            }
+            let withheld = saved.filter(\.needsCustomReview)
+            if !withheld.isEmpty {
+                notes.append("Photo \(offset + 1): \(withheld.count) unreviewed custom version(s) withheld: " + withheld.map { "\($0.id) [\($0.imageFile)]" }.joined(separator: ", ") + ".")
+            }
+            if selected.needsCustomReview {
+                let earlier = saved.prefix { $0.id != selected.id }.last { !$0.needsCustomReview }
+                if let earlier {
+                    notes.append("Photo \(offset + 1): selected \(selected.id) [\(selected.imageFile)] is withheld. Earlier approved-for-download version \(earlier.id) [\(earlier.imageFile)] (\(earlier.title)) is the selected-version fallback; every other approved saved version remains separate.")
+                } else {
+                    notes.append("Photo \(offset + 1): selected \(selected.id) [\(selected.imageFile)] is withheld and no earlier approved edit is available. Only an eligible retained source and other listing files can be included.")
+                }
+            }
+        }
+        return notes
+    }
+
+    static func prepareCoordinator(_ photos: [EnhancedPhoto],
+                                   readRetained: (URL) throws -> Data = { try Data(contentsOf: $0) }) throws -> Prepared {
+        let empty = try prepareEmpty()
+        let directory = empty.directory
+        do {
+            var files: [URL] = [], images: [URL] = []
+            var notes = try coordinatorSelectionNotes(photos)
+            var families = Set<String>()
+            func write(_ data: Data, _ path: String) throws -> URL {
+                guard coordinatorPathIsSafe(path) else { throw Failure(message: "An export filename is invalid. Nothing was exported.") }
+                let url = directory.appendingPathComponent(path)
+                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: url, options: .atomic)
+                files.append(url)
+                return url
+            }
+            for (offset, photo) in photos.enumerated() {
+                try autoreleasepool {
+                    let photoDirectory = photo.enhancedURL.deletingLastPathComponent()
+                    let history = try PhotoVersionHistory.load(directory: photoDirectory)
+                    if let named = history.versions[photo.id], named.imageFile != photo.enhancedURL.lastPathComponent {
+                        throw PhotoVersionHistory.Failure.changedVersion
+                    }
+                    guard let selected = history.versions.values.first(where: { $0.imageFile == photo.enhancedURL.lastPathComponent }) else {
+                        throw PhotoVersionHistory.Failure.invalidHistory
+                    }
+                    // One family may appear more than once in an old gallery.
+                    // Preserve one complete history rather than duplicate paths.
+                    let familyKey = photoDirectory.standardizedFileURL.path + "/" + selected.familyID
+                    guard !history.hiddenFamilies.contains(selected.familyID) else { throw PhotoVersionHistory.Failure.changedVersion }
+                    guard families.insert(familyKey).inserted else { return }
+                    let number = String(format: "%02d", offset + 1)
+                    let saved = history.history(for: selected.id).sorted {
+                        $0.createdAt != $1.createdAt ? $0.createdAt < $1.createdAt : $0.id < $1.id
+                    }
+                    let fallback = selected.needsCustomReview
+                        ? saved.prefix { $0.id != selected.id }.last { !$0.needsCustomReview } : selected
+                    let versionWidth = max(2, String(saved.count).count)
+                    if let originalFile = selected.originalFile, selected.originalVerified {
+                        let source = photoDirectory.appendingPathComponent(originalFile)
+                        try PhotoVersionHistory.requireDownloadReview(imageURL: source)
+                        let retained = try retainedImage(at: source, read: readRetained)
+                        _ = try write(retained.data, "Originals/" + number + "-retained-original." + retained.ext)
+                    } else if photo.originalURL.standardizedFileURL != photo.enhancedURL.standardizedFileURL {
+                        try PhotoVersionHistory.requireDownloadReview(imageURL: photo.originalURL)
+                        let retained = try retainedImage(at: photo.originalURL, read: readRetained)
+                        _ = try write(retained.data, "EarlierSources/" + number + "-source-unverified." + retained.ext)
+                        notes.append("Photo \(offset + 1): earlier source history is unverified; it is in EarlierSources, not Originals.")
+                    }
+                    for (position, version) in saved.enumerated() {
+                        // Custom review is an exact persisted file permission,
+                        // including descendants. Export never marks it reviewed.
+                        if version.needsCustomReview { continue }
+                        try autoreleasepool {
+                        let source = photoDirectory.appendingPathComponent(version.imageFile)
+                        try PhotoVersionHistory.requireDownloadReview(imageURL: source)
+                        let retained = try retainedImage(at: source, read: readRetained)
+                        guard let image = UIImage(data: retained.data) else { throw Failure(message: "Couldn't decode a saved photo version. Nothing was exported.") }
+                        let category = version.effects.contains("stage") ? "Staged"
+                            : (version.effects.contains("declutter") ? "Decluttered" : (version.effects.isEmpty ? "Enhanced" : "Edited"))
+                        let stem = number + "-version-" + String(format: "%0*d", versionWidth, position + 1) + "-" + version.exportSlug
+                        let master = try write(retained.data, category + "/" + stem + "." + retained.ext)
+                        images.append(master)
+                        let selectedNote = fallback?.id == version.id
+                            ? (selected.needsCustomReview ? "Earlier approved selected-version fallback." : "Version selected in the app.") : "Other saved version; retained separately."
+                        let disclosure = version.title + ".\n" + version.caption + "\n" + selectedNote
+                            + "\nSaved version ID: " + version.id + "; source file: " + version.imageFile + ".\nMaster file: exact saved bytes, unchanged format and full available dimensions.\nCheck your MLS or advertising platform's original-photo and disclosure requirements before publishing.\n"
+                        _ = try write(Data(disclosure.utf8), category + "/" + stem + "-disclosure.txt")
+                        for (platform, aspect) in [("MLS", PhotoExportLayout.Aspect.landscape), ("Zillow", .landscape),
+                                                   ("Instagram/Feed4x5", .feed), ("Instagram/Stories9x16", .portrait)] {
+                            let cropped = render(image, aspect: aspect, framing: .crop, label: nil)
+                            guard let encoded = cropped.jpegData(compressionQuality: 0.97), let pixels = cropped.cgImage else {
+                                throw Failure(message: "Couldn't encode an upload photo. Nothing was exported.")
+                            }
+                            _ = try write(encoded, platform + "/" + category + "/" + stem + ".jpg")
+                            let rotated = [.left, .right, .leftMirrored, .rightMirrored].contains(image.imageOrientation)
+                            let sourceWidth = rotated ? image.cgImage!.height : image.cgImage!.width
+                            let sourceHeight = rotated ? image.cgImage!.width : image.cgImage!.height
+                            let resolution = "Available source: \(sourceWidth)×\(sourceHeight) pixels. Export: \(pixels.width)×\(pixels.height) pixels (\(aspect.rawValue))."
+                            let cropNote = "Centered crop may remove content at the edges. No white borders, text overlay, enlargement or new detail. Originals and full saved masters are unchanged."
+                            let warning = min(pixels.width, pixels.height) < 1080
+                                ? " Limited available resolution: this copy's short edge is below 1080 pixels; check the destination's requirements. It was not upscaled." : ""
+                            _ = try write(Data((disclosure + "\n" + resolution + "\n" + cropNote + warning + "\n").utf8), platform + "/" + category + "/" + stem + "-disclosure.txt")
+                            notes.append(platform + "/" + category + "/" + stem + ".jpg — " + resolution + warning)
+                        }
+                        }
+                    }
+                    try PhotoVersionHistory.requireUnchanged(history, directory: photoDirectory)
+                }
+            }
+            return Prepared(directory: directory, images: images, files: files, notes: notes)
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    /// Explicit nested allowlist; file names remain leaf-only. The ZIP writer
+    /// also rejects traversal and duplicate entries before writing anything.
+    static func coordinatorPathIsSafe(_ path: String) -> Bool {
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let masters = Set(["Originals", "Decluttered", "Staged", "Enhanced", "Edited", "EarlierSources"])
+        let platforms = Set(["MLS", "Zillow"])
+        let validFolder = parts.count == 2 && (masters.contains(parts[0]) || ["Videos", "Attachments"].contains(parts[0]))
+            || parts.count == 3 && platforms.contains(parts[0]) && masters.contains(parts[1]) && !["Originals", "EarlierSources"].contains(parts[1])
+            || parts.count == 4 && parts[0] == "Instagram" && ["Feed4x5", "Stories9x16"].contains(parts[1])
+                && masters.contains(parts[2]) && !["Originals", "EarlierSources"].contains(parts[2])
+        guard validFolder, let leaf = parts.last, !leaf.isEmpty, leaf != ".", leaf != "..", !leaf.contains("\\"), !leaf.contains(":"), !leaf.contains("\0") else { return false }
+        return ZipArchive.safeFileName(leaf, fallback: "") == leaf
+    }
+
+    static func packageCoordinator(_ prepared: Prepared, archiveName: String, extras: [Extra] = [], now: Date = Date()) throws -> URL {
+        guard !prepared.files.isEmpty || !extras.isEmpty else { throw Failure(message: "There are no files to package.") }
+        let title = ZipArchive.safeFileName(archiveName, fallback: "Rendprop")
+        var readme = "\(title)\nRendprop coordinator handoff package.\n\nMasters: Originals contains verified retained capture/import bytes; Decluttered and Staged contain every eligible saved version separately. Enhanced, Edited and EarlierSources retain other saved sources. Masters are exact saved bytes in their real format, without cropping or re-encoding. Imported originals may contain edits made before Rendprop.\n\nReady-upload copies: MLS and Zillow use landscape 4:3; Instagram/Feed4x5 uses portrait 4:5; Instagram/Stories9x16 uses portrait 9:16. Each platform separates Decluttered, Staged, Enhanced and Edited versions. Copies are clean JPEGs encoded at quality 0.97, center-cropped at full available resolution without borders or upscaling. Cropping removes edges; review the master before uploading. No resolution or detail is invented. A short edge below 1080 pixels is flagged as limited available resolution, not a platform eligibility guarantee.\n\nThe same photo/version number maps a master to its platform copies and individual disclosure notes. All eligible saved predecessors stay accessible. Unreviewed custom edits and their unreviewed descendants are withheld; no export grants approval. This package is a handoff, not an automatic publication. Add each matching disclosure in your MLS/advertising platform and check its rules.\n\n"
+        readme += prepared.notes.joined(separator: "\n") + "\n"
+        let base = prepared.directory.standardizedFileURL.path + "/"
+        var entries: [ZipArchive.Entry] = [], used = Set<String>()
+        for file in prepared.files {
+            guard file.standardizedFileURL.path.hasPrefix(base) else { throw Failure(message: "An export file is outside its prepared package.") }
+            let name = String(file.standardizedFileURL.path.dropFirst(base.count))
+            guard coordinatorPathIsSafe(name), used.insert(name.lowercased()).inserted else { throw Failure(message: "An export filename is invalid or duplicated.") }
+            entries.append(ZipArchive.Entry(name: name, url: file))
+        }
+        for extra in extras {
+            let ext = extra.url.pathExtension.lowercased()
+            let folder = ["mp4", "mov", "m4v"].contains(ext) ? "Videos" : "Attachments"
+            let safe = ZipArchive.safeFileName(extra.name, fallback: "file")
+            var name = folder + "/" + safe, attempt = 1
+            while used.contains(name.lowercased()) {
+                attempt += 1
+                let leaf = safe as NSString
+                name = folder + "/" + leaf.deletingPathExtension + "-\(attempt)" + (leaf.pathExtension.isEmpty ? "" : "." + leaf.pathExtension)
+            }
+            guard coordinatorPathIsSafe(name) else { throw Failure(message: "A listing file name is invalid.") }
+            used.insert(name.lowercased()); entries.append(ZipArchive.Entry(name: name, url: extra.url))
+            readme += "\n" + name + " — " + extra.note
+        }
+        readme += "\n\nVideos are unchanged saved files. AI-generated motion must be disclosed wherever published; a source-photo motion fallback preserves photographed geometry but does not establish unseen room connections. Listing details and other attachments are saved separately.\n"
+        let note = prepared.directory.appendingPathComponent("README.txt")
+        try Data(readme.utf8).write(to: note, options: .atomic)
+        entries.insert(ZipArchive.Entry(name: "README.txt", url: note), at: 0)
+        let archive = prepared.directory.appendingPathComponent(title + " listing.zip")
+        try ZipArchive.write(entries, to: archive, modified: now)
+        return archive
+    }
+
     /// One file for the whole export, so an agent can hand every photo and its
     /// disclosure to whoever runs their file (a transaction coordinator, the
     /// office, a client) as a single attachment. The archive holds exactly the
@@ -298,13 +478,15 @@ struct PhotoExportSheet: View {
     /// Build 60 "Share everything": the listing's videos, 3D scan and details
     /// note that travel with the photos. Empty for an ordinary photo export.
     let extras: [PhotoExportRenderer.Extra]
+    let coordinatorPackage: Bool
     private let canExport: () -> Bool
     init(photos: [EnhancedPhoto], original: Bool = false, includeOriginals: Bool = true,
-         archiveName: String = "Rendprop", extras: [PhotoExportRenderer.Extra] = [],
+         archiveName: String = "Rendprop", extras: [PhotoExportRenderer.Extra] = [], coordinatorPackage: Bool = false,
          canExport: @escaping () -> Bool = { true }) {
         self.photos = photos
         self.archiveName = archiveName
         self.extras = extras
+        self.coordinatorPackage = coordinatorPackage
         self.canExport = canExport
         _original = State(initialValue: original)
         _includeOriginals = State(initialValue: includeOriginals)
@@ -326,6 +508,7 @@ struct PhotoExportSheet: View {
     @State private var framing: PhotoExportLayout.Framing = .fit
     @State private var levelDegrees = 0.0
     @State private var asArchive = false
+    @State private var packageNotes: [String] = []
     @State private var preview: UIImage?
     @State private var working = false
     @State private var error: String?
@@ -350,6 +533,18 @@ struct PhotoExportSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if coordinatorPackage {
+                    Section("One organized listing ZIP") {
+                        Text("Originals · Decluttered · Staged · MLS · Zillow · Instagram · Videos")
+                            .font(.headline).accessibilityIdentifier("export.coordinatorFolders")
+                        Text("Every eligible saved photo version stays separate. Full saved masters and originals keep their exact bytes. Ready-upload JPEG copies are centered crops: MLS/Zillow 4:3, Instagram feed 4:5, stories 9:16. No borders or invented resolution.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("The README and matching text files name each edit, disclose cropping and report actual pixel dimensions. Low-resolution sources are flagged. Check the photos and your platform's rules before publishing.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(packageNotes, id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
+                        if !extras.isEmpty { Text(extras.map(\.name).joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("export.packageExtras") }
+                    }
+                } else {
                 Section {
                     if let preview {
                         Image(uiImage: preview).resizable().scaledToFit().frame(maxHeight: 240)
@@ -446,16 +641,17 @@ struct PhotoExportSheet: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+                }
                 Section {
                     Button { start(saveToPhotos: false) } label: {
-                        Label(asArchive && canArchive ? "Share one ZIP file" : (wholeListing ? "Share all files · Save to Files" : (original ? "Share or save source files" : "Download JPEGs · Share or save to Files")),
+                        Label(coordinatorPackage || asArchive && canArchive ? "Share one ZIP file" : (wholeListing ? "Share all files · Save to Files" : (original ? "Share or save source files" : "Download JPEGs · Share or save to Files")),
                               systemImage: "square.and.arrow.up")
                     }
                     .accessibilityIdentifier("export.share")
-                    if !photos.isEmpty {
+                    if !coordinatorPackage && !photos.isEmpty {
                         Button { start(saveToPhotos: true) } label: { Label("Save to Photos", systemImage: "square.and.arrow.down") }
                     }
-                    Text(asArchive && canArchive
+                    Text(coordinatorPackage ? "Send this ZIP to your coordinator, office or client. Stored listing files stay unchanged." : asArchive && canArchive
                          ? "The ZIP keeps the .jpg files and matching disclosure captions together for MLS uploads. Saving to Photos adds the images to your camera roll instead."
                          : "For MLS uploads, choose Share or save to Files to keep the .jpg files and matching disclosure captions. Saving to Photos adds images to your camera roll.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -475,7 +671,12 @@ struct PhotoExportSheet: View {
                 owner = AuthStore.shared.userID; revision = AuthStore.shared.syncSessionRevision
                 workspace = WorkspaceContext.selectedOrgID; didCaptureContext = true
             }
-            .task(id: previewKey) { await updatePreview() }
+            .task(id: previewKey) {
+                if coordinatorPackage {
+                    do { packageNotes = try PhotoExportRenderer.coordinatorSelectionNotes(photos) }
+                    catch { self.error = error.localizedDescription }
+                } else { await updatePreview() }
+            }
             .sheet(item: $prepared) { export in ShareSheet(items: export.files) }
             .interactiveDismissDisabled(working)
             .onChange(of: auth.userID) { _ in prepared = nil; preview = nil; dismiss() }
@@ -520,7 +721,8 @@ struct PhotoExportSheet: View {
         let options = PhotoExportRenderer.Options(destination: destination, includeLabel: includeLabel,
             includeOriginals: includeOriginals, original: original, aspect: aspect, framing: framing, levelDegrees: levelDegrees)
         // Package only for a share: Photos receives the images themselves.
-        let wantsArchive = asArchive && canArchive && !saveToPhotos
+        let wantsArchive = (coordinatorPackage || asArchive && canArchive) && !saveToPhotos
+        let coordinator = coordinatorPackage
         let archiveTitle = archiveName
         let packageExtras = saveToPhotos ? [] : extras
         Task { @MainActor in
@@ -529,9 +731,9 @@ struct PhotoExportSheet: View {
             do {
                 let input = photos
                 let (result, archive) = try await Task.detached(priority: .userInitiated) { () -> (PhotoExportRenderer.Prepared, URL?) in
-                    let prepared = input.isEmpty ? try PhotoExportRenderer.prepareEmpty() : try PhotoExportRenderer.prepare(input, options: options)
+                    let prepared = coordinator ? try PhotoExportRenderer.prepareCoordinator(input) : (input.isEmpty ? try PhotoExportRenderer.prepareEmpty() : try PhotoExportRenderer.prepare(input, options: options))
                     do {
-                        let archive = wantsArchive ? try PhotoExportRenderer.package(prepared, archiveName: archiveTitle, extras: packageExtras) : nil
+                        let archive = wantsArchive ? (coordinator ? try PhotoExportRenderer.packageCoordinator(prepared, archiveName: archiveTitle, extras: packageExtras) : try PhotoExportRenderer.package(prepared, archiveName: archiveTitle, extras: packageExtras)) : nil
                         return (prepared, archive)
                     } catch {
                         try? FileManager.default.removeItem(at: prepared.directory)

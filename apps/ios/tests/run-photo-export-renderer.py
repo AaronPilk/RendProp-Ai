@@ -14,6 +14,8 @@ root = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--simulator', help='Existing available iOS simulator UUID')
 parser.add_argument('--evidence-dir', type=Path)
+parser.add_argument('--actual-only', action='store_true', help='Compile/run the current actual UIKit fixture only; controls remain required for the full gate')
+parser.add_argument('--coordinator-only', action='store_true', help='Run actual fixture and new coordinator controls only')
 args = parser.parse_args()
 out = args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-photo-export-renderer-', dir=os.environ.get('RUNNER_TEMP')))
 out.mkdir(parents=True, exist_ok=True)
@@ -42,10 +44,30 @@ variants = {
     'negative-history-race-accepted': (base.replace('try PhotoVersionHistory.requireUnchanged(history, directory: photoDirectory)', '/* changed history accepted */'), 'a history change during export prevents mixed version delivery'),
     'negative-crop-stretches': (base.replace('let drawWidth = CGFloat(fullWidth) * scale, drawHeight = CGFloat(fullHeight) * scale', 'let drawWidth = size.width, drawHeight = size.height'), 'center crop actually excludes left red strip'),
 }
+def mutate_coordinator(old, new):
+    start = base.index('    static func prepareCoordinator(')
+    end = base.index('    /// Explicit nested allowlist;', start)
+    return base[:start] + base[start:end].replace(old, new) + base[end:]
+
+coordinator_variants = {
+    'negative-coordinator-original-mutated': (base.replace('write(retained.data, "Originals/"', 'write(Data("mutated".utf8), "Originals/"'), 'coordinator original master preserves exact bytes and real format'),
+    'negative-coordinator-master-mutated': (base.replace('let master = try write(retained.data, category', 'let master = try write(Data("mutated".utf8), category'), 'coordinator declutter master retains the full saved bytes'),
+    'negative-coordinator-custom-exported': (mutate_coordinator('if version.needsCustomReview { continue }', '/* custom bypass */').replace('                        try PhotoVersionHistory.requireDownloadReview(imageURL: source)', '                        /* file review bypass */'), 'coordinator never exports unreviewed custom versions or descendants'),
+    'negative-coordinator-fallback-not-named': (base.replace('var notes = try coordinatorSelectionNotes(photos)', 'var notes: [String] = []'), 'coordinator names the exact withheld current and earlier fallback in README'),
+    'negative-coordinator-fit-borders': (base.replace('let cropped = render(image, aspect: aspect, framing: .crop, label: nil)', 'let cropped = render(image, aspect: aspect, framing: .fit, label: nil)'), 'coordinator upload dimensions use the intended ratio without fake upscaling'),
+    'negative-coordinator-low-quality': (base.replace('cropped.jpegData(compressionQuality: 0.97)', 'cropped.jpegData(compressionQuality: 0.50)'), 'coordinator upload JPEG is the actual clean centered crop at quality 0.97'),
+    'negative-coordinator-missing-disclosures': (base.replace('_ = try write(Data((disclosure + "\\n" + resolution', '_ = try write(Data((disclosure + "\\n" + resolution').replace('platform + "/" + category + "/" + stem + "-disclosure.txt")', 'platform + "/" + category + "/" + stem + "-missing.txt")'), 'coordinator platform JPEG carries its matching disclosure'),
+    'negative-coordinator-video-dropped': (base.replace('used.insert(name.lowercased()); entries.append(ZipArchive.Entry(name: name, url: extra.url))', 'used.insert(name.lowercased()); /* extra omitted */'), 'coordinator preserves every video with deterministic collision names'),
+    'negative-coordinator-path-allowlist-removed': (base.replace('guard validFolder, let leaf = parts.last', 'guard true, let leaf = parts.last'), 'coordinator explicit path allowlist rejects traversal and unknown folders'),
+    'negative-coordinator-missing-predecessor-skipped': (base.replace('let retained = try retainedImage(at: source, read: readRetained)\n                        guard let image', 'guard let retained = try? retainedImage(at: source, read: readRetained) else { return }\n                        guard let image'), 'coordinator missing approved predecessor must refuse partial delivery'),
+}
+variants = {'actual': (base, None), **coordinator_variants} if args.coordinator_only else {**variants, **coordinator_variants}
+if args.actual_only: variants = {'actual': (base, None)}
 architecture = 'arm64' if platform.machine() == 'arm64' else 'x86_64'
 fixture = root / 'apps/ios/tests/PhotoExportRendererTests.swift'
 stubs = root / 'apps/ios/tests/PhotoExportPlatformStubs.swift'
-consumed = [source, fixture, stubs, Path(__file__).resolve(), root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift', root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift', root / 'apps/ios/Rendprop/Support/ZipArchive.swift']
+coordinator_fixture = root / 'apps/ios/tests/CoordinatorExportTests.swift'
+consumed = [source, fixture, coordinator_fixture, stubs, Path(__file__).resolve(), root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift', root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift', root / 'apps/ios/Rendprop/Support/ZipArchive.swift']
 receipt = {
     'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
     'consumed_sha256': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed},
@@ -184,7 +206,7 @@ try:
         # on that runner. Keep bounded cold/warm deadlines with headroom;
         # a timeout still fails the entire gate.
         compile_timeout = receipt['compile_deadlines_seconds']['cold_actual' if name == 'actual' else 'warm_controls']
-        compile_result = command(f'{name}-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', f'{architecture}-apple-ios16.0-simulator', '-sdk', sdk, str(stubs), str(root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift'), str(root / 'apps/ios/Rendprop/Support/ZipArchive.swift'), str(path), str(fixture), '-o', str(binary)], compile_timeout)
+        compile_result = command(f'{name}-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', f'{architecture}-apple-ios16.0-simulator', '-sdk', sdk, str(stubs), str(root / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(root / 'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift'), str(root / 'apps/ios/Rendprop/Support/ZipArchive.swift'), str(path), str(coordinator_fixture), str(fixture), '-o', str(binary)], compile_timeout)
         # A successful actual run does not bound later process startup or
         # crash reporting on a cold hosted simulator. Await the real result;
         # neither a timeout nor partial assertion text can satisfy a control.
