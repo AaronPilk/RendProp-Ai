@@ -54,6 +54,7 @@ async function compiled(mutation?: Mutation) {
     import {assert,readJson,readJsonLimited} from ${JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)};
     import {visionInputTokenBound} from ${JSON.stringify(new URL("../_shared/funded-serving.ts", import.meta.url).href)};
     import {normalizeRoom,parseReelMotion,chooseReelMotion,REEL_MOTIONS,REEL_PRESETS,buildSeedanceReelPreset,buildReelPrompt,type ReelMotion} from ${JSON.stringify(new URL("./motion.ts", import.meta.url).href)};
+    import {parseReelFraming,buildPhotoPreservingReelPrompt} from ${JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)};
     import {MAX_DRIFT_FRAME_B64_CHARS,MAX_DRIFT_REQUEST_BODY_BYTES,MAX_DRIFT_SOURCE_B64_CHARS,DRIFT_SOURCE_EXTRA_INPUT_TOKENS,validateExtendedReelSource} from ${JSON.stringify(moduleURL(imports(h)))};
     type DriftImage={b64:string;mime:string};type DriftBody=Record<string,any>;type ReelBody=Record<string,any>;
     ${constant("MAX_DRIFT_IMAGE_B64_CHARS")} ${cap} ${constant("ALLOWED_IMAGE_MIMES")} ${constant("MAX_IMAGE_B64_CHARS")}

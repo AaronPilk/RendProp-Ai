@@ -25,7 +25,6 @@
 		14B6C3653060755275D9DF9B /* SpatialModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A24F38ABBCEB8DBE385BFC0E /* SpatialModels.swift */; };
 		18DE602B7F387816E839A3D9 /* OnboardingTour.swift in Sources */ = {isa = PBXBuildFile; fileRef = E78B2A8D3A09BDA9A38AA6CB /* OnboardingTour.swift */; };
 		19B84A44129CBED76977398B /* SubscriptionOfferPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AF5444E4223732DF63BBA30 /* SubscriptionOfferPolicy.swift */; };
-		1A13B19E04B6BA1E8C055F08 /* ReelWholeSceneFraming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76CD7F6E18A253BEEE9D302E /* ReelWholeSceneFraming.swift */; };
 		1AF302A469774E89A13D3A73 /* MediaImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF368AB27AC0367798607FA4 /* MediaImporter.swift */; };
 		1C731645EC18370529018560 /* CrashReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CAFAF30B745B48498E15F25 /* CrashReporter.swift */; };
 		23103C7671C216BFBEA08797 /* Money.swift in Sources */ = {isa = PBXBuildFile; fileRef = C65AFC6059E55D94283A7BEF /* Money.swift */; };
@@ -259,7 +258,6 @@
 		7377E9EE07D558CED9A5731F /* EnhanceSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnhanceSource.swift; sourceTree = "<group>"; };
 		7454E6869852666C80A02C2B /* FloorMeasurementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloorMeasurementsView.swift; sourceTree = "<group>"; };
 		75F888EABC6EA5FC889E6036 /* GuideShot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuideShot.swift; sourceTree = "<group>"; };
-		76CD7F6E18A253BEEE9D302E /* ReelWholeSceneFraming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReelWholeSceneFraming.swift; sourceTree = "<group>"; };
 		7AE5E0B43390D091776A9739 /* Products.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Products.swift; sourceTree = "<group>"; };
 		7DF74276AC7DEB9312C026E3 /* PaywallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallView.swift; sourceTree = "<group>"; };
 		7E61F8AE9890ECC8C3540B89 /* ReflectionVideo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReflectionVideo.swift; sourceTree = "<group>"; };
@@ -544,7 +542,6 @@
 				1EE1EF518D6CC2469EC540D9 /* DriftCheck.swift */,
 				7377E9EE07D558CED9A5731F /* EnhanceSource.swift */,
 				8C47DEE16BD416E9B71887B8 /* ReelComposer.swift */,
-				76CD7F6E18A253BEEE9D302E /* ReelWholeSceneFraming.swift */,
 				4F73FDC94EE7714522B604D2 /* ReelWorkBanner.swift */,
 				A082F7E43D8FF10637ACE4F2 /* ReelWorkQueue.swift */,
 				F2612ACED32F50C31BAC6E19 /* ReflectionRemoval.swift */,
@@ -1009,7 +1006,6 @@
 				B143F12C0423D7A62B4F4C22 /* RasterWriter.swift in Sources */,
 				633E0749E92ED1C938908323 /* RecentlyDeletedView.swift in Sources */,
 				2D98569E463CA537E504AA41 /* ReelComposer.swift in Sources */,
-				1A13B19E04B6BA1E8C055F08 /* ReelWholeSceneFraming.swift in Sources */,
 				A72CC84469F003D3A75E6D54 /* ReelWorkBanner.swift in Sources */,
 				370C8F363F91036508BF5A4A /* ReelWorkQueue.swift in Sources */,
 				79192C5B14312E46F48CF63E /* ReflectionAPI.swift in Sources */,
@@ -1171,7 +1167,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 66;
+				CURRENT_PROJECT_VERSION = 67;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -1241,7 +1237,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 66;
+				CURRENT_PROJECT_VERSION = 67;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_NS_ASSERTIONS = NO;

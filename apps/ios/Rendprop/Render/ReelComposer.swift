@@ -29,21 +29,13 @@ enum OriginalPhotoMotion {
               renderSize.width.isFinite, renderSize.height.isFinite,
               renderSize.width >= 2, renderSize.height >= 2,
               renderSize.width <= 4096, renderSize.height <= 4096 else { throw CocoaError(.fileReadCorruptFile) }
-        // Bake EXIF orientation once. The sharp foreground always includes the
-        // complete checked photo. Its own blurred pixels fill the spare canvas;
-        // the backdrop is presentation, never additional property scenery.
+        // Bake EXIF orientation once. Delivery uses one centered cover crop,
+        // with no backdrop or extra zoom. The selected source JPEG is unchanged.
         let format = UIGraphicsImageRendererFormat.default(); format.scale = 1; format.opaque = true
         let normalized = UIGraphicsImageRenderer(size: image.size, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: image.size))
         }
         guard let cg = normalized.cgImage else { throw CocoaError(.fileReadCorruptFile) }
-        let sourceImage = CIImage(cgImage: cg)
-        let blurredImage = sourceImage.clampedToExtent()
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(CGFloat(cg.width), CGFloat(cg.height)) * 0.035])
-            .cropped(to: sourceImage.extent)
-        guard let backdrop = CIContext().createCGImage(blurredImage, from: sourceImage.extent) else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
         let width = Int(renderSize.width), height = Int(renderSize.height)
         guard width % 2 == 0, height % 2 == 0 else { throw CocoaError(.fileWriteInvalidFileName) }
         let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
@@ -68,9 +60,8 @@ enum OriginalPhotoMotion {
         guard writer.startWriting() else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         writer.startSession(atSourceTime: .zero)
         do {
-            let fill = max(renderSize.width / CGFloat(cg.width), renderSize.height / CGFloat(cg.height))
-            let fit = min(renderSize.width / CGFloat(cg.width), renderSize.height / CGFloat(cg.height))
-            let backdropSize = CGSize(width: CGFloat(cg.width) * fill, height: CGFloat(cg.height) * fill)
+            let scale = max(renderSize.width / CGFloat(cg.width), renderSize.height / CGFloat(cg.height))
+            let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)
             for frame in 0..<150 {
                 try Task.checkCancellation()
                 let deadline = Date().addingTimeInterval(15)
@@ -95,14 +86,6 @@ enum OriginalPhotoMotion {
                 guard let context else { CVPixelBufferUnlockBaseAddress(buffer, []); throw CocoaError(.fileWriteUnknown) }
                 context.setFillColor(UIColor.black.cgColor)
                 context.fill(CGRect(origin: .zero, size: renderSize))
-                context.interpolationQuality = .high
-                context.draw(backdrop, in: CGRect(x: (renderSize.width - backdropSize.width) / 2,
-                    y: (renderSize.height - backdropSize.height) / 2, width: backdropSize.width, height: backdropSize.height))
-                // The gentle push ends at fit, so even the final frame retains
-                // every source edge and its original geometry.
-                let t = CGFloat(frame) / 149
-                let scale = fit * (0.98 + 0.02 * t * t * (3 - 2 * t))
-                let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)
                 context.interpolationQuality = .high
                 context.draw(cg, in: CGRect(x: (renderSize.width - size.width) / 2,
                     y: (renderSize.height - size.height) / 2, width: size.width, height: size.height))
@@ -349,9 +332,9 @@ enum ReelComposer {
 
     /// Build the reel and export it to `output` (mp4, overwritten).
     ///
-    /// Differently shaped clips are fitted over a blurred copy of their same
-    /// decoded scene. Matching clips avoid this delivery-copy encode. Source
-    /// files remain intact, and orientation is applied before framing.
+    /// Raw QC-passed clips fill the delivery canvas with one centered crop.
+    /// There is no intermediate matte, blur, or framing encode. Source files
+    /// remain intact, and orientation is applied by the existing fill transform.
     ///
     /// THE GUARANTEE THE OLD `stitch()` DOCUMENTED, KEPT WORD FOR WORD:
     /// `voiceover` is mixed onto a new AUDIO track at time zero. VIDEO LENGTH
@@ -372,17 +355,8 @@ enum ReelComposer {
             throw ComposeError.badRenderSize
         }
 
-        let framingDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("reel-full-scene-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: framingDirectory) }
-        var framedShots: [Shot] = []
-        for shot in shots {
-            try Task.checkCancellation()
-            let url = try await ReelWholeSceneFraming.normalizeIfNeeded(source: shot.url,
-                renderSize: renderSize, into: framingDirectory)
-            framedShots.append(Shot(url: url, seconds: shot.seconds, speed: shot.speed, caption: shot.caption))
-        }
-        let prepared = await prepare(framedShots, renderSize: renderSize)
+        try Task.checkCancellation()
+        let prepared = await prepare(shots, renderSize: renderSize)
         // AVAssetTrack.asset is weak. The asynchronous prepare pass must keep
         // every source asset alive through insertion AND export; retaining the
         // track alone leaves a valid downloaded clip with no readable owner.

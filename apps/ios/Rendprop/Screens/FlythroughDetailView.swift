@@ -9406,7 +9406,7 @@ struct ReelStudioView: View {
                         .accessibilityAddTraits(cameraMove == move ? .isSelected : [])
                 }
             }
-            Text("Fly-through adds a short, smooth glide to each photo. It does not map a connected route through the house. Pull-back stays within the original photo. The full photo is sent to the camera model. Your chosen video format fits the result over a soft background from the same scene; check the finished reel before publishing.")
+            Text("Fly-through adds a short, smooth glide to each photo. It does not map a connected route through the house. Pull-back stays within the original photo. The full photo is sent to the camera model. Your chosen video format fills the frame with one centered crop from the same scene; check the finished reel before publishing.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
             Text(costText).font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)

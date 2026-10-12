@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCES = [
     "services/supabase/functions/ai-video/index.ts",
     "services/supabase/functions/ai-video/drift-input.ts",
+    "services/supabase/functions/ai-video/reel-framing.ts",
     "services/supabase/functions/ai-video/drift-source-bound.test.ts",
     "services/supabase/functions/ai-video/fixtures/reel-source-2048-q95.jpg",
     "services/supabase/functions/ai-photo/input-policy.ts",

@@ -192,7 +192,7 @@ jobs:
         run: python3 apps/ios/tests/run-clip-frames.py --evidence-dir "$RUNNER_TEMP/rendprop-clip-frames"
       - name: Original photo motion preserves source pixels, orientation and geometry
         run: python3 apps/ios/tests/run-original-photo-motion.py --evidence-dir "$RUNNER_TEMP/rendprop-original-photo-motion"
-      - name: Full-scene framing preserves encoded source edges, orientation and voice
+      - name: Clean reel framing preserves intended crop, orientation and voice
         run: python3 apps/ios/tests/run-reel-whole-scene-framing.py --evidence-dir "$GITHUB_WORKSPACE/reel-whole-scene-framing-evidence"
       - name: Whole listing package preserves sources and refuses incomplete handovers
         run: python3 apps/ios/tests/run-listing-package-assembly.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-package-assembly"

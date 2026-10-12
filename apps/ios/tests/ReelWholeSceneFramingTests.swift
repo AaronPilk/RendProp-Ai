@@ -86,47 +86,43 @@ import UIKit
         }
         let target = CGSize(width:1080,height:1920)
         let wide = try await source("landscape-full-source",size:CGSize(width:1600,height:1200))
+        let portrait = try await source("portrait-full-source",size:CGSize(width:1200,height:1600))
         let rotated = try await source("rotated-full-source",size:CGSize(width:1600,height:1200),rotated:true)
         let exact = try await source("already-delivery-aspect",size:target)
-        let hashes = try [wide,rotated,exact].map(hash)
-        let matching = try await ReelWholeSceneFraming.normalizeIfNeeded(source:exact,renderSize:target,into:root.appendingPathComponent("same"))
-        check(matching == exact && (try! hash(exact)) == hashes[2], "matching delivery shape skips an unnecessary encode and keeps original bytes")
-        var copies:[URL] = [], observations:[[String:Any]] = []
-        for original in [wide,rotated] {
-            let output = try await ReelWholeSceneFraming.normalizeIfNeeded(source:original,renderSize:target,into:root.appendingPathComponent("copies"))
-            copies.append(output)
-            check(output != original,"different delivery shape gets a separate delivery copy")
+        let sources=[wide,portrait,rotated,exact]
+        let hashes = try sources.map(hash)
+        var observations:[[String:Any]] = []
+        for original in sources {
+            let output = root.appendingPathComponent("clean-"+original.lastPathComponent)
+            try await ReelComposer.compose(shots:[.init(url:original)],renderSize:target,output:output)
             let originalFrame = try await frame(original,at:0), fitted = try await frame(output,at:0)
-            check(fitted.width == 1080 && fitted.height == 1920,"whole-scene delivery output is actual1080x1920 pixels")
-            let asset = AVURLAsset(url:output), originalAsset = AVURLAsset(url:original)
-            let duration = try await asset.load(.duration), originalDuration = try await originalAsset.load(.duration)
-            check(abs(duration.seconds - originalDuration.seconds)<0.01,"delivery framing preserves the source timeline without speed change")
-            let fit = min(target.width/CGFloat(originalFrame.width),target.height/CGFloat(originalFrame.height))
-            let offsetX=(target.width-CGFloat(originalFrame.width)*fit)/2,offsetY=(target.height-CGFloat(originalFrame.height)*fit)/2
-            for (sx,sy) in [(0.05,0.5),(0.95,0.5),(0.5,0.05),(0.5,0.95),(0.41,0.5)] {
-                let x=Int(CGFloat(originalFrame.width)*sx),y=Int(CGFloat(originalFrame.height)*sy)
-                let got = pixel(fitted,Int(offsetX+CGFloat(x)*fit),Int(offsetY+CGFloat(y)*fit)), expected = pixel(originalFrame,x,y)
-                if !similar(got,expected) {
-                    FileHandle.standardOutput.write(Data("pixel mismatch \(original.lastPathComponent) source=\(x),\(y) fit=\(offsetX+CGFloat(x)*fit),\(offsetY+CGFloat(y)*fit) actual=\(got) expected=\(expected)\n".utf8))
-                }
-                check(similar(got,expected),"sharp foreground retains the whole raw provider frame and its orientation")
+            check(fitted.width == 1080 && fitted.height == 1920,"clean Instagram output is actual1080x1920 pixels")
+            let duration=try await AVURLAsset(url:output).load(.duration)
+            check(abs(duration.seconds-1)<0.04,"single delivery crop preserves the source timeline")
+            let scale=max(target.width/CGFloat(originalFrame.width),target.height/CGFloat(originalFrame.height))
+            let offsetX=(target.width-CGFloat(originalFrame.width)*scale)/2,offsetY=(target.height-CGFloat(originalFrame.height)*scale)/2
+            // Source projection is the minimum centered cover, exactly once.
+            // Pixel coordinates near every delivery edge also catch letterbox,
+            // stretched geometry, ignored orientation and additional zoom.
+            for (dx,dy) in [(0.01,0.01),(0.99,0.01),(0.01,0.99),(0.99,0.99),(0.05,0.5),(0.95,0.5),(0.5,0.05),(0.5,0.95),(0.5,0.13),(0.5,0.87)] {
+                let x=Int(target.width*dx),y=Int(target.height*dy)
+                let sx=Int((CGFloat(x)-offsetX)/scale),sy=Int((CGFloat(y)-offsetY)/scale)
+                let got=pixel(fitted,x,y),expected=pixel(originalFrame,sx,sy)
+                check(got.max()!>70,"single crop fills encoded frame edges without black bars")
+                check(similar(got,expected),"delivery is one centered cover crop with source geometry and orientation")
             }
-            for (x,y) in [(2,2),(1077,2),(2,1917),(1077,1917),(540,2),(540,1917)] {
-                check(pixel(fitted,x,y).max()! > 70,"same-scene matte fills encoded delivery edges without black bars")
+            if original == portrait {
+                let whiteX=Int(offsetX+CGFloat(originalFrame.width)*0.41*scale)
+                let leftX=Int(offsetX+CGFloat(originalFrame.width)*0.385*scale)
+                check(pixel(fitted,whiteX,100).min()!>225,"top of the reel is sharp source pixels without synthetic blur")
+                check(pixel(fitted,whiteX,1815).min()!>225,"bottom of the reel is sharp source pixels without synthetic blur")
+                check(pixel(fitted,whiteX,100).min()!-pixel(fitted,leftX,100).min()!>90,"source detail remains sharp through the final crop")
             }
-            if original == wide {
-                check(pixel(fitted,310,100).min()! < 235,"delivery padding is blurred same-scene color rather than a sharp duplicate")
-            }
-            let last = try await frame(output,at:11.0/12)
-            check(similar(pixel(last,540,960),pixel(fitted,540,960)),"last source frame remains readable after streaming normalization")
             observations.append(["source_width":originalFrame.width,"source_height":originalFrame.height,
-                "output_width":fitted.width,"output_height":fitted.height,"duration":duration.seconds])
+                "output_width":fitted.width,"output_height":fitted.height,"duration":duration.seconds,
+                "minimum_cover_scale":Double(scale),"offset_x":Double(offsetX),"offset_y":Double(offsetY)])
         }
-        check(try [wide,rotated,exact].map(hash)==hashes,"normalization never overwrites retained paid source clips")
-        let cancelled=Task { try Task.checkCancellation();return try await ReelWholeSceneFraming.normalizeIfNeeded(source:wide,renderSize:target,into:root.appendingPathComponent("cancelled")) }
-        cancelled.cancel()
-        do {_ = try await cancelled.value;preconditionFailure("cancelled framing must stop before reading or encoding") }catch is CancellationError {checks+=1}
-        do {_ = try await ReelWholeSceneFraming.normalizeIfNeeded(source:root.appendingPathComponent("missing.mp4"),renderSize:target,into:root);preconditionFailure("unreadable input must not produce a partial reel") }catch{checks+=1}
+        check(try sources.map(hash)==hashes,"composition never overwrites retained paid source clips")
         if !CommandLine.arguments.contains("--framing-only") {
             let output=root.appendingPathComponent("actual-composed-reel.mp4")
             try await ReelComposer.compose(shots:[.init(url:wide,caption:"WIDE ROOM"),.init(url:exact,caption:"FINAL ROOM")],
@@ -135,10 +131,10 @@ import UIKit
             let track=try await AVURLAsset(url:output).loadTracks(withMediaType:.video).first!
             let size=try await track.load(.naturalSize),duration=try await AVURLAsset(url:output).load(.duration)
             check(size==target,"actual composer emits1080delivery through existing overlay and transition path")
-            check(abs(duration.seconds-1.72)<0.05,"existing dissolve overlap is preserved after whole-scene delivery framing")
+            check(abs(duration.seconds-1.72)<0.05,"existing dissolve overlap is preserved after clean single-crop delivery")
             let first=try await frame(output,at:0.3)
-            check(similar(pixel(first,30,960),pixel(try await frame(wide,at:0.25),44,600)),"actual composition fits the full sharp scene instead of second cover cropping")
-            check(try [wide,rotated,exact].map(hash)==hashes,"final composition preserves all retained source files")
+            check(similar(pixel(first,30,960),pixel(try await frame(wide,at:0.25),481,600)),"actual transition composition applies the same single delivery crop")
+            check(try sources.map(hash)==hashes,"final composition preserves all retained source files")
             // Real local PCM audio binds the unchanged independent voice track,
             // including its existing last-frame hold when speech outlasts video.
             let sampleRate=22050, sampleCount=22050*3
@@ -184,6 +180,6 @@ import UIKit
             }
         }
         try JSONSerialization.data(withJSONObject:["checks":checks,"observations":observations,"source_hashes":hashes],options:[.prettyPrinted,.sortedKeys]).write(to:root.appendingPathComponent("result.json"))
-        print("PASS: \(checks) actual AVFoundation whole-scene framing/composition assertions")
+        print("PASS: \(checks) actual AVFoundation clean single-crop composition assertions")
     }
 }

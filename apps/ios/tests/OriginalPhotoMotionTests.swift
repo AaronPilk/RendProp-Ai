@@ -17,8 +17,8 @@ import UIKit
                 colors[y * 2 + x].setFill()
                 ctx.fill(CGRect(x: x * 48, y: y * 32, width: 48, height: 32))
             } }
-            // Small landmarks distinguish full-photo fit from stretching or
-            // cropping the source to fill a differently shaped output.
+            // Small landmarks distinguish the one minimum centered cover crop
+            // from stretching, a fitted backdrop, or additional zoom.
             UIColor.white.setFill(); ctx.fill(CGRect(x: 41, y: 0, width: 4, height: 64))
             UIColor.cyan.setFill(); ctx.fill(CGRect(x: 0, y: 21, width: 96, height: 4))
         }
@@ -143,34 +143,48 @@ import UIKit
                 for (x, y) in edgePoints {
                     check(pixel(frame, x: x, y: y).max()! > 90, "fallback encodes source pixels to every edge without black bars")
                 }
-                let t = CGFloat(Int(second * 30)) / 149
-                let scale = min(size.width / 96, size.height / 64) * (0.98 + 0.02 * t * t * (3 - 2 * t))
-                // Every source corner remains visible in the sharp foreground.
-                for (sx, sy) in [(5, 5), (91, 5), (5, 59), (91, 59)] {
-                    let x = Int((size.width - 96 * scale) / 2 + CGFloat(sx) * scale)
-                    let y = Int((size.height - 64 * scale) / 2 + CGFloat(sy) * scale)
-                    check(close(pixel(frame, x: x, y: y), pixel(decodedSource, x: sx, y: sy)), "fallback retains every selected photo edge without cropping")
+                let scale = max(size.width / 96, size.height / 64)
+                let offset = CGPoint(x: (size.width - 96 * scale) / 2, y: (size.height - 64 * scale) / 2)
+                // Delivery may crop edges for Tall/Wide; every visible pixel
+                // must still come from the single selected source at cover scale.
+                for (fx, fy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+                    let x = Int(size.width * fx), y = Int(size.height * fy)
+                    let sx = min(95, max(0, Int((CGFloat(x) - offset.x) / scale)))
+                    let sy = min(63, max(0, Int((CGFloat(y) - offset.y) / scale)))
+                    check(close(pixel(frame, x: x, y: y), pixel(decodedSource, x: sx, y: sy)),
+                        "fallback uses one centered cover crop of the selected photo without a backdrop")
                 }
-                // Visible source samples remain the same room, without outpaint.
-                for (sx, sy) in [(40, 16), (56, 16), (40, 48), (56, 48)] {
-                    let x = Int((size.width - 96 * scale) / 2 + CGFloat(sx) * scale)
-                    let y = Int((size.height - 64 * scale) / 2 + CGFloat(sy) * scale)
-                    check(close(pixel(frame, x: x, y: y), pixel(decodedSource, x: sx, y: sy)), "fallback uses the same selected photo pixels and orientation")
+                // Measure actual encoded stripe centers independently of the
+                // renderer. Extra zoom or stretching moves these landmarks.
+                func markerCenter(vertical: Bool) -> CGFloat {
+                    var bytes = [UInt8](repeating: 0, count: frame.width * frame.height * 4)
+                    bytes.withUnsafeMutableBytes { ptr in
+                        let context = CGContext(data: ptr.baseAddress, width: frame.width, height: frame.height,
+                            bitsPerComponent: 8, bytesPerRow: frame.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                        context.draw(frame, in: CGRect(x: 0, y: 0, width: frame.width, height: frame.height))
+                    }
+                    let limit = vertical ? frame.width : frame.height
+                    var points: [Int] = []
+                    for position in 0..<limit {
+                        let x = vertical ? position : frame.width / 4
+                        let y = vertical ? frame.height / 4 : position
+                        let start = (y * frame.width + x) * 4
+                        let r = bytes[start], g = bytes[start + 1], b = bytes[start + 2]
+                        if vertical ? (r > 205 && g > 205 && b > 205) : (r < 80 && g > 180 && b > 180) { points.append(position) }
+                    }
+                    check(!points.isEmpty, "fallback keeps sharp source landmarks without a synthetic blur")
+                    return CGFloat(points.first! + points.last! + 1) / 2
                 }
-                for (sx, sy) in [(42, 10), (32, 22)] {
-                    let x = Int((size.width - 96 * scale) / 2 + CGFloat(sx) * scale)
-                    let y = Int((size.height - 64 * scale) / 2 + CGFloat(sy) * scale)
-                    check(close(pixel(frame, x: x, y: y), pixel(decodedSource, x: sx, y: sy)), "fallback full-photo fit preserves source geometry without stretching")
-                }
-                if size.height > size.width {
-                    let cover = max(size.width / 96, size.height / 64)
-                    let bx = Int((size.width - 96 * cover) / 2 + 42 * cover)
-                    let by = Int((size.height - 64 * cover) / 2 + 4 * cover)
-                    check(pixel(frame, x: bx, y: by).min()! < 220,
-                        "fallback padding blurs the same source instead of duplicating sharp scenery")
-                }
+                check(abs(markerCenter(vertical: true) - (offset.x + 43 * scale)) <= max(2.5, scale * 0.08),
+                    "fallback cover scale has no extra zoom or stretched geometry")
+                check(abs(markerCenter(vertical: false) - (offset.y + 23 * scale)) <= max(2.5, scale * 0.08),
+                    "fallback cover crop stays centered on the original geometry")
             }
-            check((images[0].dataProvider!.data! as Data) != (images[2].dataProvider!.data! as Data), "fallback contains deterministic motion inside the source bounds")
+            for (x, y) in [(Int(size.width / 4), Int(size.height / 4)), (Int(size.width * 3 / 4), Int(size.height * 3 / 4))] {
+                check(close(pixel(images[0], x: x, y: y), pixel(images[2], x: x, y: y)),
+                    "fallback adds no camera zoom beyond the single minimum delivery crop")
+            }
             check(OriginalPhotoMotion.isClip(output), "durable clip name identifies photo motion separately from AI")
             try OriginalPhotoMotion.saveSummary(count: 2, for: output)
             check(OriginalPhotoMotion.summaryCount(for: output) == 2, "original photo motion disclosure persists after reopening")
@@ -187,8 +201,8 @@ import UIKit
         let rotationGenerator = AVAssetImageGenerator(asset: AVURLAsset(url: rotatedOutput))
         let (rotationFrame, _) = try await rotationGenerator.image(at: CMTime(seconds: 4.9, preferredTimescale: 600))
         // After rotating clockwise: upper left blue, upper right red, lower left
-        // yellow, lower right green. The complete displayed image is fitted.
-        for (x, y, expected) in [(45, 93, [0, 0, 254]), (135, 93, [254, 0, 0]), (45, 227, [255, 255, 1]), (135, 227, [0, 255, 1])] {
+        // yellow, lower right green. The displayed photo is cropped only at delivery.
+        for (x, y, expected) in [(45, 80, [0, 0, 254]), (135, 80, [254, 0, 0]), (45, 240, [255, 255, 1]), (135, 240, [0, 255, 1])] {
             check(close(pixel(rotationFrame, x: x, y: y), expected), "fallback bakes camera EXIF orientation without changing source geometry")
         }
         for (x, y) in [(1, 1), (178, 1), (1, 318), (178, 318)] {
