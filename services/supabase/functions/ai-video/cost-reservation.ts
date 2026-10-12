@@ -92,7 +92,7 @@ export async function submitReservedVideo<T extends { id: string }>(
   let attempt: ChainResult<T>;
   let dispatched = false;
   const model = step.model.replace(/^fal-ai\//, "");
-  const input = options.input as {seconds?:number;aspect?:string;resolution?:string;extra?:Record<string,unknown>};
+  const input = options.input as {seconds?:number;aspect?:string;framing?:string;resolution?:string;extra?:Record<string,unknown>};
   let quote: AttemptQuote | null = null;
   if (step.provider === "fal" && model === "topaz/upscale/video" && options.feature === "drone_render") {
     quote = {cents: Math.max(hold, (options.seconds ?? 0) * 16),version:TARIFF_VERSION};
@@ -109,6 +109,12 @@ export async function submitReservedVideo<T extends { id: string }>(
     // Only the temporary, explicitly authorized owner QA route selects this.
     // https://kie.ai/seedance-1-0-pro-fast
     quote = {cents: Math.max(hold, 18),version:TARIFF_VERSION};
+  } else if (step.provider === "kie" && model === "kling-3.0/video" &&
+      input.seconds === 5 && input.resolution === "1080p" && input.framing === "preserve_photo" &&
+      input.extra?.kie_mode === "pro" && input.extra?.sound === false && unitCents === 9 && step.unit === "second") {
+    // Official KIE Pro silent rate: 18 credits/s = $0.09/s, five seconds $0.45.
+    // https://kie.ai/kling-3-0 (2026-10-12); no top-up discount assumed.
+    quote = {cents: Math.max(hold, 45),version:TARIFF_VERSION};
   }
   try {
     // The same request must never reach a second provider after a timeout or

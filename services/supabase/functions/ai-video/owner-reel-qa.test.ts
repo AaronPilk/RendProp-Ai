@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { HttpError } from "../_shared/http.ts";
-import type { RouteStep } from "../_shared/router.ts";
-import { ownerQaReelStep, prepareOwnerQaReelInput, OWNER_REEL_QA_KEY, KIE_REEL_QA_MODEL, OWNER_REEL_QA_CONSENT } from "./owner-reel-qa.ts";
+import { paramsOf, type RouteStep } from "../_shared/router.ts";
+import { ownerQaReelStep, prepareOwnerQaReelInput, OWNER_REEL_QA_KEY, KIE_REEL_QA_MODEL, OWNER_REEL_QA_CONSENT, KIE_KLING_REEL_QA_MODEL } from "./owner-reel-qa.ts";
 import { ProviderError } from "../_shared/providers/common.ts";
 import type { GenerateInput } from "../_shared/providers/types.ts";
 import { submitReservedVideo } from "./cost-reservation.ts";
@@ -118,6 +118,8 @@ async function routingFixture() {
   assert(source.slice(dispatch, provenance).includes('feature: "reel", steps, input: genInput, seconds: secs'));
   const module = await import(encode(`
     import {assert,HttpError} from ${JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)};
+    import type {RouteStep} from ${JSON.stringify(new URL("../_shared/router.ts", import.meta.url).href)};
+    import {parseReelFraming,reelFramingSteps} from ${JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)};
     import {ownerQaReelStep as realOwnerQaReelStep} from ${JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)};
     export async function run(options:any, database:any, now:Date) {
       const events:string[]=[];
@@ -125,9 +127,11 @@ async function routingFixture() {
       const body={listing_id:${JSON.stringify(LISTING)},aspect:"9:16",...options.body};
       const req=new Request("https://closed-fixture.invalid/reel",{method:"POST"});
       const reelListingId=options.assetListing??null,secs=5;
-      const MODEL_I2V="legacy-fal-model",APP_AI_UNIT_CENTS={seedance_per_s:4.8};
+      const MODEL_I2V="bytedance/seedance/v1/pro/fast/image-to-video",APP_AI_UNIT_CENTS={seedance_per_s:4.8};
       const assertVideoReceiptSigningReady=async()=>{events.push("receipt_signing");};
       const guardGenerate=async(...args:any[])=>{events.push("listing_and_paid_guard");if(options.guardRefusal)throw new HttpError(options.guardRefusal,"synthetic refused");return {orgId:${JSON.stringify(ORG)},plan:"team"};};
+      const framing=parseReelFraming(body.framing);
+      const refundGenerateCharge=async(_charge:any)=>{events.push("allowance_refund");};
       const routerEnabled=async()=>false;
       const ownerQaReelStep=async(args:any)=>{events.push("server_grant");return await realOwnerQaReelStep(args,database,now);};
       const resolveChain=async(_task:any,context:any,legacy:any)=>{events.push("normal_chain");return [{...legacy,context}];};
@@ -328,7 +332,7 @@ async function providerCallbackFixture() {
     export async function run(options:any, database:any, input:any, now:Date) {
       const events:any[]=[],user={id:${JSON.stringify(ACTOR)}},orgId=${JSON.stringify(ORG)};
       const body={listing_id:${JSON.stringify(LISTING)}},reelListingId=null,secs=5;
-      const genInput=input,R2_BUCKET_RENDERS="renders",ownerQaStep=options.normal?null:{};
+      const genInput=input,framing=input.framing,R2_BUCKET_RENDERS="renders",ownerQaStep=options.normal?null:{};
       const step={provider:options.normal?"fal":"kie",model:options.normal?"normal-model":${JSON.stringify(KIE_REEL_QA_MODEL)}};
       const contentOrgForUser=async(actor:any,org:any,listing:any,write:any)=>{events.push({kind:"content_auth",actor,org,listing,write});if(options.revokedAccess)throw Error("content access revoked");return org;};
       const ownerQaReelStep=async(args:any)=>{events.push({kind:"grant_auth",args});return await realOwnerQaReelStep(args,database,now);};
@@ -369,4 +373,51 @@ Deno.test("actual provider callback rechecks content+grant and registers owned s
   const normal = await run({ normal: true }, db({ admin: false }).client, input, NOW);
   assertEquals(normal.events.map(x => x.kind), ["POST"]);
   assertEquals((normal.events[0].input as GenerateInput).image_url, input.image_url);
+});
+
+Deno.test("owner Kling grant requires current exact Pro silent consent and preserves scope", async () => {
+  const klingGrant = { ...grant, model: KIE_KLING_REEL_QA_MODEL, mode: "pro", sound: false };
+  const framedArgs={...args,framing:"preserve_photo" as const};
+  assertEquals(await ownerQaReelStep(args,db({value:klingGrant}).client,NOW),null,"Old client requests cannot switch to owner Kling without the marker");
+  const route = await ownerQaReelStep(framedArgs, db({value:klingGrant}).client, NOW);
+  assert(route); assertEquals([route.provider,route.model,route.unit_cents,paramsOf(route)],
+    ["kie",KIE_KLING_REEL_QA_MODEL,9,{kie_mode:"pro",sound:false}]);
+  for (const change of [{mode:"standard"},{mode:null},{sound:true},{sound:null},{sound:"false"},
+    {actor_id:OTHER},{org_id:OTHER},{listing_id:OTHER},{changed_by:OTHER},{expires_at:NOW.toISOString()}]) {
+    assertEquals(await ownerQaReelStep(framedArgs,db({value:{...klingGrant,...change}}).client,NOW),null);
+  }
+  assertEquals(await ownerQaReelStep(framedArgs,db({value:klingGrant,admin:false}).client,NOW),null);
+  const native = {actorId:HEX_ACTOR.toUpperCase(),orgId:HEX_ORG.toUpperCase(),listingId:HEX_LISTING.toUpperCase(),seconds:5,framing:"preserve_photo" as const};
+  assert(await ownerQaReelStep(native,db({value:{...klingGrant,actor_id:HEX_ACTOR,org_id:HEX_ORG,listing_id:HEX_LISTING,changed_by:HEX_ACTOR}}).client,NOW));
+  const original=await Deno.readTextFile(new URL("./owner-reel-qa.ts",import.meta.url));
+  for (const [needle,change] of [['grant.mode !== "pro"',{mode:"standard"}],['grant.sound !== false',{sound:true}]] as const) {
+    assertEquals(original.split(needle).length,2);
+    const mutant=await import(encode(absoluteImports(original.replace(needle,"false"))));
+    assert(await mutant.ownerQaReelStep(framedArgs,db({value:{...klingGrant,...change}}).client,NOW),"Compiled control must expose the removed Kling fence");
+  }
+  const marker='args.framing !== "preserve_photo"';assertEquals(original.split(marker).length,2);
+  const noMarker=await import(encode(absoluteImports(original.replace(marker,"false"))));
+  assert(await noMarker.ownerQaReelStep(args,db({value:klingGrant}).client,NOW),"Compiled marker control must expose old-client routing leak");
+  console.log("KLING_OWNER_COMPILED_CONTROLS=3");
+});
+
+Deno.test("actual routing rejects incompatible photo-preservation before supplier admission and keeps legacy routing", async () => {
+  const run=await routingFixture();
+  const klingGrant={...grant,model:KIE_KLING_REEL_QA_MODEL,mode:"pro",sound:false};
+  const accepted=await run({body:{framing:"preserve_photo",provider:"arbitrary",model:"arbitrary"}},db({value:klingGrant}).client,NOW);
+  assertEquals(accepted.steps.map(x=>x.model),[KIE_KLING_REEL_QA_MODEL]);
+  assertEquals(accepted.events,["receipt_signing","listing_and_paid_guard","server_grant"]);
+  await assertRejects(()=>run({body:{framing:"preserve_photo"}},db().client,NOW),HttpError,
+    "Photo-preserving motion is unavailable");
+  const normal=await run({body:{framing:"preserve_photo",provider:"kie",model:KIE_KLING_REEL_QA_MODEL}},db({admin:false}).client,NOW);
+  assertEquals(normal.steps.map(x=>x.provider),["fal"]);
+  const old=await run({body:{}},db({value:klingGrant}).client,NOW);
+  assertEquals(old.steps.map(x=>x.provider),["fal"],"Actual old client routing stays ordinary even with an active owner Kling grant");
+  const source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+  const route=source.indexOf('seg[0] === "reel-clip"');
+  const validation=source.indexOf("parseReelFraming(body.framing)",route);
+  const admission=source.indexOf('guardGenerate(user, req, "reel"',route);
+  const paid=source.indexOf("await submitReservedVideo({",admission);
+  assert(route<validation && validation<admission && source.indexOf("reelFramingSteps(candidateSteps, framing)",admission)<paid);
+  assert(source.slice(admission,paid).includes("await refundGenerateCharge(charge)"));
 });

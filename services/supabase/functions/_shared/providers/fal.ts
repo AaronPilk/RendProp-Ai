@@ -106,6 +106,10 @@ const secondsOf = (input: GenerateInput, dflt: number) => {
 export function falInput(step: RouteStep, input: GenerateInput): Record<string, unknown> {
   const model = falEndpoint(step.model);
   const extra = input.extra ?? {};
+  if (input.framing === "preserve_photo" && (input.task !== "video.reel_clip" ||
+      !model.endsWith("bytedance/seedance/v1/pro/fast/image-to-video"))) {
+    throw new ProviderError(PROVIDER, "validation", "This model cannot preserve photo framing.", 400, true);
+  }
 
   // Seedance 1.0 Pro Fast image-to-video — the reel and the grounded aerial.
   if (model.endsWith("bytedance/seedance/v1/pro/fast/image-to-video")) {
@@ -126,7 +130,7 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
       resolution: "1080p",
       duration: String(secondsOf(input, 5)), // Seedance takes duration as a string
       num_frames: secondsOf(input, 5) * 24 + 1,
-      aspect_ratio: input.aspect ?? "16:9",
+      aspect_ratio: input.framing === "preserve_photo" ? "auto" : input.aspect ?? "16:9",
       camera_fixed: false,
     };
   }

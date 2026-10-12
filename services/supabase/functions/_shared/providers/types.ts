@@ -25,6 +25,8 @@ export interface GenerateInput {
   mask_url?: string;
   seconds?: number;
   aspect?: "16:9" | "9:16" | "1:1";
+  /** Reel only: keep the input photograph's shape; aspect describes the app canvas. */
+  framing?: "preserve_photo";
   resolution?: "720p" | "1080p" | "4k";
   text?: string; // tts
   voice_id?: string;

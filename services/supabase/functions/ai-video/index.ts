@@ -219,7 +219,7 @@ import {
 } from "./drift-input.ts";
 import { APP_AI_UNIT_CENTS, recordAppAiCost, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
-import { resolveRoute, routerEnabled } from "../_shared/router.ts";
+import { paramsOf, resolveRoute, routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
 import type { JobState } from "../_shared/providers/types.ts";
 import { asHttpError, type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
@@ -236,6 +236,7 @@ import { createRoutedOutput } from "./routed-output.ts";
 import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
 import { ownerQaReelStep, prepareOwnerQaReelInput } from "./owner-reel-qa.ts";
+import { buildPhotoPreservingReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
 import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
@@ -971,6 +972,8 @@ interface AerialBody {
 }
 interface ReelBody {
   preset_version?: number;
+  /** Input-photo framing, separate from the app's portrait/landscape canvas. */
+  framing?: "preserve_photo";
   asset_id?: string;
   image_b64?: string;
   mime?: string;
@@ -1389,6 +1392,7 @@ Deno.serve(async (req) => {
     // ---- POST /ai-video/reel-clip ----
     if (req.method === "POST" && seg.length === 1 && seg[0] === "reel-clip") {
       const body = await readJson<ReelBody>(req);
+      const framing = parseReelFraming(body.framing);
       let secs = Math.round(Number(body.seconds ?? 5));
       if (!Number.isFinite(secs)) secs = 5;
       secs = Math.min(12, Math.max(2, secs)); // Seedance duration range 2–12 s
@@ -1472,7 +1476,9 @@ Deno.serve(async (req) => {
         assert(secs === 5, 400, "These camera presets use five-second shots.");
       }
       const reelText = presetVersion === 1
-        ? buildSeedanceReelPreset(SCENE_NOUN[space], shotMotion as typeof REEL_PRESETS[number])
+        ? framing === "preserve_photo"
+          ? buildPhotoPreservingReelPrompt(SCENE_NOUN[space], shotMotion as typeof REEL_PRESETS[number])
+          : buildSeedanceReelPreset(SCENE_NOUN[space], shotMotion as typeof REEL_PRESETS[number])
         : userMotion
         ? guardedUserPrompt(userMotion, space, "Animate")
         : buildReelPrompt({ sceneNoun: SCENE_NOUN[space], motion: shotMotion });
@@ -1493,18 +1499,25 @@ Deno.serve(async (req) => {
       const routerOn = await routerEnabled();
       const reelAspect = body.aspect === "16:9" || body.aspect === "9:16" ? body.aspect : null;
       const ownerQaStep = await ownerQaReelStep({ actorId: user.id, orgId,
-        listingId: body.listing_id ?? reelListingId, seconds: secs });
-      const steps = ownerQaStep ? [ownerQaStep] : await resolveChain(
+        listingId: body.listing_id ?? reelListingId, seconds: secs, framing });
+      const candidateSteps = ownerQaStep ? [ownerQaStep] : await resolveChain(
         task,
         {
           plan,
           // 1080p is a real requirement here: it is what the shipped clip is,
           // and asking for it correctly drops the 768p Hailuo fallback.
-          needs: ["i2v", "1080p", ...durationNeeds(task, secs), ...(reelAspect ? [reelAspect] : [])],
+          needs: ["i2v", "1080p", ...durationNeeds(task, secs), ...(!framing && reelAspect ? [reelAspect] : [])],
           carries_customer_media: true,
         },
         legacyVideoStep(task, MODEL_I2V, "second", APP_AI_UNIT_CENTS.seedance_per_s, ["i2v", "1080p", "5s", "16:9", "9:16"]),
       );
+      let steps: RouteStep[];
+      try {
+        steps = reelFramingSteps(candidateSteps, framing);
+      } catch (error) {
+        await refundGenerateCharge(charge);
+        throw error;
+      }
       const genInput: GenerateInput = {
         task,
         prompt: reelText,
@@ -1512,6 +1525,8 @@ Deno.serve(async (req) => {
         seconds: secs,
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
+        ...(framing ? { framing } : {}),
+        ...(ownerQaStep?.model === "kling-3.0/video" ? { extra: paramsOf(ownerQaStep) ?? {} } : {}),
       };
       // A priced hold precedes one POST. Definitive refusal releases it;
       // transport ambiguity retains it without another provider attempt.
@@ -1537,7 +1552,7 @@ Deno.serve(async (req) => {
                 authorize: async () => {
                   const liveOrg = await contentOrgForUser(user.id, orgId, body.listing_id ?? reelListingId ?? undefined, true);
                   const live = await ownerQaReelStep({ actorId: user.id, orgId: liveOrg,
-                    listingId: body.listing_id ?? reelListingId, seconds: secs });
+                    listingId: body.listing_id ?? reelListingId, seconds: secs, framing });
                   return live?.provider === step.provider && live?.model === step.model;
                 },
                 register: async (key, bytes) => {
@@ -1605,6 +1620,7 @@ Deno.serve(async (req) => {
         model_id: step.model,
         seconds: secs,
         space_type: space,
+        ...(framing ? { framing } : {}),
         // The move this clip was actually asked for, so the client can label it
         // in a shot list without shipping its own copy of the enum. null when a
         // free-text prompt drove the clip instead.

@@ -8,6 +8,7 @@ import { decodeDataUrl, ProviderError } from "../_shared/providers/common.ts";
 
 export const OWNER_REEL_QA_KEY = "owner_reel_provider_qa";
 export const KIE_REEL_QA_MODEL = "bytedance/v1-pro-fast-image-to-video";
+export const KIE_KLING_REEL_QA_MODEL = "kling-3.0/video";
 export const OWNER_REEL_QA_CONSENT = "owner-authorized-kie-media-qa-2026-10-12";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_QA_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -16,7 +17,7 @@ function canonicalUuid(value: unknown): string | null {
 }
 
 export async function ownerQaReelStep(
-  args: { actorId: string; orgId: string; listingId?: string | null; seconds: number },
+  args: { actorId: string; orgId: string; listingId?: string | null; seconds: number; framing?: "preserve_photo" },
   db = adminClient(),
   now = new Date(),
 ): Promise<RouteStep | null> {
@@ -31,8 +32,11 @@ export async function ownerQaReelStep(
   if (error || !data?.value || typeof data.value !== "object" || Array.isArray(data.value)) return null;
   const grant = data.value as Record<string, unknown>;
   if (grant.enabled !== true || canonicalUuid(grant.actor_id) !== actorId || canonicalUuid(grant.org_id) !== orgId ||
-      canonicalUuid(grant.listing_id) !== listingId || grant.provider !== "kie" || grant.model !== KIE_REEL_QA_MODEL ||
+      canonicalUuid(grant.listing_id) !== listingId || grant.provider !== "kie" ||
+      (grant.model !== KIE_REEL_QA_MODEL && grant.model !== KIE_KLING_REEL_QA_MODEL) ||
       grant.consent !== OWNER_REEL_QA_CONSENT || canonicalUuid(grant.changed_by) !== actorId) return null;
+  const kling = grant.model === KIE_KLING_REEL_QA_MODEL;
+  if (kling && (args.framing !== "preserve_photo" || grant.mode !== "pro" || grant.sound !== false)) return null;
   const start = typeof grant.created_at === "string" ? Date.parse(grant.created_at) : NaN;
   const end = typeof grant.expires_at === "string" ? Date.parse(grant.expires_at) : NaN;
   const clock = now.getTime();
@@ -43,11 +47,15 @@ export async function ownerQaReelStep(
   // Published 2026-10-12: 36 credits/$0.18 for 1080p/5 s. Do not use the
   // top-up bonus or marketing speed claim as a billing/latency guarantee.
   // https://kie.ai/seedance-1-0-pro-fast
+  // Kling3 Pro silent:18credits/s=$0.09/s. Its comparison is opt-in only;
+  // installed clients without preserve_photo keep their ordinary route.
+  // https://kie.ai/kling-3-0
   return {
-    route_id: "owner-qa-kie-seedance-fast-20261012", task: "video.reel_clip",
-    provider: "kie", model: KIE_REEL_QA_MODEL, unit: "second", unit_cents: 3.6,
+    route_id: kling ? "owner-qa-kie-kling3-pro-20261012" : "owner-qa-kie-seedance-fast-20261012", task: "video.reel_clip",
+    provider: "kie", model: String(grant.model), unit: "second", unit_cents: kling ? 9 : 3.6,
     capabilities: ["i2v", "1080p", "5s"], max_latency_s: 900, min_plan: "free",
-    same_model_as: "seedance_v1_pro_fast", privacy_tier: "trains_by_default", enabled: true,
+    same_model_as: kling ? "kling_3_pro" : "seedance_v1_pro_fast", privacy_tier: "trains_by_default", enabled: true,
+    ...(kling ? { params: { kie_mode: "pro", sound: false } } : {}),
   };
 }
 

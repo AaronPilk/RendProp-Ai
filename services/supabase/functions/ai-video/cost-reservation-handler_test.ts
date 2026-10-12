@@ -126,6 +126,12 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {ownerQaReelStep as actualOwnerQaReelStep,prepareOwnerQaReelInput} from ${
     JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)
   };
+    import {parseReelFraming,reelFramingSteps,buildPhotoPreservingReelPrompt} from ${
+    JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)
+  };
+    import {paramsOf} from ${
+    JSON.stringify(new URL("../_shared/router.ts", import.meta.url).href)
+  };
     import {validateExtendedReelSource} from ${
     JSON.stringify(new URL("./drift-input.ts", import.meta.url).href)
   };

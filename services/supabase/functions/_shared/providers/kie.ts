@@ -176,6 +176,9 @@ export const kieAdapter: ProviderAdapter = {
     const duration = String(Math.round(Number(input.seconds ?? 5)));
     const resolution = input.resolution ?? "1080p";
     const legacy = isLegacyVeoModel(step.model);
+    if (input.framing === "preserve_photo" && (input.task !== "video.reel_clip" || step.model !== "kling-3.0/video")) {
+      throw new ProviderError(PROVIDER, "validation", "This model cannot preserve photo framing.", 400, true);
+    }
 
     let taskId: string;
     if (legacy) {
@@ -204,12 +207,27 @@ export const kieAdapter: ProviderAdapter = {
         ? await publicImageUrlFor(input, PROVIDER)
         : undefined;
       const jobInput: Record<string, unknown> = { prompt: input.prompt };
-      if (imageUrl) jobInput.image_url = imageUrl;
-      jobInput.resolution = resolution;
-      jobInput.duration = duration;
+      if (step.model === "kling-3.0/video") {
+        // Official single-shot I2V schema. Omit aspect_ratio for source-auto.
+        // https://docs.kie.ai/market/kling/kling-3-0#aspect-ratio-auto-adaptation
+        if (!imageUrl || duration !== "5" || resolution !== "1080p" ||
+            input.extra?.kie_mode !== "pro" || input.extra?.sound !== false ||
+            input.framing !== "preserve_photo") {
+          throw new ProviderError(PROVIDER, "validation", "Kling comparison requires a five-second Pro silent photo-preserving shot.", 400, true);
+        }
+        jobInput.image_urls = [imageUrl];
+        jobInput.sound = false;
+        jobInput.duration = duration;
+        jobInput.mode = "pro";
+        jobInput.multi_shots = false;
+      } else {
+        if (imageUrl) jobInput.image_url = imageUrl;
+        jobInput.resolution = resolution;
+        jobInput.duration = duration;
+      }
       if (step.model === "bytedance/v1-pro-fast-image-to-video") {
-        // Official model schema has no aspect_ratio field: its source image
-        // controls framing. Never invent an unsupported provider parameter.
+        // No aspect_ratio field. Real owner QA returned landscape from portrait
+        // sources, so this model is not eligible for preserve_photo requests.
         // https://docs.kie.ai/market/bytedance/v1-pro-fast-image-to-video
         if (!["5", "10"].includes(duration) || !["720p", "1080p"].includes(resolution)) {
           throw new ProviderError(PROVIDER, "validation", "Kie Seedance Fast needs a supported duration and resolution", 400);
