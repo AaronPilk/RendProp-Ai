@@ -290,7 +290,11 @@ import {
 // queue, so cap submissions per burst window AND per rolling month per org,
 // and soft-dedupe retried submits via the Idempotency-Key header.
 const GEN_MAX_PER_WINDOW = 12;
-const GEN_WINDOW_SECONDS = 300; // 12 video jobs / 5 min / org
+// One eight-photo reel can need two bounded attempts per photo. Keep that
+// legitimate batch below the denial-of-wallet burst gate even when an earlier
+// monthly QC-refund cap prevents restoring a rejected attempt's burst receipt.
+const REEL_MAX_PER_WINDOW = 20;
+const GEN_WINDOW_SECONDS = 300;
 const MONTH_SECONDS = 30 * 86400;
 
 // These are NOT one pool. Measured costs differ by an order of magnitude, so
@@ -411,7 +415,8 @@ async function guardGenerate(
   const billingOrgId = await libraryBillingOrg(admin, orgId, userId);
   const burstKey = `aivideo:${billingOrgId}`;
   const monthlyKey = `${meterKeyFor(kind)}:${billingOrgId}`;
-  const burst = await chargeRateReceipt(burstKey, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS);
+  const burstCap = kind === "reel" ? REEL_MAX_PER_WINDOW : GEN_MAX_PER_WINDOW;
+  const burst = await chargeRateReceipt(burstKey, burstCap, GEN_WINDOW_SECONDS);
   if (!burst.accepted) {
     throw new HttpError(429, "AI video generation limit reached for now — try again in a few minutes.", "rate_limited");
   }
@@ -503,6 +508,116 @@ async function guardDriftCheck(user: PaidAiCaller, req: Request): Promise<string
     );
   }
   return orgId;
+}
+
+/** Recover a recorded terminal judgement without buying another opinion.
+ * Frame JPEGs can differ when a saved clip is decoded again; the immutable
+ * paid provider request, source still and current listing permission bind it.
+ * A plan-allowance refund is not a refund of the settled supplier payment.
+ */
+async function cachedDriftResponse(args: {
+  actor: string; orgId: string; requestId: string; kind: GenKind; sourceB64: string;
+  listingId: string | null; provenanceId: string | null; sourceAssetId: string | null;
+}): Promise<Response | null> {
+  const admin = adminClient();
+  const recorded = await admin.from("cost_ledger")
+    .select("id,org_id,feature,provider,model,total_cents,meta,created_at")
+    .eq("org_id", args.orgId).eq("feature", "qc")
+    .eq("meta->>kind", "video_drift").eq("meta->>request_id", args.requestId)
+    .in("meta->>action", ["accept", "retry", "refuse"])
+    .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(3);
+  assert(!recorded.error && Array.isArray(recorded.data), 503, "The saved quality check could not be read. Retry this saved clip shortly.", "upstream");
+  if (recorded.data.length === 0) return null;
+  assert(recorded.data.length <= 2, 409, "This saved clip has conflicting quality records.", "conflict");
+
+  const saved = await admin.from("app_video_cost_reservations")
+    .select("id,org_id,actor_id,idempotency_key,billing_org_id,feature,provider,model,provider_request_id,cost_ledger_id,settled_at,released_at,meta")
+    .eq("org_id", args.orgId).eq("actor_id", args.actor)
+    .eq("provider_request_id", args.requestId).limit(2);
+  assert(!saved.error && Array.isArray(saved.data), 503, "This saved video payment could not be verified.", "upstream");
+  assert(saved.data.length === 1, 404, "This saved clip is unavailable for this account.", "not_found");
+  const payment = saved.data[0];
+  const task = args.kind === "aerial" ? "video.aerial" : "video.reel_clip";
+  assert(payment.org_id === args.orgId && payment.actor_id === args.actor &&
+    payment.provider_request_id === args.requestId && payment.feature === args.kind && payment.meta?.task === task &&
+    payment.released_at === null && payment.cost_ledger_id && payment.settled_at && Number.isFinite(Date.parse(payment.settled_at)),
+    404, "This saved clip is unavailable for this account.", "not_found");
+  const allowance = await admin.from("app_video_allowance_receipts")
+    .select("listing_id,drift_refunded_at").eq("reservation_id", payment.id).maybeSingle();
+  assert(!allowance.error, 503, "This saved video's listing could not be verified.", "upstream");
+  assert(allowance.data && allowance.data.listing_id &&
+    (args.listingId === null || args.listingId === allowance.data.listing_id),
+    404, "This saved clip is unavailable for this listing.", "not_found");
+  const listingId = allowance.data.listing_id;
+  assert(await contentOrgForUser(args.actor, args.orgId, listingId, true) === args.orgId,
+    404, "This saved clip is unavailable for this listing.", "not_found");
+  const settled = await admin.from("cost_ledger")
+    .select("id,org_id,feature,provider,model,total_cents,meta").eq("id", payment.cost_ledger_id).maybeSingle();
+  assert(!settled.error, 503, "This saved video payment could not be verified.", "upstream");
+  const paid = settled.data;
+  assert(paid && paid.id === payment.cost_ledger_id && paid.org_id === args.orgId && paid.feature === args.kind &&
+    paid.provider === payment.provider && paid.model === payment.model && Number(paid.total_cents) > 0 &&
+    paid.meta?.app_video_reservation_id === payment.id && paid.meta?.request_id === args.requestId &&
+    paid.meta?.billing_org_id === args.orgId && paid.meta?.request_key === payment.idempotency_key && paid.meta?.stage === args.kind,
+    404, "This saved clip's paid receipt could not be verified.", "not_found");
+
+  const sourceHash = await driftLineageKey(args.sourceB64);
+  const meta = recorded.data[0].meta;
+  const identity = (m: Record<string, unknown>) => JSON.stringify([
+    m.clip_kind, m.request_id, m.source_sha256, m.verdict, m.scores, m.confidence,
+    m.reason, m.action, m.publishable, m.attempt, m.allowance_refunded, m.provenance_id, m.source_asset_id,
+  ]);
+  assert(meta && recorded.data.every((row) => row.org_id === args.orgId && row.feature === "qc" &&
+    Number(row.total_cents) > 0 && row.meta?.kind === "video_drift" && row.meta?.request_id === args.requestId &&
+    row.meta?.clip_kind === args.kind && row.meta?.source_sha256 === sourceHash && identity(row.meta) === identity(meta)),
+    409, "The saved quality check does not match this clip and source photo.", "conflict");
+  assert(meta.scores && ["architecture", "contents", "additions", "artifacts", "same_room"].every((key) =>
+    typeof meta.scores[key] === "number" && Number.isFinite(meta.scores[key]) && meta.scores[key] >= 0 && meta.scores[key] <= 100) &&
+    typeof meta.confidence === "number" && Number.isFinite(meta.confidence) && meta.confidence >= 0 && meta.confidence <= 1 &&
+    typeof meta.reason === "string" && ["pass", "regen", "fail"].includes(meta.verdict) &&
+    Number.isInteger(meta.attempt) && meta.attempt >= 0 && meta.attempt <= 3 &&
+    Number.isInteger(meta.frames_judged) && meta.frames_judged >= 1 && meta.frames_judged <= DRIFT_MAX_FRAMES &&
+    typeof meta.allowance_refunded === "boolean" && typeof meta.publishable === "boolean",
+    409, "This saved quality check is incomplete and cannot authorize publication.", "conflict");
+  const verdict = parseDriftVerdict(JSON.stringify({ ...meta.scores, confidence: meta.confidence, verdict: meta.verdict, reason: meta.reason }));
+  const decision = decideDriftAction({ verdict, attempt: meta.attempt, retryGranted: meta.action === "retry" && meta.attempt === 0 });
+  assert(verdict.clean && decision.action === meta.action && decision.publishable === meta.publishable &&
+    (!meta.allowance_refunded || (decision.action !== "accept" && allowance.data.drift_refunded_at !== null)),
+    409, "This saved quality check cannot authorize a different result.", "conflict");
+
+  // Historical clients omitted provenance_id. A same-listing row is not an
+  // immutable request binding, so recovery must not stamp newly supplied IDs.
+  // Validate supplied context, then return the original ledger verdict only.
+  const provenanceId = args.provenanceId ?? meta.provenance_id ?? null;
+  assert(!args.provenanceId || !meta.provenance_id || args.provenanceId === meta.provenance_id,
+    409, "The saved quality check belongs to another provenance record.", "conflict");
+  if (provenanceId) {
+    const provenance = await admin.from("media_provenance")
+      .select("id,org_id,listing_id,kind,model_id").eq("id", provenanceId).maybeSingle();
+    assert(!provenance.error, 503, "This saved clip's provenance could not be verified.", "upstream");
+    assert(provenance.data?.org_id === args.orgId && provenance.data?.listing_id === listingId &&
+      provenance.data?.kind === args.kind && provenance.data?.model_id === payment.model,
+      404, "This saved clip's provenance is unavailable for this listing.", "not_found");
+  }
+  assert(!args.sourceAssetId || !meta.source_asset_id || args.sourceAssetId === meta.source_asset_id,
+    409, "The saved quality check belongs to another source asset.", "conflict");
+  const sourceAssetId = args.sourceAssetId ?? meta.source_asset_id ?? null;
+  if (sourceAssetId) {
+    const asset = await admin.from("capture_assets").select("id,listing_id,kind,uploaded").eq("id", sourceAssetId).maybeSingle();
+    assert(!asset.error, 503, "This saved clip's source could not be verified.", "upstream");
+    assert(asset.data?.listing_id === listingId && asset.data?.kind === "photo" && asset.data?.uploaded === true,
+      404, "This saved clip's source is unavailable for this listing.", "not_found");
+  }
+  const finalCall = recorded.data.find((row) => row.meta?.escalated === true) ?? recorded.data[0];
+  return json({
+    drift: driftBlock({ decision, verdict, provider: finalCall.provider, model: finalCall.model,
+      escalated: recorded.data.some((row) => row.meta?.escalated === true), framesJudged: meta.frames_judged, attempt: meta.attempt }),
+    charge: { allowance_refunded: meta.allowance_refunded,
+      note: meta.allowance_refunded ? "This rejected clip's plan allowance was already returned." : "This clip's original plan charge is unchanged.",
+      retry_costs_another_clip: decision.action === "retry" && !meta.allowance_refunded },
+    recorded: { ledger: 0, provenance: false }, cached: true,
+    ...(typeof meta.seconds === "number" ? { seconds: meta.seconds } : {}), kind: args.kind,
+  });
 }
 
 /**
@@ -912,6 +1027,8 @@ interface DriftBody {
   /** The source photo's capture_asset, when the clip was generated from one.
    *  Recorded for the audit trail; the PIXELS always come from source_b64. */
   asset_id?: string;
+  /** Optional context; recovery must match the original paid listing. */
+  listing_id?: string;
   /** Client hint: how many clips this photo has already had rejected. It may
    *  only ever make the answer stricter — see the route. */
   attempt?: number;
@@ -1508,14 +1625,21 @@ Deno.serve(async (req) => {
       const motionText = driftMotionText(kind, body.motion);
       const provenanceId = optionalUuid(body.provenance_id);
       const sourceAssetId = optionalUuid(body.asset_id);
+      assert(body.listing_id == null || optionalUuid(body.listing_id) !== null,
+        400, "listing_id must be a valid listing identifier.", "bad_request");
 
       const orgId = await guardDriftCheck(user, req);
+
+      const cached = await cachedDriftResponse({ actor: user.id, orgId, requestId, kind,
+        sourceB64: source.b64, listingId: optionalUuid(body.listing_id), provenanceId, sourceAssetId });
+      if (cached) return cached;
 
       // ONE JUDGEMENT PER CLIP (step 3). Same 409 shape guardGenerate() uses
       // for a duplicate Idempotency-Key. Without it, re-posting the frames of a
       // failed clip would spend the lineage's retry grant twice and could ask
       // for a second allowance refund; with it, a client that lost the response
-      // is told plainly that a verdict already exists.
+      // recovers its original verdict above. If no durable verdict exists yet,
+      // the duplicate still fails closed instead of starting a second judge.
       if (!(await durableRateLimit(`aidriftjob:${orgId}:${requestId}`, 1, DRIFT_LINEAGE_WINDOW_SECONDS))) {
         throw new HttpError(
           409,
@@ -1823,7 +1947,9 @@ async function paidRoutedReceiptMatches(job: RouterJobToken, settleHeld = false)
   const allowance = await admin.from("app_video_allowance_receipts")
     .select("listing_id,drift_refunded_at").eq("reservation_id",row.id).maybeSingle();
   assert(!allowance.error,503,"This saved video scope could not be verified.","upstream");
-  if (!allowance.data || allowance.data.drift_refunded_at !== null ||
+  // QC may refund the user's clip allowance; the settled supplier payment
+  // below still stands. Only released/unpaid/foreign receipts deny recovery.
+  if (!allowance.data ||
       (job.l !== undefined && allowance.data.listing_id !== job.l)) return false;
   // Settlement can fail after validated acceptance while both priced holds
   // remain durable. Only a newer signed receipt binds that exact admission key;

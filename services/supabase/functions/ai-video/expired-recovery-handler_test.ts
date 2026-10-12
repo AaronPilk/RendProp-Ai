@@ -127,6 +127,14 @@ Deno.test("expired signed paid stored output recovers repeatedly with no provide
   assertEquals(f.outputs.length,1);assertEquals(f.objects.size,1);assert(f.queries.includes("cost_ledger"));
   assert(f.rpcCalls.every(name=>name==="register_private_ai_output"));
 });
+Deno.test("expired paid QC-rejected receipt keeps stored output recovery after allowance refund",async()=>{
+  const f=await fixture({stored:true});f.allowances[0].drift_refunded_at="2026-10-01T12:00:10Z";
+  for(let i=0;i<3;i++){const response=await f.invoke();assertEquals(response.status,200);const result=await response.json();assertEquals(result.status,"completed");assertEquals(result.video_url,"https://fixture.invalid/fresh-private-result");}
+  assertEquals(f.counts(),{polls:0,submissions:0,persists:0,signs:3,permissionReads:3});
+  assertEquals(f.ledgers.length,1);assertEquals(f.payments[0].cost_ledger_id,f.ledgers[0].id);
+  assert(f.rpcCalls.every(name=>name==="register_private_ai_output"));
+  f.payments[0].released_at="2026-10-01T12:00:11Z";assertEquals((await f.invoke()).status,403);assertEquals(f.counts().signs,3);
+});
 Deno.test("expired paid receipt without saved bytes only polls its existing job, then stores exactly once",async()=>{
   const f=await fixture();assertEquals((await (await f.invoke()).json()).status,"processing");
   f.state({status:"done",result_url:"https://fixture.invalid/provider-existing",mime:"video/mp4"});
@@ -152,7 +160,6 @@ const deniedCases: [string,(f:Awaited<ReturnType<typeof fixture>>)=>void][] = [
   ["different model",f=>{f.payments[0].model="other";}], ["different provider",f=>{f.payments[0].provider="kie";}],
   ["different request",f=>{f.payments[0].provider_request_id="other-job";}],
   ["missing allowance",f=>{f.allowances.length=0;}], ["foreign allowance listing",f=>{f.allowances[0].listing_id=foreign;}],
-  ["refunded rejected clip",f=>{f.allowances[0].drift_refunded_at=new Date().toISOString();}],
   ["missing ledger",f=>{f.ledgers.length=0;}], ["foreign ledger",f=>{f.ledgers[0].org_id=foreign;}],
   ["ledger model mismatch",f=>{f.ledgers[0].model="other";}], ["ledger provider mismatch",f=>{f.ledgers[0].provider="kie";}],
   ["zero charge",f=>{f.ledgers[0].total_cents=0;}], ["ledger receipt mismatch",f=>{f.ledgers[0].meta.app_video_reservation_id=foreign;}],
@@ -224,7 +231,6 @@ const heldDenials:[string,(f:Awaited<ReturnType<typeof fixture>>)=>void][]=[
   ["unconfirmed held admission",f=>{f.holds[0].state="uncertain";}],
   ["unconfirmed serving journal",f=>{f.holds[0].state="reserved";}],
   ["released video admission",f=>{f.payments[0].released_at="2026-10-01T12:00:01Z";}],
-  ["refunded video allowance",f=>{f.allowances[0].drift_refunded_at="2026-10-01T12:00:01Z";}],
   ["wrong held billing org",f=>{f.holds[0].billing_org_id=foreign;}],
   ["already bound foreign held ledger",f=>{f.holds[0].ledger_id=foreign;}],
   ["insufficient retained hold",f=>{f.holds[0].hold_cents=1;}],
