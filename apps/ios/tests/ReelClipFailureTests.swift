@@ -4,6 +4,7 @@ struct EnhancedPhoto { let id: String }
 struct AIShot {}
 @MainActor final class ClipAPI {
     var calls: [Int] = []
+    var originalPhotoMotionIndices: Set<Int> = []
     let errors: [Int: Error]
     init(errors: [Int: Error]) { self.errors = errors }
 }
@@ -83,6 +84,19 @@ enum FileStore {
         try await good.run(count:3,listingID:goodID,tmpDir:FileManager.default.temporaryDirectory.appendingPathComponent("clip-test-\(goodID)"))
         check(goodAPI.calls == [0,1,2] && good.stitched, "A full successful batch still reaches composition")
         check(good.clipIssues.isEmpty && good.receivedError==nil, "Successful batch has no invented error")
+        let mixedAPI=ClipAPI(errors:[:]);mixedAPI.originalPhotoMotionIndices=[1,3,6]
+        let mixed=ReelBatchHarness(api:mixedAPI);let mixedID=UUID()
+        try await mixed.run(count:8,listingID:mixedID,tmpDir:FileManager.default.temporaryDirectory.appendingPathComponent("clip-test-\(mixedID)"))
+        check(mixedAPI.calls == Array(0..<8) && mixed.stitched, "Safe source-photo fallback allows every selected photo to reach composition")
+        check(mixed.originalPhotoMotionShots==3, "Source-photo fallbacks are counted separately from AI clips")
+        check(mixed.clipIssues.isEmpty && mixed.receivedError==nil, "Confirmed safe fallback is not presented as a batch failure")
+        let mixedFailureAPI=ClipAPI(errors:[2:APIError.server(status:401,code:"unauthorized",message:"Expired session")]);mixedFailureAPI.originalPhotoMotionIndices=[1]
+        let mixedFailure=ReelBatchHarness(api:mixedFailureAPI);let mixedFailureID=UUID()
+        try await mixedFailure.run(count:8,listingID:mixedFailureID,tmpDir:FileManager.default.temporaryDirectory.appendingPathComponent("clip-test-\(mixedFailureID)"))
+        check(mixedFailureAPI.calls == [0,1,2] && !mixedFailure.stitched, "Photo-motion fallback does not swallow a later account failure")
+        let mixedSaved=PendingReelClips.load(for:mixedFailureID)!
+        check(mixedSaved.clipURLs.count==2 && OriginalPhotoMotion.isClip(mixedSaved.clipURLs[1]), "Parking retains original-photo fallback provenance")
+        PendingReelClips.clear(for:mixedFailureID)
         let cancelAPI=ClipAPI(errors:[1:CancellationError()]);let cancel=ReelBatchHarness(api:cancelAPI);let cancelID=UUID()
         try await cancel.run(count:3,listingID:cancelID,tmpDir:FileManager.default.temporaryDirectory.appendingPathComponent("clip-test-\(cancelID)"))
         check(cancelAPI.calls == [0,1] && cancel.clipIssues.isEmpty, "Cancellation stops generation without displaying it as a photo defect")

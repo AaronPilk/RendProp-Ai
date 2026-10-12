@@ -19,6 +19,8 @@ job=block(api,'struct AIVideoJob: Codable, Sendable')
 camera=block(api,'enum ReelCameraMove: String, CaseIterable, Codable, Sendable')
 failure=source[source.index('struct AIFailure: Identifiable'):source.index('/// Loud, unmissable failure card')]
 issue=source[source.index('struct ReelClipIssue: Identifiable'):source.index('struct ReelStudioView: View')]
+renderer=(root/'apps/ios/Rendprop/Render/ReelComposer.swift').read_text()
+photo_motion='enum OriginalPhotoMotion {\n'+block(renderer,'    static func isClip(')+'\n}\n'
 pending=source[source.index('private struct PendingReelClips: Codable'):source.index('// MARK: - Reel Studio (')].replace('private struct','struct')
 adoption=block((root/'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift').read_text(),'enum AdoptionOwnedIdentity {')
 helpers='enum AdoptionOwnedIdentity {\n'+'\n'.join(block(adoption,anchor) for anchor in [
@@ -43,11 +45,15 @@ assert 'failure.isServiceUnavailable || failure.isTrialCapacityUnavailable' in (
 if sys.argv[3]=='--inject-swallowed-error':
  assert loop.count('throw error')==1
  loop=loop.replace('throw error','// restored silent continuation')
+elif sys.argv[3]=='--inject-lost-fallback-provenance':
+ assert loop.count('if OriginalPhotoMotion.isClip(clip) { originalPhotoMotionShots += 1 }')==1
+ loop=loop.replace('if OriginalPhotoMotion.isClip(clip) { originalPhotoMotionShots += 1 }','// omitted fallback provenance counter')
 elif sys.argv[3]:raise SystemExit('Unknown test option')
 harness=r'''
 @MainActor final class ReelBatchHarness {
     var clipIssues: [ReelClipIssue] = []
     var completedClips = 0
+    var originalPhotoMotionShots = 0
     var statusText = ""
     var billedClips: [URL] = []
     var stitched = false
@@ -62,7 +68,8 @@ harness=r'''
                          requireCurrent: @MainActor @Sendable () throws -> Void = {}) async throws -> URL {
         api.calls.append(index)
         if let error = api.errors[index] { throw error }
-        let file=dir.appendingPathComponent("clip-\(index).mp4")
+        let prefix = api.originalPhotoMotionIndices.contains(index) ? "clip-photo-motion-" : "clip-"
+        let file=dir.appendingPathComponent("\(prefix)\(index).mp4")
         try Data("synthetic completed clip \(index)".utf8).write(to: file)
         return file
     }
@@ -87,7 +94,7 @@ __LOOP__
 __PARK__
 }
 '''
-pathlib.Path(sys.argv[2]).write_text('import Foundation\nimport CryptoKit\nenum AIImagePrep { static func error(_ m:String)->Error { NSError(domain: \"synthetic\", code:1,userInfo:[NSLocalizedDescriptionKey:m]) } }\n@MainActor final class AIConsent { static let shared=AIConsent();var isGranted=true;var revocationRevision=0 }\n'+apierror+'\n'+error_adapter+'\n'+job+'\n'+camera+'\n'+failure+'\n'+issue+'\n'+pending+'\n'+harness.replace('__LOOP__',loop).replace('__PARK__',park))
+pathlib.Path(sys.argv[2]).write_text('import Foundation\nimport CryptoKit\nenum AIImagePrep { static func error(_ m:String)->Error { NSError(domain: \"synthetic\", code:1,userInfo:[NSLocalizedDescriptionKey:m]) } }\n@MainActor final class AIConsent { static let shared=AIConsent();var isGranted=true;var revocationRevision=0 }\n'+photo_motion+'\n'+apierror+'\n'+error_adapter+'\n'+job+'\n'+camera+'\n'+failure+'\n'+issue+'\n'+pending+'\n'+harness.replace('__LOOP__',loop).replace('__PARK__',park))
 PY
 xcrun swiftc -swift-version 5 -parse-as-library \
   "$reel_clip_test_dir/Production.swift" \

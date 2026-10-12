@@ -250,12 +250,6 @@ private struct ListingToolboxGrid: View {
                                       icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
                 disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
             )
-            ListingToolLinkTile(
-                card: ListingToolCard(title: "Listing contact", sub: "Your client or your own account card",
-                                      icon: "person.text.rectangle.fill", gradient: RPGradient.agent),
-                disabled: sample, accessibilityID: "detail.clientContact",
-                destination: { AnyView(ListingClientContactEditor(listing: destinationListing())) }
-            )
             // Measurements is "Coming soon" on the listing page, exactly like Home
             // (`home.comingSoon.floorPlan`): a card, never a link. `FloorPlanView`
             // stays compiled for the build that re-enables it. The three
@@ -5661,7 +5655,8 @@ struct PhotoStudioView: View {
                             frames: frames,
                             seconds: 5,
                             spaceType: spaceRawForDrift,
-                            listingServerID: serverListingID))
+                            listingServerID: serverListingID,
+                            provenanceID: job.provenanceID))
                     } catch {
                         try requireCurrent()
                         verdict = DriftVerdict(status: .unavailable, publishable: false,
@@ -8623,6 +8618,7 @@ private struct PendingReelRequest: Codable, Sendable {
     var submissionUnconfirmed: Bool? = nil
     var sourceJPEGBase64: String? = nil
     var sourceSpaceType: String? = nil
+    var qualityAttempt: Int? = nil
     static func key(_ context: Context) -> String {
         "reel.request.\(context.listingID).\(context.owner).\(context.workspace?.uuidString ?? "local")"
     }
@@ -8686,6 +8682,14 @@ private struct PendingReelRequest: Codable, Sendable {
 // mp4 saved to Documents/reels/. `extraClipURLs` (e.g. the listing's aerial
 // intro) are ready-made clips that lead the reel — no AI call for those.
 // Inline here per the new-file-not-in-target rule.
+
+/// Only a confirmed property-drift verdict requests the bounded safer move.
+/// Network, decode, unavailable QC, consent and admission failures are not this.
+private struct ReelQualityRefusal: Error, LocalizedError {
+    let verdict: DriftVerdict
+    var errorDescription: String? { verdict.refusal }
+    var mayRetry: Bool { verdict.status == .fail && verdict.action == "retry" }
+}
 
 /// A reel stops at the first failed photo. Keep the position and a safe reason
 /// instead of reducing every error to a count and spending on the next photo.
@@ -8784,6 +8788,7 @@ struct ReelStudioView: View {
     @State private var motionPrompt = "" // Legacy draft field; never dispatched by preset UI.
     @State private var cameraMove: ReelCameraMove = .flyThrough
     @State private var completedClips = 0
+    @State private var originalPhotoMotionShots = 0
     @State private var totalClips = 0
     @State private var clipIssues: [ReelClipIssue] = []
     private var failedClips: Int { clipIssues.count }
@@ -9381,7 +9386,7 @@ struct ReelStudioView: View {
     }
 
     private var aiDisclosureLine: some View {
-        Text("Made with AI motion. Review the finished video against your photos before publishing. Aerial clips are AI-generated, not real drone footage.")
+        Text("AI motion is quality checked. If the safest AI attempt changes the property, we use motion from your selected photo instead. Review the finished video before publishing. Aerial clips are AI-generated, not real drone footage.")
             .font(.rpCaption)
             .foregroundStyle(Theme.inkDim)
             .fixedSize(horizontal: false, vertical: true)
@@ -9585,6 +9590,12 @@ struct ReelStudioView: View {
             Label("Your reel is ready", systemImage: "checkmark.circle.fill")
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.good)
+            if originalPhotoMotionShots > 0 {
+                Text("Used original photo motion on \(originalPhotoMotionShots) shot\(originalPhotoMotionShots == 1 ? "" : "s"). Those shots use the selected photo unchanged, including any photo edits you selected.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("reel.originalPhotoMotionSummary")
+            }
             if failedClips > 0 {
                 Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the reel uses the rest.")
                     .font(.rpCaption)
@@ -10641,6 +10652,7 @@ struct ReelStudioView: View {
         saveError = nil
         failure = nil
         completedClips = 0
+        originalPhotoMotionShots = 0
         totalClips = 0
         clipIssues = []
         phase = .setup
@@ -10765,6 +10777,7 @@ struct ReelStudioView: View {
         }
         player?.pause()
         reelURL = url
+        originalPhotoMotionShots = OriginalPhotoMotion.summaryCount(for: url)
         player = AVPlayer(url: url)
         savedToPhotos = false
         saveError = nil
@@ -10836,6 +10849,7 @@ struct ReelStudioView: View {
         guard files.count > keeping else { return }
         for url in files.dropFirst(keeping) {
             try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.removeItem(at: OriginalPhotoMotion.summaryURL(for: url))
         }
     }
 
@@ -10906,6 +10920,7 @@ struct ReelStudioView: View {
         let spaceRaw = space.rawValue
         phase = .generating
         completedClips = 0
+        originalPhotoMotionShots = 0
         totalClips = chosen.count
         clipIssues = []
         failure = nil
@@ -10994,7 +11009,8 @@ struct ReelStudioView: View {
                                                            requireCurrent: requireCurrent)
                         clipURLs.append(clip)
                         usedShots.append(shot)
-                        billedClips.append(clip)   // paid for the moment it lands
+                        billedClips.append(clip)   // retained before its accepted receipt is cleared
+                        if OriginalPhotoMotion.isClip(clip) { originalPhotoMotionShots += 1 }
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch {
@@ -11031,12 +11047,15 @@ struct ReelStudioView: View {
                                                   shotCaptionStyle: shotStyle,
                                                   transition: transition),
                     output: outURL)
+                try requireCurrent()
+                try OriginalPhotoMotion.saveSummary(count: clipURLs.filter(OriginalPhotoMotion.isClip).count, for: outURL)
                 try? FileManager.default.removeItem(at: tmpDir)
 
                 try requireCurrent()
                 let wasPlanned = usedShots.contains(where: { $0 != nil }) ? "true" : "false"
                 await MainActor.run {
                     reelURL = outURL
+                    originalPhotoMotionShots = clipURLs.filter(OriginalPhotoMotion.isClip).count
                     player = AVPlayer(url: outURL)
                     lastReel = outURL
                     phase = .done
@@ -11118,7 +11137,8 @@ struct ReelStudioView: View {
         for clip in clips {
             guard fm.fileExists(atPath: clip.path) else { continue }
             if relPaths.contains(FileStore.relativePath(for: clip)) { continue }
-            let dest = dir.appendingPathComponent("clip-\(UUID().uuidString).mp4")
+            let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-"
+            let dest = dir.appendingPathComponent("\(prefix)\(UUID().uuidString).mp4")
             do {
                 try fm.moveItem(at: clip, to: dest)
             } catch {
@@ -11154,6 +11174,18 @@ struct ReelStudioView: View {
         }
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
         let listingID = listing.id
+        let parkedActor = auth.userID, parkedRevision = auth.syncSessionRevision
+        let parkedWorkspace = WorkspaceContext.selectedOrgID
+        let parkedConsent = AIConsent.shared.revocationRevision
+        let parkedServerID = listing.serverID
+        let requireCurrent: @MainActor @Sendable () throws -> Void = {
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == parkedConsent,
+                  auth.userID == parkedActor, auth.syncSessionRevision == parkedRevision,
+                  WorkspaceContext.selectedOrgID == parkedWorkspace,
+                  let current = model.listings.first(where: { $0.id == listingID }),
+                  current.cloudUnavailable != true, current.serverID == parkedServerID else { throw CancellationError() }
+        }
         let isPortrait = portrait
         let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
         let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
@@ -11164,6 +11196,7 @@ struct ReelStudioView: View {
         Haptics.selection()
         workTask = Task {
             do {
+                try requireCurrent()
                 let renderSize = isPortrait ? CGSize(width: 1080, height: 1920)
                                             : CGSize(width: 1920, height: 1080)
                 let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
@@ -11182,7 +11215,8 @@ struct ReelStudioView: View {
                     options: ReelComposer.Options(titleCard: captions, voiceover: voiceover,
                                                   captionStyle: captionStyle),
                     output: outURL)
-                try Task.checkCancellation()
+                try OriginalPhotoMotion.saveSummary(count: clips.filter(OriginalPhotoMotion.isClip).count, for: outURL)
+                try requireCurrent()
                 await MainActor.run {
                     // The clips now live inside a finished reel on disk, so the
                     // parked copy has done its job and can go. This is the ONLY
@@ -11190,6 +11224,7 @@ struct ReelStudioView: View {
                     PendingReelClips.retire(clips, for: listingID)
                     parkedClips = PendingReelClips.load(for: listingID)
                     reelURL = outURL
+                    originalPhotoMotionShots = clips.filter(OriginalPhotoMotion.isClip).count
                     player = AVPlayer(url: outURL)
                     lastReel = outURL
                     phase = .done
@@ -11261,49 +11296,63 @@ struct ReelStudioView: View {
         // listing's provenance log as if the agent had typed them.
         let typed: String? = prompt.isEmpty ? nil : prompt
         try await requireCurrent()
-        let operationID = UUID().uuidString
-        var intent = try JSONEncoder().encode([typed ?? "", motion, aspect, "preset-v1", shot?.room ?? "",
-            String(index), String(shotCount), listingServerID?.uuidString ?? ""])
-        intent.append(jpeg)
-        let digest = SHA256.hash(data: intent).map { String(format: "%02x", $0) }.joined()
-        let submission = PendingReelRequest(context: recoveryContext, photoNumber: index + 1,
-            job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"),
-            operationID: operationID, inputDigest: digest, submissionUnconfirmed: true,
-            sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType)
-        try submission.save() // Atomic marker and readback BEFORE any paid POST.
-        try await requireCurrent()
-        let job: AIVideoJob
-        do {
-            job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
-                                                mime: "image/jpeg", prompt: nil, seconds: 5,
-                                                aspect: aspect, presetVersion: 1,
-                                                motion: motion, room: shot?.room,
-                                                shotIndex: index, shotCount: shotCount,
-                                                listingServerID: listingServerID,
-                                                label: Self.clipLabel(shot: shot, index: index),
-                                                idempotencyKey: operationID)
-        } catch {
-            // The marker exists for an UNKNOWN outcome: a lost response may
-            // already count a clip, so it stays and blocks a second POST. A
-            // definitive refusal is the opposite case — the server answered,
-            // nothing was admitted or charged — and keeping the marker only
-            // locked Generate behind "submission needs review" (TestFlight 59:
-            // every preset reel was refused with 400 and the button stayed
-            // dead). A 409 duplicate can mean this same operation already
-            // started. Conflicts, transport errors, timeouts and 5xx keep it.
-            if Self.isDefinitiveRefusal(error) { submission.clear() }
-            throw error
+        for attempt in 0...1 {
+            try await requireCurrent()
+            let attemptMotion = attempt == 0 ? motion : "push_in"
+            let operationID = UUID().uuidString
+            var intent = try JSONEncoder().encode([typed ?? "", attemptMotion, aspect, "preset-v1", shot?.room ?? "",
+                String(index), String(shotCount), listingServerID?.uuidString ?? ""])
+            intent.append(jpeg)
+            let digest = SHA256.hash(data: intent).map { String(format: "%02x", $0) }.joined()
+            let submission = PendingReelRequest(context: recoveryContext, photoNumber: index + 1,
+                job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"),
+                operationID: operationID, inputDigest: digest, submissionUnconfirmed: true,
+                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt)
+            try submission.save() // Atomic marker and readback BEFORE any paid POST.
+            try await requireCurrent()
+            let job: AIVideoJob
+            do {
+                job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
+                                                    mime: "image/jpeg", prompt: nil, seconds: 5,
+                                                    aspect: aspect, presetVersion: 1,
+                                                    motion: attemptMotion, room: shot?.room,
+                                                    shotIndex: index, shotCount: shotCount,
+                                                    listingServerID: listingServerID,
+                                                    label: Self.clipLabel(shot: shot, index: index),
+                                                    idempotencyKey: operationID)
+            } catch {
+                // The marker exists for an UNKNOWN outcome: a lost response may
+                // already count a clip, so it stays and blocks a second POST. A
+                // definitive refusal is the opposite case — the server answered,
+                // nothing was admitted or charged — and keeping the marker only
+                // locked Generate behind "submission needs review" (TestFlight 59:
+                // every preset reel was refused with 400 and the button stayed
+                // dead). A 409 duplicate can mean this same operation already
+                // started. Conflicts, transport errors, timeouts and 5xx keep it.
+                if Self.isDefinitiveRefusal(error) { submission.clear() }
+                throw error
+            }
+            let pending = PendingReelRequest(context: recoveryContext, photoNumber: index + 1, job: job,
+                operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
+                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt)
+            try pending.save()
+            do {
+                let clip = try await retrieveClip(job: job, pending: pending, api: api, into: dir, index: index,
+                                                 clearReceiptOnDownload: false, requireCurrent: requireCurrent)
+                try await requireCurrent()
+                let retained = try retainRecoveredClip(clip, for: pending.context.listingID)
+                try await requireCurrent()
+                pending.clear()
+                return retained
+            } catch let refusal as ReelQualityRefusal where refusal.mayRetry && attempt == 0 {
+                try await requireCurrent()
+                // This is an explicit terminal judgement, never a dropped response.
+                // Keep the first accepted receipt until the next intent is atomically
+                // saved above; no gap permits a second unknown submission.
+                continue
+            }
         }
-        let pending = PendingReelRequest(context: recoveryContext, photoNumber: index + 1, job: job,
-            operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
-            sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType)
-        try pending.save()
-        let clip = try await retrieveClip(job: job, pending: pending, api: api, into: dir, index: index,
-                                         clearReceiptOnDownload: false, requireCurrent: requireCurrent)
-        try await requireCurrent()
-        let retained = try retainRecoveredClip(clip, for: pending.context.listingID)
-        pending.clear()
-        return retained
+        throw AIImagePrep.error("The quality check requested more than one retry. The saved request has been kept.")
     }
 
     /// Give a downloaded clip an explicit media suffix before decoding it.
@@ -11409,9 +11458,28 @@ struct ReelStudioView: View {
         try await requireCurrent()
         let verdict = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
             kind: "reel", sourceBase64: source, frames: frames, seconds: 5,
-            spaceType: spaceType, listingServerID: pending?.context.serverListingID))
+            spaceType: spaceType, listingServerID: pending?.context.serverListingID,
+            provenanceID: job.provenanceID, attempt: pending?.qualityAttempt ?? 1))
         try await requireCurrent()
-        guard verdict.mayUse else { throw AIImagePrep.error(verdict.refusal) }
+        guard verdict.mayUse else {
+            guard verdict.status == .fail, verdict.action == "refuse",
+                  let jpeg = Data(base64Encoded: source) else {
+                throw ReelQualityRefusal(verdict: verdict)
+            }
+            // Only the server's terminal property-drift refusal permits this.
+            // Decode, identity, quota, consent and unavailable-QC failures never
+            // reach here. The rejected video is deleted by the existing defer.
+            try await requireCurrent()
+            let local = dir.appendingPathComponent("clip-photo-motion-\(index).mp4")
+            let shape = UIImage(data: jpeg)?.size
+            guard let shape, shape.width > 0, shape.height > 0 else { throw CocoaError(.fileReadCorruptFile) }
+            let size = shape.width < shape.height ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)
+            try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)
+            try await requireCurrent()
+            // Caller durably retains this local clip before retiring the failed
+            // AI receipt. No provider call or cost-history mutation is made.
+            return local
+        }
         let dest = dir.appendingPathComponent("clip-\(index).mp4")
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tmp, to: dest)
@@ -11428,7 +11496,8 @@ struct ReelStudioView: View {
         let dir = PendingReelClips.directory(for: listingID)
         var relPaths = (try PendingReelClips.readRecord(for: listingID)?.clipURLs ?? []).map { FileStore.relativePath(for: $0) }
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        let dest = dir.appendingPathComponent("clip-recovered-\(UUID().uuidString).mp4")
+        let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-recovered-"
+        let dest = dir.appendingPathComponent("\(prefix)\(UUID().uuidString).mp4")
         do { try fm.moveItem(at: clip, to: dest) }
         catch { try fm.copyItem(at: clip, to: dest) }
         relPaths.append(FileStore.relativePath(for: dest))

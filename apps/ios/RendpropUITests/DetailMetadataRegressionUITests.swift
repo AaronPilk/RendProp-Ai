@@ -7,7 +7,7 @@ import XCTest
 final class DetailMetadataRegressionUITests: XCTestCase {
     private var app: XCUIApplication!
     private let tileIDs = ["detail.photos", "detail.photoStudio", "detail.reelStudio", "detail.roomTags",
-                           "detail.aerialIntro", "detail.clientContact"]
+                           "detail.aerialIntro"]
     /// Plain cards, never buttons — the same contract as Home's
     /// `home.comingSoon.*`. Measurements joined them in build 57.
     private let comingSoonIDs = ["detail.measurementsComingSoon", "detail.floorPlanComingSoon", "detail.spatialComingSoon"]
@@ -89,7 +89,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["studio.edit.declutter"].exists, app.debugDescription)
         back(from: "AI Photo Studio")
         assertMeasurementsStaysComingSoon(fixture: "rich")
-        openLink("detail.clientContact", title: "Listing contact")
+        openLink("listing.clientContact", title: "Listing contact")
         XCTAssertEqual(app.textFields["clientContact.name"].value as? String, "Fixture client")
         back(from: "Listing contact") // No save or client photo picker.
         openSheet("detail.roomTags", title: "Tag rooms", close: "Done")
@@ -137,7 +137,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(element("detail.rerenderUnavailable").exists)
         XCTAssertFalse(element("detail.rerenderTour").exists)
         XCTAssertFalse(app.buttons["detail.roomTags"].isEnabled)
-        openLink("detail.clientContact", title: "Listing contact")
+        openLink("listing.clientContact", title: "Listing contact")
         back(from: "Listing contact")
     }
 
@@ -274,6 +274,14 @@ final class DetailMetadataRegressionUITests: XCTestCase {
             XCTAssertFalse(app.buttons[id].exists, "Coming soon must not open a feature: \(id)")
         }
         XCTAssertFalse(element("detail.floorPlan").exists, "The listing toolbox must not keep a live Measurements link")
+        XCTAssertFalse(element("detail.clientContact").exists, "Listing contact must not be duplicated in the Toolbox")
+        if !sample {
+            let contact = app.buttons["listing.clientContact"]
+            scrollTo(contact)
+            XCTAssertTrue(contact.exists && contact.isEnabled, "The original contact entry remains available")
+            XCTAssertEqual(app.buttons.matching(identifier: "listing.clientContact").count, 1)
+            XCTAssertTrue(contact.label.contains("Who should buyers contact?"), contact.label)
+        }
     }
 
     /// The owner's build-56 defect: "on the listing page Measurements is still
