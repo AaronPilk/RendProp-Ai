@@ -37,13 +37,14 @@ def block(s, anchor):
         end += 1
     return s[start:end]
 # Hosted CI exceeded the old 60s compiler cap before a control could execute.
-# Match the existing complex Swift audit cap; runtime assertions still use 120s.
+# Match the existing complex Swift audit cap; runtimes stay bounded at 300s.
 COMPILE_TIMEOUT_SECONDS = 240
 receipt = {'passed': False, 'start_source_sha256': hashes(), 'compiles': [], 'runs': [], 'limitations': [
     'Actual extracted Swift bodies, Foundation filesystem/preferences and HTTP downloads execute; UIImage and API client are closed doubles.',
     'No vendor, customer media, camera, Photos write or production API.',
     'Unconfirmed submissions retain a scoped durable marker; no server receipt replay or automatic POST retry is claimed.',
-    'Nonempty synthetic bytes test retention; video decoding or generation quality is not certified.']}
+    'Nonempty synthetic bytes test retention; video decoding or generation quality is not certified.',
+    'Only retrieveClip Date()/five-second sleep boundaries use a deterministic fixture clock; the extracted retry, identity and deadline decisions execute unchanged. Production timing and OS suspension are not certified.']}
 
 def compile_variant(name, command):
     log_path = out / (name + '-compile.log')
@@ -104,7 +105,12 @@ try:
     review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
     actual = 'import Foundation\nimport CryptoKit\n' + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
     for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(']:
-        actual += block(source, anchor).replace('private static', 'static', 1) + '\n'
+        extracted = block(source, anchor).replace('private static', 'static', 1)
+        if 'retrieveClip(' in anchor:
+            assert extracted.count('Date()') == 4 and extracted.count('try await Task.sleep(nanoseconds: 5_000_000_000)') == 1
+            extracted = extracted.replace('Date()', 'ReelPollClock.now()').replace('try await Task.sleep(nanoseconds: 5_000_000_000)', 'try await ReelPollClock.pause(nanoseconds: 5_000_000_000)')
+            receipt['poll_clock_boundary'] = {'production_sleep_nanoseconds': 5_000_000_000, 'date_reads': 4, 'fixture': 'ReelPollClock'}
+        actual += extracted + '\n'
     actual += '''    static func generationGuard(auth: AuthStore, model: GuardModel, listingID: UUID, targetServerID: UUID?) -> (@MainActor @Sendable () throws -> Void) {
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
         let reelWorkspace = WorkspaceContext.selectedOrgID
@@ -143,6 +149,10 @@ try:
         ('negative-empty-frames-sent', actual.replace('guard !frames.isEmpty else {', 'guard frames.isEmpty || !frames.isEmpty else {'), 'a clip this phone cannot read is held locally without a drift call'),
         ('negative-dropped-poll-fatal', actual.replace('} catch where Self.isDroppedPoll(error) && droppedPolls < 5 {', '} catch where false {'), 'one dropped poll must not fail a paid clip'),
         ('negative-dropped-poll-bound', actual.replace('droppedPolls < 5', 'droppedPolls < 6'), 'a connection that stays down surfaces after six polls'),
+        ('negative-status-identity-fence', actual.replace('status = try await api.aiVideoStatus(job)\n                try await requireCurrent()', 'status = try await api.aiVideoStatus(job)\n                // omitted post-status identity fence'), 'identity switch during status cancels before terminal processing'),
+        ('negative-poll-pause-deadline', actual.replace('try await requireCurrent()\n            guard ReelPollClock.now() < deadline else { throw AIImagePrep.error("The clip took too long.") }', 'try await requireCurrent()\n            // omitted post-pause deadline'), 'a polling pause past the deadline dispatches no status request'),
+        ('negative-poll-response-deadline', actual.replace('try await requireCurrent()\n                guard ReelPollClock.now() < deadline else { throw AIImagePrep.error("The clip took too long.") }', 'try await requireCurrent()\n                // omitted post-response deadline'), 'late completed response must hold'),
+        ('negative-download-sibling-overwrite', actual.replace('let renamed = downloaded.deletingLastPathComponent().appendingPathComponent("reel-download-\\(UUID().uuidString).mp4")', 'let renamed = downloaded.deletingPathExtension().appendingPathExtension("mp4"); try? FileManager.default.removeItem(at: renamed)'), 'download normalization uses a unique media path'),
         ('negative-duplicate-refusal-clears-marker', actual.replace(' && status != 409', ''), 'duplicate refusal preserves the already-started operation marker'),
         ('actual-lab-dispatch', actual, None),
         ('negative-dropped-receipt', actual.replace('try pending.save()', '// dropped accepted receipt'), 'pending receipt after poll failure'),

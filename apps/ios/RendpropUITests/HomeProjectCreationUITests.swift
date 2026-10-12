@@ -10,7 +10,7 @@ final class HomeProjectCreationUITests: XCTestCase {
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate",
-            "-appearance", "light", "-ui.homeProjectCreationFixture", "two-homes"]
+            "-appearance", "light", "-ui.homeProjectCreationFixture", "two-homes", "-ui.currentLocationFixture"]
         app.launch()
         XCTAssertTrue(app.buttons["home.getStarted"].waitForExistence(timeout: 20), app.debugDescription)
         XCTAssertEqual(app.staticTexts["home.fixture.projectCount"].label, "2 synthetic homes")
@@ -60,6 +60,39 @@ final class HomeProjectCreationUITests: XCTestCase {
         app.navigationBars["Pick a home"].buttons["Cancel"].tap()
         XCTAssertTrue(app.buttons["home.getStarted"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.navigationBars["Add a home"].exists)
+        XCTAssertEqual(app.staticTexts["home.fixture.projectCount"].label, "2 synthetic homes")
+    }
+
+    func testNewHomeAcceptsAddressSuggestionsAndDeterministicCurrentLocation() {
+        openPicker()
+        app.buttons["home.picker.newProject"].tap()
+        XCTAssertTrue(app.navigationBars["Add a home"].waitForExistence(timeout: 10), app.debugDescription)
+        let name = app.textFields["home.startProject.name"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText("855 Cen")
+        XCTAssertEqual(name.value as? String, "855 Cen", "The real Home field must accept a partial address")
+
+        // MapKit's network service can be unavailable on the runner. Record
+        // that one optional observation and still run the location regression.
+        let suggestions = app.descendants(matching: .any)["home.startProject.suggestions"].firstMatch
+        let observed = suggestions.waitForExistence(timeout: 8)
+        let observation = XCTAttachment(string: observed
+            ? "MapKit completer suggestions appeared for 855 Cen."
+            : "MapKit completer returned no suggestions on this runner; partial input and deterministic current location were still tested.")
+        observation.name = "home-address-completer-observation"
+        observation.lifetime = .keepAlways
+        add(observation)
+        if observed { XCTAssertTrue(suggestions.exists) }
+
+        let currentLocation = app.buttons["home.startProject.currentLocation"]
+        XCTAssertTrue(currentLocation.exists)
+        if !currentLocation.isHittable { app.swipeUp() }
+        XCTAssertTrue(currentLocation.isHittable, app.debugDescription)
+        currentLocation.tap()
+        XCTAssertEqual(name.value as? String, "100 Synthetic Condo Way, Fixture City, NC 28000")
+        XCTAssertTrue(app.buttons["home.startProject.save"].isEnabled)
+        app.navigationBars["Add a home"].buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["home.getStarted"].waitForExistence(timeout: 10))
         XCTAssertEqual(app.staticTexts["home.fixture.projectCount"].label, "2 synthetic homes")
     }
 

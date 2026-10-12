@@ -656,9 +656,20 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     func restoreListing(serverID: UUID) async throws -> RestoredListing {
+        let context = await MainActor.run { (WorkspaceContext.selectedOrgID, AuthStore.shared.userID, AuthStore.shared.syncSessionRevision) }
+        guard let workspace = context.0 else { throw CloudSyncError.identityChanged }
+        let actor = context.1, revision = context.2
         var request = makeRequest(url: url(["listings", serverID.uuidString, "restore"]), method: "POST", json: [:])
-        if let workspace = WorkspaceContext.selectedOrgID { request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
-        let data = try await execute(request)
+        request.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: {
+            guard WorkspaceContext.selectedOrgID == workspace, AuthStore.shared.userID == actor,
+                  AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        })
+        let current = await MainActor.run {
+            WorkspaceContext.selectedOrgID == workspace && AuthStore.shared.userID == actor
+                && AuthStore.shared.syncSessionRevision == revision
+        }
+        guard current else { throw CloudSyncError.identityChanged }
         let dto: RestoreDTO = try decode(data)
         guard dto.ok == true, let id = UUID(uuidString: dto.id ?? ""), id == serverID,
               let org = UUID(uuidString: dto.orgId ?? "") else { throw APIError.decoding }

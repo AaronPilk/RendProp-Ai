@@ -192,6 +192,14 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(extras.label.contains("walkthrough-tour.mp4"), extras.label)
         XCTAssertTrue(extras.label.contains("listing-details.txt"), extras.label)
         XCTAssertTrue(extras.label.contains("aerial-intro.mp4"), extras.label)
+        let allVersions = app.switches["Include retained originals and every saved version"]
+        revealActive(allVersions)
+        XCTAssertTrue(allVersions.exists, "A reviewed staged photo must offer its retained original and complete version history")
+        XCTAssertEqual(allVersions.value as? String, "1", "Whole-listing export must include saved versions by default")
+        allVersions.tap()
+        XCTAssertEqual(allVersions.value as? String, "0")
+        allVersions.tap()
+        XCTAssertEqual(allVersions.value as? String, "1")
         let delivery = app.segmentedControls["export.deliverAs"]
         revealActive(delivery)
         XCTAssertEqual(delivery.buttons.count, 2)

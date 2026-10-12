@@ -400,8 +400,17 @@ struct DetailMetadataRegressionHost: View {
                     UIColor.white.setFill(); context.fill(CGRect(x: 80, y: 100, width: 480, height: 280))
                 }
                 guard let jpeg = image.jpegData(compressionQuality: 0.85) else { throw FixtureError.image }
-                try jpeg.write(to: directory.appendingPathComponent("enh-fixture-\(index).jpg"), options: .atomic)
-                try jpeg.write(to: directory.appendingPathComponent("orig-fixture-\(index).jpg"), options: .atomic)
+                let id = "fixture-\(index)"
+                if name == "rich", index == 0 {
+                    let base = "fixture-base-0"
+                    try PhotoVersionHistory.saveCapture(original: jpeg, enhanced: jpeg, id: base, directory: directory)
+                    _ = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: base, sourceID: base,
+                        edit: "stage", style: "modern", disclosure: "Virtually staged synthetic UI fixture.",
+                        provenanceID: nil, provenanceRecorded: false, directory: directory)
+                    try PhotoVersionHistory.select(id: id, directory: directory, reviewed: true)
+                } else {
+                    try PhotoVersionHistory.saveCapture(original: jpeg, enhanced: jpeg, id: id, directory: directory)
+                }
             }
         }
         if ["republish", "republish-stale"].contains(name) {
@@ -4751,11 +4760,11 @@ struct PhotoStudioView: View {
         .onChange(of: auth.userID) { newOwner in
             // Initial anonymous connection is expected when the first AI tap
             // reconnects. A change from an established owner closes old media.
-            if photoOwner != nil, photoOwner != newOwner { compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss() }
+            if photoOwner != nil, photoOwner != newOwner { animateTask?.cancel(); compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss() }
             photoOwner = newOwner
         }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
-            compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss()
+            animateTask?.cancel(); compare = nil; exportingPhotos = nil; stagingSetup = nil; dismiss()
         }
         .onDisappear {
             if !isPresentingOverlay { animateTask?.cancel() }
@@ -5540,6 +5549,18 @@ struct PhotoStudioView: View {
         let photoID = p.id
         let listingLocalID = listing.id
         let isSample = listing.isSample
+        let animationOwner = auth.userID, animationRevision = auth.syncSessionRevision
+        let animationLibrary = WorkspaceContext.selectedOrgID
+        let animationConsentRevision = AIConsent.shared.revocationRevision
+        let requireCurrent: @MainActor () throws -> Void = { [auth, model] in
+            try Task.checkCancellation()
+            guard AIConsent.shared.isGranted,
+                  AIConsent.shared.revocationRevision == animationConsentRevision,
+                  auth.userID == animationOwner, auth.syncSessionRevision == animationRevision,
+                  WorkspaceContext.selectedOrgID == animationLibrary,
+                  let current = model.listings.first(where: { $0.id == listingLocalID }),
+                  current.cloudUnavailable != true else { throw CancellationError() }
+        }
         let tapKey = UUID().uuidString
         // Snapshot on the main actor: `space` reads the listing, and the drift
         // rubric is scoped by trade (a gym's "equipment appeared" is not a
@@ -5549,9 +5570,11 @@ struct PhotoStudioView: View {
         animateTask = Task {
             defer { busyPhotoIDs.remove(photoID) }
             do {
+                try requireCurrent()
                 guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85) else {
                     throw AIImagePrep.error("Couldn't read that photo.")
                 }
+                try requireCurrent()
                 // Generated motion is altered media too (Wisconsin Act 69 covers
                 // generated video from 1 Jan 2027) — anchor it so it is
                 // disclosed and audited like every other AI asset.
@@ -5559,11 +5582,13 @@ struct PhotoStudioView: View {
                 if !isSample {
                     serverListingID = await model.serverListingIDForCompliance(listingLocalID)
                 }
+                try requireCurrent()
                 let job = try await api.aiVideoReelClip(
                     imageBase64: b64, mime: "image/jpeg",
                     prompt: nil, seconds: 5,
                     listingServerID: serverListingID, label: "Animated photo",
                     idempotencyKey: tapKey)
+                try requireCurrent()
 
                 let deadline = Date().addingTimeInterval(10 * 60)
                 var remoteURL: URL?
@@ -5572,7 +5597,12 @@ struct PhotoStudioView: View {
                         throw AIImagePrep.error("The clip took too long. Please try again.")
                     }
                     try await Task.sleep(nanoseconds: 6_000_000_000)
-                    switch try await api.aiVideoStatus(job) {
+                    try requireCurrent()
+                    guard Date() < deadline else { throw AIImagePrep.error("The clip took too long. Please try again.") }
+                    let status = try await api.aiVideoStatus(job)
+                    try requireCurrent()
+                    guard Date() < deadline else { throw AIImagePrep.error("The clip took too long. Please try again.") }
+                    switch status {
                     case .processing:
                         break   // keep waiting; the grid shows the in-flight label
                     case .completed(let videoURL):
@@ -5585,13 +5615,17 @@ struct PhotoStudioView: View {
                     throw AIImagePrep.error("The AI didn't return a clip. Try again.")
                 }
 
+                try requireCurrent()
                 let (downloaded, resp) = try await URLSession.shared.download(from: remoteURL)
+                defer { try? FileManager.default.removeItem(at: downloaded) }
+                try requireCurrent()
                 if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                     try? FileManager.default.removeItem(at: downloaded)
                     throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)). Try again.")
                 }
                 // `.tmp` → `.mp4` before AVFoundation reads it (see ReelStudioView.clipPath).
                 let tmp = ReelStudioView.clipPath(forDownloaded: downloaded)
+                defer { try? FileManager.default.removeItem(at: tmp) }
 
                 // ── THE QUALITY GATE ────────────────────────────────────────
                 // Judge the clip before the agent ever sees it. `POST
@@ -5610,6 +5644,7 @@ struct PhotoStudioView: View {
                 await MainActor.run { processingText = "Checking it against your photo…" }
                 let verdict: DriftVerdict
                 let frames = await ClipFrames.extract(from: tmp)
+                try requireCurrent()
                 if frames.isEmpty {
                     // A clip this phone cannot read is held locally; nothing is
                     // sent for an empty judgement.
@@ -5618,6 +5653,7 @@ struct PhotoStudioView: View {
                                            reason: "no_frames")
                 } else {
                     do {
+                        try requireCurrent()
                         verdict = try await api.aiVideoDrift(DriftCheckRequest(
                             requestID: job.requestId,
                             kind: "reel",
@@ -5627,10 +5663,12 @@ struct PhotoStudioView: View {
                             spaceType: spaceRawForDrift,
                             listingServerID: serverListingID))
                     } catch {
+                        try requireCurrent()
                         verdict = DriftVerdict(status: .unavailable, publishable: false,
                                                action: "hold", message: "", reason: nil)
                     }
                 }
+                try requireCurrent()
                 guard verdict.mayUse else {
                     try? FileManager.default.removeItem(at: tmp)
                     Analytics.track("ai_clip_rejected",
@@ -5643,7 +5681,8 @@ struct PhotoStudioView: View {
                 try? FileManager.default.removeItem(at: dest)
                 try FileManager.default.moveItem(at: tmp, to: dest)
 
-                await MainActor.run {
+                try await MainActor.run {
+                    try requireCurrent()
                     localProcessing = false
                     clips = SavedClip.loadAll(listingID: listingLocalID)   // the new clip joins the list
                     animatedClip = AnimatedClip(url: dest)
@@ -5656,6 +5695,7 @@ struct PhotoStudioView: View {
             } catch {
                 await MainActor.run {
                     localProcessing = false
+                    guard (try? requireCurrent()) != nil else { return }
                     aiFailure = AIFailure(error, title: "Couldn't animate the photo")
                 }
             }
@@ -8681,6 +8721,7 @@ struct ReelClipIssue: Identifiable {
 struct ReelStudioView: View {
     @State private var idleHeld = false
     @State private var backgroundHold: UIBackgroundTaskIdentifier = .invalid
+    @State private var backgroundHoldOperation: UUID?
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -10650,25 +10691,27 @@ struct ReelStudioView: View {
         }
     }
 
-    /// Keep the clip polling alive for a short while after the phone is locked
-    /// or the app is switched away mid-reel (iOS grants about 30 s). Without
-    /// this the app was suspended at once, the status poll in flight died, and
-    /// a clip that had already been paid for came back as a "saved video
-    /// request". When the grant runs out the system suspends the app; the poll
-    /// resumes when it comes back, and `isDroppedPoll` absorbs the request that
-    /// died in between. Finishing while the app is in the background posts the
-    /// local "Your reel is ready" banner.
+    /// Request finite additional execution time when the phone is locked or
+    /// the app is switched away. iOS decides the duration and can terminate
+    /// the process; a saved paid receipt remains recoverable on the next open.
+    /// End the exact grant synchronously when iOS calls its expiration handler.
+    /// This is not a promise that long reels finish in the background.
     private func beginBackgroundHold() {
         guard backgroundHold == .invalid else { return }
+        let operation = UUID()
+        backgroundHoldOperation = operation
         backgroundHold = UIApplication.shared.beginBackgroundTask(withName: "rendprop.reel") {
-            Task { @MainActor in endBackgroundHold() }
+            guard self.backgroundHoldOperation == operation else { return }
+            self.endBackgroundHold()
         }
     }
 
     private func endBackgroundHold() {
-        guard backgroundHold != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(backgroundHold)
+        let hold = backgroundHold
         backgroundHold = .invalid
+        backgroundHoldOperation = nil
+        guard hold != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(hold)
     }
 
     private func recoverPendingRequest(_ request: PendingReelRequest) {
@@ -10836,6 +10879,7 @@ struct ReelStudioView: View {
         let selectedMove = cameraMove.rawValue
         let listingID = listing.id
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
+        let reelNoticeIdentity = PushManager.currentIdentity
         let reelWorkspace = WorkspaceContext.selectedOrgID
         let reelConsentRevision = AIConsent.shared.revocationRevision
         // Caption text is resolved HERE (main actor, plain Sendable strings) —
@@ -10989,7 +11033,7 @@ struct ReelStudioView: View {
                     output: outURL)
                 try? FileManager.default.removeItem(at: tmpDir)
 
-                try Task.checkCancellation()
+                try requireCurrent()
                 let wasPlanned = usedShots.contains(where: { $0 != nil }) ? "true" : "false"
                 await MainActor.run {
                     reelURL = outURL
@@ -10997,7 +11041,7 @@ struct ReelStudioView: View {
                     lastReel = outURL
                     phase = .done
                     Haptics.success()
-                    ReelCompletionNotice.post(success: true)
+                    ReelCompletionNotice.post(success: true, identity: reelNoticeIdentity)
                     Analytics.track("reel_made", ["ok": "true", "clips": String(clipURLs.count),
                                                   "captions": shotStyle.rawValue,
                                                   "transition": transition.rawValue,
@@ -11035,7 +11079,7 @@ struct ReelStudioView: View {
                     reloadPendingRequest()
                     phase = .failed
                     failure = ReelClipIssue.failure(for: error, title: "Couldn't make the reel")
-                    if !(error is CancellationError) { ReelCompletionNotice.post(success: false) }
+                    if !(error is CancellationError) { ReelCompletionNotice.post(success: false, identity: reelNoticeIdentity) }
                 }
             }
         }
@@ -11262,13 +11306,12 @@ struct ReelStudioView: View {
         return retained
     }
 
-    /// Move a `URLSession.download` result (`….tmp`) next to itself as `….mp4`
-    /// so AVFoundation can open it. Falls back to the original path when the
-    /// move fails; the caller's frame check then holds the clip.
+    /// Give a downloaded clip an explicit media suffix before decoding it.
+    /// A unique sibling avoids overwriting another file. If moving fails,
+    /// AVFoundation can still try the original bytes; an empty frame check holds.
     nonisolated static func clipPath(forDownloaded downloaded: URL) -> URL {
         guard downloaded.pathExtension.lowercased() != "mp4" else { return downloaded }
-        let renamed = downloaded.deletingPathExtension().appendingPathExtension("mp4")
-        try? FileManager.default.removeItem(at: renamed)
+        let renamed = downloaded.deletingLastPathComponent().appendingPathComponent("reel-download-\(UUID().uuidString).mp4")
         do { try FileManager.default.moveItem(at: downloaded, to: renamed) } catch { return downloaded }
         return renamed
     }
@@ -11306,9 +11349,12 @@ struct ReelStudioView: View {
             }
             try await Task.sleep(nanoseconds: 5_000_000_000)
             try await requireCurrent()
+            guard Date() < deadline else { throw AIImagePrep.error("The clip took too long.") }
             let status: AIVideoStatus
             do {
                 status = try await api.aiVideoStatus(job)
+                try await requireCurrent()
+                guard Date() < deadline else { throw AIImagePrep.error("The clip took too long.") }
                 droppedPolls = 0
             } catch where Self.isDroppedPoll(error) && droppedPolls < 5 {
                 // The poll is read-only. A connection that dropped (the phone
@@ -11342,12 +11388,9 @@ struct ReelStudioView: View {
         guard ((try? downloaded.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 else {
             throw AIImagePrep.error("The completed clip was empty. Recover the saved request to download it again.")
         }
-        // The download lands as `CFNetworkDownload_….tmp`. AVFoundation picks
-        // its demuxer from the extension and will not open a `.tmp`, so the
-        // frame extraction below answered with NO frames and the drift route
-        // refused every clip ("frames must hold between 1 and 3 entries" —
-        // TestFlight 60, 2026-10-12, after the clip had already been paid for).
-        // Give the bytes their real name before anything reads them.
+        // Use an explicit media suffix, but never treat that suffix as proof
+        // the vendor returned a readable clip. The actual decoder and quality
+        // gate below must still succeed before these bytes can be used.
         let tmp = Self.clipPath(forDownloaded: downloaded)
         defer { try? FileManager.default.removeItem(at: tmp) }
         // No unchecked clip enters the parked library or the final composition.

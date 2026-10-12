@@ -4,6 +4,14 @@ import Foundation
 // Isolated preference domain; no application or customer preferences are touched.
 enum UserDefaults { static let name = "com.rendprop.offline-reel-recovery." + UUID().uuidString; static let standard = Foundation.UserDefaults(suiteName:name)! }
 enum FileStore { static let documents=FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-reel-retained-"+UUID().uuidString);static func relativePath(for u:URL)->String{String(u.path.dropFirst(documents.path.count+1))};static func url(fromRelativePath p:String)->URL{documents.appendingPathComponent(p)} }
+// Only elapsed wall time and fixed polling pauses are closed boundaries. The
+// production decision/body runs unchanged against this deterministic clock.
+enum ReelPollClock {
+ static var elapsed:TimeInterval=0;static var pauseAdvance:TimeInterval=5
+ static func now()->Date {Date(timeIntervalSince1970:1_790_000_000+elapsed)}
+ static func pause(nanoseconds:UInt64) async throws {precondition(nanoseconds==5_000_000_000);try Task.checkCancellation();elapsed+=pauseAdvance;await Task.yield()}
+ static func reset(){elapsed=0;pauseAdvance=5}
+}
 struct DriftVerdict {let mayUse:Bool;let refusal:String}
 struct DriftCheckRequest {let requestID:String;let kind:String;let sourceBase64:String;let frames:[(at:String,jpeg:Data)];let seconds:Int?;let spaceType:String;let listingServerID:UUID?}
 enum ClipFrames {static var lastURL:URL?;static var answerNoFrames=false;static func extract(from u:URL) async -> [(at:String,jpeg:Data)] { lastURL=u;if answerNoFrames{return []};return ["first","middle","last"].map { ($0, Data("frame".utf8)) } } }
@@ -14,13 +22,13 @@ enum AIImagePrep {static func downscaled(_ i:UIImage,maxDimension:Int)->UIImage{
 protocol APIClient {func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob;func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus;func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict}
 final class ClipAPI:APIClient {
  var expectedContext:PendingReelRequest.Context?;var lastKey:String?
- var beforeReply:(() throws -> Void)?
+ var beforeReply:(() throws -> Void)?;var onPoll:(()->Void)?;var pollOutcomes:[Result<AIVideoStatus,Error>]=[]
  var rejectsDrift=false;var unavailableDrift=false;var checksDrift=0;var posts=0,polls=0;var throwPolls=0;var throwSubmit=false;var refuseSubmit=false;var refusalStatus=400;var terminal=false;var url:URL
  let job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel")
  init(_ u:URL){url=u}
  func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob{if let context=expectedContext {let marker=PendingReelRequest.load(context);precondition(marker?.submissionUnconfirmed==true && marker?.operationID==idempotencyKey && marker?.inputDigest?.count==64,"durable operation marker exists before POST")};lastKey=idempotencyKey;posts+=1;precondition(seconds==5&&mime=="image/jpeg"&&aspect=="9:16"&&presetVersion==1&&motion=="fly_through"&&prompt==nil);if throwSubmit{throw URLError(.networkConnectionLost)};if refuseSubmit{throw APIError.server(status:refusalStatus,code:refusalStatus == 409 ? "conflict" : "validation",message:refusalStatus == 409 ? "Duplicate submission — this job was already started." : "Unsupported video accounting metadata")};try beforeReply?();return job}
- func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict { checksDrift+=1;precondition(!r.sourceBase64.isEmpty && r.frames.count==3 && r.requestID==job.requestId);if unavailableDrift { throw URLError(.timedOut) };return DriftVerdict(mayUse:!rejectsDrift,refusal:"Property changed; held.") }
- func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus{polls+=1;precondition(j.requestId==job.requestId);if throwPolls>0{throwPolls-=1;throw URLError(.networkConnectionLost)};return terminal ? .failed("synthetic definitive failure"):.completed(videoURL:url)}
+ func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict { checksDrift+=1;precondition(!r.frames.isEmpty,"a clip this phone cannot read is held locally without a drift call");precondition(!r.sourceBase64.isEmpty && r.frames.count==3 && r.requestID==job.requestId);if unavailableDrift { throw URLError(.timedOut) };return DriftVerdict(mayUse:!rejectsDrift,refusal:"Property changed; held.") }
+ func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus{polls+=1;precondition(j.requestId==job.requestId);onPoll?();if !pollOutcomes.isEmpty{return try pollOutcomes.removeFirst().get()};if throwPolls>0{throwPolls-=1;throw URLError(.networkConnectionLost)};return terminal ? .failed("synthetic definitive failure"):.completed(videoURL:url)}
 }
 @MainActor final class AIConsent {
  static let shared=AIConsent();var isGranted=true;var revocationRevision:UInt64=0
@@ -170,7 +178,8 @@ final class ClosedVideoProtocol:URLProtocol {
   do { _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("unavailable check must hold") } catch {checks+=1}
   check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"unavailable QC holds accepted receipt")
   clip.unavailableDrift=false
-  // The download is a `.tmp`; AVFoundation only opens the real extension.
+  // Readability is independently tested on the simulator. Here the closed
+  // decoder deliberately returns no frames regardless of the media suffix.
   ClipFrames.answerNoFrames=true
   do { _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:PendingReelRequest.load(ctx),api:clip,into:root,index:0);preconditionFailure("an unreadable clip must be held") } catch {checks+=1;check(error.localizedDescription.contains("Couldn't read the finished clip on this phone"),"an unreadable clip is held with the local reason")}
   check(PendingReelRequest.load(ctx) != nil && clip.posts==1,"an unreadable clip keeps the paid receipt without a generation retry")
@@ -198,6 +207,46 @@ final class ClosedVideoProtocol:URLProtocol {
   do{_ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:old,api:clip,into:root,index:0,requireCurrent:{throw CancellationError()});preconditionFailure("stale context refuses")}catch{checks+=1}
   check(clip.polls==polls&&clip.posts==1,"stale identity refuses before status/network dispatch")
   check(PendingReelRequest.load(ctx) != nil,"identity interruption keeps scoped recovery receipt")
+  // A switch while the status response is in flight must not retire the old
+  // account's paid receipt or proceed to a download.
+  let pollGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID)
+  clip.onPoll={auth.syncSessionRevision+=1}
+  do{_ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:old,api:clip,into:root,index:0,requireCurrent:pollGuard);preconditionFailure("identity switch during status must reject")}catch{check(error is CancellationError,"identity switch during status cancels before terminal processing")}
+  check(PendingReelRequest.load(ctx) != nil,"identity switch during status preserves the paid receipt")
+  clip.onPoll=nil;clip.terminal=false
+  // Sleeping past the deadline dispatches no new poll. Returning after the
+  // deadline accepts no stale completed response and keeps the paid receipt.
+  ReelPollClock.reset();ReelPollClock.pauseAdvance=301
+  let beforeDeadlinePolls=clip.polls
+  do{_ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:old,api:clip,into:root,index:0);preconditionFailure("deadline during suspension must reject")}catch{checks+=1}
+  check(clip.polls==beforeDeadlinePolls,"a polling pause past the deadline dispatches no status request")
+  check(PendingReelRequest.load(ctx) != nil,"deadline during suspension preserves the paid receipt")
+  ReelPollClock.reset();clip.onPoll={ReelPollClock.elapsed+=301}
+  let beforeDeadlineDrift=clip.checksDrift
+  do{_ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:old,api:clip,into:root,index:0);preconditionFailure("late completed response must hold")}catch{checks+=1}
+  check(clip.checksDrift==beforeDeadlineDrift,"a status response past the deadline does not enter the quality gate")
+  check(PendingReelRequest.load(ctx) != nil,"late completed response preserves the paid receipt")
+  clip.onPoll=nil;ReelPollClock.reset()
+  for status in [408,429,500,503] {check(ReelReceiptHarness.isDroppedPoll(APIError.server(status:status,code:"synthetic",message:"synthetic")),"transient status poll permits a bounded retry")}
+  for status in [400,401,403,409,422] {check(!ReelReceiptHarness.isDroppedPoll(APIError.server(status:status,code:"synthetic",message:"synthetic")),"definitive status error stops read-only polling")}
+  check(!ReelReceiptHarness.isDroppedPoll(CancellationError()),"cancellation never retries polling")
+  check(!ReelReceiptHarness.isDroppedPoll(URLError(.cancelled)),"cancelled URL task never retries polling")
+  check(!ReelReceiptHarness.isDroppedPoll(CloudSyncError.identityChanged),"identity error never retries polling")
+  // Five misses, one processing reply, then five misses and completion: the
+  // limit is consecutive misses, so a real reply resets it.
+  clip.pollOutcomes=Array(repeating:.failure(URLError(.networkConnectionLost)),count:5)+[.success(.processing(queuePosition:nil))]+Array(repeating:.failure(URLError(.networkConnectionLost)),count:5)+[.success(.completed(videoURL:clip.url))]
+  let beforeResetPolls=clip.polls
+  _ = try await ReelReceiptHarness.retrieveClip(job:clip.job,pending:old,api:clip,into:root,index:1)
+  check(clip.polls==beforeResetPolls+12,"a successful processing reply resets the consecutive miss bound")
+  let collision=root.appendingPathComponent("same-name.tmp");let collisionMP4=root.appendingPathComponent("same-name.mp4")
+  try Data("download".utf8).write(to:collision);try Data("unrelated existing clip".utf8).write(to:collisionMP4)
+  let normalized=ReelReceiptHarness.clipPath(forDownloaded:collision)
+  check(normalized.pathExtension=="mp4"&&normalized != collisionMP4,"download normalization uses a unique media path")
+  let existingBytes=try Data(contentsOf:collisionMP4),normalizedBytes=try Data(contentsOf:normalized)
+  check(existingBytes==Data("unrelated existing clip".utf8),"download normalization preserves an existing sibling")
+  check(normalizedBytes==Data("download".utf8),"download normalization preserves exact bytes")
+  let alreadyMP4=root.appendingPathComponent("already.mp4");try Data("already media".utf8).write(to:alreadyMP4)
+  check(ReelReceiptHarness.clipPath(forDownloaded:alreadyMP4)==alreadyMP4,"an existing mp4 needs no rename")
   old.clear();let bad=PendingReelRequest(context:ctx,photoNumber:9,job:clip.job);try bad.save()
   check(PendingReelRequest.load(ctx)==nil,"invalid photo receipt cannot resume")
   try Data("broken".utf8).write(to:PendingReelRequest.file(ctx),options:.atomic)

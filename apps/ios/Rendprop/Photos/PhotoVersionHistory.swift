@@ -296,7 +296,8 @@ enum PhotoVersionHistory {
                   index.versions.allSatisfy({ key, v in
                       key == v.id && safeName(v.id) && safeName(v.familyID) && safeName(v.imageFile)
                       && (v.originalFile.map(safeName) ?? true)
-                  }), index.current.allSatisfy({ family, id in index.versions[id]?.familyID == family }),
+                  }), Set(index.versions.values.map(\.imageFile)).count == index.versions.count,
+                  index.current.allSatisfy({ family, id in index.versions[id]?.familyID == family }),
                   (index.listingSelections ?? [:]).allSatisfy({ family, id in index.versions[id]?.familyID == family })
             else { throw Failure.invalidHistory }
             return index
@@ -334,6 +335,15 @@ enum PhotoVersionHistory {
     static func load(directory: URL) throws -> Index {
         lock.lock(); defer { lock.unlock() }
         return try loadUnlocked(directory: directory)
+    }
+    /// Exports work on immutable file copies. A concurrent edit, review or
+    /// selection must not make their recorded captions disagree with history.
+    static func requireUnchanged(_ expected: Index, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        let current = try loadUnlocked(directory: directory)
+        guard current.schema == expected.schema, current.versions == expected.versions,
+              current.current == expected.current, current.listingSelections == expected.listingSelections,
+              current.hiddenFamilies == expected.hiddenFamilies else { throw Failure.changedVersion }
     }
     /// Publication must not silently replace a saved gallery when its history
     /// is corrupt or a selected file is missing. nil means legacy/no index.
@@ -495,8 +505,9 @@ enum PhotoVersionHistory {
     static func requireDownloadReview(imageURL: URL) throws {
         let directory = imageURL.deletingLastPathComponent()
         let index = try load(directory: directory)
-        if let version = index.versions.values.first(where: { $0.imageFile == imageURL.lastPathComponent }),
-           version.needsCustomReview { throw Failure.customReviewRequired }
+        if index.versions.values.contains(where: { $0.imageFile == imageURL.lastPathComponent && $0.needsCustomReview }) {
+            throw Failure.customReviewRequired
+        }
     }
 
     /// Record comparison of this exact custom output without selecting it for

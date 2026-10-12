@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import Photos
 import ImageIO
+import UniformTypeIdentifiers
 
 /// Export copies only. Stored captures, AI outputs and history are never
 /// cropped, watermarked, overwritten or removed by an export operation.
@@ -47,16 +48,34 @@ enum PhotoExportRenderer {
         var errorDescription: String? { message }
     }
 
-    static func prepare(_ photos: [EnhancedPhoto], options: Options) throws -> Prepared {
+    /// Retained files may contain PNG or HEIC bytes under a legacy .jpg name.
+    /// Read once, identify the actual format, and keep those exact bytes.
+    private static func retainedImage(at source: URL, read: (URL) throws -> Data) throws -> (data: Data, ext: String) {
+        let data: Data
+        do { data = try read(source) }
+        catch { throw Failure(message: "A retained photo is missing or unreadable: \(source.lastPathComponent). Nothing was exported. Restore it or export only the current photo.") }
+        guard let image = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(image) > 0, let type = CGImageSourceGetType(image),
+              let ext = UTType(type as String)?.preferredFilenameExtension else {
+            throw Failure(message: "Couldn't identify the retained photo's image format: \(source.lastPathComponent). Nothing was exported.")
+        }
+        return (data, ext == "jpeg" ? "jpg" : ext)
+    }
+
+    static func prepare(_ photos: [EnhancedPhoto], options: Options,
+                        readRetained: (URL) throws -> Data = { try Data(contentsOf: $0) }) throws -> Prepared {
         guard !photos.isEmpty else { throw Failure(message: "There are no photos to export.") }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Rendprop-photos-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         do {
             var urls: [URL] = []
             var deliveryFiles: [URL] = []
+            let numberWidth = max(2, String(photos.count).count)
             for (offset, photo) in photos.enumerated() {
                 let url = try autoreleasepool {
-                    let history = try PhotoVersionHistory.load(directory: photo.enhancedURL.deletingLastPathComponent())
+                    let photoDirectory = photo.enhancedURL.deletingLastPathComponent()
+                    let history = try PhotoVersionHistory.load(directory: photoDirectory)
+                    let number = String(format: "%0*d", numberWidth, offset + 1)
                     if let named = history.versions[photo.id], named.imageFile != photo.enhancedURL.lastPathComponent {
                         throw PhotoVersionHistory.Failure.changedVersion
                     }
@@ -67,11 +86,12 @@ enum PhotoExportRenderer {
                         throw Failure(message: "An earlier source is missing for photo \(offset + 1). Export its current version instead.")
                     }
                     let suffix = options.original ? (version?.originalVerified == true ? "retained-original" : "earlier-source-unverified") : "edited"
-                    let ext = options.original ? source.pathExtension : "jpg"
-                    let target = directory.appendingPathComponent(String(format: "%02d", offset + 1) + "-\(suffix).\(ext)")
+                    let originalData = options.original ? try retainedImage(at: source, read: readRetained) : nil
+                    let ext = originalData?.ext ?? "jpg"
+                    let target = directory.appendingPathComponent(number + "-\(suffix).\(ext)")
                     if options.original {
                         // Exact retained bytes. Ratio controls never apply to originals.
-                        try FileManager.default.copyItem(at: source, to: target)
+                        try originalData!.data.write(to: target, options: .atomic)
                     } else {
                         guard let image = UIImage(contentsOfFile: source.path) else {
                             throw Failure(message: "Couldn't read photo \(offset + 1). Its saved files have not been changed.")
@@ -85,52 +105,58 @@ enum PhotoExportRenderer {
                         }
                         try data.write(to: target, options: .atomic)
                         let caption = version?.caption ?? "Edit history is unavailable. Verify all edits and locate the unaltered source before publishing."
-                        let captionURL = directory.appendingPathComponent(String(format: "%02d", offset + 1) + "-disclosure.txt")
+                        let captionURL = directory.appendingPathComponent(number + "-disclosure.txt")
                         let framingNote = options.levelDegrees == 0 ? "" : "\nExport copy manually leveled and cropped. The stored source is unchanged."
                         var withheldNote = ""
                         if options.includeOriginals, version?.originalVerified == true,
                            photo.originalURL.standardizedFileURL != photo.enhancedURL.standardizedFileURL {
-                            let originalURL = directory.appendingPathComponent(String(format: "%02d", offset + 1) + "-retained-original." + photo.originalURL.pathExtension)
                             try PhotoVersionHistory.requireDownloadReview(imageURL: photo.originalURL)
-                            try FileManager.default.copyItem(at: photo.originalURL, to: originalURL)
+                            let retained = try retainedImage(at: photo.originalURL, read: readRetained)
+                            let originalURL = directory.appendingPathComponent(number + "-retained-original." + retained.ext)
+                            try retained.data.write(to: originalURL, options: .atomic)
                             urls.append(originalURL); deliveryFiles.append(originalURL)
                         }
-                        // Build 61 — every other version the app holds for this
-                        // photo, not only the gallery one and its untouched
+                        // Build 61 — every saved version the app holds for this
+                        // photo, alongside the rendered gallery delivery copy and
+                        // its untouched
                         // original: the enhancement made before any AI edit,
                         // each earlier AI edit, a superseded staging ("it needs
                         // to be EVERY image associated and labeled" — Aaron,
                         // TestFlight 60). Oldest first, numbered by position in
                         // the photo's history, named by what each one is, exact
                         // stored bytes, each with its own disclosure note. The
-                        // gallery version keeps '-edited'. A custom output that
+                        // rendered gallery copy keeps '-edited'. A custom output that
                         // was never reviewed is withheld exactly as it is from a
                         // direct download, and the photo's note says so.
                         if options.includeOriginals, let version {
-                            let photoDirectory = photo.enhancedURL.deletingLastPathComponent()
-                            let others = history.history(for: version.id).filter { $0.id != version.id }
+                            let savedVersions = history.history(for: version.id)
                                 .sorted { $0.createdAt != $1.createdAt ? $0.createdAt < $1.createdAt : $0.id < $1.id }
+                            let versionWidth = max(1, String(savedVersions.count).count)
                             var withheld = 0
-                            for (position, other) in others.enumerated() {
+                            for (position, other) in savedVersions.enumerated() {
                                 let stored = photoDirectory.appendingPathComponent(other.imageFile)
-                                guard FileManager.default.fileExists(atPath: stored.path),
-                                      (try? PhotoVersionHistory.requireDownloadReview(imageURL: stored)) != nil else { withheld += 1; continue }
-                                let stem = String(format: "%02d", offset + 1) + "-version-\(position + 1)-" + other.exportSlug
-                                let copy = directory.appendingPathComponent(stem + "." + (stored.pathExtension.isEmpty ? "jpg" : stored.pathExtension))
-                                try FileManager.default.copyItem(at: stored, to: copy)
+                                if other.needsCustomReview { withheld += 1; continue }
+                                try PhotoVersionHistory.requireDownloadReview(imageURL: stored)
+                                let retained = try retainedImage(at: stored, read: readRetained)
+                                let stem = number + "-version-" + String(format: "%0*d", versionWidth, position + 1) + "-" + other.exportSlug
+                                let copy = directory.appendingPathComponent(stem + "." + retained.ext)
+                                try retained.data.write(to: copy, options: .atomic)
                                 let note = directory.appendingPathComponent(stem + "-disclosure.txt")
                                 try Data((other.title + ".\n" + other.caption + "\nCheck your MLS or advertising platform's disclosure and original-photo rules.\n").utf8)
                                     .write(to: note, options: .atomic)
                                 urls.append(copy); deliveryFiles.append(copy); deliveryFiles.append(note)
                             }
                             if withheld > 0 {
-                                withheldNote = "\n\(withheld) other version\(withheld == 1 ? " of this photo was" : "s of this photo were") not included: not yet reviewed, or no longer on this phone."
+                                withheldNote = "\n\(withheld) saved version\(withheld == 1 ? " of this photo was" : "s of this photo were") not included: custom edits have not yet been reviewed. Compare each withheld edit with its source in Versions before downloading it."
                             }
                         }
                         try Data((caption + framingNote + withheldNote + "\nCheck your MLS or advertising platform's disclosure and original-photo rules.\n").utf8)
                             .write(to: captionURL, options: .atomic)
                         deliveryFiles.append(captionURL)
                     }
+                    // Never deliver files from one history with captions or
+                    // review permission taken from another in-flight history.
+                    try PhotoVersionHistory.requireUnchanged(history, directory: photoDirectory)
                     return target
                 }
                 urls.append(url); deliveryFiles.append(url)
@@ -166,12 +192,12 @@ enum PhotoExportRenderer {
         readme += "\(total) file\(total == 1 ? "" : "s"): "
         readme += "\(photoCount) photo\(photoCount == 1 ? "" : "s") (numbered in gallery order; '-edited' is the version shown in the app)"
         if originalCount > 0 { readme += ", \(originalCount) retained original\(originalCount == 1 ? "" : "s") (same number, '-retained-original': the untouched photo as captured or imported)" }
-        if versionCount > 0 { readme += ", \(versionCount) other version\(versionCount == 1 ? "" : "s") (same number, '-version-<n>-<what it is>', in the order they were made)" }
+        if versionCount > 0 { readme += ", \(versionCount) saved version\(versionCount == 1 ? "" : "s") (same number, '-version-<n>-<what it is>', exact stored bytes in the order they were made)" }
         if disclosureCount > 0 { readme += ", \(disclosureCount) disclosure note\(disclosureCount == 1 ? "" : "s") (same name as the image, '-disclosure.txt')" }
         if whole { readme += ", \(extras.count) more file\(extras.count == 1 ? "" : "s") listed below" }
         readme += ".\n\n"
         if versionCount > 0 {
-            readme += "Every image Rendprop holds for a photo is here: the untouched original, each enhancement or AI edit in the order it was made, and the version shown in the app. "
+            readme += "The package includes retained originals where verified, available saved enhancements and AI edits in the order they were made, and the version shown in the app. '-edited.jpg' is a rendered delivery copy; the matching stored version is also included among '-version-' files without changing its bytes. Unreviewed custom edits are withheld; each photo's disclosure note reports any withheld versions. "
             readme += "The label in the file name says what each one is (enhanced, virtually-staged-modern, decluttered, twilight-sky, ...).\n"
         }
         if disclosureCount > 0 {
@@ -384,8 +410,8 @@ struct PhotoExportSheet: View {
                             Text("Matching disclosure text files are included. On-photo labels describe recorded edits, including virtual staging and decluttering.")
                         }
                         if versions.contains(where: { $0?.originalVerified == true }) {
-                            Toggle("Include retained originals and every other version", isOn: $includeOriginals)
-                            Text("Verified retained source files are paired by number in their original format, which may be HEIC or PNG. Turn this off for JPEG copies only. Imported sources may contain edits made before Rendprop.")
+                            Toggle("Include retained originals and every saved version", isOn: $includeOriginals)
+                            Text("Verified retained originals and every saved version keep their exact bytes and original format, which may be HEIC or PNG. The current JPEG delivery copy is included too. Unreviewed custom edits are withheld. Turn this off for current JPEG copies only. Imported sources may contain edits made before Rendprop.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Button("Copy disclosure captions") {
@@ -415,7 +441,7 @@ struct PhotoExportSheet: View {
                                 ? "One file with the tour, every photo and every version of it, their disclosure notes, the other videos, a listing-details note and a short README — everything a transaction coordinator, your office or a client needs. It opens on any Mac, PC or phone."
                                 : "One file with every photo and every version of it, their disclosure notes and a short README — the easiest thing to send to a transaction coordinator, your office or a client. It opens on any Mac, PC or phone.")
                              : (wholeListing
-                                ? "Photos, originals, every other version, disclosure notes, videos and listing details are shared as separate files. Better for AirDrop to another iPhone."
+                                ? "Photos, originals, every saved version, disclosure notes, videos and listing details are shared as separate files. Better for AirDrop to another iPhone."
                                 : "Each photo, original, other version and disclosure note is shared as its own file. Better for AirDrop to another iPhone."))
                             .font(.caption).foregroundStyle(.secondary)
                     }

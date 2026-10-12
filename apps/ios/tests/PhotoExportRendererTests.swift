@@ -93,30 +93,31 @@ import ImageIO
               "reviewing a download leaves publication and editing selections unchanged")
         let customPack = try PhotoExportRenderer.prepare([customPhoto], options: .init())
         defer { try? FileManager.default.removeItem(at: customPack.directory) }
-        // Build 61: every other version of the photo rides along, named by what
+        // Build 61: every saved version of the photo rides along, named by what
         // it is; a descendant that was never reviewed is withheld and noted.
-        check(!customPack.files.contains { $0.lastPathComponent.contains("-version-2-") }, "an unreviewed custom descendant is withheld from the package")
-        check(customPack.images.count == 3 && customPack.files.count == 5, "reviewed custom exports with its original, its enhancement and both disclosures")
-        check(customPack.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-edited.jpg"], "other versions sit between the original and the current edit")
+        check(!customPack.files.contains { $0.lastPathComponent.contains("-version-3-") }, "an unreviewed custom descendant is withheld from the package")
+        check(customPack.images.count == 4 && customPack.files.count == 7, "reviewed custom exports with its original, every stored version and each disclosure")
+        check(customPack.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-version-2-ai-edit.jpg", "01-edited.jpg"], "other versions sit between the original and the current edit")
         let customNote = try String(contentsOf: customPack.directory.appendingPathComponent("01-disclosure.txt"), encoding: .utf8)
-        check(customNote.contains("1 other version of this photo was not included"), "the photo's note says a version was withheld")
+        check(customNote.contains("1 saved version of this photo was not included"), "the photo's note says a version was withheld")
         let enhancedCopy = try Data(contentsOf: customPack.directory.appendingPathComponent("01-version-1-enhanced.jpg"))
         check(enhancedCopy == original, "an exported version is the exact stored bytes")
+        check((try? Data(contentsOf: customPack.directory.appendingPathComponent("01-version-2-ai-edit.jpg"))) == original, "current stored JPEG version is byte exact beside its rendered delivery copy")
         let enhancedNote = try String(contentsOf: customPack.directory.appendingPathComponent("01-version-1-enhanced-disclosure.txt"), encoding: .utf8)
         check(enhancedNote.hasPrefix("Original enhancement.") && enhancedNote.contains("enhanced on this phone"), "each exported version carries its own disclosure note")
         try rejectsCustom([descendantPhoto], "review of one custom output cannot approve a different descendant download")
         let mls = try PhotoExportRenderer.prepare([photo], options: .init())
         defer { try? FileManager.default.removeItem(at: mls.directory) }
-        check(mls.images.count == 3 && mls.files.count == 5, "MLS package includes current, original, the enhancement before staging and their disclosures")
-        check(mls.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-edited.jpg"], "Photos receives original before current edit")
+        check(mls.images.count == 4 && mls.files.count == 7, "MLS package includes current delivery, original, every saved version and their disclosures")
+        check(mls.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-version-2-virtually-staged-modern.jpg", "01-edited.jpg"], "Photos receives original before current edit")
         check(mls.images.last?.lastPathComponent == "01-edited.jpg", "current edit is the last photo added")
         let batch = try PhotoExportRenderer.prepare([photo, photo], options: .init())
         defer { try? FileManager.default.removeItem(at: batch.directory) }
-        check(batch.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-edited.jpg", "02-retained-original.jpg", "02-version-1-enhanced.jpg", "02-edited.jpg"],
+        check(batch.images.map(\.lastPathComponent) == ["01-retained-original.jpg", "01-version-1-enhanced.jpg", "01-version-2-virtually-staged-modern.jpg", "01-edited.jpg", "02-retained-original.jpg", "02-version-1-enhanced.jpg", "02-version-2-virtually-staged-modern.jpg", "02-edited.jpg"],
               "batch Photos saves each original before its current edit")
-        check(batch.files.map(\.lastPathComponent) == ["01-disclosure.txt", "01-edited.jpg", "01-retained-original.jpg", "01-version-1-enhanced-disclosure.txt", "01-version-1-enhanced.jpg", "02-disclosure.txt", "02-edited.jpg", "02-retained-original.jpg", "02-version-1-enhanced-disclosure.txt", "02-version-1-enhanced.jpg"],
+        check(batch.files.map(\.lastPathComponent) == ["01-disclosure.txt", "01-edited.jpg", "01-retained-original.jpg", "01-version-1-enhanced-disclosure.txt", "01-version-1-enhanced.jpg", "01-version-2-virtually-staged-modern-disclosure.txt", "01-version-2-virtually-staged-modern.jpg", "02-disclosure.txt", "02-edited.jpg", "02-retained-original.jpg", "02-version-1-enhanced-disclosure.txt", "02-version-1-enhanced.jpg", "02-version-2-virtually-staged-modern-disclosure.txt", "02-version-2-virtually-staged-modern.jpg"],
               "batch Files retains alphabetical pairing independent of Photos order")
-        check(mls.files.map(\.lastPathComponent) == ["01-disclosure.txt", "01-edited.jpg", "01-retained-original.jpg", "01-version-1-enhanced-disclosure.txt", "01-version-1-enhanced.jpg"], "matching names pair metadata and source")
+        check(mls.files.map(\.lastPathComponent) == ["01-disclosure.txt", "01-edited.jpg", "01-retained-original.jpg", "01-version-1-enhanced-disclosure.txt", "01-version-1-enhanced.jpg", "01-version-2-virtually-staged-modern-disclosure.txt", "01-version-2-virtually-staged-modern.jpg"], "matching names pair metadata and source")
         let mlsImage = UIImage(contentsOfFile: mls.directory.appendingPathComponent("01-edited.jpg").path)!
         check(brightness(mlsImage, x: 380, y: 285) > 240, "MLS file is clean with no banned text overlay")
         let retained = try Data(contentsOf: mls.directory.appendingPathComponent("01-retained-original.jpg"))
@@ -145,7 +146,7 @@ import ImageIO
         let legacy = EnhancedPhoto(id: "old", originalURL: legacyURL, enhancedURL: legacyURL)
         let legacyPack = try PhotoExportRenderer.prepare([legacy], options: .init())
         defer { try? FileManager.default.removeItem(at: legacyPack.directory) }
-        check(legacyPack.images.count == 1, "unknown legacy cannot fabricate original pair")
+        check(legacyPack.images.count == 2 && !legacyPack.images.contains { $0.lastPathComponent.contains("retained-original") }, "unknown legacy cannot fabricate original pair")
         check((try? String(contentsOf: legacyPack.files[0], encoding: .utf8).contains("unverified")) == true, "legacy caption admits missing provenance")
         let blue = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 300), format: format).image { context in
             UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
@@ -211,7 +212,7 @@ import ImageIO
         check(bundle.files.allSatisfy { names.contains($0.lastPathComponent) }, "every disclosure note, original and JPEG is in the archive")
         let readme = String(decoding: zipBytes[(30 + "README.txt".utf8.count)..<(30 + "README.txt".utf8.count + Int(le32(18)))], as: UTF8.self)
         check(readme.contains("disclosure") && readme.contains("2 photos"), "README explains the numbering and the disclosure notes")
-        check(readme.contains("1 other version (same number, '-version-<n>-<what it is>'") && readme.contains("Every image Rendprop holds for a photo is here"), "README explains the version labels")
+        check(readme.contains("2 saved versions (same number, '-version-<n>-<what it is>'") && readme.contains("Unreviewed custom edits are withheld"), "README explains the version labels without promising withheld images")
         check(directoryOffset == storedBytes + names.reduce(0) { $0 + 30 + $1.utf8.count }, "local headers and stored bytes fill the archive up to the central directory")
         check(bundle.files.allSatisfy { FileManager.default.fileExists(atPath: $0.path) }, "packaging leaves the prepared files in place")
         // Build 60: parse the actual listing package back through its headers,
@@ -237,6 +238,140 @@ import ImageIO
             }
             return result
         }
+        // A stored extension is not a format guarantee: capture storage keeps
+        // an imported PNG/HEIC's original bytes under the old .jpg convention.
+        let formatsDir = root.appendingPathComponent("real-formats")
+        try PhotoVersionHistory.saveCapture(original: png, enhanced: png, id: "png-capture", directory: formatsDir)
+        let pngEdit = try PhotoVersionHistory.saveEdit(jpeg: png, id: "png-sky", parentID: "png-capture", sourceID: "png-capture", edit: "sky", style: nil,
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: formatsDir)
+        let pngStaged = try PhotoVersionHistory.saveEdit(jpeg: original, id: "png-stage", parentID: pngEdit.id, sourceID: pngEdit.id, edit: "stage", style: "modern",
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: formatsDir)
+        let pngHistoryPhoto = EnhancedPhoto(id: pngStaged.id, originalURL: formatsDir.appendingPathComponent("orig-png-capture.jpg"), enhancedURL: formatsDir.appendingPathComponent(pngStaged.imageFile))
+        let pngHistory = try PhotoExportRenderer.prepare([pngHistoryPhoto], options: .init())
+        defer { try? FileManager.default.removeItem(at: pngHistory.directory) }
+        check(pngHistory.images.map(\.lastPathComponent) == ["01-retained-original.png", "01-version-1-enhanced.png", "01-version-2-blue-sky.png", "01-version-3-virtually-staged-modern.jpg", "01-edited.jpg"], "retained PNG filenames describe their real bytes despite stored jpg names")
+        for file in pngHistory.images.filter({ $0.pathExtension == "png" }) {
+            check((try? Data(contentsOf: file)) == png, "every retained PNG version keeps exact stored bytes")
+            let image = CGImageSourceCreateWithURL(file as CFURL, nil)!
+            check(CGImageSourceGetType(image) as String? == "public.png", "each .png retained file is an actual PNG")
+        }
+        let pngOriginal = try PhotoExportRenderer.prepare([pngHistoryPhoto], options: .init(original: true))
+        defer { try? FileManager.default.removeItem(at: pngOriginal.directory) }
+        check(pngOriginal.images[0].lastPathComponent == "01-retained-original.png" && (try? Data(contentsOf: pngOriginal.images[0])) == png, "original-only PNG export corrects the legacy suffix without transcoding")
+        let pngCurrentPhoto = EnhancedPhoto(id: pngEdit.id, originalURL: pngHistoryPhoto.originalURL, enhancedURL: formatsDir.appendingPathComponent(pngEdit.imageFile))
+        let pngCurrent = try PhotoExportRenderer.prepare([pngCurrentPhoto], options: .init(destination: .web, aspect: .portrait, framing: .crop, levelDegrees: 3))
+        defer { try? FileManager.default.removeItem(at: pngCurrent.directory) }
+        check((try? Data(contentsOf: pngCurrent.directory.appendingPathComponent("01-version-2-blue-sky.png"))) == png, "current stored PNG version is exact even when delivery JPEG is labeled cropped and leveled")
+        let pngCurrentJPEG = try Data(contentsOf: pngCurrent.directory.appendingPathComponent("01-edited.jpg"))
+        check(pngCurrentJPEG.starts(with: [0xff,0xd8,0xff]) && pngCurrentJPEG != png, "current PNG receives a separate actual JPEG delivery copy")
+        let heicBytes = NSMutableData()
+        guard let heicWriter = CGImageDestinationCreateWithData(heicBytes, "public.heic" as CFString, 1, nil) else {
+            preconditionFailure("The simulator must supply the real HEIC ImageIO encoder for this gate")
+        }
+        CGImageDestinationAddImage(heicWriter, source.cgImage!, nil)
+        check(CGImageDestinationFinalize(heicWriter), "a real HEIC fixture is encoded by ImageIO")
+        let heic = heicBytes as Data
+        let heicSource = CGImageSourceCreateWithData(heic as CFData, nil)!
+        check(CGImageSourceGetType(heicSource) as String? == "public.heic", "HEIC fixture has a real HEIC container")
+        try PhotoVersionHistory.saveCapture(original: heic, enhanced: heic, id: "heic-capture", directory: formatsDir)
+        let heicStage = try PhotoVersionHistory.saveEdit(jpeg: original, id: "heic-stage", parentID: "heic-capture", sourceID: "heic-capture", edit: "stage", style: "modern",
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: formatsDir)
+        let heicPhoto = EnhancedPhoto(id: heicStage.id, originalURL: formatsDir.appendingPathComponent("orig-heic-capture.jpg"), enhancedURL: formatsDir.appendingPathComponent(heicStage.imageFile))
+        let heicHistory = try PhotoExportRenderer.prepare([heicPhoto], options: .init())
+        defer { try? FileManager.default.removeItem(at: heicHistory.directory) }
+        check(heicHistory.images.map(\.lastPathComponent) == ["01-retained-original.heic", "01-version-1-enhanced.heic", "01-version-2-virtually-staged-modern.jpg", "01-edited.jpg"], "retained HEIC filenames describe their real bytes despite stored jpg names")
+        check(heicHistory.images.filter({ $0.pathExtension == "heic" }).allSatisfy { (try? Data(contentsOf: $0)) == heic }, "HEIC original and enhancement stay byte exact")
+        let heicCurrentPhoto = EnhancedPhoto(id: "heic-capture", originalURL: heicPhoto.originalURL, enhancedURL: formatsDir.appendingPathComponent("enh-heic-capture.jpg"))
+        let heicCurrent = try PhotoExportRenderer.prepare([heicCurrentPhoto], options: .init(aspect: .portrait, framing: .crop, levelDegrees: 3))
+        defer { try? FileManager.default.removeItem(at: heicCurrent.directory) }
+        check((try? Data(contentsOf: heicCurrent.directory.appendingPathComponent("01-version-1-enhanced.heic"))) == heic, "current stored HEIC version is exact beside a cropped and leveled JPEG delivery copy")
+        check((try? Data(contentsOf: heicCurrent.directory.appendingPathComponent("01-edited.jpg")))?.starts(with: [0xff,0xd8,0xff]) == true, "current HEIC renders an actual JPEG without replacing its stored bytes")
+        // More than nine versions must still sort chronologically in Files.
+        let manyDir = root.appendingPathComponent("many-versions")
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: original, id: "many-capture", directory: manyDir)
+        var parent = "many-capture"
+        for position in 1...12 {
+            let made = try PhotoVersionHistory.saveEdit(jpeg: original, id: "many-\(position)", parentID: parent, sourceID: parent,
+                edit: position == 12 ? "stage" : "declutter", style: position == 12 ? "modern" : nil,
+                disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: manyDir)
+            parent = made.id
+        }
+        let manyPhoto = EnhancedPhoto(id: parent, originalURL: manyDir.appendingPathComponent("orig-many-capture.jpg"), enhancedURL: manyDir.appendingPathComponent("edit-\(parent).jpg"))
+        let many = try PhotoExportRenderer.prepare([manyPhoto], options: .init())
+        defer { try? FileManager.default.removeItem(at: many.directory) }
+        let chronologicalNames = many.images.filter { $0.lastPathComponent.contains("-version-") }.map(\.lastPathComponent)
+        check(chronologicalNames.count == 13 && chronologicalNames == chronologicalNames.sorted() && chronologicalNames.first == "01-version-01-enhanced.jpg" && chronologicalNames.last == "01-version-13-virtually-staged-modern.jpg", "ten or more retained versions sort in the actual chronological order")
+        check(Set(many.files.map(\.lastPathComponent)).count == many.files.count, "repeated edit slugs cannot duplicate archive filenames")
+        let manyNote = try String(contentsOf: many.directory.appendingPathComponent("01-disclosure.txt"), encoding: .utf8)
+        check(manyNote.contains("Virtually staged") && manyNote.contains("Digitally decluttered"), "a staged declutter lineage discloses both effects")
+        let earlierDeclutterNote = try String(contentsOf: many.directory.appendingPathComponent("01-version-02-decluttered-disclosure.txt"), encoding: .utf8)
+        check(earlierDeclutterNote.contains("Digitally decluttered") && !earlierDeclutterNote.contains("Virtually staged"), "each predecessor discloses its own effects rather than the latest staging")
+        // Refuse an incomplete export rather than silently promising every file.
+        let missingDir = root.appendingPathComponent("missing-versions")
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: original, id: "missing-capture", directory: missingDir)
+        let missingStage = try PhotoVersionHistory.saveEdit(jpeg: original, id: "missing-stage", parentID: "missing-capture", sourceID: "missing-capture", edit: "stage", style: nil,
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: missingDir)
+        let missingPhoto = EnhancedPhoto(id: missingStage.id, originalURL: missingDir.appendingPathComponent("orig-missing-capture.jpg"), enhancedURL: missingDir.appendingPathComponent(missingStage.imageFile))
+        try FileManager.default.removeItem(at: missingDir.appendingPathComponent("enh-missing-capture.jpg"))
+        do {
+            let output = try PhotoExportRenderer.prepare([missingPhoto], options: .init())
+            try? FileManager.default.removeItem(at: output.directory)
+            check(false, "a missing retained version cannot be silently omitted")
+        } catch let error as PhotoExportRenderer.Failure {
+            check(error.message.contains("enh-missing-capture.jpg") && error.message.contains("Nothing was exported"), "missing-version refusal names the unavailable retained file")
+        }
+        try original.write(to: missingDir.appendingPathComponent("enh-missing-capture.jpg"))
+        try FileManager.default.removeItem(at: missingPhoto.originalURL)
+        do {
+            let output = try PhotoExportRenderer.prepare([missingPhoto], options: .init())
+            try? FileManager.default.removeItem(at: output.directory)
+            check(false, "a missing verified original cannot be silently omitted")
+        } catch let error as PhotoExportRenderer.Failure {
+            check(error.message.contains("orig-missing-capture.jpg") && error.message.contains("Nothing was exported"), "missing-original refusal names the unavailable retained file")
+        }
+        let justCurrent = try PhotoExportRenderer.prepare([missingPhoto], options: .init(includeOriginals: false))
+        defer { try? FileManager.default.removeItem(at: justCurrent.directory) }
+        check(justCurrent.images.count == 1 && justCurrent.files.count == 2, "current-only export remains available when an original was lost")
+        let customArchive = try PhotoExportRenderer.package(customPack, archiveName: "Reviewed custom")
+        let customEntries = try storedEntries(customArchive)
+        check(!customEntries.keys.contains { $0.contains("-version-3-") }, "the ZIP never contains an unreviewed custom ancestor or descendant")
+        let customReadme = String(decoding: customEntries["README.txt"]!, as: UTF8.self)
+        check(customReadme.contains("Unreviewed custom edits are withheld") && !customReadme.contains("Every image Rendprop holds"), "README explicitly admits unreviewed versions are withheld")
+        // A file may disappear or history may change after initial admission.
+        // The default reader still reads real immutable source files; the seam
+        // injects that exact filesystem timing deterministically, not a fake export.
+        let raceDir = root.appendingPathComponent("raced-history")
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: original, id: "race-capture", directory: raceDir)
+        let racePhoto = EnhancedPhoto(id: "race-capture", originalURL: raceDir.appendingPathComponent("orig-race-capture.jpg"), enhancedURL: raceDir.appendingPathComponent("enh-race-capture.jpg"))
+        var changed = false
+        do {
+            let output = try PhotoExportRenderer.prepare([racePhoto], options: .init(), readRetained: { url in
+                let data = try Data(contentsOf: url)
+                if !changed {
+                    changed = true
+                    _ = try PhotoVersionHistory.saveEdit(jpeg: original, id: "race-edit", parentID: "race-capture", sourceID: "race-capture", edit: "sky", style: nil,
+                        disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: raceDir)
+                }
+                return data
+            })
+            try? FileManager.default.removeItem(at: output.directory)
+            check(false, "a history change during export prevents mixed version delivery")
+        } catch PhotoVersionHistory.Failure.changedVersion { checks += 1 }
+        check(changed && (try? Data(contentsOf: racePhoto.originalURL)) == original, "history-race refusal preserves the original source bytes")
+        let duplicateDir = root.appendingPathComponent("duplicate-history")
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: original, id: "duplicate-capture", directory: duplicateDir)
+        _ = try PhotoVersionHistory.saveEdit(jpeg: original, id: "duplicate-edit", parentID: "duplicate-capture", sourceID: "duplicate-capture", edit: "sky", style: nil,
+            disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: duplicateDir)
+        let indexURL = duplicateDir.appendingPathComponent(".photo-history.json")
+        var duplicateIndex = try JSONSerialization.jsonObject(with: Data(contentsOf: indexURL)) as! [String: Any]
+        var duplicateVersions = duplicateIndex["versions"] as! [String: [String: Any]]
+        duplicateVersions["duplicate-edit"]!["imageFile"] = "enh-duplicate-capture.jpg"
+        duplicateIndex["versions"] = duplicateVersions
+        try JSONSerialization.data(withJSONObject: duplicateIndex).write(to: indexURL, options: .atomic)
+        do {
+            _ = try PhotoVersionHistory.load(directory: duplicateDir)
+            check(false, "one stored image cannot masquerade as two different saved versions")
+        } catch PhotoVersionHistory.Failure.invalidHistory { checks += 1 }
         let video = root.appendingPathComponent("source-walkthrough.mp4")
         let videoBytes = Data([0,0,0,24,102,116,121,112]) + Data("synthetic walkthrough bytes".utf8)
         let details = root.appendingPathComponent("details-note.txt")

@@ -1725,14 +1725,38 @@ final class AppModel: ObservableObject {
     /// The local video and captures were removed when it was deleted; the tour
     /// itself is served from the cloud copy, which came back with the listing.
     func restoreListing(serverID: UUID) async throws -> RestoredListing {
-        guard Config.useLiveBackend else { throw CloudSyncError.identityChanged }
+        guard Config.useLiveBackend, AuthStore.shared.isIdentified,
+              let owner = AuthStore.shared.userID, let library = WorkspaceContext.selectedOrgID else {
+            throw CloudSyncError.identityChanged
+        }
+        let revision = AuthStore.shared.syncSessionRevision
         let restored = try await api.restoreListing(serverID: serverID)
+        guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+              library == WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        guard restored.id == serverID else { throw CloudSyncError.invalidResponse }
         // Build 61: the server has already brought the listing back, so the
         // row can leave the screen now. The library refresh is a full
         // workspace sync — several seconds on a big library — and it used to
         // hold the Restore spinner the whole time ("it does restore, it just
         // takes a while"). It runs behind the confirmation instead.
-        Task { [weak self] in await self?.refreshCloudWorkspace() }
+        Task { [weak self] in
+            guard let self, owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                  library == WorkspaceContext.selectedOrgID else { return }
+            // A refresh already in flight may contain a pre-restore snapshot.
+            // Finish that read, then request a fresh one; simply joining it
+            // could leave the restored listing absent until the next launch.
+            if let pending = self.cloudRefreshTask {
+                let operation = self.cloudRefreshOperation
+                await pending.value
+                guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                      library == WorkspaceContext.selectedOrgID else { return }
+                if self.cloudRefreshOperation == operation {
+                    self.cloudRefreshTask = nil
+                    self.cloudRefreshOperation = nil
+                }
+            }
+            await self.refreshCloudWorkspace()
+        }
         return restored
     }
 
@@ -5135,15 +5159,21 @@ struct StartProjectSheet: View {
     // Build 61 (TestFlight 60 feedback): the same address suggestions and
     // "Use current location" the Listings-tab form has had, here on the door
     // Home opens — the field was a plain text box and people typed "855
-    // Central" and stopped. Apple's on-device completer, no vendor, no key.
+    // Central" and stopped. Apple's MapKit completer needs no vendor key.
     @StateObject private var completer = AddressCompleter()
     @StateObject private var locator = OneShotLocation()
     @State private var locating = false
     @State private var locationNote: String?
+    @State private var locationRequestID: UUID?
+    @State private var locationGeocoder: CLGeocoder?
 
     private var space: SpaceType { SpaceType.current }
     private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var offersAddressHelp: Bool { space.showsPropertyDetails }
+    private var creationContextIsCurrent: Bool {
+        owner == AuthStore.shared.userID && revision == AuthStore.shared.syncSessionRevision
+            && org == WorkspaceContext.selectedOrgID
+    }
 
     var body: some View {
         NavigationStack {
@@ -5154,8 +5184,7 @@ struct StartProjectSheet: View {
                     PrimaryButton(title: "Save and continue",
                                   systemImage: "arrow.right",
                                   isDisabled: trimmed.isEmpty) {
-                        guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
-                              org == WorkspaceContext.selectedOrgID, onCreate(trimmed) else {
+                        guard creationContextIsCurrent, onCreate(trimmed) else {
                             creationError = "Your account or workspace changed. Close this sheet, choose a workspace, and start the draft there. Your typed name is still here."
                             return
                         }
@@ -5177,6 +5206,7 @@ struct StartProjectSheet: View {
                 }
             }
             .onAppear { focused = true }
+            .onDisappear { cancelCurrentLocation() }
         }
     }
 
@@ -5207,6 +5237,7 @@ struct StartProjectSheet: View {
                 .padding(14)
                 .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .onChange(of: name) { value in
+                    if locationRequestID != nil { cancelCurrentLocation() }
                     if offersAddressHelp { completer.update(query: value) }
                 }
             if offersAddressHelp, !completer.suggestions.isEmpty {
@@ -5240,6 +5271,8 @@ struct StartProjectSheet: View {
         VStack(spacing: 0) {
             ForEach(completer.suggestions, id: \.self) { item in
                 Button {
+                    guard creationContextIsCurrent else { return }
+                    cancelCurrentLocation()
                     Haptics.selection()
                     completer.accept()
                     name = AddressCompleter.fullAddress(item)
@@ -5272,9 +5305,9 @@ struct StartProjectSheet: View {
     }
 
     /// One coarse fix → street address in the field. The precise fix is used
-    /// only to resolve the address and is never stored (the listing keeps a
-    /// three-decimal coordinate the same way NewListingView does).
+    /// only to resolve the address and is never stored by this name-only flow.
     private func useCurrentLocation() {
+        guard creationContextIsCurrent, !locating else { return }
 #if targetEnvironment(simulator)
         if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.currentLocationFixture") {
             completer.accept()
@@ -5282,15 +5315,28 @@ struct StartProjectSheet: View {
             return
         }
 #endif
+        let request = UUID(), requestedName = name
+        locationRequestID = request
         locating = true; locationNote = nil
         locator.request { loc in
+            guard locationRequestID == request, creationContextIsCurrent, name == requestedName else {
+                if locationRequestID == request { cancelCurrentLocation() }
+                return
+            }
             guard let loc else {
-                locating = false
+                cancelCurrentLocation()
                 locationNote = "Location isn't available. Allow it in Settings → Rendprop → Location, or type the address."
                 return
             }
             completer.focus(on: loc.coordinate)
-            CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
+            let geocoder = CLGeocoder()
+            locationGeocoder = geocoder
+            geocoder.reverseGeocodeLocation(loc) { placemarks, _ in
+                guard locationRequestID == request, creationContextIsCurrent, name == requestedName else {
+                    if locationRequestID == request { cancelCurrentLocation() }
+                    return
+                }
+                cancelCurrentLocation()
                 if let p = placemarks?.first {
                     let line = AddressCompleter.formatted(p)
                     if !line.isEmpty { completer.accept(); name = line }
@@ -5298,9 +5344,16 @@ struct StartProjectSheet: View {
                 } else {
                     locationNote = "Couldn't turn your location into a street address. Type it instead."
                 }
-                locating = false
             }
         }
+    }
+
+    private func cancelCurrentLocation() {
+        locationRequestID = nil
+        locator.cancel()
+        locationGeocoder?.cancelGeocode()
+        locationGeocoder = nil
+        locating = false
     }
 }
 // MARK: - end project-first additions

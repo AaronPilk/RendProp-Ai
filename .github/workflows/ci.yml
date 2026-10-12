@@ -97,6 +97,8 @@ jobs:
         run: bash apps/ios/tests/run-production-writer.sh
       - name: Phone production work survives anonymous-account adoption
         run: bash apps/ios/tests/run-adoption-production.sh
+      - name: Home location callbacks and restore snapshots retain their opening identity
+        run: python3 apps/ios/tests/run-home-restore-async-boundaries.py --out "$RUNNER_TEMP/rendprop-home-restore-async"
       - name: Guest personal cards and paid requests survive only verified adoption
         run: python3 apps/ios/tests/run-adoption-owned-identity.py
       - name: Subscription offer disclosures and durable workspace intent
@@ -168,6 +170,12 @@ jobs:
         run: bash apps/ios/tests/run-reel-clip-failures.sh
       - name: Paid reel requests survive lost responses and retain downloaded clips
         run: python3 apps/ios/tests/run-reel-request-recovery.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-request-recovery-$GITHUB_RUN_ATTEMPT"
+      - name: Reel completion notices and background expiry remain generation scoped
+        run: python3 apps/ios/tests/run-reel-lifecycle.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-lifecycle"
+      - name: Moving-photo work refuses changed account, consent and library contexts
+        run: python3 apps/ios/tests/run-moving-photo-identity.py --evidence-dir "$RUNNER_TEMP/rendprop-moving-photo-identity"
+      - name: Actual AVFoundation extraction handles downloaded MP4 bytes
+        run: python3 apps/ios/tests/run-clip-frames.py --evidence-dir "$RUNNER_TEMP/rendprop-clip-frames"
       - name: Whole listing package preserves sources and refuses incomplete handovers
         run: python3 apps/ios/tests/run-listing-package-assembly.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-package-assembly"
       - name: Retain whole listing package assembly and guard-removal evidence
@@ -299,6 +307,14 @@ jobs:
             ${{ runner.temp }}/rendprop-reel-request-recovery-*/receipt.json
             ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.log
             ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.swift
+            ${{ runner.temp }}/rendprop-home-restore-async/receipt.json
+            ${{ runner.temp }}/rendprop-home-restore-async/*.log
+            ${{ runner.temp }}/rendprop-reel-lifecycle/receipt.json
+            ${{ runner.temp }}/rendprop-reel-lifecycle/*.log
+            ${{ runner.temp }}/rendprop-moving-photo-identity/receipt.json
+            ${{ runner.temp }}/rendprop-moving-photo-identity/*.log
+            ${{ runner.temp }}/rendprop-clip-frames/receipt.json
+            ${{ runner.temp }}/rendprop-clip-frames/*.log
             /tmp/rendprop-gallery-sync-fixture-*/receipt.json
             /tmp/rendprop-gallery-sync-fixture-*/*.log
             /tmp/rendprop-floor-outline-controls-*/receipt.json

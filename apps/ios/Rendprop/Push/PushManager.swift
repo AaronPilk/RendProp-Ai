@@ -646,20 +646,26 @@ final class PushManager: ObservableObject {
 /// should not show. Tapping it opens the app; `PushDelegate` routes nothing
 /// for this category, which is the whole point.
 enum ReelCompletionNotice {
-    @MainActor static func post(success: Bool) {
+    @MainActor static func post(success: Bool, identity: PushAccountIdentity?) {
         guard UIApplication.shared.applicationState != .active else { return }
-        guard let owner = PushManager.currentIdentity?.owner else { return }
+        guard let identity, PushManager.currentIdentity == identity else { return }
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else { return }
-            let content = UNMutableNotificationContent()
-            content.title = success ? "Your reel is ready" : "Your reel couldn't be made"
-            content.body = success
-                ? "Open Rendprop to watch it and share it."
-                : "Open Rendprop to see what happened. Finished clips are kept on this phone."
-            content.sound = .default
-            content.userInfo = ["recipient_user_id": owner.uuidString, "category": "reel_done"]
-            center.add(UNNotificationRequest(identifier: "reel-done-\(UUID().uuidString)", content: content, trigger: nil))
+            // Settings arrive asynchronously. An account switch can already
+            // have cleared this account's notifications before this callback.
+            Task { @MainActor in
+                guard PushManager.currentIdentity == identity,
+                      UIApplication.shared.applicationState != .active else { return }
+                let content = UNMutableNotificationContent()
+                content.title = success ? "Your reel is ready" : "Your reel couldn't be made"
+                content.body = success
+                    ? "Open Rendprop to watch it and share it."
+                    : "Open Rendprop to see what happened. Finished clips are kept on this phone."
+                content.sound = .default
+                content.userInfo = ["recipient_user_id": identity.owner.uuidString, "category": "reel_done"]
+                center.add(UNNotificationRequest(identifier: "reel-done-\(UUID().uuidString)", content: content, trigger: nil))
+            }
         }
     }
 }

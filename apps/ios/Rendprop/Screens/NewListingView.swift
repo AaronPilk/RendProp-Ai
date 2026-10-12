@@ -657,6 +657,8 @@ struct NewListingView: View {
 
     @StateObject private var locator = OneShotLocation()
     @State private var locating = false
+    @State private var locationRequestID: UUID?
+    @State private var locationGeocoder: CLGeocoder?
     @State private var pendingCoord: CLLocationCoordinate2D?
 
     @State private var form = ListingFormData()
@@ -703,6 +705,10 @@ struct NewListingView: View {
         .onChange(of: formAuth.userID) { _ in bindInitialFormContext() }
         .onChange(of: formWorkspace.selected?.id) { _ in bindInitialFormContext() }
         .onAppear { bindInitialFormContext() }
+        .onChange(of: form.address) { _ in
+            if locationRequestID != nil { cancelCurrentLocation() }
+        }
+        .onDisappear { cancelCurrentLocation() }
         .navigationTitle(SpaceType.current.newItemTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(isPresented: $goToReview) {
@@ -772,6 +778,7 @@ struct NewListingView: View {
     }
 
     private func useCurrentLocation() {
+        guard formContextIsCurrent, !locating else { return }
 #if targetEnvironment(simulator)
         if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.currentLocationFixture") {
             pendingCoord = CLLocationCoordinate2D(latitude: 35.123, longitude: -80.987)
@@ -779,20 +786,41 @@ struct NewListingView: View {
             return
         }
 #endif
+        let request = UUID(), requestedAddress = form.address
+        locationRequestID = request
         locating = true
         locator.request { loc in
-            guard let loc else { locating = false; return }
+            guard locationRequestID == request, formContextIsCurrent, form.address == requestedAddress else {
+                if locationRequestID == request { cancelCurrentLocation() }
+                return
+            }
+            guard let loc else { cancelCurrentLocation(); return }
             // Keep only a ~110 m coarse fix (3 decimals) — the precise fix is
             // used transiently below to resolve the street address, never stored.
-            pendingCoord = CLLocationCoordinate2D(latitude: coarseCoordinate(loc.coordinate.latitude),
-                                                  longitude: coarseCoordinate(loc.coordinate.longitude))
-            CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
+            let coordinate = CLLocationCoordinate2D(latitude: coarseCoordinate(loc.coordinate.latitude),
+                                                     longitude: coarseCoordinate(loc.coordinate.longitude))
+            let geocoder = CLGeocoder()
+            locationGeocoder = geocoder
+            geocoder.reverseGeocodeLocation(loc) { placemarks, _ in
+                guard locationRequestID == request, formContextIsCurrent, form.address == requestedAddress else {
+                    if locationRequestID == request { cancelCurrentLocation() }
+                    return
+                }
+                cancelCurrentLocation()
                 if let p = placemarks?.first {
+                    pendingCoord = coordinate
                     form.setSuggestedAddress(Self.formatAddress(p))
                 }
-                locating = false
             }
         }
+    }
+
+    private func cancelCurrentLocation() {
+        locationRequestID = nil
+        locator.cancel()
+        locationGeocoder?.cancelGeocode()
+        locationGeocoder = nil
+        locating = false
     }
 
     private static func formatAddress(_ p: CLPlacemark) -> String {
@@ -1272,6 +1300,11 @@ final class OneShotLocation: NSObject, ObservableObject, CLLocationManagerDelega
         default:
             finish(nil)
         }
+    }
+
+    func cancel() {
+        completion = nil
+        manager.stopUpdatingLocation()
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
