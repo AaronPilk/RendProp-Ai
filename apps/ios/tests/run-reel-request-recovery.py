@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 root = Path(__file__).resolve().parents[3]
 parser = argparse.ArgumentParser()
 parser.add_argument('--evidence-dir', type=Path)
+parser.add_argument('--quality-only', action='store_true', help='Compile/run only the new exact quality routing controls; full gate remains default')
 args = parser.parse_args()
 out = args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-reel-request-recovery-'))
 out.mkdir(parents=True, exist_ok=True)
@@ -24,7 +25,8 @@ live_path = root / 'apps/ios/Rendprop/Networking/LiveAPIClient.swift'
 fixture_path = root / 'apps/ios/tests/ReelRequestRecoveryTests.swift'
 adoption_path = root / 'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift'
 listing_path = root / 'apps/ios/Rendprop/Models/Listing.swift'
-consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, Path(__file__).resolve()]
+drift_path = root / 'apps/ios/Rendprop/Render/DriftCheck.swift'
+consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, Path(__file__).resolve()]
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed}
 def block(s, anchor):
@@ -44,6 +46,7 @@ receipt = {'passed': False, 'start_source_sha256': hashes(), 'compiles': [], 'ru
     'No vendor, customer media, camera, Photos write or production API.',
     'Unconfirmed submissions retain a scoped durable marker; no server receipt replay or automatic POST retry is claimed.',
     'Nonempty synthetic bytes test retention; video decoding or generation quality is not certified.',
+    'OriginalPhotoMotion.render is a closed boundary here; the separate simulator AVFoundation renderer gate proves actual encoding. This gate executes actual refusal/retry routing, exact saved JPEG/shape inputs and acknowledgement fences.',
     'Only retrieveClip Date()/five-second sleep boundaries use a deterministic fixture clock; the extracted retry, identity and deadline decisions execute unchanged. Production timing and OS suspension are not certified.']}
 
 def compile_variant(name, command):
@@ -103,7 +106,9 @@ try:
     space = listing_path.read_text()
     cases = space[space.index('    case realEstate =',space.index('enum SpaceType:')):space.index('    var id:',space.index('enum SpaceType:'))]
     review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
-    actual = 'import Foundation\nimport CryptoKit\n' + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
+    drift = drift_path.read_text()
+    drift_types = block(drift, 'struct DriftVerdict: Sendable, Equatable') + '\n' + block(drift, 'struct DriftCheckRequest: Sendable') + '\n' + block(source, 'private struct ReelQualityRefusal: Error, LocalizedError').replace('private struct', 'struct', 1) + '\n'
+    actual = 'import Foundation\nimport CryptoKit\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
     for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(']:
         extracted = block(source, anchor).replace('private static', 'static', 1)
         if 'retrieveClip(' in anchor:
@@ -135,7 +140,7 @@ try:
         calls = 0
         def do_GET(self):
             type(self).calls += 1
-            self.send_response(500 if type(self).calls == 1 else 200)
+            self.send_response(500 if type(self).calls == 1 and not self.path.startswith('/quality') else 200)
             self.end_headers()
             self.wfile.write(b'synthetic nonempty retained clip')
         def log_message(self, *args): pass
@@ -143,7 +148,7 @@ try:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     variants = [
         ('actual', actual, None),
-        ('negative-quality-gate-accepts-changed-property', actual.replace('guard verdict.mayUse else { throw AIImagePrep.error(verdict.refusal) }', '// omitted property gate'), 'changed property must not be retained'),
+        ('negative-quality-gate-accepts-changed-property', actual.replace(block(actual, '        guard verdict.mayUse else {'), '// omitted property gate'), 'changed property must not be retained'),
         ('negative-refusal-keeps-marker', actual.replace('if Self.isDefinitiveRefusal(error) { submission.clear() }', '// marker kept on a definitive refusal'), 'a definitive refusal retires the unconfirmed marker'),
         ('negative-tmp-download-read-as-is', actual.replace('let tmp = Self.clipPath(forDownloaded: downloaded)', 'let tmp = downloaded'), 'frames are read from an .mp4 path, never the .tmp download'),
         ('negative-empty-frames-sent', actual.replace('guard !frames.isEmpty else {', 'guard frames.isEmpty || !frames.isEmpty else {'), 'a clip this phone cannot read is held locally without a drift call'),
@@ -169,6 +174,28 @@ try:
         ('negative-manifest-park-overwrite', actual.replace('previous = try PendingReelClips.readRecord(for: listingID)', 'previous = try? PendingReelClips.readRecord(for: listingID)').replace('_ = try Self.readRecord(for: listingID)', '// omitted authoritative write admission'), 'parking preserves unreadable manifest and unretained temporary bytes'),
         ('negative-manifest-pre-dispatch', actual.replace('_ = try PendingReelClips.readRecord(for: recoveryContext.listingID)', '// omitted authoritative history preflight'), 'unreadable history prevents any new paid POST'),
     ]
+    quality_variants = [
+        ('negative-quality-unbounded-retry', actual.replace('for attempt in 0...1 {', 'for attempt in 0...2 {').replace('refusal.mayRetry && attempt == 0', 'refusal.mayRetry && attempt < 2'), 'quality retry is bounded to two total provider generations'),
+        ('negative-quality-broad-retry', actual.replace('verdict.status == .fail && verdict.action == "retry"', '!verdict.mayUse'), 'ambiguous quality verdict must hold'),
+        ('negative-quality-retry-different-jpeg', actual.replace('api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),', 'api.aiVideoReelClip(imageBase64: (attempt == 0 ? jpeg : Data("changed retry JPEG".utf8)).base64EncodedString(),'), 'retry uses the exact same prepared and saved JPEG'),
+        ('negative-quality-lost-attempt', actual.replace('attempt: pending?.qualityAttempt ?? 1', 'attempt: 1'), 'retry attempts persist and reach the real drift request'),
+        ('negative-quality-lost-provenance', actual.replace('provenanceID: job.provenanceID, attempt:', 'provenanceID: nil, attempt:'), 'each drift judgement carries its exact accepted provenance'),
+        ('negative-quality-refuse-without-fail', actual.replace('guard verdict.status == .fail, verdict.action == "refuse",', 'guard verdict.action == "refuse",'), 'ambiguous quality verdict must hold'),
+        ('negative-quality-fail-without-refuse', actual.replace('guard verdict.status == .fail, verdict.action == "refuse",', 'guard verdict.status == .fail,'), 'confirmed drift requests exactly one paid retry'),
+        ('negative-quality-original-wrong-jpeg', actual.replace('OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)', 'OriginalPhotoMotion.render(jpeg: Data("wrong source".utf8), renderSize: size, output: local)'), 'original motion renders only the exact accepted saved JPEG'),
+        ('negative-quality-original-wrong-shape', actual.replace('let size = shape.width < shape.height ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)', 'let size = CGSize(width: 1920, height: 1080)'), 'original portrait source selects the portrait renderer shape'),
+        ('negative-quality-original-invalid-shape', actual.replace('guard let shape, shape.width > 0, shape.height > 0 else {', 'guard let shape else {'), 'invalid saved image shape must hold'),
+        ('negative-quality-pre-local-fence', actual.replace('        try await requireCurrent()\n        guard verdict.mayUse else {', '        // omitted post-QC context fence\n        guard verdict.mayUse else {').replace('            try await requireCurrent()\n            let local = dir.appendingPathComponent("clip-photo-motion-', '            // omitted pre-local context fence\n            let local = dir.appendingPathComponent("clip-photo-motion-'), 'stale QC response never enters local fallback'),
+        ('negative-quality-post-render-fence', actual.replace('try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)\n            try await requireCurrent()', 'try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)\n            // omitted post-render context fence'), 'post-render identity change must stop'),
+        ('negative-quality-local-early-ack', actual.replace('            return local', '            pending?.clear()\n            return local'), 'local fallback keeps receipt until durable retention'),
+        ('negative-quality-retention-early-ack', actual.replace('                let retained = try retainRecoveredClip(clip, for: pending.context.listingID)', '                pending.clear()\n                let retained = try retainRecoveredClip(clip, for: pending.context.listingID)'), 'local fallback disk failure preserves its accepted receipt'),
+        ('negative-quality-retention-lost-label', actual.replace('let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-recovered-"', 'let prefix = "clip-recovered-"'), 'durable retention preserves original-motion bytes and label'),
+        ('negative-quality-park-lost-label', actual.replace('let prefix = OriginalPhotoMotion.isClip(clip) ? "clip-photo-motion-" : "clip-"', 'let prefix = "clip-"'), 'batch parking preserves original-motion labels for every retained copy'),
+    ]
+    if args.quality_only:
+        variants = [('actual-quality', actual, None)] + quality_variants
+    else:
+        variants += quality_variants
     for name, text, reason in variants:
         assert reason is None or text != actual, name + ' mutation anchor missing'
         path, binary = out / (name + '.swift'), out / name
@@ -179,6 +206,7 @@ try:
         Handler.calls = 0
         mode = ['--dispatch-only'] if name in ['actual-lab-dispatch', 'negative-dispatch-consent', 'negative-dispatch-workspace', 'negative-401-retry-fence'] else []
         if name.startswith('negative-manifest-'): mode = ['--manifest-only']
+        if args.quality_only or name.startswith('negative-quality-') and name != 'negative-quality-gate-accepts-changed-property': mode = ['--quality-only']
         result = subprocess.run([str(binary), f'http://127.0.0.1:{server.server_port}', *mode], capture_output=True, text=True, timeout=300)
         log = result.stdout + result.stderr
         (out / (name + '.log')).write_text(log)

@@ -51,6 +51,7 @@ variants = [
     ('negative-prepared-library', body.replace('WorkspaceContext.selectedOrgID == animationLibrary,', 'true,'), 'library switch cannot animate earlier prepared media'),
     ('negative-post-preparation-fence', body.replace('                try requireCurrent()\n                // Generated motion', '                // omitted preparation fence\n                // Generated motion'), 'stale prepared photo cannot enter listing sync'),
     ('negative-post-quality-fence', body.replace('                try requireCurrent()\n                guard verdict.mayUse', '                // omitted quality fence\n                guard verdict.mayUse'), 'stale quality reply cannot save media into the earlier listing'),
+    ('negative-provenance-forwarding', body.replace('provenanceID: job.provenanceID', 'provenanceID: nil'), 'moving photo quality check forwards its exact provenance receipt'),
 ]
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):

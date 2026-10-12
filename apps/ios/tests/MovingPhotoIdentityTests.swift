@@ -39,12 +39,13 @@ struct AnimationSpace { let rawValue = "real_estate" }
 struct AnimatedClip { let url: URL }
 struct SavedClip { static func loadAll(listingID: UUID) -> [SavedClip] { [] } }
 struct AIFailure { let message: String; init(_ error: Error, title: String) { message = error.localizedDescription } }
-struct AIVideoJob { let requestId = "closed-paid-job" }
+struct AIVideoJob { let requestId = "closed-paid-job"; let provenanceID: String? = "closed-paid-provenance" }
 enum AIVideoStatus { case processing, completed(URL), failed(String) }
 struct DriftCheckRequest {
     let requestID: String, kind: String, sourceBase64: String
     let frames: [(at: String, jpeg: Data)]
     let seconds: Int?, spaceType: String?, listingServerID: UUID?
+    var provenanceID: String? = nil
 }
 struct DriftVerdict {
     enum Status: String { case pass, fail, unavailable }
@@ -72,6 +73,7 @@ struct DriftVerdict {
     func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict {
         drifts += 1
         precondition(!request.frames.isEmpty, "moving photo never sends an empty quality request")
+        precondition(request.provenanceID == "closed-paid-provenance", "moving photo quality check forwards its exact provenance receipt")
         await Task.yield(); onDrift?()
         return .init(status: .pass, publishable: true, action: "publish", message: "", reason: nil)
     }

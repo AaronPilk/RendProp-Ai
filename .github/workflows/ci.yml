@@ -176,6 +176,8 @@ jobs:
         run: python3 apps/ios/tests/run-moving-photo-identity.py --evidence-dir "$RUNNER_TEMP/rendprop-moving-photo-identity"
       - name: Actual AVFoundation extraction handles downloaded MP4 bytes
         run: python3 apps/ios/tests/run-clip-frames.py --evidence-dir "$RUNNER_TEMP/rendprop-clip-frames"
+      - name: Original photo motion preserves source pixels, orientation and geometry
+        run: python3 apps/ios/tests/run-original-photo-motion.py --evidence-dir "$RUNNER_TEMP/rendprop-original-photo-motion"
       - name: Whole listing package preserves sources and refuses incomplete handovers
         run: python3 apps/ios/tests/run-listing-package-assembly.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-package-assembly"
       - name: Retain whole listing package assembly and guard-removal evidence
@@ -315,6 +317,8 @@ jobs:
             ${{ runner.temp }}/rendprop-moving-photo-identity/*.log
             ${{ runner.temp }}/rendprop-clip-frames/receipt.json
             ${{ runner.temp }}/rendprop-clip-frames/*.log
+            ${{ runner.temp }}/rendprop-original-photo-motion/receipt.json
+            ${{ runner.temp }}/rendprop-original-photo-motion/*.log
             /tmp/rendprop-gallery-sync-fixture-*/receipt.json
             /tmp/rendprop-gallery-sync-fixture-*/*.log
             /tmp/rendprop-floor-outline-controls-*/receipt.json
