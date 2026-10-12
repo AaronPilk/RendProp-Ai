@@ -237,7 +237,8 @@ import {
   type RouterJobToken,
   routerStatusUrl,
   assertJobTokenSigningReady,
-  verifyJobToken,
+  verifyJobTokenForRecovery,
+  isExpired,
 } from "../_shared/providers/jobtoken.ts";
 import {
   assertDroneWithinLimits,
@@ -675,7 +676,7 @@ async function submitEnvelope(
 ): Promise<{ request_id: string; status_url: string; response_url: string }> {
   // Every new receipt uses an owner-bound link, including router-off FAL.
   void routerOn;
-  const url = await routerStatusUrl(req, "ai-video", task, ref, owner);
+  const url = await routerStatusUrl(req, "ai-video", task, ref, { ...owner, admissionKey: requiredIdempotencyKey(req) });
   return { request_id: ref.id, status_url: url, response_url: url };
 }
 
@@ -1695,10 +1696,12 @@ Deno.serve(async (req) => {
       // so the canonical asset has to become ours here. Older unsigned FAL
       // receipts below require an exact owned admission mapping first.
       //
-      // SECURITY (audit item 4): verifyJobToken() checks signature, shape,
-      // expiry AND that the token's org+user match the CALLER's own JWT —
-      // never the reverse — BEFORE anything here polls a vendor with our
-      // credentials. A `job` value that is present but fails any of those
+      // Signature, shape and actor are always required. A transport token past
+      // its two-hour expiry also needs the exact durable paid receipt below;
+      // current listing/library authority remains mandatory before result or
+      // provider reads. Recovery never dispatches; a signed accepted admission
+      // may finish its original once-only accounting settlement.
+      // A `job` value that is present but fails any of those
       // checks is a 403, never a silent fall-through to the legacy path below
       // (which expects status_url/response_url, not job, and would otherwise
       // answer a confusing 400).
@@ -1708,13 +1711,17 @@ Deno.serve(async (req) => {
         // token's exact admitted listing may resolve a legacy storage org.
         const signed = await decodeJobToken(rawJobToken);
         assert(signed && signed.usr === user.id,403,"This job status link does not belong to your account.");
-        const routed = await verifyJobToken(rawJobToken, { orgId: signed.o, userId: user.id });
+        const routed = await verifyJobTokenForRecovery(rawJobToken,
+          { orgId: signed.o, userId: user.id }, paidRoutedReceiptMatches);
         const callerOrgId = routed ? await routedContentOrg(user.id, preferredOrg(req), routed) : null;
         if (!routed || callerOrgId !== routed.o) {
           throw new HttpError(
             403,
             "This job status link is invalid, expired, or does not belong to your workspace.",
           );
+        }
+        if (isExpired(routed) && !await paidRoutedReceiptMatches(routed,true)) {
+          throw new HttpError(403,"This saved video admission no longer matches the receipt.");
         }
         return await routedStatus(callerOrgId, routed);
       }
@@ -1794,18 +1801,77 @@ Deno.serve(async (req) => {
 
 // ── routed job status (poll + persist through the adapter) ────────────────────
 
-/**
- * The status answer for a job the router submitted.
- *
- * Same three states the app already decodes — processing / completed / failed —
- * with `video_url` pointing at OUR R2 copy once the result has been persisted.
- * Extra fields are additive; the shipped decoder ignores them.
- *
- * `orgId` is the CALLER's own org, already verified by verifyJobToken() to
- * match the token's owner before this function is ever reached (audit item 4)
- * — it is what the finished asset is persisted under, never re-derived from
- * the token itself.
- */
+/** Exact accounting authority for an expired, authenticated accepted receipt.
+ * Pure on the first check; a held acceptance may settle its original key only
+ * after the route has freshly verified current listing/library permission. */
+async function paidRoutedReceiptMatches(job: RouterJobToken, settleHeld = false): Promise<boolean> {
+  const feature = job.k === "video.reel_clip" ? "reel"
+    : job.k === "video.aerial" || job.k === "video.aerial_no_photo" ? "aerial"
+    : job.k === "video.upscale_4k" || job.k === "video.upscale_1080p60" ? "drone_render" : null;
+  if (!feature || !job.t || !Number.isFinite(Date.parse(job.t))) return false;
+  const admin = adminClient();
+  let query = admin.from("app_video_cost_reservations")
+    .select("id,org_id,actor_id,idempotency_key,billing_org_id,input_sha256,total_cents,hold_cents,feature,provider,model,provider_request_id,cost_ledger_id,settled_at,released_at,meta")
+    .eq("org_id",job.o).eq("actor_id",job.usr).eq("provider",job.p).eq("model",job.m);
+  query = job.a ? query.eq("idempotency_key",job.a) : query.eq("provider_request_id",job.i);
+  const saved = await query.limit(2);
+  assert(!saved.error && Array.isArray(saved.data),503,"This saved video payment could not be verified.","upstream");
+  if (saved.data.length !== 1) return false;
+  const row = saved.data[0];
+  if (row.org_id !== job.o || row.actor_id !== job.usr || (job.a && row.idempotency_key !== job.a) ||
+      row.provider !== job.p || row.model !== job.m || row.feature !== feature || row.meta?.task !== job.k || row.released_at !== null) return false;
+  const allowance = await admin.from("app_video_allowance_receipts")
+    .select("listing_id,drift_refunded_at").eq("reservation_id",row.id).maybeSingle();
+  assert(!allowance.error,503,"This saved video scope could not be verified.","upstream");
+  if (!allowance.data || allowance.data.drift_refunded_at !== null ||
+      (job.l !== undefined && allowance.data.listing_id !== job.l)) return false;
+  // Settlement can fail after validated acceptance while both priced holds
+  // remain durable. Only a newer signed receipt binds that exact admission key;
+  // never infer an old unsettled request by timestamps, FIFO or provider URL.
+  if (row.provider_request_id === null && row.cost_ledger_id === null && row.settled_at === null) {
+    if (!job.a || allowance.data.listing_id !== (job.l ?? null) || !/^[a-f0-9]{64}$/.test(row.input_sha256 ?? "") ||
+        !Number.isFinite(Number(row.total_cents)) || Number(row.total_cents) <= 0 ||
+        !Number.isFinite(Number(row.hold_cents)) || Number(row.hold_cents) < Number(row.total_cents)) return false;
+    const held = await admin.from("serving_cost_reservations")
+      .select("org_id,actor_id,request_key,stage,provider,model,input_sha256,hold_cents,state,ledger_id,billing_org_id")
+      .eq("org_id",job.o).eq("actor_id",job.usr).eq("request_key",job.a).eq("stage",feature)
+      .eq("provider",job.p).eq("model",job.m).limit(2);
+    assert(!held.error && Array.isArray(held.data),503,"This saved video admission could not be verified.","upstream");
+    if (held.data.length !== 1) return false;
+    const hold = held.data[0];
+    if (hold.org_id !== job.o || hold.actor_id !== job.usr || hold.request_key !== job.a || hold.stage !== feature ||
+        hold.provider !== job.p || hold.model !== job.m || hold.input_sha256 !== row.input_sha256 ||
+        hold.state !== "succeeded" || hold.ledger_id !== null || !row.billing_org_id || hold.billing_org_id !== row.billing_org_id ||
+        !Number.isFinite(Number(hold.hold_cents)) || Number(hold.hold_cents) < Number(row.total_cents)) return false;
+    if (!settleHeld) return true;
+    // Current library permission was resolved before this once-only accounting
+    // repair. The existing RPC locks this key and rejects released/foreign jobs.
+    let settled;
+    try { settled = await admin.rpc("app_video_cost_settle",{
+      p_actor:job.usr,p_org:job.o,p_key:job.a,p_provider_request_id:job.i,
+    }); } catch { throw new HttpError(503,"This saved video's cost could not be recorded. Retry the saved request shortly.","upstream"); }
+    assert(!settled.error && settled.data?.settled === true,503,"This saved video's cost could not be recorded. Retry the saved request shortly.","upstream");
+    // A success-shaped response alone cannot waive the durable ledger proof.
+    const recorded = await admin.from("app_video_cost_reservations")
+      .select("provider_request_id,cost_ledger_id,settled_at").eq("id",row.id).maybeSingle();
+    assert(!recorded.error,503,"This saved video payment could not be verified.","upstream");
+    if (!recorded.data || recorded.data.provider_request_id !== job.i || !recorded.data.cost_ledger_id ||
+        !recorded.data.settled_at || !Number.isFinite(Date.parse(recorded.data.settled_at))) return false;
+    return await paidRoutedReceiptMatches(job);
+  }
+  // The database normally enforces all three fields together; any partial or
+  // foreign tuple still fails closed rather than becoming recovery authority.
+  if (row.provider_request_id !== job.i || !row.cost_ledger_id || !row.settled_at || !Number.isFinite(Date.parse(row.settled_at))) return false;
+  const ledger = await admin.from("cost_ledger")
+    .select("id,org_id,feature,provider,model,total_cents,meta").eq("id",row.cost_ledger_id).maybeSingle();
+  assert(!ledger.error,503,"This saved video payment could not be verified.","upstream");
+  const paid = ledger.data;
+  return !!paid && paid.id === row.cost_ledger_id && paid.org_id === job.o &&
+    paid.feature === feature && paid.provider === job.p && paid.model === job.m && Number(paid.total_cents) > 0 &&
+    paid.meta?.app_video_reservation_id === row.id && paid.meta?.request_id === job.i && paid.meta?.billing_org_id === job.o &&
+    (!job.a || (paid.meta?.request_key === job.a && paid.meta?.stage === feature));
+}
+
 async function routedContentOrg(actor: string, preferred: string | undefined, job: RouterJobToken): Promise<string> {
   let listing = job.l;
   if (!listing) {
@@ -1822,6 +1888,18 @@ async function routedContentOrg(actor: string, preferred: string | undefined, jo
   return await contentOrgForUser(actor,preferred,listing);
 }
 
+/**
+ * The status answer for a job the router submitted.
+ *
+ * Same three states the app already decodes — processing / completed / failed —
+ * with `video_url` pointing at OUR R2 copy once the result has been persisted.
+ * Extra fields are additive; the shipped decoder ignores them.
+ *
+ * `orgId` is the CALLER's own org, already verified by the signed receipt gate to
+ * match the token's owner before this function is ever reached (audit item 4)
+ * — it is what the finished asset is persisted under, never re-derived from
+ * the token itself.
+ */
 async function routedStatus(orgId: string, job: RouterJobToken): Promise<Response> {
   const adapter = adapterFor(job.p);
   const ref: JobRef = {

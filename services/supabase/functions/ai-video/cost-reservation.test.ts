@@ -145,3 +145,33 @@ Deno.test("unpriced, unsupported or non-finite routes never reserve or POST", as
     assertEquals(f.submissions(), 0);
   }
 });
+
+
+// This is the real post-acceptance path: submitReservedVideo deliberately
+// preserves an accepted ref on settlement failure, and the actual envelope
+// then signs its original admission key. No provider/DB network occurs here.
+async function acceptedEnvelope(omitAdmission = false) {
+ const source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+ const start=source.indexOf("async function submitEnvelope("),end=source.indexOf("\n}\n",start);
+ assert(start>0&&end>start);let body=source.slice(start,end+3);
+ if(omitAdmission){const binding="{ ...owner, admissionKey: requiredIdempotencyKey(req) }";assertEquals(body.split(binding).length,2);body=body.replace(binding,"owner");}
+ const module=`import {routerStatusUrl,type JobTokenOwner} from ${JSON.stringify(new URL("../_shared/providers/jobtoken.ts",import.meta.url).href)};
+ import {requiredIdempotencyKey} from ${JSON.stringify(new URL("../_shared/idempotency.ts",import.meta.url).href)};
+ import type {JobRef} from ${JSON.stringify(new URL("../_shared/providers/types.ts",import.meta.url).href)};
+ export ${body}`;
+ return (await import("data:application/typescript;base64,"+btoa(String.fromCharCode(...new TextEncoder().encode(module))))).submitEnvelope;
+}
+for(const failure of["settleError","settleThrow"]as const)Deno.test(`actual202 ${failure} signs exact accepted admission while leaving one funded hold`,async()=>{
+ const {decodeJobToken,extractJobToken}=await import("../_shared/providers/jobtoken.ts");
+ Deno.env.set("JOB_TOKEN_SIGNING_SECRET","synthetic-accepted-admission-proof");
+ const f=fixture({[failure]:true});const accepted=await submitReservedVideo(options,f.deps);
+ const envelope=await (await acceptedEnvelope())(new Request("https://fixture.invalid/ai-video/drone",{headers:{"idempotency-key":options.key}}),true,step.task,{...accepted.value,provider:step.provider,model:step.model,submitted_at:"2026-10-12T00:00:00Z"},{orgId:options.orgId,userId:options.actorId});
+ const raw=extractJobToken(new URL(envelope.status_url).searchParams);assert(raw);const signed=await decodeJobToken(raw);assert(signed);
+ assertEquals([signed.a,signed.i,signed.o,signed.usr,signed.p,signed.m,signed.k],[options.key,accepted.value.id,options.orgId,options.actorId,step.provider,step.model,step.task]);
+ assertEquals(f.submissions(),1);assertEquals(f.calls.filter(c=>c.name==="serving_cost_reserve").length,1);assert(f.calls.every(c=>!/release|refund/.test(c.name)));
+});
+Deno.test("negative control removing actual envelope admission binding leaves accepted job unbound",async()=>{
+ const {decodeJobToken,extractJobToken}=await import("../_shared/providers/jobtoken.ts");Deno.env.set("JOB_TOKEN_SIGNING_SECRET","synthetic-admission-negative");
+ const envelope=await(await acceptedEnvelope(true))(new Request("https://fixture.invalid/ai-video/reel-clip",{headers:{"idempotency-key":options.key}}),true,step.task,{provider:step.provider,model:step.model,id:"accepted-id",submitted_at:"2026-10-12T00:00:00Z"},{orgId:options.orgId,userId:options.actorId});
+ const raw=extractJobToken(new URL(envelope.status_url).searchParams);assert(raw);assertEquals((await decodeJobToken(raw))?.a,undefined);
+});

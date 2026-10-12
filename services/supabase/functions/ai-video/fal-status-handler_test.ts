@@ -53,7 +53,7 @@ async function fixture(skipTerminalCheck = false, enforceReceipt = false, skipRe
   const orgForUser=async()=>"synthetic-org", contentOrgForUser=orgForUser;
   const adminClient=()=>({from:()=>{const filters:Record<string,unknown>={};const q:any={select:()=>q,eq:(k:string,v:unknown)=>{filters[k]=v;return q;},maybeSingle:async()=>({data:{listing_id:null},error:null}),limit:async()=>{const row={id:"owned",actor_id:"synthetic",org_id:"synthetic-org",provider:"fal",model:${JSON.stringify(storedModel)},provider_request_id:"synthetic-job"};return {data:row.model&&Object.entries(filters).every(([k,v])=>(row as any)[k]===v)?[row]:[],error:null};}};return q;}});
   ${enforceReceipt ? "async "+functionBody(source,"legacyReceiptOrg")+"\nasync "+functionBody(source,"assertLegacyVideoReceipt") : "const legacyReceiptOrg=orgForUser,assertLegacyVideoReceipt=async()=>{};"}
-  const preferredOrg=()=>undefined, verifyJobToken=orgForUser,routedStatus=orgForUser;
+  const preferredOrg=()=>undefined, isExpired=()=>false,verifyJobTokenForRecovery=orgForUser,paidRoutedReceiptMatches=async()=>false,routedStatus=orgForUser;
   ${functionBody(source, "requireFalUrl")}
   ${functionBody(source, "extractVideoUrl")}
   ${functionBody(source, "logsTail")}

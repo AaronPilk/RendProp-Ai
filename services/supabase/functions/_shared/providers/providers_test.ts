@@ -14,7 +14,7 @@ import { imageSizeFor, mapWhisperWords } from "./openai.ts";
 import { assertNotCoveredModel, outputConfigFor } from "./anthropic.ts";
 import { geminiAdapter, geminiImagePayload, supportsStagingReference } from "./gemini.ts";
 import { runChain } from "./chain.ts";
-import { assertJobTokenSigningReady, extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
+import { assertJobTokenSigningReady, extractJobToken, routerStatusUrl, verifyJobToken, verifyJobTokenForRecovery } from "./jobtoken.ts";
 import { ProviderError, snippet } from "./common.ts";
 import { MAX_PARAM_OUTPUT_TOKENS } from "./params.ts";
 import { HttpError } from "../http.ts";
@@ -942,4 +942,44 @@ Deno.test("actual receipt signer preflight rejects missing configuration even af
   Deno.env.delete("JOB_TOKEN_SIGNING_SECRET");
   await assertRejects(()=>assertJobTokenSigningReady(),Error,"JOB_TOKEN_SIGNING_SECRET");
  }finally{prior===undefined?Deno.env.delete("JOB_TOKEN_SIGNING_SECRET"):Deno.env.set("JOB_TOKEN_SIGNING_SECRET",prior);}
+});
+
+Deno.test("expired recovery requires exact authenticated paid proof while ordinary verification stays strict", async () => {
+  const { encodeJobToken, decodeJobToken } = await import("./jobtoken.ts");
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "synthetic-expired-recovery-test-secret");
+  const owner = { orgId: "owned-org", userId: "owned-actor", listingId: "fa300505-0000-4000-8000-000000000011" };
+  const raw = await encodeJobToken({ p: "fal", m: "fixture", i: "paid-job", t: new Date().toISOString(), k: "video.reel_clip" }, owner);
+  const original = await decodeJobToken(raw); assert(original);
+  const future = new Date(original.exp * 1000);
+  let proofs = 0;
+  const paid = async (job: typeof original) => { proofs++; assertEquals(job, original); return true; };
+  assertEquals(await verifyJobToken(raw, owner, future), null);
+  assertEquals(await verifyJobTokenForRecovery(raw, owner, paid, future), original);
+  assertEquals(proofs, 1);
+  assertEquals(await verifyJobTokenForRecovery(raw, owner, async () => false, future), null);
+  for (const denied of [{ ...owner, userId: "foreign" }, { ...owner, orgId: "foreign" }]) {
+    assertEquals(await verifyJobTokenForRecovery(raw, denied, paid, future), null);
+  }
+  const [payload, signature] = raw.split(".");
+  const changed = JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+  changed.i = "unpaid-job";
+  const tampered = btoa(JSON.stringify(changed)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_") + "." + signature;
+  assertEquals(await verifyJobTokenForRecovery(tampered, owner, paid, future), null);
+  assertEquals(proofs, 1);
+  assertEquals(await verifyJobTokenForRecovery(raw, owner, paid), original);
+  assertEquals(proofs, 1); // Unexpired transport verification has no new paid read.
+  await assertRejects(() => verifyJobTokenForRecovery(raw, owner, async () => { throw new Error("payment reader unavailable"); }, future), Error, "payment reader unavailable");
+});
+
+
+Deno.test("signed accepted admission key is preserved, optional for old receipts and tamper protected",async()=>{
+ const {encodeJobToken,decodeJobToken}=await import("./jobtoken.ts");
+ Deno.env.set("JOB_TOKEN_SIGNING_SECRET","synthetic-admitted-recovery-secret");
+ const owner={orgId:"owned-org",userId:"owned-actor",admissionKey:"synthetic-original-key"};
+ const fields={p:"fal",m:"fixture",i:"accepted-job",t:new Date().toISOString(),k:"video.reel_clip"};
+ const raw=await encodeJobToken(fields,owner);assertEquals((await decodeJobToken(raw))?.a,owner.admissionKey);
+ const old=await encodeJobToken(fields,{orgId:owner.orgId,userId:owner.userId});assertEquals((await decodeJobToken(old))?.a,undefined);
+ const [payload,signature]=raw.split(".");const parsed=JSON.parse(atob(payload.replace(/-/g,"+").replace(/_/g,"/")));parsed.a="other-admission";
+ const changed=btoa(JSON.stringify(parsed)).replace(/=/g,"").replace(/\+/g,"-").replace(/\//g,"_");assertEquals(await decodeJobToken(changed+"."+signature),null);
+ const invalid=await encodeJobToken(fields,{...owner,admissionKey:"bad"});assertEquals(await decodeJobToken(invalid),null);
 });

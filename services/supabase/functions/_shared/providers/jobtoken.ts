@@ -27,24 +27,25 @@
 //                §2 and DEPLOYMENT.md). A tampered payload or a forged
 //                signature fails verification and decodes to `null`.
 //   • OWNED    — every token carries the org id (`o`) AND user id (`usr`) that
-//                created the job. GET /ai-video/status re-derives the caller's
-//                own org/user from THEIR JWT (never from the token) and
-//                verifyJobToken() refuses to hand back a token whose owner
-//                does not match — a leaked token can be replayed by nobody but
-//                the org+user it was minted for.
+//                created the job. GET /ai-video/status checks the actor against
+//                the authenticated caller, then freshly resolves authorized
+//                listing/library scope and requires its org to match. A leaked
+//                token cannot confer the original actor's permissions.
 //   • EXPIRING — every token carries a short-lived `exp` (unix seconds).
 //
-// verifyJobToken() is the ONE gate: signature, shape, expiry and ownership are
-// all checked there, BEFORE the caller ever polls the vendor with our
-// credentials — so a forged or leaked/mismatched-owner token never reaches
-// adapter.poll().
+// verifyJobToken() remains the strict transport gate. Paid recovery uses
+// verifyJobTokenForRecovery(): the same signature/shape/ownership checks, plus
+// an exact durable paid receipt or signed accepted admission when expired.
+// The route then rechecks current library permissions before any saved-result
+// access or vendor poll.
 //
-// Old signed tokens remain valid under the same signature/owner/expiry rules.
+// Old signed tokens require the same signature and owner; expiry may be waived
+// only for an exact durably paid job under the recovery rules above.
 // Legacy unsigned FAL URLs are authorized separately by an exact owned job
 // receipt in ai-video; possession of a provider URL supplies no authority.
 //
 // WHAT A TOKEN MAY CONTAIN: provider, model, vendor job id, vendor poll URL,
-// submit time, task, the org id + user id that created it, and an expiry.
+// submit time, task, owner ids, optional original admission key, and an expiry.
 // Still NO vendor credential and NO signed URL. Every OTHER authorization
 // decision (role, membership, plan) still runs off the caller's own JWT
 // exactly as before — the token only ever narrows what a caller may do, never
@@ -62,6 +63,7 @@ export interface RouterJobToken {
   o: string; // org id that created the job
   usr: string; // user id that created the job
   l?: string; // optional admitted listing UUID; never a status-request field
+  a?: string; // original admitted idempotency key; signed only after acceptance
   exp: number; // unix-seconds expiry
 }
 
@@ -70,6 +72,7 @@ export interface JobTokenOwner {
   orgId: string;
   userId: string;
   listingId?: string | null;
+  admissionKey?: string;
 }
 
 // How long a minted token stays valid. Generous relative to the longest job
@@ -167,6 +170,7 @@ export async function encodeJobToken(
     o: owner.orgId,
     usr: owner.userId,
     ...(owner.listingId ? { l: owner.listingId } : {}),
+    ...(owner.admissionKey ? { a: owner.admissionKey } : {}),
     exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
   };
   const payloadB64 = toB64Url(new TextEncoder().encode(JSON.stringify(full)));
@@ -233,6 +237,7 @@ export async function decodeJobToken(raw: string): Promise<RouterJobToken | null
     }
     if (parsed.u !== undefined && typeof parsed.u !== "string") return null;
     if (parsed.l !== undefined && (typeof parsed.l !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parsed.l))) return null;
+    if (parsed.a !== undefined && (typeof parsed.a !== "string" || !/^[\x21-\x7e]{8,128}$/.test(parsed.a))) return null;
     return {
       p: parsed.p,
       m: parsed.m,
@@ -243,6 +248,7 @@ export async function decodeJobToken(raw: string): Promise<RouterJobToken | null
       o: parsed.o,
       usr: parsed.usr,
       ...(parsed.l ? { l: parsed.l } : {}),
+      ...(parsed.a ? { a: parsed.a } : {}),
       exp: parsed.exp,
     };
   } catch {
@@ -274,6 +280,23 @@ export async function verifyJobToken(
   if (!job) return null;
   if (isExpired(job, now)) return null;
   if (job.o !== owner.orgId || job.usr !== owner.userId) return null;
+  return job;
+}
+
+/** Recovery of an already accepted paid job is independent of a short-lived
+ * transport link. Expiry alone may be waived only after the caller supplies
+ * durable proof for this exact authenticated receipt. Current library/media
+ * permission must still be checked by the status route before any result or
+ * provider read. The ordinary verifier above remains strict. */
+export async function verifyJobTokenForRecovery(
+  raw: string,
+  owner: JobTokenOwner,
+  paidReceiptMatches: (job: RouterJobToken) => Promise<boolean>,
+  now: Date = new Date(),
+): Promise<RouterJobToken | null> {
+  const job = await decodeJobToken(raw);
+  if (!job || job.o !== owner.orgId || job.usr !== owner.userId) return null;
+  if (isExpired(job, now) && !await paidReceiptMatches(job)) return null;
   return job;
 }
 
