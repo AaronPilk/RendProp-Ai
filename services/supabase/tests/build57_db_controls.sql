@@ -27,7 +27,12 @@ create temp table b57 as select
 grant select on b57 to service_role;
 update orgs set plan='team',plan_source='manual'where id=(select team from b57);
 update plan_entitlements set seats=8 where plan='team';
-insert into orgs(id,name)values('fe100000-0000-4000-8000-000000000090','Agent legacy library');
+-- The existing personal library predates the second owned library. Both are
+-- empty here; now() is transaction-stable, so their implicit timestamps would
+-- tie and the production UUID tiebreaker could choose either one at random.
+-- Pin this fixture's intended chronology without changing that resolver rule.
+update orgs set created_at=now()-interval '1 second'where id=(select child from b57);
+insert into orgs(id,name,created_at)values('fe100000-0000-4000-8000-000000000090','Agent legacy library',now());
 insert into memberships(user_id,org_id,role)values('fe100000-0000-4000-8000-000000000002','fe100000-0000-4000-8000-000000000090','owner');
 set local role service_role;
 select create_org_invite('fe100000-0000-4000-8000-000000000001',(select team from b57),null,'agent',repeat('b1',32));
