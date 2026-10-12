@@ -3009,21 +3009,10 @@ enum AIImagePrep {
         }
     }
 
-    /// Center crop to the selected reel format without outpainting. The exact
-    /// cropped JPEG is also the quality-check reference and recovery input.
-    static func reelSource(_ image: UIImage, aspect: String) -> UIImage {
-        let width = image.size.width, height = image.size.height
-        guard width > 0, height > 0, width.isFinite, height.isFinite else { return image }
-        let ratio: CGFloat = aspect == "9:16" ? 9.0 / 16.0 : 16.0 / 9.0
-        let size = width / height > ratio ? CGSize(width: floor(height * ratio), height: height)
-            : CGSize(width: width, height: floor(width / ratio))
-        guard size.width >= 1, size.height >= 1 else { return image }
-        let format = UIGraphicsImageRendererFormat.default(); format.scale = 1
-        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            image.draw(in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2,
-                                  width: width, height: height))
-        }
-    }
+    /// Camera conditioning uses the complete selected photograph. Delivery
+    /// format is applied only after raw provider frames pass the quality check.
+    /// `downscaled` below bakes orientation without cropping or inventing pixels.
+    static func reelSource(_ image: UIImage, aspect: String) -> UIImage { image }
 
     /// The photo at `url` → downscaled JPEG → base64 (no data: prefix), off main.
     static func jpegBase64(at url: URL, maxDimension: CGFloat, quality: CGFloat) async -> String? {
@@ -8516,7 +8505,7 @@ private let addressToken = "{address}"
 /// this same bug in a slower form. It is cleared when the clips are stitched into a
 /// reel, when the agent explicitly discards them, or when the listing is deleted
 /// (`FileStore.deleteListingFiles` sweeps `reels/<id>-*`, folders included).
-private struct PendingReelClips: Codable {
+struct PendingReelClips: Codable {
     var listingID: UUID
     var savedAt: Date
     /// Documents-relative paths, in the order the clips were generated.
@@ -8604,7 +8593,7 @@ private struct PendingReelClips: Codable {
 
 /// One confirmed provider receipt. A connection or download failure can resume
 /// this request without submitting or charging for a second generation.
-private struct PendingReelRequest: Codable, Sendable {
+struct PendingReelRequest: Codable, Sendable {
     struct Context: Codable, Sendable, Equatable {
         let listingID: UUID
         let serverListingID: UUID?
@@ -8620,6 +8609,8 @@ private struct PendingReelRequest: Codable, Sendable {
     var sourceJPEGBase64: String? = nil
     var sourceSpaceType: String? = nil
     var qualityAttempt: Int? = nil
+    var framing: String? = nil
+    var outputAspect: String? = nil
     static func key(_ context: Context) -> String {
         "reel.request.\(context.listingID).\(context.owner).\(context.workspace?.uuidString ?? "local")"
     }
@@ -8633,7 +8624,9 @@ private struct PendingReelRequest: Codable, Sendable {
             ? (try? Data(contentsOf: target)) : UserDefaults.standard.data(forKey: key(context))
         guard let data,
               let request = try? JSONDecoder().decode(Self.self, from: data), request.context == context,
-              request.job.kind == "reel", (1...8).contains(request.photoNumber) else { return nil }
+              request.job.kind == "reel", (1...8).contains(request.photoNumber),
+              request.framing == nil || request.framing == "preserve_photo",
+              request.outputAspect == nil || ["9:16", "16:9"].contains(request.outputAspect!) else { return nil }
         return request
     }
     static func exists(_ context: Context) -> Bool {
@@ -8679,7 +8672,7 @@ private struct PendingReelRequest: Codable, Sendable {
 /// New runs keep their exact prepared photos and ordered progress. This is local
 /// owned recovery metadata, never an authorization or a substitute for server QC.
 /// Legacy single-photo receipts continue to recover without inventing a batch.
-private struct PendingReelBatch: Codable, Sendable {
+struct PendingReelBatch: Codable, Sendable {
     struct Shot: Codable, Sendable {
         let photoID: String; let order: Int; let motion: String?; let room: String?
         let onScreenText: String?; let seconds: Double?; let voiceLine: String?
@@ -8700,6 +8693,7 @@ private struct PendingReelBatch: Codable, Sendable {
     let aspect: String
     let spaceType: String
     var completedPaths: [String]
+    var framing: String? = nil
     static func file(_ context: PendingReelRequest.Context) -> URL {
         FileStore.documents.appendingPathComponent("reels/\(context.listingID.uuidString)-batch", isDirectory: true)
             .appendingPathComponent(PendingReelRequest.file(context).lastPathComponent)
@@ -8713,6 +8707,7 @@ private struct PendingReelBatch: Codable, Sendable {
               batch.completedPaths.count <= batch.photos.count,
               Set(batch.completedPaths).count == batch.completedPaths.count,
               ["9:16", "16:9"].contains(batch.aspect),
+              batch.framing == nil || batch.framing == "preserve_photo",
               batch.photos.allSatisfy({ !$0.id.isEmpty && !(Data(base64Encoded: $0.jpegBase64)?.isEmpty ?? true) }),
               batch.completedPaths.allSatisfy({ path in
                   !path.hasPrefix("/") && !path.split(separator: "/").contains("..") &&
@@ -8785,9 +8780,7 @@ struct ReelClipIssue: Identifiable {
 }
 
 struct ReelStudioView: View {
-    @State private var idleHeld = false
-    @State private var backgroundHold: UIBackgroundTaskIdentifier = .invalid
-    @State private var backgroundHoldOperation: UUID?
+    @ObservedObject private var work: ReelWorkJob
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -8799,7 +8792,7 @@ struct ReelStudioView: View {
     /// Finished clips to put in front of the photo clips (the aerial intro).
     var extraClipURLs: [URL] = []
 
-    private enum Phase { case setup, generating, stitching, done, failed }
+    private typealias Phase = ReelWorkJob.Phase
 
     /// Which voiceover the agent is building, if any. `.off` (default) makes the
     /// reel with no voiceover, exactly as before this feature existed.
@@ -8833,7 +8826,7 @@ struct ReelStudioView: View {
     /// inside a `@MainActor` `View` costs a non-isolated caller nothing.
     typealias ReelCaptions = ReelTitleCard
 
-    @State private var phase: Phase = .setup
+    private var phase: Phase { get { work.phase } nonmutating set { work.phase = newValue } }
     @State private var selected: [String] = []      // photo ids in tap order = clip order
     @State private var selectedExtras: [URL] = []   // extra clips still switched on
     @State private var seededExtras = false
@@ -8849,38 +8842,35 @@ struct ReelStudioView: View {
     @State private var reelTransition: ReelComposer.Transition = .cut
     @State private var motionPrompt = "" // Legacy draft field; never dispatched by preset UI.
     @State private var cameraMove: ReelCameraMove = .flyThrough
-    @State private var completedClips = 0
-    @State private var originalPhotoMotionShots = 0
-    @State private var totalClips = 0
-    @State private var clipIssues: [ReelClipIssue] = []
+    private var completedClips: Int { get { work.completedClips } nonmutating set { work.completedClips = newValue } }
+    private var originalPhotoMotionShots: Int { get { work.originalPhotoMotionShots } nonmutating set { work.originalPhotoMotionShots = newValue } }
+    private var totalClips: Int { get { work.totalClips } nonmutating set { work.totalClips = newValue } }
+    private var clipIssues: [ReelClipIssue] { get { work.clipIssues } nonmutating set { work.clipIssues = newValue } }
     private var failedClips: Int { clipIssues.count }
-    @State private var statusText = ""
-    @State private var reelURL: URL?
+    private var statusText: String { get { work.statusText } nonmutating set { work.statusText = newValue } }
+    private var reelURL: URL? { get { work.reelURL } nonmutating set { work.reelURL = newValue } }
     @State private var measuredReelAspect: CGFloat?
-    @State private var player: AVPlayer?
+    private var player: AVPlayer? { get { work.player } nonmutating set { work.setPlaybackPlayer(newValue) } }
     @State private var savedToPhotos = false
     @State private var isSaving = false
     @State private var saveError: String?
-    @State private var failure: AIFailure?
+    private var failure: AIFailure? { get { work.failure } nonmutating set { work.failure = newValue } }
     @StateObject private var connection = FeatureSessionAction()
-    @State private var workTask: Task<Void, Never>?
+    private var workTask: Task<Void, Never>? { work.task }
     /// The newest reel already on disk for this listing (F-A-23). Reels used to
     /// be write-only: the file survived in Documents/reels but the studio always
     /// reopened on an empty setup form, so the last one was unreachable.
-    @State private var lastReel: URL?
+    private var lastReel: URL? { get { work.lastReel } nonmutating set { work.lastReel = newValue } }
     /// Clips from an earlier run of THIS listing's reel that were generated and
     /// billed but never stitched (the 4,000 sq ft field test). Loaded on open,
     /// exactly like `AerialIntroSheet` resumes a `PendingAerialJob`.
-    @State private var parkedClips: PendingReelClips?
-    @State private var pendingRequest: PendingReelRequest?
-    @State private var pendingBatch: PendingReelBatch?
-    @State private var unreadableBatch = false
-    @State private var recoveredRetryRequestID: String?
-    @State private var unreadablePendingContext: PendingReelRequest.Context?
-    @State private var reelOwner = AuthStore.shared.userID
-    /// Close was tapped while a job was running — ask before cancelling it, the
-    /// way the aerial sheet already does.
-    @State private var showCloseConfirm = false
+    private var parkedClips: PendingReelClips? { get { work.parkedClips } nonmutating set { work.parkedClips = newValue } }
+    private var pendingRequest: PendingReelRequest? { get { work.pendingRequest } nonmutating set { work.pendingRequest = newValue } }
+    private var pendingBatch: PendingReelBatch? { get { work.pendingBatch } nonmutating set { work.pendingBatch = newValue } }
+    private var unreadableBatch: Bool { get { work.unreadableBatch } nonmutating set { work.unreadableBatch = newValue } }
+    private var recoveredRetryRequestID: String? { get { work.recoveredRetryRequestID } nonmutating set { work.recoveredRetryRequestID = newValue } }
+    private var unreadablePendingContext: PendingReelRequest.Context? { get { work.unreadablePendingContext } nonmutating set { work.unreadablePendingContext = newValue } }
+    private var reelOwner: String? { work.scope.owner }
     @State private var showDiscardParkedConfirm = false
     @State private var showDiscardPendingConfirm = false
 
@@ -8921,15 +8911,19 @@ struct ReelStudioView: View {
     @State private var nativeSetupNotice: String?
     @State private var nativeSetupError: String?
 
+    init(listing: Listing, photos: [EnhancedPhoto], extraClipURLs: [URL] = []) {
+        self.listing = listing; self.photos = photos; self.extraClipURLs = extraClipURLs
+        self.work = ReelWorkQueue.shared.job(for: listing)
+    }
+
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
     private var canGenerate: Bool { totalSelected >= 2 && totalSelected <= 9 && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
-    /// A job is in flight — AI clips are being generated, or the stitch is
-    /// running. Closing now cancels it, so Close asks first (F-A-05 / the
-    /// 4,000 sq ft field test).
-    private var isWorking: Bool { phase == .generating || phase == .stitching }
+    /// The app-owned job continues when this sheet is dismissed. Only the
+    /// explicit Cancel action or a captured permission change stops it.
+    private var isWorking: Bool { work.running || phase == .generating || phase == .stitching }
 
     /// Title + which home this reel is for. iOS 16 has no `navigationSubtitle`,
     /// so the two lines are a principal toolbar item.
@@ -8965,6 +8959,7 @@ struct ReelStudioView: View {
                     case .stitching:  stitchingSection
                     case .done:       doneSection
                     case .failed:     failedSection
+                    case .paused:     pausedSection
                     }
                 }
                 .padding()
@@ -8976,20 +8971,15 @@ struct ReelStudioView: View {
             .askAI(.reelStudio, listingID: listing.id)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    // UNGUARDED Close was half of the money bug: one tap ran
-                    // dismiss() → onDisappear → workTask?.cancel(), and the
-                    // build's catch deleted every clip already paid for without
-                    // a word on screen. Ask, exactly like AerialIntroSheet.
-                    Button("Close") {
-                        if isWorking { showCloseConfirm = true } else { dismiss() }
-                    }
+                    Button("Close") { dismiss() }
                 }
                 ToolbarItem(placement: .principal) { reelTitleBar }
             }
         }
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
-        .interactiveDismissDisabled(isWorking)
+        .interactiveDismissDisabled(connection.isWaiting)
         .onAppear {
+            work.isPresented = true
             if !seededExtras {
                 selectedExtras = extraClipURLs
                 seededExtras = true
@@ -9012,12 +9002,7 @@ struct ReelStudioView: View {
             // never stitched — the reel equivalent of resuming a pending aerial.
             if !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
             reloadPendingRequest()
-        }
-        .onChange(of: phase) { p in
-            let wantHold = (p == .generating || p == .stitching)
-            if wantHold && !idleHeld { IdleTimer.hold(); idleHeld = true }
-            else if !wantHold && idleHeld { IdleTimer.release(); idleHeld = false }
-            if wantHold { beginBackgroundHold() } else { endBackgroundHold() }
+            if let reelURL, player == nil { player = AVPlayer(url: reelURL) }
         }
         .onChange(of: voiceMode) { mode in
             // Leaving My voice mid-take drops the mic/session; a finished
@@ -9030,30 +9015,18 @@ struct ReelStudioView: View {
             }
         }
         .onDisappear {
+            // Execution belongs to the app queue. Leaving a sheet stops only
+            // its playback, microphone and unsent reconnect waiter.
             connection.cancel()
-            workTask?.cancel()
-            player?.pause()
-            voPlayer?.pause()
+            work.isPresented = false
+            player?.pause(); player = nil; voPlayer?.pause()
             if recorder.isRecording { recorder.cancel() }
-            if idleHeld { IdleTimer.release(); idleHeld = false }
-            endBackgroundHold()
         }
         .onChange(of: auth.userID) { owner in
-            if reelOwner != nil, reelOwner != owner { workTask?.cancel(); pendingRequest = nil; dismiss() }
-            reelOwner = owner
+            if reelOwner != owner { ReelWorkQueue.shared.reconcileIdentity(); dismiss() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
-            workTask?.cancel(); pendingRequest = nil; dismiss()
-        }
-        .confirmationDialog("Still making your reel", isPresented: $showCloseConfirm,
-                            titleVisibility: .visible) {
-            Button("Close anyway") {
-                workTask?.cancel()
-                dismiss()
-            }
-            Button("Keep waiting", role: .cancel) {}
-        } message: {
-            Text("Completed clips are kept on this phone. Reopen Reel Studio to finish from them or check a saved video request. A submission without a receipt needs review before you generate again.")
+            ReelWorkQueue.shared.reconcileIdentity(); dismiss()
         }
         .confirmationDialog("Discard these clips?", isPresented: $showDiscardParkedConfirm,
                             titleVisibility: .visible) {
@@ -9433,7 +9406,7 @@ struct ReelStudioView: View {
                         .accessibilityAddTraits(cameraMove == move ? .isSelected : [])
                 }
             }
-            Text("Fly-through adds a short, smooth glide to each photo. It does not map a connected route through the house. Pull-back stays within the original photo. Photos are cropped to your selected format, so check the framing first.")
+            Text("Fly-through adds a short, smooth glide to each photo. It does not map a connected route through the house. Pull-back stays within the original photo. The full photo is sent to the camera model. Your chosen video format fits the result over a soft background from the same scene; check the finished reel before publishing.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
             Text(costText).font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -9600,12 +9573,12 @@ struct ReelStudioView: View {
 
     private var generatingSection: some View {
         VStack(spacing: 14) {
-            ProgressView(value: Double(completedClips), total: Double(max(totalClips, 1)))
+            ProgressView(value: work.fraction)
                 .tint(Theme.accent)
             Text(statusText)
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
-            Text("Each photo takes about a minute. Keep this screen open — your reel is put together as soon as they're done.")
+            Text("You can close this screen and use the rest of Rendprop. We’ll show progress and notify you when the saved reel is ready. If iPhone pauses the app, open Rendprop to continue.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -10708,8 +10681,7 @@ struct ReelStudioView: View {
 
     private func cancelWork() {
         let task = workTask
-        workTask = nil
-        task?.cancel()
+        work.cancel()
         resetToSetup()
         // The cancelled task parks its already-billed clips in its own `catch`,
         // which has not run yet at this instant — so wait for it before reading
@@ -10812,30 +10784,40 @@ struct ReelStudioView: View {
         }
     }
 
-    /// Request finite additional execution time when the phone is locked or
-    /// the app is switched away. iOS decides the duration and can terminate
-    /// the process; a saved paid receipt remains recoverable on the next open.
-    /// End the exact grant synchronously when iOS calls its expiration handler.
-    /// This is not a promise that long reels finish in the background.
-    private func beginBackgroundHold() {
-        guard backgroundHold == .invalid else { return }
-        let operation = UUID()
-        backgroundHoldOperation = operation
-        backgroundHold = UIApplication.shared.beginBackgroundTask(withName: "rendprop.reel") {
-            guard self.backgroundHoldOperation == operation else { return }
-            self.endBackgroundHold()
+    private func snapshotReelConfiguration() -> ReelWorkJob.Configuration {
+        ReelWorkJob.Configuration(extras: selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) },
+            captions: captionsOn ? Self.reelCaptions(for: listing) : nil,
+            voice: voiceMode == .off ? nil : voiceover,
+            captionStyle: wordCaptionsOn ? .standard : .off,
+            shotStyle: bigCaptionsOn ? bigCaptionStyle : .off, transition: reelTransition)
+    }
+
+    /// Called only for this job's OS-expiration pause. Terminal QC, quota, auth
+    /// or network errors never trigger this automatic continuation.
+    private func resumePausedWork() {
+        guard work.isContextCurrent, !work.running else { return }
+        reloadPendingRequest()
+        if let request = pendingRequest, request.submissionUnconfirmed != true {
+            recoverPendingRequest(request, resumeBatch: true)
+        } else if pendingRequest == nil, unreadablePendingContext == nil, !unreadableBatch, let batch = pendingBatch {
+            continueSavedBatch(batch)
+        } else {
+            phase = .setup
         }
     }
 
-    private func endBackgroundHold() {
-        let hold = backgroundHold
-        backgroundHold = .invalid
-        backgroundHoldOperation = nil
-        guard hold != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(hold)
+    private var pausedSection: some View {
+        VStack(spacing: 12) {
+            Text("Your reel is safely paused").font(.rpHeadline)
+            Text("iPhone paused background work. Finished clips and the current request are kept. Open Rendprop to continue this same reel.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).multilineTextAlignment(.center)
+            Button("Continue saved reel") { work.resumeForeground() }.disabled(work.running)
+            Button("Stop for now", role: .destructive) { cancelWork() }
+        }.frame(maxWidth: .infinity).padding(.vertical, 24)
     }
 
-    private func recoverPendingRequest(_ request: PendingReelRequest) {
+    private func recoverPendingRequest(_ request: PendingReelRequest, resumeBatch: Bool = false) {
+        let model = self.model, auth = self.auth
         guard !isWorking, request.submissionUnconfirmed != true,
               pendingRequest?.job.requestId == request.job.requestId else { return }
         let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
@@ -10853,7 +10835,8 @@ struct ReelStudioView: View {
         phase = .generating; completedClips = 0; totalClips = 1
         statusText = "Checking saved request for photo \(request.photoNumber)…"
         failure = nil; clipIssues = []; recoveredRetryRequestID = nil
-        workTask = Task {
+        if work.configuration == nil { work.configuration = snapshotReelConfiguration() }
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             do {
                 try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
                 let clip = try await Self.retrieveClip(job: request.job, pending: request, api: api,
@@ -10863,6 +10846,9 @@ struct ReelStudioView: View {
                 try? FileManager.default.removeItem(at: tmpDir)
                 parkedClips = PendingReelClips.load(for: request.context.listingID)
                 reloadPendingRequest(); phase = .setup
+                if resumeBatch, let saved = pendingBatch {
+                    work.afterCurrentOperation { continueSavedBatch(saved) }
+                }
             } catch {
                 try? FileManager.default.removeItem(at: tmpDir)
                 reloadPendingRequest()
@@ -10879,6 +10865,7 @@ struct ReelStudioView: View {
 
     /// Both choices are explicit. Recovery itself remains an existing-job lookup.
     private func resolveRecoveredRetry(_ request: PendingReelRequest, choice: ReelRecoveryChoice) {
+        let model = self.model, auth = self.auth
         guard !isWorking, recoveredRetryRequestID == request.job.requestId, request.qualityAttempt == 0,
               pendingRequest?.job.requestId == request.job.requestId else { return }
         let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
@@ -10893,7 +10880,8 @@ struct ReelStudioView: View {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-choice-\(UUID())", isDirectory: true)
         failure = nil; clipIssues = []; phase = .generating
         statusText = choice == .saferRetry ? "Photo \(request.photoNumber) — one safer retry…" : "Photo \(request.photoNumber) — using original photo motion…"
-        workTask = Task {
+        if work.configuration == nil { work.configuration = snapshotReelConfiguration() }
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             do {
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 _ = try await Self.resolveSavedQualityRetry(request, choice: choice, api: api, into: dir, requireCurrent: validate)
@@ -10917,6 +10905,7 @@ struct ReelStudioView: View {
     /// Resume only this saved ordered batch. Finished positions come from its
     /// durable progress; selected setup photos cannot reorder or replace it.
     private func continueSavedBatch(_ saved: PendingReelBatch) {
+        let model = self.model, auth = self.auth
         guard !isWorking, pendingRequest == nil, unreadablePendingContext == nil,
               pendingBatch?.id == saved.id else { return }
         let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
@@ -10929,15 +10918,15 @@ struct ReelStudioView: View {
                   current.cloudUnavailable != true, current.serverID == saved.context.serverListingID else { throw CancellationError() }
         }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-resume-\(UUID())", isDirectory: true)
-        let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }
-        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
-        let voice: Voiceover? = voiceMode == .off ? nil : voiceover
-        let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
-        let shotStyle = bigCaptionsOn ? bigCaptionStyle : ReelComposer.ShotCaptionStyle.off
-        let transition = reelTransition
+        let configuration = work.configuration ?? snapshotReelConfiguration()
+        work.configuration = configuration
+        let extras = configuration.extras
+        let captions = configuration.captions, voice = configuration.voice
+        let captionStyle = configuration.captionStyle, shotStyle = configuration.shotStyle
+        let transition = configuration.transition
         phase = .generating; failure = nil; clipIssues = []
         totalClips = saved.photos.count; completedClips = saved.completedPaths.count
-        workTask = Task {
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             do {
                 try validate()
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -11104,6 +11093,7 @@ struct ReelStudioView: View {
     }
 
     private func generateWithSession() {
+        let model = self.model, auth = self.auth
         guard phase == .setup, canGenerate else { return }
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
         let chosen = selected.compactMap { id in reelPhotos.first(where: { $0.id == id }) }
@@ -11115,7 +11105,6 @@ struct ReelStudioView: View {
         let selectedMove = cameraMove.rawValue
         let listingID = listing.id
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
-        let reelNoticeIdentity = PushManager.currentIdentity
         let reelWorkspace = WorkspaceContext.selectedOrgID
         let reelConsentRevision = AIConsent.shared.revocationRevision
         // Caption text is resolved HERE (main actor, plain Sendable strings) —
@@ -11140,6 +11129,8 @@ struct ReelStudioView: View {
         let address = live.address
         let noun = space.spaceNoun
         let spaceRaw = space.rawValue
+        work.configuration = ReelWorkJob.Configuration(extras: extras, captions: captions, voice: voiceover,
+            captionStyle: captionStyle, shotStyle: shotStyle, transition: transition)
         phase = .generating
         completedClips = 0
         originalPhotoMotionShots = 0
@@ -11151,7 +11142,7 @@ struct ReelStudioView: View {
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("reel-\(UUID().uuidString)", isDirectory: true)
         let isSample = listing.isSample
-        workTask = Task {
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             // Hoisted OUT of the `do` so the `catch` can still see them. These are
             // the clips the account has ALREADY BEEN CHARGED FOR; the catch below
             // used to delete the directory holding them before it had even looked
@@ -11224,7 +11215,7 @@ struct ReelStudioView: View {
                             shot: Self.shot(for: photo, in: plan).map(PendingReelBatch.Shot.init))
                     }
                     batch = PendingReelBatch(context: recoveryContext, id: UUID(), photos: prepared,
-                        motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw, completedPaths: [])
+                        motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw, completedPaths: [], framing: "preserve_photo")
                     try requireCurrent()
                     try batch?.save()
                 }
@@ -11243,7 +11234,8 @@ struct ReelStudioView: View {
                                                            api: api, listingServerID: reelListingServerID,
                                                            into: tmpDir, index: i, recoveryContext: recoveryContext,
                                                            requireCurrent: requireCurrent,
-                                                           preparedJPEG: batch.flatMap { Data(base64Encoded: $0.photos[i].jpegBase64) })
+                                                           preparedJPEG: batch.flatMap { Data(base64Encoded: $0.photos[i].jpegBase64) },
+                                                           framing: batch?.framing)
                         if batch != nil {
                             batch = try PendingReelBatch.load(recoveryContext!)
                         }
@@ -11300,7 +11292,6 @@ struct ReelStudioView: View {
                     lastReel = outURL
                     phase = .done
                     Haptics.success()
-                    ReelCompletionNotice.post(success: true, identity: reelNoticeIdentity)
                     Analytics.track("reel_made", ["ok": "true", "clips": String(clipURLs.count),
                                                   "captions": shotStyle.rawValue,
                                                   "transition": transition.rawValue,
@@ -11339,7 +11330,6 @@ struct ReelStudioView: View {
                     reloadPendingRequest()
                     phase = .failed
                     failure = ReelClipIssue.failure(for: error, title: "Couldn't make the reel")
-                    if !(error is CancellationError) { ReelCompletionNotice.post(success: false, identity: reelNoticeIdentity) }
                 }
             }
         }
@@ -11406,6 +11396,7 @@ struct ReelStudioView: View {
     /// setup screen currently says, because those are free to change and the
     /// clips are not.
     private func finishParkedReel() {
+        let model = self.model, auth = self.auth
         guard !isWorking else { return }
         let clips = (selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) })
             + (parkedClips?.clipURLs ?? [])
@@ -11435,7 +11426,8 @@ struct ReelStudioView: View {
         clipIssues = []
         phase = .stitching
         Haptics.selection()
-        workTask = Task {
+        if work.configuration == nil { work.configuration = snapshotReelConfiguration() }
+        work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             do {
                 try requireCurrent()
                 let renderSize = isPortrait ? CGSize(width: 1080, height: 1920)
@@ -11521,7 +11513,7 @@ struct ReelStudioView: View {
                                              into dir: URL, index: Int,
                                              recoveryContext: PendingReelRequest.Context? = nil,
                                              requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() },
-                                             preparedJPEG: Data? = nil) async throws -> URL {
+                                             preparedJPEG: Data? = nil, framing: String? = nil) async throws -> URL {
         try await requireCurrent()
         guard let recoveryContext else { throw AIImagePrep.error("Reconnect your account before generating this clip.") }
         if PendingReelRequest.exists(recoveryContext) {
@@ -11533,7 +11525,7 @@ struct ReelStudioView: View {
         if let batch = try PendingReelBatch.load(recoveryContext) {
             guard batch.completedPaths.count == index, index < batch.photos.count,
                   batch.photos[index].id == photo.id, batch.photos[index].jpegBase64 == jpeg.base64EncodedString(),
-                  batch.aspect == aspect, batch.spaceType == spaceType else {
+                  batch.aspect == aspect, batch.spaceType == spaceType, batch.framing == framing else {
                 throw AIImagePrep.error("This photo does not match the saved reel. Continue the saved batch instead.")
             }
         }
@@ -11549,20 +11541,20 @@ struct ReelStudioView: View {
             let attemptMotion = attempt == 0 ? motion : "push_in"
             let operationID = UUID().uuidString
             var intent = try JSONEncoder().encode([typed ?? "", attemptMotion, aspect, "preset-v1", shot?.room ?? "",
-                String(index), String(shotCount), listingServerID?.uuidString ?? ""])
+                String(index), String(shotCount), listingServerID?.uuidString ?? "", framing ?? "legacy"])
             intent.append(jpeg)
             let digest = SHA256.hash(data: intent).map { String(format: "%02x", $0) }.joined()
             let submission = PendingReelRequest(context: recoveryContext, photoNumber: index + 1,
                 job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"),
                 operationID: operationID, inputDigest: digest, submissionUnconfirmed: true,
-                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt)
+                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt, framing: framing, outputAspect: aspect)
             try submission.save() // Atomic marker and readback BEFORE any paid POST.
             try await requireCurrent()
             let job: AIVideoJob
             do {
                 job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
                                                     mime: "image/jpeg", prompt: nil, seconds: 5,
-                                                    aspect: aspect, presetVersion: 1,
+                                                    aspect: aspect, framing: framing, presetVersion: 1,
                                                     motion: attemptMotion, room: shot?.room,
                                                     shotIndex: index, shotCount: shotCount,
                                                     listingServerID: listingServerID,
@@ -11582,7 +11574,7 @@ struct ReelStudioView: View {
             }
             let pending = PendingReelRequest(context: recoveryContext, photoNumber: index + 1, job: job,
                 operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
-                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt)
+                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt, framing: framing, outputAspect: aspect)
             try pending.save()
             do {
                 let clip = try await retrieveClip(job: job, pending: pending, api: api, into: dir, index: index,
@@ -11661,9 +11653,11 @@ struct ReelStudioView: View {
         let batch = try PendingReelBatch.load(request.context)
         if let batch {
             guard batch.completedPaths.count == request.photoNumber - 1, request.photoNumber <= batch.photos.count,
-                  batch.photos[request.photoNumber - 1].jpegBase64 == source else { throw AIImagePrep.error("Saved reel progress does not match this photo. Your request has been kept.") }
+                  batch.photos[request.photoNumber - 1].jpegBase64 == source,
+                  batch.framing == request.framing,
+                  request.outputAspect == nil || request.outputAspect == batch.aspect else { throw AIImagePrep.error("Saved reel progress does not match this photo. Your request has been kept.") }
         }
-        let aspect = shape.width < shape.height ? "9:16" : "16:9"
+        let aspect = request.outputAspect ?? batch?.aspect ?? (shape.width < shape.height ? "9:16" : "16:9")
         if choice == .originalPhoto {
             let local = dir.appendingPathComponent("clip-photo-motion-\(request.photoNumber - 1).mp4")
             try await OriginalPhotoMotion.render(jpeg: jpeg,
@@ -11672,16 +11666,16 @@ struct ReelStudioView: View {
             return try await acknowledgeRecoveredClip(local, request: request, requireCurrent: requireCurrent)
         }
         let operationID = UUID().uuidString
-        let digest = SHA256.hash(data: jpeg + Data("push_in|\(aspect)|\(request.photoNumber)|retry-1".utf8)).map { String(format: "%02x", $0) }.joined()
+        let digest = SHA256.hash(data: jpeg + Data("push_in|\(aspect)|\(request.photoNumber)|retry-1|\(request.framing ?? "legacy")".utf8)).map { String(format: "%02x", $0) }.joined()
         let submission = PendingReelRequest(context: request.context, photoNumber: request.photoNumber,
             job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"), operationID: operationID,
-            inputDigest: digest, submissionUnconfirmed: true, sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1)
+            inputDigest: digest, submissionUnconfirmed: true, sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1, framing: request.framing, outputAspect: aspect)
         try submission.save()
         try await requireCurrent()
         let job: AIVideoJob
         do {
             job = try await api.aiVideoReelClip(imageBase64: source, mime: "image/jpeg", prompt: nil, seconds: 5,
-                aspect: aspect, presetVersion: 1, motion: "push_in", room: batch?.photos[request.photoNumber - 1].shot?.room,
+                aspect: aspect, framing: request.framing, presetVersion: 1, motion: "push_in", room: batch?.photos[request.photoNumber - 1].shot?.room,
                 shotIndex: request.photoNumber - 1, shotCount: batch?.photos.count ?? request.photoNumber,
                 listingServerID: request.context.serverListingID, label: "Reel shot \(request.photoNumber) — safer retry", idempotencyKey: operationID)
         } catch {
@@ -11694,7 +11688,7 @@ struct ReelStudioView: View {
         }
         let accepted = PendingReelRequest(context: request.context, photoNumber: request.photoNumber, job: job,
             operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
-            sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1)
+            sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1, framing: request.framing, outputAspect: aspect)
         try accepted.save()
         try await requireCurrent()
         let clip = try await retrieveClip(job: job, pending: accepted, api: api, into: dir,
@@ -11719,7 +11713,7 @@ struct ReelStudioView: View {
             _ = try await makeClip(photo: EnhancedPhoto(id: photo.id, originalURL: placeholder, enhancedURL: placeholder),
                 prompt: "", shot: photo.shot?.value, shotCount: batch.photos.count, motion: batch.motion,
                 aspect: batch.aspect, spaceType: batch.spaceType, api: api, listingServerID: batch.context.serverListingID,
-                into: dir, index: index, recoveryContext: batch.context, requireCurrent: requireCurrent, preparedJPEG: jpeg)
+                into: dir, index: index, recoveryContext: batch.context, requireCurrent: requireCurrent, preparedJPEG: jpeg, framing: batch.framing)
             try await requireCurrent()
             guard let updated = try PendingReelBatch.load(saved.context), updated.id == saved.id,
                   updated.completedPaths.count == index + 1 else { throw AIImagePrep.error("Reel progress could not be confirmed. Your clips have been kept.") }
@@ -11846,7 +11840,8 @@ struct ReelStudioView: View {
             let local = dir.appendingPathComponent("clip-photo-motion-\(index).mp4")
             let shape = UIImage(data: jpeg)?.size
             guard let shape, shape.width > 0, shape.height > 0 else { throw CocoaError(.fileReadCorruptFile) }
-            let size = shape.width < shape.height ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)
+            let outputAspect = pending?.outputAspect ?? (shape.width < shape.height ? "9:16" : "16:9")
+            let size = outputAspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)
             try await OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)
             try await requireCurrent()
             // Caller durably retains this local clip before retiring the failed

@@ -1130,7 +1130,7 @@ protocol APIClient: Sendable {
     /// skips that stronger default and writes its own words into the listing's
     /// provenance log as if the agent had typed them.
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
-                         aspect: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob
 
@@ -1352,6 +1352,16 @@ extension APIClient {
 
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
         try await aiVideoDrone(assetID: assetID, tier: tier, targetFps: targetFps, idempotencyKey: nil)
+    }
+
+    /// Existing saved requests omit framing and retain their original contract.
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         aspect: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         listingServerID: UUID?, label: String?, idempotencyKey: String?) async throws -> AIVideoJob {
+        try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt, seconds: seconds,
+            aspect: aspect, framing: nil, presetVersion: presetVersion, motion: motion, room: room,
+            shotIndex: shotIndex, shotCount: shotCount, listingServerID: listingServerID, label: label,
+            idempotencyKey: idempotencyKey)
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,

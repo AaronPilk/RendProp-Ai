@@ -12,9 +12,9 @@ import Foundation
   let push=PushManager();PushHTTP.pausedOwner=a
   push.handleDeviceToken(Data([0xab,0xcd]));await tick()
   check(PushHTTP.requests.filter{$0.method=="POST"}.count==1,"Initial A registration missing")
-  push.pendingRoute = .leads;push.showPrePrompt=true;PushHTTP.holdDelete=true
+  push.pendingRoute = .leads;push.pendingReelJobID=UUID();push.showPrePrompt=true;PushHTTP.holdDelete=true
   push.accountWillChange();identity(b,2);push.accountDidChange();await tick()
-  check(push.pendingRoute==nil && !push.showPrePrompt,"Old account presentation retained")
+  check(push.pendingRoute==nil && push.pendingReelJobID==nil && !push.showPrePrompt,"Old account presentation retained")
   check(PushHTTP.requests.filter{$0.method=="POST"}.count==1,"B POST crossed unacknowledged A cleanup")
   let deletion=PushHTTP.requests.first{$0.method=="DELETE"}!
   check(deletion.credential=="synthetic-A","Cleanup used replacement credential")

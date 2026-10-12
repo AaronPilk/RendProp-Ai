@@ -167,19 +167,33 @@ jobs:
             python3 tools/audit/gallery-sync-20261002/run.py --inject-fault "$fault"
           done
       - name: Reel generation stops at failures and retains completed clips
-        run: bash apps/ios/tests/run-reel-clip-failures.sh
+        run: python3 apps/ios/tests/run-reel-batch-stop.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-batch-stop"
+      - name: Retain reel batch ordering and classified guard-removal evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: reel-batch-stop-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-reel-batch-stop/receipt.json
+            ${{ runner.temp }}/rendprop-reel-batch-stop/*.log
       - name: Paid reel requests survive lost responses and retain downloaded clips
         run: python3 apps/ios/tests/run-reel-request-recovery.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-request-recovery-$GITHUB_RUN_ATTEMPT"
       - name: Actual QC wire preserves first attempt, bounded retry and provenance
         run: python3 apps/ios/tests/run-video-drift-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-video-drift-wire"
+      - name: Full-photo reel framing preserves wire intent and legacy receipts
+        run: python3 apps/ios/tests/run-reel-framing-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-framing-wire"
       - name: Reel completion notices and background expiry remain generation scoped
         run: python3 apps/ios/tests/run-reel-lifecycle.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-lifecycle"
+      - name: Global reel banner and completion taps preserve current job identity
+        run: python3 apps/ios/tests/run-reel-work-integration.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-work-integration"
       - name: Moving-photo work refuses changed account, consent and library contexts
         run: python3 apps/ios/tests/run-moving-photo-identity.py --evidence-dir "$RUNNER_TEMP/rendprop-moving-photo-identity"
       - name: Actual AVFoundation extraction handles downloaded MP4 bytes
         run: python3 apps/ios/tests/run-clip-frames.py --evidence-dir "$RUNNER_TEMP/rendprop-clip-frames"
       - name: Original photo motion preserves source pixels, orientation and geometry
         run: python3 apps/ios/tests/run-original-photo-motion.py --evidence-dir "$RUNNER_TEMP/rendprop-original-photo-motion"
+      - name: Full-scene framing preserves encoded source edges, orientation and voice
+        run: python3 apps/ios/tests/run-reel-whole-scene-framing.py --evidence-dir "$GITHUB_WORKSPACE/reel-whole-scene-framing-evidence"
       - name: Whole listing package preserves sources and refuses incomplete handovers
         run: python3 apps/ios/tests/run-listing-package-assembly.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-package-assembly"
       - name: Retain whole listing package assembly and guard-removal evidence
@@ -314,16 +328,23 @@ jobs:
             ${{ runner.temp }}/rendprop-video-drift-wire/receipt.json
             ${{ runner.temp }}/rendprop-video-drift-wire/*.log
             ${{ runner.temp }}/rendprop-video-drift-wire/*.swift
+            ${{ runner.temp }}/rendprop-reel-framing-wire/receipt.json
+            ${{ runner.temp }}/rendprop-reel-framing-wire/*.log
+            ${{ runner.temp }}/rendprop-reel-framing-wire/*.swift
             ${{ runner.temp }}/rendprop-home-restore-async/receipt.json
             ${{ runner.temp }}/rendprop-home-restore-async/*.log
             ${{ runner.temp }}/rendprop-reel-lifecycle/receipt.json
             ${{ runner.temp }}/rendprop-reel-lifecycle/*.log
+            ${{ runner.temp }}/rendprop-reel-work-integration/receipt.json
+            ${{ runner.temp }}/rendprop-reel-work-integration/*/*.log
             ${{ runner.temp }}/rendprop-moving-photo-identity/receipt.json
             ${{ runner.temp }}/rendprop-moving-photo-identity/*.log
             ${{ runner.temp }}/rendprop-clip-frames/receipt.json
             ${{ runner.temp }}/rendprop-clip-frames/*.log
             ${{ runner.temp }}/rendprop-original-photo-motion/receipt.json
             ${{ runner.temp }}/rendprop-original-photo-motion/*.log
+            ${{ github.workspace }}/reel-whole-scene-framing-evidence/receipt.json
+            ${{ github.workspace }}/reel-whole-scene-framing-evidence/*.log
             /tmp/rendprop-gallery-sync-fixture-*/receipt.json
             /tmp/rendprop-gallery-sync-fixture-*/*.log
             /tmp/rendprop-floor-outline-controls-*/receipt.json

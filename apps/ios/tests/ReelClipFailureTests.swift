@@ -1,9 +1,10 @@
 import Foundation
 
 struct EnhancedPhoto { let id: String }
-struct AIShot {}
 @MainActor final class ClipAPI {
     var calls: [Int] = []
+    var preparedSources: [Data?] = []
+    var motions: [String] = []
     var originalPhotoMotionIndices: Set<Int> = []
     let errors: [Int: Error]
     init(errors: [Int: Error]) { self.errors = errors }
@@ -102,6 +103,25 @@ enum FileStore {
         check(cancelAPI.calls == [0,1] && cancel.clipIssues.isEmpty, "Cancellation stops generation without displaying it as a photo defect")
         check(PendingReelClips.load(for:cancelID)?.clipURLs.count==1, "Cancellation preserves completed clip")
         PendingReelClips.clear(for:cancelID)
+        let planned = AIShot(photoID: "0", order: 1, motion: "side_glide", room: "Kitchen", onScreenText: "Sunny kitchen", seconds: 4, voiceLine: "Step into the kitchen")
+        let roundTrip = PendingReelBatch.Shot(planned).value
+        check(roundTrip == planned, "The actual saved-shot wrapper preserves every current AIShot field")
+        let sourceID = UUID()
+        let context = PendingReelRequest.Context(listingID: sourceID, serverListingID: UUID(), owner: "closed-owner", workspace: UUID())
+        let sourceBytes = (0..<3).map { Data("exact saved JPEG fixture \($0)".utf8) }
+        let batch = PendingReelBatch(context: context, id: UUID(), photos: (0..<3).map {
+            PendingReelBatch.Photo(id: String($0), jpegBase64: sourceBytes[$0].base64EncodedString(), shot: $0 == 0 ? PendingReelBatch.Shot(planned) : nil)
+        }, motion: "fly_through", aspect: "9:16", spaceType: "real_estate", completedPaths: [])
+        let sourceAPI = ClipAPI(errors: [:]); let sourceRun = ReelBatchHarness(api: sourceAPI)
+        try await sourceRun.run(count: 3, listingID: sourceID, tmpDir: FileManager.default.temporaryDirectory.appendingPathComponent("clip-test-\(sourceID)"), savedBatch: batch)
+        check(sourceAPI.calls == [0,1,2] && sourceRun.stitched, "The actual ordered loop still completes the saved three-photo batch")
+        check(sourceAPI.preparedSources == sourceBytes.map(Optional.some), "The actual batch loop forwards the exact saved prepared JPEG for every position")
+        check(sourceAPI.motions == ["fly_through", "fly_through", "fly_through"], "The current closed motion string reaches each clip")
+        check(try! PendingReelBatch.load(context)?.photos.map(\.jpegBase64) == batch.photos.map(\.jpegBase64), "Reading progress never replaces the original saved source bytes")
+        batch.clear()
+        let retryVerdict = DriftVerdict(status: .fail, publishable: false, action: "retry", message: "Changed wall", reason: nil)
+        let retryIssue = ReelClipIssue(photoNumber: 1, error: ReelQualityRefusal(verdict: retryVerdict))
+        check(retryIssue.failure.message.contains("Choose one safer retry") && !retryIssue.failure.message.contains("generating"), "Confirmed recovery retry copy asks explicitly rather than promising a hidden generation")
         print("PASSED: \(assertions) reel failure, recovery, retained-file and batch-stop assertions; no network/provider calls")
     }
 }

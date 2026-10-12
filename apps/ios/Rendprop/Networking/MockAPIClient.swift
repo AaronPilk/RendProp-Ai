@@ -1280,7 +1280,7 @@ actor MockAPIClient: APIClient {
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
-                         aspect: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                         aspect: String?, framing: String? = nil, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         Self.mockAIVideoJob(kind: "reel", grounded: true)

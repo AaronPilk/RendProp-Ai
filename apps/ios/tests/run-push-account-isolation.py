@@ -75,7 +75,7 @@ __HTTP__
 }
 enum PushRoute:Equatable {case leads,tour(DeepLink)}
 @MainActor final class PushManager {static let shared=PushManager()
- var pendingRoute:PushRoute?;var showPrePrompt=false;var isAllowed=false
+ var pendingRoute:PushRoute?;var pendingReelJobID:UUID?;var showPrePrompt=false;var isAllowed=false
  private var registeredToken:String?;private var registeredIdentity:PushAccountIdentity?
  private var registrationTask:Task<Void,Never>?;private var registrationOperation:UUID?
  private var unregisterTask:Task<Bool,Never>?;private var unretainedCleanups:[PendingPushUnregister]=[];private var deviceRouteMissing=false

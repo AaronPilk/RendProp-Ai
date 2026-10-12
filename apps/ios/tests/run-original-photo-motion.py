@@ -29,19 +29,28 @@ prep = 'enum AIImagePrep {\n' + '\n'.join(block(view, anchor) for anchor in ['  
 prep += 'struct EnhancedPhoto { let enhancedURL: URL }\nenum ReelQualityPrep {\n'
 prep += block(view, '    nonisolated private static func preparedReelJPEG(').replace('private static', 'static', 1) + '\n'
 prep += block(view, '    nonisolated private static func reelDisplayAspect(').replace('private static', 'static', 1) + '\n}\n'
-body = 'import AVFoundation\nimport Foundation\nimport UIKit\n' + block(text, 'enum OriginalPhotoMotion {') + '\n' + prep
+body = 'import AVFoundation\nimport CoreImage\nimport Foundation\nimport UIKit\n' + block(text, 'enum OriginalPhotoMotion {') + '\n' + prep
 variants = [
     ('actual', body, None),
-    ('negative-wrong-photo', body.replace('context.draw(cg, in:', 'context.setFillColor(UIColor.magenta.cgColor); context.fill(CGRect(origin: .zero, size: renderSize)); if false { context.draw(cg, in:').replace('CVPixelBufferUnlockBaseAddress(buffer, [])\n                guard adaptor.append', '}\n                CVPixelBufferUnlockBaseAddress(buffer, [])\n                guard adaptor.append'), 'fallback uses the same selected photo pixels and orientation'),
-    ('negative-stretched-geometry', body.replace('let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)', 'let size = renderSize'), 'fallback center crop preserves source geometry without stretching'),
-    ('negative-fit-bars', body.replace('let fill = max(', 'let fill = min('), 'fallback encodes source pixels to every edge without black bars'),
-    ('negative-subunit-zoom', body.replace('fill * (1.0 + 0.02 * t', 'fill * (0.98 + 0.02 * t'), 'fallback encodes source pixels to every edge without black bars'),
+    ('negative-wrong-photo', body.replace('context.draw(cg, in:', 'context.setFillColor(UIColor.magenta.cgColor); context.fill(CGRect(origin: .zero, size: renderSize)); if false { context.draw(cg, in:').replace('CVPixelBufferUnlockBaseAddress(buffer, [])\n                guard adaptor.append', '}\n                CVPixelBufferUnlockBaseAddress(buffer, [])\n                guard adaptor.append'), 'fallback retains every selected photo edge without cropping'),
+    ('negative-stretched-geometry', body.replace('let size = CGSize(width: CGFloat(cg.width) * scale, height: CGFloat(cg.height) * scale)', 'let size = renderSize'), 'fallback uses the same selected photo pixels and orientation'),
+    ('negative-cover-crop', body.replace('let fit = min(', 'let fit = max('), 'fallback uses the same selected photo pixels and orientation'),
+    ('negative-unblurred-backdrop', body.replace('.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(CGFloat(cg.width), CGFloat(cg.height)) * 0.035])', ''), 'fallback padding blurs the same source instead of duplicating sharp scenery'),
     ('negative-source-1280', body.replace('maxDimension: 2048)', 'maxDimension: 1280)'), 'source JPEG retains the available full-resolution pixels up to 2048'),
     ('negative-source-low-quality', body.replace('compressionQuality: 0.95)', 'compressionQuality: 0.85)'), 'source JPEG uses the actual high-quality 0.95 encoder'),
     ('negative-source-upscale', body.replace('let scale = min(1, maxDimension / longest)', 'let scale = maxDimension / longest'), 'small source JPEG is never upscaled to pretend detail'),
-    ('negative-source-stretch', body.replace('image.draw(in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2,\n                                  width: width, height: height))', 'image.draw(in: CGRect(origin: .zero, size: size))'), 'source JPEG center crop preserves the selected photo geometry'),
+    ('negative-source-crop', body.replace('static func reelSource(_ image: UIImage, aspect: String) -> UIImage { image }', '''static func reelSource(_ image: UIImage, aspect: String) -> UIImage {
+        let ratio: CGFloat = aspect == "9:16" ? 9.0 / 16.0 : 16.0 / 9.0
+        let width = image.size.width, height = image.size.height
+        let size = width / height > ratio ? CGSize(width: floor(height * ratio), height: height)
+            : CGSize(width: width, height: floor(width / ratio))
+        let format = UIGraphicsImageRendererFormat.default(); format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height))
+        }
+    }'''), 'conditioning preserves the complete selected photo aspect before delivery formatting'),
 ]
-receipt = {'passed': False, 'start_source_sha256': hashes(), 'consumed_source_sha256': hashlib.sha256(body.encode()).hexdigest(), 'runs': [], 'limitations': ['Actual production UIKit source cropping/downsampling/JPEG encoder, AVAssetWriter renderer and AVFoundation frame decoding with synthetic source JPEGs. No provider, physical TestFlight device, Photos export or real listing pixels. Admission/account/receipt paths are checked separately by the actual-body reel request gate. Preview layout source is inspected separately; extracted measured display aspect runs on actual encoded tracks. No claim of invented detail or provider output quality.']}
+receipt = {'passed': False, 'start_source_sha256': hashes(), 'consumed_source_sha256': hashlib.sha256(body.encode()).hexdigest(), 'runs': [], 'limitations': ['Actual production UIKit source preparation/downsampling/JPEG encoder, AVAssetWriter renderer and AVFoundation frame decoding with synthetic source JPEGs. No provider, physical TestFlight device, Photos export or real listing pixels. Admission/account/receipt paths are checked separately by the actual-body reel request gate. Preview layout source is inspected separately; extracted measured display aspect runs on actual encoded tracks. No claim of invented detail or provider output quality.']}
 def command(name, argv, timeout=120, check=True):
     result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     (out / (name + '.log')).write_text(result.stdout + result.stderr)

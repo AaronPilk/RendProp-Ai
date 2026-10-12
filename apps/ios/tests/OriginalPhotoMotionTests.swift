@@ -17,8 +17,8 @@ import UIKit
                 colors[y * 2 + x].setFill()
                 ctx.fill(CGRect(x: x * 48, y: y * 32, width: 48, height: 32))
             } }
-            // Small landmarks distinguish an honest center crop from stretching
-            // the entire source to fill a differently shaped output.
+            // Small landmarks distinguish full-photo fit from stretching or
+            // cropping the source to fill a differently shaped output.
             UIColor.white.setFill(); ctx.fill(CGRect(x: 41, y: 0, width: 4, height: 64))
             UIColor.cyan.setFill(); ctx.fill(CGRect(x: 0, y: 21, width: 96, height: 4))
         }
@@ -84,9 +84,11 @@ import UIKit
         let cropStored = cropSource.jpegData(compressionQuality: 1)!; try cropStored.write(to: cropURL)
         let cropPrepared = try ReelQualityPrep.preparedReelJPEG(photo: EnhancedPhoto(enhancedURL: cropURL), aspect: "9:16")
         let cropImage = UIImage(data: cropPrepared)!
-        check(cropImage.size == CGSize(width: 675, height: 1200), "source crop uses available pixels without upscaling")
-        check(close(pixel(cropImage.cgImage!, x: 30, y: 600), [0, 255, 0]) && close(pixel(cropImage.cgImage!, x: 645, y: 600), [0, 0, 255]), "source JPEG center crop preserves the selected photo geometry")
-        check(try Data(contentsOf: cropURL) == cropStored, "center-cropped conditioning keeps the original file unchanged")
+        check(cropImage.size == CGSize(width: 1600, height: 1200), "conditioning preserves the complete selected photo aspect before delivery formatting")
+        for (x, expected) in [(30, [255, 0, 0]), (430, [0, 255, 0]), (830, [0, 0, 255]), (1530, [255, 255, 0])] {
+            check(close(pixel(cropImage.cgImage!, x: x, y: 600), expected), "conditioning preserves every selected photo edge and geometry")
+        }
+        check(try Data(contentsOf: cropURL) == cropStored, "full-photo conditioning keeps the original file unchanged")
         // A deterministic high-detail source makes the former 1.5MB decoded
         // QC ceiling visible. Real encoded bytes are also captured through the
         // production QC serializer by the runner's optional transport gate.
@@ -142,7 +144,13 @@ import UIKit
                     check(pixel(frame, x: x, y: y).max()! > 90, "fallback encodes source pixels to every edge without black bars")
                 }
                 let t = CGFloat(Int(second * 30)) / 149
-                let scale = max(size.width / 96, size.height / 64) * (1 + 0.02 * t * t * (3 - 2 * t))
+                let scale = min(size.width / 96, size.height / 64) * (0.98 + 0.02 * t * t * (3 - 2 * t))
+                // Every source corner remains visible in the sharp foreground.
+                for (sx, sy) in [(5, 5), (91, 5), (5, 59), (91, 59)] {
+                    let x = Int((size.width - 96 * scale) / 2 + CGFloat(sx) * scale)
+                    let y = Int((size.height - 64 * scale) / 2 + CGFloat(sy) * scale)
+                    check(close(pixel(frame, x: x, y: y), pixel(decodedSource, x: sx, y: sy)), "fallback retains every selected photo edge without cropping")
+                }
                 // Visible source samples remain the same room, without outpaint.
                 for (sx, sy) in [(40, 16), (56, 16), (40, 48), (56, 48)] {
                     let x = Int((size.width - 96 * scale) / 2 + CGFloat(sx) * scale)
@@ -152,7 +160,14 @@ import UIKit
                 for (sx, sy) in [(42, 10), (32, 22)] {
                     let x = Int((size.width - 96 * scale) / 2 + CGFloat(sx) * scale)
                     let y = Int((size.height - 64 * scale) / 2 + CGFloat(sy) * scale)
-                    check(close(pixel(frame, x: x, y: y), pixel(decodedSource, x: sx, y: sy)), "fallback center crop preserves source geometry without stretching")
+                    check(close(pixel(frame, x: x, y: y), pixel(decodedSource, x: sx, y: sy)), "fallback full-photo fit preserves source geometry without stretching")
+                }
+                if size.height > size.width {
+                    let cover = max(size.width / 96, size.height / 64)
+                    let bx = Int((size.width - 96 * cover) / 2 + 42 * cover)
+                    let by = Int((size.height - 64 * cover) / 2 + 4 * cover)
+                    check(pixel(frame, x: bx, y: by).min()! < 220,
+                        "fallback padding blurs the same source instead of duplicating sharp scenery")
                 }
             }
             check((images[0].dataProvider!.data! as Data) != (images[2].dataProvider!.data! as Data), "fallback contains deterministic motion inside the source bounds")
@@ -172,7 +187,7 @@ import UIKit
         let rotationGenerator = AVAssetImageGenerator(asset: AVURLAsset(url: rotatedOutput))
         let (rotationFrame, _) = try await rotationGenerator.image(at: CMTime(seconds: 4.9, preferredTimescale: 600))
         // After rotating clockwise: upper left blue, upper right red, lower left
-        // yellow, lower right green. Their displayed shape is center-cropped.
+        // yellow, lower right green. The complete displayed image is fitted.
         for (x, y, expected) in [(45, 93, [0, 0, 254]), (135, 93, [254, 0, 0]), (45, 227, [255, 255, 1]), (135, 227, [0, 255, 1])] {
             check(close(pixel(rotationFrame, x: x, y: y), expected), "fallback bakes camera EXIF orientation without changing source geometry")
         }

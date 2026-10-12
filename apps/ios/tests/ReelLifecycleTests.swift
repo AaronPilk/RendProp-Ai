@@ -49,44 +49,207 @@ struct UNNotificationRequest {
     func reset() { settings = []; requests = [] }
 }
 
+// Closed observable/OS/model boundaries. Production queue/task/identity and
+// phase decisions execute unchanged; this does not emulate OS grant duration.
+@propertyWrapper struct Published<Value> { var wrappedValue: Value }
+final class AnyCancellable {}
+final class ClosedChange {
+    static let shared = ClosedChange()
+    func send() {}
+    func sink(_ receive: @escaping (()) -> Void) -> AnyCancellable { AnyCancellable() }
+}
+protocol ObservableObject { var objectWillChange: ClosedChange { get } }
+extension ObservableObject { var objectWillChange: ClosedChange { .shared } }
+struct Listing { let id: UUID; let address: String }
+struct ReelTitleCard {}
+struct Voiceover {}
+struct CaptionStyle {}
+enum ReelComposer { enum ShotCaptionStyle { case off }; enum Transition { case cut } }
+typealias AVPlayer = ClosedPlayer
+struct AIFailure {}
+struct ReelClipIssue { let photoNumber: Int }
+struct PendingReelClips {}
+struct PendingReelRequest { struct Context {} }
+struct PendingReelBatch {}
+@MainActor final class AuthStore {
+    static let shared = AuthStore()
+    var userID: String? = UUID().uuidString
+    var syncSessionRevision: UInt64 = 1
+}
+@MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
+@MainActor final class AIConsent {
+    static let shared = AIConsent()
+    var isGranted = true; var revocationRevision: UInt64 = 0
+}
+@MainActor final class ClosedGate { var released = false }
+final class ClosedLifetime { let id = UUID() }
+
 @main struct ReelLifecycleTests {
     @MainActor static func main() async {
         var checks = 0
         func check(_ value: Bool, _ reason: String) { precondition(value, reason); checks += 1 }
-        func tick() async { for _ in 0..<20 { await Task.yield() } }
+        func tick() async { for _ in 0..<30 { await Task.yield() } }
         let app = UIApplication.shared, center = UNUserNotificationCenter.current()
         let a = PushAccountIdentity(owner: UUID(), revision: 1)
         let b = PushAccountIdentity(owner: UUID(), revision: 2)
         func reset() { center.reset(); PushManager.currentIdentity = a; app.applicationState = .background }
+        reset()
+        let queue = ReelWorkQueue.shared
+        let listing = Listing(id: UUID(), address: "Closed synthetic listing")
+        let job = queue.job(for: listing)
+        check(queue.job(for: listing) === job, "reopening a sheet returns the same app-owned job")
+        let release = ClosedGate(); var starts = 0
+        job.phase = .generating; job.totalClips = 8
+        check(job.start(identityIsCurrent: { true }, resume: {}, operation: {
+            starts += 1
+            while !release.released && !Task.isCancelled { await Task.yield() }
+            if !Task.isCancelled { job.reelURL = URL(fileURLWithPath: "/synthetic-ready.mp4"); job.phase = .done }
+        }), "the captured context admits one app task")
+        await tick()
+        check(!job.start(identityIsCurrent: { true }, resume: {}, operation: { starts += 1 }), "an already-running job admits no duplicate task")
+        let presentation = ReelPresentationHarness(job: job)
+        let presentedPlayer = presentation.player
+        presentation.onDisappearCleanup()
+        check(job.task?.isCancelled == false && job.running && starts == 1, "dismissing the sheet leaves the paid app-owned job running")
+        check(presentation.connection.cancelled, "dismissal cancels only the unsent connection waiter")
+        check(presentedPlayer?.paused == true && presentation.voPlayer?.paused == true, "dismissing the reel pauses both players")
+        check(job.player == nil && !job.isPresented, "a dismissed studio releases its decoded playback session")
+        job.setPlaybackPlayer(ClosedPlayer())
+        check(job.player == nil, "completion while the studio is closed cannot retain a decoded player")
+        check(!presentation.recorder.isRecording && presentation.recorder.cancellations == 1, "dismissing the reel releases a recording microphone")
+        check(queue.currentJob === job, "another tab still sees the active job")
+        job.completedClips = 6; job.clipIssues = [ReelClipIssue(photoNumber: 6)]
+        check(job.fraction == 5.0/8.0 && job.percent == 62, "progress counts retained shots rather than failed attempts")
+        job.completedClips = 8; job.clipIssues = []; job.phase = .stitching
+        check(job.percent == 99, "clip completion never claims the composed video is finished")
+        release.released = true; await job.task?.value
+        check(!job.running && job.task == nil && job.phase == .done && job.percent == 100 && job.reelURL != nil, "only a saved ready result reports 100 percent")
+        check(app.ended.count == 1, "normal completion ends exactly one app-owned background grant")
+        check(center.settings.count == 1, "ready result notifies centrally once after a sheet is gone")
+        center.answer(.authorized); await tick()
+        check(center.requests.count == 1, "one app result enqueues exactly one notification")
+        check(center.requests.first?.content.userInfo["listing_id"] as? String == job.listingID.uuidString &&
+              center.requests.first?.content.userInfo["reel_job_id"] as? String == job.id.uuidString, "notification points to the same owned job and listing")
+        job.dismissResult(); check(queue.visibleJobs.isEmpty, "dismissal hides only a completed banner, not its saved result")
+        check(job.reelURL != nil && queue.job(for: listing) === job, "dismissing result retains its app-owned video")
 
-        let holds = ReelBackgroundHarness()
-        holds.beginBackgroundHold()
-        let first = holds.backgroundHold
-        holds.beginBackgroundHold()
-        check(app.next == 1, "a generating-to-stitching transition keeps one background grant")
-        app.handlers[first]?()
-        check(app.ended == [first] && holds.backgroundHold == .invalid, "expiry ends the background grant synchronously")
-        check(holds.backgroundHoldOperation == nil, "expiry retires the background operation token")
-        holds.endBackgroundHold()
-        check(app.ended == [first], "ending a retired background grant is idempotent")
-        holds.beginBackgroundHold()
-        let second = holds.backgroundHold
-        app.handlers[first]?()
-        check(holds.backgroundHold == second && app.ended == [first], "stale expiry cannot end a newer background grant")
-        holds.endBackgroundHold()
-        check(app.ended == [first, second] && holds.backgroundHold == .invalid, "normal completion ends exactly its own background grant")
-        holds.beginBackgroundHold()
-        let closing = holds.backgroundHold
-        holds.idleHeld = true
-        holds.workTask = Task { while !Task.isCancelled { await Task.yield() } }
-        holds.onDisappearCleanup()
-        check(holds.workTask?.isCancelled == true && holds.connection.cancelled, "dismissing the reel cancels work and its connection")
-        check(holds.player?.paused == true && holds.voPlayer?.paused == true, "dismissing the reel pauses both players")
-        check(!holds.recorder.isRecording && holds.recorder.cancellations == 1, "dismissing the reel releases a recording microphone")
-        check(!holds.idleHeld && IdleTimer.releases == 1, "dismissing the reel releases its idle timer hold")
-        check(holds.backgroundHold == .invalid && app.ended == [first, second, closing], "dismissing the reel ends its background grant")
-        holds.onDisappearCleanup()
-        check(IdleTimer.releases == 1 && holds.recorder.cancellations == 1 && app.ended.count == 3, "repeated dismissal does not release a grant twice")
+        // Terminal jobs keep durable URLs, not the dismissed view's resume
+        // callback. Paused jobs retain the callback until resumed or cancelled.
+        for terminal in [ReelWorkJob.Phase.done, .failed, .setup] {
+            let finished = queue.job(for: Listing(id: UUID(), address: "Callback lifetime"))
+            var probe: ClosedLifetime? = ClosedLifetime()
+            weak var weakProbe = probe
+            _ = finished.start(identityIsCurrent: { true }, resume: { [held = probe!] in _ = held.id }, operation: { finished.phase = terminal })
+            probe = nil; await finished.task?.value
+            check(weakProbe == nil, "terminal work releases the captured resume callback")
+        }
+        let retainedResume = queue.job(for: Listing(id: UUID(), address: "Paused callback lifetime"))
+        var retainedProbe: ClosedLifetime? = ClosedLifetime()
+        weak var weakRetainedProbe = retainedProbe
+        retainedResume.phase = .generating
+        _ = retainedResume.start(identityIsCurrent: { true }, resume: { [held = retainedProbe!] in _ = held.id }, operation: {
+            while !Task.isCancelled { await Task.yield() }
+        })
+        retainedProbe = nil; await tick()
+        app.handlers[retainedResume.backgroundHold]?()
+        check(retainedResume.task?.isCancelled == true, "expiry pauses and cancels only local execution")
+        await retainedResume.task?.value
+        check(weakRetainedProbe != nil, "paused work preserves its exact continuation callback")
+        retainedResume.cancel()
+        check(weakRetainedProbe == nil, "explicit cancel releases the paused continuation callback")
+
+        // Expiration ends exactly its grant synchronously, stops local work and
+        // waits for paid-file cleanup before an owned foreground continuation.
+        reset(); let paused = queue.job(for: Listing(id: UUID(), address: "Paused synthetic listing"))
+        paused.phase = .generating
+        let cleanup = ClosedGate(); var continuations = 0
+        let paid = FileManager.default.temporaryDirectory.appendingPathComponent("synthetic-paid-\(UUID()).bin")
+        let paidBytes = Data("synthetic retained paid receipt/clip".utf8)
+        try! paidBytes.write(to: paid)
+        defer { try? FileManager.default.removeItem(at: paid) }
+        check(paused.start(identityIsCurrent: { true }, resume: { continuations += 1 }, operation: {
+            while !Task.isCancelled { await Task.yield() }
+            while !cleanup.released { await Task.yield() }
+        }), "expiration test starts one owned operation")
+        await tick(); let grant = paused.backgroundHold
+        app.handlers[grant]?()
+        check(app.ended.last == grant && paused.backgroundHold == .invalid, "expiry ends the background grant synchronously")
+        check(paused.backgroundHoldOperation == nil, "expiry retires the background operation token")
+        check(paused.paused && paused.phase == .paused && paused.task?.isCancelled == true, "expiry pauses and cancels only local execution")
+        check(try! Data(contentsOf: paid) == paidBytes, "expiry leaves the paid receipt and clip bytes untouched")
+        paused.resumeForeground(); await tick()
+        check(continuations == 0, "background expiry cannot dispatch a foreground continuation")
+        app.applicationState = .active
+        paused.resumeForeground(); paused.resumeForeground(); await tick()
+        check(continuations == 0, "foreground continuation waits for the interrupted task to retain paid files")
+        cleanup.released = true; await paused.task?.value; await tick()
+        check(continuations == 1 && !paused.paused && !paused.running, "foreground resumes the same saved operation exactly once")
+        paused.resumeForeground(); await tick()
+        check(continuations == 1, "repeated foreground events cannot restart a resumed operation")
+        check(center.settings.isEmpty && center.requests.isEmpty, "OS-expiration pause sends no failed or done notification")
+
+        // A stale expiration callback cannot cancel a replacement operation.
+        let replacement = ClosedGate()
+        paused.phase = .generating
+        check(paused.start(identityIsCurrent: { true }, resume: {}, operation: {
+            while !replacement.released && !Task.isCancelled { await Task.yield() }
+        }), "finished cleanup permits a replacement owned operation")
+        await tick(); let nextGrant = paused.backgroundHold
+        app.handlers[grant]?()
+        check(paused.backgroundHold == nextGrant && !paused.paused && paused.task?.isCancelled == false, "stale expiry cannot end a newer background grant")
+        paused.cancel(); await paused.task?.value
+        check(paused.task == nil && !paused.running && !paused.paused, "explicit cancel completes local cleanup without automatic restart")
+        check(try! Data(contentsOf: paid) == paidBytes, "explicit cancel does not delete paid recovery bytes")
+
+        reset(); let backgroundOnly = queue.job(for: Listing(id: UUID(), address: "Background resume boundary"))
+        var backgroundStarts = 0; backgroundOnly.phase = .generating
+        _ = backgroundOnly.start(identityIsCurrent: { true }, resume: { backgroundStarts += 1 }, operation: {
+            while !Task.isCancelled { await Task.yield() }
+        })
+        await tick(); app.handlers[backgroundOnly.backgroundHold]?(); await backgroundOnly.task?.value
+        backgroundOnly.resumeForeground(); await tick()
+        check(backgroundStarts == 0 && backgroundOnly.paused, "background expiry cannot dispatch a foreground continuation")
+        backgroundOnly.cancel()
+
+        // Scope changes stop local tasks, hide their result and never revive an
+        // old consent grant, including when the same owner signs back in.
+        for change in 0..<5 {
+            reset(); let owned = queue.job(for: Listing(id: UUID(), address: "Context synthetic listing"))
+            owned.phase = .generating; let valid = ClosedGate(); valid.released = true
+            check(owned.start(identityIsCurrent: { valid.released }, resume: {}, operation: {
+                while !Task.isCancelled { await Task.yield() }
+            }), "owned identity test starts")
+            await tick()
+            let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+            let workspace = WorkspaceContext.selectedOrgID, consent = AIConsent.shared.revocationRevision
+            if change == 0 { AuthStore.shared.userID = UUID().uuidString }
+            if change == 1 { AuthStore.shared.syncSessionRevision += 1 }
+            if change == 2 { WorkspaceContext.selectedOrgID = UUID() }
+            if change == 3 { AIConsent.shared.revocationRevision += 1 }
+            if change == 4 { valid.released = false }
+            queue.reconcileIdentity()
+            let reason = ["owner switch cancels its captured job", "session replacement cancels its captured job", "workspace switch cancels its captured job", "revoked then granted consent cancels its captured job", "listing removal cancels its captured job"][change]
+            check(owned.task?.isCancelled == true && !owned.isContextCurrent, reason)
+            await owned.task?.value
+            check(!queue.visibleJobs.contains(where: { $0.id == owned.id }), "stale work never appears under another context")
+            check(center.settings.isEmpty, "stale task never notifies a replacement account")
+            AuthStore.shared.userID = owner; AuthStore.shared.syncSessionRevision = revision
+            WorkspaceContext.selectedOrgID = workspace; AIConsent.shared.revocationRevision = consent
+        }
+        // Context can change while cancellation/retention is finishing.
+        reset(); let raced = queue.job(for: Listing(id: UUID(), address: "Resume race")); let finish = ClosedGate()
+        var resumedOldOwner = 0
+        raced.phase = .generating
+        _ = raced.start(identityIsCurrent: { true }, resume: { resumedOldOwner += 1 }, operation: {
+            while !Task.isCancelled { await Task.yield() }
+            while !finish.released { await Task.yield() }
+        })
+        await tick(); app.handlers[raced.backgroundHold]?(); app.applicationState = .active
+        raced.resumeForeground(); await tick()
+        let savedOwner = AuthStore.shared.userID; AuthStore.shared.userID = UUID().uuidString
+        finish.released = true; await raced.task?.value; await tick()
+        check(resumedOldOwner == 0, "an account switch while cleanup awaits cannot resume the old operation")
+        AuthStore.shared.userID = savedOwner
 
         reset(); app.applicationState = .active
         ReelCompletionNotice.post(success: true, identity: a)
@@ -123,6 +286,6 @@ struct UNNotificationRequest {
         center.answer(.authorized); await tick()
         check(center.requests.first?.content.title == "Your reel couldn't be made", "failed completion has a distinct honest title")
         check(center.requests.first?.content.body.contains("Finished clips are kept") == true, "failure notice explains retained paid work")
-        print("PASS: \(checks) actual reel expiry and notification enqueue assertions; closed OS boundaries")
+        print("PASS: \(checks) actual app-owned reel task/expiry/identity and notification enqueue assertions; closed OS boundaries")
     }
 }

@@ -47,7 +47,7 @@ def main():
         'Archive Review and explicit Save actions execute with a closed card API and image-byte boundary; Photos picker, camera and visual acceptance are not claimed.']}
     try:
         actual = library.read_text()
-        pending = block(fly.read_text(), 'private struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1)
+        pending = block(fly.read_text(), 'struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1)
         pending = pending.replace('UserDefaults.standard', 'FixturePreferences.defaults')
         generated = '\nimport Foundation\nimport CryptoKit\n' + block(api.read_text(), 'struct AIVideoJob: Codable, Sendable') + '\n' + pending
         generated_path = out / 'ActualPendingRequest.swift'

@@ -173,6 +173,8 @@ final class PushManager: ObservableObject {
     @Published private(set) var prePromptContext: PrePromptContext = .published
     /// Set by a tapped notification; the root consumes it and clears it.
     @Published private(set) var pendingRoute: PushRoute?
+    /// A local completion can reopen only its existing queue-owned job.
+    @Published private(set) var pendingReelJobID: UUID?
 
     /// True once the app has shown its pre-prompt (or established that there is
     /// nothing to ask). Persisted: "we already asked" must survive a relaunch,
@@ -445,6 +447,7 @@ final class PushManager: ObservableObject {
         registeredIdentity = nil
         deviceRouteMissing = false
         pendingRoute = nil
+        pendingReelJobID = nil
         showPrePrompt = false
         if !Self.isSuppressed {
             UNUserNotificationCenter.current().removeAllDeliveredNotifications()
@@ -553,6 +556,12 @@ final class PushManager: ObservableObject {
         let type = ((payload["category"] as? String) ?? (bag["type"] as? String))?.lowercased() ?? ""
         let facts = (payload["data"] as? [AnyHashable: Any]) ?? bag
 
+        if type == "reel_done" {
+            if let raw = facts["reel_job_id"] as? String, let jobID = UUID(uuidString: raw) {
+                pendingReelJobID = jobID
+            }
+            return
+        }
         // A lead belongs to the account's inbox, not to one page — and that is
         // the screen the person actually needs to act on it.
         if type == "lead" || type == "leads" || type == "lead_received" {
@@ -578,6 +587,7 @@ final class PushManager: ObservableObject {
     }
 
     func clearPendingRoute() { pendingRoute = nil }
+    func clearPendingReelJob() { pendingReelJobID = nil }
 
     // MARK: Small facts
 
@@ -640,13 +650,12 @@ final class PushManager: ObservableObject {
 /// A local banner when a reel finishes while the app is not in front — the
 /// agent asked to be able to leave the screen while clips generate
 /// (TestFlight 60 feedback). Posted only when notifications are ALREADY
-/// allowed: this app asks for that permission exactly once, at the first
-/// published tour (`PushManager.noteTourPublished`), and a second ask here
-/// would break that promise. No address, no names, nothing a lock screen
-/// should not show. Tapping it opens the app; `PushDelegate` routes nothing
-/// for this category, which is the whole point.
+/// allowed. The reel banner's explicit notification button can request the
+/// iOS permission; completion never prompts. No address or names appear on
+/// the lock screen. A tap can reopen only the same queue-owned job, after
+/// the banner rechecks the current account, workspace and listing.
 enum ReelCompletionNotice {
-    @MainActor static func post(success: Bool, identity: PushAccountIdentity?) {
+    @MainActor static func post(success: Bool, identity: PushAccountIdentity?, listingID: UUID? = nil, jobID: UUID? = nil) {
         guard UIApplication.shared.applicationState != .active else { return }
         guard let identity, PushManager.currentIdentity == identity else { return }
         let center = UNUserNotificationCenter.current()
@@ -664,6 +673,10 @@ enum ReelCompletionNotice {
                     : "Open Rendprop to see what happened. Finished clips are kept on this phone."
                 content.sound = .default
                 content.userInfo = ["recipient_user_id": identity.owner.uuidString, "category": "reel_done"]
+                if let listingID, let jobID {
+                    content.userInfo["listing_id"] = listingID.uuidString
+                    content.userInfo["reel_job_id"] = jobID.uuidString
+                }
                 center.add(UNNotificationRequest(identifier: "reel-done-\(UUID().uuidString)", content: content, trigger: nil))
             }
         }

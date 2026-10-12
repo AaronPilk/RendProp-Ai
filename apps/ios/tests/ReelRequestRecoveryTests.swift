@@ -35,22 +35,25 @@ enum OriginalPhotoMotion {
 }
 final class QualityFence {var stale=false}
 enum AIImagePrep {static func downscaled(_ i:UIImage,maxDimension:Int)->UIImage{i};static func reelSource(_ i:UIImage,aspect:String)->UIImage{i};static func error(_ m:String)->Error{NSError(domain:"synthetic",code:1,userInfo:[NSLocalizedDescriptionKey:m])} }
-protocol APIClient {func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob;func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus;func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict}
+protocol APIClient {func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,framing:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob;func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus;func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict}
 final class ClipAPI:APIClient {
- struct Submission {let image:String;let motion:String?;let key:String?;let attempt:Int?;let source:String?;let jobID:String;let index:Int?;let count:Int?}
+ struct Submission {let image:String;let motion:String?;let key:String?;let attempt:Int?;let source:String?;let jobID:String;let index:Int?;let count:Int?;let framing:String?;let outputAspect:String?}
  var expectedContext:PendingReelRequest.Context?;var lastKey:String?
  var beforeReply:(() throws -> Void)?;var onPoll:(()->Void)?;var onDrift:(()->Void)?;var pollOutcomes:[Result<AIVideoStatus,Error>]=[]
  var rejectsDrift=false;var unavailableDrift=false;var checksDrift=0;var posts=0,polls=0;var throwPolls=0;var throwSubmit=false;var refuseSubmit=false;var refusalStatus=400;var terminal=false;var url:URL
  var allowQualityRetry=false;var submissions:[Submission]=[];var driftRequests:[DriftCheckRequest]=[];var driftOutcomes:[Result<DriftVerdict,Error>]=[]
  var job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel",provenanceID:"synthetic-provenance-0")
  init(_ u:URL){url=u}
- func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob {
+ func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,framing:String?=nil,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob {
   let marker=expectedContext.flatMap(PendingReelRequest.load)
   if expectedContext != nil {precondition(marker?.submissionUnconfirmed==true && marker?.operationID==idempotencyKey && marker?.inputDigest?.count==64,"durable operation marker exists before POST")}
+  if marker?.framing != nil || framing != nil {
+   precondition(marker?.framing==framing && marker?.outputAspect==aspect,"new whole-source framing survives provider admission")
+  }
   lastKey=idempotencyKey;posts+=1
   precondition(seconds==5&&mime=="image/jpeg"&&aspect=="9:16"&&presetVersion==1&&(motion=="fly_through" || (allowQualityRetry&&motion=="push_in"))&&prompt==nil)
   if allowQualityRetry {job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel",provenanceID:"synthetic-provenance-\(posts-1)")}
-  submissions.append(.init(image:imageBase64,motion:motion,key:idempotencyKey,attempt:marker?.qualityAttempt,source:marker?.sourceJPEGBase64,jobID:job.requestId,index:shotIndex,count:shotCount))
+  submissions.append(.init(image:imageBase64,motion:motion,key:idempotencyKey,attempt:marker?.qualityAttempt,source:marker?.sourceJPEGBase64,jobID:job.requestId,index:shotIndex,count:shotCount,framing:framing,outputAspect:marker?.outputAspect))
   if throwSubmit{throw URLError(.networkConnectionLost)}
   if refuseSubmit{throw APIError.server(status:refusalStatus,code:refusalStatus == 409 ? "conflict" : "validation",message:refusalStatus == 409 ? "Duplicate submission — this job was already started." : "Unsupported video accounting metadata")}
   try beforeReply?();return job
@@ -487,10 +490,16 @@ final class ClosedVideoProtocol:URLProtocol {
   let (ordinaryContext,ordinaryAPI,ordinaryDir)=setup();ordinaryAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))]
   let ordinary=try await generate(ordinaryContext,ordinaryAPI,ordinaryDir)
   check(ordinaryAPI.posts==1 && OriginalPhotoMotion.sources==[jpeg],"ordinary terminal refusal renders the same saved source with no paid retry")
-  check(OriginalPhotoMotion.sizes.count==1 && OriginalPhotoMotion.sizes[0].width==1920 && OriginalPhotoMotion.sizes[0].height==1080,"original landscape source selects the landscape renderer shape")
+  check(OriginalPhotoMotion.sizes.count==1 && OriginalPhotoMotion.sizes[0].width==1080 && OriginalPhotoMotion.sizes[0].height==1920,"new request keeps selected portrait delivery for a landscape source")
   check(OriginalPhotoMotion.isClip(ordinary) && PendingReelClips.load(for:ordinaryContext.listingID)?.clipURLs==[ordinary] && PendingReelRequest.load(ordinaryContext)==nil,"ordinary original fallback retires receipt after durable acceptance")
   // Reject every nonterminal/unavailable verdict even when its action string
   // says refuse. The server must explicitly report fail AND refuse.
+  let(legacyLandscape,legacyLandscapeAPI,legacyLandscapeDir)=setup()
+  let oldLandscape=PendingReelRequest(context:legacyLandscape,photoNumber:1,job:legacyLandscapeAPI.job,sourceJPEGBase64:savedJPEG.base64EncodedString(),sourceSpaceType:"real_estate",qualityAttempt:1)
+  try oldLandscape.save();legacyLandscapeAPI.driftOutcomes=[.success(verdict(.fail,"refuse"))]
+  _ = try await ReelReceiptHarness.retrieveClip(job:oldLandscape.job,pending:oldLandscape,api:legacyLandscapeAPI,into:legacyLandscapeDir,index:0)
+  check(OriginalPhotoMotion.sizes[0].width==1920 && OriginalPhotoMotion.sizes[0].height==1080,"legacy landscape receipt preserves its saved source shape")
+  PendingReelRequest.forget(legacyLandscape)
   for rejected in [verdict(.unavailable,"refuse"),verdict(.pass,"refuse"),verdict(.fail,"hold"),verdict(.fail,"reject")] {
    let (context,api,dir)=setup();api.driftOutcomes=[.success(rejected)]
    do{_ = try await generate(context,api,dir);preconditionFailure("ambiguous quality verdict must hold")}catch{checks+=1}
@@ -621,6 +630,18 @@ final class ClosedVideoProtocol:URLProtocol {
   let foreignBatch=try PendingReelBatch.load(badContext)
   check(foreignBatch==nil,"batch progress cannot cross account ownership")
   finished.clear();check(!PendingReelBatch.exists(first.context),"finished batch retirement is scoped to exact batch")
+  check(batchAPI.submissions.allSatisfy{$0.framing==nil},"legacy saved batch never invents preserve-photo provider routing")
+  let(full,fullAPI,fullDir)=setup();full.clear()
+  let fullBatch=PendingReelBatch(context:full.context,id:UUID(),photos:[.init(id:"full-1",jpegBase64:source.base64EncodedString(),shot:nil),.init(id:"full-2",jpegBase64:second.base64EncodedString(),shot:nil)],motion:"fly_through",aspect:"9:16",spaceType:"real_estate",completedPaths:[],framing:"preserve_photo")
+  try fullBatch.save();fullAPI.expectedContext=full.context
+  let fullFinished:PendingReelBatch
+  do{fullFinished=try await ReelReceiptHarness.completeSavedBatch(fullBatch,api:fullAPI,into:fullDir,requireCurrent:{try Task.checkCancellation()},progress:{_ in})}catch{preconditionFailure("saved whole-scene batch resumes exact full sources and framing")}
+  check(fullAPI.posts==2 && fullAPI.submissions.allSatisfy{$0.framing=="preserve_photo" && $0.outputAspect=="9:16"},"saved whole-scene batch resumes exact full sources and framing")
+  check(fullAPI.submissions.map(\.image)==[source.base64EncodedString(),second.base64EncodedString()] && fullAPI.driftRequests.map(\.sourceBase64)==fullAPI.submissions.map(\.image),"raw QC uses the same complete source before any delivery matte")
+  check(fullFinished.framing=="preserve_photo" && fullFinished.completedPaths.count==2,"whole-scene framing remains durable through completed batch progress")
+  let badFraming=PendingReelRequest(context:full.context,photoNumber:1,job:full.job,sourceJPEGBase64:source.base64EncodedString(),sourceSpaceType:"real_estate",qualityAttempt:0,framing:"invent_room",outputAspect:"9:16");try badFraming.save()
+  check(PendingReelRequest.load(full.context)==nil && PendingReelRequest.exists(full.context),"unsupported saved framing stays blocked for review instead of dispatching")
+  PendingReelRequest.forget(full.context);fullFinished.clear()
   OriginalPhotoMotion.reset();ReelPollClock.reset();return checks
  }
 

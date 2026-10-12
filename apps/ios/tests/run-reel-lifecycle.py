@@ -16,7 +16,8 @@ out.mkdir(parents=True, exist_ok=True)
 source = root / 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift'
 push = root / 'apps/ios/Rendprop/Push/PushManager.swift'
 fixture = root / 'apps/ios/tests/ReelLifecycleTests.swift'
-paths = [source, push, fixture, Path(__file__).resolve()]
+queue = root / 'apps/ios/Rendprop/Render/ReelWorkQueue.swift'
+paths = [source, push, queue, fixture, Path(__file__).resolve()]
 hashes = lambda: {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 def block(text, anchor):
@@ -31,30 +32,48 @@ def block(text, anchor):
 
 before = hashes()
 screen = source.read_text()
-body = 'import Foundation\n' + block(push.read_text(), 'enum ReelCompletionNotice {')
-body += '\n@MainActor final class ReelBackgroundHarness {\nvar backgroundHold = UIBackgroundTaskIdentifier.invalid\nvar backgroundHoldOperation: UUID?\n'
-body += 'var idleHeld = false; let connection = ClosedConnection(); var workTask: Task<Void, Never>?; var player: ClosedPlayer? = ClosedPlayer(); var voPlayer: ClosedPlayer? = ClosedPlayer(); let recorder = ClosedRecorder()\n'
-for anchor in ['    private func beginBackgroundHold()', '    private func endBackgroundHold()']:
-    body += block(screen, anchor).replace('private func', 'func', 1) + '\n'
+# Remove imports and expose private stored grant identifiers/methods to the
+# fixture. This changes no production task, identity, expiry or resume decision.
+body = '\n'.join(line for line in queue.read_text().splitlines() if not line.startswith('import '))
+body = 'import Foundation\n' + body.replace('private(set)', '').replace('private var backgroundHold', 'var backgroundHold').replace('private func beginBackgroundHold()', 'func beginBackgroundHold()').replace('private func endBackgroundHold()', 'func endBackgroundHold()')
+body += '\n' + block(push.read_text(), 'enum ReelCompletionNotice {')
 reel_view = screen[screen.index('struct ReelStudioView:'):screen.index('// MARK: Sections', screen.index('struct ReelStudioView:'))]
 cleanup = block(reel_view, '        .onDisappear {')
-body += 'func onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n'
-body += '}\n'
-assert 'let reelNoticeIdentity = PushManager.currentIdentity' in screen
-assert 'ReelCompletionNotice.post(success: true, identity: reelNoticeIdentity)' in screen
-assert 'ReelCompletionNotice.post(success: false, identity: reelNoticeIdentity)' in screen
+body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJob; let work: ReelWorkJob; let connection = ClosedConnection(); var player: ClosedPlayer? { get { work.player } set { work.setPlaybackPlayer(newValue) } }; var voPlayer: ClosedPlayer? = ClosedPlayer(); let recorder = ClosedRecorder()\ninit(job: ReelWorkJob) { self.job = job; self.work = job; job.isPresented = true; job.setPlaybackPlayer(ClosedPlayer()) }\nfunc onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n}\n'
+assert '@ObservedObject private var work: ReelWorkJob' in reel_view
+assert '@State private var workTask' not in reel_view
+assert 'workTask?.cancel()' not in cleanup and 'endBackgroundHold()' not in cleanup
+assert screen.count('work.start(identityIsCurrent:') == 5
+assert screen.count('identityIsCurrent: { [model, id = listing.id] in') == 5
+assert 'work.isPresented = true' in reel_view
 assert 'try requireCurrent()\n                let wasPlanned' in screen
-assert 'endBackgroundHold()' in cleanup
+assert 'resumeBatch: true' in screen and 'work.afterCurrentOperation { continueSavedBatch(saved) }' in screen
+assert 'work.configuration ?? snapshotReelConfiguration()' in screen
 variants = [
     ('actual', body, None),
-    ('negative-async-expiry', body.replace('            self.endBackgroundHold()', '            Task { @MainActor in self.endBackgroundHold() }'), 'expiry ends the background grant synchronously'),
-    ('negative-stale-expiry', body.replace('guard self.backgroundHoldOperation == operation else { return }', '// omitted operation token'), 'stale expiry cannot end a newer background grant'),
-    ('negative-dismissal-grant-leak', body.replace('            endBackgroundHold()\n        }', '            // omitted dismissal cleanup\n        }'), 'dismissing the reel ends its background grant'),
+    ('negative-dismissal-cancels-paid-work', body.replace('            connection.cancel()', '            work.cancel()\n            connection.cancel()'), 'dismissing the sheet leaves the paid app-owned job running'),
+    ('negative-retained-terminal-callback', body.replace('            self.resumeAction = nil; self.identityCheck = nil\n', '            self.identityCheck = nil // omitted terminal callback release\n'), 'terminal work releases the captured resume callback'),
+    ('negative-retained-dismissed-player', body.replace('player?.pause(); player = nil;', 'player?.pause();'), 'a dismissed studio releases its decoded playback session'),
+    ('negative-late-player-while-closed', body.replace('player = isPresented ? value : nil', 'player = value'), 'completion while the studio is closed cannot retain a decoded player'),
+    ('negative-duplicate-job-admission', body.replace('guard task == nil, scope.isCurrent, identityIsCurrent()', 'guard scope.isCurrent, identityIsCurrent()'), 'an already-running job admits no duplicate task'),
+    ('negative-failed-attempt-progress', body.replace('completedClips - clipIssues.count', 'completedClips'), 'progress counts retained shots rather than failed attempts'),
+    ('negative-premature-100', body.replace('min(99, Int((fraction * 100).rounded(.down)))', 'Int((fraction * 100).rounded(.down))'), 'clip completion never claims the composed video is finished'),
+    ('negative-async-expiry', body.replace('            self.endBackgroundHold()\n        }', '            Task { @MainActor in self.endBackgroundHold() }\n        }'), 'expiry ends the background grant synchronously'),
+    ('negative-stale-expiry', body.replace('guard let self, self.backgroundHoldOperation == operation else { return }', 'guard let self else { return }'), 'stale expiry cannot end a newer background grant'),
+    ('negative-expiry-poll-continues', body.replace('            self.task?.cancel()\n            self.endBackgroundHold()', '            // omitted interrupted local polling cancellation\n            self.endBackgroundHold()'), 'expiry pauses and cancels only local execution'),
+    ('negative-background-resume', body.replace('UIApplication.shared.applicationState == .active,', 'true,'), 'background expiry cannot dispatch a foreground continuation'),
+    ('negative-resume-before-retention', body.replace('            await previous?.value', '            // omitted retention wait'), 'foreground continuation waits for the interrupted task to retain paid files'),
+    ('negative-resume-post-wait-owner', body.replace('guard self.paused, self.isContextCurrent, UIApplication.shared.applicationState == .active,', 'guard self.paused, UIApplication.shared.applicationState == .active,').replace('guard self.isContextCurrent else { self.resumeAction = nil; self.followUp = nil; self.identityCheck = nil; return }', 'guard self.isContextCurrent else { self.followUp = nil; return }'), 'an account switch while cleanup awaits cannot resume the old operation'),
+    ('negative-scope-owner', body.replace('owner == AuthStore.shared.userID && revision', 'true && revision'), 'owner switch cancels its captured job'),
+    ('negative-scope-revision', body.replace('revision == AuthStore.shared.syncSessionRevision', 'true'), 'session replacement cancels its captured job'),
+    ('negative-scope-workspace', body.replace('workspace == WorkspaceContext.selectedOrgID', 'true'), 'workspace switch cancels its captured job'),
+    ('negative-scope-consent-grant', body.replace('consentRevision == AIConsent.shared.revocationRevision', 'true'), 'revoked then granted consent cancels its captured job'),
+    ('negative-listing-permission', body.replace('scope.isCurrent && (identityCheck?() ?? true)', 'scope.isCurrent'), 'listing removal cancels its captured job'),
     ('negative-notice-owner-fence', body.replace('guard PushManager.currentIdentity == identity,', 'guard true,'), "owner switch during notification settings cannot enqueue the old owner's banner"),
     ('negative-notice-revision-fence', body.replace('guard PushManager.currentIdentity == identity,', 'guard PushManager.currentIdentity?.owner == identity.owner,'), "same-owner session replacement cannot enqueue an earlier session's banner"),
     ('negative-notice-foreground-fence', body.replace('UIApplication.shared.applicationState != .active else { return }\n                let content', 'true else { return }\n                let content'), 'returning to the foreground while settings load suppresses the banner'),
 ]
-receipt = {'passed': False, 'start_source_sha256': before, 'runs': [], 'limitations': ['Actual source-extracted methods execute with synthetic UIApplication/UNUserNotificationCenter. No APNs delivery, OS grant duration, suspension or killed-process execution proof.']}
+receipt = {'passed': False, 'start_source_sha256': before, 'runs': [], 'limitations': ['Actual app-level queue/task/identity/expiry/resume and notice methods execute with synthetic observable/UIApplication/UNUserNotificationCenter boundaries. No APNs delivery, OS grant duration, suspension, real composition or killed-process execution proof.']}
 try:
     for name, text, reason in variants:
         assert reason is None or text != body, name + ' mutation anchor missing'

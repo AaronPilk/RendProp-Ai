@@ -3130,6 +3130,7 @@ struct RendpropApp: App {
     // MARK: - analytics additions (P3)
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var analyticsAuth = AuthStore.shared
+    @ObservedObject private var reelConsent = AIConsent.shared
     // MARK: - end analytics additions
 
     init() {
@@ -3173,6 +3174,7 @@ struct RendpropApp: App {
             .onChange(of: scenePhase) { phase in
                 Analytics.sceneChanged(phase)
                 if phase == .active {
+                    ReelWorkQueue.shared.resumeForeground()
                     model.refreshSpatialCapability()
                     Task { await model.refreshCloudWorkspace() }
                     // iOS Settings can change the notification permission while
@@ -3181,6 +3183,15 @@ struct RendpropApp: App {
                     // so Settings never shows a stale answer.
                     Task { await push.refreshAuthorization(registerIfAllowed: true) }
                 }
+            }
+            .onChange(of: analyticsAuth.syncSessionRevision) { _ in
+                ReelWorkQueue.shared.reconcileIdentity()
+            }
+            .onChange(of: reelConsent.isGranted) { _ in
+                ReelWorkQueue.shared.reconcileIdentity()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+                ReelWorkQueue.shared.reconcileIdentity()
             }
             // Universal Links. `onContinueUserActivity` is the https path (a
             // tap in Messages, Mail, Safari); `onOpenURL` catches the
@@ -3428,6 +3439,7 @@ struct RootTabView: View {
     var body: some View {
         VStack(spacing: 0) {
             PhotoWorkBanner()
+            ReelWorkBanner()
             tabs.id(NativePresentationScope(actorID: workspaceAuth.userID,
                                             orgID: workspace.snapshot?.selectedOrgID))
         }
