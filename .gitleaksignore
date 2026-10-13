@@ -105,3 +105,5 @@ d46f3dfedb6e5f86b9234e275a50395fddf967ab:docs/releases/TESTFLIGHT-55-FINAL-AUDIT
 7d0533a0f95d55823603201a977ca413b9fea067:docs/releases/BUILD59-FEEDBACK-BACKEND-20261011.json:generic-api-key:28
 7d0533a0f95d55823603201a977ca413b9fea067:docs/releases/BUILD59-FEEDBACK-BACKEND-20261011.json:generic-api-key:31
 7d0533a0f95d55823603201a977ca413b9fea067:docs/releases/BUILD59-FEEDBACK-BACKEND-20261011.json:generic-api-key:43
+# Historical false positive: offline photo-quality RPC/fetch fixture identifier; current fixture uses a readable counter ID.
+83fd11e4e4924595a4a2ee0c46ee2453f95e68fb:services/supabase/functions/ai-photo/photo-quality.test.ts:generic-api-key:38
