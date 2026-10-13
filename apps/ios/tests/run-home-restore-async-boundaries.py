@@ -47,7 +47,7 @@ def replace_one(source, old, new):
 
 
 receipt = {'passed': False, 'start_source_sha256': hashes(), 'commands': [], 'runs': [],
-           'limitations': ['Model/client restore, RecentlyDeletedView restore callback, restore DTO, form context predicates and current-location/cancel bodies execute unchanged.',
+           'limitations': ['Model/client restore, RecentlyDeletedView restore callback, restore DTO, form context predicates and current-location/cancel/apply-suggestion bodies execute unchanged.',
                           'Auth, workspace routing, token wait, HTTP response, cloud refresh, GPS and geocoder are closed controlled doubles.',
                           'The actual whole refresh/merge, full URLSession auth executor and SwiftUI lifecycle are outside this isolated gate.',
                           'UI lifecycle wiring is source checked; reference-backed fixture state mirrors SwiftUI State value access without app compilation.',
@@ -87,6 +87,7 @@ try:
         'HOME_CANCEL': block(home, '    private func cancelCurrentLocation() {'),
         'LISTING_CONTEXT': block(new, '    private var formContextIsCurrent: Bool {'),
         'LISTING_LOCATION': block(new, '    private func useCurrentLocation() {'),
+        'LISTING_APPLY_LOCATION': block(new, '    private func applyLocationSuggestion('),
         'LISTING_CANCEL': block(new, '    private func cancelCurrentLocation() {'),
         'CALLER_RESTORE': block(recent, '    private func restore(_ row: TrashedListing) {'),
     }

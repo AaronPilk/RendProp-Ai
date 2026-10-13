@@ -18,8 +18,12 @@ try{
   if(!id.endsWith("/src/editor/export.ts"))return;
   const buffer='if (originalAudio && audio && clip.source.kind === "video" && (clip.speed ?? 1) === 1 &&';
   const stall='const refuseStall = () => controller.abort(new Error("Original audio playback stalled during export. No download was created. Try a shorter clip or export with audio explicitly muted."));';
-  assert(code.includes(buffer)&&code.includes(stall),"Original-audio mutation sentinel missing");mutated=true;
-  return code.replace(buffer,'if (false && originalAudio && audio && clip.source.kind === "video" && (clip.speed ?? 1) === 1 &&').replace(stall,'const refuseStall = () => {};');
+  const clock='const recordingClock = new RecordingClock();';
+  assert(code.includes(buffer)&&code.includes(stall)&&code.split(clock).length===2,"Original-audio mutation sentinel missing");mutated=true;
+  // Isolate the historical bad-audio recording so the unchanged RMS oracle
+  // actually sees it. Shipping clock safety is independently tested in the
+  // resume suite; retaining it here would intercept the mutant before audio.
+  return code.replace(buffer,'if (false && originalAudio && audio && clip.source.kind === "video" && (clip.speed ?? 1) === 1 &&').replace(stall,'const refuseStall = () => {};').replace(clock,'const recordingClock = { read: () => {} };');
  }}]:[],build:{outDir:dist,rollupOptions:{input:join(root,"tests/export-audio-fixture.html")}}});
  if(fault)assert(mutated,"Negative control did not compile the product mutation");
  server=createServer(async(req,res)=>{const path=resolve(dist,`.${new URL(req.url,"http://localhost").pathname}`);if(!path.startsWith(`${dist}/`)||req.method!=="GET")return res.writeHead(400).end();try{res.setHeader("Content-Type",({".html":"text/html",".js":"application/javascript"})[extname(path)]??"application/octet-stream");res.end(await readFile(path));}catch{res.writeHead(404).end();}});

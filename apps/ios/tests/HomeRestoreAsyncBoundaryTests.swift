@@ -140,6 +140,7 @@ enum AppModel { static func userMessage(for error: Error) -> String { String(des
     let locator = OneShotLocation()
     @FixtureState var locating = false
     @FixtureState var pendingCoord: CLLocationCoordinate2D?
+    @FixtureState var pendingCoordAddress: String?
     @FixtureState var locationRequestID: UUID?
     @FixtureState var locationGeocoder: CLGeocoder?
     func begin() { useCurrentLocation() }
@@ -147,6 +148,7 @@ enum AppModel { static func userMessage(for error: Error) -> String { String(des
     static func formatAddress(_ placemark: CLPlacemark) -> String { placemark.address }
     // __LISTING_CONTEXT__
     // __LISTING_LOCATION__
+    // __LISTING_APPLY_LOCATION__
     // __LISTING_CANCEL__
 }
 
@@ -327,6 +329,8 @@ enum AppModel { static func userMessage(for error: Error) -> String { String(des
         check(listing.form.address == "200 Synthetic Geocoded Lane" && listing.form.unit == "12", "Listings accepts a street without changing the entered unit")
         check(listing.pendingCoord?.latitude == 35.123 && listing.pendingCoord?.longitude == -80.988,
             "Listings stores only the coarse coordinate after an accepted geocode")
+        check(listing.pendingCoordAddress == listing.form.address,
+            "Listings binds the accepted coordinate to its exact suggested address")
         check(!listing.locating && listing.locationGeocoder == nil, "Listings finishes its location request")
         for mutation in 0..<3 {
             reset(); let subject = ListingLocationHarness(); subject.begin(); subject.locator.pending?(CLLocation())

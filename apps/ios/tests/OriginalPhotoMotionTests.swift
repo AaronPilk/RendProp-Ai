@@ -4,6 +4,16 @@ import Foundation
 import ImageIO
 import UIKit
 
+// Closed review boundary for this media fixture. It proves the extracted
+// preparation method invokes review before encoding, not persisted approval.
+// run-photo-reel-egress.py executes the real PhotoVersionHistory file policy.
+enum PhotoVersionHistory {
+    static var rejectReview = false
+    static func requireReelReview(imageURL: URL) throws {
+        if rejectReview { throw NSError(domain: "ClosedPhotoReview", code: 1) }
+    }
+}
+
 @main struct OriginalPhotoMotionTests {
     @MainActor static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
@@ -26,6 +36,15 @@ import UIKit
         let input = root.appendingPathComponent("selected-photo.jpg")
         try jpeg.write(to: input)
         let hash = SHA256.hash(data: jpeg)
+        PhotoVersionHistory.rejectReview = true
+        do {
+            _ = try ReelQualityPrep.preparedReelJPEG(photo: EnhancedPhoto(enhancedURL: input), aspect: "9:16")
+            check(false, "source preparation invokes closed review before encoding")
+        } catch {
+            check((error as NSError).domain == "ClosedPhotoReview", "source preparation invokes closed review before encoding")
+        }
+        PhotoVersionHistory.rejectReview = false
+        check(try Data(contentsOf: input) == jpeg, "closed review refusal preserves the stored source bytes")
         func pixel(_ image: CGImage, x: Int, y: Int) -> [Int] {
             var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
             bytes.withUnsafeMutableBytes { ptr in

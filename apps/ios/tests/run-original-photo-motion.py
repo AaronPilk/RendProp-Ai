@@ -49,8 +49,9 @@ variants = [
             image.draw(in: CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height))
         }
     }'''), 'conditioning preserves the complete selected photo aspect before delivery formatting'),
+    ('negative-review-boundary-removed', body.replace('try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL)', '/* closed review boundary omitted */'), 'source preparation invokes closed review before encoding'),
 ]
-receipt = {'passed': False, 'start_source_sha256': hashes(), 'consumed_source_sha256': hashlib.sha256(body.encode()).hexdigest(), 'runs': [], 'limitations': ['Actual production UIKit source preparation/downsampling/JPEG encoder, AVAssetWriter renderer and AVFoundation frame decoding with synthetic source JPEGs. No provider, physical TestFlight device, Photos export or real listing pixels. Admission/account/receipt paths are checked separately by the actual-body reel request gate. Preview layout source is inspected separately; extracted measured display aspect runs on actual encoded tracks. No claim of invented detail or provider output quality.']}
+receipt = {'passed': False, 'start_source_sha256': hashes(), 'consumed_source_sha256': hashlib.sha256(body.encode()).hexdigest(), 'runs': [], 'limitations': ['Actual production UIKit source preparation/downsampling/JPEG encoder, AVAssetWriter renderer and AVFoundation frame decoding with synthetic source JPEGs. PhotoVersionHistory is a closed review boundary here; the separate photo-reel-egress gate executes the real persisted history policy. No provider, physical TestFlight device, Photos export or real listing pixels. Admission/account/receipt paths are checked separately by the actual-body reel request gate. Preview layout source is inspected separately; extracted measured display aspect runs on actual encoded tracks. No claim of invented detail or provider output quality.']}
 def command(name, argv, timeout=120, check=True):
     result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     (out / (name + '.log')).write_text(result.stdout + result.stderr)
