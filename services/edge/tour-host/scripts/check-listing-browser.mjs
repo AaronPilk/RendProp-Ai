@@ -668,7 +668,12 @@ try {
   check(mediaRequests().length === unbrandedStart, "Unbranded listing also waits for an explicit watch action");
   check(await page.locator("form,input,textarea,#share,#brand,#wm,#endcard").count() === 0, "Unbranded DOM has no agent, lead, brand or share surface");
   check(!(await page.content()).match(/Synthetic Branded Agent|Synthetic Brokerage|synthetic-agent@example\.test|rendprop\.com|book a showing/i), "Unbranded markup, script and metadata leak no sentinel identity/promotion");
-  check((await page.locator("#disclosure summary").innerText()).includes("digitally altered or AI-generated"), "Unbranded alteration summary stays visible even when mobile details are collapsed");
+  const unbrandedDisclosureSummary = page.locator("#disclosure summary");
+  check(await unbrandedDisclosureSummary.isVisible(), "Unbranded alteration summary stays visible even when mobile details are collapsed");
+  const unbrandedDisclosureText = await unbrandedDisclosureSummary.innerText();
+  check(unbrandedDisclosureText.includes("Digitally edited or AI-generated media")
+    && unbrandedDisclosureText.includes(" · 1 item · ")
+    && unbrandedDisclosureText.includes("View details and originals"), "Unbranded disclosure identifies the one altered item and access to its original");
   if (!(await page.locator("#disclosure details").evaluate((el) => el.open))) await page.locator("#disclosure summary").click();
   check(await page.locator("#disclosure").innerText().then((text) => text.includes("Objects were removed digitally.")), "Unbranded user can expand and read the exact AI alteration disclosure");
   await entry.scrollIntoViewIfNeeded();
