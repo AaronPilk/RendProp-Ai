@@ -904,12 +904,13 @@ select 'the allowlist holds exactly the seeded owner, normalised',
 from admin_allowlist;
 
 insert into _inv(name, pass, note)
-select 'is_admin() is a SECURITY DEFINER with search_path pinned to public',
+select 'is_admin() is a SECURITY DEFINER with an empty search_path and qualified authority tables',
        count(*) = 1, format('%s match(es)', count(*))
 from pg_proc p
 where p.pronamespace = 'public'::regnamespace and p.proname = 'is_admin' and p.pronargs = 0
   and p.prosecdef
-  and 'search_path=public' = any(p.proconfig);
+  and 'search_path=""' = any(p.proconfig)
+  and p.prosrc like '%public.profiles%' and p.prosrc like '%auth.users%';
 
 -- Same reasoning as is_org_member (0005b): a helper used inside an RLS policy
 -- must stay executable by every role that can reach the table, or an anonymous
@@ -1655,8 +1656,9 @@ begin
 
   -- (e) WHO MAY SEE THE OUTAGE MAP. Same shape as 0017's rate_limits check: a
   -- non-admin gets ZERO ROWS (not an error), an admin sees everything.
-  insert into auth.users (id, email, raw_user_meta_data)
-    values (uAdm, 'aaron@pilk.ai', '{"full_name":"Owner"}');
+  -- This positive fixture represents the verified allowlisted owner.
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
+    values (uAdm, 'aaron@pilk.ai', now(), '{"full_name":"Owner"}');
   insert into auth.users (id, email, raw_user_meta_data)
     values (uTen, '_inv-router-tenant@example.com', '{"full_name":"Tenant"}');
 
