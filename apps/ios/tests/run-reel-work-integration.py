@@ -42,8 +42,10 @@ assert 'if value == nil { reviewJobID = nil }'in banner
 assert 'pendingReelJobID = nil'in block(push,'func accountWillChange(')
 body='import Foundation\n'+block(banner,'enum ReelWorkBannerCopy {')+'\n'+block(banner,'@MainActor enum ReelWorkReviewAdmission {')+'\n'+block(push,'enum ReelCompletionNotice {')+'\n'
 body+='''@MainActor final class PushManager {
+ static let shared=PushManager()
  static var currentIdentity:PushAccountIdentity?
  static let isSuppressed=false
+ var localDataErasureRevision:UInt64=0
  var pendingRoute:PushRoute?;var pendingReelJobID:UUID?
 '''
 for anchor in ['    static func accepts(payload:','    func handle(payload:','    func clearPendingReelJob()']:
@@ -58,6 +60,7 @@ controls=[
  ('lost-job-payload', 'content.userInfo["reel_job_id"] = jobID.uuidString', 'content.userInfo["reel_job_id"] = "invalid"', 'completion payload preserves exact job and listing identity'),
  ('foreign-recipient', 'guard !Self.isSuppressed, Self.accepts(payload: payload, identity: Self.currentIdentity) else { return }', 'guard !Self.isSuppressed else { return }', 'foreign recipient cannot route a reel'),
  ('late-owner-switch', 'guard PushManager.currentIdentity == identity,', 'guard true,', 'account replacement during OS settings cannot enqueue old result'),
+ ('late-local-erasure', 'PushManager.shared.localDataErasureRevision == erasureRevision,', 'true,', 'local erasure during OS settings suppresses the earlier reel notice'),
  ('late-foreground', 'UIApplication.shared.applicationState != .active else { return }\n                let content', 'true else { return }\n                let content', 'foreground return during settings suppresses completion notification'),
 ]
 variants=[('actual',body,None)]+[(n,body.replace(old,new,1),reason)for n,old,new,reason in controls]

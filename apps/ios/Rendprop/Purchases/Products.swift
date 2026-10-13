@@ -124,7 +124,7 @@ struct PlanAllowances: Hashable, Sendable {
     var benefitLines: [String] {
         var lines: [String] = [
             "\(renders) cloud tour \(renders == 1 ? "render" : "renders") a month",
-            "\(photoEdits) AI photo edits",
+            "High-resolution AI photo edits",
             "\(reels) reel \(reels == 1 ? "clip" : "clips")",
             "\(aerials) aerial \(aerials == 1 ? "intro" : "intros")",
         ]

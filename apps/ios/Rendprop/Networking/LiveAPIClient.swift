@@ -1675,33 +1675,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// non-nil (an `Optional` boxed as `Any` inside a JSON body is a known
     /// `JSONSerialization` foot-gun, so the key is just omitted instead).
     func coach(_ request: CoachRequest) async throws -> CoachResponse {
-        var context: [String: Any] = [
-            "listings": request.context.listings.map { l -> [String: Any] in
-                [
-                    "id": l.id,
-                    "title": l.title,
-                    "has_video": l.hasVideo,
-                    "room_tags": l.roomTags,
-                    "has_tour": l.hasTour,
-                    "published": l.published,
-                    "photos": l.photos,
-                    "edits": l.edits,
-                    "reels": l.reels,
-                    "attention": l.attention ?? "",
-                    "server_id": l.serverID.map { $0 as Any } ?? NSNull(),
-                    "local_draft": l.localDraft,
-                ]
-            },
-            "plan": request.context.plan,
-        ]
-        if let screen = request.context.screen { context["screen"] = screen }
-        if let selected = request.context.selectedListingID { context["selected_listing_id"] = selected }
-
-        let body: [String: Any] = [
-            "messages": request.messages.map { ["role": $0.role, "content": $0.content] },
-            "space_type": request.spaceType,
-            "context": context,
-        ]
+        let body = request.wireBody
         // `aiSession`, not the default one: this asks Claude a question with a
         // system prompt and up to 25 listings of context behind it, and every
         // other model-backed route on this client already uses the longer

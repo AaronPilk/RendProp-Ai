@@ -576,6 +576,9 @@ private struct SelectedPlanDetails: View {
                     .font(.rpCaption).foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Text("Photo edits, reels and other AI tools share your monthly AI allowance. Each tool also has a usage limit. See Plan & usage for what remains.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
             DisclosureGroup("How video allowances work") {
                 Text(PlanAllowances.videoAllowanceExplanation)
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)

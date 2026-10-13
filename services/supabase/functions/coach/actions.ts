@@ -59,7 +59,7 @@ export const RETIRED_ACTIONS: ReadonlySet<ActionType> = new Set(["open_floor_pla
 const DEFAULT_LABEL: Record<ActionType, string> = {
   start_project: "Start my first project",
   open_tour: "Open the tour",
-  open_photos: "Open Photo Studio",
+  open_photos: "Open Photos",
   open_reel: "Make a reel",
   open_floor_plan: "Open Measurements",
   open_aerial: "Make an aerial shot",

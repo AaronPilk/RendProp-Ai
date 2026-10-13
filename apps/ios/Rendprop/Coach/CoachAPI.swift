@@ -36,12 +36,21 @@ struct CoachRequest: Sendable {
         var localDraft: Bool = false
     }
 
+    struct ReelState: Sendable, Equatable {
+        enum Phase: String, Sendable { case generating, stitching, paused, ready, savedRequest = "saved_request", needsReview = "needs_review" }
+        var phase: Phase
+        var completed: Int
+        var total: Int
+        var stillPhotoShots: Int
+    }
+
     struct Context: Sendable {
         var listings: [ListingContext]
         var plan: String
         /// A closed screen hint; matches AskAIScreen and the server's vocabulary.
         var screen: String?
         var selectedListingID: String? = nil
+        var reelState: ReelState? = nil
     }
 
     /// Oldest first; the LAST entry must be the user's newest message.
@@ -51,6 +60,28 @@ struct CoachRequest: Sendable {
     /// Captured workspace routing metadata. This becomes X-Org-Id, never a
     /// prompt/body field, and must not be reread after an asynchronous hop.
     var orgID: UUID? = nil
+
+    /// The real transport uses this closed, inspectable body. Routing metadata,
+    /// account ids, raw progress text/errors, coordinates and media are omitted.
+    var wireBody: [String: Any] {
+        var contextBody: [String: Any] = [
+            "listings": context.listings.map { l -> [String: Any] in
+                ["id": l.id, "title": l.title, "has_video": l.hasVideo,
+                 "room_tags": l.roomTags, "has_tour": l.hasTour, "published": l.published,
+                 "photos": l.photos, "edits": l.edits, "reels": l.reels,
+                 "attention": l.attention ?? "", "server_id": l.serverID.map { $0 as Any } ?? NSNull(),
+                 "local_draft": l.localDraft]
+            }, "plan": context.plan,
+        ]
+        if let screen = context.screen { contextBody["screen"] = screen }
+        if let selected = context.selectedListingID { contextBody["selected_listing_id"] = selected }
+        if context.screen == "reel_studio", context.selectedListingID != nil, let state = context.reelState {
+            contextBody["reel_state"] = ["phase": state.phase.rawValue, "completed": state.completed,
+                                         "total": state.total, "still_photo_shots": state.stillPhotoShots]
+        }
+        return ["messages": messages.map { ["role": $0.role, "content": $0.content] },
+                "space_type": spaceType, "context": contextBody]
+    }
 }
 
 /// The closed action enum — MUST stay in lockstep with `ACTION_TYPES` in
@@ -74,7 +105,7 @@ enum CoachActionType: String, Sendable {
         switch self {
         case .startProject:  return "Start my first project"
         case .openTour:      return "Open the tour"
-        case .openPhotos:    return "Open Photo Studio"
+        case .openPhotos:    return "Open Photos"
         case .openReel:      return "Make a reel"
         case .openFloorPlan: return "Open Measurements"
         case .openAerial:    return "Make an aerial shot"

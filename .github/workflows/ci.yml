@@ -59,6 +59,10 @@ jobs:
       # the consent persistence gate. None of them is a UI runtime test.
       - name: Phase 1 source and executable-Swift gates (tests/phase1/*.test.mjs)
         run: node --test tests/phase1/*.test.mjs
+      - name: Ask AI offline replies and selected-screen privacy controls
+        run: |
+          set -o pipefail
+          bash tests/phase1/run-unit.sh 2>&1 | tee "$RUNNER_TEMP/rendprop-coach-native.log"
       - name: Draft corrections survive an older cloud snapshot
         run: python3 tools/audit/complete-product-20260922/photos_sync.py --output-directory "$RUNNER_TEMP/rendprop-photos-sync/baseline"
       - name: Draft sync rejects compiled dirty-write and identity regressions
@@ -156,14 +160,18 @@ jobs:
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
         run: bash apps/ios/tests/run-photo-delivery.sh
+      - name: Photo review previews and pre-sign-in playback preserve local privacy
+        run: python3 apps/ios/tests/run-photo-review-preview.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-preview"
+      - name: Bundled quick-start video stays under 45 seconds with a readable transcript
+        run: |
+          if ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          python3 apps/ios/tests/run-quick-start-video.py --evidence-dir "$RUNNER_TEMP/rendprop-quick-start-video"
       - name: Photo review and saved reel settings stay bound to the selected versions
         run: python3 apps/ios/tests/run-photo-reel-egress.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-reel-egress"
       - name: Room names and listing coordinates commit the current form values
         run: python3 apps/ios/tests/run-native-form-commits.py --evidence-dir "$RUNNER_TEMP/rendprop-native-form-commits"
-      - name: Actual UIKit JPEG exports, level crops and original-byte preservation
-        run: |
-          python3 tools/audit/test_photo_export_simulator_discovery.py
-          python3 apps/ios/tests/run-photo-export-renderer.py
       - name: Actual gallery sync races, warning recovery and provenance fences
         run: |
           python3 tools/audit/gallery-sync-20261002/run.py
@@ -180,8 +188,6 @@ jobs:
           path: |
             ${{ runner.temp }}/rendprop-reel-batch-stop/receipt.json
             ${{ runner.temp }}/rendprop-reel-batch-stop/*.log
-      - name: Paid reel requests survive lost responses and retain downloaded clips
-        run: python3 apps/ios/tests/run-reel-request-recovery.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-request-recovery-$GITHUB_RUN_ATTEMPT"
       - name: Actual QC wire preserves first attempt, bounded retry and provenance
         run: python3 apps/ios/tests/run-video-drift-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-video-drift-wire"
       - name: Full-photo reel framing preserves wire intent and legacy receipts
@@ -326,9 +332,9 @@ jobs:
         with:
           name: native-audit-evidence-${{ github.run_attempt }}
           path: |
-            ${{ runner.temp }}/rendprop-reel-request-recovery-*/receipt.json
-            ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.log
-            ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.swift
+            ${{ runner.temp }}/rendprop-coach-native.log
+            /tmp/rendprop-coach-privacy.*/*.log
+            /tmp/rendprop-coach-privacy.*/*.swift
             ${{ runner.temp }}/rendprop-video-drift-wire/receipt.json
             ${{ runner.temp }}/rendprop-video-drift-wire/*.log
             ${{ runner.temp }}/rendprop-video-drift-wire/*.swift
@@ -341,6 +347,12 @@ jobs:
             ${{ runner.temp }}/rendprop-reel-lifecycle/*.log
             ${{ runner.temp }}/rendprop-photo-reel-egress/receipt.json
             ${{ runner.temp }}/rendprop-photo-reel-egress/*.log
+            ${{ runner.temp }}/rendprop-photo-review-preview/receipt.json
+            ${{ runner.temp }}/rendprop-photo-review-preview/*.log
+            ${{ runner.temp }}/rendprop-photo-review-preview/*.swift
+            ${{ runner.temp }}/rendprop-quick-start-video/receipt.json
+            ${{ runner.temp }}/rendprop-quick-start-video/ffprobe.json
+            ${{ runner.temp }}/rendprop-quick-start-video/ffprobe.stderr
             ${{ runner.temp }}/rendprop-native-form-commits/receipt.json
             ${{ runner.temp }}/rendprop-native-form-commits/*.log
             ${{ runner.temp }}/rendprop-reel-work-integration/receipt.json
@@ -378,10 +390,6 @@ jobs:
             /tmp/rendprop-photo-reconciliation-*/*.log
             ${{ runner.temp }}/rendprop-profile-beta-*/receipt.json
             ${{ runner.temp }}/rendprop-profile-beta-*/*.log
-            ${{ runner.temp }}/rendprop-photo-export-renderer-*/receipt.json
-            ${{ runner.temp }}/rendprop-photo-export-renderer-*/*.log
-            ${{ runner.temp }}/rendprop-reel-request-recovery-*/receipt.json
-            ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.log
             ${{ runner.temp }}/rendprop-adoption-owned-*/receipt.json
             ${{ runner.temp }}/rendprop-adoption-owned-*/*.log
             ${{ runner.temp }}/rendprop-testing-allowance/receipt.json
@@ -396,6 +404,67 @@ jobs:
             ${{ runner.temp }}/rendprop-push-account-isolation/**/*.log
           retention-days: 7
           if-no-files-found: warn
+
+  native-photo-renderer:
+    name: Actual UIKit photo exports and classified controls
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Actual UIKit JPEG exports, level crops and original-byte preservation
+        run: |
+          python3 tools/audit/test_photo_export_simulator_discovery.py
+          python3 apps/ios/tests/run-photo-export-renderer.py
+      - name: Retain actual UIKit renderer receipts and control logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-photo-renderer-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-photo-export-renderer-*/receipt.json
+            ${{ runner.temp }}/rendprop-photo-export-renderer-*/*.log
+          retention-days: 7
+          if-no-files-found: warn
+
+  native-reel-recovery:
+    name: Paid reel recovery and classified controls
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Paid reel requests survive lost responses and retain downloaded clips
+        run: python3 apps/ios/tests/run-reel-request-recovery.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-request-recovery-$GITHUB_RUN_ATTEMPT"
+      - name: Retain paid recovery receipts, sources and control logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-reel-recovery-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-reel-request-recovery-*/receipt.json
+            ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.log
+            ${{ runner.temp }}/rendprop-reel-request-recovery-*/*.swift
+          retention-days: 7
+          if-no-files-found: warn
+
+  native-audit-required:
+    name: All native audit gates required
+    if: always()
+    needs: [audit-harnesses, native-photo-renderer, native-reel-recovery]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require every native audit job to succeed
+        env:
+          AUDIT_RESULT: ${{ needs['audit-harnesses'].result }}
+          PHOTO_RESULT: ${{ needs['native-photo-renderer'].result }}
+          REEL_RESULT: ${{ needs['native-reel-recovery'].result }}
+        run: |
+          test "$AUDIT_RESULT" = success
+          test "$PHOTO_RESULT" = success
+          test "$REEL_RESULT" = success
 
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)

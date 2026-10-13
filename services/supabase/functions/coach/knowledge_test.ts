@@ -15,26 +15,13 @@ function fact(topic: string): string {
 }
 
 function requireAccountPolicy(text: string): void {
-  assert(
-    text.includes("No account is required"),
-    "must explicitly reject an account requirement",
-  );
-  assert(text.includes("publish"), "publication must be included");
-  assert(
-    text.includes("Sign in with Apple is optional"),
-    "Apple identity must remain optional",
-  );
-  assert(
-    text.includes("internet connection"),
-    "anonymous publication does not mean offline publication",
-  );
-  assert(
-    !/fully signed out|needed only to publish|no server account/i.test(text),
-    "stale session/identity claim",
-  );
+  assert(text.includes("identified account"), "online publishing/AI must require identified account");
+  assert(text.includes("internet connection"), "online access requires network");
+  assert(text.includes("Local recording"), "local work remains distinct from paid/cloud tools");
+  assert(!text.includes("Sign in with Apple is optional"), "obsolete optional online sign-in policy");
 }
 
-Deno.test("knowledge: publication does not require an identified account", () => {
+Deno.test("knowledge: online publishing/AI require identified account", () => {
   requireAccountPolicy(fact("Signing in — what needs an account"));
 });
 

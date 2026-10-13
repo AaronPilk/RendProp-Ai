@@ -60,9 +60,29 @@ enum Analytics {
     static let shared = PurchaseManager()
     var activePlan: String? { fatalError("No purchase state in this test") }
 }
-enum EnhancedPhoto {
-    static func loadAll(listingID: UUID) -> [Int] { fatalError("No real photo reads") }
+struct EnhancedPhoto {
+    struct Version { let effects: [String] }
+    var savedVersion: Version?
+    static func loadAll(listingID: UUID) -> [EnhancedPhoto] { fatalError("No real photo reads") }
 }
+// Closed queue/media boundary only; actual Coach mapping/wire bodies are compiled.
+@MainActor final class ReelWorkJob {
+    enum Phase { case setup, generating, stitching, done, failed, paused }
+    var listingID: UUID
+    var paused = false
+    var pendingRequest: Int? = nil
+    var phase: Phase = .generating
+    var totalClips = 8
+    var completedClips = 3
+    var clipIssues: [Int] = []
+    var originalPhotoMotionShots = 1
+    init(listingID: UUID) { self.listingID = listingID }
+}
+@MainActor final class ReelWorkQueue {
+    static let shared = ReelWorkQueue()
+    var visibleJobs: [ReelWorkJob] = []
+}
+
 enum FileStore {
     static var documents: URL { fatalError("No real document reads") }
 }
@@ -88,12 +108,13 @@ struct CoachOfflineTests {
             let queries = ["Do I need an account?", "Is an account needed?",
                            "Can I publish as a guest?", "Do I have to sign in?",
                            "CAN I PUBLISH AS A GUEST?"]
-            let expected = "No account is required to record, edit, build or publish a tour. " +
-                "Publishing needs an internet connection. Sign in with Apple is optional " +
-                "for accessing your workspace on another device."
+            let expected = "Local recording and saved photo work can stay on this phone. Publishing and online " +
+                "AI tools require an identified account, an internet connection and the required " +
+                "AI consent/access. Sign in with Apple to open or adopt your account; a guest session " +
+                "cannot publish or use paid AI until sign-in."
             for query in queries {
                 let response = CoachOffline.answer(to: query, model: model, space: .realEstate)
-                try check(response.text.hasPrefix(expected), "actual account reply still requires identity: \(query)")
+                try check(response.text.hasPrefix(expected), "actual account reply must distinguish local work from identified online tools: \(query)")
                 try check(response.text.contains("I'm answering offline right now"), "offline disclosure missing")
                 try check(response.action?.kind == .openSupport, "existing support action changed")
                 try check(response.action?.listingID == nil, "account help must not invent a listing")
@@ -125,7 +146,7 @@ struct CoachOfflineTests {
             try check(deletion.text.contains("does not cancel an App Store subscription"), "preserve billing distinction")
             try check(deletion.action?.kind == .openSupport, "topic reply must not execute deletion")
             let measurements = CoachOffline.answer(to: "How do I use Measurements?", model: model, space: .realEstate)
-            for required in ["Measurements card", "outline", "worksheet", "upload a plan", "Coming soon", "TestFlight Lab", "local capture tests", "agency and Studio capture planning"] {
+            for required in ["Coming soon", "cards on Home", "do not open yet", "no plan includes them", "upload a plan", "certified survey"] {
                 try check(measurements.text.contains(required), "actual offline Measurements guidance omitted: \(required)")
             }
             try check(!measurements.text.contains("LiDAR phones can also scan"), "ordinary offline help must not promise automatic generation")

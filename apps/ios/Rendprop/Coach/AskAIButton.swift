@@ -81,10 +81,10 @@ enum AskAIScreen: String {
                     "Which change should I use on a dark room?",
                     "Can I do all my photos at once?"]
         case .reelStudio:
-            return ["What makes a reel people actually watch?",
-                    "How long should my reel be?",
-                    "Should I use my own voice?",
-                    "What do I post this to?"]
+            return ["How do I finish this reel?",
+                    "What does Fly-through do?",
+                    "Why is this paused?",
+                    "How do I save or export?"]
         case .floorPlan:
             return ["How do I enter room measurements?",
                     "Can my phone measure a distance?",

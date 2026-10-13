@@ -69,21 +69,22 @@ import { recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { resolveRoute } from "../_shared/router.ts";
 import { runChain } from "../_shared/providers/chain.ts";
-import { fundingContext, fundedAttempt, textAttemptQuote, completeFundingOperation } from "../_shared/funded-serving.ts";
+import { fundingContext, fundedAttempt, completeFundingOperation } from "../_shared/funded-serving.ts";
 import { ProviderError } from "../_shared/providers/common.ts";
 import { anthropicMessages } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
 
 import {
-  buildUserTurn,
   type CoachContext,
   type CoachListingCtx,
   screenOf,
+  reelStateOf,
   spaceTypeOf,
   systemInstruction,
 } from "./prompt.ts";
 import { parseCoachOutput } from "./actions.ts";
 import { coachContext } from "./context.ts";
+import { boundedCoachChain, boundedCoachTurn, coachAttemptQuote, coachPromptBytes, COACH_MAX_OUTPUT_TOKENS, COACH_MAX_ATTEMPTS } from "./budget.ts";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -97,7 +98,7 @@ const DAY_WINDOW_SECONDS = 86400;
 const ORG_DAY_MAX_PER_WINDOW = 600;
 
 /** Keep the reply short and the bill small — a coaching message, not an essay. */
-const MAX_TOKENS = 600;
+const MAX_TOKENS = COACH_MAX_OUTPUT_TOKENS;
 
 /** Sliding window: only the most recent turns are sent, oldest dropped first.
  *  Bounds token cost regardless of how long a chat session runs. */
@@ -224,6 +225,7 @@ interface CoachBody {
     plan?: unknown;
     screen?: unknown;
     selected_listing_id?: unknown;
+    reel_state?: unknown;
   };
 }
 
@@ -341,6 +343,7 @@ Deno.serve(async (req) => {
       plan,
       screen: cleanScreen(body.context?.screen),
     };
+    context.reelState = reelStateOf(body.context?.reel_state, context.screen, context.selectedListingId ?? null);
     const validListingIds = new Set(context.listings.map((l) => l.id));
 
     // Rate limits, PER USER, charged before the provider call (same order as
@@ -386,12 +389,12 @@ Deno.serve(async (req) => {
     }
 
     const system = systemInstruction(space);
-    const userTurn = buildUserTurn({ space, context, history: messages });
+    const userTurn = boundedCoachTurn(system, { space, context, history: messages });
 
-    const chain = await chooseChain(context.plan);
+    const chain = boundedCoachChain(await chooseChain(context.plan), system, userTurn);
 
     const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
-    const attempt = await runChain("coach.chat", chain, (step) => fundedAttempt(funding, `coach.chat:${chain.indexOf(step)}`, step, {system, userTurn}, textAttemptQuote(step, system, userTurn, MAX_TOKENS), async () => {
+    const attempt = await runChain("coach.chat", chain, (step) => fundedAttempt(funding, `coach.chat:${chain.indexOf(step)}`, step, {system, userTurn}, coachAttemptQuote(step, system, userTurn), async () => {
       if (step.provider === "anthropic") {
         // The STEP, not step.model: that is what carries the row's `params`
         // (migration 0030) into the request. No coach.chat row seeds any, so
@@ -453,6 +456,9 @@ Deno.serve(async (req) => {
           has_action: output ? output.actions.length > 0 : null,
           parse_failed: parseFailure !== null,
           screen: context.screen,
+          prompt_bytes: coachPromptBytes(system, userTurn),
+          max_output_tokens: MAX_TOKENS,
+          attempt_limit: COACH_MAX_ATTEMPTS,
         },
       });
     } catch (e) {

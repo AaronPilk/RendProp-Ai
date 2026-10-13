@@ -10,13 +10,14 @@
 //    2026-10-02; the 3.1 migration has to be a row edit in ai_routes, not a
 //    deploy. Nothing in this file names a default model.
 //  • Normal 3.x routes explicitly request imageConfig.imageSize = "1K".
-//    An authorized, input-bounded owner comparison may explicitly request 2K.
+//    Server-prepared, prospectively priced ai-photo edits explicitly request2K.
 //    The 3.x image models bill by output resolution and their default is not 1K
 //    on every surface — an implicit default is how you silently start paying 4K
 //    rates for a 1K product.
 
 import type { RouteStep } from "../router.ts";
 import { paramsOf } from "../router.ts";
+import { photo2KInputAllowance } from "../photo-image-quality.ts";
 import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter } from "./types.ts";
 import {
   BUDGETS,
@@ -136,8 +137,7 @@ export const geminiAdapter: ProviderAdapter = {
     if (requestedSize !== undefined && requestedSize !== "1K" && requestedSize !== "2K")
       throw new ProviderError(PROVIDER, "validation", "Unknown image comparison resolution.");
     const imageSize = requestedSize === "2K" ? "2K" : "1K";
-    if (imageSize === "2K" && (input.extra?.owner_photo_2k !== true ||
-        !Number.isInteger(input.extra?.owner_photo_input_bound) || Number(input.extra?.owner_photo_input_bound) <= 0 || Number(input.extra?.owner_photo_input_bound) > 8192))
+    if (imageSize === "2K" && photo2KInputAllowance(input) === null)
       throw new ProviderError(PROVIDER, "validation", "The 2K comparison input bound was not verified.");
     const data = await fetchJson<Record<string, unknown>>(
       PROVIDER,

@@ -115,7 +115,7 @@ final class CoachModel: ObservableObject {
     private func reply(to text: String) async {
         guard currentContext else { invalidateContext(); return }
         if let help = CoachOffline.recovery(to: text, model: model, space: space, orgID: workspaceAtOpen,
-                                            liveBackend: liveBackend, selectedListingID: selectedListingID) {
+                                            liveBackend: liveBackend, selectedListingID: selectedListingID, screen: originScreen) {
             messages.append(CoachMessage(role: .assistant, text: help.text, localOnly: true,
                                          actions: help.action.map { [$0] } ?? []))
             return
@@ -148,7 +148,8 @@ final class CoachModel: ObservableObject {
                     listings: Self.contextListings(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend, selectedListingID: selectedListingID),
                     plan: PurchaseManager.shared.activePlan ?? "free",
                     screen: originScreen,
-                    selectedListingID: Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend).contains(where: { $0.id == selectedListingID }) ? selectedListingID?.uuidString.lowercased() : nil
+                    selectedListingID: Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend).contains(where: { $0.id == selectedListingID }) ? selectedListingID?.uuidString.lowercased() : nil,
+                    reelState: Self.reelState(from: model, screen: originScreen, selectedListingID: selectedListingID, orgID: workspaceAtOpen, liveBackend: liveBackend)
                 ),
                 orgID: workspaceAtOpen
             )
@@ -179,7 +180,7 @@ final class CoachModel: ObservableObject {
 
     private func offlineAnswer(to text: String) -> (text: String, action: CoachResponse.Action?) {
         CoachOffline.answer(to: text, model: model, space: space, orgID: workspaceAtOpen,
-                            liveBackend: liveBackend, selectedListingID: selectedListingID)
+                            liveBackend: liveBackend, selectedListingID: selectedListingID, screen: originScreen)
     }
 
     /// Oldest-first, newest-last — matches the server's own expectation
@@ -284,6 +285,30 @@ final class CoachModel: ObservableObject {
         return model.realProjects.filter { ($0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }
     }
 
+    /// A fresh, closed snapshot of this account's selected reel only. No job
+    /// title, URL, error/provider text or physical location enters chat context.
+    static func reelState(from model: AppModel, screen: String?, selectedListingID: UUID?, orgID: UUID?, liveBackend: Bool) -> CoachRequest.ReelState? {
+        guard screen == "reel_studio", let selectedListingID,
+              contextProjects(from: model, orgID: orgID, liveBackend: liveBackend).contains(where: { $0.id == selectedListingID }),
+              let job = ReelWorkQueue.shared.visibleJobs.first(where: { $0.listingID == selectedListingID }) else { return nil }
+        let phase: CoachRequest.ReelState.Phase
+        if job.paused { phase = .paused }
+        else if job.pendingRequest != nil { phase = .savedRequest }
+        else {
+            switch job.phase {
+            case .generating: phase = .generating
+            case .stitching: phase = .stitching
+            case .done: phase = .ready
+            case .failed: phase = .needsReview
+            case .setup, .paused: return nil
+            }
+        }
+        let total = max(0, min(100, job.totalClips))
+        let completed = max(0, min(total, job.completedClips - job.clipIssues.count))
+        return .init(phase: phase, completed: completed, total: total,
+                     stillPhotoShots: max(0, min(completed, job.originalPhotoMotionShots)))
+    }
+
     static func contextListings(from model: AppModel) -> [CoachRequest.ListingContext] {
         contextListings(from: model, orgID: WorkspaceContext.selectedOrgID, liveBackend: Config.useLiveBackend)
     }
@@ -386,16 +411,12 @@ final class CoachModel: ObservableObject {
         return String(street.prefix(48))
     }
 
-    /// `EnhancedPhoto` (FlythroughDetailView.swift) is the only place this
-    /// app counts a listing's studio photos, and every entry it returns
-    /// already carries an AI edit (its `enh-*.jpg`) — there is no "added but
-    /// not yet edited" state to report separately. `photos` and `edits` are
-    /// therefore the same real number; this is a soft coaching signal (never
-    /// billed, never a gate), so the approximation costs nothing but a
-    /// slightly plainer sentence from the coach.
+    /// Gallery families include ordinary local enhancement. Count AI-edited
+    /// current versions only when their saved history records an actual effect;
+    /// a brightness copy or unknown legacy history is not proof of an AI edit.
     fileprivate static func photoCounts(for listingID: UUID) -> (photos: Int, edits: Int) {
-        let n = EnhancedPhoto.loadAll(listingID: listingID).count
-        return (n, n)
+        let photos = EnhancedPhoto.loadAll(listingID: listingID)
+        return (photos.count, photos.filter { $0.savedVersion?.effects.isEmpty == false }.count)
     }
 
     /// Mirrors FlythroughDetailView's own (private) `reelFiles(for:)`
@@ -438,9 +459,10 @@ enum CoachOffline {
             "— text or post that one. The unbranded one has no name or branding — that's the one " +
             "your MLS's virtual-tour field wants. Both are in the tour's Share sheet."),
         Topic(keywords: ["ai disclos", "real drone", "is it ai", "virtually staged", "is this fake"], reply:
-            "Every AI photo edit is labelled \"Virtually staged\" right next to the untouched " +
-            "original, and the aerial intro is always disclosed as AI-generated — never presented " +
-            "as real drone footage."),
+            "AI disclosures describe staging, decluttering or other AI changes. Compare saved " +
+            "versions with the retained source; an original may be unverified. Staged/custom " +
+            "previews need approval before listing or reel use. AI motion is not real drone " +
+            "footage; a label does not certify accuracy or MLS acceptance."),
         Topic(keywords: ["cancel", "subscription", "manage my plan", "refund", "billing"], reply:
             "Subscriptions are billed by Apple, so managing or cancelling one happens there too: " +
             "Settings → Plan & usage → \"Manage subscription.\" Cancelling stops the next renewal " +
@@ -467,14 +489,16 @@ enum CoachOffline {
             "but the trial starts only after you confirm the subscription with Apple. Apple shows " +
             "the renewal price before you confirm. Manage or cancel it in Settings → Plan & usage."),
         Topic(keywords: ["reel", "social video"], reply:
-            "Reels turn a handful of your photos into a short vertical video — a gliding camera " +
-            "move on each photo, a voiceover, and captions that land on the beat."),
+            "Choose at least two reviewed photos in Reel Studio. Each shot is five seconds; " +
+            "Fly-through is simulated AI motion, not real drone footage. Tall or Wide uses one " +
+            "centered final crop. A quality refusal can offer an explicit safer retry or " +
+            "still-photo motion. Recover a saved request before generating again. iOS can pause " +
+            "work in the background; reopen Reel Studio to use its saved continuation."),
         Topic(keywords: ["sign in", "guest", "account needed", "do i need an account"], reply:
-            // Account-first since build 50: Apple sign-in owns the cloud workspace.
-            "Rendprop is an account-based workspace: sign in with Apple to create or " +
-            "open your account. Recording and editing work offline once you are signed in; " +
-            "publishing and AI tools need an internet connection. Your first published " +
-            "listing is free, and a plan adds AI tools and more listings."),
+            "Local recording and saved photo work can stay on this phone. Publishing and online " +
+            "AI tools require an identified account, an internet connection and the required " +
+            "AI consent/access. Sign in with Apple to open or adopt your account; a guest session " +
+            "cannot publish or use paid AI until sign-in."),
     ]
 
     private static let offlineNote = "\n\n(I'm answering offline right now, so this is from what I already know.)"
@@ -482,10 +506,24 @@ enum CoachOffline {
     /// Never returns an empty string — callers always get something to show,
     /// never a blank bubble.
     static func answer(to userText: String, model: AppModel, space: SpaceType, orgID: UUID? = nil,
-                       liveBackend: Bool = false, selectedListingID: UUID? = nil) -> (text: String, action: CoachResponse.Action?) {
+                       liveBackend: Bool = false, selectedListingID: UUID? = nil, screen: String? = nil) -> (text: String, action: CoachResponse.Action?) {
         let haystack = userText.lowercased()
-        if let help = recovery(to: userText, model: model, space: space, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID) {
+        if let help = recovery(to: userText, model: model, space: space, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID, screen: screen) {
             return help
+        }
+        if ["paused", "background", "locked", "recover", "progress", "waiting", "finish", "done"].contains(where: haystack.contains),
+           let state = CoachModel.reelState(from: model, screen: screen, selectedListingID: selectedListingID, orgID: orgID, liveBackend: liveBackend),
+           let selectedListingID {
+            let reply: String
+            switch state.phase {
+            case .paused: reply = "The saved reel is paused on this iPhone. Open Reel Studio and use its available Continue saved reel action. iOS does not guarantee completion while locked or backgrounded."
+            case .savedRequest: reply = "There is a saved request for this reel. Open Reel Studio and use Recover request to check that accepted job before generating again; recovery itself does not send a new generation."
+            case .ready: reply = "This reel is ready on this phone. Open Reel Studio to review its framing and save or export it."
+            case .generating, .stitching: reply = "This phone reports \(state.completed) of \(state.total) saved shots. Open Reel Studio to check current progress; keep the app open while it runs. I can't promise a completion time."
+            case .needsReview: reply = "Open Reel Studio to review the saved clips and its available recovery action. Do not start a duplicate generation while a saved request remains."
+            }
+            return (reply + offlineNote, CoachResponse.Action(type: CoachActionType.openReel.rawValue,
+                        label: CoachActionType.openReel.defaultLabel, listingID: selectedListingID.uuidString))
         }
         if let hit = topics.first(where: { topic in topic.keywords.contains(where: haystack.contains) }) {
             let kind: CoachActionType = hit.keywords.contains("cancel") || hit.keywords.contains("trial") ? .openPlanUsage : .openSupport
@@ -498,19 +536,22 @@ enum CoachOffline {
                     CoachResponse.Action(type: CoachActionType.openPlanUsage.rawValue,
                                          label: CoachActionType.openPlanUsage.defaultLabel, listingID: nil))
         }
-        let step = nextStep(model: model, space: space, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID)
+        let step = nextStep(model: model, space: space, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID, intent: userText, screen: screen)
         return (step.text + offlineNote, step.action)
     }
 
     /// Local recovery never sends the raw lastError to a model and never
     /// executes a paid retry. It opens the project for the user's review.
     static func recovery(to text: String, model: AppModel, space: SpaceType, orgID: UUID?,
-                         liveBackend: Bool, selectedListingID: UUID?) -> (text: String, action: CoachResponse.Action?)? {
+                         liveBackend: Bool, selectedListingID: UUID?, screen: String? = nil) -> (text: String, action: CoachResponse.Action?)? {
         let query = text.lowercased()
         guard ["needs attention", "stuck", "failed", "error", "what next", "continue", "retry", "wrong", "can't publish", "cannot publish"].contains(where: query.contains),
               let selectedListingID,
               let listing = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend).first(where: { $0.id == selectedListingID }),
               let reason = CoachModel.attention(for: listing, model: model) else { return nil }
+        // A tour's older render error is not the failure of the photo/reel
+        // editor the user is asking about. Access/facts review remains global.
+        if ["reel_studio", "photos", "photo_studio"].contains(screen ?? ""), !["cloud_access", "facts_review"].contains(reason) { return nil }
         let kind: CoachActionType
         let reply: String
         switch reason {
@@ -542,7 +583,7 @@ enum CoachOffline {
     /// ever names a listing when exactly one real project exists; with two
     /// or more, offline mode points at Home rather than guessing which one.
     static func nextStep(model: AppModel, space: SpaceType, orgID: UUID? = nil, liveBackend: Bool = false,
-                         selectedListingID: UUID? = nil) -> (text: String, action: CoachResponse.Action?) {
+                         selectedListingID: UUID? = nil, intent: String = "", screen: String? = nil) -> (text: String, action: CoachResponse.Action?) {
         let noun = space.spaceNoun
         let scoped = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend)
         let projects = selectedListingID.map { selected in scoped.filter { $0.id == selected } } ?? scoped
@@ -553,6 +594,13 @@ enum CoachOffline {
         }
         guard projects.count == 1, let listing = projects.first else {
             if projects.isEmpty {
+                let request = intent.lowercased()
+                let card = ["photo", "staging", "declutter", "edit"].contains(where: request.contains) || ["photos", "photo_studio"].contains(screen ?? "") ? "Edit photos" :
+                    ["reel", "social video"].contains(where: request.contains) || screen == "reel_studio" ? "Social media" : request.contains("aerial") ? "Aerial shot" : nil
+                if let card {
+                    return ("Open Home, tap \(card), then Add a home to start that tool. You don't need a walkthrough first.",
+                            CoachResponse.Action(type: CoachActionType.openHome.rawValue, label: CoachActionType.openHome.defaultLabel, listingID: nil))
+                }
                 return ("Let's start your first \(noun).",
                         CoachResponse.Action(type: CoachActionType.startProject.rawValue,
                                              label: "Start my first \(noun)", listingID: nil))
@@ -562,6 +610,17 @@ enum CoachOffline {
                                          label: CoachActionType.openHome.defaultLabel, listingID: nil))
         }
         let id = listing.id.uuidString
+        let query = intent.lowercased()
+        let feature: CoachActionType? = ["photo", "staging", "declutter", "edit"].contains(where: query.contains) ? .openPhotos :
+            ["reel", "social video"].contains(where: query.contains) ? .openReel :
+            query.contains("aerial") ? .openAerial :
+            screen == "reel_studio" ? .openReel : ["photos", "photo_studio"].contains(screen ?? "") ? .openPhotos : nil
+        if let feature {
+            return (feature == .openReel ? "Open Reel Studio for this \(noun). Use at least two reviewed photos; a walkthrough is not required." :
+                    feature == .openPhotos ? "Open Photos for this \(noun), then choose the photo or edit you need. A walkthrough is not required." :
+                    "Open this \(noun)'s AI aerial intro and review its source and disclosure.",
+                    CoachResponse.Action(type: feature.rawValue, label: feature.defaultLabel, listingID: id))
+        }
         if model.assets[listing.id] == nil {
             let title = CoachModel.redactedStreet(listing.address) ?? "this \(noun)"
             return ("Next: add the walkthrough video for \(title).",

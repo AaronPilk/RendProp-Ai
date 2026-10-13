@@ -80,7 +80,30 @@ enum CloudSyncError: Error { case identityChanged }
     static let shared = PurchaseManager()
     var activePlan: String? = "pro"
 }
-enum EnhancedPhoto { static func loadAll(listingID: UUID) -> [Int] { [] } }
+struct EnhancedPhoto {
+    struct Version { let effects: [String] }
+    var savedVersion: Version?
+    static var samples: [EnhancedPhoto] = []
+    static func loadAll(listingID: UUID) -> [EnhancedPhoto] { samples }
+}
+// Closed queue/media boundary only; actual Coach mapping/wire bodies are compiled.
+@MainActor final class ReelWorkJob {
+    enum Phase { case setup, generating, stitching, done, failed, paused }
+    var listingID: UUID
+    var paused = false
+    var pendingRequest: Int? = nil
+    var phase: Phase = .generating
+    var totalClips = 8
+    var completedClips = 3
+    var clipIssues: [Int] = []
+    var originalPhotoMotionShots = 1
+    init(listingID: UUID) { self.listingID = listingID }
+}
+@MainActor final class ReelWorkQueue {
+    static let shared = ReelWorkQueue()
+    var visibleJobs: [ReelWorkJob] = []
+}
+
 enum FileStore {
     // Never point the production reel counter at a customer directory.
     static let documents = URL(fileURLWithPath: "/synthetic-coach-no-customer-files")
@@ -105,6 +128,7 @@ enum FileStore {
         SpaceType.current = .realEstate
         AIConsent.shared.granted = true; AIConsent.shared.onEnsure = nil
         Analytics.events = []
+        ReelWorkQueue.shared.visibleJobs = []; EnhancedPhoto.samples = []
     }
     static func model() -> AppModel {
         let value = AppModel()
@@ -238,6 +262,49 @@ enum FileStore {
 
             try check(CoachModel.redactedStreet("Unit B 1180 Crestline Ridge, Synthetic City") == "Crestline Ridge", "leading unit cannot preserve the house number")
             try check(CoachModel.redactedStreet("PO Box 421, Synthetic City") == nil, "postal boxes must use a generic label")
+            reset()
+            let reelApp = model(), job = ReelWorkJob(listingID: listingA)
+            ReelWorkQueue.shared.visibleJobs = [job]
+            EnhancedPhoto.samples = [.init(savedVersion: .init(effects: [])), .init(savedVersion: .init(effects: ["stage"])), .init(savedVersion: nil)]
+            let reelCoach = CoachModel(model: reelApp, originScreen: "reel_studio", listingID: listingA)
+            try await send("What is happening here?", through: reelCoach)
+            var sent = reelApp.api.requests.last!
+            try check(sent.context.listings.first?.photos == 3 && sent.context.listings.first?.edits == 1, "ordinary enhancement and unknown history are not counted as AI edits")
+            try check(sent.context.reelState == .init(phase: .generating, completed: 3, total: 8, stillPhotoShots: 1), "selected reel receives current closed phase and counts")
+            job.paused = true
+            try await send("What is happening here?", through: reelCoach)
+            try check(reelApp.api.requests.last!.context.reelState?.phase == .paused, "reel state is refreshed at send rather than frozen at sheet open")
+            reelApp.api.failNext = true
+            try await send("Why is this paused?", through: reelCoach)
+            try check(reelCoach.messages.last?.localOnly == true && reelCoach.messages.last?.text.contains("saved reel is paused") == true, "online refusal retains screen-specific local pause help")
+            try check(reelCoach.messages.last?.actions.first?.kind == .openReel, "online refusal opens the current reel instead of walkthrough capture")
+            job.paused = false; job.pendingRequest = 1; job.phase = .failed
+            try await send("What is happening here?", through: reelCoach)
+            sent = reelApp.api.requests.last!
+            try check(sent.context.reelState?.phase == .savedRequest, "durable request overrides a generic failed job for support recovery")
+            let bytes = try JSONSerialization.data(withJSONObject: sent.wireBody)
+            let wire = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+            let context = wire["context"] as! [String: Any]
+            let state = context["reel_state"] as! [String: Any]
+            try check(Set(state.keys) == Set(["phase", "completed", "total", "still_photo_shots"]), "actual wire state contains only allowlisted fields")
+            try check(state["phase"] as? String == "saved_request" && state["still_photo_shots"] as? Int == 1, "actual JSON carries exact closed state vocabulary")
+            try check(wire["org_id"] == nil && context["org_id"] == nil, "workspace routing identity never enters prompt body")
+            try check(CoachModel.reelState(from: reelApp, screen: "photos", selectedListingID: listingA, orgID: orgA, liveBackend: true) == nil, "other screen cannot transmit reel progress")
+            job.listingID = UUID()
+            try check(CoachModel.reelState(from: reelApp, screen: "reel_studio", selectedListingID: listingA, orgID: orgA, liveBackend: true) == nil, "wrong listing job cannot become selected context")
+            job.listingID = listingA
+            try check(CoachModel.reelState(from: reelApp, screen: "reel_studio", selectedListingID: listingA, orgID: orgB, liveBackend: true) == nil, "foreign cached project cannot expose a job snapshot")
+            var legacyContext = sent; legacyContext.context.reelState = nil
+            try check((legacyContext.wireBody["context"] as! [String: Any])["reel_state"] == nil, "legacy request omits optional reel state")
+            let photoStep = CoachOffline.nextStep(model: reelApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, intent: "Edit these photos")
+            try check(photoStep.action?.kind == .openPhotos, "photo intent starts Photos without requiring a walkthrough")
+            let reelStep = CoachOffline.nextStep(model: reelApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, screen: "reel_studio")
+            try check(reelStep.action?.kind == .openReel, "current Reel Studio wins over walkthrough onboarding offline")
+            let emptyPhotos = CoachOffline.nextStep(model: AppModel(), space: .realEstate, intent: "Edit my photos")
+            try check(emptyPhotos.action?.kind == .openHome && emptyPhotos.text.contains("Edit photos"), "new photo project uses its Home picker rather than tour-only start action")
+            let allowance = CoachOffline.answer(to: "My AI allowance is exhausted", model: reelApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA)
+            try check(allowance.action?.kind == .openPlanUsage && allowance.text.contains("can't verify"), "budget refusal has local account help without any paid request")
+
             print("PASS: \(assertions) production Coach privacy/scope assertions; actual offline-to-online sends, no network/providers/customer files")
         } catch {
             fputs("FAIL: \(error)\n", stderr)

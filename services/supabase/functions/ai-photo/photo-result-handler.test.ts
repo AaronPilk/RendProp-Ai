@@ -2,11 +2,19 @@ import {assert,assertEquals,assertRejects,AssertionError} from "https://deno.lan
 const actor="ea100606-0000-4000-8000-000000000001",org="ea100606-0000-4000-8000-000000000002",listing="ea100606-0000-4000-8000-000000000003";
 const encode=(source:string)=>`data:application/typescript;base64,${btoa(unescape(encodeURIComponent(source)))}`;
 const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|null=null){
+// Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
+const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
+const OUTPUT=outputJPEG();
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|null=null){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
   assert(source.includes(anchor));source=source.replace(anchor,"");
+  // The2K preparation independently validates the same bytes. The compiled
+  // unsafe-admission control must bypass both real input guards, not mistake
+  // a still-protected redundant guard removal for an observable vulnerability.
+  const second="genInput = preparePhoto2KInput(genInput);";assert(source.includes(second));
+  source=source.replace(second,'genInput = {...genInput,extra:{...genInput.extra,photo_quality_2k:true,photo_input_token_bound:4096,photo_input_allowance:8192}};');
  }
  if(removeAdmission==="chain"){
   const anchor="chain = await boundedPhotoChain(funding, chain, genInput);";
@@ -19,6 +27,9 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  if(removeAdmission==="stage"){
   const anchor='assertCustomPhotoPrompt(brief, promptSpace, "furnishing");';
   assert(source.includes(anchor));source=source.replace(anchor,"");
+ }
+ if(removeAdmission==="quality"){
+  const anchor="else if (normalPhoto2K) assertPhoto2KOutput(outB64, outMime);";assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="stage_prompt"){
   const anchor="return buildRealEstateStagePrompt(styleDesc);";
@@ -45,6 +56,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {requiredIdempotencyKey} from ${url("../_shared/idempotency.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
+ import {preparePhoto2KInput,photo2KChain,assertPhoto2KOutput} from ${url("./photo-quality.ts")};
  import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput} from ${url("./owner-photo-qa.ts")};
  const ownerQaPhotoStep=(args)=>actualOwnerQaPhotoStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})});
  import {assertCustomPhotoPrompt,assertCustomPhotoOutput} from ${url("../ai-copy/guard.ts")};
@@ -55,7 +67,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {persistOwnedPhotoResult,restorePhotoResult,photoResultKeys} from ${helper};
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
- export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
+ export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
  const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}},RE_PROMPTS={twilight:"Synthetic"};
  ${source.slice(locksStart,locksEnd)}
  ${source.slice(customStart,customEnd)}
@@ -67,9 +79,9 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const guardHelper=async()=>{state.charges++;return{orgId:state.org};},refundHelperCharge=async()=>{},improvePrompt=async()=>{state.helperDispatch++;return state.helperText;};
  const step={route_id:"fixture-route",provider:"gemini",model:MODEL,task:"photo.twilight",unit:"output_image",unit_cents:1,capabilities:[],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true};
  const routerEnabled=async()=>state.router,resolveChain=async(task)=>state.routes??[{...step,task}],legacyPhotoStep=(task)=>({...step,task}),needsForPhotoEdit=()=>[];
- const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{};
- const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/png",result_url:"data:image/png;base64,QUFB"};};
- const recordRoutedAiCost=async()=>{},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
+ const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{state.refunds++;};
+ const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
+ const recordRoutedAiCost=async(_db,args)=>{state.costs.push(structuredClone(args));},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
  const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
  if(name==="library_access"||name==="listing_library_scope"){
  if(state.deleted||state.role!=="owner"||args.p_actor!==state.actor)return {data:null,error:{message:"RP403: Current editor access is required"}};
@@ -80,7 +92,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  if(state.deleted||state.role!=="owner")return{data:null,error:{message:"RP403: Current editor access is required"}};
  if(state.started){if(state.operationInputHash!==args.p_input_sha256)return{data:null,error:{message:"RP409: This request key was used for different input"}};if(state.saved)return{data:{replay:true,result:structuredClone(state.saved)},error:null};return{data:null,error:{message:"RP409: This operation already started. Check its saved result or status before starting another"}};}
  state.started=true;state.operationInputHash=args.p_input_sha256;return{data:{begun:true},error:null};}
- if(name==="serving_cost_reserve"){state.holds++;return{data:{reserved:true},error:null};}
+ if(name==="serving_cost_reserve"){state.holds++;state.holdArguments.push(structuredClone(args));return{data:{reserved:true},error:null};}
  if(name.startsWith("org_has_"))return{data:state.qa,error:null};
  if(name==="subscription_trial_context")return{data:{trial_usage:null},error:null};
  if(name==="hosting_retention_state")return{data:{org_id:state.org,policy:"preserved",protected:true,retention_ends_at:null,hosting_available:true},error:null};
@@ -98,7 +110,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const adminClient=()=>admin;
  export const run=${source.slice(start,end)}};
  export async function restore(identity,pointer){return await restorePhotoResult(admin,identity,pointer);}
- export async function withdrawDuringSign(){return await restorePhotoResult(admin,{actorId:state.actor,orgId:state.org,requestKey:"owned-photo-0001",listingId:${JSON.stringify(listing)}},undefined,{head:async()=>({exists:true,bytes:3}),sign:async()=>{state.role="viewer";return"https://synthetic.invalid";},read:async()=>{state.gets++;throw Error("Never read after signing-time withdrawal");}});}
+ export async function withdrawDuringSign(){return await restorePhotoResult(admin,{actorId:state.actor,orgId:state.org,requestKey:"owned-photo-0001",listingId:${JSON.stringify(listing)}},undefined,{head:async()=>({exists:true,bytes:${atob(OUTPUT).length}}),sign:async()=>{state.role="viewer";return"https://synthetic.invalid";},read:async()=>{state.gets++;throw Error("Never read after signing-time withdrawal");}});}
  export {photoResultKeys,inputHash};
  `));
  const previous=globalThis.fetch;
@@ -110,11 +122,11 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  if(imported.state.storageFail)return new Response("",{status:503});
  if(imported.state.object)return new Response(null,{status:412});
  imported.state.object=await request.arrayBuffer();if(imported.state.putLost)throw Error("lost committed PUT");return new Response(null,{status:200});}
- if(method==="HEAD")return imported.state.object?new Response(null,{headers:{"content-length":String(imported.state.object.byteLength),"content-type":"image/png"}}):new Response(null,{status:404});
+ if(method==="HEAD")return imported.state.object?new Response(null,{headers:{"content-length":String(imported.state.object.byteLength),"content-type":"image/jpeg"}}):new Response(null,{status:404});
  if(method==="GET"){
  imported.state.gets++;assertEquals(request.redirect,"error");assertEquals(init?.credentials,"omit");assertEquals([...request.headers],[]);assertEquals(u.searchParams.get("X-Amz-Expires"),"600");assertEquals(u.searchParams.get("X-Amz-SignedHeaders"),"host");
  if(imported.state.withdrawOnGet)imported.state.role="viewer";
- return new Response(imported.state.object,{headers:{"content-length":String(imported.state.object?.byteLength??0),"content-type":"image/png"}});}
+ return new Response(imported.state.object,{headers:{"content-length":String(imported.state.object?.byteLength??0),"content-type":"image/jpeg"}});}
  throw Error("Unexpected R2 method");
  }) as typeof fetch;
  const image=btoa(String.fromCharCode(...[255,216,255,192,0,11,8,0,1,0,1,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
@@ -124,9 +136,9 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
 for(const [key,value] of Object.entries({CLOUDFLARE_ACCOUNT_ID:"a".repeat(32),R2_ACCESS_KEY_ID:"b".repeat(32),R2_SECRET_ACCESS_KEY:"c".repeat(64)}))Deno.env.set(key,value);
 Deno.test("actual photo handler router-off and router-on persist once and replay inline without another quota or provider",async()=>{
  for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
- const first=await f.run(f.request());assertEquals(first.status,200);const result=await first.json();assertEquals(result.image_b64,"QUFB");assert(/^ai-router\/.+\/completed-photo\/[a-f0-9]{64}\.png$/.test(result.asset_key));
- const second=await f.run(f.request());assertEquals(second.status,200);const restored=await second.json();assertEquals(restored.image_b64,"QUFB");assertEquals(restored.asset_key,result.asset_key);assertEquals(f.state.charges,1);assertEquals(f.state.submits,1);assertEquals(f.state.polls,1);assertEquals(f.state.puts,1);assertEquals(f.state.gets,1);
- assert(!JSON.stringify(f.state.saved).includes("X-Amz"));assert(!JSON.stringify(f.state.saved).includes("QUFB"));
+ const first=await f.run(f.request());assertEquals(first.status,200);const result=await first.json();assertEquals(result.image_b64,OUTPUT);assert(/^ai-router\/.+\/completed-photo\/[a-f0-9]{64}\.jpg$/.test(result.asset_key));
+ const second=await f.run(f.request());assertEquals(second.status,200);const restored=await second.json();assertEquals(restored.image_b64,OUTPUT);assertEquals(restored.asset_key,result.asset_key);assertEquals(f.state.charges,1);assertEquals(f.state.submits,1);assertEquals(f.state.polls,1);assertEquals(f.state.puts,1);assertEquals(f.state.gets,1);
+ assert(!JSON.stringify(f.state.saved).includes("X-Amz"));assert(!JSON.stringify(f.state.saved).includes(OUTPUT));
  }finally{f.close();}}
 });
 Deno.test("actual photo handler refuses malformed/animated/oversized prompt input before quota and dispatch",async()=>{
@@ -176,15 +188,15 @@ Deno.test("actual staging handler delivers furniture-only scope and exact source
   }finally{f.close();}}
  }
 });
-Deno.test("actual staging fallback keeps the same surgical prompt, brief and selected source without another helper",async()=>{
+Deno.test("actual staging refuses1K fallback while preserving the surgical prompt, brief and selected source",async()=>{
  const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
   {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.stage",unit:"output_image",unit_cents:6.7},
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.stage",unit:"output_image",unit_cents:4}];
   const brief="Outdoor chairs and a small movable table, with natural linen cushions.";
   const request=f.request({edit:"stage",style:"rustic",prompt:brief}),body=await request.clone().json();
-  const response=await f.run(request);assertEquals(response.status,200,await response.text());
-  assertEquals(f.state.submits,2);assertEquals(f.state.holds,2);assertEquals(f.state.helperDispatch,0);
-  assertEquals(f.state.prompts[0],f.state.prompts[1]);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
+  const response=await f.run(request);assertEquals(response.status,502,await response.text());
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.helperDispatch,0);
+  assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
   assert(f.state.prompts[0].includes("solid slabs solid"));assert(f.state.prompts[0].includes("existing open pergolas open"));
   for(const input of f.state.inputs){assertEquals(input.image_b64,body.image_b64);assertEquals(input.image_url,`data:image/jpeg;base64,${body.image_b64}`);}
  }finally{f.close();}
@@ -226,12 +238,12 @@ Deno.test("actual custom handler accepts all 600 accented characters without tru
  const f=await fixture();try{const response=await f.run(f.request({edit:"custom",prompt}));assertEquals(response.status,200,await response.text());assertEquals(f.state.submits,1);assert(f.state.prompts[0].includes(JSON.stringify(prompt)));}
  finally{f.close();}
 });
-Deno.test("actual custom handler's paid fallback receives exactly the same prepared scope and finish locks",async()=>{
+Deno.test("actual custom handler cannot quietly fallback to1K after its prepared2K attempt fails",async()=>{
  const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
   {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.custom",unit:"output_image",unit_cents:6.7},
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.custom",unit:"output_image",unit_cents:4}];
-  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,200,await response.text());
-  assertEquals(f.state.submits,2);assertEquals(f.state.holds,2);assertEquals(f.state.prompts[0],f.state.prompts[1]);assert(f.state.prompts[1].includes("garage-door color and finish"));assert(f.state.prompts[1].includes("trim color and finish"));
+  const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,502,await response.text());
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
  }finally{f.close();}
 });
 Deno.test("legacy photo polisher clarifies before a paid helper and refuses invented same-category work",async()=>{
@@ -255,12 +267,12 @@ Deno.test("actual photo handler refuses a duplicated priced primary before any p
 });
 Deno.test("actual photo handler recovers a committed output whose result-pointer response was lost",async()=>{
  const f=await fixture();try{f.state.completeLost=true;assertEquals((await f.run(f.request())).status,200);assertEquals(f.state.saved,null);
- const retry=await f.run(f.request());assertEquals(retry.status,200);assertEquals((await retry.json()).image_b64,"QUFB");assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);assertEquals(f.state.completes,2);assert(f.state.saved);
+ const retry=await f.run(f.request());assertEquals(retry.status,200);assertEquals((await retry.json()).image_b64,OUTPUT);assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);assertEquals(f.state.completes,2);assert(f.state.saved);
  }finally{f.close();}
 });
 Deno.test("actual photo handler recovers a lost committed PUT without another provider or object write",async()=>{
  const f=await fixture();try{f.state.putLost=true;assertEquals((await f.run(f.request())).status,503);assert(f.state.journal&&f.state.object);
- const retry=await f.run(f.request());assertEquals(retry.status,200);assertEquals((await retry.json()).image_b64,"QUFB");assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);
+ const retry=await f.run(f.request());assertEquals(retry.status,200);assertEquals((await retry.json()).image_b64,OUTPUT);assertEquals(f.state.submits,1);assertEquals(f.state.puts,1);assertEquals(f.state.charges,1);
  }finally{f.close();}
 });
 Deno.test("actual completed-image storage failure cannot start paid fallback or regenerate a missing object",async()=>{
@@ -273,7 +285,7 @@ Deno.test("actual photo replay refuses foreign exact receipt and deletion before
  }finally{f.close();}}
 });
 Deno.test("actual photo replay rechecks access after signing and after the bounded private read",async()=>{
- const f=await fixture();try{assertEquals((await f.run(f.request())).status,200);f.state.withdrawOnGet=true;const retry=await f.run(f.request());assertEquals(retry.status,403);assertEquals(f.state.gets,1);assertEquals(f.state.submits,1);const body=await retry.text();assert(!body.includes("QUFB"));assert(!body.includes("X-Amz"));
+ const f=await fixture();try{assertEquals((await f.run(f.request())).status,200);f.state.withdrawOnGet=true;const retry=await f.run(f.request());assertEquals(retry.status,403);assertEquals(f.state.gets,1);assertEquals(f.state.submits,1);const body=await retry.text();assert(!body.includes(OUTPUT));assert(!body.includes("X-Amz"));
  }finally{f.close();}
 });
 Deno.test("actual photo replay rejects signing-time access withdrawal before GET",async()=>{
@@ -302,7 +314,7 @@ Deno.test("actual saved photo recovery preserves a historical input now refused 
   // Represent an exact immutable old financial input journal, whose saved
   // owned output predates this new dispatch policy. No old provider is called.
   f.state.operationInputHash=await f.inputHash(await request.clone().json());
-  const response=await f.run(request);assertEquals(response.status,200);assertEquals((await response.json()).image_b64,"QUFB");
+  const response=await f.run(request);assertEquals(response.status,200);assertEquals((await response.json()).image_b64,OUTPUT);
   assertEquals(f.state.submits,1);assertEquals(f.state.charges,1);assertEquals(f.state.puts,1);assertEquals(f.state.gets,1);
   const changed=await f.run(f.request({image_b64:"QUFB",mime:"image/heic",label:"different"}));assertEquals(changed.status,409);assertEquals(f.state.gets,1);
  }finally{f.close();}
@@ -377,4 +389,23 @@ Deno.test("actual handler still admits safe glass, wood, painted furniture and f
   assertEquals(f.state.holds,1);assertEquals(f.state.charges,1);assertEquals(f.state.submits,1);assertEquals(f.state.helperDispatch,0);
   assert(f.state.prompts[0].includes(JSON.stringify(prompt)));assert(f.state.prompts[0].includes("garage-door color and finish"));
  }finally{f.close();}}
+});
+
+Deno.test("actual normal2K handler records its exact quoted size then withholds1K before persistence without refunding incurred cost",async()=>{
+ for(const valid of [true,false]){const f=await fixture();try{
+  f.state.output=outputJPEG(valid?2048:896,valid?2048:1195);
+  const response=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(response.status,valid?200:502,await response.text());
+  assertEquals(f.state.holds,1);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);
+  assertEquals(f.state.costs[0].step.params.image_size,"2K");assertEquals(f.state.costs[0].step.unit_cents,11.7184);
+  assertEquals(f.state.refunds,0,"A received supplier image cannot erase incurred liability");assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.image_size,"2K");
+  assertEquals(f.state.holdArguments[0].p_hold_cents,11.7185);
+  assertEquals(f.state.puts,valid?1:0);assertEquals(f.state.completes,valid?1:0);
+ }finally{f.close();}}
+});
+Deno.test("compiled missing normal2K output floor fails unchanged actual-handler no-persistence oracle",async()=>{
+ const oracle=async(remove:boolean)=>{const f=await fixture(false,remove?"quality":null);try{
+  f.state.output=outputJPEG(896,1195);const response=await f.run(f.request({edit:"stage",style:"modern"}));
+  assertEquals(response.status,502,"Undersized supplier output reached delivery");assertEquals(f.state.puts,0);assertEquals(f.state.costs.length,1);
+ }finally{f.close();}};
+ await oracle(false);await assertRejects(()=>oracle(true),AssertionError,"Undersized supplier output reached delivery");
 });

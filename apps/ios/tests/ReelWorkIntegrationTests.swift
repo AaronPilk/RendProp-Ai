@@ -58,6 +58,9 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
   PushManager.currentIdentity=other;center.answer(.authorized);await tick()
   check(center.requests.isEmpty,"account replacement during OS settings cannot enqueue old result")
   reset();ReelCompletionNotice.post(success:true,identity:owner,listingID:listingID,jobID:id)
+  PushManager.shared.localDataErasureRevision &+= 1;center.answer(.authorized);await tick()
+  check(center.requests.isEmpty,"local erasure during OS settings suppresses the earlier reel notice")
+  reset();ReelCompletionNotice.post(success:true,identity:owner,listingID:listingID,jobID:id)
   app.applicationState = .active;center.answer(.authorized);await tick()
   check(center.requests.isEmpty,"foreground return during settings suppresses completion notification")
   for status in [UNAuthorizationStatus.denied,.notDetermined]{

@@ -9,6 +9,7 @@ import { anthropicMaxTokens } from "./providers/anthropic.ts";
 import { openaiChatConfig } from "./providers/openai.ts";
 import { geminiImageGenerationConfig } from "./providers/gemini.ts";
 import type { GenerateInput } from "./providers/types.ts";
+import { photo2KInputAllowance } from "./photo-image-quality.ts";
 
 export class FundingAdmissionError extends HttpError { readonly funding_admission = true; }
 export class SavedFundingResponse extends HttpError {
@@ -139,6 +140,11 @@ export async function boundedPhotoChain(context: FundingContext, steps: RouteSte
  // catalog and admitted against the workspace envelope in fundedAttempt.
  if(await servingMode()==="ceiling")return steps;
  if(await unlimitedSponsored(context))return steps;
+ if(input.extra?.photo_quality_2k===true){
+  if(steps.length!==1||steps[0].provider!=="gemini"||steps[0].model!=="gemini-3.1-flash-image"||input.mask_url||!photo2KInputAllowance(input)||!mediaAttemptQuote(steps[0],input))
+   throw new FundingAdmissionError(503,"This photo tool has no complete bounded 2K serving route. No edit was sent.","upstream");
+  return steps;
+ }
  const priced=steps.filter(step=>step.task===input.task && (
   (step.provider==="gemini" && step.model==="gemini-3.1-flash-image" && !input.mask_url) ||
   (step.provider==="fal" && step.model.replace(/^fal-ai\//,"")==="flux-pro/kontext" && !input.mask_url)
@@ -257,6 +263,7 @@ export function ceilingVerifiedQuote(step:Pick<RouteStep,"provider"|"model">,inp
   const size=paramsOf(step as RouteStep)?.image_size;
   if(size==="2K"){
    const extra=data.extra as Record<string,unknown>|undefined;
+   if(extra?.photo_quality_2k===true){const allowance=photo2KInputAllowance(input);return allowance===null?null:bound((allowance*0.5+4096*3+1680*60)/10000);}
    return extra?.owner_photo_2k===true&&Number.isInteger(extra.owner_photo_input_bound)&&Number(extra.owner_photo_input_bound)>0&&Number(extra.owner_photo_input_bound)<=8192
     ?bound((8192*0.5+4096*3+1680*60)/10000):null;
   }
@@ -383,19 +390,22 @@ export function videoInputTokenBound(seconds:number,textBytes:number):number {
  return Math.ceil(Math.max(1,seconds)*263)+Math.ceil(Math.max(0,textBytes)/2)+1024;
 }
 
-/** Published legacy GenerateContent hard cutoff includes thought tokens:
- * https://ai.google.dev/gemini-api/docs/generate-content/thinking#token-limits
- * Charge every combined output token at the highest image tariff ($60/M),
- * retaining the full 131072 input window ($0.50/M). This is a documentation
- * bound, not evidence of paid-account acceptance or an invoice reconciliation. */
-export function geminiImageGenerationQuote(config:Record<string,unknown>):AttemptQuote|null {
+/** The legacy1K bound keeps the full model input window and charges every
+ * capped output token at the highest image tariff. Prospectively prepared2K
+ * edits reserve their full input tier,4096 text/thinking tokens, and1680 image
+ * tokens. These are liability bounds, not retail/invoice acceptance evidence.
+ * https://ai.google.dev/gemini-api/docs/pricing */
+export function geminiImageGenerationQuote(config:Record<string,unknown>,inputAllowance=8192):AttemptQuote|null {
  const output=config.maxOutputTokens;
  if(typeof output!=="number"||!Number.isInteger(output)||output<=0||output>32768
   ||config.candidateCount!==1||!Array.isArray(config.responseModalities)
   ||config.responseModalities.length!==1||config.responseModalities[0]!=="IMAGE"
   ||!config.imageConfig||typeof config.imageConfig!=="object"
   ||!["1K","2K"].includes(String((config.imageConfig as Record<string,unknown>).imageSize)))return null;
- if((config.imageConfig as Record<string,unknown>).imageSize==="2K")return {cents:(8192*.5+output*3+1680*60)/10000,version:"owner-2k-standard-20261012"};
+ if((config.imageConfig as Record<string,unknown>).imageSize==="2K"){
+  if(![8192,16384,24576].includes(inputAllowance))return null;
+  return {cents:inputAllowance===8192?(8192*.5+output*3+1680*60)/10000:(inputAllowance*.5+output*3+1680*60)/10000,version:"photo-2k-standard-20261013"};
+ }
  return {cents:(131072*.5+output*60)/10000,version:TARIFF_VERSION};
 }
 
@@ -403,9 +413,9 @@ export function mediaAttemptQuote(step:RouteStep,input:GenerateInput):AttemptQuo
  if(step.provider==="gemini"&&step.model==="gemini-3.1-flash-image")
   {
    const size=paramsOf(step)?.image_size;
-   if(size==="2K"&&(input.extra?.owner_photo_2k!==true||!Number.isInteger(input.extra.owner_photo_input_bound)||Number(input.extra.owner_photo_input_bound)<=0||Number(input.extra.owner_photo_input_bound)>8192))return null;
+   if(size==="2K"&&photo2KInputAllowance(input)===null)return null;
    if(size!==undefined&&size!=="1K"&&size!=="2K")return null;
-   return geminiImageGenerationQuote(geminiImageGenerationConfig(step.model,size==="2K"?"2K":"1K"));
+   return geminiImageGenerationQuote(geminiImageGenerationConfig(step.model,size==="2K"?"2K":"1K"),size==="2K"?photo2KInputAllowance(input)!:8192);
   }
  const model=step.model.replace(/^fal-ai\//,"");
  if(step.provider==="fal"&&model==="flux-pro/kontext"&&!input.mask_url)

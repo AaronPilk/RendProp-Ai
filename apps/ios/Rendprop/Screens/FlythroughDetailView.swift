@@ -6654,6 +6654,8 @@ struct PhotoCompareView: View {
     @State private var enhanced: UIImage?
     @State private var original: UIImage?
     @State private var exporting: PhotoExportSelection?
+    @State private var showFullComparison = false
+    @State private var imageContext: NativeMediaExportContext?
     @State private var selectionError: String?
     @State private var selectedForListing = false
     @State private var imageLoadComplete = false
@@ -6682,7 +6684,8 @@ struct PhotoCompareView: View {
     }
 
     var body: some View {
-        ZStack {
+        GeometryReader { geometry in
+          ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 12) {
                 HStack {
@@ -6692,12 +6695,12 @@ struct PhotoCompareView: View {
                         Menu {
                             ForEach(photo.history) { version in
                                 Button(version.savedVersion?.title ?? "Earlier version") {
-                                    selectedVersion = version; showOriginal = false
+                                    chooseVersion(version)
                                 }
                             }
                         } label: { Label("All edits", systemImage: "clock.arrow.circlepath") }
                     }
-                    Button { dismiss() } label: {
+                    Button { clearAndDismiss() } label: {
                         Image(systemName: "xmark.circle.fill").font(.title)
                     }.accessibilityLabel("Close")
                 }.padding(.horizontal)
@@ -6708,17 +6711,31 @@ struct PhotoCompareView: View {
                         }
                         ForEach(versionChoices) { version in
                             versionChip(choiceTitle(version), selected: !showOriginal && viewed.id == version.id) {
-                                selectedVersion = version; showOriginal = false
+                                chooseVersion(version)
                             }
                         }
                     }.padding(.horizontal)
-                }.accessibilityIdentifier("photoVersion.savedChoices")
-                Spacer(minLength: 0)
-                if let image = showOriginal ? original : enhanced {
-                    Image(uiImage: image).resizable().scaledToFit()
-                        .accessibilityLabel(showOriginal ? sourceTitle : "Edited photo")
-                } else { ProgressView().tint(.white) }
-                Spacer(minLength: 0)
+                }.frame(height: 48).accessibilityIdentifier("photoVersion.savedChoices")
+                ZStack {
+                    if let image = showOriginal ? original : enhanced {
+                        Image(uiImage: image).resizable().scaledToFit()
+                            .accessibilityLabel(showOriginal ? sourceTitle : "Edited photo")
+                    } else { ProgressView().tint(.white) }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: max(160, min(360, geometry.size.height * 0.42)))
+                .accessibilityIdentifier("photoVersion.preview")
+                Button {
+                    guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+                    showFullComparison = true
+                } label: {
+                    Label("View full-screen comparison", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.subheadline.weight(.semibold)).padding(.vertical, 4)
+                }
+                .disabled(enhanced == nil || imageContext?.isCurrent != true)
+                .accessibilityIdentifier("photoVersion.fullSize")
+                ScrollView {
+                  VStack(spacing: 12) {
                 if !showOriginal, let label = viewed.savedVersion?.visibleLabel {
                     Text(label).font(.headline).padding(.horizontal)
                 }
@@ -6758,6 +6775,7 @@ struct PhotoCompareView: View {
                 }
                 if !showOriginal, viewed.savedVersion != nil {
                     Button {
+                        guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
                         do {
                             guard !needsStagingReview || stagingReview.isComplete else {
                                 throw PhotoVersionHistory.Failure.reviewRequired
@@ -6790,6 +6808,7 @@ struct PhotoCompareView: View {
                                 || (needsCustomReview && !customReview.isComplete))))
                 }
                 Button {
+                    guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
                     do {
                         if !showOriginal, needsCustomReview {
                             guard enhanced != nil, original != nil, viewed.originalURL != viewed.enhancedURL else {
@@ -6811,18 +6830,29 @@ struct PhotoCompareView: View {
                     .accessibilityIdentifier("photoVersion.download")
                     .disabled(showOriginal ? original == nil : enhanced == nil || (needsCustomReview
                         && (original == nil || viewed.originalURL == viewed.enhancedURL || !customReview.isComplete)))
+                  }
+                }
+                .accessibilityIdentifier("photoVersion.reviewControls")
             }.foregroundStyle(.white)
+          }
         }
         .environment(\.colorScheme, .dark)
-        .onChange(of: auth.userID) { _ in exporting = nil; enhanced = nil; original = nil; dismiss() }
-        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
-            exporting = nil; enhanced = nil; original = nil; dismiss()
+        .onChange(of: auth.userID) { _ in clearAndDismiss() }
+        .onChange(of: auth.syncSessionRevision) { _ in clearAndDismiss() }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in clearAndDismiss() }
+        .fullScreenCover(isPresented: $showFullComparison) {
+            if let enhanced, imageContext?.isCurrent == true {
+                PhotoFullSizeComparison(edited: enhanced, source: viewed.originalURL == viewed.enhancedURL ? nil : original, sourceTitle: sourceTitle,
+                    showOriginal: $showOriginal)
+            }
         }
         .sheet(item: $exporting) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
         .alert("Couldn't use that version", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
             Button("OK") { selectionError = nil }
         } message: { Text(selectionError ?? "") }
         .task(id: viewed.id) {
+            let context = NativeMediaExportContext()
+            imageContext = context
             let directory = viewed.enhancedURL.deletingLastPathComponent()
             selectedForListing = (try? PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)) == true
             let target = viewed
@@ -6830,11 +6860,11 @@ struct PhotoCompareView: View {
             customReview = PhotoVersionHistory.CustomReview()
             enhanced = nil; original = nil; imageLoadComplete = false
             let after = await AIImagePrep.decoded(at: target.enhancedURL, maxPixel: 2400)
-            guard !Task.isCancelled, viewed.id == target.id else { return }
+            guard context.isCurrent, viewed.id == target.id else { return }
             enhanced = after
             let before = target.originalURL == target.enhancedURL ? after
                 : await AIImagePrep.decoded(at: target.originalURL, maxPixel: 2400)
-            guard !Task.isCancelled, viewed.id == target.id else { return }
+            guard context.isCurrent, viewed.id == target.id else { return }
             original = before
             imageLoadComplete = true
             if showOriginal, before != nil, target.originalURL != target.enhancedURL {
@@ -6843,11 +6873,34 @@ struct PhotoCompareView: View {
             }
         }
         .onChange(of: showOriginal) { showing in
-            if showing, original != nil, viewed.originalURL != viewed.enhancedURL {
+            if showing, imageContext?.isCurrent == true, original != nil, viewed.originalURL != viewed.enhancedURL {
                 stagingReview.comparedSource = true
                 customReview.comparedSource = true
             }
         }
+    }
+
+    private func chooseVersion(_ version: EnhancedPhoto) {
+        if version.id == viewed.id {
+            showOriginal = false
+            return
+        }
+        showFullComparison = false
+        imageContext = nil
+        enhanced = nil
+        original = nil
+        imageLoadComplete = false
+        selectedVersion = version
+        showOriginal = false
+    }
+
+    private func clearAndDismiss() {
+        showFullComparison = false
+        exporting = nil
+        imageContext = nil
+        enhanced = nil
+        original = nil
+        dismiss()
     }
 
     private var stagingReviewChecklist: some View {
@@ -6877,6 +6930,61 @@ struct PhotoCompareView: View {
             Text(title).font(.subheadline.weight(.semibold)).padding(.horizontal, 14).padding(.vertical, 10)
                 .background(selected ? Theme.accent : Color.white.opacity(0.15), in: Capsule())
         }.accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// Inspection only: choosing the source records comparison in the parent, but
+/// this screen has no publication, approval or export actions.
+private struct PhotoFullSizeComparison: View {
+    let edited: UIImage
+    let source: UIImage?
+    let sourceTitle: String
+    @Binding var showOriginal: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var zoom: CGFloat = 1
+    @GestureState private var pinch: CGFloat = 1
+
+    private var image: UIImage { showOriginal ? (source ?? edited) : edited }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(showOriginal ? sourceTitle : "Edited photo").font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }.accessibilityIdentifier("photoComparison.close")
+            }.padding(.horizontal)
+            if source != nil {
+                Picker("Photo version", selection: $showOriginal) {
+                    Text("Edited").tag(false)
+                    Text(sourceTitle).tag(true)
+                }.pickerStyle(.segmented).padding(.horizontal)
+                    .accessibilityIdentifier("photoComparison.version")
+            }
+            GeometryReader { geometry in
+                let scale = min(geometry.size.width / max(1, image.size.width),
+                                geometry.size.height / max(1, image.size.height))
+                let magnification = min(5, max(1, zoom * pinch))
+                ScrollView([.horizontal, .vertical]) {
+                    Image(uiImage: image).resizable()
+                        .frame(width: image.size.width * scale * magnification,
+                               height: image.size.height * scale * magnification)
+                        .frame(minWidth: geometry.size.width, minHeight: geometry.size.height)
+                        .accessibilityLabel(showOriginal ? sourceTitle : "Edited photo")
+                        .accessibilityIdentifier("photoComparison.image")
+                }
+                .gesture(MagnificationGesture().updating($pinch) { value, state, _ in state = value }
+                    .onEnded { value in zoom = min(5, max(1, zoom * value)) })
+            }
+            HStack {
+                Text("Pinch to zoom. Swipe to inspect details.").font(.caption)
+                Spacer()
+                Button("Reset zoom") { zoom = 1 }.font(.caption)
+            }.padding(.horizontal)
+        }
+        .foregroundStyle(.white).padding(.vertical)
+        .background(Color.black.ignoresSafeArea())
+        .environment(\.colorScheme, .dark)
+        .onChange(of: showOriginal) { _ in zoom = 1 }
     }
 }
 

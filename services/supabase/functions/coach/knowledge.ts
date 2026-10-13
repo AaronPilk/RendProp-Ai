@@ -39,20 +39,14 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "How Rendprop works",
     source: "description.txt",
     fact:
-      "Film a walkthrough on an iPhone. Tag the rooms or areas to jump to. Rendprop builds a " +
-      "smooth, drone-style flythrough and gives a share link — no drone, no crew, no editor. " +
-      "Sending the link is the whole distribution: anyone who opens it scrolls to fly through " +
-      "the space, and the contact form on that page drops enquiries into the app's inbox.",
+      "Create a home or business project, then choose what you need: add photos, edit copies, make a photo reel, or capture/import a walkthrough for a shareable tour. These are separate tools; one walkthrough does not automatically produce every asset. Photo reels use simulated AI camera motion or disclosed still-photo motion, not real drone footage or a measured 3D reconstruction. Publishing creates branded and unbranded property links; available branded contact forms send enquiries to the app.",
   },
   {
     topic: "Signing in — what needs an account",
     source:
       "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
     fact:
-      "No account is required to record, edit, build or publish a tour, or to use the AI Photo " +
-      "Studio, reels and aerial intros. The app connects through an anonymous " +
-      "session. Publishing needs an internet connection. Sign in with Apple is optional " +
-      "for accessing your workspace on another device.",
+      "Local recording and saved photo work can remain on the phone. Cloud publishing and online AI tools require an identified account, an internet connection and the required AI consent/access. Sign in with Apple opens or adopts the account; a guest/anonymous session cannot use paid AI or publish until sign-in. Do not describe Apple sign-in as optional for those online tools.",
   },
   {
     topic: "The two links every published tour gets",
@@ -68,29 +62,19 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "How AI-generated content is disclosed",
     source: "description.txt + support.html + UPLOAD-CONTRACT.md",
     fact:
-      'Every AI photo edit is labelled "Virtually staged" on the published tour, and the ' +
-      "untouched original is published right beside it so anyone can compare. The AI aerial " +
-      "intro is always disclosed as AI-generated, never presented as real drone footage. A " +
-      "listing's Compliance section lists every AI asset with its disclosure and can export the " +
-      "full audit log for a broker.",
+      "Disclosure describes the actual effects: virtually staged, digitally decluttered, other AI edits, AI aerial/reel motion or still-photo motion. Retained sources and saved versions support comparison; do not claim every edit is staging or that an unverified original is always available. Staged/custom previews require comparison approval before listing/reel/platform use. A label, approval or automated check is not a guarantee that fixed features are unchanged or that every MLS accepts it. Review against the source and follow local broker/MLS requirements.",
   },
   {
     topic: "AI Photo Studio — what it does",
     source: "description.txt + features.html",
     fact:
-      "One tap each for: a blue sky, a twilight sky, a green lawn, a tidied (decluttered) room, " +
-      'or added furniture (virtual staging). A free-text "custom" edit is also available, and ' +
-      'an "improve my prompt" button sharpens rough wording first. Every edit is a COPY — the ' +
-      "untouched original photo is always kept and published alongside it, never replaced.",
+      "Choose Sky, Twilight, Lawn, Declutter or virtual staging, or type Ask anything instructions. Custom requests may ask one clarification before generation. Changes are saved as separate copies/versions; basic Enhanced is a local brightness/color/sharpness copy, not virtual staging. Original, saved edits and the listing-selected version can differ. Use the comparison/review flow for staged/custom outputs; inspect structure, doors, finishes and property condition before sharing. Ask AI is text-only and cannot visually approve an edit.",
   },
   {
     topic: "Reels — what they do",
     source: "description.txt + features.html",
     fact:
-      "Reels turn a handful of a listing's photos into a short vertical video: each photo " +
-      "becomes a gliding camera move, stitched together with a voiceover (record your own, or " +
-      "let an AI voice read a script) and word-by-word captions that land on the beat. Exports " +
-      "in both 9:16 and 16:9 for Instagram, TikTok, YouTube and the MLS.",
+      "Reel Studio makes five-second shots from at least two reviewed photos and stitches them into Tall (9:16) or Wide (16:9) video. Four built-in movement presets include default Fly-through; AI motion is simulated and does not prove room-to-room geometry. Options include transitions, text and optional recorded voiceover. The final format uses one centered crop; check the finished framing. If property-quality retries are exhausted, eligible shots can use disclosed still-photo motion instead of an unsafe AI clip. Saved requests must be recovered before another generation; saved batches can continue and saved clips can be finished. Closing the editor can leave app-owned work running, but iOS can pause it; locked/background/terminated completion is not guaranteed. Keep the app open or reopen Reel Studio to resume its available saved action. Posting/export presets are sizes, not certification of a platform policy.",
   },
   {
     topic: "Aerial intro — what it does",
@@ -120,11 +104,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "Filming tips for a good walkthrough",
     source: "features.html + SettingsView's own capture guidance",
     fact:
-      "Walk at a normal, steady pace — no fast spins, turn the way you would showing a friend " +
-      "around. Hold the phone upright at chest height and keep it level. Turn the lights on and " +
-      "open the blinds first. The app guides filming at a wide 0.5× lens so rooms read as rooms, " +
-      "not closets. One continuous take, up to about ten minutes, ending on the best shot — the " +
-      "engine enhances real footage, it never invents a room, window or piece of furniture.",
+      "Walk at a normal, steady pace, keep the phone level at chest height, turn lights on and open blinds. Use a wide lens when available and avoid fast spins. Capture one continuous walkthrough, up to the app's displayed limit, ending on the best shot. The walkthrough uses captured footage; this does not guarantee the accuracy of separate AI-generated photo/reel/aerial outputs.",
   },
   {
     topic: "Not only homes — other business types",
@@ -132,7 +112,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     fact:
       "Rendprop ships modes for real estate, event venues, restaurants and bars, retail stores, " +
       'and gyms and studios (plus a general "other business" mode). Switching the business ' +
-      "type — from the menu at the top-left of Home — re-themes the whole app: the fields to " +
+      "type — from the menu at the top-left of Home — re-themes the business-specific fields and words: the fields to " +
       "fill in, the words on screen, the area tags in the room tagger, and the sample tour.",
   },
   {
@@ -161,7 +141,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
       "Eligible customers can start a 7-day introductory trial by choosing a subscription " +
       "and confirming it in Apple's purchase sheet. Apple determines eligibility; creating " +
       "an account or installing Rendprop does not start that trial. The selected plan's " +
-      "allowances apply after confirmation. It renews at the displayed subscription price " +
+      "allowances apply after confirmation, subject to the shared trial AI limit and trial availability. It renews at the displayed subscription price " +
       "unless cancelled through Apple. Existing previously granted trial windows keep their " +
       "original end date. Plan & usage shows the current access and Apple's offer terms.",
   },
@@ -188,11 +168,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "A render or upload failed",
     source: "support.html",
     fact:
-      "Open the affected project to review its status and available retry action. Check the " +
-      "connection before retrying an upload. If details need review or workspace access has " +
-      "changed, review those first. Plan & usage shows the current allowance; do not promise " +
-      "that every failed attempt is refunded. If the same walkthrough fails twice, contact " +
-      "support with the listing name and roughly when it was tried.",
+      "Open the affected project/tool and use its displayed saved recovery action. For a reel with a saved request, Recover request checks that accepted request; it does not dispatch another generation. A quality refusal may offer one explicit safer retry or still-photo motion. Finish saved clips and Continue saved reel preserve saved sources/options. For an upload, reconnect and keep the saved file until it completes. Review access/facts conflicts before trying again. Plan & usage shows allowances and shared AI limits; do not promise every failure is refunded, every retry is free or a completion time. Contact support if the available recovery action still fails.",
   },
   {
     topic: "Your content and privacy",
@@ -200,8 +176,9 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     fact:
       "Videos and photos stay the agent's own. Rendprop never uses them for its own marketing, " +
       "and never to train AI models, without written permission. The app only records spaces " +
-      "the person has the right to record and publish. There is no in-app feed and no way to " +
-      "browse anyone else's content.",
+      "the person has the right to record and publish. There is no public in-app feed. " +
+      "Personal accounts keep their own listings; a team owner can switch authorized agent " +
+      "libraries, while agents cannot browse teammates' listings.",
   },
   {
     topic: "Contacting support",

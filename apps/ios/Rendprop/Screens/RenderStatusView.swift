@@ -590,6 +590,7 @@ struct SignInView: View {
     @State private var rawNonce = ""
     @State private var isExchanging = false
     @State private var errorMessage: String?
+    @State private var showQuickStart = false
 
     var body: some View {
         VStack(spacing: 22) {
@@ -609,6 +610,17 @@ struct SignInView: View {
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
+            }
+
+            if requiresAccount {
+                Button { showQuickStart = true } label: {
+                    Label("See how Rendprop works", systemImage: "play.circle.fill")
+                        .font(.rpBody).foregroundStyle(Theme.accent)
+                        .padding(.vertical, 8)
+                }
+                .disabled(isExchanging)
+                .accessibilityHint("Plays a short video. No account is needed to watch.")
+                .accessibilityIdentifier("account.quickStartVideo")
             }
 
             if let errorMessage {
@@ -676,6 +688,7 @@ struct SignInView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
         .interactiveDismissDisabled(requiresAccount || isExchanging)
+        .sheet(isPresented: $showQuickStart) { QuickStartVideoView() }
     }
 
     private func handle(_ result: Result<ASAuthorization, Error>) {

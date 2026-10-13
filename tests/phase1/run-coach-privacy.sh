@@ -17,6 +17,9 @@ mutations = {
     'upload-local-bubbles': ('messages.filter { !$0.localOnly }.suffix(20)', 'messages.suffix(20)'),
     'include-foreign-cache': ('return model.realProjects.filter { ($0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }', 'return model.realProjects'),
     'drop-context-fences': ('guard currentContext else { invalidateContext(); return }', ''),
+    'wrong-reel-project': ('first(where: { $0.listingID == selectedListingID })', 'first(where: { _ in true })'),
+    'drop-reel-pause-state': ('if job.paused { phase = .paused }', 'if false { phase = .paused }'),
+    'inflate-ai-edit-count': ('photos.filter { $0.savedVersion?.effects.isEmpty == false }.count', 'photos.count'),
 }
 for name, (before, after) in mutations.items():
     count = source.count(before)
@@ -25,7 +28,7 @@ for name, (before, after) in mutations.items():
         assert count == 1, f'{name}: ambiguous anchor'
     (out / f'{name}.swift').write_text(source.replace(before, after))
 PY
-for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences; do
+for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count; do
     xcrun swiftc -parse-as-library "$COACH_API" "$ARTIFACT_DIR/$control.swift" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/$control"
     status=0
     "$ARTIFACT_DIR/$control" > "$ARTIFACT_DIR/$control.log" 2>&1 || status=$?
@@ -35,6 +38,9 @@ for control in drop-history-redaction upload-local-bubbles include-foreign-cache
         upload-local-bubbles) reason='offline-to-online transcript excludes local assistant bubbles' ;;
         include-foreign-cache) reason='live context excludes foreign and unbound cached projects' ;;
         drop-context-fences) reason='context-change-during-consent cannot dispatch a paid request' ;;
+        wrong-reel-project) reason="wrong listing job cannot become selected context" ;;
+        drop-reel-pause-state) reason='reel state is refreshed at send rather than frozen at sheet open' ;;
+        inflate-ai-edit-count) reason='ordinary enhancement and unknown history are not counted as AI edits' ;;
     esac
     rg -q "$reason" "$ARTIFACT_DIR/$control.log"
     echo "PASS: compiled $control negative control failed its intended runtime assertion"
