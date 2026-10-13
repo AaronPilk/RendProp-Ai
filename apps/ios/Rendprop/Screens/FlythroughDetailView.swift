@@ -9971,14 +9971,29 @@ struct ReelStudioView: View {
     // Every body here stays tiny on purpose — see the note above
     // `stepVoiceCard`. `aiVoicePane` is a list of identifiers and nothing else.
     @ViewBuilder private var aiVoicePane: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
+            aiVoiceScriptCard
+            aiVoicePicker
+            makeVoiceButton
+        }
+    }
+
+    private var aiVoiceScriptCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Label("Your script", systemImage: "text.alignleft")
+                    .font(.rpBody.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                toneMenu
+            }
             scriptAssistRow
             scriptField
             scriptLengthRow
             scriptLengthNote
-            aiVoicePicker
-            makeVoiceButton
         }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     /// "Write my script" — wearing the same clothes as "✨ Improve my prompt" in
@@ -9993,7 +10008,8 @@ struct ReelStudioView: View {
                         ProgressView().tint(Theme.accent)
                         Text("Writing your script…")
                     } else {
-                        Text("✨ Write my script")
+                        Image(systemName: "sparkles")
+                        Text("Write my script")
                     }
                 }
                 .font(.rpBody.weight(.semibold))
@@ -10001,15 +10017,12 @@ struct ReelStudioView: View {
                 .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
+            .buttonStyle(ScalePressStyle())
             .disabled(scriptInFlight || ttsInFlight)
             .accessibilityIdentifier("reel.script.write")
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("Uses this \(space.spaceNoun)'s own details. Every word stays editable.")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 6)
-                toneMenu
-            }
+            Text("Uses this \(space.spaceNoun)'s details. You can edit every word.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -10017,24 +10030,37 @@ struct ReelStudioView: View {
     /// of its own and not a question anybody has to answer. The default already
     /// suits the space type.
     private var toneMenu: some View {
-        Picker("Tone", selection: $tone) {
-            ForEach(ScriptTone.allCases, id: \.self) { t in
-                Text(t.label).tag(t)
+        Menu {
+            Picker("Tone", selection: $tone) {
+                ForEach(ScriptTone.allCases, id: \.self) { t in
+                    Text(t.label).tag(t)
+                }
             }
+        } label: {
+            HStack(spacing: 5) {
+                Text(tone.label)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+            .font(.rpCaption.weight(.semibold))
+            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(Theme.accentSoft, in: Capsule())
         }
-        .pickerStyle(.menu)
-        .tint(Theme.accent)
-        .font(.rpCaption)
         .disabled(scriptInFlight)
         .accessibilityLabel(Text("How the script should sound"))
+        .accessibilityValue(Text(tone.label))
     }
 
     private var scriptField: some View {
-        TextField("Type what the voice should say — e.g. 'Welcome to 12 Oak Lane. Three beds, two baths.'",
+        TextField("Write what you'd like your narrator to say…",
                   text: $aiScript, axis: .vertical)
-            .lineLimit(2...5)
-            .textFieldStyle(.roundedBorder)
+            .font(.rpBody)
+            .lineLimit(3...6)
+            .textFieldStyle(.plain)
+            .padding(12)
+            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .disabled(ttsInFlight || scriptInFlight)
+            .accessibilityLabel(Text("Narration script"))
             .accessibilityIdentifier("reel.script.field")
     }
 
@@ -10080,14 +10106,16 @@ struct ReelStudioView: View {
 
     private var makeVoiceButton: some View {
         Button { generateAIVoice() } label: {
-            Label(ttsInFlight ? "Making the voice…" : "Make the voice", systemImage: "waveform")
+            Label(ttsInFlight ? "Making voice…" : "Make voice", systemImage: "waveform")
                 .font(.rpBody.weight(.semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(aiCanGenerate ? Theme.accent : Theme.fillSubtle)
                 .foregroundStyle(aiCanGenerate ? Color.white : Theme.inkDim)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
+        .buttonStyle(ScalePressStyle())
         .disabled(!aiCanGenerate)
+        .accessibilityIdentifier("reel.voice.make")
     }
 
     @ViewBuilder private var aiVoicePicker: some View {
@@ -10100,19 +10128,79 @@ struct ReelStudioView: View {
             Button("Load voices") { loadVoices() }
                 .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
         } else {
-            Picker("Voice", selection: $selectedVoiceID) {
-                ForEach(aiVoices) { v in
-                    Text(voiceRowLabel(v)).tag(v.voiceID)
+            Menu {
+                Picker("Voice", selection: $selectedVoiceID) {
+                    ForEach(aiVoices) { v in
+                        Text(voiceRowLabel(v)).tag(v.voiceID)
+                    }
                 }
+            } label: {
+                selectedVoiceLabel
             }
-            .pickerStyle(.menu)
-            .tint(Theme.accent)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityLabel(Text("Narrator voice"))
+            .accessibilityValue(Text(selectedAIVoice.map(voiceRowLabel) ?? "Choose a voice"))
+            .accessibilityHint(Text("Choose who reads your script"))
+            .accessibilityIdentifier("reel.voice.picker")
         }
     }
 
+    private var selectedAIVoice: AIVoice? {
+        aiVoices.first { $0.voiceID == selectedVoiceID }
+    }
+
+    private var selectedVoiceLabel: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "waveform")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .frame(width: 44, height: 44)
+                .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Narrator").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Text(selectedAIVoice.map(voiceDisplayName) ?? "Choose a voice")
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    .lineLimit(1)
+                if let selectedAIVoice {
+                    Text(voiceShortDescription(selectedAIVoice))
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.inkDim)
+                .accessibilityHidden(true)
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
     private func voiceRowLabel(_ v: AIVoice) -> String {
-        v.subtitle.isEmpty ? v.displayName : "\(v.displayName) · \(v.subtitle)"
+        "\(voiceDisplayName(v)) · \(voiceShortDescription(v))"
+    }
+
+    /// Presentation only: the catalogue's id and server metadata stay intact.
+    private func voiceDisplayName(_ voice: AIVoice) -> String {
+        let name = voice.displayName
+        guard let suffix = name.range(of: #"\s+[-–—|]\s*"#, options: .regularExpression) else { return name }
+        let friendly = String(name[..<suffix.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return friendly.isEmpty ? name : friendly
+    }
+
+    private func voiceShortDescription(_ voice: AIVoice) -> String {
+        let metadata = "\(voice.displayName) \(voice.subtitle)".lowercased().replacingOccurrences(of: "_", with: " ")
+        let words = Set(metadata.components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty })
+        let styles = [("warm", "Warm"), ("friendly", "Friendly"), ("calm", "Calm"),
+                      ("confident", "Confident"), ("dominant", "Confident"), ("firm", "Confident"),
+                      ("bright", "Bright"), ("soft", "Soft"), ("deep", "Deep"), ("expressive", "Expressive")]
+        let accents = [("american", "American accent"), ("british", "British accent"),
+                       ("australian", "Australian accent"), ("irish", "Irish accent"),
+                       ("scottish", "Scottish accent"), ("canadian", "Canadian accent")]
+        let style = styles.first { words.contains($0.0) }?.1
+        let accent = accents.first { words.contains($0.0) }?.1
+        let description = [style, accent].compactMap { $0 }.joined(separator: " · ")
+        return description.isEmpty ? "Narration voice" : description
     }
 
     private var aiCanGenerate: Bool {

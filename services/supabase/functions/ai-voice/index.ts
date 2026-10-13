@@ -12,7 +12,7 @@ import { libraryBillingOrg } from "../_shared/library-access.ts";
 //   POST /ai-voice/tts   { text, voice_id, listing_id?, label? }
 //        -> { audio_url, mime, duration_s, duration_source, words[],
 //             voice_name, characters, disclosure, provenance }
-//        `audio_url` is a SHORT-LIVED SIGNED GET on R2 (15 min). The base64
+//        `audio_url` is a SHORT-LIVED SIGNED GET (at most 10 min). The base64
 //        audio ElevenLabs returns is never forwarded to the app: a 60-second
 //        mp3 is ~1 MB, which is ~1.4 MB of base64 inside a JSON body the phone
 //        then has to hold in memory twice to decode. The app downloads the URL.
@@ -160,7 +160,7 @@ const MONTH_SECONDS = 30 * 86400;
 const MAX_TEXT_CHARS = 1000;
 
 /** How long the returned audio URL stays valid. The app downloads immediately. */
-const AUDIO_URL_TTL_SECONDS = 900;
+const AUDIO_URL_TTL_SECONDS = 600;
 
 /** Voice catalogue cache lifetime (contract: 10 minutes). */
 const VOICES_TTL_MS = 10 * 60 * 1000;
