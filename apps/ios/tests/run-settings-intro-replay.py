@@ -8,7 +8,8 @@ ROOT=Path(__file__).resolve().parents[3]
 a=argparse.ArgumentParser();a.add_argument('--evidence-dir',type=Path);args=a.parse_args()
 out=(args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-intro-replay-'))).resolve();out.mkdir(parents=True,exist_ok=True)
 settings=ROOT/'apps/ios/Rendprop/Screens/SettingsView.swift';video=ROOT/'apps/ios/Rendprop/Screens/QuickStartVideo.swift'
-paths=[settings,video,Path(__file__).resolve()]
+manifest_path=ROOT/'apps/ios/tests/LaunchPreservedBodies71.json'
+paths=[settings,video,Path(__file__).resolve(),manifest_path]
 hashes=lambda:{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 initial=hashes();s=settings.read_text();q=video.read_text()
 def block(src,needle):
@@ -22,11 +23,14 @@ assert 'showIntroConfirm' not in s
 assert 'var returnLabel = "Skip checks and return to sign-in"' in q
 assert 'Button(returnLabel) { stopPlayback(); dismiss() }' in q
 assert 'Button("Done") { stopPlayback(); dismiss() }' in q
-base=subprocess.run(['git','show','f945758659192cfe4292822b66713a4bf90cb53a:apps/ios/Rendprop/Screens/QuickStartVideo.swift'],cwd=ROOT,text=True,capture_output=True,check=True).stdout
+manifest=json.loads(manifest_path.read_text())
+assert manifest['schema']==1 and manifest['reviewed_baseline_commit']=='f945758659192cfe4292822b66713a4bf90cb53a'
+expected_preserved=manifest['files']['apps/ios/Rendprop/Screens/QuickStartVideo.swift']
 preserved={}
 for anchor in ['private func stopPlayback()', '@discardableResult private func enableAudio(', '@MainActor private final class QuickStartPlaybackAudio']:
- current=block(q,anchor);assert current==block(base,anchor),anchor
- preserved[anchor]=hashlib.sha256(current.encode()).hexdigest()
+ current=block(q,anchor);digest=hashlib.sha256(current.encode()).hexdigest()
+ assert digest==expected_preserved[anchor],anchor
+ preserved[anchor]=digest
 source=r"""
 import Foundation
 final class UploadFixture { var running=true;func cancel(){running=false} }

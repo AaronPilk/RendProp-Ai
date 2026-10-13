@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "reviewed_baseline_commit": "f945758659192cfe4292822b66713a4bf90cb53a",
+  "purpose": "Fixed digests of specifically preserved accepted/saved Aerial and QuickStart audio bodies reviewed at native71. Generated once from that historic source, not from the current candidate; consumers require exact matches without accessing Git history.",
+  "files": {
+    "apps/ios/Rendprop/Screens/FlythroughDetailView.swift": {
+      "private struct PendingAerialJob:": "b3978cc2fe521a539800dc7a361bf28f7410100829d76e3711986a998cfef64d",
+      "private struct AerialMeta:": "3a58a8d78b090857891edb94776288b1aa9742348d7464d205861ba16fe0a060",
+      "private func seedIfNeeded()": "766032d68fbff57e6f3a9ca54cd030a19e79c213a74a5678ff865cd910a9f5fd",
+      "private func resume(_ pending:": "4505a61ec1cb1849c93c5cc01f74291c3a27c505db62caddc3ca820765f605e9",
+      "private func resumeWithSession(_ pending:": "a67e8643d26a9b72eb31c35fef93d7b624fac9304c8f19beea84627076a37799",
+      "private func pollAndStore(_ pending:": "d1956a901cf6c4223cba8402c2e489e2637696e44d2c94f10a16b1596e5d49b0"
+    },
+    "apps/ios/Rendprop/Screens/QuickStartVideo.swift": {
+      "private func stopPlayback()": "9ded266d33b8126c14c000b4027b83f92cc0ad9c98735f2690c01ef97e8cf144",
+      "@discardableResult private func enableAudio(": "3b92abec4e02aa49b9ffe37db3bc8414b041f692ee5736f5765eda8a04b98c2e",
+      "@MainActor private final class QuickStartPlaybackAudio": "d8ea42fbe62d8c69578befe5745639eeac85c94dc05956d3038dc5cd29a2e63a"
+    }
+  }
+}

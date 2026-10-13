@@ -10,7 +10,8 @@ a=argparse.ArgumentParser(); a.add_argument('--evidence-dir',type=Path); args=a.
 out=(args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-aerial-launch-'))).resolve();out.mkdir(parents=True,exist_ok=True)
 ios=ROOT/'apps/ios/Rendprop'
 names=['Support/LaunchFeatureAvailability.swift','RendpropApp.swift','Screens/FlythroughDetailView.swift','Purchases/Products.swift','Screens/SettingsView.swift','Screens/HomeListingsView.swift','Coach/CoachModel.swift','Coach/AskAIButton.swift','Purchases/PaywallHost.swift','Purchases/PaywallView.swift','Plan/PlanBanner.swift']
-paths=[ios/name for name in names]+[Path(__file__).resolve(),ROOT/'apps/ios/tests/AerialLaunchAvailabilityTests.swift']
+manifest_path=ROOT/'apps/ios/tests/LaunchPreservedBodies71.json'
+paths=[ios/name for name in names]+[Path(__file__).resolve(),ROOT/'apps/ios/tests/AerialLaunchAvailabilityTests.swift',manifest_path]
 hashes=lambda:{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 start=hashes(); src={n:(ios/n).read_text() for n in names}
 def block(source,needle):
@@ -19,12 +20,15 @@ def block(source,needle):
   depth+=(source[end]=='{')-(source[end]=='}');end+=1
  return source[start:end]
 app=src['RendpropApp.swift'];fly=src['Screens/FlythroughDetailView.swift']
-base=subprocess.run(['git','show','f945758659192cfe4292822b66713a4bf90cb53a:apps/ios/Rendprop/Screens/FlythroughDetailView.swift'],cwd=ROOT,capture_output=True,text=True,check=True).stdout
+manifest=json.loads(manifest_path.read_text())
+assert manifest['schema']==1 and manifest['reviewed_baseline_commit']=='f945758659192cfe4292822b66713a4bf90cb53a'
+expected_preserved=manifest['files']['apps/ios/Rendprop/Screens/FlythroughDetailView.swift']
 preserved=['private struct PendingAerialJob:','private struct AerialMeta:','private func seedIfNeeded()', 'private func resume(_ pending:', 'private func resumeWithSession(_ pending:', 'private func pollAndStore(_ pending:']
 preserved_hashes={}
 for needle in preserved:
- actual=block(fly,needle);assert actual==block(base,needle),f'accepted/saved aerial operation changed: {needle}'
- preserved_hashes[needle]=hashlib.sha256(actual.encode()).hexdigest()
+ actual=block(fly,needle);digest=hashlib.sha256(actual.encode()).hexdigest()
+ assert digest==expected_preserved[needle],f'accepted/saved aerial operation changed: {needle}'
+ preserved_hashes[needle]=digest
 toolbox=block(fly,'private struct ListingToolboxGrid:')
 assert 'ListingToolCard(title: "Aerial intro", sub: "Coming soon"' in toolbox
 assert 'detail.aerialComingSoon' in toolbox and 'detail.aerialIntro' not in toolbox and 'action: openAerial' not in toolbox
