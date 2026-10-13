@@ -53,6 +53,7 @@ import { buildPersonalListingCard } from "../_shared/agentcard.ts";
 import { resolveContactPhoto } from "../listings/client-contact.ts";
 import { buildCta } from "./cta.ts";
 import { bindSpatialChapters, type SpatialChapter } from "../spatial/chapters.ts";
+import { publishedTourContext, publishedLocation } from "./published-context.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 
@@ -378,54 +379,40 @@ Deno.serve(async (req) => {
       await admitMediaRead(admin,seg[1],deliveryBytes(req));
       return json(await businessLogoDelivery(admin,seg[1],new URL(req.url).searchParams.get("key")),200,{"Cache-Control":"no-store"});
     }
-    if (seg.length > 2 || seg.length === 2 && seg[1] !== "delivery") throw new HttpError(404,"Tour not found");
+    if (seg.length > 2 || seg.length === 2 && !["delivery", "location"].includes(seg[1])) throw new HttpError(404,"Tour not found");
     if (!slug) throw new HttpError(400, "slug is required: GET /tours/:slug");
     if (seg[1] === "delivery") await requireMediaGateway(req);
 
     // The hardcoded sample tour — answered before any DB access (see above).
-    if (DEMO_SLUGS.has(slug)) return json(demoTour());
+    if (DEMO_SLUGS.has(slug)) {
+      if (seg[1] === "location") throw new HttpError(404, "Tour location not found");
+      return json(demoTour());
+    }
 
     const admin = adminClient();
 
-    // 1. Published render for this slug.
-    const { data: render, error: rErr } = await admin
-      .from("renders")
-      .select("id, job_id, listing_id, slug, duration_s, speed_factor, video_key, stream_uid, poster_key, staged, published_at")
-      .eq("slug", slug)
-      .not("published_at", "is", null)
-      .maybeSingle();
-    if (rErr) throw new HttpError(500, `Render lookup failed: ${rErr.message}`);
-    if (!render) throw new HttpError(404, "Tour not found or not published");
-
-    // 2. Listing (public subset) + its org. A deleted listing has no public tour.
-    const { data: listing, error: lErr } = await admin
-      .from("listings")
-      .select("id, org_id, agent_id, space_type, address, tagline, details, beds, baths, sqft, price_cents, zillow_url, main_photo_key, gallery_asset_ids, lat, lng, status, sold_at, deleted_at")
-      .eq("id", render.listing_id)
-      .maybeSingle();
-    if (lErr) throw new HttpError(500, `Listing lookup failed: ${lErr.message}`);
-    if (!listing || listing.deleted_at) throw new HttpError(404, "Tour not found or not published");
-    await assertHostingAvailable(admin, listing.org_id);
+    const context = await publishedTourContext(admin, slug, seg[1] === "location");
+    const { render, listing, visibleRefs } = context;
+    if (seg[1] === "location") return json(await publishedLocation(admin, context), 200, { "Cache-Control": "no-store" });
     if (seg[1] === "delivery") await admitMediaRead(admin,listing.org_id,deliveryBytes(req));
-
-    const visibleRefs: MediaSourceRefs & { keys: string[]; assets: string[] } = { renders: [render.id], assets: [], keys: [] };
-    await assertMediaVisible(admin, listing.id, visibleRefs);
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
     const selectedPhotos=listing.gallery_asset_ids??null;
-    const gallery = await galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos,slug);
-    const cover_url = await publicMainPhoto(admin,{orgId:listing.org_id,listingId:listing.id},
-      listing.main_photo_key,key=>publishedR2Url(slug,key),visibleRefs,selectedPhotos);
+    // Independent public reads overlap; every returned lineage/contact still
+    // passes the unchanged final freshness fences below before release.
+    const [gallery, cover_url, { data: job }, { data: clientRow, error: clientError }] = await Promise.all([
+      galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos,slug),
+      publicMainPhoto(admin,{orgId:listing.org_id,listingId:listing.id},
+        listing.main_photo_key,key=>publishedR2Url(slug,key),visibleRefs,selectedPhotos),
+      admin.from("render_jobs").select("capture_asset_id").eq("id",render.job_id).maybeSingle(),
+      admin.from("listing_client_contacts").select("listing_id,org_id,enabled,public_card,hide_rendprop_branding,photo_asset_id,revision")
+        .eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle(),
+    ]);
     const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
       selectedPhotos===null?null:new Set(visibleRefs.keys),slug);
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: SpatialChapter[] = [];
-    const { data: job } = await admin
-      .from("render_jobs")
-      .select("capture_asset_id")
-      .eq("id", render.job_id)
-      .maybeSingle();
     if (job?.capture_asset_id) {
       const { data: chapterRows } = await admin
         .from("capture_chapters")
@@ -455,8 +442,6 @@ Deno.serve(async (req) => {
 
     // 4. Explicit client delivery stays first. Otherwise resolve only the
     // listing's current member's reviewed personal identity under DB locks.
-    const { data: clientRow, error: clientError }=await admin.from("listing_client_contacts")
-      .select("listing_id,org_id,enabled,public_card,hide_rendprop_branding,photo_asset_id,revision").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
     if(clientError)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
     const clientMode=clientRow?.enabled===true;
     const client=clientMode?await resolveContactPhoto(admin,clientRow,visibleRefs,key=>publishedR2Url(slug,key)):null;

@@ -1,4 +1,4 @@
-import type { Env, Tour } from "./types";
+import type { Env } from "./types";
 
 // Optional public location enrichment, not an authority for property facts.
 // Only the freshly authorized published tour may supply the origin. Never
@@ -17,8 +17,24 @@ export interface NearbyPlacesResult {
   attribution: string;
   fetched_at?: string;
 }
+export interface PublicLocation {
+  slug: string;
+  space_type: "real_estate";
+  published_at: string;
+  listing: { lat: number | null; lng: number | null };
+}
 
-export const NEARBY_ENDPOINT = "https://overpass.private.coffee/api/interpreter";
+/** Narrow freshly authorized server projection, never visitor-supplied data.
+ * Missing coordinates are a valid published listing with no enrichment. */
+export function isPublicLocation(value: unknown): value is PublicLocation {
+  if (!record(value) || typeof value.slug !== "string" || !/^[a-z0-9_-]{1,120}$/i.test(value.slug) ||
+      value.space_type !== "real_estate" || typeof value.published_at !== "string" ||
+      !Number.isFinite(Date.parse(value.published_at)) || Date.parse(value.published_at) > Date.now() || !record(value.listing)) return false;
+  return [[value.listing.lat, 90], [value.listing.lng, 180]].every(([v, bound]) => v === null ||
+    number(v, bound as number) && Math.abs(v - Math.round(v * 1000) / 1000) < 1e-8);
+}
+
+export const NEARBY_ENDPOINT = "https://overpass-api.de/api/interpreter";
 export const NEARBY_TIMEOUT_MS = 6_000;
 export const NEARBY_MAX_BYTES = 256 * 1024;
 export const NEARBY_DAILY_LOOKUPS = 100;
@@ -27,6 +43,7 @@ const PREFIX = "public-location-v1/";
 const POSITIVE_MS = 7 * 24 * 60 * 60 * 1000;
 const EMPTY_MS = 24 * 60 * 60 * 1000;
 const ERROR_MS = 10 * 60 * 1000;
+export const NEARBY_LEASE_MS = 30_000;
 const ATTRIBUTION = "© OpenStreetMap contributors";
 const LICENSE = "https://www.openstreetmap.org/copyright";
 const SHOP_TYPES = ["supermarket", "convenience", "bakery", "greengrocer", "clothes", "department_store", "mall", "butcher", "hardware", "florist", "books", "chemist"];
@@ -36,6 +53,7 @@ const number = (v: unknown, bound: number): v is number => typeof v === "number"
 
 interface CacheEntry {
   version: 1;
+  provider?: string;
   expires_at: number;
   result: NearbyPlacesResult;
   license: string;
@@ -110,7 +128,7 @@ function cacheEntry(raw: unknown, lat: number, lng: number): CacheEntry | null {
       distance_m: p.distance_m, source_url: p.source_url });
   }
   if ((r.status === "available") !== (ps.length > 0)) return null;
-  return { version: 1, expires_at: raw.expires_at, license: LICENSE,
+  return { version: 1, provider: typeof raw.provider === "string" ? raw.provider : undefined, expires_at: raw.expires_at, license: LICENSE,
     result: { status: r.status as NearbyPlacesResult["status"], places: ps, attribution: ATTRIBUTION,
       ...(typeof r.fetched_at === "string" ? { fetched_at: r.fetched_at } : {}) } };
 }
@@ -121,7 +139,7 @@ function cacheEntry(raw: unknown, lat: number, lng: number): CacheEntry | null {
  * A CAS lease suppresses the same-area stampede; a global daily CAS counter
  * bounds all provider attempts, including unsuccessful ones, across isolates.
  */
-export async function lookupNearbyPlaces(tour: Tour, env: Env, dependencies: NearbyDependencies = {}): Promise<NearbyPlacesResult> {
+export async function lookupNearbyPlaces(tour: Pick<PublicLocation, "space_type" | "published_at" | "listing">, env: Env, dependencies: NearbyDependencies = {}): Promise<NearbyPlacesResult> {
   const now = dependencies.now || Date.now;
   const openedAt = now();
   if (tour.space_type !== "real_estate" || !tour.published_at || !Number.isFinite(Date.parse(tour.published_at)) ||
@@ -171,9 +189,11 @@ export async function lookupNearbyPlaces(tour: Tour, env: Env, dependencies: Nea
       let entry: CacheEntry | null = null;
       try { entry = cacheEntry(await readObject(cached, 32 * 1024), lat, lng); } catch { cancel(); reader = undefined; }
       if (!alive()) return unavailable();
-      if (entry && entry.expires_at > now()) return entry.result;
+      if (entry && entry.expires_at > now() && (entry.result.status !== "unavailable" || entry.provider === NEARBY_ENDPOINT)) return entry.result;
     }
-    const lease: CacheEntry = { version: 1, expires_at: now() + ERROR_MS, result: unavailable(), license: LICENSE };
+    // A crashed/timed-out isolate owns only a short execution lease, not a
+    // ten-minute provider failure. Real completed errors retain their backoff.
+    const lease: CacheEntry = { version: 1, provider: NEARBY_ENDPOINT, expires_at: now() + NEARBY_LEASE_MS, result: unavailable(), license: LICENSE };
     const locked = await bucket.put(cacheKey, JSON.stringify(lease), {
       onlyIf: cached ? { etagMatches: cached.etag } : new Headers({ "If-None-Match": "*" }),
       httpMetadata: { contentType: "application/json" },
@@ -189,7 +209,7 @@ export async function lookupNearbyPlaces(tour: Tour, env: Env, dependencies: Nea
       let count = 0;
       if (current) {
         const raw = await readObject(current, 128);
-        if (!record(raw) || !Number.isInteger(raw.count) || Number(raw.count) < 0) return unavailable();
+        if (!record(raw) || !Number.isSafeInteger(raw.count) || Number(raw.count) < 0) return unavailable();
         count = Number(raw.count);
       }
       if (!alive() || count >= NEARBY_DAILY_LOOKUPS) return unavailable();
@@ -216,8 +236,8 @@ export async function lookupNearbyPlaces(tour: Tour, env: Env, dependencies: Nea
     if (!alive()) return unavailable();
     const lifetime = result.status === "available" ? POSITIVE_MS : result.status === "empty" ? EMPTY_MS : ERROR_MS;
     // Losing the cache write cannot turn genuine data into invented data; the
-    // original ten-minute lease still prevents repeated immediate requests.
-    await bucket.put(cacheKey, JSON.stringify({ version: 1, expires_at: now() + lifetime, result, license: LICENSE }), {
+    // original execution lease still prevents repeated immediate requests.
+    await bucket.put(cacheKey, JSON.stringify({ version: 1, provider: NEARBY_ENDPOINT, expires_at: now() + lifetime, result, license: LICENSE }), {
       onlyIf: { etagMatches: locked.etag }, httpMetadata: { contentType: "application/json" },
     });
     return alive() ? result : unavailable();

@@ -78,7 +78,7 @@ async function basic(module = adapter) {
   ok(result.places.every(p => Number.isFinite(p.distance_m) && p.distance_m <= 1500));
   equal(result.attribution, "© OpenStreetMap contributors");
   equal(f.calls.length, 1);
-  equal(f.calls[0].url, "https://overpass.private.coffee/api/interpreter");
+  equal(f.calls[0].url, "https://overpass-api.de/api/interpreter");
   equal(f.calls[0].options.redirect, "manual"); equal(f.calls[0].options.cache, "no-store");
   const query = new URLSearchParams(f.calls[0].options.body).get("data");
   ok(query.includes("around:1500,35.227,-80.843"), "only rounded origin reaches provider");
@@ -94,6 +94,18 @@ async function basic(module = adapter) {
 async function exhausted(module = adapter) {
   const f = fixture(); f.bucket.seed(budgetKey, { count: 100 });
   equal((await lookup(f, module)).status, "unavailable"); equal(f.calls.length, 0, "daily budget refuses before provider");
+}
+async function oldFailure(module = adapter) {
+  const f = fixture(); f.bucket.seed(cacheKey(), {version:1,expires_at:BASE_TIME+600000,license:"https://www.openstreetmap.org/copyright",result:{status:"unavailable",places:[],attribution:"© OpenStreetMap contributors"}});
+  equal((await lookup(f,module)).status,"available","old provider error cache must not suppress the repaired endpoint"); equal(f.calls.length,1);
+}
+async function timedOutLease(module = adapter) {
+  const f = fixture(); f.deps.timeoutMs=25; f.setProvider(async()=>new Promise(()=>{}));
+  equal((await lookup(f,module)).status,"unavailable"); equal(f.calls.length,1);
+  equal(f.bucket.value(cacheKey()).expires_at-BASE_TIME,30000,"an unfinished provider attempt has only a30-second lease");
+  f.setTime(BASE_TIME+29000); equal((await lookup(f,module)).status,"unavailable");equal(f.calls.length,1,"active execution lease suppresses duplicate requests");
+  f.setTime(BASE_TIME+30001);f.setProvider(async()=>Response.json({elements:[node(1,"Recovered actual fixture",{amenity:"restaurant"})]}));
+  equal((await lookup(f,module)).status,"available","expired execution lease can recover instead of blocking for ten minutes");equal(f.calls.length,2);equal(f.bucket.value(budgetKey).count,2,"timed-out attempt remains in the global daily meter");
 }
 async function stampede(module = adapter) {
   const f = fixture();
@@ -121,7 +133,10 @@ async function poison(module = adapter) {
 let failed = null;
 const controls = [];
 try {
-  await basic(); await exhausted(); await stampede(); await oversized(); await poison();
+  await basic(); await exhausted(); await stampede(); await oversized(); await poison(); await oldFailure(); await timedOutLease();
+  for (const invalid of [{}, {...tour(),slug:"fixture",listing:{lat:35.2272499,lng:-80.843}}, {...tour(),slug:"fixture",published_at:"2099-01-01"}])equal(adapter.isPublicLocation(invalid),false);
+  equal(adapter.isPublicLocation({...tour({lat:35.227,lng:-80.843}),slug:"fixture"}),true);
+  equal(adapter.isPublicLocation({...tour({lat:null,lng:null}),slug:"fixture"}),true);
   for (const input of [
     { ...tour(), space_type: "venue" }, { ...tour(), published_at: null }, { ...tour(), published_at: "2099-01-01" },
     tour({ lat: null, lng: null }), tour({ lat: 91, lng: 0 }), tour({ lat: 0, lng: Infinity }),
@@ -176,6 +191,8 @@ try {
     ["daily-cap", "count >= NEARBY_DAILY_LOOKUPS", "false", exhausted, /unavailable/],
     ["area-lease", "if (!alive() || !locked) return unavailable();", "if (!alive()) return unavailable();", stampede, /exactly one provider call/],
     ["body-cap", "export const NEARBY_MAX_BYTES = 256 * 1024;", "export const NEARBY_MAX_BYTES = 1024 * 1024;", oversized, /decoded byte cap/],
+    ["old-error-cache", '(entry.result.status !== "unavailable" || entry.provider === NEARBY_ENDPOINT)', 'true', oldFailure, /old provider error cache/],
+    ["crashed-lease", 'expires_at: now() + NEARBY_LEASE_MS', 'expires_at: now() + ERROR_MS', timedOutLease, /30-second lease/],
     ["cached-distance", "Math.abs(distance(lat, lng, p.lat, p.lng) - p.distance_m) > 1", "false", poison, /corrupt cached distance/],
   ];
   for (const [name, before, after, test, reason] of mutations) {

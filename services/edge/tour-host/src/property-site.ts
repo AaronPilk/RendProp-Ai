@@ -99,9 +99,22 @@ export const PROPERTY_SITE_CSS = `
   @media(max-width:600px) { .property-site .listing-nav-inner { padding:8px 12px; gap:6px; } .property-site #listing-nav a,.property-site #listing-nav button { font-size:12px; letter-spacing:0; } .property-site .listing-cover > img { height:580px; max-height:80svh; min-height:430px; } .property-site .property-hero-copy { padding:26px 22px; } .property-site .property-hero-title { font-size:36px; } }
 `;
 
-// Progressive full-photo view. Anchors still open the complete published image
-// with JavaScript disabled; no additional photo or video is prefetched.
+// Load gallery photos near the viewport rather than the browser's much wider
+// native lazy-load window. Anchors/lightbox still use the exact published master,
+// and noscript markup preserves photos when JavaScript is unavailable.
 export const PROPERTY_SITE_JS = `
+  var propertyThumbs=document.querySelectorAll('img[data-property-src]');
+  function loadPropertyThumb(image){
+    var source=image.getAttribute('data-property-src');
+    if (!source) return;
+    image.loading='eager'; image.src=source; image.removeAttribute('data-property-src');
+  }
+  if (typeof IntersectionObserver==='function'){
+    var propertyPhotoObserver=new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){if(entry.isIntersecting){loadPropertyThumb(entry.target);propertyPhotoObserver.unobserve(entry.target);}});
+    },{rootMargin:'160px 0px'});
+    propertyThumbs.forEach(function(image){propertyPhotoObserver.observe(image);});
+  }else{propertyThumbs.forEach(loadPropertyThumb);}
   var photoModal=document.getElementById('property-photo-modal');
   var photoFull=document.getElementById('property-photo-full');
   var photoOpener=null;

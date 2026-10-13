@@ -7,7 +7,7 @@ const load = buildSrc("property-site-check");
 const { renderTourPage, unbrandedSelfCheck } = await load("player");
 const { buildDemoTour } = await load("demo");
 const { default: worker } = await load("index");
-const { propertyPage } = await load("property-site");
+const { propertyPage, PROPERTY_SITE_JS } = await load("property-site");
 let assertions = 0, fetches = [];
 const check = (value, reason) => { assertions++; assert.ok(value, reason); };
 const fixture = () => ({ ...buildDemoTour(), slug: "synthetic-polish", published_at: "2026-01-01T00:00:00Z",
@@ -22,12 +22,16 @@ const env = { SUPABASE_FUNCTIONS_URL: "https://property-fixture.invalid/function
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 const entries = new Map();
 globalThis.caches = { default: { async match(request) { return entries.get(request.url)?.clone(); }, async put(request, response) { entries.set(request.url, response.clone()); } } };
-let current = fixture(), upstreamStatus = 200;
+let current = fixture(), upstreamStatus = 200, locationOverride;
+const publicLocation = () => ({ slug: current.slug, space_type: current.space_type || "real_estate", published_at: current.published_at,
+  listing: { lat: current.listing.lat == null ? null : Math.round(current.listing.lat * 1000) / 1000,
+    lng: current.listing.lng == null ? null : Math.round(current.listing.lng * 1000) / 1000 } });
 globalThis.fetch = async (url, init) => {
   fetches.push({ url, init });
-  assert.equal(url, env.SUPABASE_FUNCTIONS_URL + "/tours/synthetic-polish", "No provider or arbitrary network call");
+  const location = url.endsWith("/location");
+  assert.equal(url, env.SUPABASE_FUNCTIONS_URL + "/tours/synthetic-polish" + (location ? "/location" : ""), "No provider or arbitrary network call");
   assert.equal(init.cache, "no-store", "Publication read stays uncached");
-  return new Response(upstreamStatus === 200 ? JSON.stringify(current) : "not published", { status: upstreamStatus });
+  return new Response(upstreamStatus === 200 ? JSON.stringify(location ? locationOverride || publicLocation() : current) : "not published", { status: upstreamStatus });
 };
 const get = (path, method = "GET") => worker.fetch(new Request("https://rendprop.com" + path, { method }), env, ctx);
 for (const page of ["home", "gallery", "location", "contact"]) {
@@ -51,6 +55,47 @@ for (const page of ["home", "gallery", "location", "contact"]) {
 }
 const gallery = renderTourPage(fixture(), "", "", "", { page: "gallery" });
 check(gallery.includes('data-property-photo href="/published-photo.jpg"'), "Gallery complete-photo anchor works without JS");
+check(gallery.includes('<noscript><img src="/published-photo.jpg"'), "No-JS Gallery displays the real image, not a placeholder");
+const many = fixture(); many.gallery = Array.from({ length: 13 }, (_, n) => ({ url: `/published-${n}.jpg`, label: `Photo ${n}` }));
+const preview = renderTourPage(many, "", "", "", { page: "home" });
+const fullGallery = renderTourPage(many, "", "", "", { page: "gallery" });
+check((preview.match(/data-property-photo href=/g) || []).length === 4 && preview.includes('View all 13 photos'), "Home previews four photos and links to the complete Gallery");
+check((fullGallery.match(/data-property-photo href=/g) || []).length === 13, "Dedicated Gallery preserves all published selections");
+check(fullGallery.includes('href="/published-12.jpg"') && fullGallery.includes('data-property-src="/published-12.jpg"'), "Deferred image and full-size link retain the same actual source");
+// Execute the actual progressive loader with closed DOM/observer boundaries.
+// Offscreen master files are not assigned until a viewport intersection; older
+// browsers without IntersectionObserver still display every published image.
+function checkPhotoLoading(script, supportsObserver = true) {
+  const images = ["/first-master.jpg", "/second-master.jpg"].map(source => ({
+    src: "placeholder", loading: "lazy", source,
+    getAttribute(name) { return name === "data-property-src" ? this.source : null; },
+    removeAttribute(name) { if (name === "data-property-src") this.source = null; },
+  }));
+  const observed = [], unobserved = []; let callback, options;
+  const document = { querySelectorAll(selector) { assert.equal(selector, "img[data-property-src]"); return images; }, getElementById() { return null; } };
+  const context = { document };
+  if (supportsObserver) context.IntersectionObserver = function(handler, opts) {
+    callback = handler; options = opts;
+    this.observe = image => observed.push(image); this.unobserve = image => unobserved.push(image);
+  };
+  vm.runInNewContext(script, context);
+  if (!supportsObserver) {
+    assert.deepEqual(images.map(image => image.src), ["/first-master.jpg", "/second-master.jpg"]);
+    return;
+  }
+  assert.equal(options.rootMargin, "160px 0px");
+  assert.deepEqual(images.map(image => image.src), ["placeholder", "placeholder"], "Offscreen sources are not eagerly assigned");
+  assert.equal(observed.length, 2);
+  callback([{ target: images[0], isIntersecting: false }]);
+  assert.equal(images[0].src, "placeholder", "Non-intersection cannot fetch a master");
+  callback([{ target: images[0], isIntersecting: true }]);
+  assert.equal(images[0].src, "/first-master.jpg"); assert.equal(images[0].source, null);
+  assert.equal(images[1].src, "placeholder"); assert.equal(unobserved.length, 1);
+}
+checkPhotoLoading(PROPERTY_SITE_JS); assertions += 8;
+checkPhotoLoading(PROPERTY_SITE_JS, false); assertions++;
+assert.throws(() => checkPhotoLoading(PROPERTY_SITE_JS.replace("propertyThumbs.forEach(function(image){propertyPhotoObserver.observe(image);});", "propertyThumbs.forEach(loadPropertyThumb);")), /Offscreen sources are not eagerly assigned/); assertions++;
+assert.throws(() => checkPhotoLoading(PROPERTY_SITE_JS.replace("if(entry.isIntersecting)", "if(true)")), /Non-intersection cannot fetch a master/); assertions++;
 check(gallery.indexOf('id="gallery"') < gallery.indexOf('id="plan"'), "Dedicated Gallery leads with photos, ahead of floor plans");
 check(!gallery.includes('id="endcard"') && !gallery.includes('class="listing-cover"'), "Gallery is its own page, not the Home content repeated");
 const location = renderTourPage(fixture(), "", "", "", { page: "location" });
@@ -85,6 +130,14 @@ const fallback = await get("/f/synthetic-polish/nearby?lat=0&lng=0&provider=http
 check(fallback.status === 200 && fallback.headers.get("cache-control") === "no-store", "Nearby JSON is uncached and optional");
 const result = await fallback.json();
 check(result.status === "unavailable" && result.places.length === 0 && fetches.length === before + 1, "Missing private cache fails gracefully, ignores client location/provider");
+check(fetches.at(-1).url.endsWith("/tours/synthetic-polish/location"), "Nearby uses the fresh authorized location projection without fetching gallery/contact/media metadata");
+locationOverride = { ...publicLocation(), slug: "another-property" };
+check((await get("/f/synthetic-polish/nearby")).status === 404, "Location projection for a different slug cannot authorize enrichment");
+locationOverride = { ...publicLocation(), listing: { lat: 27.771234, lng: -82.641234 } };
+check((await get("/f/synthetic-polish/nearby")).status === 404, "Unrounded private coordinates cannot enter the public enrichment path");
+locationOverride = { ...publicLocation(), published_at: null };
+check((await get("/f/synthetic-polish/nearby")).status === 404, "Missing fresh publication evidence cannot authorize enrichment");
+locationOverride = undefined;
 for (const page of ["home", "gallery", "location", "contact"]) {
   const path = "/f/estate-demo" + (page === "home" ? "" : "?page=" + page);
   const first = await get(path), second = await get(path);

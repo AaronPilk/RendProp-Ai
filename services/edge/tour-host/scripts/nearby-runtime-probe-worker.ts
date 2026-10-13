@@ -48,6 +48,16 @@ export default {
       check((await (await env.MEDIA_RENDERS.get(budgetKey))!.json<{ count: number }>()).count === 100, "actual daily counter stops at 100");
       const exhausted = await lookupNearbyPlaces(tour(36.1), adapterEnv, deps);
       check(exhausted.status === "unavailable" && dispatches === 1, "exhausted real counter prevents another provider call");
+
+      // A dead isolate must not strand an area for the ten-minute completed
+      // error backoff. Its paid-free provider attempt remains counted.
+      let clock = epoch + 24 * 60 * 60 * 1000;
+      const recoveryDeps = { now: () => clock, timeoutMs: 20, fetch: (async () => new Promise<Response>(() => {})) as typeof fetch };
+      check((await lookupNearbyPlaces(tour(37.1), adapterEnv, recoveryDeps)).status === "unavailable", "actual timed-out attempt refuses promptly");
+      clock += 30_001;
+      const recovered = await lookupNearbyPlaces(tour(37.1), adapterEnv, { now: () => clock, fetch: provider });
+      check(recovered.status === "empty", "actual expired thirty-second execution lease permits recovery");
+      check((await (await env.MEDIA_RENDERS.get("public-location-v1/budget/2026-10-14.json"))!.json<{ count: number }>()).count === 2, "timeout and later recovery both remain in the actual next-day meter");
       return Response.json({ passed: true, assertions, storage: "local workerd R2", provider: "closed fixture", external_network: false });
     } catch (error) {
       return Response.json({ passed: false, assertions, error: error instanceof Error ? error.message : String(error) }, { status: 500 });

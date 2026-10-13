@@ -28,10 +28,10 @@ try {
   receipt = { ...receipt, ...result };
   assert.equal(response.status, 200, result.error || "actual workerd probe must succeed");
   assert.equal(result.passed, true);
-  assert.equal(result.assertions, 13);
+  assert.equal(result.assertions, 16);
   receipt.source_binding_matches = createHash("sha256").update(await readFile(sourcePath)).digest("hex") === sourceHash;
   assert.equal(receipt.source_binding_matches, true, "source changed during runtime proof");
-  console.log("check-nearby-runtime: 13 actual workerd/R2 assertions passed; area stampede 1/20 and daily cap 1/15; closed provider only");
+  console.log("check-nearby-runtime: 16 actual workerd/R2 assertions passed; area stampede 1/20 and daily cap 1/15; closed provider only");
 } catch (error) {
   receipt = { ...receipt, passed: false, error: error instanceof Error ? error.message : String(error) };
   console.error("check-nearby-runtime FAILED:", receipt.error);

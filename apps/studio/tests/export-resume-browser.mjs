@@ -31,6 +31,10 @@ const fixture=window.fixture={ready:false,error:null,result:null,trace:[],export
   delayDecode:async(signal,kind)=>{
     const index=decodeIndex++,delay=fixture.decodeDelays[index]??0;
     log("decode.start",{index,kind,delay});
+    // Invalidate at the actual lookahead entry, before the current clip can
+    // start another recording-clock interval. A host-side polling round trip
+    // can arrive after an unrelated timing refusal on a busy runner.
+    if(fixture.staleDecodeIndex===index){fixture.revision++;log("revision.changed",{index,revision:fixture.revision});}
     if(delay)await new Promise((resolve,reject)=>{
       const abort=()=>{clearTimeout(timer);signal.removeEventListener("abort",abort);log("decode.aborted",{index});reject(signal.reason);};
       const timer=setTimeout(()=>{signal.removeEventListener("abort",abort);log("decode.ready",{index});resolve();},delay);
@@ -90,7 +94,7 @@ HTMLMediaElement.prototype.play=function(...args){observeVideo(this);fixture.pla
 document.querySelector("#sources").onchange=async event=>{fixture.ready=false;try{sources=[];for(const file of event.target.files)sources.push(await inspectFile(file,new AbortController().signal));fixture.ready=true;}catch(error){fixture.error=error.message;}};
 document.querySelector("#voice").onchange=event=>{voice=event.target.files[0];};
 document.querySelector("#run").onclick=async()=>{
-  fixture.error=null;fixture.result=null;fixture.trace=[];fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
+  fixture.error=null;fixture.errorCause=null;fixture.result=null;fixture.trace=[];fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
   if(url)URL.revokeObjectURL(url);
   try{
     const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?4:.5,speed:index===1?2:1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
@@ -336,15 +340,15 @@ document.querySelector("#run").onclick=async()=>{
           window.fixture.configure(false);
           window.fixture.decodeDelays = scenario === "abort-initial-successor" ? [0, 5000] : scenario === "failed-initial-successor" ? [] : [0, 0, 5000];
           window.fixture.decodeErrorIndex = scenario === "failed-initial-successor" ? 1 : undefined;
+          window.fixture.staleDecodeIndex = scenario === "stale-during-lookahead" ? 2 : undefined;
         }, scenario);
         await page.locator("#run").click();
-        if (scenario === "abort-initial-successor" || scenario === "stale-during-lookahead") {
-          const index = scenario === "abort-initial-successor" ? 1 : 2;
-          await expect.poll(() => page.evaluate(index => window.fixture.trace.some(event => event.event === "decode.start" && event.index === index), index)).toBe(true);
-          await page.evaluate(scenario => { if (scenario === "abort-initial-successor") window.fixture.cancel(); else window.fixture.revision++; }, scenario);
+        if (scenario === "abort-initial-successor") {
+          await expect.poll(() => page.evaluate(() => window.fixture.trace.some(event => event.event === "decode.start" && event.index === 1))).toBe(true);
+          await page.evaluate(() => window.fixture.cancel());
         }
         await expect.poll(() => page.evaluate(() => window.fixture.exporting), { timeout: 10000 }).toBe(false);
-        const evidence = await page.evaluate(() => ({ error: window.fixture.error, result: window.fixture.result, trace: window.fixture.trace, resourceCount: window.fixture.resources.length, remainingSources: window.fixture.resources.filter(element => element.hasAttribute("src")).length, liveTracks: window.fixture.tracks.filter(track => track.readyState !== "ended").length }));
+        const evidence = await page.evaluate(() => ({ error: window.fixture.error, errorCause: window.fixture.errorCause, revision: window.fixture.revision, result: window.fixture.result, trace: window.fixture.trace, resourceCount: window.fixture.resources.length, remainingSources: window.fixture.resources.filter(element => element.hasAttribute("src")).length, liveTracks: window.fixture.tracks.filter(track => track.readyState !== "ended").length }));
         receipt.preparationFailures.push({ scenario, ...evidence }); await persist();
         assert.equal(evidence.result, null, "Preparation failure must never offer an export blob");
         assert.equal(evidence.remainingSources, 0, "All current and prepared decoders must release their source");
@@ -352,7 +356,17 @@ document.querySelector("#run").onclick=async()=>{
         assert(evidence.resourceCount > 0, "Cleanup assertion must inspect real decoded resources");
         if (scenario === "late-successor") assert.match(evidence.error, /could not prepare the next clip in time/);
         if (scenario === "abort-initial-successor") assert.match(evidence.error, /Fixture export cancelled/);
-        if (scenario === "stale-during-lookahead") assert.match(evidence.error, /changed/i);
+        if (scenario === "stale-during-lookahead") {
+          assert.match(evidence.error, /changed/i);
+          assert.equal(evidence.revision, 2, "The actual currentDraft revision must change exactly once");
+          const changed = evidence.trace.filter(event => event.event === "revision.changed");
+          assert.equal(changed.length, 1, "Exactly one source-side lookahead invalidation must execute");
+          assert.equal(changed[0].index, 2, "Only the pending third decoder changes the draft");
+          assert(changed[0].at > evidence.trace.find(event => event.event === "start.call").at,
+            "The revision must become stale during an actual recording, not before export admission");
+          assert(!evidence.trace.some(event => event.event === "decode.ready" && event.index === 2),
+            "Stale lookahead must be refused before its delayed source becomes ready");
+        }
         if (scenario === "failed-initial-successor") {
           assert.match(evidence.error, /Fixture decoder failure/);
           assert(!evidence.trace.some(event => event.event === "start.call"), "Known initial preparation failure must precede recording");

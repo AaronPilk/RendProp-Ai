@@ -43,7 +43,7 @@ import { spatialData, spatialModule, spatialPage } from "./spatial";
 import { handleMediaDelivery } from "./media-delivery";
 import { handleRecipientConfirmation } from "./recipient-confirmation";
 import { propertyPage } from "./property-site";
-import { lookupNearbyPlaces } from "./nearby-places";
+import { isPublicLocation, lookupNearbyPlaces } from "./nearby-places";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
@@ -417,10 +417,10 @@ async function handleNearbyPlaces(slug: string, req: Request, url: URL, env: Env
   });
   if (req.method !== "GET") return reply(405, { status: "unavailable", places: [] });
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug) || isDemoSlug(slug) || url.searchParams.has("embed")) return reply(404, { status: "unavailable", places: [] });
-  const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}`, env);
+  const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}/location`, env);
   if (upstream.kind === "not-found") return reply(404, { status: "unavailable", places: [] });
   if (upstream.kind === "error") return reply(upstream.status, { status: "unavailable", places: [] });
-  if (!isTour(upstream.value) || (upstream.value.space_type || "real_estate") !== "real_estate") return reply(404, { status: "unavailable", places: [] });
+  if (!isPublicLocation(upstream.value) || upstream.value.slug !== slug) return reply(404, { status: "unavailable", places: [] });
   return reply(200, { ...await lookupNearbyPlaces(upstream.value, env), license_url: "https://www.openstreetmap.org/copyright" });
 }
 

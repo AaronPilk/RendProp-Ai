@@ -45,6 +45,7 @@ async function fixture(bypassFilter = false) {
     import {HttpError,canonicalTimestamps,json,pathSegments,respondError} from ${
     JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)
   };
+    import {publishedTourContext,publishedLocation} from ${JSON.stringify(new URL("./published-context.ts", import.meta.url).href)};
     import {handleOptions} from ${
     JSON.stringify(new URL("../_shared/cors.ts", import.meta.url).href)
   };
@@ -63,10 +64,12 @@ async function fixture(bypassFilter = false) {
     const DEMO_SLUGS=new Set();
     const demoTour=()=>{throw Error("Demo boundary must not run");};
     export const state:any={listing:null,client:null,published:true,revoked:false,reads:[]};
-    const render={id:"render-fixture",job_id:"job-fixture",listing_id:"listing-fixture",slug:"private-measurement-fixture",duration_s:8,speed_factor:1,video_key:"renders/fixture/video.mp4",stream_uid:null,poster_key:"renders/fixture/poster.jpg",staged:false,published_at:"2030-01-01T00:00:00Z"};
+    const render={id:"30000000-0000-4000-8000-000000000003",job_id:"job-fixture",listing_id:"20000000-0000-4000-8000-000000000002",slug:"private-measurement-fixture",duration_s:8,speed_factor:1,video_key:"renders/fixture/video.mp4",stream_uid:null,poster_key:"renders/fixture/poster.jpg",staged:false,published_at:"2030-01-01T00:00:00Z"};
     const rows:any={renders:render,orgs:{handle:"fixture-agent",brand_kit:{name:"Synthetic Public Agent"}},profiles:{name:"Synthetic Public Agent"},render_jobs:{capture_asset_id:null}};
     const adminClient=()=>({rpc:async(name:string,args:any)=>{
-      if(name!=="public_listing_agent_identity" || args.p_listing!=="listing-fixture" || Object.keys(args).length!==1)throw Error("Unexpected identity RPC");
+      if(name==="hosting_retention_state")return {error:null,data:{org_id:args.p_org,policy:"preserved",protected:false,retention_ends_at:null,hosting_available:true}};
+      if(name==="studio_presenter_media_visibility")return {error:null,data:Object.fromEntries(["assets","renders","keys"].map(kind=>[kind,Object.fromEntries(args["p_"+kind].map((key:string)=>[key,!state.revoked]))]))};
+      if(name!=="public_listing_agent_identity" || args.p_listing!=="20000000-0000-4000-8000-000000000002" || Object.keys(args).length!==1)throw Error("Unexpected identity RPC");
       return {error:null,data:{personal_card:null,profile_name:"Synthetic Public Agent",legacy_owned_single_member:false,org_business:{},org_handle:"fixture-agent",legacy_brand:{},legacy_portrait:null}};
     },from:(table:string)=>{
       const query:any={select:(fields:string)=>{state.reads.push({table,fields});return query;},eq:()=>query,not:()=>query,
@@ -90,7 +93,7 @@ async function fixture(bypassFilter = false) {
     async ${productionFunction(source, "listingAgentIdentity")}
     ${handler}
     export const ownerRead=async(req:Request)=>{
-      const id=undefined,explicitOrg="org-fixture";
+      const id=undefined,explicitOrg="10000000-0000-4000-8000-000000000001";
       const q:any={select:()=>q,is:()=>q,eq:()=>q,order:async()=>({data:[state.listing],error:null})};
       const db={from:()=>q};
       ${ownerSource.slice(ownerStart, ownerEnd)}
@@ -150,8 +153,8 @@ const details = {
 
 function listing() {
   return {
-    id: "listing-fixture",
-    org_id: "org-fixture",
+    id: "20000000-0000-4000-8000-000000000002",
+    org_id: "10000000-0000-4000-8000-000000000001",
     agent_id: "agent-fixture",
     space_type: "real_estate",
     address: "Synthetic property",
@@ -289,7 +292,8 @@ Deno.test("publication and media-revocation gates still reject public tour acces
   assertEquals((await f.handler(request())).status, 404);
   f.state.published = true;
   f.state.revoked = true;
-  assertEquals((await f.handler(request())).status, 403);
+  // The shared production media authority intentionally returns404 on revocation.
+  assertEquals((await f.handler(request())).status, 404);
 });
 
 Deno.test("copied actual-route bypass control exposes the sentinel and is rejected", async () => {

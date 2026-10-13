@@ -349,13 +349,8 @@ function alteredItems(tour: Tour): AlteredItem[] {
 function disclosureSummary(tour: Tour, items: AlteredItem[]): string {
   if (items.length) {
     const n = items.length;
-    const head = `${n} item${n === 1 ? "" : "s"} in this tour ${n === 1 ? "was" : "were"} digitally altered or AI-generated.`;
-    // Say that the originals are RIGHT HERE and can be compared, not merely
-    // that something was altered. A disclosure nobody opens discloses nothing.
-    if (items.some((it) => it.original && VIDEO_KINDS.has(it.kind))) {
-      return `${head} Compare the edited media with the unedited originals below.`;
-    }
-    return items.some((it) => it.original) ? `${head} Drag to compare with the unedited photo.` : head;
+    const head = `Digitally edited or AI-generated media · ${n} item${n === 1 ? "" : "s"}`;
+    return items.some((it) => it.original) ? `${head} · View details and originals` : `${head} · View details`;
   }
   return "Some imagery in this tour has been virtually staged or digitally decluttered.";
 }
@@ -440,9 +435,7 @@ function renderDisclosureSection(tour: Tour): string {
   const list = rows ? `<ul class="disc-list">${rows}</ul>` : "";
 
   return `<section class="lp-sec" id="disclosure"><div class="lp-wrap">
-    <div class="lp-eyebrow">Disclosure</div>
-    <h2 class="lp-h">AI &amp; digital editing disclosure</h2>
-    <details class="disc" id="disc" open>
+    <details class="disc" id="disc">
       <summary class="disc-sum">${escapeHtml(disclosureSummary(tour, items))}</summary>
       <div class="disc-body">
         ${lead}
@@ -1120,11 +1113,14 @@ const PLAYER_CSS = `${TOKENS_CSS}
 // ---------------------------------------------------------------------------
 
 const EDITORIAL_INTERACTIONS_JS = `
-  /* ---- AI disclosure: full text is always IN the page (no-JS included);
-     mobile just starts it collapsed behind the one-line summary. ---- */
+  /* ---- A compact visible notice opens the full details and originals. ---- */
   var discEl = document.getElementById('disc');
-  if (discEl && window.matchMedia && matchMedia('(max-width: 719px)').matches){
-    discEl.removeAttribute('open');
+  if (discEl){
+    document.querySelectorAll('a[href]').forEach(function(link){
+      if (link.getAttribute('href') !== '#disclosure') return;
+      link.addEventListener('click',function(){discEl.open=true;});
+    });
+    if (location.hash === '#disclosure') discEl.open=true;
   }
 
   /* ---- Before/after drag. Upgrades the side-by-side pair in place; if this
@@ -2608,8 +2604,17 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
   // Gallery — real images if provided, else the chapter list as a teaser.
   const imgs = galleryItems(tour);
   if (imgs.length) {
+    // Home is a preview. The full Gallery keeps every published selection and
+    // its exact full-size URL; offscreen photos need not compete with the hero.
+    const preview = page === "home" ? imgs.slice(0, 4) : imgs;
+    const photo = (g: { url: string; label: string }) => {
+      const alt = escapeAttr(g.label || headingRaw);
+      const image = `<img src="${escapeAttr(g.url)}" alt="${alt}" loading="lazy" decoding="async">`;
+      if (!page) return `<figure class="lp-gcell">${image}${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
+      return `<figure class="lp-gcell"><a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}"><img class="property-thumb" data-property-src="${escapeAttr(g.url)}" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="${alt}" loading="lazy" decoding="async" fetchpriority="low"><noscript>${image}</noscript></a>${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
+    };
     out.push(sec("gallery", "Gallery", "A closer look",
-      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p>' : ""}<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell">${page ? `<a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}">` : ""}<img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${page ? "</a>" : ""}${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}${mediaDateNote(tour)}</div>`));
+      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery"))}">View all ${imgs.length} photos</a></p>` : ""}`));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Explore the rooms" : "Explore the space",
       `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
@@ -2898,9 +2903,8 @@ export const EDITORIAL_CSS = `
 
   /* AI disclosure (A2) — required on BOTH /f/ and /u/ */
   .disc { margin-top:8px; }
-  .disc-sum { cursor:pointer; list-style:none; padding:14px 16px; border-radius:14px;
-    background:var(--card); border:1px solid rgba(255,255,255,.08);
-    font-size:14.5px; font-weight:600; line-height:1.5; color:var(--ink); }
+  .disc-sum { cursor:pointer; list-style:none; padding:12px 0;
+    font-size:12px; font-weight:400; line-height:1.5; color:var(--ink-dim); }
   .disc-sum::-webkit-details-marker { display:none; }
   .disc-sum::after { content:" ▾"; color:var(--accent-3); }
   .disc[open] .disc-sum::after { content:" ▴"; }
