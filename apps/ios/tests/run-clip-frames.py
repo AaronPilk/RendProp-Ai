@@ -49,7 +49,7 @@ def command(name, argv, timeout, check=True):
 
 try:
     sdk = command('sdk', ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], 30).stdout.strip()
-    inventory = json.loads(command('simulators', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 30).stdout)['devices']
+    inventory = json.loads(command('simulators', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 120).stdout)['devices']
     devices = [d for runtime, rows in inventory.items() if 'iOS' in runtime for d in rows if d['isAvailable'] and 'iPhone' in d['name']]
     device = next(d for d in devices if d['udid'] == args.simulator) if args.simulator else next((d for d in devices if d['state'] == 'Booted'), devices[0])
     receipt['simulator'] = device
