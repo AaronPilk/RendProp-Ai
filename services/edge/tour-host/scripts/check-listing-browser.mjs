@@ -34,6 +34,7 @@ const movie = readFileSync(moviePath);
 const movieHash = createHash("sha256").update(movie).digest("hex");
 const load = buildSrc("listing-browser-check-" + process.pid);
 const { renderTourPage, unbrandedSelfCheck } = await load("player");
+const { propertyPage } = await load("property-site");
 const { buildDemoTour } = await load("demo");
 const { spatialModule } = await load("spatial");
 const spatialFixturePath = arg("--spatial-fixture"), spatialEnginePath = arg("--spatial-engine");
@@ -71,6 +72,10 @@ const failureDiagnostic = async (label, action, timeoutMs = 2000) => {
   } finally { clearTimeout(timer); }
 };
 let failVideoRequests = true;
+let nearbyMode = "available", pendingNearby = [];
+const nearbyFixture = { status: "available", attribution: "© OpenStreetMap contributors", places: [
+  { name: "Synthetic Cafe <script>not executable</script>", category: "Cafe", distance_m: 640, source_url: "https://www.openstreetmap.org/node/123" },
+] };
 const check = (value, message) => { assert.ok(value, message); checks.push(message); };
 const waitUntil = async (predicate, message, timeout = 5000) => {
   const deadline = Date.now() + timeout;
@@ -170,10 +175,15 @@ try {
       req.on("end", () => { record.payload = JSON.parse(body); send(201, JSON.stringify({ ok: true, accepted: true }), { "Content-Type": "application/json" }); });
       return;
     }
+    if (/^\/f\/[^/]+\/nearby$/.test(url.pathname)) {
+      if (nearbyMode === "pending") { pendingNearby.push(() => send(200, JSON.stringify(nearbyFixture), { "Content-Type": "application/json" })); return; }
+      if (nearbyMode === "failed") return send(503, "Unavailable", { "Content-Type": "text/plain" });
+      return send(200, JSON.stringify(nearbyMode === "empty" ? { status: "empty", places: [] } : nearbyFixture), { "Content-Type": "application/json" });
+    }
     if (url.pathname.startsWith("/f/") || url.pathname.startsWith("/u/")) {
       const unbranded = url.pathname.startsWith("/u/");
       const tour = fixture({ slow: url.pathname.includes("slow"), missing: url.pathname.includes("no-video"), failed: url.pathname.includes("failed"), spatial: url.pathname.includes("spatial"), client: url.pathname.includes("client-alpha") ? "alpha" : url.pathname.includes("client-beta") ? "beta" : null });
-      let html = renderTourPage(tour, "http://127.0.0.1:" + server.address().port + "/api", "", "", { unbranded, origin: "http://127.0.0.1:" + server.address().port });
+      let html = renderTourPage(tour, "http://127.0.0.1:" + server.address().port + "/api", "", "", { unbranded, origin: "http://127.0.0.1:" + server.address().port, page: propertyPage(url.searchParams.get("page")) });
       if (unbranded) assert.deepEqual(unbrandedSelfCheck(html, tour), [], "Actual unbranded renderer must pass its unchanged security gate");
       if (fault === "eager-media") html = html.replace("</body>", '<script>document.getElementById("flythrough-video").src="/synthetic-video.mp4";document.getElementById("flythrough-video").load();</script></body>');
       if (fault === "retain-media") html = html.replace("</body>", '<script>var v=document.getElementById("flythrough-video");var remove=v.removeAttribute.bind(v);v.removeAttribute=function(name){if(name!=="src")remove(name)};var load=v.load.bind(v);v.load=function(){if(!v.currentSrc)load()};</script></body>');
@@ -287,15 +297,57 @@ try {
 
   // The regression reported by the user: navigation through listing sections
   // must never seek or force the visitor through a massive scroll/video track.
-  await page.locator('#listing-nav a[href="#gallery"]').click();
+  await page.locator('#listing-nav a[href$="?page=gallery"]').click();
   await page.locator("#gallery").waitFor({ state: "visible" });
   await page.waitForTimeout(150);
   check(await page.evaluate(() => document.querySelector("#gallery").getBoundingClientRect().top < innerHeight), "Photos navigation reaches photos in a normal page scroll");
-  await page.locator('#listing-nav a[href="#overview"]').click();
+  await page.locator('#listing-nav .listing-nav-links a').filter({hasText:"Home"}).click();
   await page.waitForTimeout(150);
-  check(await page.evaluate(() => Math.abs(document.querySelector("#overview").getBoundingClientRect().top) < 180), "Details navigation returns directly to the listing overview");
+  check(await page.locator(".property-hero-title").isVisible() && await page.locator("#overview").count() === 1, "Home navigation returns to the property hero and factual overview");
   check(mediaRequests().length === 0, "Browsing photos/details and returning to the top does not fetch video");
   check(await page.locator("#track").count() === 0, "Public listing has no legacy duration-sized scrub track");
+
+  // These are server navigations, not renamed anchors. Photos, maps and forms
+  // are independently usable, and optional map data never delays HTML.
+  await page.locator('#listing-nav a[href$="?page=gallery"]').click();
+  check(new URL(page.url()).searchParams.get("page") === "gallery", "Gallery has a reloadable URL");
+  const photoLink = page.locator('[data-property-photo]').first();
+  await photoLink.click();
+  await page.waitForFunction(() => document.querySelector('#property-photo-full').naturalWidth > 0);
+  check(await page.locator('#property-photo-modal').evaluate(el => el.open), "Gallery opens a real full-photo dialog");
+  check(await page.locator('#property-photo-full').getAttribute('src') === base + '/synthetic-gallery.svg', "Full photo uses the exact published image, with no altered derivative");
+  check(await page.locator('#property-photo-full').evaluate(el => getComputedStyle(el).objectFit === 'contain'), "Full photo preserves the complete frame");
+  await page.keyboard.press('Escape');
+  check(await page.locator('#property-photo-full').getAttribute('src') === null && await photoLink.evaluate(el => document.activeElement === el), "Escape closes, unloads the full image and restores gallery focus");
+  nearbyMode = "pending";
+  await page.locator('#listing-nav a[href$="?page=location"]').click();
+  await waitUntil(() => pendingNearby.length > 0, "Location must request optional nearby data");
+  check(await page.locator('.property-location-copy address').isVisible() && await page.locator('.property-location-copy a').getAttribute('href').then(href => href.startsWith('https://www.google.com/maps/')), "Location address/map is immediately usable while provider data is pending");
+  check(await page.locator('#property-nearby-status').innerText() === 'Loading nearby places…', "Nearby loading is honest and does not block the page");
+  pendingNearby.splice(0).forEach(send => send());
+  await page.locator('#property-nearby-list li').waitFor();
+  check(await page.locator('#property-nearby-list a').innerText() === nearbyFixture.places[0].name && await page.locator('#property-nearby-list script').count() === 0, "OSM names render as literal text, never executable markup");
+  check(await page.locator('#property-nearby-list span').innerText() === 'Cafe · approximately 0.4 mi away', "Nearby distance is derived from actual fixture data and labelled approximate");
+  for (const mode of ['empty', 'failed']) {
+    nearbyMode = mode; await page.reload();
+    await page.waitForFunction(() => !document.querySelector('#property-nearby-status').textContent.startsWith('Loading'));
+    const message = await page.locator('#property-nearby-status').innerText();
+    check(message.includes(mode === 'empty' ? 'No nearby places' : 'unavailable right now') && await page.locator('#property-nearby-list li').count() === 0, mode + " nearby response offers the map without invented place cards");
+  }
+  nearbyMode = 'available';
+  check(mediaRequests().length === 0, "Gallery photos and all Location data states make zero video requests");
+  await page.locator('#listing-nav .listing-nav-links a').filter({hasText:"Home"}).click();
+  const noJS = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 390, height: 844 } });
+  await noJS.route('**/*', route => new URL(route.request().url()).origin === base ? route.continue() : route.abort());
+  const noJSPage = await noJS.newPage();
+  await noJSPage.goto(base + '/f/synthetic-listing');
+  await noJSPage.locator('#listing-nav a[href$="?page=gallery"]').click();
+  check(await noJSPage.locator('[data-property-photo]').getAttribute('href') === '/synthetic-gallery.svg', "JavaScript-disabled Gallery links to the complete image");
+  await noJSPage.locator('#listing-nav a[href$="?page=location"]').click();
+  check(await noJSPage.locator('noscript').isVisible() && await noJSPage.locator('.property-location-copy address').isVisible(), "JavaScript-disabled Location still renders address and map guidance");
+  await noJSPage.locator('#listing-nav a[href$="?page=contact"]').click();
+  check(await noJSPage.locator('#leadform input[name="name"]').isVisible(), "JavaScript-disabled Contact navigation reaches actual enquiry fields");
+  await noJS.close();
 
   for (const width of [320, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: 844 });
@@ -315,11 +367,14 @@ try {
     check(width>600 || Math.abs(geometry.actions.at(-1).right-(width-12))<1, "Mobile actions use the full row with consistent side margins at " + width + "px");
     if (width===1440) { await page.locator('.listing-backtop').click(); await page.screenshot({ path: join(evidence, "listing-first-desktop.png") }); }
     for (const target of ["gallery", "overview", "endcard"]) {
-      await page.locator('#listing-nav a[href="#' + target + '"]').click(); await page.waitForTimeout(100);
-      const measurement = await page.evaluate((id) => { const nav = document.querySelector("#listing-nav").getBoundingClientRect(), heading = document.querySelector("#" + id + (id === "endcard" ? " .agent .nm" : " .lp-h")).getBoundingClientRect(); return { width: innerWidth, target: id, navBottom: nav.bottom, headingTop: heading.top, headingBottom: heading.bottom }; }, target);
+      const targetPage = target === "gallery" ? "gallery" : target === "endcard" ? "contact" : "home";
+      await page.locator('#listing-nav .listing-nav-links a').filter({ hasText: new RegExp('^'+targetPage[0].toUpperCase()+targetPage.slice(1)+'$') }).click();
+      await page.waitForTimeout(100);
+      const measurement = await page.evaluate((id) => { const nav = document.querySelector("#listing-nav").getBoundingClientRect(), heading = document.querySelector(id === "overview" ? ".property-hero-title" : "#" + id + (id === "endcard" ? " .agent .nm" : " .lp-h")).getBoundingClientRect(); return { width: innerWidth, target: id, navBottom: nav.bottom, headingTop: heading.top, headingBottom: heading.bottom }; }, target);
       navigationMeasurements.push(measurement);
       check(measurement.headingTop >= measurement.navBottom - 1 && measurement.headingBottom < 844, target + " heading is visible below the actual wrapped navigation at " + width + "px");
     }
+    await page.locator('#listing-nav .listing-nav-links a').filter({hasText:"Home"}).click();
   }
   for (const width of [320, 375, 430]) {
     await page.setViewportSize({ width, height: 844 });
@@ -587,7 +642,7 @@ try {
   const clientMediaStart = mediaRequests().length;
   for (const client of ["alpha", "beta"]) {
     await page.goto(base + "/f/synthetic-client-" + client);
-    await page.locator('#listing-nav a[href="#endcard"]').click();
+    await page.locator('#listing-nav a[href$="?page=contact"]').click();
     await page.waitForFunction(() => { const img = document.querySelector("#endcard .avatar img"); return img?.complete && img.naturalWidth > 0; });
     check(await page.locator("#endcard .nm").innerText() === "Synthetic Client " + client, "Client " + client + " listing displays its own contact name");
     check(await page.locator("#endcard .avatar img").evaluate((img) => img.complete && img.naturalWidth > 0 && img.getAttribute("src").includes("client-")), "Client " + client + " headshot loads as real browser image");

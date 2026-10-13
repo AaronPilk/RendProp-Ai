@@ -41,6 +41,7 @@
 
 import type { AlteredMedium, Cta, SecondaryLink, Tour, TourListing } from "./types";
 import { LISTING_PLAYER_CSS, LISTING_PLAYER_JS } from "./listing-player";
+import { propertyPage, propertyPageHref, PROPERTY_SITE_CSS, PROPERTY_SITE_JS, NEARBY_PLACES_JS, type PropertyPage } from "./property-site";
 import { spatialAnchor } from "./spatial-manifest";
 import { APP_STORE_ID, appStoreUrl, siteUrl } from "./attribution";
 import { tourJsonLd } from "./jsonld";
@@ -2559,7 +2560,7 @@ function mediaDateNote(tour: Tour): string {
   return `<p class="lp-fine lp-mediadate"><time datetime="${escapeAttr(when.toISOString().slice(0, 10))}">This tour was published on ${escapeHtml(text)}.</time> Ask the agent before assuming anything shown here is still current.</p>`;
 }
 
-function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): string {
+function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null): string {
   const l = tour.listing;
   const isRE = isRealEstate(tour);
   const sold = isSoldOrArchived(tour);
@@ -2608,7 +2609,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
   const imgs = galleryItems(tour);
   if (imgs.length) {
     out.push(sec("gallery", "Gallery", "A closer look",
-      `<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell"><img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}${mediaDateNote(tour)}</div>`));
+      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p>' : ""}<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell">${page ? `<a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}">` : ""}<img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${page ? "</a>" : ""}${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}${mediaDateNote(tour)}</div>`));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Explore the rooms" : "Explore the space",
       `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
@@ -2642,10 +2643,24 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
   // Neighborhood / commute.
   const nb = neighborhoodBlurb(tour);
   const commute = commuteItems(tour);
-  if (nb || commute.length) {
+  if (nb || commute.length || page) {
     const c = commute.length ? `<div class="lp-commute">${commute.map((x) => `<div class="lp-cm"><span class="t">${escapeHtml(x.time)}</span><span class="l">${escapeHtml(x.label)}</span></div>`).join("")}</div>` : "";
+    const address = first(l.address);
+    const locationCard = page ? `<div class="property-location-card"><div class="property-location-copy">
+      ${address ? `<address>${escapeHtml(address)}</address>` : '<p class="lp-tag">An address has not been published for this listing. Ask the listing contact for its location.</p>'}
+      ${address ? `<a class="lp-btn" href="${escapeAttr(directionsUrl(tour))}" target="_blank" rel="noopener nofollow">Open in Google Maps ↗</a><p class="lp-fine">Opens an external map. Confirm the address and directions before visiting.</p>` : ""}
+    </div><div class="property-location-visual" aria-hidden="true"><span>⌖</span></div></div>` : "";
     out.push(sec("location", "The location", detStr(tour, "neighborhood_title") || "The neighborhood",
-      `${nb ? `<div class="lp-prose"><p>${escapeHtml(nb)}</p></div>` : ""}${c}`));
+      `${locationCard}${nb ? `<div class="lp-prose"><p>${escapeHtml(nb)}</p></div>` : ""}${c}`));
+  }
+  if (page === "location" && tour.slug !== "estate-demo" && tour.slug !== "demo") {
+    out.push(`<section class="lp-sec" id="property-nearby" data-endpoint="/f/${encodeURIComponent(tour.slug)}/nearby"><div class="lp-wrap">
+      <div class="lp-eyebrow">Around the address</div><h2 class="lp-h">Explore nearby</h2>
+      <p id="property-nearby-status" class="lp-tag" role="status">Loading nearby places…</p>
+      <ul class="property-nearby-list" id="property-nearby-list" hidden></ul>
+      <noscript><p class="lp-tag">Open the map above to explore nearby restaurants, cafés and shops.</p></noscript>
+      <p class="lp-fine">Approximate straight-line distances from the published location, not travel times. Map data may be incomplete or out of date. <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a></p>
+    </div></section>`);
   }
 
   // An explicit owner-supplied lender link only. Rendprop is not quoting loan
@@ -2664,7 +2679,22 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
   // BOTH pages. Disclosure is property information, so it survives sanitizing.
   out.push(renderDisclosureSection(tour));
 
-  return `<div id="listing-page">${out.join("")}</div>`;
+  // Separate server-rendered pages keep navigation, reload and browser Back
+  // useful with JavaScript disabled. The home retains its existing overview,
+  // gallery preview and enquiry; other pages show their own full content.
+  const pageSections: Record<PropertyPage, Set<string>> = {
+    home: new Set(), gallery: new Set(["gallery", "plan", "floorplan", "disclosure"]),
+    location: new Set(["nearby", "location", "property-nearby", "disclosure"]), contact: new Set(),
+  };
+  const visible = page && page !== "home"
+    ? out.filter((html) => pageSections[page].has(html.match(/\bid="([^"]+)"/)?.[1] || ""))
+    : out;
+  if (page === "gallery") visible.sort((a, b) => Number(b.includes('id="gallery"')) - Number(a.includes('id="gallery"')));
+  if (page === "gallery" && !imgs.length && !tour.chapters?.length) visible.unshift(sec("gallery", "Gallery", "Photos coming soon", '<p class="lp-tag">No property photos have been published yet.</p>'));
+  const pageTitle = page === "gallery" ? "A closer look" : page === "location" ? "The location" : "Arrange a visit";
+  const pageHead = page && page !== "home" ? `<header class="property-page-head"><div class="lp-wrap"><div class="lp-eyebrow">${escapeHtml(page === "contact" ? sold ? "Contact" : "Private showing enquiry" : page)}</div><h1>${pageTitle}</h1><p>${escapeHtml(headingRaw)}</p></div></header>` : "";
+  const container = page ? "main" : "div";
+  return `<${container} id="listing-page">${pageHead}${visible.join("")}</${container}>`;
 }
 
 /**
@@ -2974,6 +3004,8 @@ export interface RenderOpts {
   /** Request origin (`https://rendprop.com`). Used only for the `/f/` canonical
    *  and og:image absolutization; NEVER used on the unbranded page. */
   origin?: string;
+  /** Branded real-estate page navigation. Unknown values resolve to Home. */
+  page?: PropertyPage;
 }
 
 export function renderTourPage(input: Tour, functionsBase: string, anonKey: string, turnstileSiteKey = "", opts: RenderOpts = {}): string {
@@ -2982,6 +3014,9 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 
   // STEP 1 — strip at the data level, before a single byte of HTML exists.
   const tour = unbranded ? sanitizeTourForUnbranded(input) : input;
+  const polished = !embed && !unbranded && isRealEstate(tour);
+  const page = polished ? propertyPage(opts.page) : null;
+  const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target);
 
   const hideVendor = hidesVendorBranding(tour);
   const agent = extractAgent(tour.client_mode === true ? { ...tour.agent_card, handle: null } : tour.agent_card || {});
@@ -3118,14 +3153,17 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const hasVideo = !!(scrubUrl || hlsUrl);
   const coverHtml = `<section class="listing-cover" aria-label="Property media">
     ${coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
+    ${polished ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><div class="property-hero-title">${escapeHtml(header.entityName)}</div>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}` : ""}
     <div class="listing-cover-actions">
       ${hasVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : `<p>Photos and location details are available below.</p>`}
+      ${polished ? `<a class="property-hero-link" href="${escapeAttr(pageHref("gallery"))}">View gallery</a>${!isSoldOrArchived(tour) ? `<a class="property-hero-link" href="${escapeAttr(pageHref("contact"))}">Enquire about this home</a>` : ""}` : ""}
     </div>
     ${staged || hasAltered ? `<span class="listing-media-label">${escapeHtml(chipLabel)}${hasDisclosureSection ? ` · <a href="#disclosure">See disclosures and originals</a>` : ""}</span>` : ""}
+    ${polished ? "</div>" : ""}
   </section>`;
-  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, coverHtml);
+  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page);
   // The end card IS the branding: agent card + CTA/lead form. `/u/` has none.
-  const endcardHtml = embed || unbranded ? "" : `<section id="endcard">
+  const endcardHtml = embed || unbranded || (page && page !== "home" && page !== "contact") ? "" : `<section id="endcard">
   <div class="panel">
     ${renderAgentCard(agent, tour)}
     ${ctaBlock.html}
@@ -3199,7 +3237,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d10">
-<title>${escapeHtml(header.pageTitle)}</title>
+<title>${escapeHtml(page && page !== "home" ? `${page[0].toUpperCase() + page.slice(1)} · ${header.pageTitle}` : header.pageTitle)}</title>
 <meta name="description" content="${escapeAttr(header.ogDesc)}">
 ${embed || unbranded ? `<meta name="robots" content="noindex">` : indexable ? "" : `<meta name="robots" content="noindex, nofollow">`}
 ${appBanner}
@@ -3213,10 +3251,10 @@ ${shareUrl ? `<meta property="og:url" content="${escapeAttr(shareUrl)}">` : ""}
 ${ogImage}
 ${jsonLdHtml}`}
 <style>${PLAYER_CSS}${unbranded ? "" : FORM_CSS}
-${EDITORIAL_CSS}${embed ? "" : LISTING_PLAYER_CSS}${embed || unbranded ? "" : "#endcard {min-height:0;padding-top:48px;background:var(--bg);scroll-margin-top:var(--listing-nav-offset,88px);}"}</style>
+${EDITORIAL_CSS}${embed ? "" : LISTING_PLAYER_CSS}${embed || unbranded ? "" : "#endcard {min-height:0;padding-top:48px;background:var(--bg);scroll-margin-top:var(--listing-nav-offset,88px);}"}${polished ? PROPERTY_SITE_CSS : ""}</style>
 ${accentOverride}
 </head>
-<body>
+<body${polished ? ` class="property-site property-page-${page}"` : ""}>
 
 ${embed ? `<div id="track">
   <div id="stage"${hasStrip ? ` class="hasstrip"` : ""}>
@@ -3278,10 +3316,11 @@ ${footerHtml}
 ` : `<div id="listing-top"></div>
 <nav id="listing-nav" aria-label="Listing navigation"><div class="listing-nav-inner">
   <div class="listing-nav-links">
+  ${polished ? (["home", "gallery", "location", "contact"] as const).map((target) => `<a href="${escapeAttr(pageHref(target))}"${target === page ? ' aria-current="page"' : ""}>${target[0].toUpperCase() + target.slice(1)}</a>`).join("") : `
   <a href="#overview">Details</a>
   ${galleryItems(tour).length || chapters.length ? `<a href="#gallery">${galleryItems(tour).length ? "Photos" : "Rooms"}</a>` : ""}
   ${safeUrl(tour.floorplan_url || "") ? `<a href="#plan">Floor plan</a>` : ""}
-  ${!unbranded ? `<a href="#endcard">Contact</a>` : ""}
+  ${!unbranded ? `<a href="#endcard">Contact</a>` : ""}`}
   </div><div class="listing-nav-actions">
   ${hasVideo ? `<button type="button" class="watch-button" data-open-flythrough aria-label="Open fly-through" aria-haspopup="dialog">Fly-through</button>` : ""}
   ${shareHtml}
@@ -3290,8 +3329,10 @@ ${footerHtml}
 </div></nav>
 ${sectionsHtml}
 ${endcardHtml}
+${page === "contact" ? renderDisclosureSection(tour) : ""}
 ${getAppHtml}
 ${footerHtml}
+${polished ? `<dialog id="property-photo-modal" aria-labelledby="property-photo-title"><div class="property-photo-head"><p id="property-photo-title">Property photo</p><button type="button" id="property-photo-close">Close photo ×</button></div><img id="property-photo-full" alt="">${hasDisclosureSection ? '<a href="#disclosure" onclick="document.getElementById(\'property-photo-close\').click()">See disclosures and originals</a>' : ""}</dialog>` : ""}
 <dialog id="flythrough-modal" aria-labelledby="flythrough-title" aria-modal="true">
   <div class="video-head"><h2 id="flythrough-title">Fly-through</h2><button type="button" id="flythrough-close">Back to listing ×</button></div>
   <div class="flythrough-modes" role="group" aria-label="Choose how to view the tour">
@@ -3316,6 +3357,8 @@ ${footerHtml}
 
 <script>window.__CFG__=${jsonForScript(cfg)};</script>
 <script>${embed ? engineJs(unbranded, true, hideVendor) : listingEngineJs(unbranded, hideVendor)}</script>
+${polished ? `<script>(function(){${PROPERTY_SITE_JS}})();</script>` : ""}
+${page === "location" ? `<script>${NEARBY_PLACES_JS}</script>` : ""}
 </body>
 </html>`;
 }

@@ -42,6 +42,8 @@ import { fetchUpstreamJSON } from "./upstream";
 import { spatialData, spatialModule, spatialPage } from "./spatial";
 import { handleMediaDelivery } from "./media-delivery";
 import { handleRecipientConfirmation } from "./recipient-confirmation";
+import { propertyPage } from "./property-site";
+import { lookupNearbyPlaces } from "./nearby-places";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
@@ -303,18 +305,19 @@ async function handleTour(
   // Only the demo slug honours it, only in embed mode, and only for a known
   // business type; it is part of the cache key so the two renders never mix.
   const demoAs = embed && demo ? demoSpaceFrom(url.searchParams.get("space")) : undefined;
+  const page = !embed && !unbranded ? propertyPage(url.searchParams.get("page")) : "home";
 
   // WH-05: changing only the response TTL leaves old cache hits reachable.
   // Customer HTML must bypass both reads AND writes, including entries from a
   // previous deployment. The explicit demo slugs have no revocable user data.
   const cache = demo ? caches.default : null;
-  const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : ""}${demoAs ? `&space=${demoAs}` : ""}`);
+  const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : page === "home" ? "" : `?page=${page}`}${demoAs ? `&space=${demoAs}` : ""}`);
   if (cache) {
     const hit = await cache.match(key);
     if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
   }
 
-  const renderOpts = { embed, unbranded, origin: url.origin };
+  const renderOpts = { embed, unbranded, origin: url.origin, page };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
   const finish = (tour: Tour): Response => {
@@ -404,6 +407,23 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env)
   }
 }
 
+// Location data is requested separately so a best-effort map provider cannot
+// delay the listing HTML. Every request rechecks current publication; neither
+// a client coordinate nor an old cached listing can select the query location.
+async function handleNearbyPlaces(slug: string, req: Request, url: URL, env: Env): Promise<Response> {
+  const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), {
+    status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Robots-Tag": "noindex, nofollow" },
+  });
+  if (req.method !== "GET") return reply(405, { status: "unavailable", places: [] });
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug) || isDemoSlug(slug) || url.searchParams.has("embed")) return reply(404, { status: "unavailable", places: [] });
+  const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}`, env);
+  if (upstream.kind === "not-found") return reply(404, { status: "unavailable", places: [] });
+  if (upstream.kind === "error") return reply(upstream.status, { status: "unavailable", places: [] });
+  if (!isTour(upstream.value) || (upstream.value.space_type || "real_estate") !== "real_estate") return reply(404, { status: "unavailable", places: [] });
+  return reply(200, { ...await lookupNearbyPlaces(upstream.value, env), license_url: "https://www.openstreetmap.org/copyright" });
+}
+
 /**
  * GET /sitemap.xml — served by the Worker, not by Static Assets.
  *
@@ -486,6 +506,11 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return req.method === "HEAD" ? new Response(null, response) : response;
   }
 
+  const nearbyMatch = path.match(/^\/f\/([^/]+)\/nearby$/);
+  if (nearbyMatch) {
+    const slug = safeDecode(nearbyMatch[1]);
+    return handleNearbyPlaces(slug || "", req, url, env);
+  }
   const fMatch = path.match(/^\/f\/([^/]+)$/);
   if (fMatch) {
     const slug = safeDecode(fMatch[1]);
