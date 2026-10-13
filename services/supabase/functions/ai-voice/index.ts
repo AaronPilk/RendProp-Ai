@@ -675,7 +675,12 @@ Deno.serve(async (req) => {
         const model = ELEVENLABS_MODEL_ID || "eleven_multilingual_v2";
         const payload: Record<string, unknown> = { text, model_id: model };
         const funding = await fundingContext(user.id, charge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
-        const quote = ["eleven_multilingual_v2", "eleven_v3", "eleven_flash_v2_5", "eleven_turbo_v2_5"].includes(model) ? { cents: text.length * .008, version: TARIFF_VERSION } : null;
+        // The liability hold must cover the same catalog price the ledger uses.
+        // Keep the verified public API rate as a floor, without assuming which
+        // vendor billing plan applies. Unknown models/units/prices stay unpriced.
+        const quote = ["eleven_multilingual_v2", "eleven_v3", "eleven_flash_v2_5", "eleven_turbo_v2_5"].includes(model) && step.provider === "elevenlabs" && step.unit === "1k_chars" && Number.isFinite(step.unit_cents) && step.unit_cents > 0
+          ? { cents: Math.ceil((text.length / 1000) * Math.max(step.unit_cents, model === "eleven_flash_v2_5" || model === "eleven_turbo_v2_5" ? 4 : 8) * 10000) / 10000, version: `${TARIFF_VERSION}:voice-catalog-v1` }
+          : null;
 
         const data = await fundedAttempt(funding, "voice.tts", {provider: "elevenlabs", model}, payload, quote, async () => {
           const res = await fetch(url, {method:"POST",headers:elevenHeaders(),body:JSON.stringify(payload)});
