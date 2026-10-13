@@ -1,0 +1,66 @@
+{
+  "recordedUTC": "2026-10-12T23:55:39.767975+00:00",
+  "version": "1.0.4",
+  "build": "67",
+  "sourceCommit": "7c83a0f3fe6711c6c2734f2d626e3981ab69a198",
+  "purpose": "Owner-selected full-screen Instagram framing: full photo sent to AI, one delivery crop, no synthetic blur",
+  "archiveVerified": true,
+  "ipaSHA256": "2ae962939b5f82d4913b22930fe83ec862fec1b10cba57197fd806e8d2bba39d",
+  "deliveryUUID": "80a4930b-a6d4-4f8f-a8a7-84bf05643cb1",
+  "uploadCount": 1,
+  "testflightState": "IN_BETA_TESTING",
+  "existingInternalTeamVerified": true,
+  "testingNotesVerified": true,
+  "encodedProofs": {
+    "cleanCompositor": {
+      "assertions": 120,
+      "negativeControls": 4
+    },
+    "photoMotionFallback": {
+      "assertions": 261,
+      "negativeControls": 8
+    },
+    "fullPhotoInputAndPaidRecovery": "unchanged body hashes; reused proof explicitly rebound"
+  },
+  "phone66Actual": {
+    "fullSource": true,
+    "twoKlingClips": "1244x1660",
+    "twoFirstAttemptQcPasses": true,
+    "backgroundResumeNoDuplicate": true,
+    "globalProgressAndReview": true,
+    "saveToPhotos": true,
+    "blurredDeliveryRejected": true
+  },
+  "cleanPreview": {
+    "size": "1080x1920",
+    "fps": 30,
+    "seconds": 10,
+    "samePaidRawClips": true,
+    "noBlur": true,
+    "ownerSelectedAsDefault": true
+  },
+  "ci": {
+    "runID": 38324044229,
+    "sourceCommit": "7c83a0f3fe6711c6c2734f2d626e3981ab69a198",
+    "state": "running",
+    "prior66": "9pass,2failed,remaining native cancelled on new source",
+    "extractedFixtureRepair": "5tests+8controls passed locally",
+    "unresolved": "Studio web whip transition timing under held callbacks"
+  },
+  "phone67": {
+    "installed": false,
+    "newGeneratedReelAccepted": false
+  },
+  "appStore": {
+    "build": "57",
+    "state": "WAITING_FOR_REVIEW",
+    "release": "MANUAL",
+    "modified": false
+  },
+  "limits": [
+    "Different photo shapes require different amounts of delivery cropping",
+    "Existing saved videos are not overwritten",
+    "Full cloud completion after iOS suspension or process termination is not implemented",
+    "Owner-only Kie comparison does not certify public routes"
+  ]
+}
