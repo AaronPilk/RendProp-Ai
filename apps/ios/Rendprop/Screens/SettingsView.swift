@@ -60,7 +60,7 @@ struct SettingsView: View {
     // Sign in / sign out
     @State private var showSignIn = false
     @State private var showSignOutConfirm = false
-    @State private var showIntroConfirm = false
+    @State private var showQuickStart = false
 
     // Account deletion flow (App Store Guideline 5.1.1(v) — in-app deletion).
     @State private var showDeleteConfirm = false
@@ -115,6 +115,11 @@ struct SettingsView: View {
         aiConsent.isGranted
             ? "AI tools may send selected media, text and project context to \(AIConsent.processors.map(\.name).joined(separator: ", ")) to produce your result. Turning this off stops that; capture, on-device rendering and sharing keep working."
             : "AI tools are off. The next time you open one, Rendprop asks again before sending anything to an outside AI provider."
+    }
+
+    /// Replay is a local presentation, never a reset of account or setup state.
+    private func watchIntroAgain() {
+        showQuickStart = true
     }
 
     var body: some View {
@@ -323,15 +328,10 @@ struct SettingsView: View {
                     Label("App walkthrough", systemImage: "hand.tap")
                 }
                 .accessibilityIdentifier("settings.appGuide")
-                Button {
-                    if uploads.state?.status == .uploading {
-                        showIntroConfirm = true
-                    } else {
-                        hasOnboarded = false   // flips the root back to the intro
-                    }
-                } label: {
+                Button(action: watchIntroAgain) {
                     Label("Watch the intro again", systemImage: "play.rectangle")
                 }
+                .accessibilityIdentifier("settings.watchIntro")
             } header: {
                 Text("Account")
             } footer: {
@@ -546,6 +546,9 @@ struct SettingsView: View {
             usage = nil; usageError = nil
             Task { await loadUsage() }
         }
+        .sheet(isPresented: $showQuickStart) {
+            QuickStartVideoView(returnLabel: "Skip checks and return to Settings")
+        }
         .sheet(isPresented: $showSignIn) {
             // Apple's own wording in the 5.1.1(v) rejection: "You may explain to
             // the user that registering will enable them to access the purchased
@@ -566,12 +569,6 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(signOutMessage)
-        }
-        .alert("Upload in progress", isPresented: $showIntroConfirm) {
-            Button("Watch anyway", role: .destructive) { hasOnboarded = false }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("A video is uploading. It keeps going in the background, but you'll lose the progress screen.")
         }
         .alert("Delete account?", isPresented: $showDeleteConfirm) {
             let context = accountDeletionContext
@@ -876,7 +873,7 @@ struct SettingsView: View {
         } header: {
             Text("Plan & usage")
         } footer: {
-            Text(usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo, reel and aerial allowances use their 30-day window. Pull down to refresh.")
+            Text(usage?.servingEnvelope != nil ? ServingEnvelopeSummary.explanation : usage?.servingActivation?.shouldShowPending(plan: usage?.planName, recordedTrial: usage?.trialUsage) == true ? ServingActivationSummary.pendingExplanation : usage?.servingPhotoPackage != nil ? ServingPhotoPackageSummary.explanation : usage?.trialUsage != nil ? TrialUsageSummary.explanation : "Allowances are shared by this workspace. Cloud tour renders reset with the calendar month; AI photo and reel allowances use their 30-day window. Pull down to refresh.")
         }
     }
 
@@ -967,7 +964,6 @@ struct SettingsView: View {
             usageRow("Cloud tour renders", used: e.used["renders"], cap: e.rendersPerMonth, plan: e.plan, source: e.planSource)
             usageRow("Photo edits", used: e.used["photo_edits"], cap: e.photoEditsPerMonth, plan: e.plan, source: e.planSource)
             usageRow("Reel clips", used: e.used["reels"], cap: e.reelsPerMonth, plan: e.plan, source: e.planSource)
-            usageRow("Aerial intros", used: e.used["aerials"], cap: e.aerialsPerMonth, plan: e.plan, source: e.planSource)
             usageRow("Video quality upgrades", used: e.used["drone"], cap: e.topazPerMonth, plan: e.plan, source: e.planSource)
             DisclosureGroup("How video allowances work") {
                 Text(PlanAllowances.videoAllowanceExplanation).font(.rpCaption).foregroundStyle(Theme.inkDim)

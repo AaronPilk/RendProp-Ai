@@ -5,7 +5,7 @@ import Icon from "../../icons";
 import {AI_FEATURES,FEATURES,featureFor,homeWords,listingStatus,type Feature,type FeatureId} from "./features";
 
 export function FeatureCards({features,onOpen}: {features:readonly Feature[];onOpen:(id:FeatureId)=>void}) {
-  return <div className="app-feature-grid">{features.map(feature=><button className={`app-feature-card feature-${feature.id}`} key={feature.id} onClick={()=>onOpen(feature.id)}>
+  return <div className="app-feature-grid">{features.map(feature=><button className={`app-feature-card feature-${feature.id}`} key={feature.id} disabled={feature.comingSoon} onClick={()=>onOpen(feature.id)}>
     <span className="app-feature-top"><Icon name={feature.icon} size={27}/>{feature.ai&&<span className="app-ai-pill">AI</span>}</span>
     <strong>{feature.title}</strong><span>{feature.description}</span>
   </button>)}</div>;

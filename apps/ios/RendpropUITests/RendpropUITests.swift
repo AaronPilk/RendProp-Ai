@@ -108,14 +108,14 @@ final class RendpropUITests: XCTestCase {
     func testHomeShowroomCards() throws {
 #if targetEnvironment(simulator)
         XCTAssertTrue(waitForHome(timeout: screenTimeout))
-        let activeIDs = ["tour", "photos", "photoStudio", "reel", "aerial"]
+        let activeIDs = ["tour", "photos", "photoStudio", "reel"]
             .map { "home.feature.\($0)" }
         var identifiers = activeIDs
         let spatial = app.buttons["home.feature.spatial"]
         let spatialAvailable = spatial.exists
         if spatialAvailable { identifiers.append("home.feature.spatial") }
         let activeCount = identifiers.count
-        identifiers += ["home.comingSoon.floorPlan", "home.comingSoon.3dFloorPlan"]
+        identifiers += ["home.comingSoon.aerial", "home.comingSoon.floorPlan", "home.comingSoon.3dFloorPlan"]
         if !spatialAvailable { identifiers.append("home.comingSoon.spatial") }
         let cards = identifiers.map { app.descendants(matching: .any).matching(identifier: $0).firstMatch }
         for card in cards { XCTAssertTrue(card.exists, card.identifier) }

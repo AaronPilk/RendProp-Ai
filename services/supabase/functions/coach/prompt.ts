@@ -182,11 +182,11 @@ export function reelStateOf(raw: unknown, screen: string | null, selected: strin
 
 const SCREEN_HELP: Record<string, string> = {
   home: "Home: Get started chooses a tool and an existing home or Add a home. Photos and reels can start without a walkthrough.",
-  listing: "Listing: its toolbox opens Photos, AI Photo Studio, Make a reel and Aerial intro. Who should buyers contact? edits the listing contact. Saved files and Share everything are local downloads; Publish creates the website.",
+  listing: "Listing: its toolbox opens Photos, AI Photo Studio and Make a reel. Aerial intro is Coming soon. Who should buyers contact? edits the listing contact. Saved files and Share everything are local downloads; Publish creates the website.",
   photos: "Photos: Add photos imports source images; Enhanced is a local brightness/color copy. Review saved AI versions, select the intended version for the listing and cover, and compare with the retained source before export.",
   photo_studio: "AI Photo Studio: choose an edit or Ask anything. Custom instructions may need one clarification before generation. Staged/custom previews need comparison approval before listing/reel/platform use. Ask AI cannot see the photo or approve its accuracy.",
   reel_studio: "Reel Studio: choose at least two reviewed photos; choose Tall or Wide and a movement preset, default Fly-through. AI source clips stay separate and the final video fills its format with one centered crop. Review the finished reel. A saved request means Recover request, not Make my reel again. Only explicit safe retry or still-photo motion is offered after property-quality refusal. Finish saved clips composes saved clips/options; Continue saved reel resumes a saved batch. Closing the editor can leave app-owned work running, but iOS may pause it; no guaranteed completion while locked, backgrounded or terminated.",
-  aerial: "Aerial intro: AI establishing shot, not actual drone footage. Review the property and AI disclosure before sharing.",
+  aerial: "Aerial intro is Coming soon. New generation is unavailable for launch. Previously saved clips and already accepted jobs remain available; review their AI disclosure before sharing.",
   tour_capture: "Tour capture: record or import a walkthrough. Camera/microphone permissions are for capture; a reel from existing photos does not require filming a walkthrough first.",
   room_tagger: "Room tagger: tag positions in the existing walkthrough; tags create jump points, not new rooms.",
   files: "Files: download media saved on this phone. Share everything bundles available local media, not unknown cloud originals. Coordinator package separates retained versions and platform copies; pending staging review does not produce platform copies.",
@@ -208,7 +208,7 @@ const ACTION_MEANINGS: Record<string, string> = {
   open_reel: "open that project's reel maker. Needs listing_id.",
   open_floor_plan:
     "RETIRED — do not use. Measurements, 3D floor plans and 3D walkthroughs are Coming soon; the cards do not open yet. If asked, say so in the reply and offer open_home (or the project's next useful step) instead.",
-  open_aerial: "open that project's AI aerial intro tool. Needs listing_id.",
+  open_aerial: "RETIRED — do not emit. Aerial intro is Coming soon; no launch plan includes new generation.",
   share_tour:
     "open that project's finished tour, where both the branded and unbranded share links live. Needs listing_id.",
   open_plan_usage:
@@ -257,10 +257,10 @@ export function systemInstruction(space: SpaceType): string {
     "",
     "Choose the next step from the user's latest intent and CURRENT SCREEN first; do not redirect a photo/reel question into walkthrough onboarding.",
     "  1. Answer a support/how-to question in place. Do not navigate away unnecessarily. Use the selected authorized project; ask one short question if the project or intended tool is unclear.",
-    "  2. No matching project yet: for a walkthrough use start_project. For photos/reels/aerial use open_home and explain its Edit photos/Social media/Aerial shot card, then Add a home; start_project opens the tour picker, not those tools.",
+    "  2. No matching project yet: for a walkthrough use start_project. For photos/reels use open_home and explain its Edit photos/Social media card, then Add a home; start_project opens the tour picker, not those tools.",
     "  3. Photos, editing, staging or custom edits → open_photos when navigation helps. A walkthrough video is NOT required.",
     "  4. Reels → open_reel when navigation helps. At least two reviewed photos are needed; a walkthrough video is NOT required.",
-    "  5. Aerial intro → open_aerial. This is AI motion, not real drone footage.",
+    "  5. Aerial intro is Coming soon: never emit open_aerial or offer new generation. Previously saved clips and accepted jobs remain available. Offer photos or a reel only if the user wants an alternative.",
     "  6. A walkthrough/tour request → open_tour to record/import/build. Offer share_tour only when has_tour is true and the user wants that tour's link.",
     "  7. Measurements or floor plans → explain the documented availability; never use the retired open_floor_plan action or make other work depend on it.",
     "  8. Generic what-next with no chosen tool → ask whether they want photos, a reel or a walkthrough. Do not force a walkthrough or congratulate them for work that is still pending.",

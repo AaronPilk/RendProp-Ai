@@ -94,11 +94,14 @@ final class SessionNetworkFlow: XCTestCase {
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "2 photos changed")).firstMatch.waitForExistence(timeout: 15))
     }
 
-    func testAerialRecoversWithoutSecondTap() throws {
+    func testAerialComingSoonCannotSubmitOrRequestSessionRecovery() throws {
         try launch("aerial")
-        try tap("phase1.aerialGenerate")
-        try recoverAndAssert("/functions/v1/ai-video/aerial")
-        XCTAssertTrue(app.staticTexts["Aerial ready"].waitForExistence(timeout: 45))
+        XCTAssertTrue(app.staticTexts["aerial.comingSoon"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["phase1.aerialGenerate"].exists)
+        XCTAssertFalse(app.otherElements["session.connection.notice"].exists)
+        let requests = try control("state")["requests"] as? [String:Int] ?? [:]
+        XCTAssertEqual(requests["/functions/v1/ai-video/aerial"] ?? 0, 0)
+        XCTAssertEqual(requests["/auth/v1/signup"] ?? 0, 0)
     }
 
     func testReelRecoversWithoutSecondTap() throws {

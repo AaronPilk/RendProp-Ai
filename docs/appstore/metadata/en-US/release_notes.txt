@@ -1,15 +1,7 @@
-Photographers and videographers can publish with their client's name, photo and contact details, route enquiries to the client, and follow delivery in Leads.
+Aerial intro is Coming soon and is not included in any plan. Previously saved and published aerial clips remain available, with their AI disclosure.
 
-Choose your listing's cover photo and publish selected reviewed photo versions. Shared pages now open with photos and details; viewers can choose Explore or Play inside the flythrough viewer.
+Watch a short introduction before signing in, with captions and optional questions you can skip. Ask AI uses your current screen context to help with the next step.
 
-Photo edits show progress across screens and keep completed images when work stops. We've also fixed listing-toolbox crashes and improved room tags, listing details and photo disclosures.
+Review edited photos at a usable size and open a full-screen comparison with the retained original. Staging and custom edits keep their review requirements.
 
-Ask for anything now helps you clarify a photo edit before generating. Review custom results against the retained source before using them on your listing, cover, download or reel.
-
-Rendprop now starts with Sign in with Apple, so your listings and pages belong to your account on every device. Your first published listing is free; plans add AI tools and more listings, and an eligible 7-day free trial starts only after you confirm a subscription with Apple.
-
-Home now has photographic cards that follow your iPhone appearance setting. Invited Team agents keep their own listings; only the Team owner can switch between linked agents.
-
-Reels retain accepted requests and completed clips for explicit recovery in that listing’s Reel Studio. Saved clips keep the job’s available settings and aspect. iPhone may pause background work; recovery is not a promise that generation finishes while the app is closed. Local quality fallback shots are identified as still photos.
-
-Share everything now makes an organized ZIP of eligible files saved on this iPhone. Retained masters, delivery aspect presets and disclosure notes stay separate. Pending staging masters are clearly marked previews and excluded from upload folders. Labels distinguish the listing’s selected version from the latest editing preview, and disclosures name stacked edits.
+Reel Studio has clearer AI voice choices. Saved requests and clips support explicit recovery in the same listing; iPhone may pause background work. Share everything delivers an organized ZIP of eligible files saved on this iPhone, with masters, upload folders and disclosure notes.

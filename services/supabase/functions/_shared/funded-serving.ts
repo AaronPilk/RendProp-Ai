@@ -123,7 +123,8 @@ export async function inputHash(value: unknown): Promise<string> {
  const bytes=new TextEncoder().encode(JSON.stringify(value));
  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),byte=>byte.toString(16).padStart(2,"0")).join("");
 }
-async function unlimitedSponsored(context: FundingContext): Promise<boolean> {
+/** Existing private unlimited sponsorship only; never a client or plan claim. */
+export async function unlimitedSponsored(context: Pick<FundingContext, "orgId" | "rpc">): Promise<boolean> {
  for(const name of ["org_has_internal_testing_grant","org_has_private_internal_testing"]){
   let result;try{result=await context.rpc(name,{p_org:context.orgId});}catch{throw new FundingAdmissionError(503,"Testing sponsorship could not be checked. Please retry.","upstream");}
   if(result.error)throw new FundingAdmissionError(503,"Testing sponsorship could not be checked. Please retry.","upstream");

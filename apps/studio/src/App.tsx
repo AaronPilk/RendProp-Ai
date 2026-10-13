@@ -274,6 +274,7 @@ export default function App({ servicesFactory }: {
     navigate("workspace");
   }
   function openCreative(listingId:string,tool:CreativeTool) {
+    if (tool === "aerial") return;
     if (!workspace || !listings.some(item=>item.id===listingId)) return;
     if (!canReplacePresenter()) return;
     if (!selectListing(listingId, true)) return;
@@ -287,6 +288,7 @@ export default function App({ servicesFactory }: {
     navigate("properties");
   }
   function openFeature(feature:FeatureId,requestedId?:string) {
+    if (feature === "aerial") return;
     if (!workspace) { setShowLogin(true); return; }
     if (feature === "agent") { openBusiness("brand"); return; }
     const available=listings.filter(item=>!item.soldAt);

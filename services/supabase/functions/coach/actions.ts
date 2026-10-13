@@ -50,8 +50,10 @@ export const LISTING_ACTIONS: ReadonlySet<ActionType> = new Set([
  *  model that still emits one is dropped here — never shown as a chip. Build
  *  57 marks Measurements "Coming soon" on Home and in every listing's toolbox
  *  (FlythroughDetailView.swift), and its route now lands on the listing itself
- *  (RendpropApp.swift routeDestination), so a chip would open nothing. */
-export const RETIRED_ACTIONS: ReadonlySet<ActionType> = new Set(["open_floor_plan"]);
+ *  (RendpropApp.swift routeDestination), so a chip would open nothing. Build
+ *  72 likewise marks new Aerial generation Coming soon; earlier files/jobs
+ *  remain accessible through their existing recovery screens. */
+export const RETIRED_ACTIONS: ReadonlySet<ActionType> = new Set(["open_floor_plan", "open_aerial"]);
 
 /** A short, sane label the app can show on the chip even if the model's own
  *  label was missing, empty, or absurdly long. Mirrors CoachAction.defaultLabel

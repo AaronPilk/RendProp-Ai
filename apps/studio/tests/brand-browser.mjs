@@ -30,10 +30,11 @@ try{
  await expect(page.getByRole('navigation',{name:'Creative tools'}).getByRole('button',{name:'AI Photo Studio',exact:true})).toHaveAttribute('aria-current','page');await expect(page.getByRole('combobox',{name:'Property',exact:true})).toHaveValue(first);
  check('native home cards use a keyboard-dismissable home picker and route the chosen property to AI Photo Studio');
  await home();await page.getByLabel('Home for creation tools').selectOption(second);
- for(const [id,panel,kind] of [['aerial','AI video','aerial'],['voice','Voiceover'],['copy','Scripts & shot plans'],['animate','AI video','reel'],['chapters','Room chapters'],['coach','Ask Rendprop']]){
+ for(const [id,panel,kind] of [['voice','Voiceover'],['copy','Scripts & shot plans'],['animate','AI video','reel'],['chapters','Room chapters'],['coach','Ask Rendprop']]){
   await card(id).click();await expect(page.getByRole('navigation',{name:'Creative tools'}).getByRole('button',{name:panel,exact:true})).toHaveAttribute('aria-current','page');await expect(page.getByRole('combobox',{name:'Property',exact:true})).toHaveValue(second);if(kind)await expect(page.getByRole('combobox',{name:'What would you like to make?',exact:true})).toHaveValue(kind);await home();
  }
- check('all six additional AI cards open their exact tool and preset with the selected second property');
+ await expect(card('aerial')).toBeDisabled();await expect(card('aerial')).toContainText('Coming soon · not included in any plan');
+ check('Aerial is a disabled Coming soon card; all five available AI cards open their exact tool and preset with the selected property');
  for(const [id,tab] of [['tour','Create & publish'],['floorplan','Floor plan & 3D'],['photos','Media']]){await card(id).click();await expect(page.getByRole('tab',{name:new RegExp(tab.replace('&','&'))})).toHaveAttribute('aria-selected','true');await expect(page.getByLabel('Working on',{exact:true})).toHaveValue(second);await home();}
  check('tour, photo and floor-plan cards select the matching property task');
  await card('agent').click();await expect(page.getByRole('navigation',{name:'Business tools'}).getByRole('button',{name:'Agent card',exact:true})).toHaveAttribute('aria-current','page');await page.getByLabel('Display name',{exact:true}).fill('Unfinished profile change');await home();await card('agent').click();await expect(page.getByLabel('Display name',{exact:true})).toHaveValue('Unfinished profile change');await home();await page.locator('.app-leads-banner').click();await expect(page.getByRole('navigation',{name:'Business tools'}).getByRole('button',{name:'Leads',exact:true})).toHaveAttribute('aria-current','page');

@@ -6,11 +6,10 @@ import XCTest
 /// camera, microphone, customer account, upload, AI call or destructive action.
 final class DetailMetadataRegressionUITests: XCTestCase {
     private var app: XCUIApplication!
-    private let tileIDs = ["detail.photos", "detail.photoStudio", "detail.reelStudio", "detail.roomTags",
-                           "detail.aerialIntro"]
+    private let tileIDs = ["detail.photos", "detail.photoStudio", "detail.reelStudio", "detail.roomTags"]
     /// Plain cards, never buttons — the same contract as Home's
     /// `home.comingSoon.*`. Measurements joined them in build 57.
-    private let comingSoonIDs = ["detail.measurementsComingSoon", "detail.floorPlanComingSoon", "detail.spatialComingSoon"]
+    private let comingSoonIDs = ["detail.aerialComingSoon", "detail.measurementsComingSoon", "detail.floorPlanComingSoon", "detail.spatialComingSoon"]
 
     override func setUpWithError() throws {
 #if targetEnvironment(simulator)
@@ -54,7 +53,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["studio.edit.declutter"].exists, app.debugDescription)
         back(from: "AI Photo Studio")
         assertMeasurementsStaysComingSoon(fixture: "empty")
-        openSheet("detail.aerialIntro", title: "Aerial intro", close: "Close")
+        XCTAssertFalse(app.buttons["detail.aerialIntro"].exists, "Aerial generation is unavailable at launch")
     }
 
     func testCapturedUnrenderedListingKeepsRoomTaggingAndNoRerenderTile() {
@@ -71,9 +70,9 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         let photos = app.buttons["detail.photos"]
         scrollTo(photos)
         XCTAssertTrue(photos.label.contains("3 photos"), photos.label)
-        let aerial = app.buttons["detail.aerialIntro"]
+        let aerial = element("detail.aerialComingSoon")
         scrollTo(aerial)
-        XCTAssertTrue(aerial.label.contains("Aerial ready"), aerial.label)
+        XCTAssertTrue(aerial.label.contains("Coming soon"), aerial.label)
         let rerender = app.buttons["detail.rerenderTour"]
         scrollTo(rerender)
         XCTAssertTrue(rerender.isEnabled)
@@ -95,7 +94,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         openSheet("detail.roomTags", title: "Tag rooms", close: "Done")
         openLink("detail.rerenderTour", title: "Review & Submit")
         back(from: "Review & Submit") // Never submit or change render source.
-        openSheet("detail.aerialIntro", title: "Aerial intro", close: "Close")
+        XCTAssertFalse(app.buttons["detail.aerialIntro"].exists, "Aerial generation is unavailable at launch")
 
         let reel = app.buttons["detail.reelStudio"]
         scrollTo(reel); reel.tap()

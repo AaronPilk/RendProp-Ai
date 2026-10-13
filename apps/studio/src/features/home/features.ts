@@ -1,7 +1,7 @@
 import type { IconName } from "../../icons";
 
 export type FeatureId = "tour" | "spatial" | "photos" | "studio" | "reel" | "floorplan" | "aerial" | "agent" | "voice" | "copy" | "animate" | "chapters" | "coach" | "presenter";
-export type Feature = { id: FeatureId; title: string; description: string; icon: IconName; ai?: boolean };
+export type Feature = { id: FeatureId; title: string; description: string; icon: IconName; ai?: boolean; comingSoon?: boolean };
 // Labels and ordering follow iPhone ProjectFeature. Desktop promises describe
 // the actual available workflow instead of promising local iPhone enhancement.
 export const FEATURES: readonly Feature[] = [
@@ -11,7 +11,7 @@ export const FEATURES: readonly Feature[] = [
   {id:"studio",title:"AI Photo Studio",description:"Declutter · staging · twilight · sky",icon:"sparkles",ai:true},
   {id:"reel",title:"Make a reel",description:"Photos and clips → one social video",icon:"film",ai:true},
   {id:"floorplan",title:"Measurements",description:"Room dimensions, outlines, worksheets and saved plans",icon:"floorplan"},
-  {id:"aerial",title:"Make an aerial shot",description:"A cinematic opening shot",icon:"aerial",ai:true},
+  {id:"aerial",title:"Aerial intro",description:"Coming soon · not included in any plan",icon:"aerial",comingSoon:true},
   {id:"agent",title:"Agent card",description:"You, on every tour you send",icon:"person"},
 ];
 export const AI_FEATURES: readonly Feature[] = [

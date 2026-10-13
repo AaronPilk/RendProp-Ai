@@ -126,7 +126,6 @@ struct PlanAllowances: Hashable, Sendable {
             "\(renders) cloud tour \(renders == 1 ? "render" : "renders") a month",
             "High-resolution AI photo edits",
             "\(reels) reel \(reels == 1 ? "clip" : "clips")",
-            "\(aerials) aerial \(aerials == 1 ? "intro" : "intros")",
         ]
         if topaz > 0 {
             // Quality upgrades have a separate expensive AI allowance.
@@ -138,7 +137,7 @@ struct PlanAllowances: Hashable, Sendable {
         return lines
     }
 
-    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Reel clips and aerial intros each have their own allowance."
+    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Reel clips have their own allowance. Aerial intro is Coming soon and is not included at launch."
 }
 
 /// How often the subscription bills.

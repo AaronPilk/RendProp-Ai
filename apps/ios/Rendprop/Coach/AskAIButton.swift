@@ -91,10 +91,10 @@ enum AskAIScreen: String {
                     "How do I draw a second floor outline?",
                     "Can I upload a plan I already have?"]
         case .aerial:
-            return ["What is an aerial intro for?",
-                    "Do I need a drone?",
-                    "Can I use my own drone footage?",
-                    "How long does it take?"]
+            return ["Why is aerial intro Coming soon?",
+                    "Where is my saved aerial?",
+                    "How do I resume an earlier request?",
+                    "Can I use my own drone footage?"]
         case .tourCapture:
             return ["How should I walk a big house?",
                     "How do I hold the phone?",

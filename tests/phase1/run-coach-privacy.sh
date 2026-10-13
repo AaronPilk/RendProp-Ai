@@ -6,7 +6,7 @@ REPO_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACT_DIR="$(mktemp -d /tmp/rendprop-coach-privacy.XXXXXX)"
 COACH_SOURCE="$REPO_DIR/apps/ios/Rendprop/Coach/CoachModel.swift"
 COACH_API="$REPO_DIR/apps/ios/Rendprop/Coach/CoachAPI.swift"
-xcrun swiftc -parse-as-library "$COACH_API" "$COACH_SOURCE" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/positive"
+xcrun swiftc -parse-as-library "$REPO_DIR/apps/ios/Rendprop/Support/LaunchFeatureAvailability.swift" "$COACH_API" "$COACH_SOURCE" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/positive"
 "$ARTIFACT_DIR/positive"
 python3 - "$COACH_SOURCE" "$ARTIFACT_DIR" <<'PY'
 import pathlib, sys
@@ -20,6 +20,7 @@ mutations = {
     'wrong-reel-project': ('first(where: { $0.listingID == selectedListingID })', 'first(where: { _ in true })'),
     'drop-reel-pause-state': ('if job.paused { phase = .paused }', 'if false { phase = .paused }'),
     'inflate-ai-edit-count': ('photos.filter { $0.savedVersion?.effects.isEmpty == false }.count', 'photos.count'),
+    'drop-aerial-launch-fence': ('guard kind != .openAerial || LaunchFeatureAvailability.canGenerateAerial else { return nil }', ''),
 }
 for name, (before, after) in mutations.items():
     count = source.count(before)
@@ -28,8 +29,8 @@ for name, (before, after) in mutations.items():
         assert count == 1, f'{name}: ambiguous anchor'
     (out / f'{name}.swift').write_text(source.replace(before, after))
 PY
-for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count; do
-    xcrun swiftc -parse-as-library "$COACH_API" "$ARTIFACT_DIR/$control.swift" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/$control"
+for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count drop-aerial-launch-fence; do
+    xcrun swiftc -parse-as-library "$REPO_DIR/apps/ios/Rendprop/Support/LaunchFeatureAvailability.swift" "$COACH_API" "$ARTIFACT_DIR/$control.swift" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/$control"
     status=0
     "$ARTIFACT_DIR/$control" > "$ARTIFACT_DIR/$control.log" 2>&1 || status=$?
     test "$status" -eq 1
@@ -41,6 +42,7 @@ for control in drop-history-redaction upload-local-bubbles include-foreign-cache
         wrong-reel-project) reason="wrong listing job cannot become selected context" ;;
         drop-reel-pause-state) reason='reel state is refreshed at send rather than frozen at sheet open' ;;
         inflate-ai-edit-count) reason='ordinary enhancement and unknown history are not counted as AI edits' ;;
+        drop-aerial-launch-fence) reason='stale online aerial action is rejected by shipping availability' ;;
     esac
     rg -q "$reason" "$ARTIFACT_DIR/$control.log"
     echo "PASS: compiled $control negative control failed its intended runtime assertion"

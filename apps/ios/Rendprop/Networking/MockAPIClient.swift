@@ -1458,7 +1458,7 @@ actor MockAPIClient: APIClient {
             let name = first.title.isEmpty ? "your project" : first.title
             return CoachResponse(
                 reply: "Let's finish \(name). Once the walkthrough's in, I can help with photos, "
-                    + "a reel, or an aerial shot next.",
+                    + "or a reel next. Aerial intro is Coming soon.",
                 actions: [CoachResponse.Action(type: "open_tour", label: "Open the tour", listingID: first.id)],
                 suggestedReplies: ["What does publishing do?", "How do I share to the MLS?"],
                 model: "mock-coach")

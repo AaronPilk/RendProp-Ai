@@ -1,5 +1,5 @@
 import { requireLibraryWrite, libraryBillingOrg, listingLibraryScope } from "../_shared/library-access.ts";
-import { fundingContext, fundedAttempt, completeFundingOperation, FundingAdmissionError, textAttemptQuote, visionInputTokenBound, type FundingContext } from "../_shared/funded-serving.ts";
+import { fundingContext, fundedAttempt, completeFundingOperation, FundingAdmissionError, textAttemptQuote, visionInputTokenBound, unlimitedSponsored, type FundingContext } from "../_shared/funded-serving.ts";
 import { beginDriftCheck, finishDriftCheck } from "./drift-funding.ts";
 // ai-video — server-side AI video suite on fal.ai (owner-authenticated).
 //
@@ -356,6 +356,20 @@ interface GenerateCharge {
   burstKey: string;
   monthlyReceipt: RateChargeReceipt;
   burstReceipt: RateChargeReceipt;
+}
+
+/** New Aerial generation is private beta only. Existing receipts/status/QC
+ * remain outside this entry gate. Resolve current write access and the real
+ * billing authority before reading the existing sponsorship, without taking
+ * an allowance, idempotency tombstone or supplier-cost hold. */
+async function assertAerialLaunchAccess(user: PaidAiCaller, req: Request, listingId?: string | null): Promise<string> {
+  const orgId = await contentOrgForUser(user.id, preferredOrg(req), listingId, true);
+  await assertPaidAiIdentity(user, orgId);
+  const admin = adminClient();
+  const billingOrgId = await libraryBillingOrg(admin, orgId, user.id);
+  if (!await unlimitedSponsored({ orgId: billingOrgId, rpc: (name, args) => admin.rpc(name, args) }))
+    throw new HttpError(503, "Aerial intro is Coming soon.", "upstream");
+  return orgId;
 }
 
 /**
@@ -1287,9 +1301,10 @@ Deno.serve(async (req) => {
         style,
       });
 
-      await assertVideoReceiptSigningReady();
       assert(!assetListingId || !body.listing_id || assetListingId === body.listing_id,400,"Choose a source from this listing.");
-      const charge = await guardGenerate(user, req, "aerial", undefined, undefined, body.listing_id ?? assetListingId ?? undefined); // validated — charge, then submit
+      const aerialOrgId = await assertAerialLaunchAccess(user, req, body.listing_id ?? assetListingId);
+      await assertVideoReceiptSigningReady();
+      const charge = await guardGenerate(user, req, "aerial", undefined, aerialOrgId, body.listing_id ?? assetListingId ?? undefined); // private beta validated — charge, then submit
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). GROUNDED is an image-to-video task carrying the

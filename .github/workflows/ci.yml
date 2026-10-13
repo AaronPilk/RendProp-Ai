@@ -113,6 +113,10 @@ jobs:
         run: python3 apps/ios/tests/run-adoption-owned-identity.py
       - name: Subscription offer disclosures and durable workspace intent
         run: bash apps/ios/tests/run-subscription-policy.sh
+      - name: Coming-soon Aerial admission preserves existing accepted jobs and saved clips
+        run: python3 apps/ios/tests/run-aerial-launch-availability.py --evidence-dir "$RUNNER_TEMP/rendprop-aerial-launch"
+      - name: Introduction replay presents the movie without resetting account or ongoing work
+        run: python3 apps/ios/tests/run-settings-intro-replay.py --evidence-dir "$RUNNER_TEMP/rendprop-settings-intro-replay"
       - name: Private testing allowance labels preserve ordinary plan displays
         run: python3 apps/ios/tests/run-workspace-allowance-display.py --out "$RUNNER_TEMP/rendprop-testing-allowance"
       - name: Verified trial counters and disabled offers preserve billing dates

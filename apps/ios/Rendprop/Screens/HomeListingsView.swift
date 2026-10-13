@@ -43,7 +43,7 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
         case .photos: return "Add and choose photos"
         case .editing: return "Declutter or stage photos"
         case .reel: return "Make a social reel"
-        case .aerial: return "Create an aerial opening"
+        case .aerial: return "Aerial intro · Coming soon"
         case .measurements: return "Measurements and floor plans"
         case .contact: return "Your card and client details"
         case .sharing: return "Publish and share"
@@ -96,12 +96,12 @@ private enum AppGuideTopic: String, CaseIterable, Identifiable {
             ("Choose movement and sound", "Set the clip style and voice options, then review the quote before creating. If processing stops, recover a confirmed saved request or finish a shorter reel from saved clips. Review an unconfirmed request before starting another generation."),
             ("Watch the whole result", "Review transitions, scene accuracy, captions and audio. Save the finished video before posting it to social media.")]
         case .aerial: return [
-            ("Choose an exterior", "Open Make an aerial shot for the listing. Use a clear exterior photo with the property in view."),
-            ("Review the request", "Choose the motion. Each aerial intro uses one from your plan\u{2019}s monthly allowance. Generated footage can contain errors in the building or surroundings."),
-            ("Check the result", "Watch the entire clip before including it in a reel or publishing it. Keep your original footage for comparison.")]
+            ("Coming soon", "Aerial intro is still being tested. New generation is unavailable and no launch plan includes it."),
+            ("Keep saved work", "Previously saved aerial clips stay in the listing's files and can still be used in a reel."),
+            ("Resume an earlier request", "If an aerial was already submitted, open its listing and tap Resume earlier aerial. This checks the existing request; it does not generate a new clip.")]
         case .measurements: return [
             ("Coming soon", "Measurements, 3D floor plans and 3D walkthroughs are still being tested. The cards on Home and in each listing's toolbox do not open yet, and no plan includes them."),
-            ("Nothing else waits on them", "Photos, AI Photo Studio, reels, aerial intros and published listings work today without any measurements."),
+            ("Nothing else waits on them", "Photos, AI Photo Studio, reels and published listings work today without any measurements."),
             ("When they ship", "You will be able to enter room dimensions, draw measured outlines and upload a plan you already have. App calculations will not be a certified survey or appraisal.")]
         case .contact: return [
             ("Set up your card", "Open Profile, edit your name, photo and contact details, then tap Save. Your personal card stays yours when you join a team. Set the listing library's business logo separately. Use Send business card for your contact details alone, or Share my portfolio to choose the listings to include."),

@@ -37,11 +37,11 @@ import Foundation
         let e = usage.entitlements!
         check(e.planSource == "manual", "actual me forwards authoritative manual source")
         let rows = settings.rows(e)
-        check(rows.count == 5, "all five actual Settings usage consumers remain covered")
-        for (row, expected) in zip(rows, ["3 used · Unlimited", "5 used · Unlimited", "2 used · Unlimited", "1 used · Unlimited", "0 used · Unlimited"]) {
+        check(rows.count == 4, "all four launch Settings usage consumers remain covered")
+        for (row, expected) in zip(rows, ["3 used · Unlimited", "5 used · Unlimited", "2 used · Unlimited", "0 used · Unlimited"]) {
             check(row.value == expected, "actual Settings testing row shows used count and Unlimited")
         }
-        check(rows.map(\.title) == ["Cloud tour renders", "Photo edits", "Reel clips", "Aerial intros", "Video quality upgrades"], "actual Settings row titles are unchanged")
+        check(rows.map(\.title) == ["Cloud tour renders", "Photo edits", "Reel clips", "Video quality upgrades"], "Settings hides unavailable aerial allowance while keeping active tools")
         check(e.remaining("renders") == unlimited - 3 && e.canUseTopaz && e.canUseAerial,
               "display labels do not alter positive numeric native access compatibility")
         check(live.requestCount == 1, "actual me reads one held fixture without a mutation")

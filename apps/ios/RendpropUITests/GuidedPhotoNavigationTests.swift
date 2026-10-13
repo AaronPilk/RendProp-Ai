@@ -29,18 +29,15 @@ final class GuidedPhotoNavigationTests: XCTestCase {
         closeCamera()
     }
 
-    func testExteriorCameraAndLargeTextKeepCloseReachable() {
+    func testAerialComingSoonAtLargeTextCannotOpenCamera() {
         launch(largeText: true)
-        openFeature("aerial")
-        XCTAssertTrue(app.navigationBars["Aerial intro"].waitForExistence(timeout: 10))
-        openCamera(id: "aerial.takePhoto", title: "Exterior photo")
-        assertUnavailable()
-        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        attachment.name = "guided-photo-camera-unavailable-large-text"
-        attachment.lifetime = .keepAlways
-        add(attachment)
-        closeCamera()
-        XCTAssertTrue(app.navigationBars["Aerial intro"].waitForExistence(timeout: 5))
+        let card = app.descendants(matching: .any)["home.comingSoon.aerial"].firstMatch
+        scrollTo(card)
+        XCTAssertTrue(card.exists && card.label.contains("Coming soon"))
+        XCTAssertFalse(app.buttons["home.feature.aerial"].exists)
+        card.tap()
+        XCTAssertFalse(app.navigationBars["Aerial intro"].exists)
+        XCTAssertFalse(app.buttons["aerial.takePhoto"].exists)
     }
 
     private func launch(largeText: Bool = false) {

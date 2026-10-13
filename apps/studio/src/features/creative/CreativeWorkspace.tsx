@@ -827,8 +827,9 @@ function ListingCreative(
     );
   }
   async function generateVideo() {
+    if (videoKind === "aerial") throw new Error("Aerial intros are Coming soon.");
     let assetId = videoAsset;
-    if (videoKind === "reel" || videoKind === "aerial") {
+    if (videoKind === "reel") {
       assetId = await ensureOriginal();
     }
     if (!assetId) throw new Error("Choose a completed video first.");
@@ -840,7 +841,6 @@ function ListingCreative(
       label: room ||
         ({
           reel: "Property motion clip",
-          aerial: "Aerial-style intro",
           drone: "Drone glide",
           declutter: "Decluttered clip",
         }[videoKind]),
@@ -849,13 +849,10 @@ function ListingCreative(
         : videoKind === "declutter"
         ? { prompt }
         : {
-          seconds: videoKind === "aerial" ? 6 : seconds,
-          motion: videoKind === "aerial" ? "orbit_left" : motion,
+          seconds,
+          motion,
           room,
           prompt: prompt.trim() || undefined,
-          ...(videoKind === "aerial"
-            ? { aspect: "16:9", time_of_day: "day" }
-            : {}),
         }),
     };
     const raw = record(
@@ -1870,15 +1867,15 @@ function ListingCreative(
       {panel === "video" && (
         <div className="creative-two-column">
           <div className="creative-card">
-            <h2>{videoKind === "aerial" ? "Make an aerial shot" : videoKind === "drone" ? "Polish your drone footage" : videoKind === "declutter" ? "Remove an object from your video" : "Animate a property photo"}</h2>
-            <p>{videoKind === "aerial" ? "Start with an exterior photo of this property. Review your AI aerial-style clip before adding it to a reel." : videoKind === "drone" ? "Choose drone footage you uploaded from your phone to make a smoother, sharper clip." : videoKind === "declutter" ? "Choose a saved clip and describe the object you want removed." : "Choose a saved property photo, add a little movement, then use the clip in Reel Studio."}</p>
+            <h2>{videoKind === "aerial" ? "Aerial intros · Coming soon" : videoKind === "drone" ? "Polish your drone footage" : videoKind === "declutter" ? "Remove an object from your video" : "Animate a property photo"}</h2>
+            <p>{videoKind === "aerial" ? "New aerial creation is not included in any plan. Your saved aerial videos remain available below." : videoKind === "drone" ? "Choose drone footage you uploaded from your phone to make a smoother, sharper clip." : videoKind === "declutter" ? "Choose a saved clip and describe the object you want removed." : "Choose a saved property photo, add a little movement, then use the clip in Reel Studio."}</p>
             <label>
               What would you like to make?<select
                 value={videoKind}
                 onChange={(e) => setVideoKind(e.target.value)}
               >
                 <option value="reel">Animate a property photo</option>
-                <option value="aerial">Create an aerial-style intro</option>
+                <option value="aerial" disabled>Aerial intro · Coming soon</option>
                 <option value="drone">Smooth and upscale drone footage</option>
                 <option value="declutter">
                   Remove an object from a short clip
@@ -1974,7 +1971,7 @@ function ListingCreative(
             </label>
             <button
               className="creative-primary"
-              disabled={isBusy || !canCreate}
+              disabled={isBusy || !canCreate || videoKind === "aerial"}
               onClick={() => run("Starting your video", generateVideo)}
             >
               Generate video

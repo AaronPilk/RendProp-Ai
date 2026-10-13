@@ -39,7 +39,7 @@ hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdige
 team, teamview, settings, api, live, money, app, homes, workspace, billing, runner, test = [path.read_text() for path in paths]
 settingsRows = block(settings, 'private func usageRows(')
 calls = re.findall(r'^\s*(usageRow\([^\n]+\))$', settingsRows, re.M)
-assert len(calls) == 5 and all('plan: e.plan, source: e.planSource' in call for call in calls)
+assert len(calls) == 4 and all('plan: e.plan, source: e.planSource' in call for call in calls)
 teamRow = re.findall(r'^\s*(LabeledContent\("Seats used", value: [^\n]+\))$', teamview, re.M)
 assert len(teamRow) == 1 and teamRow[0] == 'LabeledContent("Seats used", value: s.seatUsageLabel)'
 accessRow = re.findall(r'^\s*(LabeledContent\("Workspace access", value: [^\n]+\))$', teamview, re.M)

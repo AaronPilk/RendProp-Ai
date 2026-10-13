@@ -1,4 +1,5 @@
 // Pure typed tests: local imports only, no endpoint/provider/auth/deletion calls.
+import { systemInstruction } from "./prompt.ts";
 import { KNOWLEDGE, knowledgeBlock } from "./knowledge.ts";
 
 function assert(value: boolean, reason: string): asserts value {
@@ -97,4 +98,14 @@ Deno.test("knowledge: Measurements, 3D floor plans and 3D walkthroughs are all C
   assert(!knowledgeBlock().includes("manual Measurements"), "no fact may describe manual Measurements as usable today");
   assert(fact("What the app needs to run").includes("Measurements, 3D floor plans and 3D walkthroughs are Coming soon"), "requirements fact must carry the Coming-soon state");
   assert(!fact("A render or upload failed").includes("back automatically"), "recovery must not promise every attempt is refunded");
+});
+
+Deno.test("Aerial launch facts and intent guidance preserve earlier media without selling new generation",()=>{
+  const aerial=fact("Aerial intro — what it does"),block=knowledgeBlock(),prompt=systemInstruction("real_estate");
+  for(const required of ["Coming soon","no launch plan includes new Aerial generation","Previously saved clips and already accepted jobs remain available","never described as real drone footage"])
+    assert(aerial.includes(required),`Missing aerial policy: ${required}`);
+  assert(block.includes(aerial),"Actual online prompt must contain launch availability");
+  assert(!/\d+ aerial intros/.test(block),"No launch plan may advertise internal aerial counters");
+  assert(prompt.includes("never emit open_aerial"),"Online next-step guidance must not offer an Aerial chip");
+  assert(!prompt.includes("Aerial intro → open_aerial"),"Obsolete generation instruction");
 });

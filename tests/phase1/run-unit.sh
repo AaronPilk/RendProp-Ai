@@ -16,6 +16,7 @@ elif ! "$TEST_DIR/session-tests"; then
     FAIL=1
 fi
 if ! xcrun swiftc -parse-as-library \
+    "$REPO_DIR/apps/ios/Rendprop/Support/LaunchFeatureAvailability.swift" \
     "$REPO_DIR/apps/ios/Rendprop/Coach/CoachAPI.swift" \
     "$REPO_DIR/apps/ios/Rendprop/Coach/CoachModel.swift" \
     "$SCRIPT_DIR/CoachOfflineTests.swift" -o "$TEST_DIR/coach-tests"; then

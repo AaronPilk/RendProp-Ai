@@ -80,7 +80,7 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             } else if purchases.billingContext?.isCeilingMode == true {
-                Text("Apple handles payment and cancellation. Your first published listing is free; a plan adds AI photo edits, reels, aerial intros and more listings.")
+                Text("Apple handles payment and cancellation. Your first published listing is free; a plan adds AI photo edits, reels and more listings.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             } else {

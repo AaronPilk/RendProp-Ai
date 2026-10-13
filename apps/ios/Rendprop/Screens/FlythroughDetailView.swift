@@ -181,10 +181,8 @@ private struct ListingToolboxGrid: View {
     let canRerender: Bool
     let hasPublishedTour: Bool
     let photoCount: Int
-    let hasAerial: Bool
     let openReel: () -> Void
     let openRoomTagger: () -> Void
-    let openAerial: () -> Void
     /// Build 60: one tap for the whole listing — tour, photos, originals,
     /// disclosures, videos and a details note — as one ZIP (TestFlight 59:
     /// "the share all feature is supposed to be the FULL package").
@@ -239,11 +237,10 @@ private struct ListingToolboxGrid: View {
             }
             // The aerial sits beside the fly-through tools it feeds (build 60;
             // TestFlight 59: "Aerial intro needs to be next to re-render").
-            ListingToolButtonTile(
-                card: ListingToolCard(title: "Aerial intro", sub: sample ? createFirst : (hasAerial ? "Aerial ready" : "AI opening shot"),
-                                      icon: "airplane.departure", gradient: RPGradient.aerial, ai: true, dimmed: sample),
-                disabled: sample, accessibilityID: "detail.aerialIntro", action: openAerial
-            )
+            ListingToolCard(title: "Aerial intro", sub: "Coming soon",
+                            icon: "airplane.departure", gradient: RPGradient.aerial, dimmed: true)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("detail.aerialComingSoon")
             ListingToolButtonTile(
                 card: ListingToolCard(title: "Share everything",
                                       sub: sample ? createFirst : (hasAnythingToShare ? "On this iPhone · photos · videos · one ZIP" : "Add photos or a tour first"),
@@ -272,12 +269,21 @@ private struct ListingToolboxGrid: View {
 
 private struct ListingToolboxSection: View {
     let grid: ListingToolboxGrid
+    let resumeAerial: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 .frame(maxWidth: .infinity, alignment: .leading)
             grid
+            if let resumeAerial {
+                Button(action: resumeAerial) {
+                    Label("Resume earlier aerial", systemImage: "arrow.clockwise")
+                        .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                }
+                .accessibilityHint("Checks the request already submitted. Does not generate a new aerial.")
+                .accessibilityIdentifier("detail.resumeAerial")
+            }
         }
     }
 }
@@ -1396,16 +1402,15 @@ struct FlythroughDetailView: View {
             hasPublishedTour: tour != nil || shareURL != nil,
             // Reuse the background FILES scan. No disk reads in body.
             photoCount: mediaItems.filter { $0.kind == .photo }.count,
-            hasAerial: mediaItems.contains { $0.kind == .aerial },
             openReel: { showReelStudio = true },
             openRoomTagger: {
                 tagsBeforeEdit = asset?.roomTags ?? []
                 showRoomTagger = true
             },
-            openAerial: { showAerialIntro = true },
             sharePackage: { shareListingPackage() },
             hasAnythingToShare: !mediaItems.isEmpty
-        ))
+        ), resumeAerial: !currentListing.isSample && PendingAerialJob.load(for: currentListing.id) != nil
+            ? { showAerialIntro = true } : nil)
     }
 
     // MARK: - Files (the 4,000 sq ft field test)
@@ -1605,7 +1610,7 @@ struct FlythroughDetailView: View {
             Text("Nothing here yet.")
                 .font(.rpBody.weight(.semibold))
                 .foregroundStyle(Theme.ink)
-            Text("Everything you make with the tools above — reels, photos and an aerial intro — is saved here automatically and stays on this phone. You can put any of it in your Photos app with one tap.")
+            Text("Your saved photos and videos stay on this phone. You can put them in your Photos app with one tap.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -7843,9 +7848,10 @@ struct AerialIntroSheet: View {
                     }
                     if let failure, phase != .generating {
                         AIFailureCard(failure: failure,
-                                      retryHint: "Adjust the settings above and generate again.",
-                                      quotaFeature: "aerials",
-                                      onReconnect: { generate() })
+                                      retryHint: "Reopen to check the request already submitted.",
+                                      onReconnect: {
+                                          if let pending = PendingAerialJob.load(for: listing.id) { resume(pending) }
+                                      })
                     }
                 }
                 .padding()
@@ -7935,9 +7941,11 @@ struct AerialIntroSheet: View {
             // The "from your photo" promise is only TRUE once a photo is
             // attached — with none, the clip is invented scenery and the
             // headline must not claim otherwise (F-A-03).
-            Text(hasPhoto
-                 ? "A cinematic AI opening shot for this \(noun) — generated from your exterior photo, so it starts on the real building and flies out."
-                 : "A cinematic AI opening shot for this \(noun). Add an exterior photo below and it starts on YOUR building; without one the AI invents a generic \(noun).")
+            Text(!LaunchFeatureAvailability.canGenerateAerial
+                 ? "Coming soon. You can still review saved clips and resume a request already submitted."
+                 : (hasPhoto
+                    ? "A cinematic AI opening shot for this \(noun) — generated from your exterior photo."
+                    : "Add an exterior photo to ground an AI opening shot on this \(noun)."))
                 .font(.rpBody)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -7975,10 +7983,13 @@ struct AerialIntroSheet: View {
 
     // MARK: - Form
 
-    // Setup is available offline. Generate retains its original tap and waits
-    // for an anonymous connection; there is no registration gate.
+    // Launch availability never affects recovery of an already accepted job.
     @ViewBuilder private var formSection: some View {
-        if listing.isSample {
+        if !LaunchFeatureAvailability.canGenerateAerial {
+            Text(LaunchFeatureAvailability.aerialMessage)
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+                .accessibilityIdentifier("aerial.comingSoon")
+        } else if listing.isSample {
             sampleNotice
         } else {
             propertyCard
@@ -8165,7 +8176,7 @@ struct AerialIntroSheet: View {
                 .foregroundStyle(Color.white)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .disabled(isSavingPhoto)
+        .disabled(isSavingPhoto || !LaunchFeatureAvailability.canGenerateAerial)
         .accessibilityIdentifier("phase1.aerialGenerate")
     }
 
@@ -8266,12 +8277,14 @@ struct AerialIntroSheet: View {
                     .foregroundStyle(Theme.warn)
                     .multilineTextAlignment(.center)
             }
-            Button("Regenerate") {
-                failure = nil
-                phase = .form      // the current clip stays until a new one lands
+            if LaunchFeatureAvailability.canGenerateAerial {
+                Button("Regenerate") {
+                    failure = nil
+                    phase = .form      // the current clip stays until a new one lands
+                }
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
             }
-            .font(.rpBody)
-            .foregroundStyle(Theme.inkDim)
         }
         .frame(maxWidth: .infinity)
     }
@@ -8355,12 +8368,14 @@ struct AerialIntroSheet: View {
     // MARK: - Generate (submit → poll → download; fal URLs expire, so download now)
 
     private func generate() {
-        guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        guard LaunchFeatureAvailability.canGenerateAerial,
+              phase != .generating, !listing.isSample, !isSavingPhoto else { return }
         connection.run { generateWithSession() }
     }
 
     private func generateWithSession() {
-        guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        guard LaunchFeatureAvailability.canGenerateAerial,
+              phase != .generating, !listing.isSample, !isSavingPhoto else { return }
         failure = nil
         statusText = hasPhoto ? "Preparing your photo…" : "Submitting…"
         phase = .generating

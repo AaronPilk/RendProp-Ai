@@ -254,6 +254,7 @@ final class CoachModel: ObservableObject {
     }
 
     private func route(for kind: CoachActionType, action: CoachResponse.Action) -> CoachRoute? {
+        guard kind != .openAerial || LaunchFeatureAvailability.canGenerateAerial else { return nil }
         if kind.needsListing {
             guard let idString = action.listingID,
                   let listingID = UUID(uuidString: idString),
@@ -454,6 +455,8 @@ enum CoachOffline {
     private struct Topic { let keywords: [String]; let reply: String }
 
     private static let topics: [Topic] = [
+        Topic(keywords: ["aerial", "flyover"], reply: LaunchFeatureAvailability.aerialMessage +
+            " If a request was already submitted, open its listing and tap Resume earlier aerial. New generation is unavailable and no launch plan includes it."),
         Topic(keywords: ["mls", "unbranded", "branded link", "two link"], reply:
             "Publishing gives you two links. The branded one carries your card and contact form " +
             "— text or post that one. The unbranded one has no name or branding — that's the one " +
@@ -479,7 +482,7 @@ enum CoachOffline {
         Topic(keywords: ["floor plan", "lidar", "roomplan", "measurements"], reply:
             "Measurements, 3D floor plans and 3D walkthroughs are Coming soon. The cards on Home " +
             "and in a listing's toolbox do not open yet, and no plan includes them. Photos, " +
-            "AI Photo Studio, reels, aerial intros and published listings work today without any " +
+            "AI Photo Studio, reels and published listings work today without any " +
             "measurements. When measurements ship you will be able to enter room dimensions, draw " +
             "measured outlines and upload a plan you already have; app calculations will not be a " +
             "certified survey or appraisal and will not set advertised living area."),
@@ -585,6 +588,12 @@ enum CoachOffline {
     static func nextStep(model: AppModel, space: SpaceType, orgID: UUID? = nil, liveBackend: Bool = false,
                          selectedListingID: UUID? = nil, intent: String = "", screen: String? = nil) -> (text: String, action: CoachResponse.Action?) {
         let noun = space.spaceNoun
+        if !LaunchFeatureAvailability.canGenerateAerial,
+           intent.lowercased().contains("aerial") || intent.lowercased().contains("flyover") || screen == "aerial" {
+            return (LaunchFeatureAvailability.aerialMessage,
+                    CoachResponse.Action(type: CoachActionType.openHome.rawValue,
+                                         label: CoachActionType.openHome.defaultLabel, listingID: nil))
+        }
         let scoped = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend)
         let projects = selectedListingID.map { selected in scoped.filter { $0.id == selected } } ?? scoped
         if selectedListingID != nil && projects.isEmpty {

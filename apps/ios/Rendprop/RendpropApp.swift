@@ -3788,6 +3788,7 @@ struct HomeDashboardView: View {
     ///   • 2+      → "Which home?"
     /// Samples are never candidates — `projects` excludes them.
     private func open(_ feature: ProjectFeature) {
+        guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }
         guard !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else {
             goToListings(); return
         }
@@ -3804,6 +3805,7 @@ struct HomeDashboardView: View {
     /// Open `feature` on `listing`. The aerial tool is a sheet; everything else
     /// is a push.
     private func go(_ listing: Listing, _ feature: ProjectFeature) {
+        guard feature != .aerial || LaunchFeatureAvailability.canGenerateAerial else { return }
         if feature == .aerial {
             gate = .aerial(listing)
         } else if feature == .reel {
@@ -3999,7 +4001,7 @@ struct HomeDashboardView: View {
             featureButton(.photos)
             featureButton(.photoStudio)
             featureButton(.reel)
-            featureButton(.aerial)
+            comingSoonTile("Aerial intro", "AI opening shots are still being tested", "airplane.departure", id: "aerial")
             // Only while the server says the 3D pipeline is on — for everyone,
             // the same flag. Unknown, offline or disabled stays non-actionable.
             if model.isSpatialWalkthroughAvailable {
@@ -4085,7 +4087,7 @@ struct HomeDashboardView: View {
         case "photo.stack": return "Add photos"
         case "wand.and.stars": return "Edit photos"
         case "film.stack": return "Social media"
-        case "airplane.departure": return "Aerial shot"
+        case "airplane.departure": return "Aerial intro"
         case "ruler": return "Floor plans"
         case "cube.transparent": return "3D plans"
         case "rotate.3d": return "3D tours"

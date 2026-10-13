@@ -22,7 +22,7 @@ function withoutImports(source: string): string {
 // Production route bodies, price arithmetic, response envelope and reservation
 // helper run unchanged. Only Auth/DB, route resolution and provider boundaries
 // are isolated doubles. No environment, network, writes or provider requests.
-async function fixture(reserveLate = false, priceRequestedTier = false, dropRejectionEvidence = false, dropSigningReadiness = false) {
+async function fixture(reserveLate = false, priceRequestedTier = false, dropRejectionEvidence = false, dropSigningReadiness = false, dropAerialLaunchGate = false) {
   const source = await Deno.readTextFile(
     new URL("./index.ts", import.meta.url),
   );
@@ -95,6 +95,11 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
       "        outputWidth: tier === '1080p60' ? 1920 : outputWidth,\n        outputHeight: tier === '1080p60' ? 1080 : outputHeight,",
     );
   }
+  if (dropAerialLaunchGate) {
+    const gate = "const aerialOrgId = await assertAerialLaunchAccess(user, req, body.listing_id ?? assetListingId);";
+    assert(routes.includes(gate), "Aerial launch entry anchor changed");
+    routes = routes.replace(gate, 'const aerialOrgId = "org-synthetic";');
+  }
   const promptStart = source.indexOf("const SPACE_TYPES =");
   const promptEnd = source.indexOf("interface DroneBody", promptStart);
   assert(promptStart > 0 && promptEnd > promptStart);
@@ -135,14 +140,20 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {validateExtendedReelSource} from ${
     JSON.stringify(new URL("./drift-input.ts", import.meta.url).href)
   };
+    import {unlimitedSponsored} from ${JSON.stringify(new URL("../_shared/funded-serving.ts", import.meta.url).href)};
+    type PaidAiCaller=any;
     type RouteStep=any;type JobRef=any;type JobTokenOwner=any;type ChainResult<T>={value:T,step:any};type GenerateInput=any;type DroneBody=any;type AerialBody=any;type ReelBody=any;type DroneEstimate=any;type AerialMotion=any;type ReelMotion=any;
     export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]};
-    export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]});}
+    export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],grantReads:[],access:null,billing:null,refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]});}
     const getUser=async(_req:Request)=>({id:"actor-synthetic",is_anonymous:false});
     const userClient=(_req:Request)=>({});
     const orgForUser=async(..._a:any[])=>"org-synthetic";
-    const assertPaidAiIdentity=async(..._a:any[])=>{};
-    const preferredOrg=(_req:Request)=>undefined;
+    const contentOrgForUser=async(actor:string,preferred:any,listing:any,write:boolean)=>{state.access={actor,preferred,listing,write};if(state.options.accessDenied)throw new HttpError(403,"This listing is unavailable.");return state.options.contentOrg??"org-synthetic";};
+    const libraryBillingOrg=async(_admin:any,org:string,actor:string)=>{state.billing={org,actor};if(state.options.billingDenied)throw new HttpError(403,"Current billing unavailable.");return state.options.billingOrg??org;};
+    const assertPaidAiIdentity=async(..._a:any[])=>{if(state.options.identityDenied)throw new HttpError(401,"Sign in required.");};
+    async ${functionBody(source, "assertAerialLaunchAccess")}
+
+    const preferredOrg=(req:Request)=>req.headers.get("X-Org-Id")??undefined;
     // The real helper is exercised against a closed, disabled QA grant. No
     // live Supabase client/config can enter this ordinary-route harness.
     const ownerQaReelStep=(args:any)=>actualOwnerQaReelStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})}as any);
@@ -177,7 +188,12 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     const adminClient=()=>({rpc:async(name:string,args:any)=>{
       if(name==="serving_cost_reserve")return {data:{reserved:true},error:null};
       if(name==="serving_cost_finish")return {data:{finished:true},error:null};
-      if(name==="org_has_internal_testing_grant")return {data:true,error:null};
+      if(name==="org_has_internal_testing_grant"||name==="org_has_private_internal_testing"){
+        state.grantReads??=[];state.grantReads.push({name,args});
+        if(state.options.grantThrow)throw Error("Synthetic private failure");
+        if(state.options.grantError)return {data:null,error:{message:"Synthetic private failure"}};
+        return {data:name==="org_has_internal_testing_grant"?(state.options.masterGrant??!state.options.ordinary):(state.options.privateGrant??false),error:null};
+      }
       state.events.push(name==="app_video_cost_reserve_v2"?"reserve":name==="app_video_cost_release_rejected"?"release":"settle");state.rpcs.push({name,args});
       if(name==="app_video_cost_reserve_v2"){
         if(state.admitted.has(args.p_key))return {data:null,error:{message:"RP409: This video request was already admitted"}};
@@ -618,3 +634,56 @@ Deno.test("actual reel handler sends a server prompt and portrait format through
 // Mirror of the allow-list in public.app_video_cost_reserve (SQL). Keep in sync.
 const SQL_ACCOUNTING_META_KEYS = new Set(["tier","upscale_factor","target_fps","interpolated","estimate_cents","output_fps",
   "grounded","seconds","aspect","motion","motion_requested","space_type","route_id","task","unit","price_estimated"]);
+
+async function refusedOrdinaryAerial(f:Awaited<ReturnType<typeof fixture>>, extra:Record<string,unknown>={}) {
+  f.reset({ordinary:true});
+  const response=await f.handler(req("aerial","ordinary-aerial-coming-soon",extra));
+  assertEquals(response.status,503,"Ordinary Aerial must decline before paid admission");
+  assertEquals((await response.json()).error,"Aerial intro is Coming soon.");
+  assertEquals(f.state.charges,[]);assertEquals(f.state.posts,[]);assertEquals(f.state.events,[]);
+  assertEquals(f.state.admitted.size,0);assertEquals(f.state.holds.size,0);assertEquals(f.state.ledger,[]);
+}
+Deno.test("ordinary Aerial is Coming soon before allowance, dedupe, holds or provider including forged beta claims",async()=>{
+  const f=await fixture();
+  await refusedOrdinaryAerial(f);
+  await refusedOrdinaryAerial(f,{is_admin:true,beta:true,sponsored_unlimited:true,plan:"team"});
+  f.reset({ordinary:true});
+  const original=req("aerial");const headers=new Headers(original.headers);headers.set("X-Beta","true");headers.set("X-Admin","true");
+  assertEquals((await f.handler(new Request(original,{headers}))).status,503);
+  assertEquals(f.state.posts,[]);assertEquals(f.state.charges,[]);
+});
+Deno.test("Aerial private beta uses fresh writable content and actor billing sponsorship, retaining financial admission",async()=>{
+  const f=await fixture();
+  f.reset({ordinary:true,contentOrg:"agent-private",billingOrg:"existing-sponsor",privateGrant:true});
+  assertEquals((await f.handler(req("aerial","existing-private-beta",{listing_id:"owned-listing"}))).status,202);
+  assertEquals(f.state.access,{actor:"actor-synthetic",preferred:undefined,listing:"owned-listing",write:true});
+  assertEquals(f.state.billing,{org:"agent-private",actor:"actor-synthetic"});
+  assert(f.state.grantReads.every((row:any)=>row.args.p_org==="existing-sponsor"));
+  assertEquals(f.state.sourceOrgId,"agent-private");assertEquals(f.state.charges.length,1);
+  assertEquals(f.state.events,["reserve","POST","settle"]);assertEquals(f.state.ledger.length,1);
+  f.reset({ordinary:true,privateGrant:true,reserveError:true});
+  assertEquals((await f.handler(req("aerial"))).status,402);assertEquals(f.state.posts,[]);
+});
+Deno.test("Aerial grants require strict current truth, and outages or revoked scope cannot admit paid work",async()=>{
+  const f=await fixture();
+  for(const options of [
+    {ordinary:true,masterGrant:"true",privateGrant:1},
+    {ordinary:true,masterGrant:{active:true},privateGrant:null},
+    {ordinary:true,grantThrow:true},{ordinary:true,grantError:true},
+    {ordinary:true,privateGrant:true,accessDenied:true},
+    {ordinary:true,privateGrant:true,billingDenied:true},
+    {ordinary:true,privateGrant:true,identityDenied:true},
+  ]){
+    f.reset(options);const old=console.error;console.error=()=>{};
+    try{const response=await f.handler(req("aerial"));assert([401,403,503].includes(response.status));assertEquals(f.state.posts,[]);assertEquals(f.state.charges,[]);assertEquals(f.state.events,[]);}
+    finally{console.error=old;}
+  }
+});
+Deno.test("Coming-soon Aerial does not gate ordinary Reel or source-video tools",async()=>{
+  const f=await fixture();for(const route of ["drone","reel-clip"]as const){f.reset({ordinary:true});assertEquals((await f.handler(req(route))).status,202);assertEquals(f.state.posts.length,1);}
+});
+Deno.test("compiled omitted Aerial launch gate is caught before any ordinary paid dispatch",async()=>{
+  const mutant=await fixture(false,false,false,false,true);
+  await assertRejects(()=>refusedOrdinaryAerial(mutant),Error,"Ordinary Aerial must decline before paid admission");
+  assertEquals(mutant.state.posts.length,1);assertEquals(mutant.state.charges.length,1);
+});

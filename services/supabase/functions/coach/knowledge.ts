@@ -78,12 +78,12 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Aerial intro — what it does",
-    source: "description.txt + features.html",
+    source: "LaunchFeatureAvailability.swift + ai-video Aerial launch gate (build 72)",
     fact:
-      "The aerial intro is an AI-generated establishing shot — 4 to 8 seconds, in the time of " +
-      "day and camera move the agent picks — that lifts off an exterior photo already in the " +
-      "listing. It is optional and always disclosed as AI-generated, never real drone footage, " +
-      "so a viewer's trust in the rest of the tour stays intact.",
+      "Aerial intro is Coming soon for launch; no launch plan includes new Aerial generation. " +
+      "Previously saved clips and already accepted jobs remain available. Photos, reels and " +
+      "published listings work without an aerial intro. Any existing AI aerial clip must be " +
+      "reviewed and disclosed as AI-generated, never described as real drone footage.",
   },
   {
     topic: "Measurements and floor plans — current availability",
@@ -92,7 +92,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     fact:
       "Measurements, 3D floor plans and 3D walkthroughs are Coming soon. The Measurements card " +
       "on Home and in each listing's toolbox does not open yet, no plan includes it, and nothing " +
-      "else in the app waits on it: photos, AI Photo Studio, reels, aerial intros and published " +
+      "else in the app waits on it: photos, AI Photo Studio, reels and published " +
       "listings work without any measurements. When measurements ship, the user will be able to " +
       "enter room dimensions, draw measured outlines and upload an existing PDF or image; app " +
       "calculations will not be a certified survey or appraisal and will not set advertised " +
@@ -217,11 +217,11 @@ export const PLAN_ALLOWANCES: Array<{
   },
 ];
 
-/** One line per plan, e.g. "Pro — 10 tour renders, 200 AI photo edits, 12 reels, 4 aerial intros a month." */
+/** Aerial counters remain internal compatibility data, not a launch allowance. */
 function allowanceLine(a: (typeof PLAN_ALLOWANCES)[number]): string {
   const seats = a.seats ? `, ${a.seats} seats` : "";
-  return `${a.plan} — ${a.renders} tour renders, ${a.photoEdits} AI photo edits, ${a.reels} reels, ` +
-    `${a.aerials} aerial intros${seats} a month.`;
+  return `${a.plan} — ${a.renders} tour renders, ${a.photoEdits} AI photo edits, ${a.reels} reels${seats} a month. ` +
+    "Aerial intro is Coming soon.";
 }
 
 /**

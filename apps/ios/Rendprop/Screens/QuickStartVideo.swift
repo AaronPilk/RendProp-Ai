@@ -87,6 +87,7 @@ struct QuickStartKnowledgeCheck: Identifiable {
 }
 
 @MainActor struct QuickStartVideoView: View {
+    var returnLabel = "Skip checks and return to sign-in"
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var player: AVPlayer?
@@ -161,7 +162,7 @@ struct QuickStartKnowledgeCheck: Identifiable {
                     }
                     .font(.headline).foregroundStyle(Theme.accent)
 
-                    Button("Skip checks and return to sign-in") { stopPlayback(); dismiss() }
+                    Button(returnLabel) { stopPlayback(); dismiss() }
                         .font(.body).foregroundStyle(Theme.accent)
                         .accessibilityIdentifier("quickStart.skipChecks")
                 }
@@ -219,7 +220,7 @@ struct QuickStartKnowledgeCheck: Identifiable {
             VStack(spacing: 12) {
                 Image(systemName: "play.rectangle").font(.largeTitle)
                 Text("Introduction video unavailable").font(.headline)
-                Text("Close this video to continue signing in.")
+                Text("Close this video to continue.")
                     .font(.body).multilineTextAlignment(.center)
             }
             .foregroundStyle(Theme.inkDim)

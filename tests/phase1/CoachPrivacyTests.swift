@@ -305,6 +305,14 @@ enum FileStore {
             let allowance = CoachOffline.answer(to: "My AI allowance is exhausted", model: reelApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA)
             try check(allowance.action?.kind == .openPlanUsage && allowance.text.contains("can't verify"), "budget refusal has local account help without any paid request")
 
+            let aerialHelp = CoachOffline.nextStep(model: reelApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, intent: "Make an aerial")
+            try check(aerialHelp.action?.kind == .openHome && aerialHelp.text.contains("Coming soon"), "selected-project aerial intent cannot open new generation")
+            reelApp.coachRoute = nil
+            reelCoach.perform(.init(type: "open_photos", label: "Photos remain available", listingID: listingA.uuidString))
+            try check(reelApp.coachRoute == .project(listingID: listingA, feature: .photos), "same current Coach context can still open photos")
+            reelApp.coachRoute = nil
+            reelCoach.perform(.init(type: "open_aerial", label: "Legacy aerial action", listingID: listingA.uuidString))
+            try check(reelApp.coachRoute == nil, "stale online aerial action is rejected by shipping availability")
             print("PASS: \(assertions) production Coach privacy/scope assertions; actual offline-to-online sends, no network/providers/customer files")
         } catch {
             fputs("FAIL: \(error)\n", stderr)
