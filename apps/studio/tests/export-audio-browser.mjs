@@ -7,15 +7,20 @@ import {createServer} from "node:http";
 import {execFileSync} from "node:child_process";
 import {build} from "vite";
 import {chromium,expect} from "@playwright/test";
-const fault=process.argv[2]??null;assert(fault===null||fault==="--fault=live-original-audio");
+const fault=process.argv[2]??null;assert(fault===null||["--fault=live-original-audio","--fault=late-buffered-wall-origin"].includes(fault));
 const root=resolve(import.meta.dirname,".."), artifacts=await mkdtemp(join(tmpdir(),"rendprop-export-original-audio-")),dist=join(artifacts,"dist");
-const paths=["src/editor/export.ts","src/editor/media.ts","src/editor/model.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
+const paths=["src/editor/export.ts","src/editor/recording-clock.ts","src/editor/media.ts","src/editor/model.ts","tests/export-audio-fixture.ts","tests/export-audio-browser.mjs"];
 const hashes=async()=>Object.fromEntries(await Promise.all(paths.map(async path=>[path,createHash("sha256").update(await readFile(join(root,path))).digest("hex")])));
 const receipt={status:"running",fault,proof:"Actual browser exporter/MediaRecorder with generated H264/AAC source, real100ms video pause and a transient waiting notification without loss. No live accounts/providers. RMS>.03 retained.",sourceHashes:await hashes(),checks:[],cases:[],externalRequests:[],errors:[]};
 let browser,server,page,mutated=false;
 try{
  await build({configFile:false,root,publicDir:false,logLevel:"error",plugins:fault?[{name:"live-original-audio-regression",enforce:"pre",transform(code,id){
   if(!id.endsWith("/src/editor/export.ts"))return;
+  if(fault==="--fault=late-buffered-wall-origin"){
+    const origin='const start = originalWallStart ?? performance.now();';
+    assert.equal(code.split(origin).length,2,"Buffered-clock origin mutation sentinel missing");mutated=true;
+    return code.replace(origin,'const start = performance.now();');
+  }
   const buffer='if (originalAudio && audio && clip.source.kind === "video" && (clip.speed ?? 1) === 1 &&';
   const stall='const refuseStall = () => controller.abort(new Error("Original audio playback stalled during export. No download was created. Try a shorter clip or export with audio explicitly muted."));';
   const clock='const recordingClock = new RecordingClock();';
@@ -36,10 +41,10 @@ try{
  page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
  const run=async(name,config,{refused=false,silentAudio=false,cancelled=false}={})=>{
   await page.goto(`${origin}/tests/export-audio-fixture.html`);await page.getByLabel("Synthetic source").setInputFiles(silentAudio?silent:tone);
-  await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,...config},config);
+  await page.evaluate(config=>window.audioExportFixture.config={speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:0,...config},config);
   await page.getByRole("button",{name:"Export fixture",exact:true}).click();await expect.poll(()=>page.evaluate(()=>window.audioExportFixture.result)).not.toBeNull();
-  const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error};receipt.cases.push(record);
-  if(config.stall||config.hiccup)assert(result.injected,"Forced video stall not injected");
+  const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);
+  if(config.stall||config.hiccup||config.playResolutionDelayMs)assert(result.injected,"Forced playback fixture not injected");
   if(cancelled){assert.equal(result.ok,false);assert.match(result.error,/Synthetic export cancelled/);assert.equal(result.base64,undefined);return;}
   if(refused){assert.equal(result.ok,false,"A media-audio stall must refuse an export");assert.match(result.error,/Original audio playback stalled/);assert.equal(result.base64,undefined);return;}
   assert.equal(result.ok,true,result.error);
@@ -53,7 +58,12 @@ try{
   if(silentAudio)assert(rms<.001,"Silent source gained sound");
   else{assert(weakest>.03,`Continuous speech through cutaway boundaries: weakest40ms RMS${weakest}`);assert(Math.abs(frequency-880)<30,`Original speech pitch changed: ${frequency}`);}
  };
+ if(fault==="--fault=late-buffered-wall-origin"){
+  await run("delayed-buffered-start",{playResolutionDelayMs:120});
+  assert.fail("Late buffered clock-origin negative control unexpectedly passed");
+ }
  await run("normal-speed-stall",{stall:true});receipt.checks.push("A real100ms video stall preserves uninterrupted normal-speed original audio with exact trim/duration");
+ await run("delayed-buffered-start",{playResolutionDelayMs:120});receipt.checks.push("A delayed play-promise delivery preserves buffered speech, original pitch and exact duration without misclassifying a constant startup phase as media loss");
  await run("split-segments",{split:true});receipt.checks.push("Adjacent trimmed source segments export once without overlapping sound or a cut gap");
  await run("double-speed-pitch",{speed:2});receipt.checks.push("Media fallback retains2x duration and original880Hz pitch");
  await run("double-speed-stall",{speed:2,stall:true},{refused:true});

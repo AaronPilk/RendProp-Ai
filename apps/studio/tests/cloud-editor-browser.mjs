@@ -6,9 +6,12 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { build } from "vite";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
-const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
+const sourcePaths=["tests/cloud-editor-browser.mjs","tests/cloud-editor-fixture.tsx",...['export','recording-clock','media','model','overlay-renderer'].map(name=>`src/editor/${name}.ts`)];
+const sourceHashes=async()=>Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,createHash('sha256').update(await readFile(join(root,path))).digest('hex')])));
+const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", sourceHashes:await sourceHashes(), checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
 const timingDevices=[];
 // Test-only observation: every wrapper returns the original native result and
@@ -56,18 +59,36 @@ function installMediaTimingFixture() {
 async function captureMediaTiming() {
   for(const device of timingDevices){
     if(device.tab.isClosed())continue;
-    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());}
+    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());device.clockRefusals=await device.tab.evaluate(()=>window.exportClockRefusals??[]);}
     catch(error){device.captureError=String(error);}
   }
-  receipt.mediaTiming=timingDevices.map(({id,listing,trace,captureError})=>({id,listing,trace,captureError}));
+  receipt.mediaTiming=timingDevices.map(({id,listing,trace,clockRefusals,captureError})=>({id,listing,trace,clockRefusals,captureError}));
 }
 async function closeDevice(tab){await captureMediaTiming();await tab.close();}
 async function saveExportDiagnostics(label,path,probe){await captureMediaTiming();receipt.exportProbes.push({label,path,ffprobe:probe});await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));}
 
 const pro=async tab=>{await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
 const advancedTools=async tab=>{const details=tab.locator("details.creation-advanced").filter({has:tab.locator("summary",{hasText:"Capture plan & extra editing tools"})});if(!await details.evaluate(node=>node.open))await details.locator("summary").click();};
+// Retain the actual guard's cause on a refused export. No clock arguments,
+// scheduling, thresholds or thrown errors change; successful reads are untouched.
+const clockReceiptPlugin={name:"cloud-clock-refusal-receipt",enforce:"pre",transform(code,id){
+  if(!id.endsWith('/src/editor/recording-clock.ts'))return;
+  const seam='export class RecordingClock {';
+  assert.equal(code.split(seam).length,2,"Actual recording-clock observation anchor missing");
+  return code.replace(seam,'class ShippingRecordingClock {')+`
+export class RecordingClock extends ShippingRecordingClock {
+  read(wall: number, timeline: number, audio?: number): void {
+    try { super.read(wall,timeline,audio); }
+    catch(error) {
+      const observations = (window as any).exportClockRefusals ??= [];
+      observations.push({atMs:performance.now(),message:(error as Error).message,cause:(error as Error).cause});
+      throw error;
+    }
+  }
+}`;
+}};
 try {
-  await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
+  await build({ configFile: false, root, publicDir: false, logLevel: "error", plugins:[clockReceiptPlugin], build: { outDir: dist, rollupOptions: { input: join(root, "tests/cloud-editor-fixture.html") } } });
   server = createServer(async (request, response) => { const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`); if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end(); try { response.setHeader("Content-Type", ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css" })[extname(path)] ?? "application/octet-stream"); response.end(await readFile(path)); } catch { response.writeHead(404).end(); } });
   await new Promise((done) => server.listen(0, "127.0.0.1", done)); const origin = `http://127.0.0.1:${server.address().port}`;
   const sourceVideo = join(artifacts, "source-blue.mp4"), agentVideo = join(artifacts, "agent-green.mp4"), voiceFile = join(artifacts, "narration.wav");
@@ -315,4 +336,4 @@ try {
   await second.screenshot({ path: join(artifacts, "cloud-editor.png"), fullPage: true });
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); receipt.visibleText = await page?.locator("body").innerText().catch(()=>""); process.exitCode = 1; if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {}); }
-finally { await captureMediaTiming(); await browser?.close(); if (server) await new Promise(done => server.close(done)); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
+finally { await captureMediaTiming(); await browser?.close(); if (server) await new Promise(done => server.close(done)); receipt.sourceBoundAtEnd=JSON.stringify(await sourceHashes())===JSON.stringify(receipt.sourceHashes); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }

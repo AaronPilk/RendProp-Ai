@@ -9,12 +9,15 @@ import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
+const onlyFixed=process.argv.slice(2).includes('--only-fixed');
+assert(process.argv.slice(2).every(argument=>argument==='--only-fixed'),"Unknown resume test option");
+const variants=onlyFixed?["fixed"]:["baseline", "sequential", "clock-baseline", "cadence-baseline", "fixed", "late-frames"];
 // Two one-second notifications leave a clear regression beyond the unchanged
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
 const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", ...["export", "recording-clock", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
-const receipt = { sourceHashes, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
+const receipt = { sourceHashes, variants, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -124,7 +127,7 @@ document.querySelector("#run").onclick=async()=>{
   } };
   const clockObservationPlugin = { name: "export-clock-observation", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;
-    const seam = "const start = performance.now();";
+    const seam = "const start = originalWallStart ?? performance.now();";
     assert(code.includes(seam));
     const schedule = "const frame = requestAnimationFrame(done);";
     assert(code.includes(schedule), "Cadence fault must intercept only the actual export-frame animation branch");
@@ -155,7 +158,7 @@ document.querySelector("#run").onclick=async()=>{
     assert(code.includes(seam), "Cadence control must remove only the frame interval ceiling");
     return code.replace(seam, "remainingMs");
   } };
-  for (const variant of ["baseline", "sequential", "clock-baseline", "cadence-baseline", "fixed", "late-frames"]) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", plugins: [clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
+  for (const variant of variants) await build({ root: artifacts, configFile: false, publicDir: false, base: "./", logLevel: "error", plugins: [clockObservationPlugin, delayedDecodePlugin, ...(variant === "baseline" ? [oldAwaitPlugin] : variant === "sequential" ? [sequentialPreparationPlugin] : variant === "clock-baseline" ? [oldFrameClockPlugin] : variant === "cadence-baseline" ? [deadlineOnlyPlugin] : [])], build: { outDir: join(dist, variant), rollupOptions: { input: join(artifacts, "fixture.html") } } });
   server = createServer(async (request, response) => {
     const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`);
     if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end();
@@ -202,7 +205,7 @@ document.querySelector("#run").onclick=async()=>{
   const isOpeningTone = value => value.rms > .04 && value.dominantHz > 900 && value.dominantHz < 1100;
   const isWhip = ({ left, right }) => left[2] > 200 && left[0] < 30 && right[0] > 200 && right[2] < 30;
   const whipPixels = (path, time) => ({ time, left: pixel(path, time, 100), right: pixel(path, time, 650) });
-  for (const variant of ["baseline", "sequential", "clock-baseline", "cadence-baseline", "fixed", "late-frames"]) {
+  for (const variant of variants) {
     const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: true });
     await context.route("**/*", route => { const url = new URL(route.request().url()); if (url.origin === origin || ["blob:", "data:"].includes(url.protocol)) return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
     const page = await context.newPage(); page.on("pageerror", error => receipt.errors.push(error.message)); await page.goto(`${origin}/${variant}/fixture.html`);
@@ -358,13 +361,15 @@ document.querySelector("#run").onclick=async()=>{
     }
     await context.close();
   }
+  if(!onlyFixed){
   receipt.checks.push("Held export animation callbacks retain the same MP4 timing, held-frame transitions and opening speech; the animation-only clock misses whip timing and the deadline-only control misses progressing dissolve frames");
   receipt.checks.push("Late decoder readiness, cancellation during initial preparation, stale revision during lookahead and decoder failure reject without a blob, source handles or live tracks");
   receipt.checks.push("Negative control reproduces >400 ms accumulated timing error by delaying only two resume notifications; source playback and decoding are unchanged");
   receipt.checks.push("Sequential-decoder negative control violates readiness before handoff; fixed export prepares the second source before start and third during the second segment despite identical 600 ms decoder delays");
+  }
   receipt.checks.push("Fixed exports keep the existing 400 ms duration tolerance without cutting source spans or changing playback speed");
   receipt.checks.push("Decoded MP4 frames retain the real dissolve and whip at their intended timeline positions");
-  receipt.checks.push("AAC retains 660 Hz narration, leading photo silence, the distinctive 990 Hz opening sound in adjacent bounded samples after resume, and continuous 440 Hz original audio; the old-await control misses that opening window");
+  receipt.checks.push("AAC retains 660 Hz narration, leading photo silence, the distinctive 990 Hz opening sound in adjacent bounded samples after resume, and continuous 440 Hz original audio");
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); throw error; }
 finally {

@@ -373,6 +373,9 @@ export async function exportLocalVideo(options: {
         track?.requestFrame?.();
       }
       // Start recording before advancing the source, so startup cannot discard speech.
+      // Buffered audio starts before play() resolves. Its capture wall clock
+      // must share that origin; a slow play promise does not mean sound was lost.
+      const originalWallStart = originalSource && audio ? performance.now() : undefined;
       const originalClockStart = originalSource && audio ? audio.currentTime : undefined;
       if (originalSource) {
         originalSource.start(originalClockStart!, clip.start, clip.end - clip.start);
@@ -414,7 +417,7 @@ export async function exportLocalVideo(options: {
           musicSource.start(audio.currentTime + delay, draft.music.start + elapsed, remaining);
         }
       }
-      const start = performance.now();
+      const start = originalWallStart ?? performance.now();
       const recordingClock = new RecordingClock();
       const recordingAudioStart = originalClockStart ?? audio?.currentTime;
       let lastVideoTime = video?.currentTime ?? 0;

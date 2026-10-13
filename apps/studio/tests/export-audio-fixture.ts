@@ -2,7 +2,7 @@ import {exportFormats, exportLocalVideo} from "../src/editor/export";
 import {inspectFile} from "../src/editor/media";
 import {newDraft, validateDraft} from "../src/editor/model";
 // Separate browser fixture. Only locally generated source bytes are consumed.
-const fixture = {config:{speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false},result:null as unknown};
+const fixture = {config:{speed:1,stall:false,hiccup:false,decodeFailure:false,split:false,cancelAfterBuffer:false,playResolutionDelayMs:0},result:null as unknown};
 Object.assign(window,{audioExportFixture:fixture});
 document.querySelector("button")!.addEventListener("click",async()=>{
   fixture.result=null;
@@ -36,6 +36,12 @@ document.querySelector("button")!.addEventListener("click",async()=>{
         injected=true;
         result.then(()=>timers.push(setTimeout(()=>{this.dispatchEvent(new Event("waiting"));this.dispatchEvent(new Event("playing"));},800)));
       }
+      // Playback and recording run normally. Delay only the awaited promise's
+      // delivery, exposing a mismatched clock origin without injecting media loss.
+      if(fixture.config.playResolutionDelayMs){
+        injected=true;
+        return result.then(()=>new Promise<void>(resolve=>timers.push(setTimeout(resolve,fixture.config.playResolutionDelayMs))));
+      }
       return result;
     };
     const clip={id:"source",source:local.source,start:.5,end:2.5,caption:"",focusX:.5,focusY:.5,speed:fixture.config.speed};
@@ -47,6 +53,6 @@ document.querySelector("button")!.addEventListener("click",async()=>{
     const bytes=new Uint8Array(await result.blob.arrayBuffer());let binary="";for(const byte of bytes)binary+=String.fromCharCode(byte);
     fixture.result={ok:true,base64:btoa(binary),duration:result.duration,decodeCalls,injected};
     URL.revokeObjectURL(local.url);
-  }catch(error){fixture.result={ok:false,error:String(error),decodeCalls,injected};}
+  }catch(error){fixture.result={ok:false,error:String(error),cause:error instanceof Error?error.cause:undefined,decodeCalls,injected};}
   finally{for(const timer of timers)clearTimeout(timer);HTMLMediaElement.prototype.play=play;AudioContext.prototype.decodeAudioData=decode;AudioContext.prototype.createBufferSource=createBuffer;controller.abort();}
 });

@@ -755,6 +755,11 @@ jobs:
             exit 1
           fi
           grep -q "Continuous speech through cutaway boundaries: weakest40ms RMS" "$RUNNER_TEMP/export-original-audio-defect.log"
+          if node tests/export-audio-browser.mjs --fault=late-buffered-wall-origin > "$RUNNER_TEMP/export-clock-origin-defect.log" 2>&1; then
+            echo "::error::Buffered-audio clock-origin regression control unexpectedly passed"
+            exit 1
+          fi
+          grep -q "Audio and picture timing drifted during export" "$RUNNER_TEMP/export-clock-origin-defect.log"
           node tests/cloud-editor-browser.mjs
           node tests/conversation-browser.mjs
           node tests/finishing-audio-probe-controls.mjs
@@ -776,6 +781,7 @@ jobs:
             ${{ runner.temp }}/rendprop-conversation-*/*.mp4
             ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
             ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/export-clock-origin-defect.log
             ${{ runner.temp }}/rendprop-finishing-*/receipt.json
             ${{ runner.temp }}/rendprop-finishing-*/*.png
             ${{ runner.temp }}/rendprop-finishing-*/*.mp4
