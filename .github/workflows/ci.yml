@@ -35,6 +35,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
+      - name: Ensure ripgrep for native source and privacy controls
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            brew install ripgrep
+          fi
+          rg --version
       - name: Database runner control-flow (mocked, no database)
         run: python3 tools/audit/test_database_runner.py
       - name: Invariant source registration contracts

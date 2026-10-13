@@ -35,7 +35,7 @@ Deno.test("actual normal2K adapter sends2K exact source only after its full pric
  globalThis.fetch=async(url,init)=>{if(!String(url).includes("generativelanguage.googleapis.com"))return Response.json("ceiling");events.push("POST");posts++;bodies.push(JSON.parse(String((init as {body?:unknown}|undefined)?.body)));return Response.json({candidates:[{content:{parts:[{inlineData:{mimeType:"image/jpeg",data:jpeg(1792,2390)}}]}}]});};
  try{assertEquals(await servingMode(),"ceiling");for(const prompt of ["Add one sofa.","x".repeat(5000)]){
   const prepared=preparePhoto2KInput(input({prompt})),route=photo2KChain([step],prepared)[0];let held=0;
-  const context:FundingContext={actorId:"closed-actor",orgId:"closed-org",requestKey:"closed-normal2k-"+posts,rpc:async(name,args)=>{events.push(name);if(name==="serving_cost_reserve")held=Number(args.p_hold_cents);return{data:{reserved:true,finished:true},error:null};}};
+  const context:FundingContext={actorId:"closed-actor",orgId:"closed-org",requestKey:"case-"+posts,rpc:async(name,args)=>{events.push(name);if(name==="serving_cost_reserve")held=Number(args.p_hold_cents);return{data:{reserved:true,finished:true},error:null};}};
   const job=await fundedAttempt(context,"photo.stage:0",route,prepared,mediaAttemptQuote(route,prepared),()=>geminiAdapter.submit(route,prepared));assertEquals((await geminiAdapter.poll(job)).status,"done");assert(held>=route.unit_cents&&held-route.unit_cents<0.00011);
   assertEquals((bodies.at(-1)?.generationConfig as {imageConfig:unknown}).imageConfig,{imageSize:"2K"});assertEquals((bodies.at(-1)?.contents as {parts:{inline_data?:{data:string}}[]}[])[0].parts[1].inline_data?.data,prepared.image_b64);
  }
