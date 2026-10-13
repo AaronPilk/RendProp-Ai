@@ -701,7 +701,7 @@ enum SpaceType: String, CaseIterable, Identifiable {
         case .realEstate:
             return RealEstateRoleStore.current.isProducer
                 ? "Capture, edit and deliver listing media. Each client's page shows their contact details, and their inquiries stay organized in your account."
-                : "Be your own crew. Capture and polish photos, create tours, social media content, floor plans, virtual staging, and a shareable property site - all from your phone."
+                : "Be your own crew. Capture and polish photos, create tours, social media content, virtual staging, and a shareable property site - all from your phone."
         case .venue:
             return "Walk the room once. Get a cinematic tour, polished photos and a link planners share before they've booked a visit."
         case .restaurant:

@@ -74,6 +74,25 @@ for (const [message, status] of [["RP402: Workspace processing budget reached", 
   });
 }
 
+for (const [kind, copy] of [
+  ["free", "Your free AI sample is used up"], ["trial", "Your trial's AI allowance is used up"],
+  ["paid", "This workspace has used its AI allowance"], ["grace", "AI tools are paused while Apple retries"],
+] as const) {
+  Deno.test(`video ${kind} ceiling refusal is customer copy and dispatches nothing`, async () => {
+    const f = fixture({ reserveError: `RP402: AI usage limit reached [kind=${kind}] (396 of 300 cents this period)` });
+    const error = await assertRejects(() => submitReservedVideo(options, f.deps), HttpError);
+    assertEquals(error.status, 402); assertEquals(error.code, "quota_exceeded");
+    assert(error.message.startsWith(copy)); assert(!error.message.includes("RP402"));
+    assertEquals(f.submissions(), 0); assertEquals(f.calls.length, 1);
+  });
+}
+Deno.test("video shared trial capacity refusal never tells a customer to upgrade", async () => {
+  const f = fixture({ reserveError: "RP402: Free-trial AI limit reached [pool=cap]" });
+  const error = await assertRejects(() => submitReservedVideo(options, f.deps), HttpError);
+  assertEquals(error.code, "trial_capacity_unavailable"); assert(!/upgrade|RP402/i.test(error.message));
+  assertEquals(f.submissions(), 0); assertEquals(f.calls.length, 1);
+});
+
 for (const reserve of [null, {}, { reserved: false }, "ok"]) {
   Deno.test(`malformed reservation ${JSON.stringify(reserve)} fails closed before provider`, async () => {
     const f = fixture({ reserve });

@@ -53,7 +53,9 @@ export function verifyConnectedBundle(chunks, config) {
   for (const name of PUBLIC_NAMES) assert(found.has(name), `Built JavaScript is missing the exact configured ${name} property; rebuild connected production assets.`);
 }
 
-export const DIST_BUDGETS = Object.freeze({ initial: 160_000, create: 260_000, total: 350_000 });
+// Build 68 adds the recording clock guard and its bounded diagnostic readings.
+// Allow 5 KB total headroom; the initial and Create loading budgets stay fixed.
+export const DIST_BUDGETS = Object.freeze({ initial: 160_000, create: 260_000, total: 355_000 });
 export const CREATE_ENTRIES = ["index.html", "src/features/projects/Projects.tsx", "src/features/sync/PropertyReels.tsx"];
 export const PROXY_ENTRY = "src/editor/ProxyPanel.tsx";
 export function manifestClosure(manifest, entries) {

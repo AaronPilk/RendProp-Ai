@@ -1,5 +1,6 @@
 import { requireLibraryWrite, libraryBillingOrg, listingLibraryScope } from "../_shared/library-access.ts";
-import { fundingContext, fundedAttempt, textAttemptQuote, visionInputTokenBound, type FundingContext } from "../_shared/funded-serving.ts";
+import { fundingContext, fundedAttempt, completeFundingOperation, FundingAdmissionError, textAttemptQuote, visionInputTokenBound, type FundingContext } from "../_shared/funded-serving.ts";
+import { beginDriftCheck, finishDriftCheck } from "./drift-funding.ts";
 // ai-video — server-side AI video suite on fal.ai (owner-authenticated).
 //
 // ASYNC SUBMIT/STATUS pattern: edge functions can't babysit multi-minute GPU
@@ -1645,8 +1646,8 @@ Deno.serve(async (req) => {
     //      going to work.
     //   2. ROLE + BURST (guardDriftCheck). No monthly meter: an org must never
     //      run out of the ability to verify clips it has already paid for.
-    //   3. ONE JUDGEMENT PER CLIP, so a retried POST cannot buy a second
-    //      opinion or a second refund.
+    //   3. SERIALIZE checks against the owned paid clip. A terminal judgment
+    //      replays; only HOLD or an abandoned worker permits a paid recheck.
     //   4. JUDGE on `judge.qc_drift`, escalating once on low confidence.
     //   5. DECIDE — pure, in drift.ts. The retry grant is durable and keyed on
     //      the SOURCE PHOTOGRAPH, so "exactly once" survives restarts and lies.
@@ -1683,28 +1684,27 @@ Deno.serve(async (req) => {
         sourceB64: source.b64, listingId: optionalUuid(body.listing_id), provenanceId, sourceAssetId });
       if (cached) return cached;
 
-      // ONE JUDGEMENT PER CLIP (step 3). Same 409 shape guardGenerate() uses
-      // for a duplicate Idempotency-Key. Without it, re-posting the frames of a
-      // failed clip would spend the lineage's retry grant twice and could ask
-      // for a second allowance refund; with it, a client that lost the response
-      // recovers its original verdict above. If no durable verdict exists yet,
-      // the duplicate still fails closed instead of starting a second judge.
-      if (!(await durableRateLimit(`aidriftjob:${orgId}:${requestId}`, 1, DRIFT_LINEAGE_WINDOW_SECONDS))) {
-        throw new HttpError(
-          409,
-          "This clip has already been checked — use the verdict you were given.",
-          "conflict",
-        );
-      }
-
-      const funding = await fundingContext(user.id, orgId, req, body, (name,args)=>adminClient().rpc(name,args));
-      const judged = await judgeDrift({
+      // SQL verifies the owned paid generation and current listing access, then
+      // serializes checks. Only a completed HOLD permits a new paid check key.
+      // Old uncertain holds stay counted; changed client nonces cannot replay.
+      const check = await beginDriftCheck({ actor: user.id, orgId, requestId, kind,
+        sourceHash: await driftLineageKey(source.b64), listingId: optionalUuid(body.listing_id),
+        req, input: body, rpc: (name,args)=>adminClient().rpc(name,args) });
+      if (check.replay) return json(check.replay);
+      const funding = check.funding!;
+      let judged: JudgeOutcome;
+      try { judged = await judgeDrift({
         funding,
         plan: await driftRoutingPlan(orgId),
         subject: { kind: kind === "aerial" ? "aerial" : "reel", sceneNoun: SCENE_NOUN[space], motionText },
         source,
         frames,
-      });
+      }); } catch (error) {
+        // A funding refusal is availability/quota, not a model outage. It must
+        // be shown truthfully and must not strand a check before any verdict.
+        await finishDriftCheck(funding.rpc, user.id, orgId, check.id, "hold", null);
+        throw error;
+      }
       const verdict = judged.verdict;
       const passed = driftPasses(verdict);
 
@@ -1738,16 +1738,6 @@ Deno.serve(async (req) => {
       }
 
       const decision = decideDriftAction({ verdict, attempt, retryGranted });
-
-      // A HOLD means no verdict was delivered, so this clip has NOT been judged
-      // and the once-per-clip token above must not go on holding the door shut
-      // for six hours — the message we are about to return literally says "try
-      // the check again in a moment". Handing the token back is what makes that
-      // sentence true. Same primitive, same best-effort contract, as every
-      // other refund in this function.
-      if (decision.action === "hold") {
-        await refundRateLimit(`aidriftjob:${orgId}:${requestId}`, DRIFT_LINEAGE_WINDOW_SECONDS, 1);
-      }
 
       // ── The money (step 6) ───────────────────────────────────────────────
       //
@@ -1834,7 +1824,7 @@ Deno.serve(async (req) => {
         })
         : false;
 
-      return json({
+      const response = {
         drift: driftBlock({
           decision,
           verdict,
@@ -1854,7 +1844,12 @@ Deno.serve(async (req) => {
         recorded: { ledger: ledgerRows, provenance: stamped },
         ...(seconds !== null ? { seconds } : {}),
         kind,
-      });
+      };
+      // A saved serving result is an independent crash-recovery proof if the
+      // following QC-journal save is interrupted. It contains no source media.
+      await completeFundingOperation(funding, response);
+      await finishDriftCheck(funding.rpc, user.id, orgId, check.id, decision.action, response);
+      return json(response);
     }
 
     // ---- GET /ai-video/status ----
@@ -2458,6 +2453,7 @@ async function judgeDrift(args: {
   try {
     primary = await runChain(DRIFT_TASK, steps, (step) => fundedAttempt(args.funding, `qc.initial:${steps.indexOf(step)}`, step, parts, textAttemptQuote(step, rubric, "", DRIFT_MAX_TOKENS, true, judgeInputTokens), () => callJudgeStep(step, rubric, parts)));
   } catch (e) {
+    if (e instanceof FundingAdmissionError) throw e;
     const why = e instanceof Error ? e.message : String(e);
     console.error("ai-video: the drift judge could not be reached:", why);
     return {

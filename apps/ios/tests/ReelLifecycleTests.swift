@@ -7,6 +7,8 @@ struct UIBackgroundTaskIdentifier: Equatable, Hashable {
 @MainActor final class UIApplication {
     enum State { case active, inactive, background }
     static let shared = UIApplication()
+    static let didBecomeActiveNotification = Notification.Name("fixture.application.active")
+    static let willResignActiveNotification = Notification.Name("fixture.application.inactive")
     var applicationState = State.background
     var next = 0
     var handlers: [UIBackgroundTaskIdentifier: @MainActor () -> Void] = [:]
@@ -20,11 +22,16 @@ struct UIBackgroundTaskIdentifier: Equatable, Hashable {
     func endBackgroundTask(_ id: UIBackgroundTaskIdentifier) { ended.append(id) }
 }
 struct PushAccountIdentity: Equatable { let owner: UUID; let revision: UInt64 }
-@MainActor enum PushManager { static var currentIdentity: PushAccountIdentity? }
+@MainActor final class PushManager { static let shared=PushManager();static var currentIdentity: PushAccountIdentity?;var localDataErasureRevision:UInt64=0 }
 @MainActor final class ClosedConnection { var cancelled = false; func cancel() { cancelled = true } }
 @MainActor final class ClosedPlayer { var paused = false; func pause() { paused = true } }
 @MainActor final class ClosedRecorder { var isRecording = true; var cancellations = 0; func cancel() { isRecording = false; cancellations += 1 } }
-@MainActor enum IdleTimer { static var releases = 0; static func release() { releases += 1 } }
+@MainActor enum IdleTimer {
+    static var holds = 0, releases = 0
+    static var activeHolds: Int { holds - releases }
+    static func hold() { holds += 1 }
+    static func release() { releases += 1; precondition(releases <= holds, "idle timer cannot release another feature's hold") }
+}
 enum UNAuthorizationStatus { case notDetermined, denied, authorized, provisional, ephemeral }
 struct UNNotificationSettings { let authorizationStatus: UNAuthorizationStatus }
 struct UNNotificationSound { static let `default` = Self() }
@@ -92,7 +99,7 @@ final class ClosedLifetime { let id = UUID() }
         let app = UIApplication.shared, center = UNUserNotificationCenter.current()
         let a = PushAccountIdentity(owner: UUID(), revision: 1)
         let b = PushAccountIdentity(owner: UUID(), revision: 2)
-        func reset() { center.reset(); PushManager.currentIdentity = a; app.applicationState = .background }
+        func reset() { center.reset(); PushManager.currentIdentity = a; app.applicationState = .background; ReelWorkQueue.shared.updateScreenAwakeHold(isActive: false) }
         reset()
         let queue = ReelWorkQueue.shared
         let listing = Listing(id: UUID(), address: "Closed synthetic listing")
@@ -258,6 +265,9 @@ final class ClosedLifetime { let id = UUID() }
         ReelCompletionNotice.post(success: true, identity: a)
         check(center.settings.isEmpty, "an already stale completion cannot request notification settings")
         reset(); ReelCompletionNotice.post(success: true, identity: a)
+        PushManager.shared.localDataErasureRevision &+= 1; center.answer(.authorized); await tick()
+        check(center.requests.isEmpty, "Clear data during notification settings suppresses the earlier completion")
+        reset(); ReelCompletionNotice.post(success: true, identity: a)
         PushManager.currentIdentity = b; center.answer(.authorized); await tick()
         check(center.requests.isEmpty, "owner switch during notification settings cannot enqueue the old owner's banner")
         reset(); ReelCompletionNotice.post(success: true, identity: a)
@@ -286,6 +296,66 @@ final class ClosedLifetime { let id = UUID() }
         center.answer(.authorized); await tick()
         check(center.requests.first?.content.title == "Your reel couldn't be made", "failed completion has a distinct honest title")
         check(center.requests.first?.content.body.contains("Finished clips are kept") == true, "failure notice explains retained paid work")
+
+        // Actual global screen-awake policy covers other tabs/editor dismissal,
+        // balances concurrent jobs and never releases another feature's hold.
+        reset(); app.applicationState = .active
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil); await tick()
+        IdleTimer.hold() // A separate capture/render feature owns this hold.
+        let active = queue.job(for: Listing(id: UUID(), address: "Foreground idle guard"))
+        let second = queue.job(for: Listing(id: UUID(), address: "Second foreground job"))
+        let activeFinish = ClosedGate(), secondFinish = ClosedGate()
+        active.phase = .generating; second.phase = .generating
+        _ = active.start(identityIsCurrent: { true }, resume: {}, operation: {
+            while !activeFinish.released && !Task.isCancelled { await Task.yield() }
+            active.phase = .done
+        })
+        await tick()
+        check(IdleTimer.activeHolds == 2, "active app-wide reel work keeps the screen awake")
+        _ = second.start(identityIsCurrent: { true }, resume: {}, operation: {
+            while !secondFinish.released && !Task.isCancelled { await Task.yield() }
+            second.phase = .done
+        })
+        await tick()
+        queue.updateScreenAwakeHold(); queue.updateScreenAwakeHold()
+        check(IdleTimer.activeHolds == 2, "concurrent jobs share one balanced reel idle hold")
+        let closedEditor = ReelPresentationHarness(job: active); closedEditor.onDisappearCleanup()
+        check(IdleTimer.activeHolds == 2, "closing Reel Studio keeps active work's idle hold")
+        app.applicationState = .inactive
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil); await tick()
+        check(IdleTimer.activeHolds == 1, "inactive scene releases only the reel idle hold")
+        app.applicationState = .active
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil); await tick()
+        check(IdleTimer.activeHolds == 2, "returning active reclaims the existing job's idle hold")
+        activeFinish.released = true; await active.task?.value
+        check(IdleTimer.activeHolds == 2, "one terminal job cannot release a concurrent reel hold")
+        second.cancel(); await second.task?.value
+        check(IdleTimer.activeHolds == 1, "terminal and cancelled reels balance the idle hold")
+        IdleTimer.release()
+        check(IdleTimer.activeHolds == 0, "reel cleanup preserves and balances unrelated idle holds")
+
+        // A cancelled paid POST can still write an ambiguous receipt as it
+        // unwinds. Erasure must wait for that writer and clear only its jobs.
+        reset(); let erasing = queue.job(for: Listing(id: UUID(), address: "Erase delayed writer"))
+        let eraseCleanup = ClosedGate(); var writerFinished = false
+        erasing.phase = .generating
+        _ = erasing.start(identityIsCurrent: { true }, resume: {}, operation: {
+            while !Task.isCancelled { await Task.yield() }
+            while !eraseCleanup.released { await Task.yield() }
+            writerFinished = true
+        })
+        await tick(); var erased = false
+        let eraseTask = Task { await queue.cancelForLocalDataErasure(); erased = true }
+        await tick()
+        check(!erased && !writerFinished && erasing.task?.isCancelled == true, "local erasure waits for cancelled reel receipt writers")
+        let replacementJob = queue.job(for: Listing(id: UUID(), address: "New context while waiting"))
+        erasing.configuration = .init(extras: [], captions: nil, voice: nil, captionStyle: .init(), shotStyle: .off, transition: .cut)
+        erasing.reelURL = URL(fileURLWithPath: "/erased-reel.mp4")
+        erasing.pendingRequest = PendingReelRequest(); erasing.pendingBatch = PendingReelBatch(); erasing.parkedClips = PendingReelClips()
+        eraseCleanup.released = true; await eraseTask.value
+        check(erased && writerFinished, "local erasure completes after the paid writer terminates")
+        check(!queue.jobs.contains(where: { $0.id == erasing.id }) && queue.jobs.contains(where: { $0.id == replacementJob.id }), "erasure removes only captured jobs, preserving replacement work")
+        check(erasing.reelURL == nil && erasing.pendingRequest == nil && erasing.pendingBatch == nil && erasing.parkedClips == nil && erasing.configuration == nil, "erasure drops embedded source and playback presentation references")
         print("PASS: \(checks) actual app-owned reel task/expiry/identity and notification enqueue assertions; closed OS boundaries")
     }
 }

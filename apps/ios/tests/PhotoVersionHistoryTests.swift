@@ -502,9 +502,40 @@ struct PhotoVersionHistoryTests {
         check((try? PhotoVersionHistory.load(directory: customCloudDir).versions["remote"]?.customReviewed) == nil, "preexisting cloud ids are not retroactively rewritten or certified")
         check((try? Data(contentsOf: customCloudDir.appendingPathComponent("cloud-original.jpg"))) == original, "cloud import review preserves exact retained source bytes")
 
+        // Review is an egress permission, not the current editing preview or
+        // a motion-QC verdict. No image bytes change when it is granted.
+        let reelReviewDir = root.appendingPathComponent("reel-review")
+        try PhotoVersionHistory.saveCapture(original: original, enhanced: original, id: "source", directory: reelReviewDir)
+        let clean = try PhotoVersionHistory.saveEdit(jpeg: original, id: "clean", parentID: "source", sourceID: "source", edit: "declutter", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
+        let stagePreview = try PhotoVersionHistory.saveEdit(jpeg: original, id: "stage-preview", parentID: clean.id, sourceID: clean.id, edit: "stage", style: "modern", disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
+        let customPreview = try PhotoVersionHistory.saveEdit(jpeg: original, id: "custom-preview", parentID: stagePreview.id, sourceID: stagePreview.id, edit: "custom", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
+        let skyPreview = try PhotoVersionHistory.saveEdit(jpeg: original, id: "custom-sky-preview", parentID: customPreview.id, sourceID: customPreview.id, edit: "sky", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
+        try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(clean.imageFile))
+        check(true, "reviewed built-in predecessor remains eligible for reels")
+        rejected("unreviewed custom preview cannot be sent to a reel") { try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(customPreview.imageFile)) }
+        rejected("unreviewed custom descendant cannot be laundered through reel QC") { try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(skyPreview.imageFile)) }
+        rejected("unreviewed staging cannot bypass property review through reels") { try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(stagePreview.imageFile)) }
+        let egressIndex = try PhotoVersionHistory.load(directory: reelReviewDir)
+        check(egressIndex.current[clean.familyID] == skyPreview.id && egressIndex.publicationChoice(for: skyPreview.id)?.id == clean.id, "current preview is independent from selected listing version")
+        try PhotoVersionHistory.selectForPublication(id: stagePreview.id, directory: reelReviewDir, reviewed: true)
+        try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(stagePreview.imageFile))
+        check(true, "existing staged comparison approval enables exact reel source")
+        try PhotoVersionHistory.selectForPublication(id: customPreview.id, directory: reelReviewDir, reviewed: true, customReviewed: true)
+        try PhotoVersionHistory.requireReelReview(imageURL: reelReviewDir.appendingPathComponent(customPreview.imageFile))
+        check(true, "persisted exact custom approval enables reel source")
+        check((try? Data(contentsOf: reelReviewDir.appendingPathComponent("orig-source.jpg"))) == original && (try? Data(contentsOf: reelReviewDir.appendingPathComponent(customPreview.imageFile))) == original, "reel review never changes retained source or candidate bytes")
+        try PhotoVersionHistory.select(id: clean.id, directory: reelReviewDir)
+        let twilightClean = try PhotoVersionHistory.saveEdit(jpeg: original, id: "twilight-clean", parentID: clean.id, sourceID: clean.id, edit: "twilight", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
+        check(twilightClean.caption.contains("Digitally decluttered") && twilightClean.caption.contains("simulate dusk"), "declutter then twilight discloses every effect")
+        try PhotoVersionHistory.select(id: stagePreview.id, directory: reelReviewDir)
+        let skyAfterStage = try PhotoVersionHistory.saveEdit(jpeg: original, id: "sky-after-stage", parentID: stagePreview.id, sourceID: stagePreview.id, edit: "sky", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
+        check(skyAfterStage.caption.contains("Virtually staged") && skyAfterStage.caption.contains("Digitally decluttered") && skyAfterStage.caption.contains("sky was replaced"), "stage declutter sky disclosure retains all recorded effects")
+        check(skyPreview.caption.contains("custom or imported AI edit") && skyPreview.caption.contains("sky was replaced"), "custom descendants name both custom changes and preset effects")
+
         typealias Layout = PhotoExportLayout
         check(Layout.size(width: 4032, height: 3024, aspect: .original, framing: .crop) == .init(width: 4032, height: 3024), "default preserves every original pixel")
         check(Layout.size(width: 4032, height: 3024, aspect: .landscape, framing: .crop) == .init(width: 4032, height: 3024), "4:3 same source")
+        check(Layout.size(width: 4000, height: 3000, aspect: .feed, framing: .crop) == .init(width: 2400, height: 3000), "feed delivery preset is a true 4:5 crop")
         check(Layout.size(width: 4000, height: 3000, aspect: .wide, framing: .crop) == .init(width: 4000, height: 2250), "wide crop removes top and bottom")
         check(Layout.size(width: 4000, height: 3000, aspect: .portrait, framing: .crop) == .init(width: 1688, height: 3000), "portrait crop trims sides")
         check(Layout.size(width: 4000, height: 3000, aspect: .portrait, framing: .fit) == .init(width: 2250, height: 4000), "fit canvas bounded by source long edge")

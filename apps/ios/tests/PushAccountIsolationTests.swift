@@ -6,8 +6,8 @@ import Foundation
   func tick()async{for _ in 0..<100{await Task.yield()};try? await Task.sleep(nanoseconds:20_000_000)}
   let a=UUID(uuidString:"11000000-0000-4000-8000-000000000001")!
   let b=UUID(uuidString:"11000000-0000-4000-8000-000000000002")!
-  func identity(_ owner:UUID,_ revision:UInt64){AuthStore.shared.userID=owner.uuidString;AuthStore.shared.isSignedIn=true;AuthStore.shared.syncSessionRevision=revision;AuthStore.access=owner==a ? "synthetic-A" : "synthetic-B"}
-  func reset(){PushHTTP.reset();SecureStore.values=[:];SecureStore.failSet=false;SecureStore.failRead=false;SecureStore.failRemove=false;UserDefaults.standard.values=[:];identity(a,1)}
+  func identity(_ owner:UUID,_ revision:UInt64){AuthStore.shared.userID=owner.uuidString;AuthStore.shared.isSignedIn=true;AuthStore.shared.isIdentified=true;AuthStore.shared.syncSessionRevision=revision;AuthStore.access=owner==a ? "synthetic-A" : "synthetic-B"}
+  func reset(){UIApplication.shared.unregisterCalls=0;PushHTTP.reset();SecureStore.values=[:];SecureStore.failSet=false;SecureStore.failRead=false;SecureStore.failRemove=false;UserDefaults.standard.values=[:];identity(a,1)}
   reset()
   let push=PushManager();PushHTTP.pausedOwner=a
   push.handleDeviceToken(Data([0xab,0xcd]));await tick()
@@ -97,9 +97,24 @@ import Foundation
   check(PushHTTP.requests.isEmpty,"Confirmed account deletion queued dead credential")
   check(try AuthStore.pendingPushUnregisters().isEmpty,"Confirmed deletion left cleanup record")
   check(AuthStore.retainPushUnregister(cleanup),"Wipe fixture unavailable");UserDefaults.standard.set(true,forKey:"push.unregisterStorageBlocked.v1")
-  deleted.discardPendingCleanup()
-  check(try AuthStore.pendingPushUnregisters().isEmpty,"Device erasure retained captured credential")
-  check(!UserDefaults.standard.bool(forKey:"push.unregisterStorageBlocked.v1"),"Device erasure retained blocked flag")
+  deleted.retryPendingCleanup();await tick()
+  check(PushHTTP.requests.count==1 && PushHTTP.requests[0].method=="DELETE" && PushHTTP.requests[0].credential=="synthetic-A","Local erasure must finish the exact pending outgoing DELETE")
+  check(try AuthStore.pendingPushUnregisters().isEmpty,"Acknowledged erasure cleanup remained queued")
+  check(!UserDefaults.standard.bool(forKey:"push.unregisterStorageBlocked.v1"),"Acknowledged erasure cleanup retained blocked flag")
+  reset();UserDefaults.standard.set("abcd",forKey:"push.deviceToken.v1");PushHTTP.deleteError=URLError(.notConnectedToInternet)
+  let erased=ClearDataHarness();await erased.clearLocalDataTapped();await tick()
+  check(UIApplication.shared.unregisterCalls==1,"Clear data stops local APNs delivery during offline server cleanup")
+  check(PushManager.shared.localDataErasureRevision>0,"Clear data invalidates already queued local completion callbacks")
+  check(erased.wipes==1 && erased.showDataCleared && !AuthStore.shared.isSignedIn,"Clear data signs out and wipes after reel cancellation")
+  check(try AuthStore.pendingPushUnregisters().count==1,"Clear data retains failed outgoing DELETE until acknowledgment")
+  check(PushHTTP.requests.first{$0.method=="DELETE"}?.credential=="synthetic-A","Clear data DELETE uses only outgoing captured credential")
+  PushHTTP.deleteError=nil;PushManager.shared.retryPendingCleanup();await tick()
+  check(try AuthStore.pendingPushUnregisters().isEmpty,"Clear data cleanup retries after connectivity returns")
+  reset();ReelWorkQueue.shared.hold=true
+  let waiting=ClearDataHarness();let eraseTask=Task{await waiting.clearLocalDataTapped()};await tick()
+  check(waiting.wipes==0 && ReelWorkQueue.shared.pending != nil,"Clear data waits for interrupted reel writers before erasure")
+  identity(b,8);ReelWorkQueue.shared.pending?.resume();ReelWorkQueue.shared.pending=nil;ReelWorkQueue.shared.hold=false;await eraseTask.value
+  check(waiting.wipes==0 && AuthStore.shared.userID==b.uuidString && !waiting.showDataCleared,"Clear data cannot erase a replacement session")
   identity(b,6)
   let bid=PushAccountIdentity(owner:b,revision:6)
   check(!PushManager.accepts(payload:["recipient_user_id":a.uuidString,"rp":["type":"leads"]],identity:bid),"Other account notification accepted")

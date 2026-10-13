@@ -1,6 +1,7 @@
 import {decodeMusic} from "./music";
 import {musicGainAt} from "./finishing";
 import {OverlayPainter} from "./overlay-renderer";
+import {RecordingClock} from "./recording-clock";
 import {
   EDIT_LIMITS,
   draftMedia,
@@ -414,6 +415,8 @@ export async function exportLocalVideo(options: {
         }
       }
       const start = performance.now();
+      const recordingClock = new RecordingClock();
+      const recordingAudioStart = originalClockStart ?? audio?.currentTime;
       let lastVideoTime = video?.currentTime ?? 0;
       let lastVideoAdvance = start;
       const duration = clipDuration(clip);
@@ -447,6 +450,8 @@ export async function exportLocalVideo(options: {
             throwIfAborted(renderSignal);
           }
         } else lossReadings = 0;
+        recordingClock.read((now - start) / 1000, elapsed,
+          recordingAudioStart !== undefined && audio ? audio.currentTime - recordingAudioStart : undefined);
         if (audio) {
           const timelineTime = elapsedBefore + elapsed;
           if (musicGain) musicGain.gain.setTargetAtTime(musicGainAt(draft, clip, timelineTime, elapsed, voiceBuffer?.duration), audio.currentTime, .025);

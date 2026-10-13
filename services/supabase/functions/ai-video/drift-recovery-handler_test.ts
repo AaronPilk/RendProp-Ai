@@ -81,7 +81,7 @@ async function compiled(mutation?: Mutation) {
     JSON.stringify(new URL("./drift-input.ts", import.meta.url).href)
   };
     type GenKind="reel"|"aerial"|"drone"|"declutter";
-    type PaidAiCaller={id:string};type DriftBody=Record<string,any>;
+    type PaidAiCaller={id:string};type DriftBody=Record<string,any>;type JudgeOutcome=any;
     interface DriftImage{b64:string;mime:string};interface DriftFrame extends DriftImage{at:DriftFramePosition};
     ${statement("ALLOWED_IMAGE_MIMES")}
     ${statement("MAX_DRIFT_IMAGE_B64_CHARS")}
@@ -106,6 +106,8 @@ async function compiled(mutation?: Mutation) {
       const durableRateLimit=deps.rate;
       const trap=(name:string)=>async(..._args:any[])=>{deps.traps.push(name);throw new HttpError(500,"Unexpected "+name+" in cached recovery");};
       const fundingContext=trap("funding"),judgeDrift=trap("judge"),driftRoutingPlan=trap("routing");
+      const beginDriftCheck=async()=>{throw new HttpError(409,"This quality check is already running.","conflict");},finishDriftCheck=trap("finishCheck");
+      const completeFundingOperation=trap("completeFunding");
       const refundRateLimit=trap("refundRate"),refundRejectedClipAllowance=trap("allowanceRefund"),recordRoutedAiCost=trap("costWrite"),stampProvenanceQc=trap("provenanceWrite");
       ${functionBody("guardDriftCheck")}
       ${cache}
@@ -686,7 +688,7 @@ for (
     // reuse branch must visibly take the duplicate refusal path instead.
     if (mutation === "reuse") {
       assertEquals(response.status, 409);
-      assert(f.rates.some((k) => k.startsWith("aidriftjob:")));
+      assert(!f.rates.some((k) => k.startsWith("aidriftjob:"))); // Durable SQL check admission replaces the expiring once-per-job limiter.
     } else {
       assertEquals(response.status, 200);
       assertEquals((await response.json()).drift.action, "refuse");

@@ -83,6 +83,10 @@ try {
   const output=join(artifacts,"music-captions-mix.mp4"); await (await download).saveAs(output);
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","stream=codec_name,codec_type,start_time,duration,sample_rate:format=duration","-of","json",output],{encoding:"utf8"}));
   const outputDuration=Number(probe.format.duration);
+  const audioDuration=Number(probe.streams.find(stream=>stream.codec_type==="audio")?.duration);
+  const videoDuration=Number(probe.streams.find(stream=>stream.codec_type==="video")?.duration);
+  receipt.avDurationGap=Math.abs(audioDuration-videoDuration);
+  assert(Number.isFinite(receipt.avDurationGap)&&receipt.avDurationGap<=2/30,`Audio and picture durations diverged: ${receipt.avDurationGap}s`);
   assert(probe.streams.some(stream=>stream.codec_name==="aac"));assert(probe.streams.some(stream=>stream.codec_name==="h264"));assert(Math.abs(outputDuration-8)<.5);
   const pixel=time=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",output,"-frames:v","1","-vf","format=rgb24,crop=1:1:100:1140","-f","rawvideo","pipe:1"])];
   // Anchor second-shot audio to its independently decoded blue-to-red cut.

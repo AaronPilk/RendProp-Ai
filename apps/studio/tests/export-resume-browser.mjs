@@ -13,7 +13,7 @@ const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
-const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", ...["export", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", ...["export", "recording-clock", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
 const receipt = { sourceHashes, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
@@ -51,6 +51,8 @@ fixture.requestExportFrame=callback=>{
 };
 const NativeRecorder=MediaRecorder;
 function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...extra});}
+const NativeAudioContext=AudioContext;
+window.AudioContext=class extends NativeAudioContext {constructor(...args){super(...args);fixture.audio=this;}};
 // The exporter uses detached video elements, so observe them directly without
 // retiming events, from the moment the export decoder creates them so that
 // readiness before playback and the element state at each event are retained.
@@ -91,7 +93,7 @@ document.querySelector("#run").onclick=async()=>{
     const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?4:.5,speed:index===1?2:1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
     const result=await exportLocalVideo({draft,media:new Map(sources.map((local,index)=>["clip-"+index,local])),narrationBlob:narrated?voice:undefined,format:exportFormats().find(format=>format.extension==="mp4"),signal:exportController.signal,currentDraft:()=>({...draft,revision:fixture.revision}),onProgress:()=>{}});
     url=URL.createObjectURL(result.blob);const download=document.querySelector("#download");download.href=url;download.hidden=false;fixture.result={duration:result.duration,bytes:result.blob.size};
-  }catch(error){fixture.error=error.message;}finally{fixture.exporting=false;}
+  }catch(error){fixture.error=error.message;fixture.errorCause=error.cause;}finally{fixture.exporting=false;}
 };
 `);
   const oldAwaitPlugin = { name: "negative-control-original-resume-await", enforce: "pre", transform(code, id) {
@@ -126,14 +128,17 @@ document.querySelector("#run").onclick=async()=>{
     assert(code.includes(seam));
     const schedule = "const frame = requestAnimationFrame(done);";
     assert(code.includes(schedule), "Cadence fault must intercept only the actual export-frame animation branch");
-    return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index});')
+    return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index}); if(index===1 && (window as any).fixture.interruptAudio) setTimeout(()=>{const sound=(window as any).fixture.audio; sound.suspend().then(()=>setTimeout(()=>{if(sound.state!=="closed")sound.resume();},180));},250);')
+      .replace('recordingClock.read((now - start)', '(window as any).fixture.trace.push({event:"clip.clock.read",at:performance.now(),index,wall:(now-start)/1000,timeline:elapsed,audio:audio?.currentTime,media:video?.currentTime}); recordingClock.read((now - start)')
       .replace(schedule, "const frame = (window as any).fixture.requestExportFrame(done);");
   } };
   const oldFrameClockPlugin = { name: "negative-control-animation-only-clock", enforce: "pre", transform(code, id) {
     if (!id.endsWith("/src/editor/export.ts")) return;
     const seam = /export function nextExportFrame\([\s\S]*?\n}\n\n\/\*\* A real-time/;
     assert(seam.test(code), "Frame-clock control must match the actual deadline helper");
-    return code.replace(seam, `export function nextExportFrame(signal: AbortSignal, _remainingMs: number): Promise<number> {
+    // Reproduce the historical exporter, including its missing capture/audio
+    // guard. The fixed and late-frames variants always use the actual guard.
+    return code.replace('const recordingClock = new RecordingClock();', 'const recordingClock = {read() {}};').replace(seam, `export function nextExportFrame(signal: AbortSignal, _remainingMs: number): Promise<number> {
       throwIfAborted(signal);
       return new Promise((resolve, reject) => {
         const aborted = () => {cancelAnimationFrame(frame); reject(signal.reason);};
@@ -212,7 +217,7 @@ document.querySelector("#run").onclick=async()=>{
         // Retain failures before rethrowing the unchanged completion assertion.
         // In particular, a broken control must never erase the event that caused
         // a genuine production stall refusal. No variant accepts that refusal.
-        const attempt = await page.evaluate(() => ({ error: window.fixture.error, result: window.fixture.result,
+        const attempt = await page.evaluate(() => ({ error: window.fixture.error, errorCause: window.fixture.errorCause, result: window.fixture.result,
           trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
           tracks: window.fixture.tracks.map(track => track.readyState) }));
         receipt.attempts.push({ variant, narrated, ...attempt }); await persist();
@@ -238,6 +243,14 @@ document.querySelector("#run").onclick=async()=>{
       };
       receipt.runs.push({ variant, narrated, plannedSeconds: 3, duration, trace, audio, pixels, decodedFrames: frames(output, 100), output, probe }); await persist();
       assert(probe.streams.some(stream => stream.codec_name === "h264")); assert(probe.streams.some(stream => stream.codec_name === "aac"));
+      if (["fixed", "late-frames"].includes(variant)) {
+        const audioTrack = probe.streams.find(stream => stream.codec_type === "audio");
+        const videoTrack = probe.streams.find(stream => stream.codec_type === "video");
+        const avDurationGap = Math.abs(Number(audioTrack.duration) - Number(videoTrack.duration));
+        receipt.runs.at(-1).avDurationGap = avDurationGap; await persist();
+        assert(Number.isFinite(avDurationGap) && avDurationGap <= 2 / 30,
+          `Audio and picture stream durations must agree within two frames: ${avDurationGap}s`);
+      }
       assert.equal(trace.filter(event => event.event === "resume.return").length, 2);
       assert(trace.filter(event => event.event === "resume.return").every(event => event.state === "recording"));
       if (["cadence-baseline", "late-frames"].includes(variant)) {
@@ -303,6 +316,18 @@ document.querySelector("#run").onclick=async()=>{
       }
     }
     if (variant === "fixed") {
+      await page.evaluate(() => {window.fixture.configure(true);window.fixture.decodeDelays=[];window.fixture.interruptAudio=true;});
+      await page.locator("#run").click();
+      await expect.poll(() => page.evaluate(() => window.fixture.exporting), {timeout:10000}).toBe(false);
+      const interruption=await page.evaluate(()=>({error:window.fixture.error,cause:window.fixture.errorCause,result:window.fixture.result,
+        downloadHidden:document.querySelector("#download").hidden,tracks:window.fixture.tracks.map(track=>track.readyState)}));
+      receipt.clockInterruption=interruption;await persist();
+      assert.match(interruption.error,/Audio and picture timing drifted/);
+      assert.equal(interruption.result,null,"An actual audio-clock suspension cannot offer a downloadable export");
+      assert(interruption.downloadHidden&&interruption.tracks.every(state=>state==="ended"));
+      assert(interruption.cause.maxLossSeconds>2/30&&interruption.cause.readings.slice(-2).every(reading=>reading.drift>2/30));
+      await page.evaluate(()=>{window.fixture.interruptAudio=false;});
+      receipt.checks.push("An actual AudioContext suspension rejects the export before a download and retains the clock readings; removing the recording guard makes this assertion fail");
       for (const scenario of ["late-successor", "abort-initial-successor", "stale-during-lookahead", "failed-initial-successor"]) {
         await page.evaluate(scenario => {
           window.fixture.configure(false);

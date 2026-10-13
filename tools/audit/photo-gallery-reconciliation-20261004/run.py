@@ -74,8 +74,10 @@ log = result.stdout + result.stderr
 if expected:
     passed = result.returncode != 0 and expected in log and ('Precondition failed:' in log or 'Fatal error:' in log)
 else:
-    # Retain all 422 prior history/layout cases plus 114 custom-intent/review/export cases.
-    passed = result.returncode == 0 and 'Photo history/export geometry: 536 passed' in log
+    # Retain the original 536 cases plus 60 geometry checks for Instagram's
+    # .feed (4:5) aspect, plus 12 review, disclosure and explicit feed-ratio
+    # assertions added for build 68. Named corruption controls stay required.
+    passed = result.returncode == 0 and 'Photo history/export geometry: 608 passed' in log
 receipt = {'passed': passed, 'fault': args.inject_fault, 'expected_runtime_assertion': expected,
            'compile_exit': compile_result.returncode, 'runtime_exit': result.returncode,
            'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),

@@ -663,9 +663,11 @@ Deno.test("wiring: the check is role-gated and org-scoped like every other route
   assertStringIncludes(DRIFT_ROUTE, "stampProvenanceQc(orgId, provenanceId,");
 });
 
-Deno.test("wiring: one judgement per clip — a re-post cannot buy a second verdict", () => {
-  assertStringIncludes(DRIFT_ROUTE, "`aidriftjob:${orgId}:${requestId}`");
-  assertStringIncludes(DRIFT_ROUTE, '"conflict"');
+Deno.test("wiring: durable check admission precedes judgement and result persistence precedes reopening", () => {
+  assert(DRIFT_ROUTE.indexOf("await beginDriftCheck(") < DRIFT_ROUTE.indexOf("await judgeDrift("));
+  assertStringIncludes(DRIFT_ROUTE, "if (check.replay) return json(check.replay)");
+  assert(DRIFT_ROUTE.lastIndexOf("await finishDriftCheck(") > DRIFT_ROUTE.indexOf("await recordRoutedAiCost("));
+  assert(!DRIFT_ROUTE.includes("`aidriftjob:${orgId}:${requestId}`"));
 });
 
 Deno.test("wiring: the retry grant is durable and keyed on the SOURCE photo", () => {

@@ -177,8 +177,8 @@ async function handleDrain(limit: number): Promise<Response> {
 
   for (const row of rows) {
     try {
-      if (row.channel === "email" && ["first_tour_nudge", "free_week_ending"].includes(row.category)) {
-        await mark(row.id, "skipped", "Promotional lifecycle email is disabled until explicit email opt-in and unsubscribe are supported.", null);
+      if (["first_tour_nudge", "free_week_ending"].includes(row.category)) {
+        await mark(row.id, "skipped", "Promotional lifecycle messages are disabled until explicit marketing opt-in is supported.", null);
         skipped++; continue;
       }
       if (row.channel === "email" && !explicitRecipient(row) && emailLookupFailed) throw new Error("Verified notification recipient lookup is temporarily unavailable.");

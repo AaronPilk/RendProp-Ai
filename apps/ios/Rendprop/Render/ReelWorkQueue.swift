@@ -11,6 +11,42 @@ final class ReelWorkQueue: ObservableObject {
     static let shared = ReelWorkQueue()
     @Published private(set) var jobs: [ReelWorkJob] = []
     private var observations: [UUID: AnyCancellable] = [:]
+    private var sceneObservers: [NSObjectProtocol] = []
+    private var sceneIsActive = UIApplication.shared.applicationState == .active
+    private var holdsIdleTimer = false
+
+    private init() {
+        for (name, active) in [(UIApplication.didBecomeActiveNotification, true),
+                               (UIApplication.willResignActiveNotification, false)] {
+            sceneObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.updateScreenAwakeHold(isActive: active) }
+            })
+        }
+    }
+
+    /// One app-wide hold covers active work even after its editor is closed.
+    /// Paused/background/cancelled work releases only this queue's own hold.
+    func updateScreenAwakeHold(isActive: Bool? = nil) {
+        if let isActive { sceneIsActive = isActive }
+        let wanted = sceneIsActive && jobs.contains {
+            $0.running && !$0.paused && $0.isContextCurrent && $0.task?.isCancelled != true
+        }
+        guard wanted != holdsIdleTimer else { return }
+        holdsIdleTimer = wanted
+        if wanted { IdleTimer.hold() } else { IdleTimer.release() }
+    }
+
+    /// Erasure waits for interrupted paid-request cleanup before removing files.
+    /// A replacement account's job created during that wait is left alone.
+    func cancelForLocalDataErasure() async {
+        let outgoing = jobs
+        for job in outgoing { job.cancel() }
+        for job in outgoing { await job.task?.value }
+        let outgoingIDs = Set(outgoing.map(\.id))
+        for job in outgoing { job.clearErasedState(); observations.removeValue(forKey: job.id) }
+        jobs.removeAll { outgoingIDs.contains($0.id) }
+        updateScreenAwakeHold()
+    }
 
     func job(for listing: Listing) -> ReelWorkJob {
         let scope = ReelWorkJob.Scope.current(listingID: listing.id)
@@ -65,6 +101,7 @@ final class ReelWorkJob: ObservableObject, Identifiable {
         let captionStyle: CaptionStyle
         let shotStyle: ReelComposer.ShotCaptionStyle
         let transition: ReelComposer.Transition
+        var aspect: String? = nil
     }
     let id = UUID()
     let scope: Scope
@@ -85,8 +122,8 @@ final class ReelWorkJob: ObservableObject, Identifiable {
     @Published var unreadableBatch = false
     @Published var recoveredRetryRequestID: String?
     @Published var unreadablePendingContext: PendingReelRequest.Context?
-    @Published private(set) var paused = false
-    @Published private(set) var running = false
+    @Published private(set) var paused = false { didSet { ReelWorkQueue.shared.updateScreenAwakeHold() } }
+    @Published private(set) var running = false { didSet { ReelWorkQueue.shared.updateScreenAwakeHold() } }
     @Published private(set) var bannerDismissed = false
     var player: AVPlayer?
     var isPresented = false
@@ -153,6 +190,14 @@ final class ReelWorkJob: ObservableObject, Identifiable {
         paused = false; resumeAction = nil; followUp = nil
         task?.cancel(); endBackgroundHold()
         if task == nil { identityCheck = nil }
+        ReelWorkQueue.shared.updateScreenAwakeHold()
+    }
+    func clearErasedState() {
+        player?.pause(); player = nil; configuration = nil
+        reelURL = nil; lastReel = nil; parkedClips = nil; pendingRequest = nil; pendingBatch = nil
+        unreadablePendingContext = nil; recoveredRetryRequestID = nil; unreadableBatch = false
+        resumeAction = nil; followUp = nil; identityCheck = nil; noticeIdentity = nil
+        phase = .setup; statusText = ""; failure = nil; clipIssues = []
     }
     func dismissResult() { guard !running, !paused else { return }; bannerDismissed = true }
 
@@ -166,7 +211,7 @@ final class ReelWorkJob: ObservableObject, Identifiable {
             guard let self, self.backgroundHoldOperation == operation else { return }
             guard self.running, self.phase != .done, self.phase != .failed else { self.endBackgroundHold(); return }
             self.paused = true; self.phase = .paused
-            self.statusText = "Paused by iPhone. Open Rendprop to continue the saved reel."
+            self.statusText = "Paused by iPhone. Open this listing's Reel Studio to continue the saved reel."
             self.task?.cancel()
             self.endBackgroundHold()
         }

@@ -475,6 +475,23 @@ final class PushManager: ObservableObject {
         Task { _ = await finishPendingUnregisters() }
     }
 
+    private(set) var localDataErasureRevision: UInt64 = 0
+
+    /// Stop delivery locally even when the captured server DELETE is offline.
+    /// Its credential stays queued until acknowledgment; the next identified
+    /// session can explicitly register with APNs again via accountDidChange.
+    func prepareForLocalDataErasure() {
+        localDataErasureRevision &+= 1
+        registrationTask?.cancel(); registrationTask = nil; registrationOperation = nil
+        registeredToken = nil; registeredIdentity = nil
+        pendingRoute = nil; pendingReelJobID = nil; showPrePrompt = false
+        guard !Self.isSuppressed else { return }
+        UIApplication.shared.unregisterForRemoteNotifications()
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        retryPendingCleanup()
+    }
+
     private func finishPendingUnregisters() async -> Bool {
         if let existing = unregisterTask { return await existing.value }
         let task = Task { @MainActor () -> Bool in
@@ -512,13 +529,6 @@ final class PushManager: ObservableObject {
         let result = await task.value
         unregisterTask = nil
         return result
-    }
-
-    /// Called only by the user's explicit device-data erasure path. Token
-    /// takeover on the server fences any old session whose cleanup was lost.
-    func discardPendingCleanup() {
-        unretainedCleanups.removeAll()
-        _ = AuthStore.discardPendingPushUnregisters()
     }
 
     /// iOS could not get a token (no network, no APNs entitlement on this
@@ -658,6 +668,7 @@ enum ReelCompletionNotice {
     @MainActor static func post(success: Bool, identity: PushAccountIdentity?, listingID: UUID? = nil, jobID: UUID? = nil) {
         guard UIApplication.shared.applicationState != .active else { return }
         guard let identity, PushManager.currentIdentity == identity else { return }
+        let erasureRevision = PushManager.shared.localDataErasureRevision
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
             guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else { return }
@@ -665,6 +676,7 @@ enum ReelCompletionNotice {
             // have cleared this account's notifications before this callback.
             Task { @MainActor in
                 guard PushManager.currentIdentity == identity,
+                      PushManager.shared.localDataErasureRevision == erasureRevision,
                       UIApplication.shared.applicationState != .active else { return }
                 let content = UNMutableNotificationContent()
                 content.title = success ? "Your reel is ready" : "Your reel couldn't be made"

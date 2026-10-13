@@ -660,6 +660,7 @@ struct NewListingView: View {
     @State private var locationRequestID: UUID?
     @State private var locationGeocoder: CLGeocoder?
     @State private var pendingCoord: CLLocationCoordinate2D?
+    @State private var pendingCoordAddress: String?
 
     @State private var form = ListingFormData()
     /// Owned here because Step 2 (the video buttons) is this view's `middle`,
@@ -705,9 +706,7 @@ struct NewListingView: View {
         .onChange(of: formAuth.userID) { _ in bindInitialFormContext() }
         .onChange(of: formWorkspace.selected?.id) { _ in bindInitialFormContext() }
         .onAppear { bindInitialFormContext() }
-        .onChange(of: form.address) { _ in
-            if locationRequestID != nil { cancelCurrentLocation() }
-        }
+        .onChange(of: form.address) { addressDidChange($0) }
         .onDisappear { cancelCurrentLocation() }
         .navigationTitle(SpaceType.current.newItemTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -781,8 +780,8 @@ struct NewListingView: View {
         guard formContextIsCurrent, !locating else { return }
 #if targetEnvironment(simulator)
         if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.currentLocationFixture") {
-            pendingCoord = CLLocationCoordinate2D(latitude: 35.123, longitude: -80.987)
-            form.setSuggestedAddress("100 Synthetic Condo Way, Fixture City, NC 28000")
+            applyLocationSuggestion("100 Synthetic Condo Way, Fixture City, NC 28000",
+                coordinate: CLLocationCoordinate2D(latitude: 35.123, longitude: -80.987))
             return
         }
 #endif
@@ -808,11 +807,23 @@ struct NewListingView: View {
                 }
                 cancelCurrentLocation()
                 if let p = placemarks?.first {
-                    pendingCoord = coordinate
-                    form.setSuggestedAddress(Self.formatAddress(p))
+                    applyLocationSuggestion(Self.formatAddress(p), coordinate: coordinate)
                 }
             }
         }
+    }
+
+    private func applyLocationSuggestion(_ address: String, coordinate: CLLocationCoordinate2D) {
+        form.setSuggestedAddress(address)
+        pendingCoordAddress = form.address
+        pendingCoord = coordinate
+    }
+
+    private func addressDidChange(_ address: String) {
+        if locationRequestID != nil { cancelCurrentLocation() }
+        guard pendingCoordAddress != address else { return }
+        pendingCoord = nil
+        pendingCoordAddress = nil
     }
 
     private func cancelCurrentLocation() {

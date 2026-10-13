@@ -43,6 +43,12 @@ Deno.test("actual drain retries private recipient outage without delivering to t
 Deno.test("actual drain disables promotional email even when already claimed and preferences default on",async()=>{
  const out=await invoke([row("first_tour_nudge"),row("free_week_ending")]);assertEquals(out.body.skipped,2);assertEquals(out.body.sent,0);assert(!out.calls.some(c=>new URL(c.url).hostname==="api.resend.com"));assert(out.marked.every(c=>c.p_state==="skipped"));
 });
+Deno.test("actual drain suppresses both promotional push categories without sending to APNS",async()=>{
+ const out=await invoke([row("first_tour_nudge"),row("free_week_ending")].map(r=>({...r,channel:"push"})));
+ assertEquals(out.body.skipped,2);assertEquals(out.body.sent,0);assertEquals(out.body.failed,0);
+ assert(out.marked.every(c=>c.p_state==="skipped"));
+ assert(!out.calls.some(c=>!new URL(c.url).hostname.endsWith("fixture.invalid")));
+});
 Deno.test("recipient verification has its own frozen destination and no buyer snapshot",async()=>{
  const verification={...row("client_recipient_verification"),user_id:null,to_email:"client@fixture.invalid",client_verification_id:VERIFY};
  const out=await invoke([row(),verification],{lookupError:true});assertEquals(out.body.sent,1);assertEquals(out.body.failed,1);

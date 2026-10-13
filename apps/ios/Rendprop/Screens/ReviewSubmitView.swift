@@ -580,11 +580,8 @@ struct RoomTaggerView: View {
                     // and SwiftUI does not promise that a sheet's `onDisappear`
                     // runs before it. Doing it here makes the binding already
                     // clean on the Done path regardless of that order.
-                    Button("Done") {
-                        customNameFocused = false
-                        discardUnconfirmedAITags()
-                        dismiss()
-                    }.accessibilityIdentifier("roomTagger.done")
+                    Button("Done", action: finishTagging)
+                        .accessibilityIdentifier("roomTagger.done")
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     if customNameFocused {
@@ -793,6 +790,13 @@ struct RoomTaggerView: View {
         addTag(customName)
         customName = ""
         customNameFocused = false
+    }
+
+    private func finishTagging() {
+        addCustomTag()
+        customNameFocused = false
+        discardUnconfirmedAITags()
+        dismiss()
     }
 
     // MARK: The tag list

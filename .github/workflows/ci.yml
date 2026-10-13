@@ -156,6 +156,10 @@ jobs:
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
         run: bash apps/ios/tests/run-photo-delivery.sh
+      - name: Photo review and saved reel settings stay bound to the selected versions
+        run: python3 apps/ios/tests/run-photo-reel-egress.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-reel-egress"
+      - name: Room names and listing coordinates commit the current form values
+        run: python3 apps/ios/tests/run-native-form-commits.py --evidence-dir "$RUNNER_TEMP/rendprop-native-form-commits"
       - name: Actual UIKit JPEG exports, level crops and original-byte preservation
         run: |
           python3 tools/audit/test_photo_export_simulator_discovery.py
@@ -335,6 +339,10 @@ jobs:
             ${{ runner.temp }}/rendprop-home-restore-async/*.log
             ${{ runner.temp }}/rendprop-reel-lifecycle/receipt.json
             ${{ runner.temp }}/rendprop-reel-lifecycle/*.log
+            ${{ runner.temp }}/rendprop-photo-reel-egress/receipt.json
+            ${{ runner.temp }}/rendprop-photo-reel-egress/*.log
+            ${{ runner.temp }}/rendprop-native-form-commits/receipt.json
+            ${{ runner.temp }}/rendprop-native-form-commits/*.log
             ${{ runner.temp }}/rendprop-reel-work-integration/receipt.json
             ${{ runner.temp }}/rendprop-reel-work-integration/*/*.log
             ${{ runner.temp }}/rendprop-moving-photo-identity/receipt.json
@@ -1141,6 +1149,7 @@ jobs:
           python3 tools/audit/run_reaudit_database.py
           python3 tools/audit/run_legacy_notification_sessions.py
           python3 tools/audit/run_build57_db_controls.py
+          python3 services/supabase/tests/run_build68_backend.py --evidence "$RUNNER_TEMP/build68-backend"
           python3 tools/audit/run_internal_testing_grants.py
           python3 tools/audit/run_private_internal_testing.py
           python3 services/supabase/tests/funded_serving_pg.py

@@ -189,6 +189,9 @@ interface AdminCaller {
  */
 async function requireAdmin(req: Request): Promise<AdminCaller> {
   const user = await getUser(req); // 401 on a missing/invalid/expired token
+  if (user.is_anonymous !== false || !user.email_confirmed_at) {
+    throw new HttpError(403, "A verified admin account is required for this console.", "forbidden", { reason: "unverified_admin" });
+  }
 
   const { data, error } = await adminClient()
     .from("profiles")

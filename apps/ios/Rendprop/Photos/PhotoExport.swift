@@ -192,14 +192,11 @@ enum PhotoExportRenderer {
             if !withheld.isEmpty {
                 notes.append("Photo \(offset + 1): \(withheld.count) unreviewed custom version(s) withheld: " + withheld.map { "\($0.id) [\($0.imageFile)]" }.joined(separator: ", ") + ".")
             }
-            if selected.needsCustomReview {
-                let earlier = saved.prefix { $0.id != selected.id }.last { !$0.needsCustomReview }
-                if let earlier {
-                    notes.append("Photo \(offset + 1): selected \(selected.id) [\(selected.imageFile)] is withheld. Earlier approved-for-download version \(earlier.id) [\(earlier.imageFile)] (\(earlier.title)) is the selected-version fallback; every other approved saved version remains separate.")
-                } else {
-                    notes.append("Photo \(offset + 1): selected \(selected.id) [\(selected.imageFile)] is withheld and no earlier approved edit is available. Only an eligible retained source and other listing files can be included.")
-                }
-            }
+            let publication = history.publicationChoice(for: selected.id)
+            notes.append("Photo \(offset + 1): latest in Photo Studio is \(selected.id) [\(selected.imageFile)]. Listing selection: " + (publication.map { "\($0.id) [\($0.imageFile)] (\($0.title))." } ?? "none recorded."))
+            if selected.needsCustomReview { notes.append("Photo \(offset + 1): latest Photo Studio preview is withheld pending custom-edit review; it is not an approved selected-version fallback.") }
+            let previews = saved.filter { !$0.needsCustomReview && $0.needsStagingReview }
+            if !previews.isEmpty { notes.append("Photo \(offset + 1): \(previews.count) staging preview(s) retained in StagingPreviews only; review is not recorded and no platform copies are included: " + previews.map { "\($0.id) [\($0.imageFile)]" }.joined(separator: ", ") + ".") }
         }
         return notes
     }
@@ -239,8 +236,7 @@ enum PhotoExportRenderer {
                     let saved = history.history(for: selected.id).sorted {
                         $0.createdAt != $1.createdAt ? $0.createdAt < $1.createdAt : $0.id < $1.id
                     }
-                    let fallback = selected.needsCustomReview
-                        ? saved.prefix { $0.id != selected.id }.last { !$0.needsCustomReview } : selected
+                    let publication = history.publicationChoice(for: selected.id)
                     let versionWidth = max(2, String(saved.count).count)
                     if let originalFile = selected.originalFile, selected.originalVerified {
                         let source = photoDirectory.appendingPathComponent(originalFile)
@@ -262,16 +258,21 @@ enum PhotoExportRenderer {
                         try PhotoVersionHistory.requireDownloadReview(imageURL: source)
                         let retained = try retainedImage(at: source, read: readRetained)
                         guard let image = UIImage(data: retained.data) else { throw Failure(message: "Couldn't decode a saved photo version. Nothing was exported.") }
-                        let category = version.effects.contains("stage") ? "Staged"
+                        let category = version.needsStagingReview ? "StagingPreviews" : version.effects.contains("stage") ? "Staged"
                             : (version.effects.contains("declutter") ? "Decluttered" : (version.effects.isEmpty ? "Enhanced" : "Edited"))
                         let stem = number + "-version-" + String(format: "%0*d", versionWidth, position + 1) + "-" + version.exportSlug
                         let master = try write(retained.data, category + "/" + stem + "." + retained.ext)
                         images.append(master)
-                        let selectedNote = fallback?.id == version.id
-                            ? (selected.needsCustomReview ? "Earlier approved selected-version fallback." : "Version selected in the app.") : "Other saved version; retained separately."
+                        let selectedNote = publication?.id == version.id ? "Selected for listing."
+                            : (selected.id == version.id ? "Latest in Photo Studio; not selected for listing." : "Other saved version; not selected for listing.")
+                        let reviewNote = version.needsStagingReview ? "\nSTAGING PREVIEW — review is not recorded. Not approved for publication; no platform copies are included." : ""
                         let disclosure = version.title + ".\n" + version.caption + "\n" + selectedNote
+                            + reviewNote
                             + "\nSaved version ID: " + version.id + "; source file: " + version.imageFile + ".\nMaster file: exact saved bytes, unchanged format and full available dimensions.\nCheck your MLS or advertising platform's original-photo and disclosure requirements before publishing.\n"
                         _ = try write(Data(disclosure.utf8), category + "/" + stem + "-disclosure.txt")
+                        // Keep the pending preview as a clearly named master,
+                        // never as an upload-ready copy or an implicit approval.
+                        if version.needsStagingReview { return }
                         for (platform, aspect) in [("MLS", PhotoExportLayout.Aspect.landscape), ("Zillow", .landscape),
                                                    ("Instagram/Feed4x5", .feed), ("Instagram/Stories9x16", .portrait)] {
                             let cropped = render(image, aspect: aspect, framing: .crop, label: nil)
@@ -305,12 +306,12 @@ enum PhotoExportRenderer {
     /// also rejects traversal and duplicate entries before writing anything.
     static func coordinatorPathIsSafe(_ path: String) -> Bool {
         let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        let masters = Set(["Originals", "Decluttered", "Staged", "Enhanced", "Edited", "EarlierSources"])
+        let masters = Set(["Originals", "Decluttered", "Staged", "StagingPreviews", "Enhanced", "Edited", "EarlierSources"])
         let platforms = Set(["MLS", "Zillow"])
         let validFolder = parts.count == 2 && (masters.contains(parts[0]) || ["Videos", "Attachments"].contains(parts[0]))
-            || parts.count == 3 && platforms.contains(parts[0]) && masters.contains(parts[1]) && !["Originals", "EarlierSources"].contains(parts[1])
+            || parts.count == 3 && platforms.contains(parts[0]) && masters.contains(parts[1]) && !["Originals", "EarlierSources", "StagingPreviews"].contains(parts[1])
             || parts.count == 4 && parts[0] == "Instagram" && ["Feed4x5", "Stories9x16"].contains(parts[1])
-                && masters.contains(parts[2]) && !["Originals", "EarlierSources"].contains(parts[2])
+                && masters.contains(parts[2]) && !["Originals", "EarlierSources", "StagingPreviews"].contains(parts[2])
         guard validFolder, let leaf = parts.last, !leaf.isEmpty, leaf != ".", leaf != "..", !leaf.contains("\\"), !leaf.contains(":"), !leaf.contains("\0") else { return false }
         return ZipArchive.safeFileName(leaf, fallback: "") == leaf
     }
@@ -318,7 +319,7 @@ enum PhotoExportRenderer {
     static func packageCoordinator(_ prepared: Prepared, archiveName: String, extras: [Extra] = [], now: Date = Date()) throws -> URL {
         guard !prepared.files.isEmpty || !extras.isEmpty else { throw Failure(message: "There are no files to package.") }
         let title = ZipArchive.safeFileName(archiveName, fallback: "Rendprop")
-        var readme = "\(title)\nRendprop coordinator handoff package.\n\nMasters: Originals contains verified retained capture/import bytes; Decluttered and Staged contain every eligible saved version separately. Enhanced, Edited and EarlierSources retain other saved sources. Masters are exact saved bytes in their real format, without cropping or re-encoding. Imported originals may contain edits made before Rendprop.\n\nReady-upload copies: MLS and Zillow use landscape 4:3; Instagram/Feed4x5 uses portrait 4:5; Instagram/Stories9x16 uses portrait 9:16. Each platform separates Decluttered, Staged, Enhanced and Edited versions. Copies are clean JPEGs encoded at quality 0.97, center-cropped at full available resolution without borders or upscaling. Cropping removes edges; review the master before uploading. No resolution or detail is invented. A short edge below 1080 pixels is flagged as limited available resolution, not a platform eligibility guarantee.\n\nThe same photo/version number maps a master to its platform copies and individual disclosure notes. All eligible saved predecessors stay accessible. Unreviewed custom edits and their unreviewed descendants are withheld; no export grants approval. This package is a handoff, not an automatic publication. Add each matching disclosure in your MLS/advertising platform and check its rules.\n\n"
+        var readme = "\(title)\nRendprop coordinator handoff package. Only files saved on this iPhone are included; cloud-only media is not fetched.\n\nMasters: Originals contains the source files retained by Rendprop; new camera and library imports are full-resolution JPEG copies made before enhancement, with camera metadata not preserved; Decluttered and Staged contain every eligible saved version separately. Enhanced, Edited and EarlierSources retain other saved sources. Masters are exact saved bytes in their real format, without cropping or re-encoding. Imported sources may contain edits made before Rendprop. Only files saved on this iPhone are included; cloud-only photos, tours and videos are not downloaded for this package.\n\nDelivery aspect presets, not platform rules: the MLS and Zillow folders use landscape 4:3; Instagram/Feed4x5 uses portrait 4:5; Instagram/Stories9x16 uses portrait 9:16. Each platform separates Decluttered, Staged, Enhanced and Edited versions. Copies are clean JPEGs encoded at quality 0.97, center-cropped at full available resolution without borders or upscaling. Cropping removes edges; review the master before uploading. No resolution or detail is invented. A short edge below 1080 pixels is flagged as limited available resolution, not a platform eligibility guarantee.\n\nThe same photo/version number maps a master to its platform copies and individual disclosure notes. All eligible saved predecessors stay accessible. Unreviewed custom edits and their unreviewed descendants are withheld. StagingPreviews contains pending staging masters, explicitly not approved for publication, with no platform copies. No export grants approval. This package is a handoff, not an automatic publication. Add each matching disclosure in your MLS/advertising platform and check its rules.\n\n"
         readme += prepared.notes.joined(separator: "\n") + "\n"
         let base = prepared.directory.standardizedFileURL.path + "/"
         var entries: [ZipArchive.Entry] = [], used = Set<String>()
@@ -342,7 +343,7 @@ enum PhotoExportRenderer {
             used.insert(name.lowercased()); entries.append(ZipArchive.Entry(name: name, url: extra.url))
             readme += "\n" + name + " — " + extra.note
         }
-        readme += "\n\nVideos are unchanged saved files. AI-generated motion must be disclosed wherever published; a source-photo motion fallback preserves photographed geometry but does not establish unseen room connections. Listing details and other attachments are saved separately.\n"
+        readme += "\n\nVideos are unchanged saved files. AI-generated motion must be disclosed wherever published; a still-photo fallback uses one cover-cropped photo and preserves the photographed geometry within that crop but does not establish unseen room connections. Listing details and other attachments are saved separately.\n"
         let note = prepared.directory.appendingPathComponent("README.txt")
         try Data(readme.utf8).write(to: note, options: .atomic)
         entries.insert(ZipArchive.Entry(name: "README.txt", url: note), at: 0)
@@ -371,7 +372,7 @@ enum PhotoExportRenderer {
         let total = prepared.files.count + extras.count
         readme += "\(total) file\(total == 1 ? "" : "s"): "
         readme += "\(photoCount) photo\(photoCount == 1 ? "" : "s") (numbered in gallery order; '-edited' is the version shown in the app)"
-        if originalCount > 0 { readme += ", \(originalCount) retained original\(originalCount == 1 ? "" : "s") (same number, '-retained-original': the untouched photo as captured or imported)" }
+        if originalCount > 0 { readme += ", \(originalCount) retained original\(originalCount == 1 ? "" : "s") (same number, '-retained-original': the pre-enhancement source retained by Rendprop; new imports are JPEG copies without original camera metadata)" }
         if versionCount > 0 { readme += ", \(versionCount) saved version\(versionCount == 1 ? "" : "s") (same number, '-version-<n>-<what it is>', exact stored bytes in the order they were made)" }
         if disclosureCount > 0 { readme += ", \(disclosureCount) disclosure note\(disclosureCount == 1 ? "" : "s") (same name as the image, '-disclosure.txt')" }
         if whole { readme += ", \(extras.count) more file\(extras.count == 1 ? "" : "s") listed below" }
@@ -537,7 +538,7 @@ struct PhotoExportSheet: View {
                     Section("One organized listing ZIP") {
                         Text("Originals · Decluttered · Staged · MLS · Zillow · Instagram · Videos")
                             .font(.headline).accessibilityIdentifier("export.coordinatorFolders")
-                        Text("Every eligible saved photo version stays separate. Full saved masters and originals keep their exact bytes. Ready-upload JPEG copies are centered crops: MLS/Zillow 4:3, Instagram feed 4:5, stories 9:16. No borders or invented resolution.")
+                        Text("Every eligible saved photo version stays separate. Full saved masters and retained sources keep their stored bytes. Delivery aspect presets use centered crops: MLS/Zillow folders 4:3, Instagram feed 4:5, stories 9:16. These are presets, not platform rules. Pending staging has no platform copies.")
                             .font(.caption).foregroundStyle(.secondary)
                         Text("The README and matching text files name each edit, disclose cropping and report actual pixel dimensions. Low-resolution sources are flagged. Check the photos and your platform's rules before publishing.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -633,10 +634,10 @@ struct PhotoExportSheet: View {
                         .accessibilityIdentifier("export.deliverAs")
                         Text(asArchive
                              ? (wholeListing
-                                ? "One file with the tour, every photo and every version of it, their disclosure notes, the other videos, a listing-details note and a short README — everything a transaction coordinator, your office or a client needs. It opens on any Mac, PC or phone."
-                                : "One file with every photo and every version of it, their disclosure notes and a short README — the easiest thing to send to a transaction coordinator, your office or a client. It opens on any Mac, PC or phone.")
+                                ? "One ZIP with eligible photo versions, videos and listing details saved on this iPhone, plus disclosure notes and a README. Cloud-only files are not included. It opens on any Mac, PC or phone."
+                                : "One ZIP with eligible saved photo versions, their disclosure notes and a README. Unreviewed custom edits are withheld. It opens on any Mac, PC or phone.")
                              : (wholeListing
-                                ? "Photos, originals, every saved version, disclosure notes, videos and listing details are shared as separate files. Better for AirDrop to another iPhone."
+                                ? "Eligible photos, retained sources, disclosure notes, videos and listing details saved on this iPhone are shared as separate files. Cloud-only files are not included. Better for AirDrop to another iPhone."
                                 : "Each photo, original, other version and disclosure note is shared as its own file. Better for AirDrop to another iPhone."))
                             .font(.caption).foregroundStyle(.secondary)
                     }

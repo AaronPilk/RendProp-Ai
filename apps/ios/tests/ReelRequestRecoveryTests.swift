@@ -13,7 +13,14 @@ enum ReelPollClock {
  static func reset(){elapsed=0;pauseAdvance=5}
 }
 enum ClipFrames {static var lastURL:URL?;static var answerNoFrames=false;static func extract(from u:URL) async -> [(at:String,jpeg:Data)] { lastURL=u;if answerNoFrames{return []};return ["first","middle","last"].map { ($0, Data("frame".utf8)) } } }
-struct EnhancedPhoto { let id:String;let originalURL:URL;let enhancedURL:URL;init(id:String="synthetic",originalURL:URL?=nil,enhancedURL:URL){self.id=id;self.originalURL=originalURL ?? enhancedURL;self.enhancedURL=enhancedURL} }
+struct EnhancedPhoto { let id:String;let originalURL:URL;let enhancedURL:URL;init(id:String="synthetic",originalURL:URL?=nil,enhancedURL:URL){self.id=id;self.originalURL=originalURL ?? enhancedURL;self.enhancedURL=enhancedURL};static func directory(for id:UUID)->URL{FileStore.documents.appendingPathComponent("synthetic-photo-history-"+id.uuidString)} }
+// Closed persisted-review boundary: this gate proves the production preparation
+// calls it before a paid dispatch. The history gate executes its real file rules.
+enum PhotoVersionHistory {
+ static var rejectReview=false
+ static func requireReelReview(imageURL:URL)throws {if rejectReview{throw AIImagePrep.error("synthetic review required")}}
+ static func requireReelReview(versionID:String,directory:URL)throws {if rejectReview{throw AIImagePrep.error("synthetic review required")}}
+}
 struct UIImage {
  static var onPreparation:(() -> Void)?;static var savedSize=CGSize(width:1280,height:720);static var rejectSavedJPEG=false
  let bytes:Data;var size:CGSize {Self.savedSize}
@@ -194,6 +201,10 @@ final class ClosedVideoProtocol:URLProtocol {
   let auth=AuthStore.shared;WorkspaceContext.selectedOrgID=ctx.workspace
   let model=GuardModel(.init(id:ctx.listingID,serverID:ctx.serverListingID))
   let dispatchGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID)
+  PhotoVersionHistory.rejectReview=true
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:dispatchGuard);preconditionFailure("unreviewed preparation must reject paid dispatch")}catch{check(error.localizedDescription=="synthetic review required","unreviewed preparation calls persisted review before paid dispatch")}
+  PhotoVersionHistory.rejectReview=false
+  check(clip.posts==0 && !PendingReelRequest.exists(ctx),"unreviewed preparation permits no paid POST or pending marker")
   UIImage.onPreparation={DispatchQueue.main.sync {MainActor.assumeIsolated {AIConsent.shared.revokeAndGrant()}}}
   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:dispatchGuard);preconditionFailure("preparation revocation must reject paid dispatch")}catch{checks+=1}
   UIImage.onPreparation=nil

@@ -51,8 +51,8 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     helper = helper.slice(0, settle) + reserve + helper.slice(settle);
   }
   const helperUrl = encode(`
-    import {HttpError,throwRpc} from ${JSON.stringify(http)};
-    import {fundedAttempt,TARIFF_VERSION} from ${JSON.stringify(new URL("../_shared/funded-serving.ts",import.meta.url).href)};
+    import {HttpError,throwRpc,isTrialCapacityRefusal,TRIAL_CAPACITY_UNAVAILABLE_MESSAGE} from ${JSON.stringify(http)};
+    import {ceilingRefusalCopy,fundedAttempt,TARIFF_VERSION} from ${JSON.stringify(new URL("../_shared/funded-serving.ts",import.meta.url).href)};
     type RoutedUsage=any;type RouteStep=any;type ChainResult<T>={value:T,step:any};
     export ${functionBody(ledger, "unitsForStep")}
     ${helper}

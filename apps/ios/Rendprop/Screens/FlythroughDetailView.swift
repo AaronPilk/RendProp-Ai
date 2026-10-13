@@ -246,7 +246,7 @@ private struct ListingToolboxGrid: View {
             )
             ListingToolButtonTile(
                 card: ListingToolCard(title: "Share everything",
-                                      sub: sample ? createFirst : (hasAnythingToShare ? "Tour · photos · videos · one ZIP" : "Add photos or a tour first"),
+                                      sub: sample ? createFirst : (hasAnythingToShare ? "On this iPhone · photos · videos · one ZIP" : "Add photos or a tour first"),
                                       icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
                 disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
             )
@@ -1605,7 +1605,7 @@ struct FlythroughDetailView: View {
             Text("Nothing here yet.")
                 .font(.rpBody.weight(.semibold))
                 .foregroundStyle(Theme.ink)
-            Text("Everything you make with the tools above — reels, photos, a flyover, a floor plan — is saved here automatically and stays on this phone. You can put any of it in your Photos app with one tap.")
+            Text("Everything you make with the tools above — reels, photos and an aerial intro — is saved here automatically and stays on this phone. You can put any of it in your Photos app with one tap.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -9578,7 +9578,7 @@ struct ReelStudioView: View {
             Text(statusText)
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
-            Text("You can close this screen and use the rest of Rendprop. We’ll show progress and notify you when the saved reel is ready. If iPhone pauses the app, open Rendprop to continue.")
+            Text("You can close this screen and use the rest of Rendprop. Progress and a completion notification work while iPhone allows the app to run. If the app pauses or closes, open this listing’s Reel Studio to recover and continue saved work.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -9636,7 +9636,7 @@ struct ReelStudioView: View {
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.good)
             if originalPhotoMotionShots > 0 {
-                Text("Used original photo motion on \(originalPhotoMotionShots) shot\(originalPhotoMotionShots == 1 ? "" : "s"). Those shots use the selected photo unchanged, including any photo edits you selected.")
+                Text("Used still photo on \(originalPhotoMotionShots) shot\(originalPhotoMotionShots == 1 ? "" : "s"). Those shots use the selected photo unchanged, including any photo edits you selected.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
                     .accessibilityIdentifier("reel.originalPhotoMotionSummary")
@@ -10637,6 +10637,7 @@ struct ReelStudioView: View {
 
     private func selectThumb(_ p: EnhancedPhoto) -> some View {
         let order = selected.firstIndex(of: p.id)
+        let reviewed = (try? PhotoVersionHistory.requireReelReview(imageURL: p.enhancedURL)) != nil
         return Button { toggle(p) } label: {
             ZStack(alignment: .topTrailing) {
                 DetailPhotoThumb(url: p.enhancedURL, height: 100)
@@ -10646,9 +10647,12 @@ struct ReelStudioView: View {
                             .strokeBorder(order != nil ? Theme.accent : Theme.border,
                                           lineWidth: order != nil ? 2 : 1)
                     )
-                    .opacity(order == nil && selected.count >= 8 ? 0.4 : 1)
+                    .opacity(!reviewed || order == nil && selected.count >= 8 ? 0.4 : 1)
 
-                if let order {
+                if !reviewed {
+                    Text("Review photo first").font(.caption2.weight(.semibold))
+                        .padding(5).background(.ultraThinMaterial, in: Capsule())
+                } else if let order {
                     Text("\(order + 1)")
                         .font(.caption2.weight(.bold))
                         .frame(width: 22, height: 22)
@@ -10665,7 +10669,8 @@ struct ReelStudioView: View {
             }
         }
         .buttonStyle(ScalePressStyle())
-        .accessibilityLabel(Text(order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
+        .disabled(!reviewed)
+        .accessibilityLabel(Text(!reviewed ? "Photo needs review in Photo Studio before use in a reel." : order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
                                  ?? "Photo not in reel. Tap to add."))
         .accessibilityIdentifier("reel.photo.\(p.id)")
     }
@@ -10674,6 +10679,7 @@ struct ReelStudioView: View {
         if let idx = selected.firstIndex(of: p.id) {
             selected.remove(at: idx)
         } else if selected.count < 8 {
+            guard (try? PhotoVersionHistory.requireReelReview(imageURL: p.enhancedURL)) != nil else { return }
             selected.append(p.id)
             Haptics.selection()
         }
@@ -10758,11 +10764,11 @@ struct ReelStudioView: View {
                     Text("Check this existing request before generating again. Recovery checks its status, downloads its clip and checks it against the saved source photo; it sends no new generation. Remote results can expire.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     if recoveredRetryRequestID == request.job.requestId, request.qualityAttempt == 0 {
-                        Text("The first AI clip changed the property. Nothing is generating now. A safer retry sends this same photo once more; original photo motion happens on this iPhone without another AI generation.")
+                        Text("The first AI clip changed the property. Nothing is generating now. A safer retry sends this same photo once more; still photo happens on this iPhone without another AI generation.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         Button("Retry once with safer motion") { connection.run { resolveRecoveredRetry(request, choice: .saferRetry) } }
                             .disabled(isWorking).accessibilityIdentifier("reel.retry-saved-safer")
-                        Button("Use original photo motion") { connection.run { resolveRecoveredRetry(request, choice: .originalPhoto) } }
+                        Button("Use still photo") { connection.run { resolveRecoveredRetry(request, choice: .originalPhoto) } }
                             .disabled(isWorking).accessibilityIdentifier("reel.use-saved-original")
                     } else {
                         Button("Recover saved request") { connection.run { recoverPendingRequest(request) } }
@@ -10789,7 +10795,8 @@ struct ReelStudioView: View {
             captions: captionsOn ? Self.reelCaptions(for: listing) : nil,
             voice: voiceMode == .off ? nil : voiceover,
             captionStyle: wordCaptionsOn ? .standard : .off,
-            shotStyle: bigCaptionsOn ? bigCaptionStyle : .off, transition: reelTransition)
+            shotStyle: bigCaptionsOn ? bigCaptionStyle : .off, transition: reelTransition,
+            aspect: portrait ? "9:16" : "16:9")
     }
 
     /// Called only for this job's OS-expiration pause. Terminal QC, quota, auth
@@ -10809,7 +10816,7 @@ struct ReelStudioView: View {
     private var pausedSection: some View {
         VStack(spacing: 12) {
             Text("Your reel is safely paused").font(.rpHeadline)
-            Text("iPhone paused background work. Finished clips and the current request are kept. Open Rendprop to continue this same reel.")
+            Text("iPhone paused background work. Finished clips and the current request are kept. Open this listing’s Reel Studio to recover and continue; it will not finish while the app is paused.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).multilineTextAlignment(.center)
             Button("Continue saved reel") { work.resumeForeground() }.disabled(work.running)
             Button("Stop for now", role: .destructive) { cancelWork() }
@@ -10818,6 +10825,8 @@ struct ReelStudioView: View {
 
     private func recoverPendingRequest(_ request: PendingReelRequest, resumeBatch: Bool = false) {
         let model = self.model, auth = self.auth
+        do { try Self.requireSavedReelReview(try PendingReelBatch.load(request.context)) }
+        catch { failure = AIFailure(error, title: "Review the saved photo first"); return }
         guard !isWorking, request.submissionUnconfirmed != true,
               pendingRequest?.job.requestId == request.job.requestId else { return }
         let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
@@ -10879,7 +10888,7 @@ struct ReelStudioView: View {
         }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("reel-choice-\(UUID())", isDirectory: true)
         failure = nil; clipIssues = []; phase = .generating
-        statusText = choice == .saferRetry ? "Photo \(request.photoNumber) — one safer retry…" : "Photo \(request.photoNumber) — using original photo motion…"
+        statusText = choice == .saferRetry ? "Photo \(request.photoNumber) — one safer retry…" : "Photo \(request.photoNumber) — using still photo…"
         if work.configuration == nil { work.configuration = snapshotReelConfiguration() }
         work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             do {
@@ -10906,6 +10915,8 @@ struct ReelStudioView: View {
     /// durable progress; selected setup photos cannot reorder or replace it.
     private func continueSavedBatch(_ saved: PendingReelBatch) {
         let model = self.model, auth = self.auth
+        do { try Self.requireSavedReelReview(saved) }
+        catch { failure = AIFailure(error, title: "Review the saved photo first"); return }
         guard !isWorking, pendingRequest == nil, unreadablePendingContext == nil,
               pendingBatch?.id == saved.id else { return }
         let api = model.api, revision = auth.syncSessionRevision, consent = AIConsent.shared.revocationRevision
@@ -11097,6 +11108,13 @@ struct ReelStudioView: View {
         guard phase == .setup, canGenerate else { return }
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
         let chosen = selected.compactMap { id in reelPhotos.first(where: { $0.id == id }) }
+        do {
+            for photo in chosen { try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL) }
+        } catch {
+            phase = .failed
+            failure = AIFailure(error, title: "Review the selected photo first")
+            return
+        }
         let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }
         guard chosen.count + extras.count >= 2 else { return }
         let api = model.api                       // snapshot on the main actor
@@ -11130,7 +11148,8 @@ struct ReelStudioView: View {
         let noun = space.spaceNoun
         let spaceRaw = space.rawValue
         work.configuration = ReelWorkJob.Configuration(extras: extras, captions: captions, voice: voiceover,
-            captionStyle: captionStyle, shotStyle: shotStyle, transition: transition)
+            captionStyle: captionStyle, shotStyle: shotStyle, transition: transition,
+            aspect: isPortrait ? "9:16" : "16:9")
         phase = .generating
         completedClips = 0
         originalPhotoMotionShots = 0
@@ -11391,14 +11410,30 @@ struct ReelStudioView: View {
     /// the clips were bought on an earlier run; this is the free half of the job
     /// the old cancel path threw away.
     ///
-    /// Any aerial/extra clip still switched on leads the reel, exactly as it does
-    /// in `generate()`. Shape, title card and voiceover come from whatever the
-    /// setup screen currently says, because those are free to change and the
-    /// clips are not.
+    /// Finish paid clips with the saved job's settings and durable batch shape.
+    /// Only older clips without saved settings use the current setup.
+    nonisolated private static func parkedReelSettings(configuration: ReelWorkJob.Configuration?,
+        batchAspect: String?, fallback: ReelWorkJob.Configuration) -> (configuration: ReelWorkJob.Configuration, renderSize: CGSize) {
+        let settings = configuration ?? fallback
+        let aspect = batchAspect ?? settings.aspect ?? fallback.aspect
+        return (settings, aspect == "16:9" ? CGSize(width: 1920, height: 1080) : CGSize(width: 1080, height: 1920))
+    }
+
+    nonisolated private static func requireSavedReelReview(_ batch: PendingReelBatch?) throws {
+        guard let batch else { return }
+        let directory = EnhancedPhoto.directory(for: batch.context.listingID)
+        for photo in batch.photos { try PhotoVersionHistory.requireReelReview(versionID: photo.id, directory: directory) }
+    }
+
     private func finishParkedReel() {
         let model = self.model, auth = self.auth
         guard !isWorking else { return }
-        let clips = (selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) })
+        do { try Self.requireSavedReelReview(pendingBatch) }
+        catch { failure = AIFailure(error, title: "Review the saved photo first"); return }
+        let settings = Self.parkedReelSettings(configuration: work.configuration,
+            batchAspect: pendingBatch?.aspect, fallback: snapshotReelConfiguration())
+        let configuration = settings.configuration
+        let clips = (configuration.extras.filter { FileManager.default.fileExists(atPath: $0.path) })
             + (parkedClips?.clipURLs ?? [])
         guard !clips.isEmpty else {
             parkedClips = nil
@@ -11418,20 +11453,18 @@ struct ReelStudioView: View {
                   let current = model.listings.first(where: { $0.id == listingID }),
                   current.cloudUnavailable != true, current.serverID == parkedServerID else { throw CancellationError() }
         }
-        let isPortrait = portrait
-        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
-        let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
-        let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
+        let captions = configuration.captions
+        let voiceover = configuration.voice
+        let captionStyle = configuration.captionStyle
         failure = nil
         clipIssues = []
         phase = .stitching
         Haptics.selection()
-        if work.configuration == nil { work.configuration = snapshotReelConfiguration() }
+        work.configuration = configuration
         work.start(identityIsCurrent: { [model, id = listing.id] in model.listings.contains { $0.id == id && $0.cloudUnavailable != true } }, resume: { resumePausedWork() }) {
             do {
                 try requireCurrent()
-                let renderSize = isPortrait ? CGSize(width: 1080, height: 1920)
-                                            : CGSize(width: 1920, height: 1080)
+                let renderSize = settings.renderSize
                 let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
                 try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
                 let stamp = Int(Date().timeIntervalSince1970)
@@ -11446,7 +11479,8 @@ struct ReelStudioView: View {
                     shots: clips.map { ReelComposer.Shot(url: $0) },
                     renderSize: renderSize,
                     options: ReelComposer.Options(titleCard: captions, voiceover: voiceover,
-                                                  captionStyle: captionStyle),
+                        captionStyle: captionStyle, shotCaptionStyle: configuration.shotStyle,
+                        transition: configuration.transition),
                     output: outURL)
                 try OriginalPhotoMotion.saveSummary(count: clips.filter(OriginalPhotoMotion.isClip).count, for: outURL)
                 try requireCurrent()
@@ -11593,6 +11627,7 @@ struct ReelStudioView: View {
     }
 
     nonisolated private static func preparedReelJPEG(photo: EnhancedPhoto, aspect: String) throws -> Data {
+        try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL)
         guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else { throw AIImagePrep.error("Couldn't read that photo.") }
         let scaled = AIImagePrep.downscaled(AIImagePrep.reelSource(ui, aspect: aspect), maxDimension: 2048)
         guard let jpeg = scaled.jpegData(compressionQuality: 0.95), !jpeg.isEmpty else { throw AIImagePrep.error("Couldn't prepare that photo.") }
@@ -11634,6 +11669,7 @@ struct ReelStudioView: View {
     nonisolated private static func resolveSavedQualityRetry(_ request: PendingReelRequest, choice: ReelRecoveryChoice,
         api: APIClient, into dir: URL, requireCurrent: @MainActor @Sendable () throws -> Void) async throws -> URL {
         try await requireCurrent()
+        try requireSavedReelReview(try PendingReelBatch.load(request.context))
         guard request.qualityAttempt == 0, request.submissionUnconfirmed != true,
               PendingReelRequest.load(request.context)?.job.requestId == request.job.requestId,
               let source = request.sourceJPEGBase64, let jpeg = Data(base64Encoded: source), !jpeg.isEmpty,
@@ -11702,6 +11738,7 @@ struct ReelStudioView: View {
         requireCurrent: @MainActor @Sendable () throws -> Void,
         progress: @MainActor @Sendable (Int) -> Void) async throws -> PendingReelBatch {
         try await requireCurrent()
+        try requireSavedReelReview(saved)
         guard var batch = try PendingReelBatch.load(saved.context), batch.id == saved.id,
               !PendingReelRequest.exists(saved.context) else { throw AIImagePrep.error("Recover the saved photo before continuing this reel.") }
         while batch.completedPaths.count < batch.photos.count {

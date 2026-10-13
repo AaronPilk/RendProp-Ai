@@ -56,10 +56,11 @@ enum Config {
 }
 enum UserFacingError { static func message(_ error: Error) -> String { error.localizedDescription } }
 enum Haptics { static func success() {} }
+@MainActor final class ReelWorkQueue { static let shared = ReelWorkQueue(); func cancelForLocalDataErasure() async {} }
 @MainActor final class UploadSpy { var state: Int? = 1; var cancelCalls = 0; func cancel() { state = nil; cancelCalls += 1 } }
 @MainActor final class DeletionHarness {
     let auth = AuthStore.shared, uploads = UploadSpy()
-    var serverAccountsEnabled = true, isDeletingAccount = false, deletionPendingCleanup = false
+    var serverAccountsEnabled = true, isDeletingAccount = false, isClearingLocalData = false, deletionPendingCleanup = false
     var showDeleteNeedsSignIn = false, showDeleteConfirm = false, showDeleteError = false, showAccountDeleted = false
     var deleteErrorMessage: String?
     var files = ["saved-account-a-media"], wipeCalls = 0, wipedOwner: String?

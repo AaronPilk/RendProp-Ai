@@ -80,7 +80,7 @@ def main():
             throw AccountDeletionContextError.changedAfterDispatch(deletionConfirmed: confirmed)
         }"""
     final_guard = "        guard !serverAccountsEnabled || context?.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) == true else { return }"
-    require(generated.count(late_guard) == 1 and generated.count(final_guard) == 1,
+    require(generated.count(late_guard) == 1 and generated.count(final_guard) == 2,
             "Response and final local cleanup must retain separate admission guards")
     # Removing only the post-refresh session guard still has a subject guard;
     # A→B→A proves the revision gate without requiring a mismatched token.
@@ -96,7 +96,7 @@ def main():
         ("drop-post-token-context", generated.replace(request, no_token_guard, 1), "Changed token session cannot dispatch deletion"),
         ("drop-token-subject", generated.replace("guard AuthStore.jwtSubject(token) == context.owner else", "guard true else", 1), "Wrong or unverified JWT subject cannot dispatch deletion"),
         ("drop-response-context", generated.replace(late_guard, "        // synthetic removed response context guard", 1), "Stale response preserves confirmed prior-account deletion fact"),
-        ("drop-response-and-cleanup-context", generated.replace(late_guard, "        // synthetic removed response context guard", 1).replace(final_guard, "        // synthetic removed cleanup context guard", 1), "Late deletion response preserves replacement files"),
+        ("drop-response-and-cleanup-context", generated.replace(late_guard, "        // synthetic removed response context guard", 1).replace(final_guard, "        // synthetic removed cleanup context guard"), "Late deletion response preserves replacement files"),
     ]
     args.out.mkdir(parents=True, exist_ok=False)
     receipt = {"schema": "rendprop-native-account-deletion-controls-v1", "accepted": False,

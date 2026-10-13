@@ -992,10 +992,10 @@ begin
   delete from auth.users where id in (uA,uB,uC);
   delete from admin_allowlist where email = '_inv-existing@example.com';
 
-  -- (a) an allowlisted e-mail becomes an admin at SIGN-UP — no password, no
+  -- (a) a verified allowlisted e-mail becomes an admin at SIGN-UP — no password, no
   -- secret in the app, mixed case on purpose (the allowlist is normalised).
-  insert into auth.users (id, email, raw_user_meta_data)
-    values (uA, 'AARON@Pilk.ai', '{"full_name":"Owner"}');
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
+    values (uA, 'AARON@Pilk.ai', now(), '{"full_name":"Owner"}');
   select p.is_admin into b from profiles p where p.id = uA;
   insert into _inv(name, pass, note)
     values ('an allowlisted sign-up e-mail becomes an admin (case-insensitive)',
@@ -1009,8 +1009,8 @@ begin
 
   -- (b) an account that ALREADY EXISTS when the allowlist gains it is promoted
   -- by the migration's back-fill (this is how the owner's real account works).
-  insert into auth.users (id, email, raw_user_meta_data)
-    values (uB, '_inv-existing@example.com', '{"full_name":"Existing"}');
+  insert into auth.users (id, email, email_confirmed_at, raw_user_meta_data)
+    values (uB, '_inv-existing@example.com', now(), '{"full_name":"Existing"}');
   select p.is_admin into b from profiles p where p.id = uB;
   insert into _inv(name, pass, note)
     values ('precondition: the pre-existing account starts as a non-admin',

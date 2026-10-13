@@ -45,13 +45,18 @@ enum CoordinatorExportChecks {
             disclosure: "Movable items removed; fixed features retained.", provenanceID: nil, provenanceRecorded: false, directory: root)
         let staged = try PhotoVersionHistory.saveEdit(jpeg: png, id: "stage", parentID: declutter.id, sourceID: declutter.id, edit: "stage", style: "modern",
             disclosure: "Furniture digitally added.", provenanceID: nil, provenanceRecorded: false, directory: root)
+        try PhotoVersionHistory.selectForPublication(id: staged.id, directory: root, reviewed: true)
+        try PhotoVersionHistory.selectForPublication(id: declutter.id, directory: root)
         let unreviewed = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: "custom", parentID: staged.id, sourceID: staged.id, edit: "custom", style: nil,
             disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: root)
         let descendant = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: "custom-sky", parentID: unreviewed.id, sourceID: unreviewed.id, edit: "sky", style: nil,
             disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: root)
         try PhotoVersionHistory.saveCapture(original: jpeg, enhanced: jpeg, id: "other", directory: root)
+        try PhotoVersionHistory.saveCapture(original: png, enhanced: jpeg, id: "pending", directory: root)
+        let pendingStage = try PhotoVersionHistory.saveEdit(jpeg: png, id: "pending-stage", parentID: "pending", sourceID: "pending", edit: "stage", style: "modern", disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: root)
         let photos = [EnhancedPhoto(id: descendant.id, originalURL: root.appendingPathComponent("orig-base.jpg"), enhancedURL: root.appendingPathComponent(descendant.imageFile)),
-                      EnhancedPhoto(id: "other", originalURL: root.appendingPathComponent("orig-other.jpg"), enhancedURL: root.appendingPathComponent("enh-other.jpg"))]
+                      EnhancedPhoto(id: "other", originalURL: root.appendingPathComponent("orig-other.jpg"), enhancedURL: root.appendingPathComponent("enh-other.jpg")),
+                      EnhancedPhoto(id: pendingStage.id, originalURL: root.appendingPathComponent("orig-pending.jpg"), enhancedURL: root.appendingPathComponent(pendingStage.imageFile))]
         let indexBefore = try Data(contentsOf: root.appendingPathComponent(".photo-history.json"))
         let prepared = try PhotoExportRenderer.prepareCoordinator(photos)
         defer { try? FileManager.default.removeItem(at: prepared.directory) }
@@ -72,9 +77,17 @@ enum CoordinatorExportChecks {
         check(contents["Videos/walkthrough.mp4"] == videoBytes && contents["Videos/WALKTHROUGH-2.mp4"] == videoBytes, "coordinator preserves every video with deterministic collision names")
         check(contents["Attachments/listing-details.txt"] == detailsBytes, "coordinator retains the actual listing details")
         let readme = String(decoding: contents["README.txt"]!, as: UTF8.self)
-        check(readme.contains("custom-sky [edit-custom-sky.jpg]") && readme.contains("stage [edit-stage.jpg]") && readme.contains("selected-version fallback"), "coordinator names the exact withheld current and earlier fallback in README")
+        check(readme.contains("custom-sky [edit-custom-sky.jpg]") && readme.contains("Listing selection: declutter [edit-declutter.jpg]") && readme.contains("withheld pending custom-edit review"), "coordinator distinguishes current preview from recorded listing selection in README")
         check(readme.contains("Decluttered and Staged") && readme.contains("Masters are exact saved bytes") && readme.contains("center-cropped") && readme.contains("without borders or upscaling"), "coordinator README separates unchanged masters from cropped upload copies")
         check(readme.contains("Videos/walkthrough.mp4 — Original walkthrough") && readme.contains("AI-generated motion must be disclosed"), "coordinator README explains video and motion provenance")
+        check(!names.contains { ($0.hasPrefix("MLS/") || $0.hasPrefix("Zillow/") || $0.hasPrefix("Instagram/")) && $0.contains("03-version-02-") }, "coordinator withholds pending staging platform copies")
+        check(contents["StagingPreviews/03-version-02-virtually-staged-modern.png"] == png, "coordinator retains pending staging master in unmistakable preview folder")
+        let previewNote = String(decoding: contents["StagingPreviews/03-version-02-virtually-staged-modern-disclosure.txt"]!, as: UTF8.self)
+        check(previewNote.contains("STAGING PREVIEW") && previewNote.contains("review is not recorded") && previewNote.contains("Latest in Photo Studio; not selected for listing"), "coordinator labels staging preview without granting publication approval")
+        let listingNote = String(decoding: contents["Decluttered/01-version-02-decluttered-disclosure.txt"]!, as: UTF8.self)
+        let otherStageNote = String(decoding: contents["Staged/01-version-03-virtually-staged-modern-disclosure.txt"]!, as: UTF8.self)
+        check(listingNote.contains("Selected for listing.") && otherStageNote.contains("not selected for listing"), "coordinator actual publication choice wins over current and reviewed saved alternatives")
+        check(readme.contains("Only files saved on this iPhone") && readme.contains("not platform rules") && !readme.contains("untouched photo as captured"), "coordinator local scope retained JPEG and aspect preset claims remain explicit")
         for (folder, aspect, width, height) in [("MLS", PhotoExportLayout.Aspect.landscape, 400, 300), ("Zillow", .landscape, 400, 300),
                                                ("Instagram/Feed4x5", .feed, 240, 300), ("Instagram/Stories9x16", .portrait, 169, 300)] {
             for (category, stem, source) in [("Enhanced", "01-version-01-enhanced", jpeg), ("Decluttered", "01-version-02-decluttered", jpeg),

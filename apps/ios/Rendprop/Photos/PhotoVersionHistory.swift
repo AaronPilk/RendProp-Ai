@@ -125,6 +125,7 @@ enum PhotoVersionHistory {
         var customReviewed: Bool? = nil
 
         var needsCustomReview: Bool { customReviewed == false }
+        var needsStagingReview: Bool { effects.contains("stage") && stagingReviewed != true }
         var canAutomaticallySelectForListing: Bool { !effects.contains("stage") && !needsCustomReview }
 
         var visibleLabel: String? {
@@ -140,21 +141,15 @@ enum PhotoVersionHistory {
         /// retained verbatim in the saved audit/history, not used as a geometry certificate.
         var reviewDisclosure: String? {
             guard !effects.isEmpty else { return disclosure }
-            let change: String
-            if effects.contains("stage") {
-                change = "This photo was virtually staged with AI: furniture and decor were digitally added or restyled."
-            } else if effects.contains("declutter") {
-                change = "This photo was digitally decluttered with AI: clutter and personal items were removed."
-            } else if edit == "twilight" {
-                change = "This photo was digitally altered with AI to simulate dusk."
-            } else if edit == "sky" {
-                change = "This photo was digitally altered with AI: the sky was replaced."
-            } else if edit == "lawn" {
-                change = "This photo was digitally altered with AI: the lawn and landscaping were digitally repaired."
-            } else {
-                change = "This photo was digitally altered with AI."
-            }
-            return change + " Compare with the original to check fixed features, layout and access before publication."
+            var changes: [String] = []
+            if effects.contains("stage") { changes.append("This photo was virtually staged with AI: furniture and decor were digitally added or restyled.") }
+            if effects.contains("declutter") { changes.append("This photo was digitally decluttered with AI: clutter and personal items were removed.") }
+            if effects.contains("twilight") { changes.append("This photo was digitally altered with AI to simulate dusk.") }
+            if effects.contains("sky") { changes.append("This photo was digitally altered with AI: the sky was replaced.") }
+            if effects.contains("lawn") { changes.append("This photo was digitally altered with AI: the lawn and landscaping were digitally repaired.") }
+            let named = Set(["stage", "declutter", "twilight", "sky", "lawn"])
+            if effects.contains(where: { !named.contains($0) }) { changes.append("This photo also contains a custom or imported AI edit; check its recorded history and source.") }
+            return changes.joined(separator: " ") + " Compare with the original to check fixed features, layout and access before publication."
         }
 
         var caption: String {
@@ -275,7 +270,7 @@ enum PhotoVersionHistory {
             case .missingImage: return "A source photo is missing from this phone. Import it again before editing."
             case .duplicate: return "That photo version is already saved. Reopen Photos to see it."
             case .changedVersion: return "This photo changed while the edit was running. Reopen Photos before editing again."
-            case .reviewRequired: return "Review this staged photo against its original before downloading it, using it on the listing or choosing it as the cover."
+            case .reviewRequired: return "Review this staged photo against its original before using it in a reel, on the listing or as the cover. A saved staging preview is not approved for publication."
             case .customReviewRequired: return "Compare this edit with its source and check the paint colors, materials and fixed features before downloading it, using it on the listing or choosing it as the cover."
             case .coverNotSelected: return "The cover isn't among the photos selected for this listing. Open Photos and choose a cover from a reviewed version. Your published gallery has been kept."
             }
@@ -508,6 +503,26 @@ enum PhotoVersionHistory {
         if index.versions.values.contains(where: { $0.imageFile == imageURL.lastPathComponent && $0.needsCustomReview }) {
             throw Failure.customReviewRequired
         }
+    }
+
+    /// Video QC compares motion against its selected photo. It cannot approve
+    /// property edits already present in that photo, so review precedes spending.
+    static func requireReelReview(imageURL: URL) throws {
+        let index = try load(directory: imageURL.deletingLastPathComponent())
+        for version in index.versions.values where version.imageFile == imageURL.lastPathComponent {
+            if version.needsCustomReview { throw Failure.customReviewRequired }
+            if version.needsStagingReview { throw Failure.reviewRequired }
+        }
+    }
+
+    /// Existing batches retain exact JPEGs even if their gallery tile changed.
+    /// Consult the recorded source version rather than today's visible tile.
+    /// Older photos without a history record remain unverified legacy sources.
+    static func requireReelReview(versionID: String, directory: URL) throws {
+        let index = try load(directory: directory)
+        guard let version = index.versions[versionID] else { return }
+        if version.needsCustomReview { throw Failure.customReviewRequired }
+        if version.needsStagingReview { throw Failure.reviewRequired }
     }
 
     /// Record comparison of this exact custom output without selecting it for

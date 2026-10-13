@@ -51,6 +51,12 @@ assert 'resumeBatch: true' in screen and 'work.afterCurrentOperation { continueS
 assert 'work.configuration ?? snapshotReelConfiguration()' in screen
 variants = [
     ('actual', body, None),
+    ('negative-no-reel-idle-hold', body.replace('if wanted { IdleTimer.hold() } else { IdleTimer.release() }', 'if wanted {} else { IdleTimer.release() }'), 'active app-wide reel work keeps the screen awake'),
+    ('negative-duplicate-idle-hold', body.replace('guard wanted != holdsIdleTimer else { return }', 'guard wanted || holdsIdleTimer else { return }'), 'concurrent jobs share one balanced reel idle hold'),
+    ('negative-background-idle-hold', body.replace('let wanted = sceneIsActive && jobs.contains', 'let wanted = jobs.contains'), 'inactive scene releases only the reel idle hold'),
+    ('negative-erasure-before-writer-finishes', body.replace('for job in outgoing { await job.task?.value }', '// omitted interrupted paid-writer join'), 'local erasure waits for cancelled reel receipt writers'),
+    ('negative-erasure-drops-new-work', body.replace('jobs.removeAll { outgoingIDs.contains($0.id) }', 'jobs.removeAll()'), 'erasure removes only captured jobs, preserving replacement work'),
+    ('negative-retained-erased-source', body.replace('pendingRequest = nil; pendingBatch = nil', '// omitted erased source release'), 'erasure drops embedded source and playback presentation references'),
     ('negative-dismissal-cancels-paid-work', body.replace('            connection.cancel()', '            work.cancel()\n            connection.cancel()'), 'dismissing the sheet leaves the paid app-owned job running'),
     ('negative-retained-terminal-callback', body.replace('            self.resumeAction = nil; self.identityCheck = nil\n', '            self.identityCheck = nil // omitted terminal callback release\n'), 'terminal work releases the captured resume callback'),
     ('negative-retained-dismissed-player', body.replace('player?.pause(); player = nil;', 'player?.pause();'), 'a dismissed studio releases its decoded playback session'),
@@ -70,6 +76,7 @@ variants = [
     ('negative-scope-consent-grant', body.replace('consentRevision == AIConsent.shared.revocationRevision', 'true'), 'revoked then granted consent cancels its captured job'),
     ('negative-listing-permission', body.replace('scope.isCurrent && (identityCheck?() ?? true)', 'scope.isCurrent'), 'listing removal cancels its captured job'),
     ('negative-notice-owner-fence', body.replace('guard PushManager.currentIdentity == identity,', 'guard true,'), "owner switch during notification settings cannot enqueue the old owner's banner"),
+    ('negative-notice-erasure-fence', body.replace('PushManager.shared.localDataErasureRevision == erasureRevision,', 'true,'), 'Clear data during notification settings suppresses the earlier completion'),
     ('negative-notice-revision-fence', body.replace('guard PushManager.currentIdentity == identity,', 'guard PushManager.currentIdentity?.owner == identity.owner,'), "same-owner session replacement cannot enqueue an earlier session's banner"),
     ('negative-notice-foreground-fence', body.replace('UIApplication.shared.applicationState != .active else { return }\n                let content', 'true else { return }\n                let content'), 'returning to the foreground while settings load suppresses the banner'),
 ]

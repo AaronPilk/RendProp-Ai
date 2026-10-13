@@ -67,6 +67,7 @@ struct SettingsView: View {
     @State private var showDeleteNeedsSignIn = false
     @State private var accountDeletionContext: AccountDeletionContext?
     @State private var isDeletingAccount = false
+    @State private var isClearingLocalData = false
     @State private var deleteErrorMessage: String?
     @State private var showDeleteError = false
     @State private var showAccountDeleted = false
@@ -608,7 +609,7 @@ struct SettingsView: View {
                  : "Your account and data have been removed.")
         }
         .alert("Clear data on this phone?", isPresented: $showClearDataConfirm) {
-            Button("Clear", role: .destructive) { clearLocalDataTapped() }
+            Button("Clear", role: .destructive) { Task { await clearLocalDataTapped() } }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(serverAccountsEnabled
@@ -1270,7 +1271,7 @@ struct SettingsView: View {
 
     @MainActor
     private func deleteAccount(context: AccountDeletionContext?) async {
-        guard !isDeletingAccount else { return }
+        guard !isDeletingAccount, !isClearingLocalData else { return }
         if serverAccountsEnabled {
             // A queued old confirmation must not open a Retry dialog backed
             // by a replacement account's newly prepared confirmation.
@@ -1306,6 +1307,8 @@ struct SettingsView: View {
         //    signOut() also drops any saved workspace-transfer handoff (and the
         //    anonymous refresh token inside it) — the account it was for is gone.
         if uploads.state != nil { uploads.cancel() }
+        await ReelWorkQueue.shared.cancelForLocalDataErasure()
+        guard !serverAccountsEnabled || context?.matches(owner: auth.userID, revision: auth.syncSessionRevision, signedIn: auth.isSignedIn) == true else { return }
         auth.signOut(serverAccountDeleted: serverAccountsEnabled)
         wipeLocalData()
         Haptics.success()
@@ -1315,8 +1318,16 @@ struct SettingsView: View {
     /// Honest local-only wipe. Signs out (the tokens are data on this phone
     /// too) but never touches the server account or hosted tours.
     @MainActor
-    private func clearLocalDataTapped() {
+    private func clearLocalDataTapped() async {
+        guard !isClearingLocalData, !isDeletingAccount else { return }
+        isClearingLocalData = true
+        defer { isClearingLocalData = false }
+        let owner = auth.userID, revision = auth.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID
         if uploads.state != nil { uploads.cancel() }
+        await ReelWorkQueue.shared.cancelForLocalDataErasure()
+        guard auth.userID == owner, auth.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == workspace else { return }
         // Anonymous sessions keep their session: this alert promises the
         // published tours survive, and for an anonymous workspace the token is
         // the ONLY key to them. Delete account is the honest way to end one.
@@ -1373,12 +1384,17 @@ struct SettingsView: View {
     ///                           the saved workspace-transfer handoff (+ the anonymous refresh
     ///                           token inside it) — AuthStore.signOut() / discardPendingAdoption(),
     ///                           both paths, before this runs;
+    ///                           captured outgoing push-unregister credentials — retained only
+    ///                           until DELETE acknowledgment, including an offline local wipe;
     ///                           analytics device id — Analytics.resetDeviceIdentity() (step 6)
     /// UserDefaults              analytics device id fallback — same call, step 6
     /// ──────────────────────────────────────────────────────────────────────────────
     @MainActor
     private func wipeLocalData() {
-        PushManager.shared.discardPendingCleanup()
+        // Captured push DELETE credentials are a durable privacy cleanup, not
+        // account presentation. Keep them until the server acknowledges removal;
+        // clearing offline must still unregister on the next connected launch.
+        PushManager.shared.prepareForLocalDataErasure()
         // Stop any render/publish first — a job finishing after the wipe would
         // write a tour for a listing that no longer exists.
         for id in Array(model.renderCoordinator.jobs.keys) { model.renderCoordinator.cancel(listingID: id) }

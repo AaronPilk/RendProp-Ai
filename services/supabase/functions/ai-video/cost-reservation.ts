@@ -1,7 +1,7 @@
 // Commit a priced, durable hold before ONE potentially billable video POST.
 // Lost acceptance remains held and is never automatically retried/fallen over.
-import { fundedAttempt, TARIFF_VERSION, type AttemptQuote } from "../_shared/funded-serving.ts";
-import { HttpError, throwRpc } from "../_shared/http.ts";
+import { ceilingRefusalCopy, fundedAttempt, TARIFF_VERSION, type AttemptQuote } from "../_shared/funded-serving.ts";
+import { HttpError, throwRpc, isTrialCapacityRefusal, TRIAL_CAPACITY_UNAVAILABLE_MESSAGE } from "../_shared/http.ts";
 import { unitsForStep } from "../_shared/ledger.ts";
 import type { RoutedUsage } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
@@ -81,6 +81,10 @@ export async function submitReservedVideo<T extends { id: string }>(
     throw new HttpError(503, "The video budget could not be reserved. Please retry shortly.", "upstream");
   }
   if (reservation.error) {
+    const message = reservation.error.message ?? "";
+    if (isTrialCapacityRefusal(message)) throw new HttpError(402, TRIAL_CAPACITY_UNAVAILABLE_MESSAGE, "trial_capacity_unavailable");
+    const copy = ceilingRefusalCopy(message);
+    if (copy) throw new HttpError(402, copy, "quota_exceeded");
     if (/RP(?:400|402|403|409):/.test(reservation.error.message ?? "")) throwRpc(reservation.error.message);
     throw new HttpError(503, "The video budget could not be reserved. Please retry shortly.", "upstream");
   }
