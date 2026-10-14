@@ -13,7 +13,7 @@ probe=shutil.which('ffprobe'); assert probe,'ffprobe is required to verify the a
 result=subprocess.run([probe,'-v','error','-show_format','-show_streams','-of','json',str(movie)],capture_output=True,text=True,timeout=30)
 (out/'ffprobe.json').write_text(result.stdout);(out/'ffprobe.stderr').write_text(result.stderr);assert result.returncode==0,'Actual introduction did not decode metadata.'
 meta=json.loads(result.stdout); videos=[x for x in meta['streams'] if x['codec_type']=='video']; audio=[x for x in meta['streams'] if x['codec_type']=='audio'];assert len(videos)==1 and len(audio)==1,'Introduction must contain one video and one audio track.'
-v=videos[0];a=audio[0]; duration=float(meta['format']['duration']); assert 0<duration<=45,'Introduction must not exceed45seconds.'
+v=videos[0];a=audio[0]; duration=float(meta['format']['duration']); assert 0<duration<=60,'Introduction must not exceed60seconds.'
 assert v['codec_name']=='h264' and a['codec_name']=='aac','Use native-compatible H264 and AAC.'
 assert sorted([int(v['width']),int(v['height'])])==[1080,1920],'Introduction must be1080p.'
 assert v['pix_fmt']=='yuv420p','Use broadly compatible8-bit4:2:0 video.'

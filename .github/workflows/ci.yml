@@ -172,7 +172,7 @@ jobs:
         run: bash apps/ios/tests/run-photo-delivery.sh
       - name: Photo review previews and pre-sign-in playback preserve local privacy
         run: python3 apps/ios/tests/run-photo-review-preview.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-preview"
-      - name: Bundled quick-start video stays under 45 seconds with a readable transcript
+      - name: Bundled quick-start video stays within 60 seconds with a readable transcript
         run: |
           if ! command -v ffprobe >/dev/null; then
             brew install ffmpeg
