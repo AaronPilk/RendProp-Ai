@@ -32,6 +32,10 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The floor-plan boundary compares preserved scan/import bodies
+          # against build75. A depth-one checkout omits that exact baseline.
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -480,10 +484,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Verify installed UIKit toolchain and exact owned kernel
+        run: |
+          python3 tools/audit/test_photo_export_ci_setup.py --out "$RUNNER_TEMP/rendprop-photo-export-setup-controls"
+          python3 tools/audit/prepare_photo_export_ci.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-export-setup-$GITHUB_RUN_ATTEMPT"
       - name: Actual UIKit JPEG exports, level crops and original-byte preservation
         run: |
           python3 tools/audit/test_photo_export_simulator_discovery.py
-          python3 apps/ios/tests/run-photo-export-renderer.py
+          python3 apps/ios/tests/run-photo-export-renderer.py --simulator "${RENDPROP_PHOTO_EXPORT_SIMULATOR:?verified CI kernel required}"
       - name: Retain actual UIKit renderer receipts and control logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -492,6 +500,11 @@ jobs:
           path: |
             ${{ runner.temp }}/rendprop-photo-export-renderer-*/receipt.json
             ${{ runner.temp }}/rendprop-photo-export-renderer-*/*.log
+            ${{ runner.temp }}/rendprop-photo-export-setup-*/receipt.json
+            ${{ runner.temp }}/rendprop-photo-export-setup-*/*.log
+            ${{ runner.temp }}/rendprop-photo-export-setup-controls/**/*.json
+            ${{ runner.temp }}/rendprop-photo-export-setup-controls/**/*.log
+            ${{ runner.temp }}/rendprop-photo-export-setup-controls/*.py
           retention-days: 7
           if-no-files-found: warn
 
