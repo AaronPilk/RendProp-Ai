@@ -116,9 +116,9 @@ final class AVAudioSession {
         let checks = QuickStartKnowledgeCheck.questions
         Checks.check(checks.count == 3 && Set(checks.map(\.id)).count == 3, "optional knowledge checks have stable distinct identities")
         Checks.check(checks.allSatisfy { $0.answers.indices.contains($0.correctAnswer) && !$0.explanation.isEmpty }, "every check has a valid answer and corrective explanation")
-        Checks.check(checks[0].answers[checks[0].correctAnswer].contains("retained original"), "photo instruction requires comparison before use")
-        Checks.check(checks[1].answers[checks[1].correctAnswer].contains("Publish"), "website instruction requires publishing before sharing")
-        Checks.check(checks[2].answers[checks[2].correctAnswer].contains("Ask AI"), "screen help instruction uses Ask AI")
+        Checks.check(checks[0].answers[checks[0].correctAnswer].contains("Add photos") && checks[0].answers[checks[0].correctAnswer].contains("walkthrough") && checks[0].explanation.contains("Compare AI edits") && checks[0].explanation.contains("select the reviewed versions"), "listing details lead to photos or walkthrough, then reviewed versions")
+        Checks.check(checks[1].answers[checks[1].correctAnswer].contains("level") && checks[1].answers[checks[1].correctAnswer].contains("slowly") && checks[1].answers[checks[1].correctAnswer].contains("smoothly"), "walkthrough instruction requires level slow capture and smooth turns")
+        Checks.check(checks[2].answers[checks[2].correctAnswer].contains("buyer contact") && checks[2].answers[checks[2].correctAnswer].contains("publish, then share the link") && checks[2].explanation.contains("Compare AI edits"), "sharing follows source review, selection, buyer contact and publication")
 
         Checks.reset()
         let normal = PhotoReviewHarness()

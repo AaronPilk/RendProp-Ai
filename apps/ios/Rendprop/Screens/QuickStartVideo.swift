@@ -28,18 +28,18 @@ struct QuickStartKnowledgeCheck: Identifiable {
     let explanation: String
 
     static let questions: [QuickStartKnowledgeCheck] = [
-        .init(id: "review", question: "What should you do before using an AI-edited photo?",
-              answers: ["Compare it with the retained original and review the changes", "Publish it immediately"],
+        .init(id: "journey", question: "After entering the address and listing details, what comes next?",
+              answers: ["Add photos or record/import a walkthrough", "Publish the empty listing right away"],
               correctAnswer: 0,
-              explanation: "Compare the edited photo with its retained source. Check fixed features, colors and materials before selecting it for your listing."),
-        .init(id: "share", question: "How do you share a property website?",
-              answers: ["Publish the property website, then share its link", "Send someone a screenshot of the editor"],
+              explanation: "Add photos or a walkthrough, then use the tools you need. Compare AI edits with their retained source and select the reviewed versions for the listing."),
+        .init(id: "capture", question: "How should you film a walkthrough?",
+              answers: ["Keep the phone level, walk slowly, and turn smoothly", "Rush through rooms and spin quickly"],
               correctAnswer: 0,
-              explanation: "Publish the property website first. Then share the published link so buyers can view it and send an enquiry."),
-        .init(id: "help", question: "Where can you get help with the screen you're using?",
-              answers: ["Tap Ask AI on that screen", "Start another listing"],
+              explanation: "Keep the phone level and move steadily at a slow walking pace. Make smooth turns so viewers can follow the rooms."),
+        .init(id: "share", question: "What should you do before sending buyers the link?",
+              answers: ["Review the content and buyer contact, publish, then share the link", "Share an unreviewed editor preview"],
               correctAnswer: 0,
-              explanation: "Tap Ask AI for help with the current screen. You can ask what a control does or how to take the next step.")
+              explanation: "Compare AI edits with the source and select the reviewed versions. Check who buyers should contact, publish the property website, then share its published link.")
     ]
 }
 

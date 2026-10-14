@@ -1,7 +1,7 @@
 import XCTest
 
-/// Drives the real Home gate, picker and name-it sheet on an offline, two-home
-/// fixture. Never opens camera, Photos, account, purchase or paid AI actions.
+/// Drives Home's full new-home entry and its separate tool picker/name sheet
+/// on an offline two-home fixture. Never opens camera, Photos or paid actions.
 final class HomeProjectCreationUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -28,7 +28,25 @@ final class HomeProjectCreationUITests: XCTestCase {
         app.terminate()
     }
 
-    func testGetStartedWithTwoHomesCanNameANewHomeAndCancelWithoutCreatingIt() {
+    func testGetStartedOpensFullNewHomeFormWithoutChoosingAnExistingHome() {
+        app.buttons["home.getStarted"].tap()
+        XCTAssertTrue(app.navigationBars["New Home"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.textFields["newListing.address"].exists)
+        XCTAssertTrue(app.textFields["newListing.unit"].exists)
+        XCTAssertFalse(app.navigationBars["Pick a home"].exists)
+        XCTAssertFalse(app.textFields["home.startProject.name"].exists)
+        let photos = app.buttons["newListing.startWithPhotos"]
+        if !photos.isHittable { app.swipeUp() }
+        XCTAssertTrue(photos.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Home details (optional)"].exists,
+            "The main entry must retain the full listing details form")
+        app.navigationBars["New Home"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["home.getStarted"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["home.fixture.projectCount"].label, "2 synthetic homes",
+            "Opening and backing out of the form must not create or choose a home")
+    }
+
+    func testTourToolWithTwoHomesCanNameANewHomeAndCancelWithoutCreatingIt() {
         openPicker()
         app.buttons["home.picker.newProject"].tap()
         XCTAssertTrue(app.navigationBars["Add a home"].waitForExistence(timeout: 10), app.debugDescription)
@@ -38,7 +56,7 @@ final class HomeProjectCreationUITests: XCTestCase {
         let save = app.buttons["home.startProject.save"]
         XCTAssertTrue(save.exists)
         XCTAssertFalse(save.isEnabled, "An empty name cannot create a draft")
-        XCTAssertTrue(app.staticTexts["Next: make a tour."].exists, "Get started must retain its tour destination")
+        XCTAssertTrue(app.staticTexts["Next: make a tour."].exists, "The tour tool must retain its destination")
         name.tap(); name.typeText("300 New Fixture Lane")
         XCTAssertTrue(save.isEnabled)
         app.navigationBars["Add a home"].buttons["Cancel"].tap()
@@ -97,7 +115,10 @@ final class HomeProjectCreationUITests: XCTestCase {
     }
 
     private func openPicker() {
-        app.buttons["home.getStarted"].tap()
+        let tour = app.buttons["home.feature.tour"]
+        if !tour.isHittable { app.swipeUp() }
+        XCTAssertTrue(tour.waitForExistence(timeout: 5), app.debugDescription)
+        tour.tap()
         XCTAssertTrue(app.navigationBars["Pick a home"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.buttons["home.picker.newProject"].exists,
             "A user with existing homes must still have a new-home action")

@@ -3567,6 +3567,7 @@ struct HomeDashboardView: View {
     /// What the pushed destination shows.
     @State private var route: ProjectRoute?
     @State private var showRoute = false
+    @State private var showNewListing = false
     /// Entry point 1 of 2 for Coach (the other is Settings → "Coach & help").
     /// docs/COACH-CONTRACT.md.
     @State private var showCoach = false
@@ -3662,6 +3663,7 @@ struct HomeDashboardView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { homeToolbar }
         .navigationDestination(isPresented: $showRoute) { routeDestination }
+        .navigationDestination(isPresented: $showNewListing) { NewListingView() }
         .task { await model.load() }        // idempotent — seeds the demo tour for this tab
         .task(id: auth.isSignedIn) { await loadLeadCount() }
         .onAppear { revealed = true }
@@ -3781,6 +3783,15 @@ struct HomeDashboardView: View {
     }
 
     // MARK: The gate — 0 homes / 1 home / many / cancelled / samples
+
+    /// Home's main action starts the full address/details form. Feature tiles
+    /// keep their existing home picker and direct-to-feature shortcuts.
+    private func startNewHome() {
+        guard !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else {
+            goToListings(); return
+        }
+        showNewListing = true
+    }
 
     /// A feature tile was tapped. Nothing starts until a home is chosen:
     ///   • 0 homes → name one first, then land in the feature
@@ -3939,7 +3950,7 @@ struct HomeDashboardView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : 260, alignment: .leading)
                 .contentTransition(.opacity)
-            Button { open(.tour) } label: {
+            Button { startNewHome() } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "sparkles")
                     Text("Get started").fontWeight(.semibold)
