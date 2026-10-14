@@ -43,6 +43,7 @@ import { spatialData, spatialModule, spatialPage } from "./spatial";
 import { handleMediaDelivery } from "./media-delivery";
 import { handleRecipientConfirmation } from "./recipient-confirmation";
 import { propertyPage } from "./property-site";
+import { previewWebsiteTheme } from "./property-design";
 import { isPublicLocation, lookupNearbyPlaces } from "./nearby-places";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
@@ -281,11 +282,12 @@ async function handleTour(
   // business type; it is part of the cache key so the two renders never mix.
   const demoAs = embed && demo ? demoSpaceFrom(url.searchParams.get("space")) : undefined;
   const page = !embed && !unbranded ? propertyPage(url.searchParams.get("page")) : "home";
+  const previewTheme = !embed && !unbranded ? previewWebsiteTheme(url.searchParams.get("preview_theme")) : null;
 
   // WH-05: changing only the response TTL leaves old cache hits reachable.
   // Customer HTML must bypass both reads AND writes, including entries from a
   // previous deployment. The explicit demo slugs have no revocable user data.
-  const cache = demo ? caches.default : null;
+  const cache = demo && !previewTheme ? caches.default : null;
   const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : page === "home" ? "" : `?page=${page}`}${demoAs ? `&space=${demoAs}` : ""}`);
   if (cache) {
     const hit = await cache.match(key);
@@ -293,11 +295,12 @@ async function handleTour(
   }
 
   const publicBase: "/f" | "/property" = url.pathname.startsWith("/property/") ? "/property" : "/f";
-  const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase };
+  const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase, previewTheme };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
   const finish = (tour: Tour): Response => {
-    const t = demo ? ttl(env) : 0;
+    if (previewTheme && (tour.space_type || "real_estate") !== "real_estate") return notFound();
+    const t = demo && !previewTheme ? ttl(env) : 0;
     const html = renderTourPage(
       tour,
       functionsBase(env),
@@ -319,11 +322,11 @@ async function handleTour(
     // so a crawler that never parses the body (and anything reading the cached
     // response) gets the same answer. `/u/` has its own noindex in `base`.
     const robots: Record<string, string> =
-      unbranded || allowsIndexing(tour) ? {} : { "X-Robots-Tag": "noindex, nofollow" };
+      !previewTheme && (unbranded || allowsIndexing(tour)) ? {} : { "X-Robots-Tag": "noindex, nofollow" };
     const resp = htmlResponse(
       html,
       200,
-      { ...base, ...robots, "Cache-Control": demo ? `public, max-age=${t}, s-maxage=${t}` : "no-store" },
+      { ...base, ...robots, "Cache-Control": demo && !previewTheme ? `public, max-age=${t}, s-maxage=${t}` : "no-store" },
       { unbranded },
     );
     if (cache && req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));

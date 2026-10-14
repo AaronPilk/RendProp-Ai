@@ -5,7 +5,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 // @ts-ignore Release helpers are plain ESM, executed without tsx in production.
-import { parseDeploymentArgs, selectedPolicy, verifyLivePolicy, verifyModernServiceTransition, MODERN_SERVICE_FUNCTIONS, sourceImports, sourceClosure, stageDeployment, verifyStagedSnapshot, verifyDownloadedSources } from "../scripts/backend-deploy-lib.mjs";
+import { parseDeploymentArgs, selectedPolicy, verifyLivePolicy, verifyDeploymentBefore, NEW_FUNCTION_POLICIES, verifyModernServiceTransition, MODERN_SERVICE_FUNCTIONS, sourceImports, sourceClosure, stageDeployment, verifyStagedSnapshot, verifyDownloadedSources } from "../scripts/backend-deploy-lib.mjs";
 // @ts-ignore Release helpers are plain ESM, executed without tsx in production.
 import { connectedProductionConfig, verifyConnectedBundle, manifestClosure, releaseAssetGroups, PROXY_ENTRY } from "../scripts/dist-policy.mjs";
 async function fixture(run: (root: string) => Promise<void>) {
@@ -40,6 +40,21 @@ test("mixed JWT preserved; live drift, missing/duplicate functions and undeclare
   assert.throws(() => verifyLivePolicy([...inventory, inventory[0]], policy), /exactly one/);
   assert.throws(() => selectedPolicy({ studio: true }, ["new-function"]), /No declared/);
   assert.throws(() => selectedPolicy({ studio: "true" }, ["studio"]));
+});
+test("first deployment requires explicit reviewed endpoint names; policy mismatch or absent ordinary functions still refuse",()=>{
+  assert.deepEqual(NEW_FUNCTION_POLICIES,{"property-sites":true,"property-video-plan":true});
+  assert.deepEqual(parseDeploymentArgs(["--functions","studio,property-sites,property-video-plan","--create-new","property-sites,property-video-plan"]),{functions:["studio","property-sites","property-video-plan"],run:false,createNew:["property-sites","property-video-plan"]});
+  for(const args of [["--functions","studio","--create-new","studio"],["--functions","property-sites","--create-new","property-video-plan"],["--functions","property-sites","--create-new"],["--functions","property-sites","--create-new","property-sites,property-sites"],["--functions","property-sites","--create-new","unreviewed-function"]])assert.throws(()=>parseDeploymentArgs(args));
+  const policy={studio:true,"property-sites":true,"property-video-plan":true},studio={name:"studio",verify_jwt:true,status:"ACTIVE",import_map:false};
+  const before=verifyDeploymentBefore([studio],policy,["property-sites","property-video-plan"]);assert.deepEqual(before["property-sites"],{create:true,verifyJwt:true});
+  assert.throws(()=>verifyDeploymentBefore([],policy,["property-sites","property-video-plan"]),/exactly one/);
+  assert.throws(()=>verifyDeploymentBefore([studio],policy),/exactly one/);
+  assert.throws(()=>verifyDeploymentBefore([studio],{...policy,"property-sites":false},["property-sites","property-video-plan"]),/reviewed JWT/);
+  const live=[studio,{name:"property-sites",verify_jwt:true,status:"ACTIVE",import_map:false},{name:"property-video-plan",verify_jwt:true,status:"ACTIVE",import_map:false}];
+  assert.equal(verifyDeploymentBefore(live,policy,["property-sites","property-video-plan"])["property-sites"].verifyJwt,true);
+  for(const delta of [{verify_jwt:false},{status:"FAILED"},{import_map:true}])assert.throws(()=>verifyDeploymentBefore([studio,{...live[1],...delta},live[2]],policy,["property-sites","property-video-plan"]));
+  assert.throws(()=>verifyDeploymentBefore([...live,live[1]],policy,["property-sites","property-video-plan"]),/exactly one/);
+  assert.throws(()=>verifyLivePolicy([studio],policy),/exactly one/,"final verification never permits missing new endpoints");
 });
 test("AST sees side effects, reexports, dynamic literals and type imports, not prose", () => {
   const imports = sourceImports(`// import './comment.ts';
@@ -189,3 +204,36 @@ test("connected AST gate accepts minifier backticks/escapes only on exact public
   assert.throws(() => verifyConnectedBundle([bundle + "const token=`" + jwt + "`;"], values), /service-role/);
   assert.throws(() => verifyConnectedBundle([bundle + "const token='prefix " + jwt + " suffix';"], values), /service-role/);
 });
+
+test("mocked first deployment creates only declared JWT-protected endpoints and requires exact final policy/source readback",async()=>fixture(async(root)=>{
+ const executable=path.join(root,"supabase"),log=path.join(root,"calls.jsonl"),statefile=path.join(root,"stages.json");
+ await writeFile(executable,`#!${process.execPath}
+import fs from 'node:fs';import path from 'node:path';
+const args=process.argv.slice(2),action=args[1],name=args[2],state=fs.existsSync(${JSON.stringify(statefile)})?JSON.parse(fs.readFileSync(${JSON.stringify(statefile)},'utf8')):{};
+fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(args)+'\\n');
+if(action==='list')console.log(JSON.stringify(['studio',...Object.keys(state).filter(n=>n!=='studio')].map(name=>({name,status:'ACTIVE',import_map:false,verify_jwt:!(process.env.FAKE_DRIFT==='before'&&name==='studio'||process.env.FAKE_DRIFT==='after'&&Object.keys(state).length===3&&name==='property-video-plan'),version:1}))));
+else if(action==='deploy'){
+ const source=args[args.indexOf('--workdir')+1],config=fs.readFileSync(path.join(source,'supabase/config.toml'),'utf8');
+ if(!['studio','property-sites','property-video-plan'].includes(name)||!config.includes('[functions.'+name+']\\nverify_jwt = true'))process.exit(8);
+ state[name]=source;fs.writeFileSync(${JSON.stringify(statefile)},JSON.stringify(state));
+}else if(action==='download'){
+ const source=state[name],target=args[args.indexOf('--workdir')+1],manifest=JSON.parse(fs.readFileSync(path.join(source,'deployment-receipt.json'),'utf8')).manifest;
+ for(const file of manifest.runtimeByFunction[name]){const output=path.join(target,'supabase/functions',file);fs.mkdirSync(path.dirname(output),{recursive:true});fs.copyFileSync(path.join(source,'supabase/functions',file),output);}
+}else process.exit(9);
+`,{mode:0o755});
+ const script=path.resolve(import.meta.dirname,"../scripts/deploy-backend.mjs");
+ for(const scenario of ['success','missing-flag','before','after']){
+  await writeFile(log,'');await rm(statefile,{force:true});
+  const args=[script,'--functions','studio,property-sites,property-video-plan','--run',...(scenario==='missing-flag'?[]:['--create-new','property-sites,property-video-plan'])];
+  const result=spawnSync(process.execPath,args,{encoding:'utf8',env:{...process.env,PATH:`${root}${path.delimiter}${path.dirname(process.execPath)}`,FAKE_DRIFT:scenario}});
+  const calls=(await readFile(log,'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)),receiptPath=scenario==='success'?JSON.parse(result.stdout).receipt:result.stderr.match(/Receipt retained at (.+deployment-receipt\.json)/)?.[1];assert(receiptPath,result.stderr);
+  const receipt=JSON.parse(await readFile(receiptPath,'utf8'));
+  try{
+   if(scenario==='success'){
+    assert.equal(result.status,0,result.stderr);assert.equal(receipt.status,'verified');assert.deepEqual(receipt.requestedNewFunctions,['property-sites','property-video-plan']);assert.equal(receipt.before['property-sites'].create,true);assert.equal(receipt.after['property-sites'].verifyJwt,true);assert(receipt.completed['property-video-plan'].matchedSourceFiles>10);
+    assert.deepEqual(calls.filter(c=>c[1]==='deploy').map(c=>c[2]),['studio','property-sites','property-video-plan']);
+   }else{assert.notEqual(result.status,0);assert.equal(receipt.status,'failed');if(scenario==='after'){assert.equal(calls.filter(c=>c[1]==='deploy').length,3);assert.match(receipt.failure,/drift/);}else{assert(!calls.some(c=>c[1]==='deploy'));assert.match(receipt.failure,scenario==='before'?/drift/:/exactly one/);}}
+   assert(!calls.some(c=>c.includes('--no-verify-jwt')||c.includes('--prune')));
+  }finally{for(const c of calls.filter(c=>c[1]==='download'))await rm(c[c.indexOf('--workdir')+1],{recursive:true,force:true});await rm(path.dirname(receiptPath),{recursive:true,force:true});}
+ }
+}));

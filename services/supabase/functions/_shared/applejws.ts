@@ -555,6 +555,8 @@ export interface AppleTransaction {
   revocationDate: string | null;
   revocationReason: number | null;
   type: string | null;
+  /** Present only when Apple signed the purchased consumable quantity. */
+  quantity?: number;
   /** "PURCHASED" | "FAMILY_SHARED" */
   inAppOwnershipType: string | null;
   appAccountToken: string | null;
@@ -592,6 +594,7 @@ export function decodeTransaction(payload: Record<string, unknown>): AppleTransa
     revocationDate: msToIso(payload.revocationDate),
     revocationReason: num(payload.revocationReason),
     type: str(payload.type),
+    ...(payload.type === 'Consumable' && typeof payload.quantity === 'number' && Number.isSafeInteger(payload.quantity) ? {quantity:payload.quantity} : {}),
     inAppOwnershipType: str(payload.inAppOwnershipType),
     appAccountToken: str(payload.appAccountToken),
     webOrderLineItemId: str(payload.webOrderLineItemId),

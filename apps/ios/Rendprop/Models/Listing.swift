@@ -28,6 +28,9 @@ struct Listing: Identifiable, Codable, Hashable {
     /// The enhanced photo (path relative to Documents) shown as the card's hero
     /// and in the public app link.
     var mainPhotoRelPath: String? = nil
+    /// Explicit local website-video choice. Recording a walkthrough or making
+    /// another social video never replaces this selection or publishes it.
+    var websiteVideoRelPath: String? = nil
     /// Cached geocode of `address` so we don't re-hit the geocoder every open.
     var latitude: Double? = nil
     var longitude: Double? = nil
@@ -340,7 +343,7 @@ extension Listing {
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, factsSync, measurementSync, publishedRenderID, lastRepublishedAt,
              unbrandedShareURL, stateCode, allowSearchIndexing,
-             clientContact, clientContactDirty, clientContactLoaded, clientPhotoRelPath, clientPhotoDirty
+             clientContact, clientContactDirty, clientContactLoaded, clientPhotoRelPath, clientPhotoDirty, websiteVideoRelPath
     }
 
     init(from decoder: Decoder) throws {
@@ -362,6 +365,7 @@ extension Listing {
         cloudArchived    = try c.decodeIfPresent(Bool.self, forKey: .cloudArchived)
         zillowURL        = try c.decodeIfPresent(String.self, forKey: .zillowURL)
         mainPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .mainPhotoRelPath)
+        websiteVideoRelPath = try c.decodeIfPresent(String.self, forKey: .websiteVideoRelPath)
         latitude         = try c.decodeIfPresent(Double.self, forKey: .latitude)
         longitude        = try c.decodeIfPresent(Double.self, forKey: .longitude)
         tagline          = try c.decodeIfPresent(String.self, forKey: .tagline)

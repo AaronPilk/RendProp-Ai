@@ -136,6 +136,8 @@ jobs:
         run: python3 apps/ios/tests/run-native-trial-hold.py --out "$RUNNER_TEMP/rendprop-native-trial-hold"
       - name: Durable StoreKit intervention and purchase recovery controls
         run: python3 apps/ios/tests/run-purchase-fulfilment.py --out "$RUNNER_TEMP/rendprop-purchase-fulfilment"
+      - name: Property website consumable custody and account recovery controls
+        run: python3 apps/ios/tests/run-website-upgrade.py --out "$RUNNER_TEMP/rendprop-website-upgrade"
       - name: Retain purchase recovery runtime and guard-removal evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -145,6 +147,9 @@ jobs:
             ${{ runner.temp }}/rendprop-purchase-fulfilment/receipt.json
             ${{ runner.temp }}/rendprop-purchase-fulfilment/*.log
             ${{ runner.temp }}/rendprop-purchase-fulfilment/*.swift
+            ${{ runner.temp }}/rendprop-website-upgrade/receipt.json
+            ${{ runner.temp }}/rendprop-website-upgrade/**/*.log
+            ${{ runner.temp }}/rendprop-website-upgrade/**/*.swift
       - name: Private media gateway actor binding and import context controls
         run: python3 apps/ios/tests/run-private-media-gateway.py --out "$RUNNER_TEMP/rendprop-private-media-gateway"
       - name: Retain private media gateway runtime and guard-removal evidence
@@ -212,6 +217,12 @@ jobs:
         run: python3 apps/ios/tests/run-reel-framing-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-framing-wire"
       - name: Video destination and larger photo sequences survive saved work and recovery
         run: python3 apps/ios/tests/run-video-purpose.py --evidence-dir "$RUNNER_TEMP/rendprop-video-purpose"
+      - name: Selected photo versions retain automatic scene order and per-shot motion
+        run: python3 apps/ios/tests/run-property-video-planner.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-planner"
+      - name: Video sources retain reviewed staged versions instead of newer previews
+        run: python3 apps/ios/tests/run-staged-video-source.py --evidence-dir "$RUNNER_TEMP/rendprop-staged-video-source"
+      - name: Finished property videos retain master selection and publication identity
+        run: python3 apps/ios/tests/run-listing-video-native.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-video-native"
       - name: Large video batches retain every selected photo and recover both output formats
         run: python3 apps/ios/tests/run-reel-request-recovery.py --large-only --evidence-dir "$RUNNER_TEMP/rendprop-video-large"
       - name: Retain video purpose and buyer navigation regression evidence
@@ -228,6 +239,12 @@ jobs:
             ${{ runner.temp }}/rendprop-video-purpose/*.log
             ${{ runner.temp }}/rendprop-video-large/receipt.json
             ${{ runner.temp }}/rendprop-video-large/*.log
+            ${{ runner.temp }}/rendprop-property-video-planner/receipt.json
+            ${{ runner.temp }}/rendprop-property-video-planner/*.log
+            ${{ runner.temp }}/rendprop-staged-video-source/receipt.json
+            ${{ runner.temp }}/rendprop-staged-video-source/*.log
+            ${{ runner.temp }}/rendprop-listing-video-native/receipt.json
+            ${{ runner.temp }}/rendprop-listing-video-native/*.log
       - name: Reel completion notices and background expiry remain generation scoped
         run: python3 apps/ios/tests/run-reel-lifecycle.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-lifecycle"
       - name: Global reel banner and completion taps preserve current job identity
@@ -1276,6 +1293,7 @@ jobs:
           python3 services/supabase/tests/bounded_subscription_trial_pg.py
           python3 services/supabase/tests/serving_photo_partitions_pg.py
           python3 services/supabase/tests/launch_blockers_pg.py
+          python3 services/supabase/tests/property_video_websites_pg.py
           python3 tools/audit/run_listing_gallery_selection.py
           python3 tools/audit/run_listing_measurement_cas.py
           python3 tools/audit/run_listing_facts_cas.py

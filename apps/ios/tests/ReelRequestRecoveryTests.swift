@@ -43,12 +43,21 @@ enum OriginalPhotoMotion {
 final class QualityFence {var stale=false}
 enum AIImagePrep {static func downscaled(_ i:UIImage,maxDimension:Int)->UIImage{i};static func reelSource(_ i:UIImage,aspect:String)->UIImage{i};static func error(_ m:String)->Error{NSError(domain:"synthetic",code:1,userInfo:[NSLocalizedDescriptionKey:m])} }
 protocol APIClient {func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,framing:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob;func aiVideoStatus(_ j:AIVideoJob) async throws->AIVideoStatus;func aiVideoDrift(_ r:DriftCheckRequest) async throws->DriftVerdict}
+extension APIClient {
+ func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,framing:String?,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?,sourceAssetID:String,sourceProvenanceID:String?) async throws->AIVideoJob {
+  if let fake=self as? ClipAPI,let context=fake.expectedContext {
+   let marker=PendingReelRequest.load(context)
+   precondition(marker?.sourceAssetID==sourceAssetID && marker?.photoProvenanceID==sourceProvenanceID,"exact private source identity is durable before provider admission")
+  }
+  return try await aiVideoReelClip(imageBase64:imageBase64,mime:mime,prompt:prompt,seconds:seconds,aspect:aspect,framing:framing,presetVersion:presetVersion,motion:motion,room:room,shotIndex:shotIndex,shotCount:shotCount,listingServerID:listingServerID,label:label,idempotencyKey:idempotencyKey)
+ }
+}
 final class ClipAPI:APIClient {
  struct Submission {let image:String;let motion:String?;let key:String?;let attempt:Int?;let source:String?;let jobID:String;let index:Int?;let count:Int?;let framing:String?;let outputAspect:String?}
  var expectedContext:PendingReelRequest.Context?;var lastKey:String?
  var beforeReply:(() throws -> Void)?;var onPoll:(()->Void)?;var onDrift:(()->Void)?;var pollOutcomes:[Result<AIVideoStatus,Error>]=[]
  var rejectsDrift=false;var unavailableDrift=false;var checksDrift=0;var posts=0,polls=0;var throwPolls=0;var throwSubmit=false;var refuseSubmit=false;var refusalStatus=400;var terminal=false;var url:URL
- var allowQualityRetry=false;var submissions:[Submission]=[];var driftRequests:[DriftCheckRequest]=[];var driftOutcomes:[Result<DriftVerdict,Error>]=[]
+ var allowQualityRetry=false;var allowScenePlan=false;var submissions:[Submission]=[];var driftRequests:[DriftCheckRequest]=[];var driftOutcomes:[Result<DriftVerdict,Error>]=[]
  var job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel",provenanceID:"synthetic-provenance-0")
  init(_ u:URL){url=u}
  func aiVideoReelClip(imageBase64:String,mime:String,prompt:String?,seconds:Int,aspect:String?,framing:String?=nil,presetVersion:Int?,motion:String?,room:String?,shotIndex:Int?,shotCount:Int?,listingServerID:UUID?,label:String?,idempotencyKey:String?) async throws->AIVideoJob {
@@ -58,7 +67,7 @@ final class ClipAPI:APIClient {
    precondition(marker?.framing==framing && marker?.outputAspect==aspect,"new whole-source framing survives provider admission")
   }
   lastKey=idempotencyKey;posts+=1
-  precondition(seconds==5&&mime=="image/jpeg"&&["9:16","16:9"].contains(aspect ?? "")&&presetVersion==1&&(motion=="fly_through" || (allowQualityRetry&&motion=="push_in"))&&prompt==nil)
+  precondition(seconds==5&&mime=="image/jpeg"&&["9:16","16:9"].contains(aspect ?? "")&&presetVersion==1&&(motion=="fly_through" || (allowQualityRetry&&motion=="push_in") || (allowScenePlan && ["push_in","side_glide","pull_back"].contains(motion ?? "")))&&prompt==nil)
   if allowQualityRetry {job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel",provenanceID:"synthetic-provenance-\(posts-1)")}
   submissions.append(.init(image:imageBase64,motion:motion,key:idempotencyKey,attempt:marker?.qualityAttempt,source:marker?.sourceJPEGBase64,jobID:job.requestId,index:shotIndex,count:shotCount,framing:framing,outputAspect:marker?.outputAspect))
   if throwSubmit{throw URLError(.networkConnectionLost)}
@@ -682,17 +691,23 @@ final class ClosedVideoProtocol:URLProtocol {
   PendingReelRequest.forget(hundred);full.clear()
   for aspect in ["9:16","16:9"] {
    OriginalPhotoMotion.reset();ReelPollClock.reset();ClipFrames.answerNoFrames=false
-   let ctx=context(),selected=Array(photos.prefix(12))
-   let api=ClipAPI(URL(string:CommandLine.arguments[1]+"/quality")!);api.expectedContext=ctx;api.allowQualityRetry=true
-   let batch=PendingReelBatch(context:ctx,id:UUID(),photos:selected,motion:"fly_through",aspect:aspect,spaceType:"real_estate",completedPaths:[],framing:"preserve_photo")
+   let ctx=context(),selected=Array(photos.prefix(12)).enumerated().map { index, photo in
+    let motion=["side_glide","pull_back","fly_through","push_in"][index % 4]
+    let shot=AIShot(photoID:photo.id,order:index+1,motion:motion,room:nil,onScreenText:nil,seconds:5,voiceLine:nil)
+    return PendingReelBatch.Photo(id:photo.id,jpegBase64:photo.jpegBase64,shot:.init(shot),sourceAssetID:UUID().uuidString,photoProvenanceID:UUID().uuidString)
+   }
+   let api=ClipAPI(URL(string:CommandLine.arguments[1]+"/quality")!);api.expectedContext=ctx;api.allowQualityRetry=true;api.allowScenePlan=true
+   let batch=PendingReelBatch(context:ctx,id:UUID(),photos:selected,motion:"fly_through",aspect:aspect,spaceType:"real_estate",completedPaths:[],framing:"preserve_photo",scenePlanVersion:1,scenePlanningNotice:"Closed scene plan",automaticOrder:true,usedPlanningFallback:false)
    try batch.save()
    let dir=root.appendingPathComponent("large-"+UUID().uuidString);try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
    let finished:PendingReelBatch
    do{finished=try await ReelReceiptHarness.completeSavedBatch(batch,api:api,into:dir,requireCurrent:{try Task.checkCancellation()},progress:{_ in})}
    catch{preconditionFailure("large batch continuation retains every selected photo in order")}
    check(api.posts==12 && api.submissions.map(\.index)==Array(0..<12).map{Optional($0)} && api.submissions.map(\.image)==selected.map(\.jpegBase64),"large batch continuation retains every selected photo in order")
+   check(api.submissions.map(\.motion)==selected.map{$0.shot?.motion},"resumed scene plan sends each immutable per-photo camera motion")
    check(api.submissions.allSatisfy{$0.count==12 && $0.outputAspect==aspect && $0.framing=="preserve_photo"},"large batch sends selected canvas and full-source framing on every clip")
    check(finished.completedPaths.count==12 && finished.photos.map(\.id)==selected.map(\.id),"large saved recipe preserves all finished positions")
+   check(finished.completedSources?.map(\.photoVersionID)==selected.map(\.id) && finished.completedSources?.map(\.photoAssetID)==selected.map(\.sourceAssetID) && api.driftRequests.map(\.sourceAssetID)==selected.map(\.sourceAssetID),"private photo versions and provider/QC identities survive exact ordered batch completion")
    let again=try await ReelReceiptHarness.completeSavedBatch(batch,api:api,into:dir,requireCurrent:{try Task.checkCancellation()},progress:{_ in})
    check(again.completedPaths==finished.completedPaths && api.posts==12,"reopening a completed large recipe submits no extra clips")
    finished.clear()

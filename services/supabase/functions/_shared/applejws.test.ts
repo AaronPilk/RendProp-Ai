@@ -23,6 +23,7 @@ import {
   assert,
   assertEquals,
   assertRejects,
+  assertThrows,
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { HttpError } from "./http.ts";
@@ -992,6 +993,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   const admin = {
     rpc: (name: string, args: Record<string, unknown>) => {
       calls.push({ name, args });
+      if (name === "property_website_transaction") return Promise.resolve({data:{recorded:true},error:null});
       if (name === "grant_sandbox_trial") return Promise.resolve(sandboxGrant
         ? { data: { ...sandboxGrant, original_transaction_id: args.p_original, product_id: args.p_product }, error: null }
         : { data: null, error: { message: "RP409: This test purchase belongs to another account or workspace" } });
@@ -1050,6 +1052,7 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
   Object.assign(globalThis, { __appleChronologyFixture: fixture });
   const program = `
     import {assert,HttpError,json,readJsonLimited,throwRpc} from ${JSON.stringify(new URL("./http.ts", import.meta.url).href)};
+    import {PROPERTY_WEBSITE_PRODUCT,websitePurchaseArgs} from ${JSON.stringify(new URL("./property-website-purchase.ts",import.meta.url).href)};
     import {reservedTrialWorkspace} from ${JSON.stringify(new URL("./trial-purchase.ts",import.meta.url).href)};
     import {fundVerifiedAppleTransaction} from ${JSON.stringify(new URL("./apple-funding.ts",import.meta.url).href)};
     import {inputHash} from ${JSON.stringify(new URL("./funded-serving.ts",import.meta.url).href)};
@@ -1180,6 +1183,19 @@ Deno.test("verified signed chronology reaches actual notification, restore and h
     const mismatched = await signJws(chain, { originalTransactionId: "different-subscription", signedDate: event });
     await assertRejects(() => methods.readFacts({ ...outer, data: { ...(outer.data as object), signedRenewalInfo: mismatched } }), HttpError);
 
+    // Real verified consumable notification dispatch never enters subscription
+    // funding/application. Refunds work with no device property-sidecar.
+    const propertyPayload=transactionPayload({productId:"com.rendprop.app.website.premium.property",type:"Consumable",quantity:1,environment:"Production",appAccountToken:user,signedDate:now-10_000});delete propertyPayload.expiresDate;
+    const propertyTx=await signJws(chain,propertyPayload);
+    for(const [index,type,expected]of [[1,"ONE_TIME_CHARGE","purchase"],[2,"REFUND","refund"],[3,"REFUND_REVERSED","refund_reversed"]]as const){
+      const propertyEvent=await eventJWS(`property-event-${index}`,type,propertyTx);calls.length=0;
+      assertEquals((await(await notify(propertyEvent)).json()).property_upgrade,true);
+      assertEquals(calls.map(c=>c.name),["property_website_transaction"]);
+      assertEquals(calls[0].args.p_listing,null);assertEquals(calls[0].args.p_actor,user);assertEquals(calls[0].args.p_event,expected);
+      assertEquals(calls[0].args.p_signed,new Date(event).toISOString(),"outer event chronology stays independent of freshly signed transaction");
+      calls.length=0;assertEquals((await(await notify(propertyEvent)).json()).duplicate,true);assertEquals(calls.length,0);
+    }
+
     // Ceiling mode (2026-10-08): a Sandbox purchase goes to grant_sandbox_trial
     // with the whole verified receipt — identity, status, expiry, signature —
     // and the response carries the RPC's grant verdict.
@@ -1221,4 +1237,15 @@ Deno.test("signed transactions require an explicit recognized billing environmen
     const verified = await verifyAppleJWS(jws, { trustRoot: chain.rootDer });
     await expectUnauthorized(async () => decodeTransaction(verified), "recognized App Store environment");
   }
+});
+
+Deno.test('property consumable goes through real chain and signature validation before typed quantity/account facts',async()=>{
+ const {PROPERTY_WEBSITE_PRODUCT,websitePurchaseArgs}=await import('./property-website-purchase.ts');
+ const actor='e2000000-0000-4000-8000-000000000001',chain=await buildChain();
+ const payload=transactionPayload({productId:PROPERTY_WEBSITE_PRODUCT,type:'Consumable',quantity:1,appAccountToken:actor});delete payload.expiresDate;
+ const signed=await signJws(chain,payload),tx=decodeTransaction(await verifyAppleJWS(signed,{trustRoot:chain.rootDer}));
+ assertEquals(websitePurchaseArgs(tx,actor,'property','org').p_transaction,tx.transactionId);
+ const [h,p,s]=signed.split('.'),forged=b64url(new TextEncoder().encode(JSON.stringify({...payload,quantity:2})));
+ await expectUnauthorized(()=>verifyAppleJWS(`${h}.${forged}.${s}`,{trustRoot:chain.rootDer}));
+ assertThrows(()=>websitePurchaseArgs(decodeTransaction({...payload,quantity:2}),actor,'property','org'),HttpError);
 });

@@ -50,3 +50,10 @@ test("iPhone camera preset survives Studio decoding; unknown presets are refused
   }
   assert.throws(() => decodeNativeReel({ ...recipe(), motionPreset: "invent-new-room" }));
 });
+
+
+test("automatic scene order preference survives semantic recipe sync; malformed values are refused",()=>{
+ for(const automaticOrder of [true,false])assert.equal(decodeNativeReel({...recipe(),automaticOrder}).automaticOrder,automaticOrder);
+ assert.equal(Object.hasOwn(decodeNativeReel(recipe()),"automaticOrder"),false);
+ for(const automaticOrder of ["true",1,{},[]])assert.throws(()=>decodeNativeReel({...recipe(),automaticOrder}));
+});

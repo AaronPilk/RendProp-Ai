@@ -1,6 +1,7 @@
 import { inputHash } from "../_shared/funded-serving.ts";
 import { fundVerifiedAppleTransaction } from "../_shared/apple-funding.ts";
 import { reservedTrialWorkspace } from "../_shared/trial-purchase.ts";
+import { PROPERTY_WEBSITE_PRODUCT,websitePurchaseArgs } from '../_shared/property-website-purchase.ts';
 // apple-subscriptions — App Store Server Notifications V2, verified and applied.
 //
 //   POST /apple-subscriptions/notify   -> 200 { ok, duplicate?, applied?, ignored?, pending? }
@@ -243,13 +244,13 @@ async function handleNotify(req: Request): Promise<Response> {
   // build has never heard of. Store it and say so — do NOT guess a plan, and do
   // NOT downgrade an org because an unrecognised subscription lapsed.
   const unknownProduct = facts.transaction !== null &&
-    productToPlan(facts.transaction.productId) === null;
+    productToPlan(facts.transaction.productId) === null && facts.transaction.productId!==PROPERTY_WEBSITE_PRODUCT;
   if (unknownProduct) {
     console.log(`apple notification for an unmapped product: ${facts.transaction!.productId}`);
   }
 
   const entitlementRelevant = verdictKind !== "ignore" && facts.transaction !== null &&
-    !environmentMismatch && !unknownProduct;
+    !environmentMismatch && !unknownProduct && facts.transaction!.productId!==PROPERTY_WEBSITE_PRODUCT;
   const pending = entitlementRelevant && orgId === null && facts.environment === "Production";
   const entitlement = entitlementRelevant ? computeEntitlement(facts, verdictKind) : null;
 
@@ -301,6 +302,16 @@ async function handleNotify(req: Request): Promise<Response> {
 
   if (environmentMismatch) {
     return acknowledge("ignored", { ok: true, applied: false, ignored: "environment_mismatch" });
+  }
+  if(facts.transaction?.productId===PROPERTY_WEBSITE_PRODUCT){
+    const event=facts.type==='REFUND'?'refund':facts.type==='REVOKE'?'revoke':facts.type==='REFUND_REVERSED'?'refund_reversed':facts.type==='ONE_TIME_CHARGE'?'purchase':null;
+    if(!event)return acknowledge('ignored',{ok:true,applied:false,ignored:'no_property_upgrade_change'});
+    const actor=facts.transaction.appAccountToken;
+    assert(typeof actor==='string'&&/^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(actor),400,'This property purchase has no verified account owner.');
+    const {data,error}=await admin.rpc('property_website_transaction',websitePurchaseArgs(facts.transaction,actor,null,null,{notification:true,event,eventSignedAt:facts.signedDate}));
+    if(error){if(/RP(?:400|403|409):/.test(error.message))return acknowledge('refused',{ok:true,applied:false,ignored:'refused'});throw new HttpError(503,'The property upgrade notification could not be recorded. Retry.','upstream');}
+    assert(data?.recorded===true,503,'The property upgrade notification was not recorded. Retry.');
+    return acknowledge('applied',{ok:true,applied:true,property_upgrade:true});
   }
   if (!entitlementRelevant) {
     return acknowledge("ignored", {

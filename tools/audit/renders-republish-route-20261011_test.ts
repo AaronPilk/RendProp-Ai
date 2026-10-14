@@ -35,8 +35,9 @@ globalThis.fetch = async (input, init) => {
   if (u.pathname.endsWith("/rpc/listing_library_scope")) { assertEquals(lower(body!.p_listing), LISTING); return response({ actor_id: USER, listing_id: LISTING, org_id: ORG, library_org_id: ORG, library_owner_user_id: USER, listing_owner_user_id: USER, role: "owner", access_mode: "own", can_read: true, can_write: true, can_manage_subscription: true, billing_org_id: ORG, team_org_id: null }); }
   if (u.pathname.endsWith("/rpc/subscription_trial_video_context")) return response({ required: false }); // paid authority: no duration attestation
   if (u.pathname.endsWith("/rpc/create_render_job")) { assertEquals([lower(body!.p_listing), lower(body!.p_asset), body!.p_source], [LISTING, ASSET, "app"]); return response({ id: JOB, listing_id: LISTING }); }
-  if (u.pathname.endsWith("/rpc/republish_render") || u.pathname.endsWith("/rpc/publish_render")) {
+  if (u.pathname.endsWith("/rpc/publish_recorded_render")) {
     assertEquals(body!.p_job, JOB);
+    assertEquals(typeof body!.p_republish,"boolean");
     if (state.rpcRefusal) return response({ code: "P0001", message: state.rpcRefusal }, 400);
     return response(renderRow(JOB));
   }
@@ -54,7 +55,7 @@ const publish = (route: string, extra: Record<string, unknown> = {}) => handler(
 }));
 const rpcNames = () => state.calls.filter((c) => c.path.includes("/rpc/")).map((c) => c.path.split("/").pop());
 
-Deno.test("republish-app calls republish_render, answers 200 with the same render and marks it republished", async () => {
+Deno.test("republish-app selects recorded republish authority, answers 200 with the same render and marks it republished", async () => {
   state.calls = []; state.rpcRefusal = null;
   const r = await publish("republish-app");
   assertEquals(r.status, 200, await r.clone().text());
@@ -63,18 +64,20 @@ Deno.test("republish-app calls republish_render, answers 200 with the same rende
   assertEquals(value.share_url, "https://rendprop.com/f/b58slug0004");
   assertEquals(value.unbranded_url, "https://rendprop.com/u/b58slug0004");
   const names = rpcNames();
-  assert(names.includes("republish_render") && !names.includes("publish_render"), names.join(","));
-  assert(names.indexOf("create_render_job") < names.indexOf("republish_render"));
+  assert(names.includes("publish_recorded_render"),names.join(","));
+  assertEquals(state.calls.find(c=>c.path.endsWith("/rpc/publish_recorded_render"))!.body!.p_republish,true);
+  assert(names.indexOf("create_render_job") < names.indexOf("publish_recorded_render"));
 });
 
-Deno.test("publish-app is unchanged: publish_render, 201, not marked republished", async () => {
+Deno.test("publish-app selects recorded first-publish authority, 201, not marked republished", async () => {
   state.calls = []; state.rpcRefusal = null;
   const r = await publish("publish-app");
   assertEquals(r.status, 201, await r.clone().text());
   const value = await r.json();
   assertEquals([value.id, value.republished], [RENDER, false]);
   const names = rpcNames();
-  assert(names.includes("publish_render") && !names.includes("republish_render"), names.join(","));
+  assert(names.includes("publish_recorded_render"),names.join(","));
+  assertEquals(state.calls.find(c=>c.path.endsWith("/rpc/publish_recorded_render"))!.body!.p_republish,false);
 });
 
 Deno.test("a republish refused by SQL keeps its status and fails the job it created", async () => {
@@ -88,5 +91,5 @@ Deno.test("republish-app validates like publish-app", async () => {
   state.calls = []; state.rpcRefusal = null;
   const r = await publish("republish-app", { asset_id: undefined });
   assertEquals(r.status, 400);
-  assert(!rpcNames().includes("republish_render"));
+  assert(!rpcNames().includes("publish_recorded_render"));
 });

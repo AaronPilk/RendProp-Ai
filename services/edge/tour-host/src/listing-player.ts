@@ -152,7 +152,7 @@ export const LISTING_PLAYER_JS = `
     accountBuffer();
   }
   function postBeacon(extra){
-    if (!CFG.functionsBase || !CFG.slug || !viewSent) return;
+    if (CFG.preview || !CFG.functionsBase || !CFG.slug || !viewSent) return;
     accountBuffer();
     var body = {watch_ms:Math.max(0,Math.round(watchMs-sentWatch)),scroll_depth:Math.round(maxDepth*1000)/1000,streamed_minutes:Math.round(Math.max(0,delivered-sentDelivered)/60*1000)/1000};
     sentWatch = watchMs; sentDelivered = delivered;
@@ -242,6 +242,7 @@ export const LISTING_PLAYER_JS = `
   }
   function openVideo(button,time){
     if (!modal || !video || (!CFG.scrubUrl && !CFG.hlsUrl)) return;
+    if (typeof Event==='function' && document.dispatchEvent) document.dispatchEvent(new Event('property:walkthrough-open'));
     pendingSeek = typeof time === 'number' && isFinite(time) ? Math.max(0,time) : lastTime;
     if (active){ syncPosition(pendingSeek); seekPending(); if (mode==='watch') play(); return; }
     opener = button; savedScroll = {x:scrollX,y:scrollY};

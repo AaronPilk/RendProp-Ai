@@ -265,11 +265,10 @@ struct SettingsView: View {
                 notificationsSection
             }
 
-            // Source of truth for shooting guidance is the capture screen's
-            // coaching (PaceRing: a normal walking pace is good; only rushing
-            // and fast spins hurt). Keep every other surface saying the same.
+            // Motion coaching helps avoid shakes and fast turns; it does not
+            // measure walking speed. Keep filming guidance slow and steady.
             Section("How to shoot a great walkthrough") {
-                Label("Walk at your normal pace — steady beats slow", systemImage: "figure.walk")
+                Label("Walk slowly and steadily; a gimbal can help", systemImage: "figure.walk")
                 Label("No fast spins — turn like you're showing a friend around", systemImage: "arrow.triangle.turn.up.right.diamond")
                 Label("Phone upright at chest height, keep the bubble level", systemImage: "level")
                 Label("Lights on, blinds open", systemImage: "lightbulb")

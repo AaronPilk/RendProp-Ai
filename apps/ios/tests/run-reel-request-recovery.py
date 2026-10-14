@@ -29,7 +29,8 @@ adoption_path = root / 'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift'
 listing_path = root / 'apps/ios/Rendprop/Models/Listing.swift'
 drift_path = root / 'apps/ios/Rendprop/Render/DriftCheck.swift'
 capacity_path = root / 'apps/ios/Rendprop/Render/VideoAspectChoice.swift'
-consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, capacity_path, Path(__file__).resolve()]
+video_metadata_path = root / 'apps/ios/Rendprop/Models/ListingVideo.swift'
+consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, capacity_path, video_metadata_path, Path(__file__).resolve()]
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed}
 def block(s, anchor):
@@ -112,7 +113,7 @@ try:
     review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
     drift = drift_path.read_text()
     drift_types = block(drift, 'struct DriftVerdict: Sendable, Equatable') + '\n' + block(drift, 'struct DriftCheckRequest: Sendable') + '\n' + block(source, 'private struct ReelQualityRefusal: Error, LocalizedError').replace('private struct', 'struct', 1) + '\n'
-    actual = 'import Foundation\nimport CryptoKit\n' + capacity_path.read_text() + '\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n' + block(api, 'struct AIShot: Sendable, Hashable, Identifiable') + '\n' + block(source, 'struct PendingReelBatch: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private enum ReelRecoveryChoice').replace('private enum', 'enum', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
+    actual = 'import Foundation\nimport CryptoKit\n' + capacity_path.read_text() + '\n' + video_metadata_path.read_text() + '\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n' + block(api, 'struct AIShot: Sendable, Hashable, Identifiable') + '\n' + block(source, 'struct PendingReelBatch: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private enum ReelRecoveryChoice').replace('private enum', 'enum', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
     for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(', '    nonisolated private static func preparedReelJPEG(', '    nonisolated private static func requireSavedReelReview(', '    nonisolated private static func acknowledgeRecoveredClip(', '    nonisolated private static func resolveSavedQualityRetry(', '    nonisolated private static func completeSavedBatch(']:
         extracted = block(source, anchor).replace('private static', 'static', 1)
         if 'retrieveClip(' in anchor:
@@ -190,7 +191,7 @@ try:
         ('negative-quality-broad-retry', actual.replace('verdict.status == .fail && verdict.action == "retry"', '!verdict.mayUse'), 'ambiguous quality verdict must hold'),
         ('negative-quality-retry-different-jpeg', actual.replace('api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),', 'api.aiVideoReelClip(imageBase64: (attempt == 0 ? jpeg : Data("changed retry JPEG".utf8)).base64EncodedString(),'), 'retry uses the exact same prepared and saved JPEG'),
         ('negative-quality-lost-attempt', actual.replace('attempt: pending?.qualityAttempt ?? 1', 'attempt: 1'), 'retry attempts persist and reach the real drift request'),
-        ('negative-quality-lost-provenance', actual.replace('provenanceID: job.provenanceID, attempt:', 'provenanceID: nil, attempt:'), 'each drift judgement carries its exact accepted provenance'),
+        ('negative-quality-lost-provenance', actual.replace('provenanceID: job.provenanceID, sourceAssetID:', 'provenanceID: nil, sourceAssetID:'), 'each drift judgement carries its exact accepted provenance'),
         ('negative-quality-refuse-without-fail', actual.replace('guard verdict.status == .fail, verdict.action == "refuse",', 'guard verdict.action == "refuse",'), 'ambiguous quality verdict must hold'),
         ('negative-quality-fail-without-refuse', actual.replace('guard verdict.status == .fail, verdict.action == "refuse",', 'guard verdict.status == .fail,'), 'confirmed drift requests exactly one paid retry'),
         ('negative-quality-original-wrong-jpeg', actual.replace('OriginalPhotoMotion.render(jpeg: jpeg, renderSize: size, output: local)', 'OriginalPhotoMotion.render(jpeg: Data("wrong source".utf8), renderSize: size, output: local)'), 'original motion renders only the exact accepted saved JPEG'),
@@ -220,7 +221,8 @@ try:
             ('negative-eight-photo-cap', actual.replace('static let maximumPhotos = 100', 'static let maximumPhotos = 8'), '100-photo recipe reloads without an eight-photo cap'),
             ('negative-eight-request-position', actual.replace('(1...VideoSelectionCapacity.maximumPhotos).contains(request.photoNumber)', '(1...8).contains(request.photoNumber)'), 'photo 100 accepted receipt remains recoverable'),
             ('negative-large-order-skip', actual.replace('let index = batch.completedPaths.count, photo = batch.photos[index]', 'let index = batch.completedPaths.count + 1, photo = batch.photos[index]'), 'large batch continuation retains every selected photo in order'),
-            ('negative-unbounded-recipe-read', actual.replace('fileBytes <= VideoSelectionCapacity.maximumRecipeBytes', 'fileBytes <= Int.max'), 'oversized recipe is rejected before reading the file')]
+            ('negative-unbounded-recipe-read', actual.replace('fileBytes <= VideoSelectionCapacity.maximumRecipeBytes', 'fileBytes <= Int.max'), 'oversized recipe is rejected before reading the file'),
+            ('negative-lost-frozen-scene-motion', actual.replace('batch.scenePlanVersion == 1 ? photo.shot?.motion ?? batch.motion : batch.motion', 'batch.motion').replace('batch.scenePlanVersion != 1 || (batch.photos[index].shot?.motion ?? batch.motion) == motion', 'true'), 'resumed scene plan sends each immutable per-photo camera motion')]
     elif args.choices_only:
         variants = [('actual-choices', actual, None)] + choice_variants
     elif args.quality_only:

@@ -5,8 +5,9 @@ import Foundation
 import QuartzCore
 import UIKit
 
-/// Local fallback after a terminal property-drift refusal. This is a flat photo
-/// moving inside the frame, never generated scenery, parallax or a room model.
+/// Local still-photo fallback after a terminal property-drift refusal. The
+/// selected photo stays fixed in one centered cover crop; no generated scenery,
+/// camera movement, parallax or room model is introduced.
 enum OriginalPhotoMotion {
     static func isClip(_ url: URL) -> Bool { url.lastPathComponent.contains("photo-motion-") }
 

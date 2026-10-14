@@ -54,6 +54,7 @@ import { resolveContactPhoto } from "../listings/client-contact.ts";
 import { buildCta } from "./cta.ts";
 import { bindSpatialChapters, type SpatialChapter } from "../spatial/chapters.ts";
 import { publishedTourContext, publishedLocation } from "./published-context.ts";
+import { propertyPublicPresentation } from '../_shared/property-public-presentation.ts';
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 
@@ -413,7 +414,7 @@ Deno.serve(async (req) => {
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: SpatialChapter[] = [];
-    if (job?.capture_asset_id) {
+    if (job?.capture_asset_id && render.presentation_kind!=='photo_video') {
       const { data: chapterRows } = await admin
         .from("capture_chapters")
         .select("label, t_ms, sort")
@@ -457,8 +458,9 @@ Deno.serve(async (req) => {
     // (HLS) re-encodes away the all-intra GOP and snaps seeks to keyframes, so it
     // degrades scrubbing to keyframe-stepping. Therefore the R2 mp4 is the PRIMARY
     // scrub source; HLS is exposed separately as an adaptive fallback (long/4K).
-    const scrub_url = publishedR2Url(slug,render.video_key as string);
-    const hls_url = publishedStreamUrl(slug,render.stream_uid as string);
+    const presentation=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,visibleRefs,publishedR2Url);
+    const scrub_url = render.presentation_kind==='photo_video'?null:publishedR2Url(slug,render.video_key as string);
+    const hls_url = render.presentation_kind==='photo_video'?null:publishedStreamUrl(slug,render.stream_uid as string);
     const video_url = scrub_url ?? hls_url;
 
     const planURL = PUBLIC_MEDIA_PROXY ? await admittedFloorplan(admin,{orgId:listing.org_id,listingId:listing.id},floorplanUrl(listing.details),slug,visibleRefs) : floorplanUrl(listing.details);
@@ -467,7 +469,7 @@ Deno.serve(async (req) => {
       delete agent_card.business_logo_url;
       if (logo) agent_card.business_logo_url=logo.url;
     }
-    for(const key of [render.video_key,render.poster_key])if(typeof key==="string")visibleRefs.keys.push(key);
+    for(const key of render.presentation_kind==='photo_video'?[]:[render.video_key,render.poster_key])if(typeof key==="string")visibleRefs.keys.push(key);
     const staged = Boolean(render.staged);
     const sold_at = (listing.sold_at as string | null) ?? null;
     const status = (listing.status as string) ?? "ready";
@@ -488,6 +490,10 @@ Deno.serve(async (req) => {
     if (!clientMode && JSON.stringify(await listingAgentIdentity(admin,listing.id))!==JSON.stringify(identity))
       throw new HttpError(503,"The listing agent changed. Please refresh.");
     // Byte requests need publication freshness too, not merely lineage approval.
+    const assertCurrentPresentation=async()=>{
+      const current=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,{assets:[],keys:[]},publishedR2Url);
+      if(JSON.stringify(current)!==JSON.stringify(presentation))throw new HttpError(503,'The property website changed. Please refresh.');
+    };
     if (seg[1] === "delivery") {
       const {data:currentRender,error:currentRenderError}=await admin.from("renders").select("id,listing_id,slug,video_key,poster_key,stream_uid,published_at").eq("id",render.id).not("published_at","is",null).maybeSingle();
       if(currentRenderError)throw new HttpError(503,"Published media could not be verified.");
@@ -495,9 +501,11 @@ Deno.serve(async (req) => {
       await assertMediaVisible(admin,listing.id,visibleRefs);
       if(logo && JSON.stringify(await admittedBusinessLogo(admin,listing.org_id,identity?.org_business && (identity.org_business as Record<string,unknown>).business_logo_url,slug))!==JSON.stringify(logo))throw new HttpError(404,"The logo is no longer published.");
       await assertHostingAvailable(admin, listing.org_id);
-      return json(deliveryEnvelope(slug,{orgId:listing.org_id,listingId:listing.id},visibleRefs.keys,render.stream_uid,logo?.key),200,{"Cache-Control":"no-store"});
+      await assertCurrentPresentation();
+      return json(deliveryEnvelope(slug,{orgId:listing.org_id,listingId:listing.id},visibleRefs.keys,render.presentation_kind==='photo_video'?null:render.stream_uid,logo?.key),200,{"Cache-Control":"no-store"});
     }
     const publicDetails = publicListingDetails(listing.details);
+    await assertCurrentPresentation();
     await assertHostingAvailable(admin, listing.org_id);
     return json({
       slug: render.slug,
@@ -528,12 +536,13 @@ Deno.serve(async (req) => {
         sold_at,
       },
       video_url,
+      ...presentation,
       scrub_url,   // all-intra mp4 (byte-range) — use this for frame-accurate scrubbing
       hls_url,     // Cloudflare Stream HLS — adaptive fallback for very long / 4K tours
-      poster: publishedR2Url(slug,render.poster_key as string),
+      poster: render.presentation_kind==='photo_video'?null:publishedR2Url(slug,render.poster_key as string),
       cover_url,
-      duration_s: render.duration_s,
-      speed_factor: render.speed_factor,
+      duration_s: render.presentation_kind==='photo_video'?null:render.duration_s,
+      speed_factor: render.presentation_kind==='photo_video'?null:render.speed_factor,
       published_at: render.published_at,
       chapters,
       agent_card,

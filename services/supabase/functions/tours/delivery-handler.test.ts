@@ -6,11 +6,12 @@ for(const[name,value]of Object.entries({SUPABASE_URL:"https://media-delivery-fix
 let handler!:(req:Request)=>Promise<Response>;const descriptor=Object.getOwnPropertyDescriptor(Deno,"serve")!;
 Object.defineProperty(Deno,"serve",{configurable:true,writable:true,value:(fn:typeof handler)=>{handler=fn;return {};}});
 try{await import("./index.ts");}finally{Object.defineProperty(Deno,"serve",descriptor);}
-async function invoke(options:{unpublish?:boolean;changedObject?:boolean;revokedAtFinal?:boolean;missingPermission?:boolean;crossProperty?:boolean;deleteAtFinal?:boolean;withStream?:boolean;expiredHosting?:boolean;hostingExpiresAtFinal?:boolean;badHostingReceipt?:boolean}={}){
- const original=globalThis.fetch;let renders=0,listings=0,permissions=0,retentionReads=0;const requests:string[]=[];
+async function invoke(options:{unpublish?:boolean;changedObject?:boolean;revokedAtFinal?:boolean;missingPermission?:boolean;crossProperty?:boolean;deleteAtFinal?:boolean;withStream?:boolean;expiredHosting?:boolean;hostingExpiresAtFinal?:boolean;badHostingReceipt?:boolean;photoVideo?:boolean;compositionChanged?:boolean}={}){
+ const original=globalThis.fetch;let renders=0,listings=0,permissions=0,retentionReads=0;const requests:string[]=[];let presentationReads=0;
  const reply=(data:unknown,status=200)=>Response.json(data,{status});
  globalThis.fetch=async(raw,init)=>{
   const req=new Request(raw,init),u=new URL(req.url);assertEquals(u.hostname,"media-delivery-fixture.invalid");requests.push(u.pathname);
+  if(u.pathname.endsWith("/rpc/property_public_presentation")){presentationReads++;return reply(options.photoVideo?{website_theme:"basic",listing_video:{composition_id:render,asset_id:photo,poster_asset_id:other,storage_key:`${base}/${options.compositionChanged&&presentationReads>1?"new-selected":"selected"}.mp4`,poster_key:`${base}/first-clip.jpg`,width:1920,height:1080,duration_s:15,branding_policy:"unbranded",disclosure:"Photo movement",source_asset_ids:[photo]}}:null);}
   if(u.pathname.endsWith("/rpc/media_delivery_admit")){const body=await req.json();assertEquals(body,{p_org:org,p_bytes:0,p_required:true});return reply({admitted:true,legacy_unbudgeted:false});}
   if(u.pathname.endsWith("/rpc/studio_presenter_media_visibility")){
    permissions++;const p=await req.json();assertEquals(p.p_listing,listing);
@@ -22,7 +23,7 @@ async function invoke(options:{unpublish?:boolean;changedObject?:boolean;revoked
   const table=u.pathname.split("/").at(-1);
   if(table==="renders"){
    renders++;if(options.unpublish&&renders>1)return reply(null);
-   return reply({id:render,listing_id:listing,job_id:job,slug,video_key:options.changedObject&&renders>1?video+"changed":video,poster_key:poster,stream_uid:options.withStream?"f".repeat(32):null,published_at:"2026-10-06T00:00:00Z"});
+   return reply({id:render,listing_id:listing,job_id:job,slug,presentation_kind:options.photoVideo?"photo_video":"recorded_walkthrough",video_key:options.changedObject&&renders>1?video+"changed":video,poster_key:poster,stream_uid:options.withStream?"f".repeat(32):null,published_at:"2026-10-06T00:00:00Z"});
   }
   if(table==="listings"){listings++;return reply({id:listing,org_id:org,agent_id:other,deleted_at:options.deleteAtFinal&&listings>1?"2026-10-06":null,details:{gallery:[{url:`https://media.fixture.invalid/${retired}`}],floor_measurements_v1:"private-sentinel"},main_photo_key:null,gallery_asset_ids:[photo]});}
   if(table==="render_jobs")return reply({capture_asset_id:null});
@@ -51,4 +52,11 @@ Deno.test("future protected Stream UID is exact published render identity while 
 Deno.test("actual byte admission refuses expired hosting and deadline withdrawal after assembly",async()=>{
  for(const options of[{expiredHosting:true},{hostingExpiresAtFinal:true}])assertEquals((await invoke(options)).status,404);
  assertEquals((await invoke({badHostingReceipt:true})).status,503);
+});
+
+Deno.test("photo-only anchor delivers selected composition and independent poster without stale anchor/recorded media",async()=>{
+ const r=await invoke({photoVideo:true});assertEquals(r.status,200);assertEquals(r.body.objects,{[gallery]:"renders",[`${base}/selected.mp4`]:"renders",[`${base}/first-clip.jpg`]:"renders"});assert(!Object.hasOwn(r.body.objects,video));assert(!Object.hasOwn(r.body.objects,poster));
+});
+Deno.test("composition reselection during byte authority is refused rather than exposing the previous video",async()=>{
+ const r=await invoke({photoVideo:true,compositionChanged:true});assertEquals(r.status,503);assert(!JSON.stringify(r.body).includes("selected.mp4"));
 });

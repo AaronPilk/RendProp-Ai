@@ -965,38 +965,29 @@ struct VideoSourcePicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            bigActionButton(
-                title: "Upload a video",
-                subtitle: "A clip from Photos or Files — the easiest way",
-                icon: "square.and.arrow.up.fill",
-                filled: true
-            ) {
-                showUploadChoice = true
+            if let onPhotosFirst {
+                bigActionButton(
+                    title: "Start with photos",
+                    subtitle: "Add and polish photos, make a listing video, then publish your website",
+                    icon: "photo.stack.fill",
+                    filled: true
+                ) { onPhotosFirst() }
+                .accessibilityIdentifier("newListing.startWithPhotos")
             }
 
             bigActionButton(
                 title: "Record a walkthrough",
-                subtitle: "Prefer to film now? We'll coach your pace",
+                subtitle: "Optional — walk slowly and steadily, with gentle turns",
                 icon: "record.circle.fill",
-                filled: false
-            ) {
-                showCapture = true
-            }
+                filled: onPhotosFirst == nil
+            ) { showCapture = true }
 
-            // THE THIRD WAY. Not every property needs a video and not every
-            // agent has time to shoot one — this creates the listing and opens
-            // its photos, and the walkthrough can come later or never.
-            if let onPhotosFirst {
-                bigActionButton(
-                    title: "Start with photos",
-                    subtitle: "No video yet — add photos now, film whenever you like",
-                    icon: "photo.stack.fill",
-                    filled: false
-                ) {
-                    onPhotosFirst()
-                }
-                .accessibilityIdentifier("newListing.startWithPhotos")
-            }
+            bigActionButton(
+                title: "Upload a video",
+                subtitle: "Optional — existing walkthrough or drone footage from Photos or Files",
+                icon: "square.and.arrow.up.fill",
+                filled: false
+            ) { showUploadChoice = true }
 
             if let p = importProgress {
                 let clamped = min(max(p, 0), 1)
@@ -1239,9 +1230,12 @@ struct AddVideoFlowView: View {
                     Text(listing.address)
                         .font(.rpTitle)
                         .foregroundStyle(Theme.ink)
-                    Text("Add the walkthrough video for this \(noun). The tour, the share link and the leads all start from it.")
+                    Text("Optional drone-style walkthrough for this \(noun). Record on your phone or upload an existing walkthrough or drone video. Your photo-based listing video and website stay separate.")
                         .font(.rpBody)
                         .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Walk slowly, keep the phone level and steady, and turn gently around corners. A phone gimbal can help smooth doorways and turns; it isn't required.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

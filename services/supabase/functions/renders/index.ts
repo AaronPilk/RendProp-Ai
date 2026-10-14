@@ -29,11 +29,12 @@
 
 import { assertMediaVisible } from "../_shared/media-source-access.ts";
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, respondError, throwRpc } from "../_shared/http.ts";
+import { HttpError, assert, json, pathSegments, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
 import { adminClient, assertNotDeleting, contentOrgForUser, getUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { headObject, publishedR2Url, publishedStreamUrl, R2_BUCKET_RENDERS } from "../_shared/r2.ts";
 import { presignGet } from "../_shared/providers/common.ts";
 import { attestTrialVideo } from "../_shared/trial-video-attestation.ts";
+import { attestPropertyVideo,propertyVideoManifest } from '../_shared/property-video.ts';
 
 const TIERS = ["smooth", "premium4k", "cinematic"];
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -145,14 +146,15 @@ Deno.serve(async (req) => {
         verifiedDuration = (await attest(job.listing_id, job.capture_asset_id))?.duration_s ?? null;
       }
 
-      const { data: render, error } = await db.rpc("publish_render", {
+      const { data: render, error } = await db.rpc("publish_recorded_render", {
         p_job: jobId,
+        p_republish: false,
         p_duration: verifiedDuration ?? optionalNumber(body.duration_s, "duration_s"),
         p_speed: optionalNumber(body.speed_factor, "speed_factor") ?? 2.0,
         // `staged` is deliberately NOT forwarded: virtual-staging disclosure is
         // derived server-side from the job's enhancements (migration 0008).
         p_chapters: chapterRows(body.chapters),
-        p_poster_asset: optionalUuid(body.poster_asset_id, "poster_asset_id"),
+        p_poster: optionalUuid(body.poster_asset_id, "poster_asset_id"),
       });
       if (error) throwRpc(error.message);
       await assertMediaVisible(db, render.listing_id, { renders: [render.id] });
@@ -172,11 +174,34 @@ Deno.serve(async (req) => {
     // failures — audit F-supabase-05).
     if (req.method === "POST" && seg.length === 1 && (seg[0] === "publish-app" || seg[0] === "republish-app")) {
       const republish = seg[0] === "republish-app";
-      const body = await readJson<Record<string, unknown>>(req);
+      const body = await readJsonLimited<Record<string, unknown>>(req,128*1024);
       assert(body.listing_id, 400, "listing_id is required");
       assert(body.asset_id, 400, "asset_id is required");
       const tier = (body.tier as string) ?? "smooth";
       const posterAsset = optionalUuid(body.poster_asset_id, "poster_asset_id");
+      if(body.presentation_kind!==undefined)assert(body.presentation_kind==='photo_video',400,'Choose a supported property-video presentation.');
+      if(body.presentation_kind==='photo_video'){
+        const listing=optionalUuid(body.listing_id,'listing_id')!,asset=optionalUuid(body.asset_id,'asset_id')!;
+        const manifest=propertyVideoManifest(body.composition),key=idem??body.idempotency_key;
+        const publicationID=optionalUuid(body.publication_id,'publication_id');
+        assert(publicationID&&key===`photo-video:${publicationID}`&&posterAsset,400,'Keep the saved property-video publication identity and first-clip poster.');
+        await assertNotDeleting(user.id);
+        await attest(listing,asset); // preserve funded trial duration admission
+        const info=await attestPropertyVideo(user.id,listing,asset,{
+          rpc:(name,args)=>adminClient().rpc(name,args),
+          head:(_bucket,key,signal)=>headObject(R2_BUCKET_RENDERS,key,signal),
+          sign:(_bucket,key,seconds)=>presignGet(R2_BUCKET_RENDERS,key,seconds),fetch,
+        });
+        const org=await contentOrgForUser(user.id,preferredOrg(req),listing,true);
+        assert(org===info.org_id,409,'The property video workspace changed.');
+        const {data:render,error}=await db.rpc('publish_property_video',{p_listing:listing,p_asset:asset,p_manifest:manifest,p_poster:posterAsset,p_key:key});
+        if(error){if(/^RP409:\s*publication_superseded:/.test(error.message))throw new HttpError(409,'A newer property-video selection has replaced this saved request.','publication_superseded');throwRpc(error.message);}
+        await assertMediaVisible(db,listing,{renders:[render.id],assets:[asset]});
+        return json({...render,id:render.id,listing_id:listing,org_id:org,
+          library_org_id:preferredOrg(req)??org,presentation_kind:'photo_video',presentation_asset_id:asset,publication_id:publicationID,
+          share_url:shareUrl(render.slug),unbranded_url:unbrandedUrl(render.slug),republished:republish},republish?200:201);
+      }
+      assert(body.composition===undefined,400,'Photo-video source receipts need their typed presentation.');
       let duration = optionalNumber(body.duration_s, "duration_s");
       const speed = optionalNumber(body.speed_factor, "speed_factor") ?? 2.0;
       await assertNotDeleting(user.id);
@@ -201,13 +226,14 @@ Deno.serve(async (req) => {
       });
       if (jErr) throwRpc(jErr.message);
 
-      const { data: render, error: pErr } = await db.rpc(republish ? "republish_render" : "publish_render", {
+      const { data: render, error: pErr } = await db.rpc("publish_recorded_render", {
         p_job: job.id,
+        p_republish: republish,
         p_duration: duration,
         p_speed: speed,
         // `staged` is deliberately NOT forwarded (see above).
         p_chapters: chapterRows(body.chapters),
-        p_poster_asset: posterAsset,
+        p_poster: posterAsset,
       });
       if (pErr) {
         // Best effort: the RPC refuses to fail a job that already has a render

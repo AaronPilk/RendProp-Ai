@@ -2,7 +2,7 @@ import { HttpError } from "../_shared/http.ts";
 import { assertHostingAvailable } from "../_shared/hosting-retention.ts";
 import { assertMediaVisible, type MediaSourceRefs } from "../_shared/media-source-access.ts";
 
-const RENDER_FIELDS = "id, job_id, listing_id, slug, duration_s, speed_factor, video_key, stream_uid, poster_key, staged, published_at";
+const RENDER_FIELDS = "id, job_id, listing_id, slug, duration_s, speed_factor, video_key, stream_uid, poster_key, staged, published_at, presentation_kind";
 const LISTING_FIELDS = "id, org_id, agent_id, space_type, address, tagline, details, beds, baths, sqft, price_cents, zillow_url, main_photo_key, gallery_asset_ids, lat, lng, status, sold_at, deleted_at";
 const LOCATION_FIELDS = "id, org_id, space_type, lat, lng, deleted_at";
 

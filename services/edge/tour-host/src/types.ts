@@ -112,6 +112,11 @@ export interface AgentCard {
 }
 
 export interface Tour {
+  /** Verified finished landscape composition selected for this property.
+   * Independent of the optional recorded walkthrough below. */
+  listing_video?: import("./property-video").ListingVideo | null;
+  /** Server-resolved paid property entitlement; never a client details flag. */
+  website_theme?: import("./property-design").WebsiteTheme;
   /** Server-resolved, visible property cover photo selected by the owner.
    *  Separate from the video poster; never sourced from client headshots. */
   cover_url?: string | null;

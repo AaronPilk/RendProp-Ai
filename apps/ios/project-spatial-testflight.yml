@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Listing/video update and experimental spatial tools. Normal project remains74.
+    # Photo-first property video and website update. Normal project remains74.
     # Recheck Apple inventory; never automatically renumber an upload retry.
-    CURRENT_PROJECT_VERSION: "77"
+    CURRENT_PROJECT_VERSION: "78"
 targets:
   Rendprop:
     sources:

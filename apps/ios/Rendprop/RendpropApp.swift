@@ -524,7 +524,7 @@ final class AppModel: ObservableObject {
     private func reconcileAfterRestore() {
         for i in listings.indices where !listings[i].isSample {
             let id = listings[i].id
-            let hasTour = tours[id] != nil
+            let hasTour = tours[id] != nil || listings[i].websiteVideoRelPath != nil
             let hasShare = listings[i].serverShareURL != nil
             switch listings[i].status {
             case .processing, .uploading:
@@ -549,7 +549,8 @@ final class AppModel: ObservableObject {
         // Only real listings that still have a local tour and no link can be pending.
         pendingPublish = pendingPublish.filter { id in
             guard let l = listings.first(where: { $0.id == id }), !l.isSample else { return false }
-            return tours[id] != nil && l.serverShareURL == nil
+            let videoPending = FileManager.default.fileExists(atPath: ListingVideoStore.pendingFile(listingID: id, documents: FileStore.documents).path)
+            return (tours[id] != nil || l.websiteVideoRelPath != nil) && (l.serverShareURL == nil || videoPending)
         }
         uploadedRenderAssets = uploadedRenderAssets.filter { entry in
             listings.contains { $0.id == entry.key && !$0.isSample }
@@ -1569,12 +1570,137 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Selects a verified finished file locally. It deliberately makes no cloud
+    /// publication call; an interrupted publication pins its own immutable file.
+    func selectWebsiteVideo(_ record: ListingVideoRecord, for id: UUID, onlyIfUnselected: Bool = false) async throws {
+        if onlyIfUnselected, listings.first(where: { $0.id == id })?.websiteVideoRelPath != nil ||
+            pendingPublish.contains(id) || publishInFlight.contains(id) { return }
+        guard let current = listings.first(where: { $0.id == id }), !current.isSample,
+              isInSelectedWorkspace(current), current.cloudUnavailable != true, !publishInFlight.contains(id),
+              !pendingPublish.contains(id),
+              try ListingVideoStore.pending(listingID: id, documents: FileStore.documents) == nil else { throw PublishError.inFlight }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision, workspace = WorkspaceContext.selectedOrgID
+        let documents = FileStore.documents
+        _ = try await Task.detached(priority: .userInitiated) {
+            try ListingVideoStore.validate(record, documents: documents, listingID: id, ownerID: owner,
+                workspaceID: workspace, serverListingID: current.serverID)
+        }.value
+        guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+              workspace == WorkspaceContext.selectedOrgID, let i = index(of: id), listings[i].serverID == current.serverID,
+              listings[i].cloudUnavailable != true, !publishInFlight.contains(id) else { throw CloudSyncError.identityChanged }
+        if onlyIfUnselected, listings[i].websiteVideoRelPath != nil || pendingPublish.contains(id) { return }
+        try ListingVideoStore.select(record, documents: documents)
+        listings[i].websiteVideo = record
+    }
+
+    /// One source resolver for first publish, republish, relaunch and resumed
+    /// upload completion. Recorded walkthrough storage/chapters stay separate.
+    private func publishSelectedWebsiteVideo(listingID id: UUID, existingAssetID: String? = nil,
+                                             cellularApproved: Bool = false) async throws -> URL {
+        guard let listing = listings.first(where: { $0.id == id }), !listing.isSample,
+              isInSelectedWorkspace(listing), listing.cloudUnavailable != true else { throw PublishError.listingMissing }
+        guard !publishInFlight.contains(id) else { throw PublishError.inFlight }
+        let pending = try ListingVideoStore.pending(listingID: id, documents: FileStore.documents)
+        guard !pendingPublish.contains(id) || pending != nil else { throw PublishError.inFlight }
+        guard let record = pending ?? listing.websiteVideo, listing.websiteVideo?.id == record.id,
+              let serverID = listing.serverID else { throw ListingVideoStore.Failure.invalidRecord }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision, workspace = WorkspaceContext.selectedOrgID
+        let documents = FileStore.documents, expectedSlug = listing.shareSlug
+        func requireCurrent() throws {
+            try Task.checkCancellation()
+            guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                  workspace == WorkspaceContext.selectedOrgID, let current = listings.first(where: { $0.id == id }),
+                  current.serverID == serverID, current.websiteVideo?.id == record.id,
+                  current.cloudUnavailable != true else { throw CloudSyncError.identityChanged }
+        }
+        publishInFlight.insert(id)
+        defer { publishInFlight.remove(id) }
+        do {
+            let output = try await Task.detached(priority: .userInitiated) {
+                try ListingVideoStore.validate(record, documents: documents, listingID: id, ownerID: owner,
+                    workspaceID: workspace, serverListingID: serverID)
+            }.value
+            try requireCurrent()
+            var publication = try ListingVideoStore.beginPublication(record, documents: documents)
+            if !pendingPublish.contains(id) { pendingPublish.append(id) }
+            setLastError(nil, for: id) // Sync below restores any current problem; stale retry copy cannot block itself.
+            try await syncClientContactBeforePublish(id, requireClient: listing.spaceType == .realEstate && RealEstateRoleStore.current.isProducer)
+            await syncListing(id)
+            try requireCurrent()
+            await syncGalleryPhotos(listingLocalID: id, listingServerID: serverID)
+            try requireCurrent()
+            guard !gallerySyncInFlight.contains(id), !gallerySyncPending.contains(id),
+                  let current = listings.first(where: { $0.id == id }), current.needsServerSync != true,
+                  current.factsSync?.conflict != true, current.factsSync?.reviewRequired != true,
+                  current.measurementSync?.pending != true, current.lastError == nil else {
+                throw AIImagePrep.error("Your listing details or photos haven't finished syncing. Review the listing's attention message and retry; the selected video is kept.")
+            }
+            var posterID = publication.posterAssetID
+            let poster = posterID == nil ? await PosterMaker.makePoster(from: output, listingID: id, identity: publication.operationID) : nil
+            if let poster {
+                posterID = try await UploadManager.shared.uploadPoster(fileURL: poster, listingID: serverID)
+                try requireCurrent()
+                publication.posterAssetID = posterID
+                try ListingVideoStore.savePublication(publication, documents: documents)
+            }
+            defer { if let poster { try? FileManager.default.removeItem(at: poster) } }
+            try requireCurrent()
+            guard posterID != nil else {
+                throw AIImagePrep.error("We couldn't prepare the video's cover image. Your selected video is kept; retry before publishing.")
+            }
+            let assetID: String
+            if let remembered = publication.outputAssetID { assetID = remembered }
+            else if let existingAssetID, UploadManager.shared.state?.filePath == record.relativePath { assetID = existingAssetID }
+            else if let remembered = uploadedRenderAssets[id], remembered.relPath == record.relativePath { assetID = remembered.assetID }
+            else {
+                assetID = try await UploadManager.shared.upload(fileURL: output, listingID: serverID, listingLocalID: id,
+                    role: "render", metadata: UploadMetadata(durationS: record.durationS, width: record.width,
+                        height: record.height, bytes: record.bytes, sha256: record.sha256), cellularApproved: cellularApproved)
+            }
+            try requireCurrent()
+            uploadedRenderAssets[id] = UploadedRenderAsset(relPath: record.relativePath, assetID: assetID)
+            publication.outputAssetID = assetID
+            try ListingVideoStore.savePublication(publication, documents: documents)
+            let published = try await api.publishListingVideo(listingID: serverID, assetID: assetID,
+                record: record, operationID: publication.operationID, posterAssetID: posterID, republish: expectedSlug != nil)
+            try requireCurrent()
+            guard expectedSlug == nil || published.slug == expectedSlug else { throw PublishError.noShareURL }
+            guard let i = index(of: id), let url = URL(string: published.shareURL), url.scheme == "https" else { throw PublishError.noShareURL }
+            var updated = listings[i]
+            updated.shareSlug = published.slug; updated.shareURL = published.shareURL
+            if let unbranded = published.unbrandedURL { updated.unbrandedShareURL = unbranded }
+            updated.publishedRenderID = published.renderID; updated.lastRepublishedAt = Date()
+            updated.lastError = nil; updated.status = .ready; listings[i] = updated
+            try ListingVideoStore.retainUploadedAssets(publication, documents: documents)
+            try ListingVideoStore.finishPublication(record, operationID: publication.operationID, documents: documents)
+            pendingPublish.removeAll { $0 == id }; uploadedRenderAssets.removeValue(forKey: id)
+            PushManager.shared.noteTourPublished()
+            return url
+        } catch {
+            if let error = error as? APIError, error.code == "publication_superseded",
+               owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+               workspace == WorkspaceContext.selectedOrgID,
+               let saved = try? ListingVideoStore.publication(listingID: id, documents: documents), saved.record.id == record.id {
+                try? ListingVideoStore.finishPublication(record, operationID: saved.operationID, documents: documents)
+                pendingPublish.removeAll { $0 == id }; uploadedRenderAssets.removeValue(forKey: id)
+            }
+            if !(error is CancellationError), owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+               workspace == WorkspaceContext.selectedOrgID { setLastError(Self.userMessage(for: error), for: id) }
+            if let error = error as? APIError, error.isValidation || error.isNotFound { uploadedRenderAssets.removeValue(forKey: id) }
+            throw error
+        }
+    }
+
     /// Publish the EXISTING local tour — no re-render (decision A2). Used by
     /// the listing detail's "Publish tour", RenderStatusView's "Retry publish",
     /// and the launch-time resume. Returns the public share URL.
     func publishExisting(listingID id: UUID, existingAssetID: String? = nil, cellularApproved: Bool = false) async throws -> URL {
         guard let listing = listings.first(where: { $0.id == id }) else { throw PublishError.listingMissing }
         guard !listing.isSample else { throw PublishError.sampleListing }
+        let savedVideoPublication = try ListingVideoStore.pending(listingID: id, documents: FileStore.documents)
+        if savedVideoPublication != nil || (listing.websiteVideoRelPath != nil && !pendingPublish.contains(id)) {
+            return try await publishSelectedWebsiteVideo(listingID: id, existingAssetID: existingAssetID, cellularApproved: cellularApproved)
+        }
         guard let tour = tours[id] else { throw PublishError.noLocalTour }
         let render = renders[id] ?? Render(listingID: id, tier: .smooth, durationS: tour.durationS)
         let tags = assets[id]?.roomTags ?? []
@@ -1607,6 +1733,10 @@ final class AppModel: ObservableObject {
     func republishExisting(listingID id: UUID, cellularApproved: Bool = false) async throws -> URL {
         guard let listing = listings.first(where: { $0.id == id }) else { throw PublishError.listingMissing }
         guard !listing.isSample else { throw PublishError.sampleListing }
+        let savedVideoPublication = try ListingVideoStore.pending(listingID: id, documents: FileStore.documents)
+        if listing.websiteVideoRelPath != nil || savedVideoPublication != nil {
+            return try await publishSelectedWebsiteVideo(listingID: id, cellularApproved: cellularApproved)
+        }
         guard let serverID = listing.serverID, let currentSlug = listing.shareSlug, let shareURL = listing.serverShareURL else {
             return try await publishExisting(listingID: id, cellularApproved: cellularApproved)
         }
@@ -1773,11 +1903,12 @@ final class AppModel: ObservableObject {
         guard Config.useLiveBackend else { return }
         guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }   // never prompts on its own
         for id in pendingPublish {
-            guard let l = listings.first(where: { $0.id == id }), !l.isSample, tours[id] != nil else {
+            guard let l = listings.first(where: { $0.id == id }), !l.isSample, tours[id] != nil || l.websiteVideoRelPath != nil else {
                 pendingPublish.removeAll { $0 == id }
                 continue
             }
-            guard l.serverShareURL == nil else {
+            let savedVideoPublication = FileManager.default.fileExists(atPath: ListingVideoStore.pendingFile(listingID: id, documents: FileStore.documents).path)
+            guard l.serverShareURL == nil || savedVideoPublication else {
                 pendingPublish.removeAll { $0 == id }
                 continue
             }
@@ -1809,7 +1940,13 @@ final class AppModel: ObservableObject {
         guard UploadManager.shared.state?.role == "render" else { return }
         guard let l = listings.first(where: { $0.serverID == serverListingID && !$0.isSample }) else { return }
         let id = l.id
-        guard pendingPublish.contains(id), tours[id] != nil, l.serverShareURL == nil else { return }
+        let videoPublication = try? ListingVideoStore.pending(listingID: id, documents: FileStore.documents)
+        guard pendingPublish.contains(id), tours[id] != nil || l.websiteVideoRelPath != nil,
+              l.serverShareURL == nil || videoPublication != nil else { return }
+        if let videoPublication {
+            guard UploadManager.shared.state?.filePath == videoPublication.relativePath,
+                  l.websiteVideo?.id == videoPublication.id else { return }
+        }
         guard !renderCoordinator.isRunning(id), !publishInFlight.contains(id) else { return }   // an in-app publish is awaiting this upload
         guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
         _ = try? await publishExisting(listingID: id, existingAssetID: assetID)
@@ -1840,7 +1977,7 @@ final class AppModel: ObservableObject {
 enum PosterMaker {
     /// A 1280 px JPEG (q 0.8) of the tour's first frame in Caches. Nil on any
     /// failure — the poster is best effort.
-    static func makePoster(from videoURL: URL, listingID: UUID) async -> URL? {
+    static func makePoster(from videoURL: URL, listingID: UUID, identity: UUID? = nil) async -> URL? {
         let asset = AVURLAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
@@ -1851,7 +1988,8 @@ enum PosterMaker {
         guard let result = try? await generator.image(at: time) else { return nil }
         let cgImage = result.image
         let dir = FileStore.caches.appendingPathComponent("posters", isDirectory: true)
-        let out = dir.appendingPathComponent("poster-\(listingID.uuidString).jpg")
+        let suffix = identity.map { "-\($0.uuidString)" } ?? ""
+        let out = dir.appendingPathComponent("poster-\(listingID.uuidString)\(suffix).jpg")
         let written: Bool = await Task.detached(priority: .userInitiated) {
             guard let data = UIImage(cgImage: cgImage).jpegData(compressionQuality: 0.8) else { return false }
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -2142,6 +2280,13 @@ final class RenderCoordinator: ObservableObject {
             model.setStatus(.ready, for: id)
             update(id, run) { $0.stage = .published; $0.phase = "Your tour is ready"; $0.isRunning = false }
             Haptics.success()
+            return
+        }
+        // A separately selected photo-video owns website presentation. A new
+        // optional recorded walkthrough stays local until explicitly chosen.
+        if model.listings.first(where: { $0.id == id })?.websiteVideoRelPath != nil {
+            model.setStatus(.ready, for: id)
+            update(id, run) { $0.stage = .rendered; $0.phase = "Walkthrough saved separately"; $0.isRunning = false }
             return
         }
         await runPublish(listingID: id, run: run, allowEnhance: true)
@@ -3224,7 +3369,10 @@ struct RendpropApp: App {
             // MARK: - push additions (1.0.2)
             // Reads the OS answer and, when it is already yes, refreshes the
             // APNs token. Prompts nothing — see Push/PushManager.swift.
-            .task { push.start() }
+            .task {
+                push.start()
+                WebsiteUpgradeStore.shared.start()
+            }
             // The one root sheet slot. The permission pre-prompt is presented
             // from HERE so that EVERY publish path reaches it, not just the
             // detail screen's button.
@@ -3887,7 +4035,7 @@ struct HomeDashboardView: View {
             // Same two inputs the listing screen's tile passes: the listing's
             // own edited photos, and its aerial as an optional opening clip.
             ReelStudioView(listing: listing,
-                           photos: EnhancedPhoto.loadAll(listingID: listing.id),
+                           photos: (try? EnhancedPhoto.loadForListing(listingID: listing.id)) ?? [],
                            extraClipURLs: listing.aerialURL.map { [$0] } ?? [])
                 .environmentObject(model)
         }

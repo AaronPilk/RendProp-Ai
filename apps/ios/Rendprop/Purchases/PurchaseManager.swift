@@ -783,6 +783,9 @@ final class PurchaseManager: ObservableObject {
             return false
         }
         // 2. Ours?
+        // Website credits have a separate property-bound fulfilment engine.
+        // Leave them unfinished here; they must never become plan entitlements.
+        if transaction.productID == "com.rendprop.app.website.premium.property" { return false }
         guard RendpropProducts.plan(for: transaction.productID) != nil else {
             // A verified product this build does not recognize may still be
             // paid. Never discard it merely to stop StoreKit redelivery.

@@ -217,6 +217,12 @@ private struct ListingToolboxGrid: View {
                                       icon: "film.stack", gradient: RPGradient.reel, ai: true, dimmed: sample),
                 disabled: sample, accessibilityID: "detail.reelStudio", action: openReel
             )
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "Drone-style walkthrough", sub: sample ? createFirst : "Optional · record or upload",
+                                      icon: "video", gradient: RPGradient.drone, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.recordedWalkthrough",
+                destination: { AnyView(RecordedWalkthroughView(listing: destinationListing())) }
+            )
             ListingToolButtonTile(
                 card: ListingToolCard(title: space == .realEstate ? "Tag rooms" : "Tag areas",
                                       sub: sample ? createFirst : (asset == nil ? "Needs your own video" : "Tap-to-jump chapters"),
@@ -273,6 +279,56 @@ private struct ListingToolboxGrid: View {
                 .accessibilityIdentifier("detail.spatialComingSoon")
 #endif
         }
+    }
+}
+
+private struct RecordedWalkthroughView: View {
+    let listing: Listing
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var workspace = WorkspaceStore.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var scope = NativePresentationScope(actorID: AuthStore.shared.userID, orgID: WorkspaceContext.selectedOrgID)
+    private var currentListing: Listing { model.listings.first(where: { $0.id == listing.id }) ?? listing }
+    private var isCurrent: Bool {
+        scope.matches(actorID: auth.userID, orgID: WorkspaceContext.selectedOrgID) &&
+        model.listings.contains { $0.id == listing.id && $0.cloudUnavailable != true && model.isInSelectedWorkspace($0) }
+    }
+    private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
+    private var asset: CaptureAsset? { model.assets[listing.id] }
+    private var roomTags: [RoomTag] {
+        let speed = tour?.speedFactor ?? 1
+        guard speed.isFinite, speed > 0 else { return [] }
+        return (asset?.roomTags ?? []).map { RoomTag(name: $0.name, tMs: Int((Double($0.tMs) / speed).rounded())) }
+    }
+    var body: some View {
+        ScrollView {
+            if isCurrent {
+            VStack(alignment: .leading, spacing: Theme.spacing) {
+                Text("Optional recorded walkthrough").font(.rpTitle).foregroundStyle(Theme.ink)
+                Text("Record on your phone or upload existing walkthrough or drone footage. Walk slowly, keep the camera level and steady, and turn gently around corners. A phone gimbal can help smooth doorways and turns.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+                if let url = tour?.url ?? asset?.localURL {
+                    PlayerWebView(localVideoURL: url, roomTags: roomTags, listing: currentListing)
+                        .frame(height: 460).clipShape(RoundedRectangle(cornerRadius: Theme.radius))
+                }
+                NavigationLink { AddVideoFlowView(listing: currentListing) } label: {
+                    Label("Record or upload footage", systemImage: "video.badge.plus")
+                        .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(14)
+                        .background(Theme.accent).foregroundStyle(.white).clipShape(RoundedRectangle(cornerRadius: 12))
+                }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("walkthrough.addFootage")
+                if let asset {
+                    NavigationLink { ReviewSubmitView(listing: currentListing, asset: asset) } label: {
+                        Label("Review and create the walkthrough", systemImage: "sparkles")
+                    }.accessibilityIdentifier("walkthrough.review")
+                }
+                Text("This recorded video stays separate from the photo-based listing presentation. Adding footage doesn't replace your chosen property video.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }.padding()
+            } else { Text("Your account or listing changed. Reopen the walkthrough from your listing.").padding() }
+        }.background(Theme.bg).navigationTitle("Drone-style walkthrough").navigationBarTitleDisplayMode(.inline)
+        .onChange(of: auth.userID) { _ in if !isCurrent { dismiss() } }
+        .onChange(of: workspace.selected?.id) { _ in if !isCurrent { dismiss() } }
     }
 }
 
@@ -516,6 +572,7 @@ struct FlythroughDetailView: View {
     @State private var tagsBeforeEdit: [RoomTag] = []
     @State private var chapterSyncNote: String?
     @State private var playerRefresh = UUID()
+    @State private var websiteVideoPlayer: AVPlayer?
     @State private var showAerialIntro = false
     /// The toolbox's "Make a reel" tile presents Reel Studio DIRECTLY now.
     ///
@@ -616,6 +673,7 @@ struct FlythroughDetailView: View {
     /// Clear only this screen's presentation. Shared admitted jobs and their
     /// account/workspace completion fences continue to own background work.
     private func invalidatePresentation() {
+        websiteVideoPlayer?.pause(); websiteVideoPlayer = nil
         filesTask?.cancel(); filesTask = nil; filesStamp = nil
         mediaItems = []; availableRerenderSource = nil; openedFile = nil
         filePhotoExport = nil; filePhotoExportAdmission = nil; filePackageExtras = []; packageError = nil
@@ -711,6 +769,15 @@ struct FlythroughDetailView: View {
     /// Prefer the rendered tour; fall back to the raw capture.
     private var playbackURL: URL? { tour?.url ?? asset?.localURL }
 
+    private var selectedWebsiteVideoURL: URL? {
+        guard let selected = currentListing.websiteVideo, selected.listingID == listing.id,
+              selected.ownerID == auth.userID, selected.workspaceID == WorkspaceContext.selectedOrgID,
+              selected.serverListingID == currentListing.serverID,
+              let url = try? ListingVideoStore.fileURL(selected, documents: FileStore.documents),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return url
+    }
+
     /// The tour's retime factor, sanitized: a 0/NaN factor would trap the
     /// integer conversions below (F-A-26), so anything degenerate reads as 1×.
     private var safeSpeedFactor: Double {
@@ -764,6 +831,12 @@ struct FlythroughDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if !currentListing.isSample { ListingClientContactSummary(listing: currentListing) }
+                if !currentListing.isSample {
+                    NavigationLink { WebsiteDesignPickerView(listing: currentListing) } label: {
+                        nextStepHeader("rectangle.3.group", "Website design", "Choose the look of this property's website.")
+                            .padding(14).background(Theme.card, in: RoundedRectangle(cornerRadius: 14))
+                    }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("listing.websiteDesign")
+                }
                 if let shareURL {
                     shareSection(shareURL)
                 } else {
@@ -877,7 +950,7 @@ struct FlythroughDetailView: View {
         // this screen stayed put, so the FILES scan cannot trust its stamp.
         .fullScreenCover(isPresented: $showReelStudio, onDismiss: { loadFiles(force: true) }) {
             ReelStudioView(listing: currentListing,
-                           photos: EnhancedPhoto.loadAll(listingID: currentListing.id),
+                           photos: (try? EnhancedPhoto.loadForListing(listingID: currentListing.id)) ?? [],
                            extraClipURLs: currentListing.aerialURL.map { [$0] } ?? [])
                 .environmentObject(model)
         }
@@ -960,10 +1033,33 @@ struct FlythroughDetailView: View {
 
     private var tourSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(playbackURL != nil ? "YOUR TOUR" : "SAMPLE TOUR")
+            Text(currentListing.isSample ? "SAMPLE TOUR" : "LISTING VIDEO")
                 .font(.rpKicker).foregroundStyle(Theme.inkDim)
             Group {
-                if currentListing.isSample, space != .realEstate, !PlayerWebView.bundledDemoAvailable,
+                if currentListing.websiteVideoRelPath != nil {
+                    if let selectedWebsiteVideoURL {
+                        VideoPlayer(player: websiteVideoPlayer)
+                            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                            .task(id: currentListing.websiteVideo?.id) {
+                                websiteVideoPlayer?.pause()
+                                guard hasCurrentPresentationContext else { return }
+                                websiteVideoPlayer = AVPlayer(url: selectedWebsiteVideoURL)
+                            }
+                            .onDisappear { websiteVideoPlayer?.pause() }
+                    } else {
+                        Text("Your selected listing video isn't available on this phone. The published page is unchanged; reopen Make a video to choose a saved file.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim).padding()
+                    }
+                } else if !currentListing.isSample {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Your property video starts with photos", systemImage: "photo.on.rectangle")
+                            .font(.rpHeadline).foregroundStyle(Theme.ink)
+                        Text("Add and polish property photos, then choose Listing in Make a video. Your landscape video becomes this listing's presentation; a recorded walkthrough is an optional separate tool.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                        Button("Make a listing video") { showReelStudio = true }
+                            .buttonStyle(.borderedProminent).accessibilityIdentifier("listing.primaryVideoStart")
+                    }.padding()
+                } else if currentListing.isSample, space != .realEstate, !PlayerWebView.bundledDemoAvailable,
                    let demo = PlayerWebView.hostedDemoEmbedURL(for: space) {
                     // A build WITHOUT player/demo.mp4: a venue's / bar's / gym's
                     // sample plays the hosted demo flythrough presented as a
@@ -978,13 +1074,13 @@ struct FlythroughDetailView: View {
                 }
             }
                 .id(playerRefresh)
-                .frame(height: 460)
+                .frame(height: currentListing.isSample ? 460 : 230)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                         .strokeBorder(Theme.border)
                 )
-            Text(tourCaption)
+            Text(currentListing.isSample ? tourCaption : currentListing.websiteVideoRelPath != nil ? "Selected for this listing's website. Publish or Republish to update the live page. Your recorded walkthrough stays separate." : "A photo-based listing video is the main presentation. Open Drone-style walkthrough for recorded footage.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
         }
@@ -1014,11 +1110,11 @@ struct FlythroughDetailView: View {
                 name: "Your link",
                 blurb: "\(space.profileCardName) + lead capture. Email, social, texts, QR.",
                 shareSubject: currentListing.address,
-                shareMessage: "Fly through \(currentListing.address) — scroll to walk the \(space.spaceNoun).",
+                shareMessage: "See photos and the property video for \(currentListing.address).",
                 shareTitle: "Share your link",
                 qrCaption: space == .realEstate
-                    ? "Scan to open your branded tour — flyers, sign riders, open-house sheets."
-                    : "Scan to open your branded tour — flyers, counter cards, the front window.")
+                    ? "Scan to open your property website — flyers, sign riders, open-house sheets."
+                    : "Scan to open your property website — flyers, counter cards, the front window.")
 
             if let mls = currentListing.serverUnbrandedURL {
                 linkCard(
@@ -1060,7 +1156,9 @@ struct FlythroughDetailView: View {
                     Text("Made changes?")
                         .font(.rpHeadline)
                         .foregroundStyle(Theme.ink)
-                    Text("Republish sends this phone's latest details, photos and walkthrough to the live page. Your links stay the same — flyers, QR codes and the MLS field keep working.")
+                    Text(currentListing.websiteVideoRelPath != nil
+                         ? "Republish sends the selected listing video, details and photos to the live website. Your links stay the same; the optional recorded walkthrough stays separate."
+                         : "Republish sends this phone's latest details, photos and walkthrough to the live page. Your links stay the same — flyers, QR codes and the MLS field keep working.")
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1206,7 +1304,7 @@ struct FlythroughDetailView: View {
     // stranger can arrive at it through a search box.
 
     @ViewBuilder private var searchIndexingCard: some View {
-        if !currentListing.isSample, tour != nil || shareURL != nil {
+        if !currentListing.isSample, tour != nil || currentListing.websiteVideoRelPath != nil || shareURL != nil {
             VStack(alignment: .leading, spacing: 10) {
                 Text("SEARCH").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 Toggle(isOn: Binding(get: { listOnGoogle },
@@ -1259,13 +1357,30 @@ struct FlythroughDetailView: View {
     @ViewBuilder private var nextStepCard: some View {
         if currentListing.isSample {
             sampleCard
-        } else if tour != nil {
+        } else if tour != nil || currentListing.websiteVideoRelPath != nil {
             publishCard
-        } else if let a = asset {
-            createTourCard(a)
         } else {
-            addVideoCard
+            startListingVideoCard
         }
+    }
+
+    private var startListingVideoCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            nextStepHeader("photo.on.rectangle", "Build your listing presentation",
+                "Add property photos, polish the ones you want, then make a landscape Listing video. Review it and choose Use on listing website before publishing.")
+            lastErrorBanner
+            NavigationLink { PhotoStudioView(listing: currentListing, entry: .photos) } label: {
+                nextStepLabel("Add or review photos", "photo.stack")
+            }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("listing.startPhotos")
+            Button { showReelStudio = true } label: {
+                Label("Make a listing video", systemImage: "film.stack")
+                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 12)
+                    .background(Theme.card).foregroundStyle(Theme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }.buttonStyle(ScalePressStyle()).accessibilityIdentifier("listing.startVideo")
+            Text("Recording or uploading a drone-style walkthrough is optional. Its separate tool is in the toolbox.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }.padding(14).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
     }
 
     @ViewBuilder private var lastErrorBanner: some View {
@@ -1308,7 +1423,7 @@ struct FlythroughDetailView: View {
               let upload = publishUploads.state, upload.status == .queued,
               upload.role == "render", upload.listingID == currentListing.serverID,
               upload.listingLocalID == nil || upload.listingLocalID == listing.id,
-              let tour, upload.filePath == FileStore.relativePath(for: tour.url),
+              upload.filePath == (currentListing.websiteVideo?.relativePath ?? tour.map { FileStore.relativePath(for: $0.url) }),
               model.isInSelectedWorkspace(currentListing), currentListing.cloudUnavailable != true else { return false }
         return true
     }
@@ -1345,7 +1460,7 @@ struct FlythroughDetailView: View {
                     .accessibilityIdentifier("phase1.publishCellular")
             } else {
                 Button { publishNow() } label: {
-                    nextStepLabel(hasPublishProblem ? "Retry publish" : "Publish tour", "icloud.and.arrow.up")
+                    nextStepLabel(hasPublishProblem ? "Retry publish" : currentListing.websiteVideoRelPath != nil ? "Publish listing" : "Publish tour", "icloud.and.arrow.up")
                 }
                 .buttonStyle(ScalePressStyle())
                 .accessibilityIdentifier("phase1.publish")
@@ -1374,7 +1489,7 @@ struct FlythroughDetailView: View {
     private var addVideoCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             nextStepHeader("video.badge.plus", "Add a walkthrough video",
-                           "Record a walkthrough or upload a clip. The tour, share link and leads all start from that video.")
+                           "Optional: record a steady walkthrough or upload existing footage. Your photo-based listing video and property website work without it.")
             lastErrorBanner
             NavigationLink {
                 AddVideoFlowView(listing: currentListing)
@@ -2368,7 +2483,7 @@ struct FlythroughDetailView: View {
     /// Publish the EXISTING local render (no re-render). Retain this tap while
     /// the anonymous connection is recovered; registration is never required.
     private func publishNow(cellularApproved: Bool = false) {
-        guard !isPublishing, tour != nil, !currentListing.isSample,
+        guard !isPublishing, tour != nil || currentListing.websiteVideoRelPath != nil, !currentListing.isSample,
               model.isInSelectedWorkspace(currentListing), currentListing.cloudUnavailable != true else { return }
         let context = NativeMediaExportContext()
         connection.run {
@@ -2409,7 +2524,7 @@ struct FlythroughDetailView: View {
     }
 
     private func publishWithSession(cellularApproved: Bool = false) {
-        guard !isPublishing, tour != nil, !currentListing.isSample else { return }
+        guard !isPublishing, tour != nil || currentListing.websiteVideoRelPath != nil, !currentListing.isSample else { return }
         // The toggle above the button is the answer whether or not it was
         // touched: it is drawn at the workspace's own default, so publishing
         // without touching it has to mean what it says on screen. A no-op when
@@ -8032,7 +8147,7 @@ struct AerialIntroSheet: View {
         }
         .fullScreenCover(isPresented: $showReelStudio) {
             ReelStudioView(listing: listing,
-                           photos: EnhancedPhoto.loadAll(listingID: listing.id),
+                           photos: (try? EnhancedPhoto.loadForListing(listingID: listing.id)) ?? [],
                            extraClipURLs: clipURL.map { [$0] } ?? [])
                 .environmentObject(model)
         }
@@ -8861,6 +8976,8 @@ struct PendingReelRequest: Codable, Sendable {
     var qualityAttempt: Int? = nil
     var framing: String? = nil
     var outputAspect: String? = nil
+    var sourceAssetID: String? = nil
+    var photoProvenanceID: String? = nil
     static func key(_ context: Context) -> String {
         "reel.request.\(context.listingID).\(context.owner).\(context.workspace?.uuidString ?? "local")"
     }
@@ -8935,6 +9052,8 @@ struct PendingReelBatch: Codable, Sendable {
     }
     struct Photo: Codable, Sendable {
         let id: String; let jpegBase64: String; let shot: Shot?
+        var sourceAssetID: String? = nil
+        var photoProvenanceID: String? = nil
     }
     let context: PendingReelRequest.Context
     let id: UUID
@@ -8943,7 +9062,12 @@ struct PendingReelBatch: Codable, Sendable {
     let aspect: String
     let spaceType: String
     var completedPaths: [String]
+    var completedSources: [ListingVideoSource]? = nil
     var framing: String? = nil
+    var scenePlanVersion: Int? = nil
+    var scenePlanningNotice: String? = nil
+    var automaticOrder: Bool? = nil
+    var usedPlanningFallback: Bool? = nil
     static func file(_ context: PendingReelRequest.Context) -> URL {
         FileStore.documents.appendingPathComponent("reels/\(context.listingID.uuidString)-batch", isDirectory: true)
             .appendingPathComponent(PendingReelRequest.file(context).lastPathComponent)
@@ -8962,9 +9086,14 @@ struct PendingReelBatch: Codable, Sendable {
         guard batch.context == context, (1...VideoSelectionCapacity.maximumPhotos).contains(batch.photos.count),
               Set(batch.photos.map(\.id)).count == batch.photos.count,
               batch.completedPaths.count <= batch.photos.count,
+              batch.completedSources == nil || batch.completedSources?.count == batch.completedPaths.count,
               Set(batch.completedPaths).count == batch.completedPaths.count,
               ["9:16", "16:9"].contains(batch.aspect),
               batch.framing == nil || batch.framing == "preserve_photo",
+              batch.scenePlanVersion == nil || (batch.scenePlanVersion == 1 && batch.photos.enumerated().allSatisfy({ index, photo in
+                  photo.shot?.photoID == photo.id && photo.shot?.order == index + 1 && photo.shot?.seconds == 5 &&
+                  ["fly_through", "push_in", "side_glide", "pull_back"].contains(photo.shot?.motion ?? "")
+              })),
               batch.photos.reduce(0, { $0 + $1.jpegBase64.utf8.count }) <= VideoSelectionCapacity.maximumPreparedBase64Bytes,
               batch.photos.allSatisfy({ !$0.id.isEmpty && $0.jpegBase64.utf8.count <= VideoSelectionCapacity.maximumPhotoBase64Bytes && !(Data(base64Encoded: $0.jpegBase64)?.isEmpty ?? true) }),
               batch.completedPaths.allSatisfy({ path in
@@ -9023,7 +9152,7 @@ struct ReelClipIssue: Identifiable {
         let original = AIFailure(error, title: title)
         let message: String
         if let refusal = error as? ReelQualityRefusal, refusal.mayRetry {
-            message = "The AI changed the property, so this clip was held. Choose one safer retry or use motion from your original photo."
+            message = "The AI changed the property, so this clip was held. Choose one safer retry or keep your selected photo as a still shot."
         } else if let api = error as? APIError, (api.status ?? 0) >= 500 || api.code == "upstream" || api.code == "internal" {
             message = "The video service is unavailable right now, so this clip wasn't made. If it keeps happening, contact support from Settings → Legal & support."
         } else if AIFailure.isOffline(error) {
@@ -9048,6 +9177,7 @@ struct ReelStudioView: View {
     let listing: Listing
     let photos: [EnhancedPhoto]
     @State private var refreshedPhotos: [EnhancedPhoto]?
+    @State private var savedPhotoError: String?
     @State private var showReelPhotos = false
     private var reelPhotos: [EnhancedPhoto] { refreshedPhotos ?? photos }
     /// Finished clips to put in front of the photo clips (the aerial intro).
@@ -9098,17 +9228,18 @@ struct ReelStudioView: View {
         get { videoPurpose?.portrait ?? true }
         nonmutating set { videoPurpose = VideoAspectChoice(portrait: newValue) }
     }
-    @State private var captionsOn = true            // intro title card + Rendprop mark on export
-    /// The BIG burned-in words on each shot — three or four, upper case, held for
-    /// the picture. On by default and deliberately so: this is what separates a
-    /// reel that looks posted from one that looks generated, and the owner's whole
-    /// bet is that the app produces the former without being asked.
-    @State private var bigCaptionsOn = true
+    @State private var captionsOn = false           // Optional social title/mark, under Advanced.
+    /// Optional picture labels remain available under Advanced. A fresh video
+    /// starts with clean imagery and no unexplained text overlays.
+    @State private var bigCaptionsOn = false
     @State private var bigCaptionStyle: ReelComposer.ShotCaptionStyle = .lowerThird
     /// Defaults to hard cuts, and the copy under the picker says why.
     @State private var reelTransition: ReelComposer.Transition = .cut
     @State private var motionPrompt = "" // Legacy draft field; never dispatched by preset UI.
-    @State private var cameraMove: ReelCameraMove = .flyThrough
+    @State private var cameraMove: ReelCameraMove? = nil // Automatic per-photo motion by default.
+    @State private var automaticOrder = true
+    @State private var showVideoAdvanced = false
+    @State private var scenePlanningNotice: String?
     private var completedClips: Int { get { work.completedClips } nonmutating set { work.completedClips = newValue } }
     private var originalPhotoMotionShots: Int { get { work.originalPhotoMotionShots } nonmutating set { work.originalPhotoMotionShots = newValue } }
     private var totalClips: Int { get { work.totalClips } nonmutating set { work.totalClips = newValue } }
@@ -9246,9 +9377,10 @@ struct ReelStudioView: View {
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .interactiveDismissDisabled(connection.isWaiting)
         .onAppear {
+            refreshVideoPhotos()
             work.isPresented = true
             if !seededExtras {
-                selectedExtras = extraClipURLs
+                selectedExtras = [] // Saved aerials stay available, but new videos start with the chosen photos only.
                 seededExtras = true
             }
             // The tone that suits this trade, picked once. Guarded like
@@ -9262,8 +9394,7 @@ struct ReelStudioView: View {
             if aiScript.isEmpty, let script = CloudVoiceStore.script(listing.id) { aiScript = script }
             if voiceover == nil, let saved = CloudVoiceStore.voice(listing.id) {
                 voiceover = saved
-                voiceMode = .aiVoice
-                voiceNote = "Narration saved from Studio."
+                voiceNote = "Saved narration is available under Advanced."
             }
             // Pick up clips a previous run generated and was charged for but
             // never stitched — the reel equivalent of resuming a pending aerial.
@@ -9326,11 +9457,7 @@ struct ReelStudioView: View {
         // Guideline 5.1.2(i) — each selected photo is animated by a
         // third-party video model. Agreed once per device; declining closes
         // the studio.
-        .sheet(isPresented: $showReelPhotos, onDismiss: {
-            refreshedPhotos = EnhancedPhoto.loadAll(listingID: listing.id)
-            let available = Set(reelPhotos.map(\.id))
-            selected.removeAll { !available.contains($0) }
-        }) {
+        .sheet(isPresented: $showReelPhotos, onDismiss: { refreshVideoPhotos() }) {
             NavigationStack {
                 PhotoStudioView(listing: listing, entry: .photos)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showReelPhotos = false } } }
@@ -9400,14 +9527,6 @@ struct ReelStudioView: View {
     }
 
     @ViewBuilder private var configuredSetupSection: some View {
-        if space == .realEstate && !listing.isSample {
-            NavigationLink { ProductionPlanView(listing: listing) } label: {
-                Label("Plan your shots and collect video takes", systemImage: "checklist")
-                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(14)
-                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
-            }
-        }
-        nativeSetupCard
         setupHeader
 
         // Unfinished, ALREADY-PAID-FOR clips come first, and deliberately NOT
@@ -9424,9 +9543,7 @@ struct ReelStudioView: View {
         // the same rule the listing screen's FILES section follows.
         lastReelCard
 
-        if !extraClipURLs.isEmpty { clipsCard }
         stepPhotosCard
-        stepVoiceCard
         stepMakeCard
     }
 
@@ -9485,7 +9602,7 @@ struct ReelStudioView: View {
                     localNarration: voiceMode != .off && voiceover != nil && voiceID == nil,
                     photos: sharedPhotos,
                     localExtraClipCount: selectedExtras.count, updatedAt: ISO8601DateFormatter().string(from: Date()),
-                    motionPreset: cameraMove.rawValue)
+                    motionPreset: cameraMove?.rawValue, automaticOrder: automaticOrder)
                 let document = try await cloud.saveCloudNativeReel(draft, listingID: sid, orgID: org, revision: nativeSetupRevision)
                 guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
                 nativeSetupRevision = document.revision
@@ -9497,10 +9614,11 @@ struct ReelStudioView: View {
                 guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
                 guard let document else { nativeSetupRevision = 0; nativeSetupNotice = "No saved setup yet. Save this one to continue at the office."; return }
                 let draft = document.payload
-                portrait = draft.portrait; captionsOn = draft.titleCard; bigCaptionsOn = draft.shotCaptions
+                let planning = draft.planningSetup
+                portrait = draft.portrait; captionsOn = draft.titleCard; bigCaptionsOn = planning.pictureLabels
                 bigCaptionStyle = ReelComposer.ShotCaptionStyle(rawValue: draft.captionStyle) ?? .lowerThird
                 reelTransition = ReelComposer.Transition(rawValue: draft.transition) ?? .cut
-                motionPrompt = ""; cameraMove = draft.motionPreset.flatMap(ReelCameraMove.init(rawValue:)) ?? .flyThrough; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
+                motionPrompt = ""; cameraMove = planning.motionPreset.flatMap(ReelCameraMove.init(rawValue:)); automaticOrder = planning.automaticOrder; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
                 wordCaptionsOn = draft.wordCaptions
                 let available = Set(reelPhotos.map(\.id))
                 selected = draft.photos.compactMap { photo in
@@ -9520,7 +9638,7 @@ struct ReelStudioView: View {
                     if draft.voiceMode != "off" { missing.append(draft.localNarration ? "The recorded narration is on its original iPhone." : "Save its narration from Cloud files.") }
                 }
                 nativeSetupRevision = document.revision
-                nativeSetupNotice = (["Saved setup loaded."] + missing).joined(separator: " ")
+                nativeSetupNotice = (["Saved setup loaded."] + (planning.notice.map { [$0] } ?? []) + missing).joined(separator: " ")
             }
         } catch is CancellationError { return }
         catch {
@@ -9538,8 +9656,8 @@ struct ReelStudioView: View {
                 .font(.rpTitle)
                 .foregroundStyle(Theme.ink)
             Text(extraClipURLs.isEmpty
-                 ? (portrait ? "Your photos become one vertical social video. Three steps." : "Your photos become one landscape listing video. Three steps.")
-                 : "Your opening clip comes first, then your photos. Three steps.")
+                 ? (portrait ? "Choose photos. Rendprop plans the scenes and motion for your social video." : "Choose photos. Rendprop plans the scenes and motion for your listing video.")
+                 : "Choose photos. An optional opening clip can be added under Advanced.")
                 .font(.rpBody)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -9552,16 +9670,13 @@ struct ReelStudioView: View {
     /// The whole flow on one line, so the voice step is visible before you
     /// scroll to it.
     private var stepsRail: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             stepChip("1", "Photos")
-            Image(systemName: "arrow.right")
-                .font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
-            stepChip("2", "🎙 Voice")
-            Image(systemName: "arrow.right")
-                .font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
-            stepChip("3", "Make it")
-        }
-        .padding(.top, 2)
+            Image(systemName: "arrow.right").font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
+            stepChip("2", "Create")
+            Image(systemName: "arrow.right").font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
+            stepChip("3", "Review")
+        }.padding(.top, 2)
     }
 
     private func stepChip(_ number: String, _ title: String) -> some View {
@@ -9589,21 +9704,42 @@ struct ReelStudioView: View {
     private var stepPhotosCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                stepTitle(1, "PICK PHOTOS", "Tap them in the order you want them. Up to \(VideoSelectionCapacity.maximumPhotos) photos.")
+                stepTitle(1, "PICK PHOTOS", "Choose up to \(VideoSelectionCapacity.maximumPhotos) photos. We organize the scenes for you.")
                 Text("\(selected.count)/\(VideoSelectionCapacity.maximumPhotos)")
                     .font(.rpCaption)
                     .foregroundStyle(selected.count >= 1 ? Theme.accent : Theme.inkDim)
             }
             photoPickerGrid
-            Text("Each photo becomes about 5 seconds of video. Larger selections take longer to generate. For more than 20 photos, the video keeps your chosen order.")
+            Text("Each photo becomes about 5 seconds of video. Larger selections take longer. Automatic planning works across the entire selection.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if videoPurpose == .listing {
+                Text("Include the front exterior, entry, main rooms and backyard for a complete property video. Confident scenes are arranged in a natural order; unclear photos keep their position. Each shot comes from its own photo, without inventing a connected route through the home.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
     }
 
+    private func refreshVideoPhotos() {
+        do {
+            refreshedPhotos = try EnhancedPhoto.loadForListing(listingID: listing.id)
+            savedPhotoError = nil
+            let available = Set(reelPhotos.map(\.id))
+            selected.removeAll { !available.contains($0) }
+        } catch {
+            refreshedPhotos = []
+            savedPhotoError = "The selected photo versions need attention. Your saved photos are kept; review them in Photos before creating a video."
+        }
+    }
+
     @ViewBuilder private var photoPickerGrid: some View {
-        if reelPhotos.isEmpty {
+        if let savedPhotoError {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(savedPhotoError).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button("Review saved photos") { showReelPhotos = true }.buttonStyle(.borderedProminent)
+            }
+        } else if reelPhotos.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
             Text("Add photos to this listing, then return to pick them for your reel.")
                 .font(.rpCaption)
@@ -9624,12 +9760,12 @@ struct ReelStudioView: View {
 
     private var stepMakeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            stepTitle(3, "MAKE THE VIDEO", "Your destination sets the shape. Choose the look, then create.")
+            stepTitle(2, "CREATE YOUR VIDEO", "The scene order and camera motion are automatic. Advanced settings are optional.")
             formatRow
-            titleCardToggle
-            bigCaptionsRow
-            transitionRow
-            motionRow
+            Text(cameraMove == nil ? "Automatic camera motion for each photo" : "All photos use your \(cameraMove!.title.lowercased()) override")
+                .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+            if let scenePlanningNotice { Text(scenePlanningNotice).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+            videoAdvancedControls
             Text("Videos export at 1080p. Sharpness depends on the available photos; enlarging a small source cannot restore detail. Motion may crop the edges of a copy; saved photos stay unchanged.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
             makeButton
@@ -9637,6 +9773,28 @@ struct ReelStudioView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    private var videoAdvancedControls: some View {
+        DisclosureGroup("Advanced · voice, motion and style", isExpanded: $showVideoAdvanced) {
+            VStack(alignment: .leading, spacing: 16) {
+                Toggle("Automatically arrange the scenes", isOn: $automaticOrder).tint(Theme.accent)
+                Text("Turn this off to keep your selected photo order. Camera motion can still be automatic.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                motionRow
+                titleCardToggle
+                bigCaptionsRow
+                transitionRow
+                stepVoiceCard
+                if !extraClipURLs.isEmpty { clipsCard }
+                nativeSetupCard
+                if space == .realEstate && !listing.isSample {
+                    NavigationLink { ProductionPlanView(listing: listing) } label: {
+                        Label("Plan recorded shots and collect takes", systemImage: "checklist").font(.rpCaption)
+                    }
+                }
+            }.padding(.top, 12)
+        }.foregroundStyle(Theme.ink).accessibilityIdentifier("video.advanced")
     }
 
     /// The big words on the video, and which of the three looks they wear.
@@ -9702,8 +9860,11 @@ struct ReelStudioView: View {
         .accessibilityIdentifier("video.deliveryFormat")
     }
 
-    private var titleCardToggle: some View {
-        Toggle(isOn: $captionsOn) {
+    @ViewBuilder private var titleCardToggle: some View {
+        if !portrait {
+            Text("Listing videos omit the intro title and Rendprop mark. Review your own narration and text for contact or agent branding before using an MLS link.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        } else { Toggle(isOn: $captionsOn) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Show the \(space == .realEstate ? "address" : "name") at the start")
                     .font(.rpBody.weight(.semibold))
@@ -9714,11 +9875,22 @@ struct ReelStudioView: View {
             }
         }
         .tint(Theme.accent)
+        }
     }
 
     private var motionRow: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("HOW IT MOVES").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Text("CAMERA MOTION").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Button { cameraMove = nil; Haptics.selection() } label: {
+                HStack {
+                    Text("Automatic · choose for each photo").font(.rpCaption.weight(.semibold))
+                    Spacer()
+                    if cameraMove == nil { Image(systemName: "checkmark.circle.fill") }
+                }.padding(12).frame(maxWidth: .infinity)
+                    .foregroundStyle(cameraMove == nil ? Theme.accent : Theme.ink)
+                    .background(cameraMove == nil ? Theme.accent.opacity(0.12) : Theme.fillSubtle)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }.buttonStyle(.plain).accessibilityIdentifier("video.motion.automatic")
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 ForEach(ReelCameraMove.allCases, id: \.rawValue) { move in
                     Button { cameraMove = move; Haptics.selection() } label: {
@@ -9755,7 +9927,7 @@ struct ReelStudioView: View {
     }
 
     private var aiDisclosureLine: some View {
-        Text("AI motion is quality checked. If the safest AI attempt changes the property, we use motion from your selected photo instead. Review the finished video before publishing. Aerial clips are AI-generated, not real drone footage.")
+        Text("AI motion is quality checked. If the safest AI attempt changes the property, that shot uses your selected photo as a still image instead; reviewed photo edits stay included. Review the finished video before publishing. Aerial clips are AI-generated, not real drone footage.")
             .font(.rpCaption)
             .foregroundStyle(Theme.inkDim)
             .fixedSize(horizontal: false, vertical: true)
@@ -9960,6 +10132,23 @@ struct ReelStudioView: View {
         measuredReelAspect ?? (portrait ? 9.0 / 16.0 : 16.0 / 9.0)
     }
 
+    @State private var selectingWebsiteVideo = false
+    @State private var websiteVideoNote: String?
+
+    private func chooseWebsiteVideo(_ url: URL) {
+        guard !selectingWebsiteVideo, !listing.isSample else { return }
+        selectingWebsiteVideo = true; websiteVideoNote = nil
+        Task {
+            defer { selectingWebsiteVideo = false }
+            do {
+                let record = try ListingVideoStore.load(for: url)
+                try await model.selectWebsiteVideo(record, for: listing.id)
+                websiteVideoNote = "Selected for the listing website. Return to the listing and tap Publish or Republish to make it live."
+                Haptics.success()
+            } catch { websiteVideoNote = AppModel.userMessage(for: error) }
+        }
+    }
+
     @ViewBuilder private var doneSection: some View {
         VStack(spacing: 12) {
             Label("Your video is ready", systemImage: "checkmark.circle.fill")
@@ -9992,6 +10181,15 @@ struct ReelStudioView: View {
                     }
             }
             if let reelURL {
+                if !listing.isSample, let record = try? ListingVideoStore.load(for: reelURL), record.canSelectForWebsite {
+                    Button { chooseWebsiteVideo(reelURL) } label: {
+                        Label(selectingWebsiteVideo ? "Checking the saved video…" : "Use on listing website", systemImage: "globe")
+                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(Theme.accent).foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }.disabled(selectingWebsiteVideo).accessibilityIdentifier("video.useOnWebsite")
+                }
+                if let websiteVideoNote { Text(websiteVideoNote).font(.rpCaption).foregroundStyle(Theme.inkDim) }
                 Button { saveToPhotos(reelURL) } label: {
                     Label(savedToPhotos ? "Saved to Photos" : "Save to Photos",
                           systemImage: savedToPhotos ? "checkmark.circle.fill" : "square.and.arrow.down")
@@ -10080,7 +10278,9 @@ struct ReelStudioView: View {
     /// the caption toggle.
     @ViewBuilder private var stepVoiceCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            stepTitle(2, "ADD YOUR VOICE", "Optional. Talk over your reel and the words appear as captions.")
+            Text("OPTIONAL NARRATION").font(.rpKicker).foregroundStyle(Theme.accent)
+            Text("Add your voice or an AI voice. Spoken captions are optional and follow the narration.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
             voiceModePicker
             voiceModeHint
             switch voiceMode {
@@ -11155,7 +11355,7 @@ struct ReelStudioView: View {
             owner: owner, workspace: WorkspaceContext.selectedOrgID)
         pendingRequest = PendingReelRequest.load(context)
         unreadablePendingContext = pendingRequest == nil && PendingReelRequest.exists(context) ? context : nil
-        do { pendingBatch = try PendingReelBatch.load(context); unreadableBatch = false }
+        do { pendingBatch = try PendingReelBatch.load(context); scenePlanningNotice = pendingBatch?.scenePlanningNotice; unreadableBatch = false }
         catch { pendingBatch = nil; unreadableBatch = true }
         if recoveredRetryRequestID != pendingRequest?.job.requestId { recoveredRetryRequestID = nil }
     }
@@ -11216,9 +11416,9 @@ struct ReelStudioView: View {
 
     private func snapshotReelConfiguration() -> ReelWorkJob.Configuration {
         ReelWorkJob.Configuration(extras: selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) },
-            captions: captionsOn ? Self.reelCaptions(for: listing) : nil,
+            captions: VideoBrandingPolicy.titleCard(captionsOn ? Self.reelCaptions(for: listing) : nil, aspect: portrait ? "9:16" : "16:9"),
             voice: voiceMode == .off ? nil : voiceover,
-            captionStyle: wordCaptionsOn ? .standard : .off,
+            captionStyle: voiceMode != .off && wordCaptionsOn ? .standard : .off,
             shotStyle: bigCaptionsOn ? bigCaptionStyle : .off, transition: reelTransition,
             aspect: portrait ? "9:16" : "16:9")
     }
@@ -11356,7 +11556,7 @@ struct ReelStudioView: View {
         let configuration = work.configuration ?? snapshotReelConfiguration()
         work.configuration = configuration
         let extras = configuration.extras
-        let captions = configuration.captions, voice = configuration.voice
+        let captions = VideoBrandingPolicy.titleCard(configuration.captions, aspect: saved.aspect), voice = configuration.voice
         let captionStyle = configuration.captionStyle, shotStyle = configuration.shotStyle
         let transition = configuration.transition
         phase = .generating; failure = nil; clipIssues = []
@@ -11372,7 +11572,7 @@ struct ReelStudioView: View {
                 let photoClips = batch.completedPaths.map { FileStore.url(fromRelativePath: $0) }
                 let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
                 try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
-                let out = reelsDir.appendingPathComponent("\(saved.context.listingID.uuidString)-\(Int(Date().timeIntervalSince1970)).mp4")
+                let out = reelsDir.appendingPathComponent("\(saved.context.listingID.uuidString)-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString).mp4")
                 try await ReelComposer.compose(shots: Self.shots(extras: extras, photoClips: photoClips,
                     plan: batch.photos.map { $0.shot?.value }, captionsOn: shotStyle.isOn),
                     renderSize: batch.aspect == "9:16" ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080),
@@ -11380,6 +11580,15 @@ struct ReelStudioView: View {
                         shotCaptionStyle: shotStyle, transition: transition), output: out)
                 try validate()
                 try OriginalPhotoMotion.saveSummary(count: photoClips.filter(OriginalPhotoMotion.isClip).count, for: out)
+                let finishedRecord = try await ListingVideoPreparation.retain(output: out, listingID: saved.context.listingID,
+                    ownerID: saved.context.owner, workspaceID: saved.context.workspace, serverListingID: saved.context.serverListingID,
+                    purpose: batch.aspect == "16:9" ? .listing : .socialMedia, sources: batch.completedSources ?? [],
+                    includesOpeningClip: !extras.isEmpty, brandingPolicy: batch.aspect == "16:9" ? "unbranded" : nil)
+                try validate()
+                if finishedRecord.canSelectForWebsite, model.listings.first(where: { $0.id == saved.context.listingID })?.websiteVideoRelPath == nil {
+                    try await model.selectWebsiteVideo(finishedRecord, for: saved.context.listingID, onlyIfUnselected: true)
+                    try validate()
+                }
                 batch.clear()
                 PendingReelClips.retire(photoClips, for: saved.context.listingID)
                 try? FileManager.default.removeItem(at: dir)
@@ -11493,7 +11702,13 @@ struct ReelStudioView: View {
     nonisolated private static func pruneReels(for listingID: UUID, keeping: Int) {
         let files = reelFiles(for: listingID)
         guard files.count > keeping else { return }
+        let selected = ListingVideoStore.selected(listingID: listingID, documents: FileStore.documents)?.relativePath
+        let pending = (try? ListingVideoStore.pending(listingID: listingID, documents: FileStore.documents))?.relativePath
         for url in files.dropFirst(keeping) {
+            let path = FileStore.relativePath(for: url)
+            guard path != selected, path != pending else { continue }
+            try? FileManager.default.removeItem(at: ListingVideoStore.metadataURL(for: url))
+            try? FileManager.default.removeItem(at: url.appendingPathExtension("website-assets.json"))
             try? FileManager.default.removeItem(at: url)
             try? FileManager.default.removeItem(at: OriginalPhotoMotion.summaryURL(for: url))
         }
@@ -11544,32 +11759,24 @@ struct ReelStudioView: View {
         let api = model.api                       // snapshot on the main actor
         let isPortrait = portrait
         let prompt = "" // Closed presets keep free text from replacing property-preservation rules.
-        let selectedMove = cameraMove.rawValue
+        let selectedMove = cameraMove?.rawValue ?? "push_in"
+        let motionOverride = cameraMove?.rawValue, arrangeScenes = automaticOrder
         let listingID = listing.id
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
         let reelWorkspace = WorkspaceContext.selectedOrgID
         let reelConsentRevision = AIConsent.shared.revocationRevision
         // Caption text is resolved HERE (main actor, plain Sendable strings) —
         // the CALayers themselves are built inside the nonisolated stitch.
-        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
+        let captions: ReelCaptions? = VideoBrandingPolicy.titleCard(captionsOn ? Self.reelCaptions(for: listing) : nil, aspect: isPortrait ? "9:16" : "16:9")
         // Voiceover + caption-style snapshot on the main actor (both Sendable).
         // `.off` mode → no voiceover; a finished take is used only when the mode
         // isn't .off. captionStyle governs the burned-in spoken-word captions.
         let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
-        let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
+        let captionStyle: CaptionStyle = voiceMode != .off && wordCaptionsOn ? .standard : .off
         // The big burned-in shot captions and the transition, snapshot as plain
         // Sendable values like everything else this Task reads.
         let shotStyle: ReelComposer.ShotCaptionStyle = bigCaptionsOn ? bigCaptionStyle : .off
         let transition = reelTransition
-        // What the shot planner needs, read here on the main actor. The call
-        // itself happens inside the Task and is allowed to fail.
-        let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
-        let planRequest = Self.shotlistRequest(for: live, space: space,
-                                               photos: chosen,
-                                               targetSeconds: targetSeconds,
-                                               tone: tone.rawValue)
-        let address = live.address
-        let noun = space.spaceNoun
         let spaceRaw = space.rawValue
         work.configuration = ReelWorkJob.Configuration(extras: extras, captions: captions, voice: voiceover,
             captionStyle: captionStyle, shotStyle: shotStyle, transition: transition,
@@ -11599,33 +11806,8 @@ struct ReelStudioView: View {
                 if !isSample {
                     reelListingServerID = await model.serverListingIDForCompliance(listingID)
                 }
-                // THE SHOT PLAN. One text-only `/ai-copy/shotlist` call, before a
-                // cent is spent on video: a camera move, a three-to-five-word
-                // caption and a length for each photo. It is a BEST EFFORT and
-                // nothing below depends on it — `planShots` never throws, and an
-                // empty plan puts every downstream decision back exactly where it
-                // was before this route existed (nil motion, whole clips, no shot
-                // captions). It runs first because the motion has to be known
-                // before the clip is submitted, not after.
                 var plan: [AIShot] = []
-                if !chosen.isEmpty && chosen.count <= VideoSelectionCapacity.maximumPlannerPhotos {
-                    var req = planRequest
-                    if let resolved = reelListingServerID { req.listingServerID = resolved }
-                    plan = await Self.planShots(req, api: api, address: address, fallbackNoun: noun)
-                    let planned = plan.isEmpty ? "false" : "true"
-                    let shotCount = String(plan.count)
-                    await MainActor.run {
-                        Analytics.track("reel_planned", ["ok": planned,
-                                                         "space_type": spaceRaw,
-                                                         "shots": shotCount])
-                    }
-                }
-                // The plan may REORDER the reel — it opens on the best
-                // establishing shot and closes on the best closing frame, with
-                // the agent's tap order as its tiebreak. `reordered` is all or
-                // nothing: anything it cannot account for photo-for-photo leaves
-                // the tap order exactly as it was.
-                let ordered = Self.reordered(chosen, by: plan)
+                var ordered = chosen
                 try Task.checkCancellation()
 
                 var clipURLs: [URL] = extras          // ready-made clips lead the reel
@@ -11654,7 +11836,7 @@ struct ReelStudioView: View {
                     guard !PendingReelBatch.exists(recoveryContext) else { throw AIImagePrep.error("Continue or discard the saved reel before starting another batch.") }
                     var prepared: [PendingReelBatch.Photo] = []
                     var preparedBase64Bytes = 0
-                    for photo in ordered {
+                    for photo in chosen {
                         try requireCurrent()
                         let jpeg = try Self.preparedReelJPEG(photo: photo, aspect: isPortrait ? "9:16" : "16:9")
                         guard jpeg.count <= VideoSelectionCapacity.maximumPreparedJPEGBytes else {
@@ -11665,12 +11847,58 @@ struct ReelStudioView: View {
                         guard preparedBase64Bytes <= VideoSelectionCapacity.maximumPreparedBase64Bytes else {
                             throw AIImagePrep.error("These photos are too large to prepare together. Choose fewer photos or smaller copies. No video clips have been submitted.")
                         }
+                        // Private input upload leaves the public gallery untouched.
+                        // Its exact JPEG binds generation/QC source authority.
+                        var sourceAssetID: String? = nil
+                        if let targetServerID {
+                            let input = tmpDir.appendingPathComponent("source-\(prepared.count).jpg")
+                            try jpeg.write(to: input, options: .atomic)
+                            sourceAssetID = try await DirectUploader.uploadPhoto(fileURL: input, listingID: targetServerID,
+                                role: "capture", contentType: "image/jpeg", keyPrefix: "video-source", api: api)
+                            try requireCurrent()
+                            try? FileManager.default.removeItem(at: input)
+                        }
                         prepared.append(PendingReelBatch.Photo(id: photo.id, jpegBase64: encoded,
-                            shot: Self.shot(for: photo, in: plan).map(PendingReelBatch.Shot.init)))
+                            shot: nil,
+                            sourceAssetID: sourceAssetID, photoProvenanceID: photo.savedVersion?.provenanceID))
                         await Task.yield()
                     }
+                    // All exact private JPEGs exist before classification. Freeze
+                    // the complete global order and per-photo motion before any clip POST.
+                    var plannedPhotos: [PropertyVideoPlanner.Planned] = []
+                    var planningFallback = true
+                    var planningNotice = "Automatic scene planning wasn't available. Keeping your selected order with restrained motion."
+                    if let sid = targetServerID, let owner = UUID(uuidString: recoveryContext.owner), let org = recoveryContext.workspace {
+                        let inputs = try prepared.map { photo -> PropertyVideoPlanner.Input in
+                            guard let asset = photo.sourceAssetID.flatMap(UUID.init(uuidString:)), let jpeg = Data(base64Encoded: photo.jpegBase64) else {
+                                throw PropertyVideoPlanner.Failure.invalidInput
+                            }
+                            return PropertyVideoPlanner.Input(photoID: photo.id, assetID: asset, jpegDigest: PropertyVideoPlanner.digest(jpeg))
+                        }
+                        await MainActor.run { statusText = "Organizing scenes and choosing camera motion…" }
+                        let result = try await PropertyVideoPlanner.plan(inputs: inputs,
+                            context: .init(ownerID: owner, orgID: org, listingID: sid), api: api as? PropertyVideoPlanningAPI,
+                            automaticOrder: arrangeScenes, documents: FileStore.documents, requireCurrent: requireCurrent)
+                        plannedPhotos = result.photos; planningFallback = result.usedFallback; planningNotice = result.notice
+                    }
+                    try requireCurrent()
+                    let byID = Dictionary(uniqueKeysWithValues: prepared.map { ($0.id, $0) })
+                    let frozenIDs = plannedPhotos.isEmpty ? prepared.map(\.id) : plannedPhotos.map { $0.input.photoID }
+                    let plannedByID = Dictionary(uniqueKeysWithValues: plannedPhotos.map { ($0.input.photoID, $0) })
+                    prepared = frozenIDs.enumerated().map { index, id in
+                        let original = byID[id]!, scene = plannedByID[id]
+                        let shot = AIShot(photoID: id, order: index + 1, motion: motionOverride ?? scene?.motion ?? "push_in",
+                            room: scene?.confident == true ? scene?.scene.rawValue : nil,
+                            onScreenText: scene?.caption, seconds: 5, voiceLine: nil)
+                        return PendingReelBatch.Photo(id: id, jpegBase64: original.jpegBase64, shot: .init(shot),
+                            sourceAssetID: original.sourceAssetID, photoProvenanceID: original.photoProvenanceID)
+                    }
+                    plan = prepared.compactMap { $0.shot?.value }
+                    ordered = Self.reordered(chosen, by: plan)
+                    await MainActor.run { scenePlanningNotice = planningNotice }
                     batch = PendingReelBatch(context: recoveryContext, id: UUID(), photos: prepared,
-                        motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw, completedPaths: [], framing: "preserve_photo")
+                        motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw, completedPaths: [], framing: "preserve_photo", scenePlanVersion: 1,
+                        scenePlanningNotice: planningNotice, automaticOrder: arrangeScenes, usedPlanningFallback: planningFallback)
                     try requireCurrent()
                     try batch?.save()
                 }
@@ -11685,12 +11913,14 @@ struct ReelStudioView: View {
                     do {
                         let clip = try await Self.makeClip(photo: photo, prompt: prompt,
                                                            shot: shot, shotCount: ordered.count,
-                                                           motion: selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw,
+                                                           motion: shot?.motion ?? selectedMove, aspect: isPortrait ? "9:16" : "16:9", spaceType: spaceRaw,
                                                            api: api, listingServerID: reelListingServerID,
                                                            into: tmpDir, index: i, recoveryContext: recoveryContext,
                                                            requireCurrent: requireCurrent,
                                                            preparedJPEG: batch.flatMap { Data(base64Encoded: $0.photos[i].jpegBase64) },
-                                                           framing: batch?.framing)
+                                                           framing: batch?.framing,
+                                                           sourceAssetID: batch?.photos[i].sourceAssetID,
+                                                           photoProvenanceID: batch?.photos[i].photoProvenanceID)
                         if batch != nil {
                             batch = try PendingReelBatch.load(recoveryContext!)
                         }
@@ -11722,7 +11952,7 @@ struct ReelStudioView: View {
                                             : CGSize(width: 1920, height: 1080)
                 let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
                 try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
-                let stamp = Int(Date().timeIntervalSince1970)
+                let stamp = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)"
                 let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
                 let photoClips = Array(clipURLs.dropFirst(extras.count))
                 try await ReelComposer.compose(
@@ -11736,6 +11966,15 @@ struct ReelStudioView: View {
                     output: outURL)
                 try requireCurrent()
                 try OriginalPhotoMotion.saveSummary(count: clipURLs.filter(OriginalPhotoMotion.isClip).count, for: outURL)
+                let finishedRecord = try await ListingVideoPreparation.retain(output: outURL, listingID: listingID,
+                    ownerID: reelActor, workspaceID: reelWorkspace, serverListingID: reelListingServerID,
+                    purpose: isPortrait ? .socialMedia : .listing, sources: batch?.completedSources ?? [],
+                    includesOpeningClip: !extras.isEmpty, brandingPolicy: isPortrait ? nil : "unbranded")
+                try requireCurrent()
+                if finishedRecord.canSelectForWebsite, model.listings.first(where: { $0.id == listingID })?.websiteVideoRelPath == nil {
+                    try await model.selectWebsiteVideo(finishedRecord, for: listingID, onlyIfUnselected: true)
+                    try requireCurrent()
+                }
                 try? FileManager.default.removeItem(at: tmpDir)
 
                 try requireCurrent()
@@ -11889,7 +12128,7 @@ struct ReelStudioView: View {
                   let current = model.listings.first(where: { $0.id == listingID }),
                   current.cloudUnavailable != true, current.serverID == parkedServerID else { throw CancellationError() }
         }
-        let captions = configuration.captions
+        let captions = VideoBrandingPolicy.titleCard(configuration.captions, aspect: settings.renderSize.width < settings.renderSize.height ? "9:16" : "16:9")
         let voiceover = configuration.voice
         let captionStyle = configuration.captionStyle
         failure = nil
@@ -11903,7 +12142,7 @@ struct ReelStudioView: View {
                 let renderSize = settings.renderSize
                 let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
                 try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
-                let stamp = Int(Date().timeIntervalSince1970)
+                let stamp = "\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString)"
                 let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
                 // Parked clips have no shot plan — the run that bought them ended
                 // before one could be attached to a file on disk — so they are
@@ -11919,7 +12158,17 @@ struct ReelStudioView: View {
                         transition: configuration.transition),
                     output: outURL)
                 try OriginalPhotoMotion.saveSummary(count: clips.filter(OriginalPhotoMotion.isClip).count, for: outURL)
+                let recipe = pendingBatch
+                let sources = recipe?.completedPaths == parkedClips?.relPaths ? recipe?.completedSources ?? [] : []
+                let finishedRecord = try await ListingVideoPreparation.retain(output: outURL, listingID: listingID,
+                    ownerID: parkedActor, workspaceID: parkedWorkspace, serverListingID: parkedServerID,
+                    purpose: renderSize.width > renderSize.height ? .listing : .socialMedia, sources: sources,
+                    includesOpeningClip: !configuration.extras.isEmpty, brandingPolicy: settings.renderSize.width > settings.renderSize.height ? "unbranded" : nil)
                 try requireCurrent()
+                if finishedRecord.canSelectForWebsite, model.listings.first(where: { $0.id == listingID })?.websiteVideoRelPath == nil {
+                    try await model.selectWebsiteVideo(finishedRecord, for: listingID, onlyIfUnselected: true)
+                    try requireCurrent()
+                }
                 await MainActor.run {
                     // The clips now live inside a finished reel on disk, so the
                     // parked copy has done its job and can go. This is the ONLY
@@ -11983,7 +12232,8 @@ struct ReelStudioView: View {
                                              into dir: URL, index: Int,
                                              recoveryContext: PendingReelRequest.Context? = nil,
                                              requireCurrent: @MainActor @Sendable () throws -> Void = { try Task.checkCancellation() },
-                                             preparedJPEG: Data? = nil, framing: String? = nil) async throws -> URL {
+                                             preparedJPEG: Data? = nil, framing: String? = nil,
+                                             sourceAssetID: String? = nil, photoProvenanceID: String? = nil) async throws -> URL {
         try await requireCurrent()
         guard let recoveryContext else { throw AIImagePrep.error("Reconnect your account before generating this clip.") }
         if PendingReelRequest.exists(recoveryContext) {
@@ -11995,7 +12245,8 @@ struct ReelStudioView: View {
         if let batch = try PendingReelBatch.load(recoveryContext) {
             guard batch.completedPaths.count == index, index < batch.photos.count,
                   batch.photos[index].id == photo.id, batch.photos[index].jpegBase64 == jpeg.base64EncodedString(),
-                  batch.aspect == aspect, batch.spaceType == spaceType, batch.framing == framing else {
+                  batch.aspect == aspect, batch.spaceType == spaceType, batch.framing == framing,
+                  batch.scenePlanVersion != 1 || (batch.photos[index].shot?.motion ?? batch.motion) == motion else {
                 throw AIImagePrep.error("This photo does not match the saved reel. Continue the saved batch instead.")
             }
         }
@@ -12017,11 +12268,18 @@ struct ReelStudioView: View {
             let submission = PendingReelRequest(context: recoveryContext, photoNumber: index + 1,
                 job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"),
                 operationID: operationID, inputDigest: digest, submissionUnconfirmed: true,
-                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt, framing: framing, outputAspect: aspect)
+                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt, framing: framing, outputAspect: aspect, sourceAssetID: sourceAssetID, photoProvenanceID: photoProvenanceID)
             try submission.save() // Atomic marker and readback BEFORE any paid POST.
             try await requireCurrent()
             let job: AIVideoJob
             do {
+                if let sourceAssetID {
+                    job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(), mime: "image/jpeg", prompt: nil, seconds: 5,
+                        aspect: aspect, framing: framing, presetVersion: 1, motion: attemptMotion, room: shot?.room,
+                        shotIndex: index, shotCount: shotCount, listingServerID: listingServerID,
+                        label: Self.clipLabel(shot: shot, index: index), idempotencyKey: operationID,
+                        sourceAssetID: sourceAssetID, sourceProvenanceID: photoProvenanceID)
+                } else {
                 job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
                                                     mime: "image/jpeg", prompt: nil, seconds: 5,
                                                     aspect: aspect, framing: framing, presetVersion: 1,
@@ -12030,6 +12288,7 @@ struct ReelStudioView: View {
                                                     listingServerID: listingServerID,
                                                     label: Self.clipLabel(shot: shot, index: index),
                                                     idempotencyKey: operationID)
+                }
             } catch {
                 // The marker exists for an UNKNOWN outcome: a lost response may
                 // already count a clip, so it stays and blocks a second POST. A
@@ -12044,7 +12303,7 @@ struct ReelStudioView: View {
             }
             let pending = PendingReelRequest(context: recoveryContext, photoNumber: index + 1, job: job,
                 operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
-                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt, framing: framing, outputAspect: aspect)
+                sourceJPEGBase64: jpeg.base64EncodedString(), sourceSpaceType: spaceType, qualityAttempt: attempt, framing: framing, outputAspect: aspect, sourceAssetID: sourceAssetID, photoProvenanceID: photoProvenanceID)
             try pending.save()
             do {
                 let clip = try await retrieveClip(job: job, pending: pending, api: api, into: dir, index: index,
@@ -12092,6 +12351,17 @@ struct ReelStudioView: View {
         let retained = try retainRecoveredClip(clip, for: request.context.listingID)
         try await requireCurrent()
         if batch != nil {
+            // Source identity is retained in the same atomic write as the clip,
+            // before the accepted request can be acknowledged and removed.
+            let position = request.photoNumber - 1, photo = batch!.photos[position]
+            let source = ListingVideoSource(photoVersionID: photo.id,
+                photoAssetID: request.sourceAssetID ?? photo.sourceAssetID,
+                photoProvenanceID: request.photoProvenanceID ?? photo.photoProvenanceID,
+                generationRequestID: request.job.requestId, generationProvenanceID: request.job.provenanceID,
+                motionKind: OriginalPhotoMotion.isClip(retained) ? "original_photo" : "ai",
+                sourceBound: request.job.sourceBound == true && request.job.sourceAssetID == (request.sourceAssetID ?? photo.sourceAssetID))
+            if batch!.completedSources == nil && batch!.completedPaths.isEmpty { batch!.completedSources = [] }
+            batch!.completedSources?.append(source)
             batch!.completedPaths.append(FileStore.relativePath(for: retained))
             try batch!.save()
         }
@@ -12141,15 +12411,23 @@ struct ReelStudioView: View {
         let digest = SHA256.hash(data: jpeg + Data("push_in|\(aspect)|\(request.photoNumber)|retry-1|\(request.framing ?? "legacy")".utf8)).map { String(format: "%02x", $0) }.joined()
         let submission = PendingReelRequest(context: request.context, photoNumber: request.photoNumber,
             job: AIVideoJob(requestId: operationID, statusUrl: "", responseUrl: "", kind: "reel"), operationID: operationID,
-            inputDigest: digest, submissionUnconfirmed: true, sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1, framing: request.framing, outputAspect: aspect)
+            inputDigest: digest, submissionUnconfirmed: true, sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1, framing: request.framing, outputAspect: aspect, sourceAssetID: request.sourceAssetID, photoProvenanceID: request.photoProvenanceID)
         try submission.save()
         try await requireCurrent()
         let job: AIVideoJob
         do {
-            job = try await api.aiVideoReelClip(imageBase64: source, mime: "image/jpeg", prompt: nil, seconds: 5,
-                aspect: aspect, framing: request.framing, presetVersion: 1, motion: "push_in", room: batch?.photos[request.photoNumber - 1].shot?.room,
-                shotIndex: request.photoNumber - 1, shotCount: batch?.photos.count ?? request.photoNumber,
-                listingServerID: request.context.serverListingID, label: "Reel shot \(request.photoNumber) — safer retry", idempotencyKey: operationID)
+            if let sourceAssetID = request.sourceAssetID {
+                job = try await api.aiVideoReelClip(imageBase64: source, mime: "image/jpeg", prompt: nil, seconds: 5,
+                    aspect: aspect, framing: request.framing, presetVersion: 1, motion: "push_in", room: batch?.photos[request.photoNumber - 1].shot?.room,
+                    shotIndex: request.photoNumber - 1, shotCount: batch?.photos.count ?? request.photoNumber,
+                    listingServerID: request.context.serverListingID, label: "Reel shot \(request.photoNumber) — safer retry", idempotencyKey: operationID,
+                    sourceAssetID: sourceAssetID, sourceProvenanceID: request.photoProvenanceID)
+            } else {
+                job = try await api.aiVideoReelClip(imageBase64: source, mime: "image/jpeg", prompt: nil, seconds: 5,
+                    aspect: aspect, framing: request.framing, presetVersion: 1, motion: "push_in", room: batch?.photos[request.photoNumber - 1].shot?.room,
+                    shotIndex: request.photoNumber - 1, shotCount: batch?.photos.count ?? request.photoNumber,
+                    listingServerID: request.context.serverListingID, label: "Reel shot \(request.photoNumber) — safer retry", idempotencyKey: operationID)
+            }
         } catch {
             if Self.isDefinitiveRefusal(error), PendingReelRequest.load(request.context)?.job.requestId == operationID {
                 // Restore the confirmed rejected job atomically, with no empty
@@ -12160,7 +12438,7 @@ struct ReelStudioView: View {
         }
         let accepted = PendingReelRequest(context: request.context, photoNumber: request.photoNumber, job: job,
             operationID: operationID, inputDigest: digest, submissionUnconfirmed: false,
-            sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1, framing: request.framing, outputAspect: aspect)
+            sourceJPEGBase64: source, sourceSpaceType: spaceType, qualityAttempt: 1, framing: request.framing, outputAspect: aspect, sourceAssetID: request.sourceAssetID, photoProvenanceID: request.photoProvenanceID)
         try accepted.save()
         try await requireCurrent()
         let clip = try await retrieveClip(job: job, pending: accepted, api: api, into: dir,
@@ -12184,9 +12462,10 @@ struct ReelStudioView: View {
             await progress(index)
             let placeholder = dir.appendingPathComponent("saved-source-\(index).jpg")
             _ = try await makeClip(photo: EnhancedPhoto(id: photo.id, originalURL: placeholder, enhancedURL: placeholder),
-                prompt: "", shot: photo.shot?.value, shotCount: batch.photos.count, motion: batch.motion,
+                prompt: "", shot: photo.shot?.value, shotCount: batch.photos.count, motion: batch.scenePlanVersion == 1 ? photo.shot?.motion ?? batch.motion : batch.motion,
                 aspect: batch.aspect, spaceType: batch.spaceType, api: api, listingServerID: batch.context.serverListingID,
-                into: dir, index: index, recoveryContext: batch.context, requireCurrent: requireCurrent, preparedJPEG: jpeg, framing: batch.framing)
+                into: dir, index: index, recoveryContext: batch.context, requireCurrent: requireCurrent, preparedJPEG: jpeg, framing: batch.framing,
+                sourceAssetID: photo.sourceAssetID, photoProvenanceID: photo.photoProvenanceID)
             try await requireCurrent()
             guard let updated = try PendingReelBatch.load(saved.context), updated.id == saved.id,
                   updated.completedPaths.count == index + 1 else { throw AIImagePrep.error("Reel progress could not be confirmed. Your clips have been kept.") }
@@ -12299,7 +12578,7 @@ struct ReelStudioView: View {
         let verdict = try await api.aiVideoDrift(DriftCheckRequest(requestID: job.requestId,
             kind: "reel", sourceBase64: source, frames: frames, seconds: 5,
             spaceType: spaceType, listingServerID: pending?.context.serverListingID,
-            provenanceID: job.provenanceID, attempt: pending?.qualityAttempt ?? 1))
+            provenanceID: job.provenanceID, sourceAssetID: pending?.sourceAssetID, attempt: pending?.qualityAttempt ?? 1))
         try await requireCurrent()
         guard verdict.mayUse else {
             guard verdict.status == .fail, verdict.action == "refuse",

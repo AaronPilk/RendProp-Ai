@@ -17,6 +17,8 @@ export type ErrorCode =
   | "forbidden"
   | "not_found"
   | "conflict"
+  | "publication_superseded"
+  | "consent_required"
   | "plan_required"
   | "sandbox_testing_required"
   | "quota_exceeded"

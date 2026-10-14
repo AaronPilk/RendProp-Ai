@@ -288,7 +288,10 @@ try {
   check(await video.getAttribute("src") === null, "Initial video element has no attached source");
   check(mediaRequests().length === 0, "Initial listing has made zero video, HLS or segment requests");
   check(requests.filter((r) => r.path.startsWith("/api/beacon")).length === 0, "Viewing listing content alone does not record a flythrough view or delivery");
-  check(await page.locator("#overview").innerText().then((text) => text.includes("123 Listing Avenue")), "Property address/details render without media readiness");
+  check(await page.locator("h1.property-hero-title").isVisible() &&
+    await page.locator("h1.property-hero-title").innerText().then((text) => text.includes("123 Listing Avenue")) &&
+    await page.locator("#overview .lp-stat").count() > 0,
+    "Property address/details render without media readiness");
   check(await page.locator("#gallery img").count() === 1, "Property photos remain available without a flythrough");
   check(await page.locator(".listing-cover img").getAttribute("src") === "/synthetic-main-photo.svg", "Actual browser opens on the selected main photo instead of the video thumbnail");
   check(await page.evaluate(() => document.querySelector(".listing-cover").getBoundingClientRect().top < document.querySelector("#overview").getBoundingClientRect().top), "The main photo is above details in the rendered page");
@@ -370,7 +373,7 @@ try {
       const targetPage = target === "gallery" ? "gallery" : target === "endcard" ? "contact" : "home";
       await page.locator('#listing-nav .listing-nav-links a').filter({ hasText: new RegExp('^'+targetPage[0].toUpperCase()+targetPage.slice(1)+'$') }).click();
       await page.waitForTimeout(100);
-      const measurement = await page.evaluate((id) => { const nav = document.querySelector("#listing-nav").getBoundingClientRect(), heading = document.querySelector(id === "overview" ? ".property-hero-title" : "#" + id + (id === "endcard" ? " .agent .nm" : " .lp-h")).getBoundingClientRect(); return { width: innerWidth, target: id, navBottom: nav.bottom, headingTop: heading.top, headingBottom: heading.bottom }; }, target);
+      const measurement = await page.evaluate((id) => { const nav = document.querySelector("#listing-nav").getBoundingClientRect(), heading = document.querySelector(id === "overview" ? ".property-hero-title" : id === "gallery" ? ".property-page-head h1" : "#" + id + " .agent .nm").getBoundingClientRect(); return { width: innerWidth, target: id, navBottom: nav.bottom, headingTop: heading.top, headingBottom: heading.bottom }; }, target);
       navigationMeasurements.push(measurement);
       check(measurement.headingTop >= measurement.navBottom - 1 && measurement.headingBottom < 844, target + " heading is visible below the actual wrapped navigation at " + width + "px");
     }

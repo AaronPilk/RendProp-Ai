@@ -11,6 +11,7 @@ export type NativeReel = {
   captionStyle: "off" | "lowerThird" | "punchCard" | "highlightBox";
   transition: "cut" | "dissolve" | "whip";
   motionPrompt: string;
+  automaticOrder?: boolean;
   motionPreset?: "fly_through" | "push_in" | "side_glide" | "pull_back";
   script: string;
   tone: "warm" | "punchy" | "luxury";
@@ -63,6 +64,7 @@ export function decodeNativeReel(value: unknown): NativeReel {
     tone: choice(raw.tone, ["warm", "punchy", "luxury"]), wordCaptions: flag(raw.wordCaptions),
     voiceMode: choice(raw.voiceMode, ["off", "myVoice", "aiVoice"]), voiceResultId: optionalId(raw.voiceResultId), localNarration: flag(raw.localNarration),
     photos, localExtraClipCount: raw.localExtraClipCount as number, updatedAt,
+    ...(raw.automaticOrder == null ? {} : {automaticOrder:flag(raw.automaticOrder)}),
     ...(raw.motionPreset == null ? {} : { motionPreset: choice(raw.motionPreset, ["fly_through", "push_in", "side_glide", "pull_back"] as const) }),
   };
 }

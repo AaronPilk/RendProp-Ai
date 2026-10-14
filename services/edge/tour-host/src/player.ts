@@ -41,7 +41,10 @@
 
 import type { AlteredMedium, Cta, SecondaryLink, Tour, TourListing } from "./types";
 import { LISTING_PLAYER_CSS, LISTING_PLAYER_JS } from "./listing-player";
+import { isDemoSlug } from "./demo";
 import { propertyPage, propertyPageHref, PROPERTY_SITE_CSS, PROPERTY_SITE_JS, NEARBY_PLACES_JS, type PropertyPage } from "./property-site";
+import { websiteTheme, previewWebsiteTheme, websiteThemeName, PROPERTY_DESIGN_CSS, type WebsiteTheme } from "./property-design";
+import { listingVideo, listingVideoStage, PROPERTY_VIDEO_CSS, PROPERTY_VIDEO_JS } from "./property-video";
 import { spatialAnchor } from "./spatial-manifest";
 import { APP_STORE_ID, appStoreUrl, siteUrl } from "./attribution";
 import { tourJsonLd } from "./jsonld";
@@ -225,6 +228,9 @@ export function sanitizeTourForUnbranded(tour: Tour): Tour {
   const listing = (tour.listing || {}) as TourListing;
   return {
     ...tour,
+    // A neutral HTML page cannot remove branding burned into an old video.
+    // Only the server's immutable composition policy can admit this master.
+    listing_video: tour.listing_video?.branding_policy === "unbranded" ? tour.listing_video : null,
     // No link back to the branded page (it is a rendprop.com URL, and the
     // unbranded page must not link anywhere).
     share_url: undefined,
@@ -406,9 +412,11 @@ function renderDisclosureSection(tour: Tour): string {
   const items = alteredItems(tour);
   const staged = !!tour.staged;
   const stagedText = first(tour.staged_disclosure);
-  if (!items.length && !(staged && stagedText)) return "";
+  const videoDisclosure = listingVideo(tour.listing_video)?.disclosure;
+  if (!items.length && !(staged && stagedText) && !videoDisclosure) return "";
 
-  const lead = staged && stagedText ? `<p class="disc-lead">${escapeHtml(stagedText)}</p>` : "";
+  const lead = (staged && stagedText ? `<p class="disc-lead">${escapeHtml(stagedText)}</p>` : "") +
+    (videoDisclosure ? `<p class="disc-txt"><strong>Property video:</strong> ${escapeHtml(videoDisclosure)}</p>` : "");
 
   const rows = items
     .map((it) => {
@@ -436,7 +444,7 @@ function renderDisclosureSection(tour: Tour): string {
 
   return `<section class="lp-sec" id="disclosure"><div class="lp-wrap">
     <details class="disc" id="disc">
-      <summary class="disc-sum">${escapeHtml(disclosureSummary(tour, items))}</summary>
+      <summary class="disc-sum">${escapeHtml(items.length || staged ? disclosureSummary(tour, items) : "Property video disclosure")}</summary>
       <div class="disc-body">
         ${lead}
         ${list}
@@ -2067,11 +2075,11 @@ function engineJs(unbranded: boolean, embed = false, hideVendor = false): string
         .replace(SKIP_SLOT, embed ? "" : ENGINE_SKIP_JS);
 }
 
-function listingEngineJs(unbranded: boolean, hideVendor = false): string {
+function listingEngineJs(unbranded: boolean, hideVendor = false, preview = false): string {
   return LISTING_PLAYER_JS.replace(EDITORIAL_SLOT, EDITORIAL_INTERACTIONS_JS)
-    .replace(LEADFORM_SLOT, unbranded ? "" : ENGINE_LEADFORM_JS)
-    .replace(APPLINK_SLOT, unbranded || hideVendor ? "" : ENGINE_APPLINK_JS)
-    .replace(SHARE_SLOT, unbranded ? "" : ENGINE_SHARE_JS);
+    .replace(LEADFORM_SLOT, unbranded || preview ? "" : ENGINE_LEADFORM_JS)
+    .replace(APPLINK_SLOT, unbranded || hideVendor || preview ? "" : ENGINE_APPLINK_JS)
+    .replace(SHARE_SLOT, unbranded || preview ? "" : ENGINE_SHARE_JS);
 }
 
 // ===========================================================================
@@ -2340,10 +2348,9 @@ function neighborhoodBlurb(tour: Tour): string {
   return "";
 }
 
-function sec(id: string, eyebrow: string, title: string, inner: string): string {
-  return `<section class="lp-sec" id="${id}"><div class="lp-wrap">
-    <div class="lp-eyebrow">${escapeHtml(eyebrow)}</div>
-    <h2 class="lp-h">${escapeHtml(title)}</h2>
+function sec(id: string, eyebrow: string, title: string, inner: string, showHeading = true): string {
+  return `<section class="lp-sec" id="${id}"${showHeading ? "" : ` aria-label="${escapeAttr(title)}"`}><div class="lp-wrap">
+    ${showHeading ? `<div class="lp-eyebrow">${escapeHtml(eyebrow)}</div><h2 class="lp-h">${escapeHtml(title)}</h2>` : ""}
     ${inner}
   </div></section>`;
 }
@@ -2556,12 +2563,12 @@ function mediaDateNote(tour: Tour): string {
   return `<p class="lp-fine lp-mediadate"><time datetime="${escapeAttr(when.toISOString().slice(0, 10))}">This tour was published on ${escapeHtml(text)}.</time> Ask the agent before assuming anything shown here is still current.</p>`;
 }
 
-function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null, publicBase: "/f" | "/property" = "/f"): string {
+function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null, publicBase: "/f" | "/property" = "/f", previewTheme: WebsiteTheme | null = null): string {
   const l = tour.listing;
   const isRE = isRealEstate(tour);
   const sold = isSoldOrArchived(tour);
   const out: string[] = [];
-  // Lead with the owner's property photo; details follow without loading video.
+  // Lead with selected media; attaching a video remains an explicit tap.
   if (mediaCover) out.push(mediaCover);
 
   // Overview (always — built from core listing data).
@@ -2575,8 +2582,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
     : "";
   out.push(`<section class="lp-sec lp-lead" id="overview"><div class="lp-wrap">
     <div class="lp-eyebrow">${escapeHtml(isRE ? "The residence" : spaceLabel(tour.space_type))}${sold ? `<span class="lp-soldtag">${escapeHtml(archiveLabel(tour))}</span>` : ""}</div>
-    <h1 class="lp-h">${escapeHtml(headingRaw)}</h1>
-    ${priceBig}
+    ${page === "home" && mediaCover ? "" : `<h1 class="lp-h">${escapeHtml(headingRaw)}</h1>${priceBig}`}
     ${tagline}
     ${soldNote}
     ${tiles.length ? `<div class="lp-stats">${tiles.map((t) => `<div class="lp-stat"><span class="v">${escapeHtml(t.v)}</span><span class="k">${escapeHtml(t.k)}</span></div>`).join("")}</div>` : ""}
@@ -2614,7 +2620,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
       return `<figure class="lp-gcell"><a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}"><img class="property-thumb" data-property-src="${escapeAttr(g.url)}" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="${alt}" loading="lazy" decoding="async" fetchpriority="low"><noscript>${image}</noscript></a>${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
     };
     out.push(sec("gallery", "Gallery", "A closer look",
-      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase))}">View all ${imgs.length} photos</a></p>` : ""}`));
+      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase, previewTheme))}">View all ${imgs.length} photos</a></p>` : ""}`, page !== "gallery"));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Explore the rooms" : "Explore the space",
       `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
@@ -2624,7 +2630,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
   // `/u/`: the copy is social-posting marketing, not property information
   // (details.reel_url is stripped by the sanitizer too — this is belt and
   // braces).
-  if (!unbranded) out.push(reelSection(tour));
+  if (!unbranded && isDemoSlug(tour.slug)) out.push(reelSection(tour));
 
   // Features & finishes.
   const groups = featureGroups(tour);
@@ -3012,6 +3018,8 @@ export interface RenderOpts {
   page?: PropertyPage;
   /** Browser-only public alias; the canonical server URL is unchanged. */
   publicBase?: "/f" | "/property";
+  /** Presentation-only preview of already-published data; grants no design. */
+  previewTheme?: WebsiteTheme | null;
 }
 
 export function renderTourPage(input: Tour, functionsBase: string, anonKey: string, turnstileSiteKey = "", opts: RenderOpts = {}): string {
@@ -3023,7 +3031,11 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const polished = !embed && !unbranded && isRealEstate(tour);
   const page = polished ? propertyPage(opts.page) : null;
   const publicBase = opts.publicBase === "/property" ? "/property" : "/f";
-  const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target, publicBase);
+  const previewTheme = polished ? previewWebsiteTheme(opts.previewTheme) : null;
+  const preview = previewTheme !== null;
+  const theme = previewTheme || websiteTheme(tour.website_theme);
+  const primaryVideo = !embed && isRealEstate(tour) ? listingVideo(tour.listing_video) : null;
+  const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target, publicBase, previewTheme);
 
   const hideVendor = hidesVendorBranding(tour);
   const agent = extractAgent(tour.client_mode === true ? { ...tour.agent_card, handle: null } : tour.agent_card || {});
@@ -3085,7 +3097,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // Only link to #disclosure when that section will actually be on the page —
   // renderDisclosureSection() returns "" when there is nothing to disclose,
   // and a dangling anchor is worse than none.
-  const hasDisclosureSection = !embed && (hasAltered || (staged && !!first(tour.staged_disclosure)));
+  const hasDisclosureSection = !embed && (hasAltered || (staged && !!first(tour.staged_disclosure)) || !!primaryVideo?.disclosure);
   const chipLink = hasDisclosureSection ? ` <a href="#disclosure">Full disclosure</a>` : "";
   const stagedHtml = staged || hasAltered
     ? `<div class="chrome on" id="staged" role="button" tabindex="0" aria-label="AI and virtual staging disclosure">${escapeHtml(chipLabel)}</div>
@@ -3106,7 +3118,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // F-H-19: a customer's tour is not offered to search engines unless its owner
   // asked for it. og:* still ships — sharing a link in a message is not the
   // same decision as being listed in a search index forever.
-  const indexable = !embed && !unbranded && allowsIndexing(tour);
+  const indexable = !embed && !unbranded && !preview && allowsIndexing(tour);
   const ogPoster = unbranded ? "" : absolutize(coverImage, shareUrl);
   const ogImage = ogPoster ? `<meta property="og:image" content="${escapeAttr(ogPoster)}">\n<meta name="twitter:image" content="${escapeAttr(ogPoster)}">` : "";
 
@@ -3123,10 +3135,12 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   );
 
   // No CTA, no lead form, no deep link, no handoff on the unbranded page.
-  const ctaBlock = embed || unbranded ? { html: "", handoffUrl: "" } : renderCtaBlock(tour, turnstileSiteKey);
+  const ctaBlock = embed || unbranded || preview ? { html: "", handoffUrl: "" } : renderCtaBlock(tour, turnstileSiteKey);
 
   const cfg = {
     slug: tour.slug,
+    listingVideo: primaryVideo,
+    preview,
     functionsBase,
     anonKey: anonKey || "",
     scrubUrl,
@@ -3158,34 +3172,36 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // Embed mode (?embed=1): render ONLY the flythrough hero — for the in-app
   // "See it in action" card. Otherwise render the full listing microsite.
   const hasVideo = !!(scrubUrl || hlsUrl);
-  const coverHtml = `<section class="listing-cover" aria-label="Property media">
-    ${coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
-    ${polished ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><div class="property-hero-title">${escapeHtml(header.entityName)}</div>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}` : ""}
+  const coverHtml = `<section class="listing-cover${primaryVideo ? " property-video-hero" : ""}" aria-label="Property media">
+    ${primaryVideo ? listingVideoStage(primaryVideo, coverImage, header.entityName) : coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
+    ${polished ? `<div class="property-hero-copy"><div class="lp-eyebrow">${escapeHtml(isSoldOrArchived(tour) ? "Sold property" : "Discover the residence")}</div><h1 class="property-hero-title">${escapeHtml(header.entityName)}</h1>${priceText(tour) ? `<p class="property-hero-price">${escapeHtml(priceText(tour))}</p>` : ""}` : ""}
     <div class="listing-cover-actions">
-      ${hasVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : `<p>Photos and location details are available below.</p>`}
+      ${hasVideo && !primaryVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : primaryVideo ? "" : `<p>Photos and location details are available below.</p>`}
       ${polished ? `<a class="property-hero-link" href="${escapeAttr(pageHref("gallery"))}">View gallery</a>${!isSoldOrArchived(tour) ? `<a class="property-hero-link" href="${escapeAttr(pageHref("contact"))}">Enquire about this home</a>` : ""}` : ""}
     </div>
+    ${primaryVideo?.disclosure ? `<span class="listing-media-label">Photo-based property video${hasDisclosureSection ? ` · <a href="#disclosure">Media details and originals</a>` : ""}</span>` : ""}
     ${staged || hasAltered ? `<span class="listing-media-label">${escapeHtml(chipLabel)}${hasDisclosureSection ? ` · <a href="#disclosure">See disclosures and originals</a>` : ""}</span>` : ""}
+    ${primaryVideo && hasVideo ? `<details class="property-recorded-option"><summary>Optional recorded walkthrough</summary><p>Explore the separately recorded tour.</p><button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Open recorded walkthrough</button></details>` : ""}
     ${polished ? "</div>" : ""}
   </section>`;
-  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page, publicBase);
+  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page, publicBase, previewTheme);
   // The end card IS the branding: agent card + CTA/lead form. `/u/` has none.
   const endcardHtml = embed || unbranded || (page && page !== "home" && page !== "contact") ? "" : `<section id="endcard">
   <div class="panel">
     ${renderAgentCard(agent, tour)}
-    ${ctaBlock.html}
+    ${preview ? `<p class="property-preview-note">Design preview. Enquiries are available on the published property website.</p>` : ctaBlock.html}
     ${disclosurePanel}
   </div>
 </section>`;
   // Footer = "Made with Rendprop" + the (opt-out) house partner strip +
   // Terms/Privacy. All of it is branding or an external link, so `/u/` gets no
   // footer at all.
-  const footerHtml = embed || unbranded ? "" : renderFooter(promoPrefs(tour), hideVendor);
+  const footerHtml = embed || unbranded || preview ? "" : renderFooter(promoPrefs(tour), hideVendor);
 
   // "Get the app" — see renderGetAppSection() for the placement argument.
   // `embed` is excluded as well as `unbranded`: the in-app preview is already
   // inside the app it would be advertising.
-  const getAppHtml = embed || unbranded || hideVendor
+  const getAppHtml = embed || unbranded || hideVendor || preview
     ? ""
     : renderGetAppSection({
         surface: "tour",
@@ -3195,7 +3211,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // iOS Safari's smart banner. Same two guards, same reason. This is the half
   // of the CTA that lands ABOVE the fold, for free, on the exact device the
   // download targets — which is why the visible band can afford to sit low.
-  const appBanner = embed || unbranded || hideVendor ? "" : `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}">`;
+  const appBanner = embed || unbranded || hideVendor || preview ? "" : `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}">`;
 
   // STRUCTURED DATA — see src/jsonld.ts for the three rules that gate it.
   // `indexable` is already `!embed && !unbranded && allowsIndexing(tour)`, so
@@ -3209,8 +3225,8 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
         canonical: shareUrl,
         name: header.entityName,
         description: header.ogDesc,
-        poster: absolutize(poster, shareUrl),
-        videoUrl: scrubUrl,
+        poster: absolutize(primaryVideo ? primaryVideo.poster_url || coverImage : poster, shareUrl),
+        videoUrl: primaryVideo?.url || scrubUrl,
         // priceText() already returns "" for 0 / absent; price_cents is the
         // only numeric source, so a listing with a display price but no cents
         // emits no Offer rather than an Offer with a parsed guess in it.
@@ -3223,7 +3239,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 
   // Share control — branded, non-embed only. `/u/` must not offer a social
   // affordance at all, and the in-app embed already has the system share sheet.
-  const shareHtml = embed || unbranded
+  const shareHtml = embed || unbranded || preview
     ? ""
     : `<button type="button" class="chrome" id="share" aria-label="Share this tour">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15V3m0 0L8 7m4-4 4 4M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -3258,10 +3274,11 @@ ${shareUrl ? `<meta property="og:url" content="${escapeAttr(shareUrl)}">` : ""}
 ${ogImage}
 ${jsonLdHtml}`}
 <style>${PLAYER_CSS}${unbranded ? "" : FORM_CSS}
-${EDITORIAL_CSS}${embed ? "" : LISTING_PLAYER_CSS}${embed || unbranded ? "" : "#endcard {min-height:0;padding-top:48px;background:var(--bg);scroll-margin-top:var(--listing-nav-offset,88px);}"}${polished ? PROPERTY_SITE_CSS : ""}</style>
+${EDITORIAL_CSS}${embed ? "" : LISTING_PLAYER_CSS}${embed || unbranded ? "" : "#endcard {min-height:0;padding-top:48px;background:var(--bg);scroll-margin-top:var(--listing-nav-offset,88px);}"}${polished ? PROPERTY_SITE_CSS + PROPERTY_DESIGN_CSS : ""}${primaryVideo ? PROPERTY_VIDEO_CSS : ""}</style>
 ${accentOverride}
 </head>
-<body${polished ? ` class="property-site property-page-${page}"` : ""}>
+<body${polished ? ` class="property-site property-page-${page} site-theme-${theme}${preview ? " site-preview" : ""}"` : ""}>
+${preview ? `<aside class="property-preview-banner" role="status">${escapeHtml(websiteThemeName(theme))} · Design preview<span>Preview only. This does not change your published website or unlock a paid design.</span></aside><div class="property-preview-watermark" aria-hidden="true">DESIGN PREVIEW</div>` : ""}
 
 ${embed ? `<div id="track">
   <div id="stage"${hasStrip ? ` class="hasstrip"` : ""}>
@@ -3329,7 +3346,8 @@ ${footerHtml}
   ${safeUrl(tour.floorplan_url || "") ? `<a href="#plan">Floor plan</a>` : ""}
   ${!unbranded ? `<a href="#endcard">Contact</a>` : ""}`}
   </div><div class="listing-nav-actions">
-  ${hasVideo ? `<button type="button" class="watch-button" data-open-flythrough aria-label="Open fly-through" aria-haspopup="dialog">Fly-through</button>` : ""}
+  ${primaryVideo ? page === "home" || !polished ? `<button type="button" id="property-video-nav-play" class="watch-button property-primary-play" aria-controls="property-video">Play property video</button>` : `<a class="property-primary-play" href="${escapeAttr(pageHref("home") + "#property-video")}">Property video</a>` : ""}
+  ${hasVideo ? `<button type="button" class="${primaryVideo ? "walkthrough-secondary" : "watch-button"}" data-open-flythrough aria-label="${primaryVideo ? "Open optional recorded walkthrough" : "Open fly-through"}" aria-haspopup="dialog">${primaryVideo ? "Recorded walkthrough" : "Fly-through"}</button>` : ""}
   ${shareHtml}
   <a href="#listing-top" class="listing-backtop">Top ↑</a>
   </div>
@@ -3363,7 +3381,8 @@ ${polished ? `<dialog id="property-photo-modal" aria-labelledby="property-photo-
 `}
 
 <script>window.__CFG__=${jsonForScript(cfg)};</script>
-<script>${embed ? engineJs(unbranded, true, hideVendor) : listingEngineJs(unbranded, hideVendor)}</script>
+<script>${embed ? engineJs(unbranded, true, hideVendor) : listingEngineJs(unbranded, hideVendor, preview)}</script>
+${primaryVideo ? `<script>${PROPERTY_VIDEO_JS}</script>` : ""}
 ${polished ? `<script>(function(){${PROPERTY_SITE_JS}})();</script>` : ""}
 ${page === "location" ? `<script>${NEARBY_PLACES_JS}</script>` : ""}
 </body>

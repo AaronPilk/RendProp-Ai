@@ -943,6 +943,11 @@ protocol APIClient: Sendable {
                       enhancements: Enhancements, chapters: [ChapterInput],
                       posterAssetID: String?) async throws -> PublishedTour
 
+    /// Owned photo-video publication. The server registers ordered source
+    /// lineage before allowing this upload to become the website presentation.
+    func publishListingVideo(listingID: UUID, assetID: String, record: ListingVideoRecord, operationID: UUID,
+                             posterAssetID: String?, republish: Bool) async throws -> PublishedTour
+
     /// PATCH /renders/:id/chapters — replace the published tour's tap-to-jump
     /// chapters (room tags retimed to the rendered timeline) without re-publishing.
     func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws
@@ -1111,6 +1116,12 @@ protocol APIClient: Sendable {
     /// is never sent. `AIVideoJob.grounded`/`.synthetic` echo the server's
     /// flags so the UI can disclose "AI-generated — not real drone footage".
     func aiVideoAerial(_ request: AerialRequest, idempotencyKey: String?) async throws -> AIVideoJob
+
+    /// Exact uploaded private JPEG binds generation/QC to composition lineage.
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                        aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                        listingServerID: UUID?, label: String?, idempotencyKey: String?,
+                        sourceAssetID: String, sourceProvenanceID: String?) async throws -> AIVideoJob
 
     /// POST /ai-video/reel-clip — animate a photo (base64) into a 2–12 s motion
     /// clip (Seedance image-to-video). `listingServerID` anchors the clip's
@@ -1297,6 +1308,16 @@ protocol APIClient: Sendable {
 
 // MARK: - Convenience overloads (protocol requirements can't carry defaults)
 extension APIClient {
+    func publishListingVideo(listingID: UUID, assetID: String, record: ListingVideoRecord, operationID: UUID,
+                             posterAssetID: String?, republish: Bool) async throws -> PublishedTour {
+        throw APIError.server(status: 503, code: "unsupported", message: "Listing video publication isn't available on this connection. Your video is saved on this phone.")
+    }
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                        aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                        listingServerID: UUID?, label: String?, idempotencyKey: String?, sourceAssetID: String,
+                        sourceProvenanceID: String?) async throws -> AIVideoJob {
+        throw APIError.server(status: 503, code: "unsupported", message: "Verified photo-video generation isn't available on this connection. Your photos are saved.")
+    }
     func uploadBusinessLogo(image: Data, contentType: String, expectedLogoURL: String?, operationID: UUID, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
     func removeBusinessLogo(expectedLogoURL: String?, orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
     func businessLogo(orgID: UUID) async throws -> BusinessLogoReceipt { throw APIError.notConfigured }
@@ -1454,6 +1475,12 @@ struct AIVideoJob: Codable, Sendable {
     var disclosure: String? = nil
     /// `media_provenance.id` when the server logged the generation.
     var provenanceID: String? = nil
+
+    /// Server acknowledgement of this exact private photo input. Older jobs
+    /// remain playable but cannot claim the new composition source binding.
+    var sourceBound: Bool? = nil
+    var sourceAssetID: String? = nil
+
 
     /// The sentence to show when the server sent none (older server / offline):
     /// HousingWire's recommended simulated-movement disclosure.

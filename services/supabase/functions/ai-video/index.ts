@@ -229,7 +229,8 @@ import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/pro
 import { openaiChat } from "../_shared/providers/openai.ts";
 import { falCompletedFailure, falLegacyReceipt, falLegacyReceiptMatchesModel } from "../_shared/providers/fal.ts";
 import { persistResult, persistedUrl, putBytes, presignGet } from "../_shared/providers/common.ts";
-import { R2_BUCKET_RENDERS, headObject } from "../_shared/r2.ts";
+import { R2_BUCKET_RENDERS,R2_BUCKET_UPLOADS,headObject } from "../_shared/r2.ts";
+import { verifyPropertyVideoInput } from '../_shared/property-video.ts';
 import { createEraseHandler, extractEraseJob, readEraseConfig } from "./erase.ts";
 import { renewEraseOutput } from "./erase-output.ts";
 import { privateMediaUrl } from "../_shared/private-media.ts";
@@ -986,6 +987,8 @@ interface AerialBody {
   label?: string;
 }
 interface ReelBody {
+  source_asset_id?:string;
+  source_provenance_id?:string|null;
   preset_version?: number;
   /** Input-photo framing, separate from the app's portrait/landscape canvas. */
   framing?: "preserve_photo";
@@ -1505,6 +1508,17 @@ Deno.serve(async (req) => {
 
       await assertVideoReceiptSigningReady();
       assert(!reelListingId || !body.listing_id || reelListingId === body.listing_id,400,"Choose a source from this listing.");
+      let propertySource:Awaited<ReturnType<typeof verifyPropertyVideoInput>>|null=null;
+      if(body.source_asset_id!==undefined){
+        assert(typeof body.source_asset_id==='string'&&typeof body.listing_id==='string'&&typeof body.image_b64==='string',400,'Choose an uploaded property source and its exact prepared photo.');
+        assert(optionalUuid(body.source_asset_id)===body.source_asset_id&&optionalUuid(body.listing_id)===body.listing_id,400,'Choose a valid property source.');
+        const sourceProv=body.source_provenance_id??null;assert(sourceProv===null||optionalUuid(sourceProv)===sourceProv,400,'Choose a valid photo provenance record.');
+        propertySource=await verifyPropertyVideoInput(user.id,body.listing_id,body.source_asset_id,body.image_b64,sourceProv,{
+          rpc:(name,args)=>adminClient().rpc(name,args),
+          head:(bucket,key,signal)=>headObject(bucket==='uploads'?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,key,signal),
+          sign:(bucket,key,seconds)=>presignGet(bucket==='uploads'?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS,key,seconds),fetch,
+        });
+      }else assert(body.source_provenance_id===undefined||body.source_provenance_id===null,400,'Photo provenance needs its uploaded source.');
       const charge = await guardGenerate(user, req, "reel", undefined, undefined, body.listing_id ?? reelListingId ?? undefined); // validated — charge, then submit
       const { orgId, plan } = charge;
 
@@ -1630,9 +1644,16 @@ Deno.serve(async (req) => {
         style: chosenMotion,
         promptSummary: userMotion ?? null,
       });
+      let sourceBound=false;
+      if(propertySource&&prov.id){
+        const bound=await adminClient().rpc('bind_property_video_source',{p_actor:user.id,p_listing:propertySource.listing,p_asset:propertySource.asset,
+          p_photo_provenance:propertySource.photoProvenance,p_request:sub.request_id,p_generation_provenance:prov.id,p_sha256:propertySource.sha256,p_qc_hash:propertySource.qcHash});
+        sourceBound=!bound.error&&bound.data?.bound===true;
+      }
       return json({
         ...sub,
         kind: "reel",
+        ...(propertySource?{source_bound:sourceBound,source_asset_id:propertySource.asset}:{}),
         model_id: step.model,
         seconds: secs,
         space_type: space,

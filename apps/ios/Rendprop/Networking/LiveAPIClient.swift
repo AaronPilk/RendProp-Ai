@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
+final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -851,10 +851,12 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                              posterAssetID: posterAssetID)
     }
 
-    private func publishApp(route: String, listingID: UUID, assetID: String, durationS: Double,
+    @MainActor private func publishApp(route: String, listingID: UUID, assetID: String, durationS: Double,
                             speedFactor: Double, tier: RenderTier,
                             enhancements: Enhancements, chapters: [ChapterInput],
-                            posterAssetID: String?) async throws -> PublishedTour {
+                            posterAssetID: String?, composition: ListingVideoComposition? = nil, publicationID: UUID? = nil) async throws -> PublishedTour {
+        let publicationOwner = AuthStore.shared.userID, publicationRevision = AuthStore.shared.syncSessionRevision
+        let publicationLibrary = WorkspaceContext.selectedOrgID
         var body: [String: Any] = [
             "listing_id": listingID.uuidString,
             "asset_id": assetID,
@@ -873,12 +875,27 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                 .map { $0.wireDictionary }
         }
         if let posterAssetID, !posterAssetID.isEmpty { body["poster_asset_id"] = posterAssetID }
+        if let composition {
+            guard let publicationID else { throw CloudSyncError.invalidResponse }
+            body["presentation_kind"] = "photo_video"
+            body["publication_id"] = publicationID.uuidString.lowercased()
+            body["composition"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(composition))
+        }
         // Stable per (listing, asset): a retry after a lost response replays the
         // SAME job + slug instead of publishing a second public tour.
-        let key = "publish:\(listingID.uuidString.lowercased()):\(assetID)"
+        let key = publicationID.map { "photo-video:\($0.uuidString.lowercased())" } ?? "publish:\(listingID.uuidString.lowercased()):\(assetID)"
         let data = try await execute(makeRequest(url: url(["renders", route]),
                                                  method: "POST", json: body, idempotency: .key(key)))
         let dto: PublishAppDTO = try decode(data)
+        if composition != nil {
+            guard publicationOwner == AuthStore.shared.userID, publicationRevision == AuthStore.shared.syncSessionRevision,
+                  publicationLibrary == WorkspaceContext.selectedOrgID,
+                  dto.presentationKind == "photo_video", dto.presentationAssetId == assetID,
+                  dto.publicationId.flatMap(UUID.init(uuidString:)) == publicationID,
+                  dto.listingId.flatMap(UUID.init(uuidString:)) == listingID,
+                  dto.orgId.flatMap(UUID.init(uuidString:)) != nil,
+                  dto.libraryOrgId.flatMap(UUID.init(uuidString:)) == publicationLibrary else { throw CloudSyncError.invalidResponse }
+        }
         guard let slug = dto.slug, let share = dto.shareUrl else {
             throw APIError.decoding   // server didn't return a slug/share_url
         }
@@ -890,6 +907,15 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                              videoURL: dto.videoUrl, posterURL: dto.posterUrl ?? dto.poster,
                              durationS: dto.durationS, staged: dto.staged,
                              renderID: dto.id.flatMap(UUID.init(uuidString:)))
+    }
+
+    func publishListingVideo(listingID: UUID, assetID: String, record: ListingVideoRecord, operationID: UUID,
+                             posterAssetID: String?, republish: Bool) async throws -> PublishedTour {
+        guard record.canSelectForWebsite, record.serverListingID == listingID else { throw ListingVideoStore.Failure.invalidRecord }
+        return try await publishApp(route: republish ? "republish-app" : "publish-app",
+            listingID: listingID, assetID: assetID, durationS: record.durationS, speedFactor: 1,
+            tier: .smooth, enhancements: Enhancements(), chapters: [], posterAssetID: posterAssetID,
+            composition: ListingVideoComposition(sources: record.sources), publicationID: operationID)
     }
 
     func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws {
@@ -1391,7 +1417,35 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                          aspect: String?, framing: String? = nil, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
+        try await submitReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt, seconds: seconds,
+            aspect: aspect, framing: framing, presetVersion: presetVersion, motion: motion, room: room,
+            shotIndex: shotIndex, shotCount: shotCount, listingServerID: listingServerID, label: label,
+            idempotencyKey: idempotencyKey, sourceAssetID: nil, sourceProvenanceID: nil)
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                        aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                        listingServerID: UUID?, label: String?, idempotencyKey: String?, sourceAssetID: String,
+                        sourceProvenanceID: String?) async throws -> AIVideoJob {
+        try await submitReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt, seconds: seconds,
+            aspect: aspect, framing: framing, presetVersion: presetVersion, motion: motion, room: room,
+            shotIndex: shotIndex, shotCount: shotCount, listingServerID: listingServerID, label: label,
+            idempotencyKey: idempotencyKey, sourceAssetID: sourceAssetID, sourceProvenanceID: sourceProvenanceID)
+    }
+
+    private func submitReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                        aspect: String?, framing: String?, presetVersion: Int?, motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
+                        listingServerID: UUID?, label: String?, idempotencyKey: String?, sourceAssetID: String?,
+                        sourceProvenanceID: String?) async throws -> AIVideoJob {
         var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "seconds": seconds]
+        if let sourceAssetID {
+            guard UUID(uuidString: sourceAssetID) != nil, listingServerID != nil else { throw CloudSyncError.invalidResponse }
+            body["source_asset_id"] = sourceAssetID
+        }
+        if let sourceProvenanceID {
+            guard UUID(uuidString: sourceProvenanceID) != nil, sourceAssetID != nil else { throw CloudSyncError.invalidResponse }
+            body["source_provenance_id"] = sourceProvenanceID
+        }
         if let aspect {
             guard aspect == "9:16" || aspect == "16:9" else { throw CloudSyncError.invalidResponse }
             body["aspect"] = aspect
@@ -1458,7 +1512,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
                           responseUrl: responseUrl, kind: dto.kind ?? fallbackKind,
                           grounded: dto.grounded, synthetic: dto.synthetic,
                           disclosure: (disclosure?.isEmpty == false) ? disclosure : nil,
-                          provenanceID: dto.provenance?.id)
+                          provenanceID: dto.provenance?.id, sourceBound: dto.sourceBound, sourceAssetID: dto.sourceAssetId)
     }
 
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
@@ -1513,6 +1567,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         if let s = request.spaceType, !s.isEmpty { body["space_type"] = s }
         if let id = request.listingServerID { body["listing_id"] = id.uuidString }
         if let p = request.provenanceID, !p.isEmpty { body["provenance_id"] = p }
+        if let source = request.sourceAssetID { body["asset_id"] = source }
 
         let data = try await execute(makeRequest(url: url(["ai-video", "drift"]),
                                                  method: "POST", json: body,
@@ -1613,6 +1668,35 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             provenanceID: dto.provenance?.id,
             provenanceRecorded: dto.provenance?.recorded ?? false,
             sharedResultID: dto.sharedResultId.flatMap(UUID.init(uuidString:)))
+    }
+
+    /// Image-backed editing hints only. Every uploaded source remains private;
+    /// the backend revalidates owned bytes and returns closed scene/motion values.
+    @MainActor func propertyVideoPlan(listingID: UUID, orgID: UUID, photos: [PropertyVideoPlanPhoto],
+                                     idempotencyKey: String) async throws -> PropertyVideoPlanReply {
+        guard (1...20).contains(photos.count), Set(photos.map(\.photoID)).count == photos.count,
+              photos.allSatisfy({ !$0.photoID.isEmpty && $0.photoID.utf8.count <= 200 }),
+              !idempotencyKey.isEmpty else { throw PropertyVideoPlanner.Failure.invalidInput }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let consent = AIConsent.shared.revocationRevision
+        func requireCurrent() throws {
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent,
+                  owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                  WorkspaceContext.selectedOrgID == orgID else { throw CloudSyncError.identityChanged }
+        }
+        try requireCurrent()
+        let body: [String: Any] = ["listing_id": listingID.uuidString.lowercased(),
+            "expected_org_id": orgID.uuidString.lowercased(),
+            "photos": photos.map { ["photo_id": $0.photoID, "asset_id": $0.assetID.uuidString.lowercased()] }]
+        var request = makeRequest(url: url(["property-video-plan"]), method: "POST", json: body, idempotency: .key(idempotencyKey))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        request.setValue("property-video-plan-v1", forHTTPHeaderField: "x-rendprop-ai-consent")
+        let data = try await execute(request, session: aiSession, beforeSend: { try requireCurrent() })
+        try requireCurrent()
+        guard data.count <= 65536 else { throw PropertyVideoPlanner.Failure.invalidReply }
+        let reply = try JSONDecoder().decode(PropertyVideoPlanReply.self, from: data)
+        _ = try reply.checked(listingID: listingID, orgID: orgID, requested: photos)
+        return reply
     }
 
     // MARK: - AI room chapters (docs/AI-CHAPTERS-CONTRACT.md)
@@ -2417,6 +2501,12 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let posterUrl: String?     // poster_url
         let poster: String?        // alt key some routes use
         let unbrandedUrl: String?  // unbranded_url — the MLS-safe /u/<slug> twin
+        let presentationKind: String?
+        let presentationAssetId: String?
+        let publicationId: String?
+        let listingId: String?
+        let orgId: String?
+        let libraryOrgId: String?
     }
 
     /// 202 body of POST /ai-video/{drone,aerial,reel-clip} — fal's queue ids
@@ -2433,6 +2523,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         /// The exact public disclosure sentence for this generation (W2-B3).
         let disclosure: String?
         let provenance: ProvenanceEnvelopeDTO?
+        let sourceBound: Bool?
+        let sourceAssetId: String?
     }
 
     /// `provenance: { id, recorded, reason? }` — the same envelope every AI

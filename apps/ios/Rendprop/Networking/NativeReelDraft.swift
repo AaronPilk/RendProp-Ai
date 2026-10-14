@@ -1,5 +1,28 @@
 import Foundation
 
+/// Setup migration is separate from paid batch recovery. Legacy setup defaults
+/// cannot be distinguished from explicit choices, so only missing-version
+/// setups adopt Automatic; current setups keep their stated overrides.
+struct NativeReelPlanningSetup: Sendable {
+    let motionPreset: String?
+    let pictureLabels: Bool
+    let automaticOrder: Bool
+    let notice: String?
+    init(automaticOrder: Bool?, motionPreset: String?, pictureLabels: Bool) {
+        if let automaticOrder {
+            self.automaticOrder = automaticOrder
+            self.motionPreset = motionPreset
+            self.pictureLabels = pictureLabels
+            self.notice = nil
+        } else {
+            self.automaticOrder = true
+            self.motionPreset = nil
+            self.pictureLabels = false
+            self.notice = "Older setups now use automatic scene order and camera motion, with picture labels off. Your photos and narration are kept."
+        }
+    }
+}
+
 /// Semantic setup shared with Studio. Device URLs, upload capabilities and paid
 /// generation requests never enter this document. Unsupported local media is
 /// represented explicitly, so another device cannot invent a matching shot.
@@ -23,6 +46,10 @@ struct NativeReelDraft: Codable, Hashable, Sendable {
     let localExtraClipCount: Int
     let updatedAt: String
     var motionPreset: String? = nil
+    var automaticOrder: Bool? = nil
+    var planningSetup: NativeReelPlanningSetup {
+        NativeReelPlanningSetup(automaticOrder: automaticOrder, motionPreset: motionPreset, pictureLabels: shotCaptions)
+    }
 
     func checked() throws -> Self {
         guard motionPreset == nil || ["fly_through", "push_in", "side_glide", "pull_back"].contains(motionPreset!), schema == 1, kind == "native-reel-setup", ["off", "lowerThird", "punchCard", "highlightBox"].contains(captionStyle),

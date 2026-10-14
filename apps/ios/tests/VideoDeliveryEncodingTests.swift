@@ -3,6 +3,11 @@ import CoreImage
 import Foundation
 import UIKit
 
+enum FileStore {
+    static var documents:URL {URL(fileURLWithPath:CommandLine.arguments[1],isDirectory:true)}
+    static func relativePath(for url:URL)->String {String(url.path.dropFirst(documents.path.count+1))}
+    static func fileSize(_ url:URL)->Int64 {Int64((try? url.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0)}
+}
 /// Headless AVFoundation encoding; no app, UI, account or camera is launched.
 @main struct VideoDeliveryEncodingTests {
     @MainActor static func main() async throws {
@@ -24,6 +29,18 @@ import UIKit
             }
             let offset=((image.height/2)*image.width+image.width/2)*4
             return [Int(data[offset]),Int(data[offset+1]),Int(data[offset+2])]
+        }
+        func cleanFrame(_ image:CGImage, expected:[Int])->Bool {
+            var data=[UInt8](repeating:0,count:image.width*image.height*4)
+            data.withUnsafeMutableBytes { p in
+                CGContext(data:p.baseAddress,width:image.width,height:image.height,bitsPerComponent:8,bytesPerRow:image.width*4,
+                    space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!.draw(image,in:CGRect(x:0,y:0,width:image.width,height:image.height))
+            }
+            for y in stride(from:4,to:image.height,by:8) { for x in stride(from:4,to:image.width,by:8) {
+                let offset=(y*image.width+x)*4
+                if (0..<3).contains(where:{abs(Int(data[offset+$0])-expected[$0])>20}) {return false}
+            }}
+            return true
         }
         let colors:[(CGFloat,CGFloat,CGFloat)]=[(0.9,0.15,0.1),(0.1,0.8,0.15),(0.1,0.2,0.9),(0.9,0.8,0.1),(0.85,0.1,0.85),(0.1,0.8,0.85),(0.45,0.15,0.1),(0.1,0.45,0.2),(0.1,0.2,0.45),(0.5,0.45,0.1),(0.45,0.1,0.45),(0.1,0.45,0.45)]
         var clips:[URL]=[],pixels:[[Int]]=[]
@@ -50,18 +67,31 @@ import UIKit
             check(writer.status == .completed,"procedural source encoder completes")
             clips.append(url);pixels.append(center(try await frame(url,0)))
         }
+        let listingID=UUID(),owner=UUID().uuidString,workspace=UUID(),serverListing=UUID()
+        try FileManager.default.createDirectory(at:root.appendingPathComponent("reels"),withIntermediateDirectories:true)
+        let sources=(0..<12).map { ListingVideoSource(photoVersionID:"photo-version-\($0)",photoAssetID:UUID().uuidString,motionKind:"original_photo") }
         var output:[[String:Any]]=[]
         for choice in VideoAspectChoice.allCases {
-            let url=root.appendingPathComponent("delivered-\(choice.rawValue).mp4")
-            try await ReelComposer.compose(shots:clips.map{.init(url:$0)},renderSize:CGSize(width:CGFloat(choice.width),height:CGFloat(choice.height)),output:url)
+            let url=root.appendingPathComponent("reels/\(listingID.uuidString)-\(choice.rawValue).mp4")
+            let requestedCard: ReelTitleCard? = choice == .listing ? ReelTitleCard(title: "Agent brand", subtitle: "A company", watermark: "Made with Rendprop") : nil
+            let title = VideoBrandingPolicy.titleCard(requestedCard, aspect: choice.aspect)
+            check(choice != .listing || title == nil,"listing title-card policy suppresses app branding before encoding")
+            try await ReelComposer.compose(shots:clips.map{.init(url:$0)},renderSize:CGSize(width:CGFloat(choice.width),height:CGFloat(choice.height)),options:.init(titleCard:title),output:url)
             let duration=try await AVURLAsset(url:url).load(.duration)
             check(abs(duration.seconds-3)<0.05,"12-shot video retains every clip in its full timeline")
             let first=try await frame(url,0.1)
             check(first.width == (choice == .listing ? 1920:1080) && first.height == (choice == .listing ? 1080:1920),"delivered purpose uses actual 1080p orientation pixels")
             for index in 0..<12 {
-                let actual=center(try await frame(url,Double(index)*0.25+0.1))
+                let encodedFrame=try await frame(url,Double(index)*0.25+0.1)
+                let actual=center(encodedFrame)
+                if choice == .listing {check(cleanFrame(encodedFrame,expected:pixels[index]),"listing master retains full clean source pixels without baked branding or panels")}
                 check(zip(actual,pixels[index]).allSatisfy{abs($0-$1)<20},"all twelve source shots retain exact order in encoded video")
             }
+            let record=try await ListingVideoPreparation.retain(output:url,listingID:listingID,ownerID:owner,
+                workspaceID:workspace,serverListingID:serverListing,purpose:choice,sources:sources,includesOpeningClip:false,brandingPolicy:choice == .listing ? "unbranded" : nil)
+            check((try? ListingVideoStore.load(for:url))==record,"finished video metadata survives independent reload before selection")
+            check(record.width==first.width && record.height==first.height && abs(record.durationS-duration.seconds)<0.05,"retained metadata comes from actual encoded video shape and duration")
+            check(record.sources.map(\.photoVersionID)==sources.map(\.photoVersionID) && record.canSelectForWebsite==(choice == .listing),"actual output retains its ordered sources and destination eligibility")
             output.append(["purpose":choice.rawValue,"width":first.width,"height":first.height,"seconds":duration.seconds,"shots":12,"centerColorOrderChecked":true])
         }
         let result:[String:Any]=["passed":true,"checks":checks,"outputs":output,"headlessKernelOnly":true,"UIExecutions":0,"cameraCalls":0,"providerCalls":0]

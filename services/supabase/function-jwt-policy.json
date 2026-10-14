@@ -18,6 +18,8 @@
   "portfolio": false,
   "presenter-drain": false,
   "property": true,
+  "property-sites": true,
+  "property-video-plan": true,
   "renders": true,
   "spatial": false,
   "studio": true,

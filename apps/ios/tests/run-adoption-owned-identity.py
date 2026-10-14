@@ -30,7 +30,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     models = [IOS / p for p in ['Models/Listing.swift', 'Models/ListingClientContact.swift', 'Models/Money.swift',
               'Models/ProductionGuidance.swift', 'Networking/ProductionPlan.swift', 'Auth/AnonymousAdoptionRecovery.swift',
-              'Auth/AdoptionLocalBindings.swift']]
+              'Auth/AdoptionLocalBindings.swift', 'Render/VideoAspectChoice.swift']]
     library = IOS / 'Auth/AdoptionProductionLibrary.swift'
     fly = IOS / 'Screens/FlythroughDetailView.swift'
     api = IOS / 'Networking/APIClient.swift'
