@@ -255,3 +255,5 @@ assert receipt['passed'], 'Boundary source or harness changed during execution'
 print('PASS: exact boundary production and harness hashes match at completion')
 PY
 echo "Boundary evidence: $shipping_boundary_dir"
+python3 "$shipping_boundary_root/apps/ios/tests/run-spatial-floor-plan-boundary.py" \
+  --evidence-dir "$shipping_boundary_dir/floor-plan"

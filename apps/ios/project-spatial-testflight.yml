@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Separate photo libraries and private Bria video-removal beta, plus local scan tests.
+    # Experimental local room scans/3D plans. Normal App Store project remains74.
     # Recheck Apple inventory; never automatically renumber an upload retry.
-    CURRENT_PROJECT_VERSION: "43"
+    CURRENT_PROJECT_VERSION: "75"
 targets:
   Rendprop:
     sources:

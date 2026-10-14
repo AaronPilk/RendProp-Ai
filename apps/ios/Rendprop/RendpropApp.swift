@@ -3894,11 +3894,15 @@ struct HomeDashboardView: View {
                 // caller ever pushes this case.
                 FlythroughDetailView(listing: route.listing)
             case .floorPlan:
+#if SPATIAL_CAPTURE_LAB
+                FloorPlanView(listing: route.listing)
+#else
                 // Measurements is Coming soon on Home and on the listing
                 // toolbox (build 57). A route that still names it (a coach
                 // "open_floor_plan" action, a stale push) lands on the home
                 // itself instead of opening the hidden tool.
                 FlythroughDetailView(listing: route.listing)
+#endif
             case .spatial:
                 // Same gate as the tile: the product only opens while the
                 // server says its pipeline is on. A route that arrives anyway
@@ -4019,7 +4023,17 @@ struct HomeDashboardView: View {
                 featureButton(.spatial)
             }
             comingSoonTile("Measurements", "Draw an outline or upload a plan", "ruler", id: "floorPlan")
+#if SPATIAL_CAPTURE_LAB
+            Button { open(.floorPlan) } label: {
+                HomeShortcutCard(title: "3D plans", subtitle: "TestFlight · scan rooms",
+                                 icon: "cube.transparent", assetName: "BrandFloorPlanTools")
+            }
+            .buttonStyle(ScalePressStyle())
+            .accessibilityLabel("3D floor plan. TestFlight room scan.")
+            .accessibilityIdentifier("home.feature.3dFloorPlanLab")
+#else
             comingSoonTile("3D floor plan", "Scan and build a room model", "cube.transparent", id: "3dFloorPlan")
+#endif
             if !model.isSpatialWalkthroughAvailable {
                 comingSoonTile("3D walkthrough", "Room-by-room exploration", "rotate.3d", id: "spatial")
             }

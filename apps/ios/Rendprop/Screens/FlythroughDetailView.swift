@@ -247,18 +247,26 @@ private struct ListingToolboxGrid: View {
                                       icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
                 disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
             )
-            // Measurements is "Coming soon" on the listing page, exactly like Home
-            // (`home.comingSoon.floorPlan`): a card, never a link. `FloorPlanView`
-            // stays compiled for the build that re-enables it. The three
-            // placeholders close the grid so working tools come first.
+            // Measurements stays Coming soon. Only the explicit TestFlight lab
+            // opens the existing RoomPlan scan/preview; public builds keep an
+            // inert card and do not create its destination.
             ListingToolCard(title: "Measurements", sub: "Coming soon",
                             icon: "ruler", gradient: RPGradient.plan, dimmed: true)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("detail.measurementsComingSoon")
+#if SPATIAL_CAPTURE_LAB
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "3D floor plan", sub: sample ? createFirst : "TestFlight · scan rooms",
+                                      icon: "cube.transparent", gradient: RPGradient.plan, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.floorPlanLab",
+                destination: { AnyView(FloorPlanView(listing: destinationListing())) }
+            )
+#else
             ListingToolCard(title: "3D floor plan", sub: "Coming soon",
                             icon: "cube.transparent", gradient: RPGradient.plan, dimmed: true)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("detail.floorPlanComingSoon")
+#endif
             ListingToolCard(title: "3D walkthrough", sub: "Coming soon",
                             icon: "rotate.3d", gradient: RPGradient.drone, dimmed: true)
                 .accessibilityElement(children: .combine)
