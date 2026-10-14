@@ -145,3 +145,37 @@ native/phone acceptance. No enquiry form or message is sent to reference contact
 
 This file must be updated with actual source hashes and acceptance receipts as
 each open item is completed. Do not equate source completion with live acceptance.
+
+## Evening owner feedback and corrected release state
+
+- [ ] Replace the visible Scandinavian choice with Contemporary, using a distinct
+  contemporary furniture prompt. Keep decoding historical Scandinavian results
+  and accepting legacy clients without rewriting saved media.
+- [ ] Photo edits show real preparation/upload/generation/returned-image-check/save
+  stages and batch completion. The current synchronous provider response has no
+  live percentage; do not invent elapsed-time percentages or provider progress.
+- [ ] Redesign Photo versions with adaptive system/glass materials, a larger
+  uncropped image, clear saved-version selection, one comparison action, compact
+  required review checks, and bottom actions above the safe area. Preserve exact
+  source/version review bindings, originals and explicit listing selection.
+
+The owner's October14 19:08 Modern staging result on the actual mirrored iPhone78
+was visually approved as good. Root observed that result at19:15; required review
+toggles remain unchecked and root has not published or selected that staged result
+for the listing. This confirms one real output, not every style or generation.
+Phone78 still has Latest/Scandinavian; Original is in79 source, and the newer
+Contemporary/review/progress requests are implemented in isolated80 work lanes.
+
+Apple readback at22:55Z supersedes the preceding candidate status:1.0.4(74) is
+READY_FOR_SALE, reviewCOMPLETE, AFTER_APPROVAL. Internal1.0.4(79) upload was refused
+with90062/90186 because that release train is closed; its failure evidence remains.
+79 is absent across app trains. Only the lab marketing version changed to1.0.5;
+normal74/1.0.4 project,161 Swift files and7 resources remain unchanged. Fresh
+internal1.0.5(79) signed archive/Apple processing/hardware acceptance are pending.
+
+All five79 migrations and13 affected functions are now deployed with exact-source
+and JWT-policy readback. The original partial CLI failure remains preserved;
+reconnected Supabase MCP delivered the three remaining exact-source functions.
+The dedicated CPU Worker and music files are deployed but disabled; no hosted
+CPU encoding or background-video acceptance is claimed. Studio/website79 rollout,
+premium Sandbox acceptance and refreshed onboarding remain open release work.
