@@ -299,8 +299,15 @@ final class ClosedVideoProtocol:URLProtocol {
   check(normalizedBytes==Data("download".utf8),"download normalization preserves exact bytes")
   let alreadyMP4=root.appendingPathComponent("already.mp4");try Data("already media".utf8).write(to:alreadyMP4)
   check(ReelReceiptHarness.clipPath(forDownloaded:alreadyMP4)==alreadyMP4,"an existing mp4 needs no rename")
-  old.clear();let bad=PendingReelRequest(context:ctx,photoNumber:9,job:clip.job);try bad.save()
-  check(PendingReelRequest.load(ctx)==nil,"invalid photo receipt cannot resume")
+  old.clear()
+  for photoNumber in [9,100] {
+   let valid=PendingReelRequest(context:ctx,photoNumber:photoNumber,job:clip.job);try valid.save()
+   check(PendingReelRequest.load(ctx)?.photoNumber==photoNumber,"valid photo receipt within100 preserves its exact position")
+  }
+  for photoNumber in [-1,0,101,Int.max] {
+   let bad=PendingReelRequest(context:ctx,photoNumber:photoNumber,job:clip.job);try bad.save()
+   check(PendingReelRequest.load(ctx)==nil,"invalid photo receipt cannot resume")
+  }
   try Data("broken".utf8).write(to:PendingReelRequest.file(ctx),options:.atomic)
   check(PendingReelRequest.exists(ctx)&&PendingReelRequest.load(ctx)==nil,"corrupt receipt fails closed")
   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx);preconditionFailure("unreadable receipt blocks another POST")}catch{checks+=1}

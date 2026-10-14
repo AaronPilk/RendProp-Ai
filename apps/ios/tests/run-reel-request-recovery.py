@@ -169,6 +169,8 @@ try:
         ('actual-lab-dispatch', actual, None),
         ('negative-dropped-receipt', actual.replace('try pending.save()', '// dropped accepted receipt'), 'pending receipt after poll failure'),
         ('negative-duplicate-submit', actual.replace('if PendingReelRequest.exists(recoveryContext) {', 'if false && PendingReelRequest.exists(recoveryContext) {'), 'existing receipt blocks second POST'),
+        ('negative-receipt-upper-bound', actual.replace('(1...VideoSelectionCapacity.maximumPhotos).contains(request.photoNumber)', 'request.photoNumber > 0'), 'invalid photo receipt cannot resume'),
+        ('negative-receipt-lower-bound', actual.replace('(1...VideoSelectionCapacity.maximumPhotos).contains(request.photoNumber)', 'request.photoNumber <= VideoSelectionCapacity.maximumPhotos'), 'invalid photo receipt cannot resume'),
         ('negative-early-download-ack', actual.replace('if clearReceiptOnDownload { pending?.clear() }', 'pending?.clear()'), 'temporary successful download keeps request'),
         ('negative-no-pre-dispatch-marker', actual.replace('try submission.save()', '// omitted pre-dispatch marker'), 'durable operation marker exists before POST'),
         ('negative-preparation-consent', actual.replace(block(actual, '                    guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == reelConsentRevision else {'), '// omitted captured preparation permission'), 'revocation during preparation permits no paid POST'),

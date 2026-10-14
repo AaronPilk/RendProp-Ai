@@ -105,6 +105,7 @@ import Foundation
         cleared.filePackageExtras = [303]; cleared.packageError = "Old package failure"
         cleared.provenance = [1]; cleared.provenanceCanExport = { true }; cleared.auditExport = 1
         cleared.showPhotosScreen = true; cleared.showReelStudio = true; cleared.showRoomTagger = true
+        cleared.showComplianceDetails = true
         cleared.availableRerenderSource = URL(fileURLWithPath: "/synthetic.mov")
         cleared.loadFiles(); await waitFor { ScanFixture.pending.count == 1 }
         let cancelledScan = cleared.filesTask
@@ -119,6 +120,7 @@ import Foundation
               "Invalidation clears old listing-derived details")
         check(!cleared.showPhotosScreen && !cleared.showReelStudio && !cleared.showRoomTagger && cleared.dismissals == 1,
               "Invalidation closes old feature presentation")
+        check(!cleared.showComplianceDetails, "Invalidation collapses old listing disclosure presentation")
         check(cleared.sharedAdmittedJobs == 7, "Presentation invalidation leaves admitted shared jobs untouched")
         ScanFixture.pending.removeFirst().resume(returning: .init(stamp: 4, items: [55]))
         await cancelledScan?.value
