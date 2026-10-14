@@ -5,45 +5,10 @@ import Foundation
 import UIKit
 
 @main struct ClipFramesTests {
-    @MainActor static func makeVideo(at url: URL) async throws {
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 96, AVVideoHeightKey: 64,
-        ])
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: 96, kCVPixelBufferHeightKey as String: 64,
-        ])
-        precondition(writer.canAdd(input), "synthetic video writer accepts its input")
-        writer.add(input)
-        precondition(writer.startWriting(), "synthetic video writer starts")
-        writer.startSession(atSourceTime: .zero)
-        for frame in 0..<60 {
-            let until = Date().addingTimeInterval(10)
-            while !input.isReadyForMoreMediaData {
-                guard Date() < until else { throw NSError(domain: "clip-fixture", code: 1) }
-                try await Task.sleep(nanoseconds: 1_000_000)
-            }
-            var pixel: CVPixelBuffer?
-            precondition(CVPixelBufferCreate(kCFAllocatorDefault, 96, 64, kCVPixelFormatType_32BGRA, nil, &pixel) == kCVReturnSuccess, "synthetic frame allocation succeeds")
-            let buffer = pixel!
-            CVPixelBufferLockBaseAddress(buffer, [])
-            let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
-            let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
-            for y in 0..<64 { for x in 0..<96 {
-                let offset = y * rowBytes + x * 4
-                base[offset] = UInt8(30 + frame)
-                base[offset + 1] = UInt8(50 + x)
-                base[offset + 2] = UInt8(70 + y)
-                base[offset + 3] = 255
-            } }
-            CVPixelBufferUnlockBaseAddress(buffer, [])
-            precondition(adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)), "synthetic frame append succeeds")
-        }
-        input.markAsFinished()
-        await withCheckedContinuation { continuation in writer.finishWriting { continuation.resume() } }
-        precondition(writer.status == .completed, "synthetic video writer completes")
-    }
+    // Pinned bytes remove unrelated runtime encoder startup from this decoder gate.
+    // The original writer and the observed hosted failure remain in fixture provenance.
+    static let fixtureSHA256 = "b16c9f4cb5aaf826f9820ac4846a44c54fbe989c861b88f925095d789ccc60a3"
+
 
     @MainActor static func main() async throws {
         var checks = 0
@@ -51,8 +16,12 @@ import UIKit
         let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let mp4 = root.appendingPathComponent("known-good.mp4")
-        try await makeVideo(at: mp4)
-        let bytes = try Data(contentsOf: mp4)
+        precondition(CommandLine.arguments.count == 3, "known-good fixture path is provided")
+        let fixtureURL = URL(fileURLWithPath: CommandLine.arguments[2])
+        let bytes = try Data(contentsOf: fixtureURL)
+        precondition(SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined() == fixtureSHA256,
+                     "pinned known-good fixture SHA matches its preserved encoder provenance")
+        try bytes.write(to: mp4)
         let tmp = root.appendingPathComponent("same-video.tmp")
         let mp4Copy = root.appendingPathComponent("same-video.mp4")
         try bytes.write(to: tmp); try bytes.write(to: mp4Copy)

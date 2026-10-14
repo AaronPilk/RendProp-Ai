@@ -18,7 +18,15 @@ out.mkdir(parents=True, exist_ok=True)
 source = root / 'apps/ios/Rendprop/Render/DriftCheck.swift'
 screen = root / 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift'
 fixture = root / 'apps/ios/tests/ClipFramesTests.swift'
-paths = [source, screen, fixture, Path(__file__).resolve()]
+fixture_asset = root / 'apps/ios/tests/fixtures/clip-frames-known-good.mp4'
+fixture_provenance = fixture_asset.with_suffix('.provenance.json')
+fixture_writer_source = fixture_asset.parent / 'ClipFramesFixtureWriter.swift.txt'
+paths = [source, screen, fixture, Path(__file__).resolve(), fixture_asset, fixture_provenance, fixture_writer_source]
+provenance = json.loads(fixture_provenance.read_text())
+assert hashlib.sha256(fixture_asset.read_bytes()).hexdigest() == provenance['sha256'], 'Pinned MP4 provenance SHA mismatch'
+assert fixture_asset.stat().st_size == provenance['bytes'], 'Pinned MP4 size mismatch'
+assert hashlib.sha256(fixture_writer_source.read_bytes()).hexdigest() == provenance['generatorSourceSHA256'], 'Preserved encoder provenance changed'
+assert provenance['durationSeconds'] == 2.0 and provenance['frames'] == 60 and provenance['frameRate'] == '30/1'
 hashes = lambda: {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 def block(text, anchor):
@@ -39,7 +47,7 @@ variants = [
     ('negative-no-decoded-frames', body.replace('let asset = AVURLAsset(url: url)', 'return []; let asset = AVURLAsset(url: url)'), 'known-good mp4 yields all three actual AVFoundation frames'),
     ('negative-overwrite-existing-sibling', body.replace('let renamed = downloaded.deletingLastPathComponent().appendingPathComponent("reel-download-\\(UUID().uuidString).mp4")', 'let renamed = downloaded.deletingPathExtension().appendingPathExtension("mp4"); try? FileManager.default.removeItem(at: renamed)'), 'normalizing a download never overwrites its existing mp4 sibling'),
 ]
-receipt = {'passed': False, 'start_source_sha256': before, 'runs': [], 'limitations': ['Actual iOS AVFoundation/UIImage and actual ClipFrames body decode a local AVAssetWriter H.264 fixture. No provider response, TestFlight physical-device codec, generation quality or network proof. Raw .tmp decoding is measured and is not forced to fail.']}
+receipt = {'passed': False, 'start_source_sha256': before, 'runs': [], 'limitations': ['Actual iOS AVFoundation/UIImage and actual ClipFrames body decode pinned known-good H.264 bytes produced by the original local AVAssetWriter fixture. No provider response, TestFlight physical-device codec, generation quality or network proof. Raw .tmp decoding is measured and is not forced to fail.']}
 def command(name, argv, timeout, check=True):
     result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     (out / (name + '.log')).write_text(result.stdout + result.stderr)
@@ -48,6 +56,7 @@ def command(name, argv, timeout, check=True):
     return result
 
 try:
+    receipt['fixture_provenance'] = provenance
     sdk = command('sdk', ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], 30).stdout.strip()
     inventory = json.loads(command('simulators', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 120).stdout)['devices']
     devices = [d for runtime, rows in inventory.items() if 'iOS' in runtime for d in rows if d['isAvailable'] and 'iPhone' in d['name']]
@@ -63,7 +72,7 @@ try:
         path.write_text(text)
         command(name + '-compile', ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', '-target', architecture + '-apple-ios16.0-simulator', '-sdk', sdk, str(path), str(fixture), '-o', str(binary)], 300)
         media = out / (name + '-media')
-        run = command(name, ['xcrun', 'simctl', 'spawn', device['udid'], str(binary), str(media)], 120, check=False)
+        run = command(name, ['xcrun', 'simctl', 'spawn', device['udid'], str(binary), str(media), str(fixture_asset)], 120, check=False)
         log = run.stdout + run.stderr
         expected = run.returncode == 0 if reason is None else run.returncode != 0 and 'Precondition failed: ' + reason in log
         receipt['runs'].append({'name': name, 'exit_code': run.returncode, 'expected_result': expected, 'expected_failure': reason, 'output': log[:4000]})
