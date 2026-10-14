@@ -556,6 +556,31 @@ final class BetaPolishUITests: XCTestCase {
         app.navigationBars["Custom AI edit"].buttons["Cancel"].tap()
     }
 
+    /// Compiled here for future UI acceptance; no provider or Photos writes.
+    /// The fixed actions must remain reachable while scrolling larger text.
+    func testPhotoReviewFixedActionsAcrossAppearanceAndAccessibilityText() {
+        for appearance in ["light", "dark"] {
+            app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "rich",
+                "-appearance", appearance, "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch()
+            XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 30), app.debugDescription)
+            openDetail("detail.photos", title: "Photos")
+            let photo = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare")).firstMatch
+            scrollTo(photo); photo.tap()
+            let preview = app.otherElements["photoVersion.preview"]
+            let save = app.buttons["photoVersion.download"]
+            XCTAssertTrue(save.waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertTrue(save.isHittable && save.frame.maxY <= app.frame.maxY, "Save stays inside the bottom safe area")
+            XCTAssertTrue(app.scrollViews["photoVersion.savedChoices"].exists)
+            XCTAssertTrue(app.buttons["photoVersion.fullSize"].exists)
+            if preview.exists { XCTAssertGreaterThanOrEqual(preview.frame.height, 200) }
+            app.scrollViews.firstMatch.swipeUp()
+            XCTAssertTrue(save.isHittable, "Scrolling review content cannot hide Save")
+            attach("photo-review-fixed-actions-\(appearance)-large-text")
+            app.buttons["Close"].tap(); app.terminate()
+        }
+    }
+
     func testCustomPhotoDownloadReviewDoesNotPublishAndPersists() {
         launchDetail() // Procedural images and simulator-only MockAPIClient.
         openDetail("detail.photoStudio", title: "AI Photo Studio")
@@ -592,9 +617,10 @@ final class BetaPolishUITests: XCTestCase {
         for label in ["Structure and fixed features match the source",
                       "Paint colors, garage door, trim and materials match",
                       "Only the change I requested was made"] {
-            let control = app.switches[label].switches.firstMatch
+            let control = app.buttons[label]
+            scrollTo(control)
             XCTAssertTrue(control.exists && control.isHittable, app.debugDescription)
-            control.tap(); XCTAssertEqual(control.value as? String, "1")
+            control.tap(); XCTAssertEqual(control.value as? String, "Confirmed")
         }
         XCTAssertTrue(download.isEnabled, "Complete exact comparison allows downloading")
         download.tap()
@@ -1182,15 +1208,12 @@ final class BetaPolishUITests: XCTestCase {
                       "Doors, exits and walking routes remain clear",
                       "Furniture matches my other published views, or this is the only view"]
         for label in checks {
-            let control = app.switches[label]
+            let control = app.buttons[label]
+            scrollTo(control)
             XCTAssertTrue(control.exists && control.isHittable, app.debugDescription)
-            // SwiftUI exposes a full-width wrapper and nested physical UISwitch.
-            // A wrapper-center tap hits its caption on iOS 26.
-            let physicalSwitch = control.switches.firstMatch
-            XCTAssertTrue(physicalSwitch.exists && physicalSwitch.isHittable, app.debugDescription)
-            XCTAssertEqual(physicalSwitch.value as? String, "0")
-            physicalSwitch.tap()
-            XCTAssertEqual(physicalSwitch.value as? String, "1", "The actual review toggle must turn on")
+            XCTAssertEqual(control.value as? String, "Not confirmed")
+            control.tap()
+            XCTAssertEqual(control.value as? String, "Confirmed", "The explicit review check must turn on")
         }
         let complete = NSPredicate { _, _ in use.isEnabled }
         expectation(for: complete, evaluatedWith: app); waitForExpectations(timeout: 5)

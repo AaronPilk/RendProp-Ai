@@ -4572,6 +4572,7 @@ private struct BatchRun: Equatable {
     var current: Int = 1
     var done: Int = 0
     var failed: Int = 0
+    var phase: PhotoWorkQueue.Phase = .preparing
 }
 
 struct PhotoStudioView: View {
@@ -5529,7 +5530,7 @@ struct PhotoStudioView: View {
     /// owed a count.
     private var pillText: String {
         if let run = batchRun {
-            return "\(run.title) — \(min(run.current, run.total)) of \(run.total)"
+            return "\(run.phase.title) · photo \(min(run.current, run.total)) of \(run.total)"
         }
         return processingText
     }
@@ -5656,7 +5657,7 @@ struct PhotoStudioView: View {
         busyPhotoIDs = job.currentPhotoID.map { Set([$0]) } ?? []
         if job.running {
             batchRun = BatchRun(title: job.title, total: job.total, current: job.current,
-                                done: job.done, failed: job.failures.count)
+                                done: job.done, failed: job.failures.count, phase: job.phase ?? .preparing)
             return
         }
         batchRun = nil
@@ -6347,14 +6348,19 @@ struct PhotoStudioView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 ProgressView()
-                Text("\(run.title) — photo \(min(run.current, run.total)) of \(run.total)")
+                Text("\(run.phase.title) — photo \(min(run.current, run.total)) of \(run.total)")
                     .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                     .lineLimit(2).minimumScaleFactor(0.8)
             }
+            Text(run.phase.detail).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            // This bar counts completed attempts, not invented supplier progress.
             ProgressView(value: Double(run.done + run.failed), total: Double(max(run.total, 1)))
                 .tint(Theme.accent)
+                .accessibilityLabel("Batch completed attempts")
+                .accessibilityValue("\(run.done) saved, \(run.failed) failed, \(run.total) total")
             Text(run.failed == 0
-                 ? "\(run.done) done. Earlier versions and source files stay in history."
+                 ? "\(run.done) of \(run.total) saved. Earlier versions stay in history."
                  : "\(run.done) done, \(run.failed) failed. The rest keep going.")
                 .font(.rpCaption)
                 .foregroundStyle(run.failed == 0 ? Theme.inkDim : Theme.warn)
@@ -6918,6 +6924,17 @@ private struct PhotoPublicationBadge: View {
 
 /// Full-screen before/after compare. Both images decode once, off the main
 /// thread, at screen resolution.
+/// Keeps the photo large and footer readable across compact phones and larger text.
+/// No source/export geometry is changed by this display-only calculation.
+private enum PhotoReviewLayout {
+    static func previewHeight(viewportHeight: CGFloat) -> CGFloat {
+        max(200, min(560, viewportHeight * 0.52))
+    }
+    static func stacksActions(width: CGFloat, accessibilityType: Bool) -> Bool {
+        accessibilityType || width < 360
+    }
+}
+
 struct PhotoCompareView: View {
     let photo: EnhancedPhoto
     var disclosure: String? = nil
@@ -6963,162 +6980,60 @@ struct PhotoCompareView: View {
         return effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
     }
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         GeometryReader { geometry in
-          ZStack {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: 12) {
-                HStack {
-                    Text("Photo versions").font(.headline)
-                    Spacer()
-                    if photo.history.count > 1 {
-                        Menu {
-                            ForEach(photo.history) { version in
-                                Button(version.savedVersion?.title ?? "Earlier version") {
-                                    chooseVersion(version)
-                                }
-                            }
-                        } label: { Label("All edits", systemImage: "clock.arrow.circlepath") }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    reviewHeader
+                    savedVersionStrip
+                    ZStack {
+                        if let image = showOriginal ? original : enhanced {
+                            Image(uiImage: image).resizable().scaledToFit()
+                                .accessibilityLabel(showOriginal ? sourceTitle : choiceTitle(viewed) + " photo")
+                        } else if imageLoadComplete {
+                            Label("Photo unavailable", systemImage: "photo.badge.exclamationmark")
+                                .foregroundStyle(Theme.inkDim)
+                        } else { ProgressView().tint(Theme.accent) }
                     }
-                    Button { clearAndDismiss() } label: {
-                        Image(systemName: "xmark.circle.fill").font(.title)
-                    }.accessibilityLabel("Close")
-                }.padding(.horizontal)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        if viewed.originalURL != viewed.enhancedURL && !versionChoices.contains(where: {
-                            $0.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } ?? false
-                        }) {
-                            versionChip(viewed.retainedSourceIsVerified ? "Original" : "Earlier source", selected: showOriginal) { showOriginal = true }
-                        }
-                        ForEach(versionChoices) { version in
-                            versionChip(choiceTitle(version), selected: !showOriginal && viewed.id == version.id) {
-                                chooseVersion(version)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: PhotoReviewLayout.previewHeight(viewportHeight: geometry.size.height))
+                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .accessibilityIdentifier("photoVersion.preview")
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(showOriginal ? sourceTitle : viewed.savedVersion?.visibleLabel ?? choiceTitle(viewed))
+                                .font(.headline).foregroundStyle(Theme.ink)
+                            if selectedForListing, !showOriginal {
+                                Label("Selected for listing", systemImage: "checkmark.circle.fill")
+                                    .font(.caption).foregroundStyle(Theme.good)
                             }
                         }
-                    }.padding(.horizontal)
-                }.frame(height: 48).accessibilityIdentifier("photoVersion.savedChoices")
-                ZStack {
-                    if let image = showOriginal ? original : enhanced {
-                        Image(uiImage: image).resizable().scaledToFit()
-                            .accessibilityLabel(showOriginal ? sourceTitle : "Edited photo")
-                    } else { ProgressView().tint(.white) }
+                        Spacer(minLength: 8)
+                        Button {
+                            guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+                            showFullComparison = true
+                        } label: {
+                            Label("Compare", systemImage: "square.split.2x1")
+                                .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+                        }
+                        .disabled(enhanced == nil || imageContext?.isCurrent != true)
+                        .accessibilityIdentifier("photoVersion.fullSize")
+                        .accessibilityHint("Inspect this version beside its retained source at full size.")
+                    }
+                    reviewDetails
                 }
+                .padding(16)
+                .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
-                .frame(height: max(160, min(360, geometry.size.height * 0.42)))
-                .accessibilityIdentifier("photoVersion.preview")
-                Button {
-                    guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
-                    showFullComparison = true
-                } label: {
-                    Label("View full-screen comparison", systemImage: "arrow.up.left.and.arrow.down.right")
-                        .font(.subheadline.weight(.semibold)).padding(.vertical, 4)
-                }
-                .disabled(enhanced == nil || imageContext?.isCurrent != true)
-                .accessibilityIdentifier("photoVersion.fullSize")
-                ScrollView {
-                  VStack(spacing: 12) {
-                if !showOriginal, let label = viewed.savedVersion?.visibleLabel {
-                    Text(label).font(.headline).padding(.horizontal)
-                }
-                if !showOriginal, viewed.savedVersion?.effects.contains("stage") == true {
-                    Text("Review against the original: check windows, doors, fixed appliances and furniture placement. AI can change details or use different furniture in another view.")
-                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).padding(.horizontal)
-                    if imageLoadComplete && (original == nil || viewed.originalURL == viewed.enhancedURL) {
-                        Text("The earlier source isn't available for comparison. Restore it before selecting this staged version.")
-                            .font(.caption).foregroundStyle(.orange).padding(.horizontal)
-                    }
-                    if needsStagingReview {
-                        stagingReviewChecklist
-                    }
-                }
-                if !showOriginal, needsCustomReview {
-                    Text("Compare this edit with its source before using it. Check the garage door, trim, paint colors and materials, as well as the change you requested.")
-                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true).padding(.horizontal)
-                    if imageLoadComplete && (original == nil || viewed.originalURL == viewed.enhancedURL) {
-                        Text("The earlier source isn't available. Restore it before selecting this custom edit.")
-                            .font(.caption).foregroundStyle(.orange).padding(.horizontal)
-                    }
-                    customReviewChecklist
-                }
-                if !showOriginal, let savedDisclosure, !savedDisclosure.isEmpty {
-                    Text(savedDisclosure).font(.caption).foregroundStyle(.white.opacity(0.85))
-                        .fixedSize(horizontal: false, vertical: true).padding(.horizontal)
-                }
-                if viewed.savedVersion?.sourceHistoryKnown != true {
-                    Text("Earlier edits are unverified. This source may already contain AI changes.")
-                        .font(.caption).foregroundStyle(.orange).padding(.horizontal)
-                }
-                if viewed.originalURL != viewed.enhancedURL {
-                    Picker("Photo version", selection: $showOriginal) {
-                        Text("Edited").tag(false)
-                        Text(sourceTitle).tag(true)
-                    }.pickerStyle(.segmented).padding(.horizontal)
-                }
-                if !showOriginal, viewed.savedVersion != nil {
-                    Button {
-                        guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
-                        do {
-                            guard !needsStagingReview || stagingReview.isComplete else {
-                                throw PhotoVersionHistory.Failure.reviewRequired
-                            }
-                            guard !needsCustomReview || customReview.isComplete else {
-                                throw PhotoVersionHistory.Failure.customReviewRequired
-                            }
-                            let directory = viewed.enhancedURL.deletingLastPathComponent()
-                            guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
-                            let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
-                            let familyWasMain = photo.history.contains { FileStore.relativePath(for: $0.enhancedURL) == priorMain }
-                            try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
-                                priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
-                            try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory,
-                                reviewed: stagingReview.isComplete, customReviewed: customReview.isComplete)
-                            if familyWasMain || requestedCover { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
-                            selectedForListing = true
-                            if let listing = model.listings.first(where: { $0.id == listingID }),
-                               listing.serverShareURL != nil, let serverID = listing.serverID {
-                                Task { await model.syncGalleryPhotos(listingLocalID: listingID, listingServerID: serverID) }
-                            }
-                        } catch { selectionError = error.localizedDescription }
-                    } label: {
-                        Label(selectedForListing ? "Selected for listing" : "Use this version on listing", systemImage: "checkmark.circle")
-                            .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 12)
-                    }.padding(.horizontal).accessibilityIdentifier("photoVersion.useOnListing")
-                        .disabled(enhanced == nil || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
-                            && (original == nil || viewed.originalURL == viewed.enhancedURL
-                                || (needsStagingReview && !stagingReview.isComplete)
-                                || (needsCustomReview && !customReview.isComplete))))
-                }
-                Button {
-                    guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
-                    do {
-                        if !showOriginal, needsCustomReview {
-                            guard enhanced != nil, original != nil, viewed.originalURL != viewed.enhancedURL else {
-                                throw PhotoVersionHistory.Failure.missingImage
-                            }
-                            try PhotoVersionHistory.confirmCustomReview(id: viewed.id,
-                                imageFile: viewed.enhancedURL.lastPathComponent,
-                                sourceFile: viewed.originalURL.lastPathComponent, review: customReview,
-                                directory: viewed.enhancedURL.deletingLastPathComponent())
-                        }
-                        exporting = PhotoExportSelection(photos: [viewed], original: showOriginal)
-                    } catch { selectionError = error.localizedDescription }
-                } label: {
-                    Label(showOriginal ? (viewed.retainedSourceIsVerified ? "Download original" : "Download earlier source")
-                          : "Download \(choiceTitle(viewed).lowercased()) photo", systemImage: "square.and.arrow.down")
-                        .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12))
-                }.padding(.horizontal).padding(.bottom, 12)
-                    .accessibilityIdentifier("photoVersion.download")
-                    .disabled(showOriginal ? original == nil : enhanced == nil || (needsCustomReview
-                        && (original == nil || viewed.originalURL == viewed.enhancedURL || !customReview.isComplete)))
-                  }
-                }
-                .accessibilityIdentifier("photoVersion.reviewControls")
-            }.foregroundStyle(.white)
-          }
+            }
+            .background(Theme.bg.ignoresSafeArea())
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                actionFooter(stacked: PhotoReviewLayout.stacksActions(width: geometry.size.width,
+                    accessibilityType: dynamicTypeSize.isAccessibilitySize))
+            }
         }
-        .environment(\.colorScheme, .dark)
         .onChange(of: auth.userID) { _ in clearAndDismiss() }
         .onChange(of: auth.syncSessionRevision) { _ in clearAndDismiss() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in clearAndDismiss() }
@@ -7162,6 +7077,169 @@ struct PhotoCompareView: View {
         }
     }
 
+
+    private var reviewHeader: some View {
+        HStack {
+            Text("Photo versions").font(.title2.weight(.bold)).foregroundStyle(Theme.ink)
+            Spacer(minLength: 8)
+            if photo.history.count > 1 {
+                Menu {
+                    ForEach(photo.history) { version in
+                        Button(version.savedVersion?.title ?? "Earlier version") { chooseVersion(version) }
+                    }
+                } label: {
+                    Label("All edits", systemImage: "clock.arrow.circlepath").font(.subheadline)
+                        .frame(minHeight: 44)
+                }.accessibilityHint("Every saved style and earlier version remains available.")
+            }
+            Button { clearAndDismiss() } label: {
+                Image(systemName: "xmark").font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44).background(.thinMaterial, in: Circle())
+            }.accessibilityLabel("Close")
+        }
+    }
+
+    private var savedVersionStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if viewed.originalURL != viewed.enhancedURL && !versionChoices.contains(where: {
+                    $0.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } ?? false
+                }) {
+                    versionChip(viewed.retainedSourceIsVerified ? "Original" : "Earlier source", selected: showOriginal) {
+                        showOriginal = true
+                    }
+                }
+                ForEach(versionChoices) { version in
+                    versionChip(choiceTitle(version), selected: !showOriginal && choiceTitle(viewed) == choiceTitle(version)) {
+                        chooseVersion(version)
+                    }
+                }
+            }.padding(.vertical, 2)
+        }.accessibilityIdentifier("photoVersion.savedChoices")
+    }
+
+    private var reviewDetails: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if !showOriginal, needsStagingReview || needsCustomReview {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Review before using on the listing", systemImage: "checkmark.shield")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.ink)
+                    Text("Compare with the source, then confirm the checks below.")
+                        .font(.caption).foregroundStyle(Theme.inkDim)
+                    if needsStagingReview { stagingReviewChecklist }
+                    if needsCustomReview { customReviewChecklist }
+                }
+                .padding(14)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            if !showOriginal, (viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview),
+               imageLoadComplete && (original == nil || viewed.originalURL == viewed.enhancedURL) {
+                Label("Restore the retained source before selecting this version.", systemImage: "exclamationmark.circle")
+                    .font(.caption).foregroundStyle(Theme.warn).fixedSize(horizontal: false, vertical: true)
+            }
+            if (!showOriginal && savedDisclosure?.isEmpty == false) || viewed.savedVersion?.sourceHistoryKnown != true {
+                DisclosureGroup("About this version") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if !showOriginal, let savedDisclosure, !savedDisclosure.isEmpty {
+                            Text(savedDisclosure)
+                        }
+                        if viewed.savedVersion?.sourceHistoryKnown != true {
+                            Text("Earlier edits are unverified. This source may already contain AI changes.")
+                        }
+                        if !showOriginal, viewed.savedVersion?.effects.contains("stage") == true {
+                            Text("Check windows, doors, fixed appliances and furniture across views. AI can change details.")
+                        }
+                    }.font(.caption).foregroundStyle(Theme.inkDim).padding(.top, 6)
+                }.font(.subheadline).foregroundStyle(Theme.ink)
+            }
+        }.accessibilityIdentifier("photoVersion.reviewControls")
+    }
+
+    private func actionFooter(stacked: Bool) -> some View {
+        Group {
+            if stacked {
+                VStack(spacing: 10) { savePhotoButton; useOnListingButton }
+            } else {
+                HStack(spacing: 12) { savePhotoButton; useOnListingButton }
+            }
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
+        .accessibilityIdentifier("photoVersion.fixedActions")
+    }
+
+    @ViewBuilder private var useOnListingButton: some View {
+        if !showOriginal, viewed.savedVersion != nil {
+            Button {
+            guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+            do {
+                guard !needsStagingReview || stagingReview.isComplete else {
+                    throw PhotoVersionHistory.Failure.reviewRequired
+                }
+                guard !needsCustomReview || customReview.isComplete else {
+                    throw PhotoVersionHistory.Failure.customReviewRequired
+                }
+                let directory = viewed.enhancedURL.deletingLastPathComponent()
+                guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
+                let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
+                let familyWasMain = photo.history.contains { FileStore.relativePath(for: $0.enhancedURL) == priorMain }
+                try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
+                    priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
+                try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory,
+                    reviewed: stagingReview.isComplete, customReviewed: customReview.isComplete)
+                if familyWasMain || requestedCover { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
+                selectedForListing = true
+                if let listing = model.listings.first(where: { $0.id == listingID }),
+                   listing.serverShareURL != nil, let serverID = listing.serverID {
+                    Task { await model.syncGalleryPhotos(listingLocalID: listingID, listingServerID: serverID) }
+                }
+            } catch { selectionError = error.localizedDescription }
+
+            } label: {
+                Label(selectedForListing ? "Selected" : "Use on listing", systemImage: "checkmark.circle")
+                    .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent).tint(Theme.accent)
+            .accessibilityIdentifier("photoVersion.useOnListing")
+            .accessibilityLabel(selectedForListing ? "Selected for listing" : "Use this version on listing")
+            .disabled(imageContext?.isCurrent != true || enhanced == nil
+                || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
+                    && (original == nil || viewed.originalURL == viewed.enhancedURL
+                        || (needsStagingReview && !stagingReview.isComplete)
+                        || (needsCustomReview && !customReview.isComplete))))
+        }
+    }
+
+    private var savePhotoButton: some View {
+        Button {
+            guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+            do {
+                if !showOriginal, needsCustomReview {
+                    guard enhanced != nil, original != nil, viewed.originalURL != viewed.enhancedURL else {
+                        throw PhotoVersionHistory.Failure.missingImage
+                    }
+                    try PhotoVersionHistory.confirmCustomReview(id: viewed.id,
+                        imageFile: viewed.enhancedURL.lastPathComponent,
+                        sourceFile: viewed.originalURL.lastPathComponent, review: customReview,
+                        directory: viewed.enhancedURL.deletingLastPathComponent())
+                }
+                exporting = PhotoExportSelection(photos: [viewed], original: showOriginal)
+            } catch { selectionError = error.localizedDescription }
+
+        } label: {
+            Label("Save photo", systemImage: "square.and.arrow.down")
+                .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .buttonStyle(.bordered).tint(Theme.accent)
+        .accessibilityIdentifier("photoVersion.download")
+        .accessibilityLabel(showOriginal ? (viewed.retainedSourceIsVerified ? "Download original" : "Download earlier source")
+            : "Download " + choiceTitle(viewed).lowercased() + " photo")
+        .disabled(imageContext?.isCurrent != true || (showOriginal ? original == nil : enhanced == nil || (needsCustomReview
+            && (original == nil || viewed.originalURL == viewed.enhancedURL || !customReview.isComplete))))
+    }
+
     private func chooseVersion(_ version: EnhancedPhoto) {
         if version.id == viewed.id {
             showOriginal = false
@@ -7186,31 +7264,51 @@ struct PhotoCompareView: View {
     }
 
     private var stagingReviewChecklist: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(stagingReview.comparedSource ? "Source comparison opened" : "Open the original or earlier source above, then check this version.")
-                .font(.caption).foregroundStyle(.orange)
-            Toggle("Windows, walls and fixed appliances match the source", isOn: $stagingReview.fixedFeaturesMatch)
-            Toggle("Doors, exits and walking routes remain clear", isOn: $stagingReview.accessIsClear)
-            Toggle("Furniture matches my other published views, or this is the only view", isOn: $stagingReview.furnitureMatchesOtherViews)
-        }.font(.caption).padding(.horizontal)
-            .accessibilityIdentifier("photoVersion.stagingReview")
+        VStack(alignment: .leading, spacing: 2) {
+            comparisonStatus(stagingReview.comparedSource)
+            reviewCheck("Windows, walls and fixtures match", detail: "Windows, walls and fixed appliances match the source", isOn: $stagingReview.fixedFeaturesMatch)
+            reviewCheck("Doors and routes stay clear", detail: "Doors, exits and walking routes remain clear", isOn: $stagingReview.accessIsClear)
+            reviewCheck("Furniture matches across views", detail: "Furniture matches my other published views, or this is the only view", isOn: $stagingReview.furnitureMatchesOtherViews)
+        }.accessibilityIdentifier("photoVersion.stagingReview")
     }
 
     private var customReviewChecklist: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(customReview.comparedSource ? "Source comparison opened" : "Open the original or earlier source above, then check this version.")
-                .font(.caption).foregroundStyle(.orange)
-            Toggle("Structure and fixed features match the source", isOn: $customReview.fixedFeaturesMatch)
-            Toggle("Paint colors, garage door, trim and materials match", isOn: $customReview.colorsAndMaterialsMatch)
-            Toggle("Only the change I requested was made", isOn: $customReview.onlyRequestedChange)
-        }.font(.caption).padding(.horizontal)
-            .accessibilityIdentifier("photoVersion.customReview")
+        VStack(alignment: .leading, spacing: 2) {
+            comparisonStatus(customReview.comparedSource)
+            reviewCheck("Fixed features match", detail: "Structure and fixed features match the source", isOn: $customReview.fixedFeaturesMatch)
+            reviewCheck("Colors and materials match", detail: "Paint colors, garage door, trim and materials match", isOn: $customReview.colorsAndMaterialsMatch)
+            reviewCheck("Only my requested change", detail: "Only the change I requested was made", isOn: $customReview.onlyRequestedChange)
+        }.accessibilityIdentifier("photoVersion.customReview")
+    }
+
+    private func comparisonStatus(_ compared: Bool) -> some View {
+        Label(compared ? "Source comparison opened" : "Open Compare and view the source first",
+              systemImage: compared ? "checkmark.circle.fill" : "square.split.2x1")
+            .font(.caption).foregroundStyle(compared ? Theme.good : Theme.inkDim)
+            .padding(.bottom, 4)
+    }
+
+    private func reviewCheck(_ title: String, detail: String, isOn: Binding<Bool>) -> some View {
+        Button { isOn.wrappedValue.toggle() } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isOn.wrappedValue ? "checkmark.circle.fill" : "circle")
+                    .font(.title3).foregroundStyle(isOn.wrappedValue ? Theme.accent : Theme.inkDim)
+                Text(title).font(.subheadline).foregroundStyle(Theme.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(detail)
+        .accessibilityValue(isOn.wrappedValue ? "Confirmed" : "Not confirmed")
+        .accessibilityAddTraits(isOn.wrappedValue ? .isSelected : [])
     }
 
     private func versionChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title).font(.subheadline.weight(.semibold)).padding(.horizontal, 14).padding(.vertical, 10)
-                .background(selected ? Theme.accent : Color.white.opacity(0.15), in: Capsule())
+                .background(selected ? Theme.accent : Theme.fillSubtle, in: Capsule())
+                .foregroundStyle(selected ? Color.white : Theme.ink)
         }.accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
@@ -7263,9 +7361,8 @@ private struct PhotoFullSizeComparison: View {
                 Button("Reset zoom") { zoom = 1 }.font(.caption)
             }.padding(.horizontal)
         }
-        .foregroundStyle(.white).padding(.vertical)
-        .background(Color.black.ignoresSafeArea())
-        .environment(\.colorScheme, .dark)
+        .foregroundStyle(Theme.ink).padding(.vertical)
+        .background(Theme.bg.ignoresSafeArea())
         .onChange(of: showOriginal) { _ in zoom = 1 }
     }
 }

@@ -35,8 +35,9 @@ final class PhotoEditService {
     }
 
     func edit(_ p: EnhancedPhoto, edit: String, style: String?, prompt: String?, batch: Bool,
-              stagingReferenceID: String? = nil) async throws {
+              stagingReferenceID: String? = nil, progress: ((PhotoWorkQueue.Phase) -> Void)? = nil) async throws {
         try requireUnsentWork()
+        progress?(.preparing)
         let api = model.api
         let directory = EnhancedPhoto.directory(for: listing.id)
         guard p.enhancedURL.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL else {
@@ -69,6 +70,7 @@ final class PhotoEditService {
             serverID = await model.serverListingIDForCompliance(listing.id)
             try requireUnsentWork()
             if let serverID, parent.originalVerified, let original = parent.originalFile {
+                progress?(.uploading)
                 originalAssetID = await model.publishOriginalForDisclosure(
                     listingServerID: serverID, fileURL: directory.appendingPathComponent(original))
                 try requireUnsentWork()
@@ -87,10 +89,12 @@ final class PhotoEditService {
         if let stagingReferenceID {
             _ = try PhotoVersionHistory.stagingReference(id: stagingReferenceID, directory: directory)
         }
+        progress?(.generatingAndChecking)
         let result = try await api.aiPhotoEdit(request)
         // This request was already sent. Keep its returned edit under the same
         // account/workspace; consent revocation fences the next unsent photo.
         try requireIdentity()
+        progress?(.checkingReturnedImage)
         let jpeg = try await Task.detached(priority: .userInitiated) {
             guard let raw = Data(base64Encoded: result.imageBase64), let image = UIImage(data: raw),
                   let jpeg = image.jpegData(compressionQuality: 0.97) else {
@@ -99,6 +103,7 @@ final class PhotoEditService {
             return jpeg
         }.value
         try requireIdentity()
+        progress?(.saving)
         let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000)) + "-" + UUID().uuidString
         let version = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: parent.id,
             sourceID: sourceVersion.id, edit: edit, style: style, disclosure: result.disclosure,
@@ -136,8 +141,11 @@ final class PhotoEditService {
                     || (error as? APIError)?.isPhotoPromptRefusal == true
             }, process: { id in
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }
+                guard let jobID = queue.visibleJob?.id else { throw CloudSyncError.identityChanged }
                 try await self.edit(photo, edit: edit, style: style, prompt: prompt, batch: photos.count > 1,
-                                    stagingReferenceID: stagingReferenceID)
+                                    stagingReferenceID: stagingReferenceID, progress: { phase in
+                    queue.report(phase, jobID: jobID, photoID: id)
+                })
             }, completion: { result in
                 if background != .invalid { UIApplication.shared.endBackgroundTask(background); background = .invalid }
                 IdleTimer.release()
