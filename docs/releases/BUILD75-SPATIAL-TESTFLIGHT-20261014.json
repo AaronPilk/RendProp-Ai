@@ -1,0 +1,101 @@
+{
+  "recordedUTC": "2026-10-14T14:02:13.929453+00:00",
+  "version": "1.0.4",
+  "build": "75",
+  "sourceCommit": "8b1f090cb9edc7167841b2179c8a47955aecb63f",
+  "branch": "testflight/spatial75-20261014",
+  "Apple": {
+    "buildID": "dae0c929-c5c8-4ec5-926e-841a9564d194",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "externalBuildState": "NOT_APPLICABLE",
+    "groupID": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+    "membershipVerified": true,
+    "testingNotesVerified": true,
+    "available": true
+  },
+  "protectedAppStore74": {
+    "checkedUTC": "2026-10-14T14:00:38.167312+00:00",
+    "attachedBuild": "74",
+    "attachedBuildID": "0d6dfeeb-9ecb-49bf-a1bc-33e8d9115901",
+    "releaseType": "AFTER_APPROVAL",
+    "storeState": "WAITING_FOR_REVIEW",
+    "reviewID": "cdd8edb2-1b4b-4a46-a06e-08376f9b9d1a",
+    "reviewState": "WAITING_FOR_REVIEW",
+    "noAppleWrites": true
+  },
+  "scope": "Internal spatial testing only: existing local RoomPlan scan entry, guided panoramas and walking captures. No cloud capability or paid provider enabled.",
+  "nativeValidation": {
+    "archivePassed": true,
+    "signatureVerified": true,
+    "labCompilerFlagVerified": true,
+    "actualAppSwiftDEBUGAbsent": true,
+    "UUID": "D030488C-5A05-3325-9F63-2849DA2DE6E5",
+    "introductionAssets": {
+      "RendpropQuickStart.mp4": "8ccd867b223e36b4f42348fac8fe3e75b288850dbc463fcfbab0422ed5d6dfb1",
+      "RendpropQuickStart.txt": "ff66150cc9caeb4f28942f87729176fd46906e627bdde0585a367ba05282a3f2"
+    },
+    "requiredGates": [
+      {
+        "path": "/tmp/rendprop-app-store-boundaries-wcsCqv/receipt.json",
+        "sha256": "3131e1df7c95b27f2585f2b690e86450781c71cee7bb0c3c370dcf1704791631",
+        "rootScopeReviewed": true
+      },
+      {
+        "path": "/tmp/rendprop-app-store-boundaries-wcsCqv/floor-plan/receipt.json",
+        "sha256": "9bc7066c35ebf57ce4da25b6bcc11b75a30da469dbe408f1ab4a3f9edc8c6165",
+        "rootScopeReviewed": true
+      },
+      {
+        "path": "/Users/pilksclaes/Rendprop AI/_bridge/build75-spatial-aerial-preserved/receipt.json",
+        "sha256": "3fbaa80a1359b9879e6400ac68329128d8ed05d00512fff54e905cd69c18c0d0",
+        "rootScopeReviewed": true
+      }
+    ]
+  },
+  "delivery": {
+    "uploadSucceeded": true,
+    "XcodeInternalOnlyExportCompleted": true,
+    "retainedExportIPAAvailable": false,
+    "AppStoreWrites": 0,
+    "betaActivationWrites": [
+      "notes"
+    ]
+  },
+  "physicalAcceptance": {
+    "passed": false,
+    "pending": true,
+    "limitation": "Mirroring reports iPhone in use. No build75 phone screen or physical scan acceptance is claimed."
+  },
+  "evidence": {
+    "source-preflight.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build75-spatial-testflight/source-preflight.json",
+      "sha256": "e79f82f806d26f78ccb062412176e70b8adcf07f7efcbaba187344bb286c7d51"
+    },
+    "archive-verified.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build75-spatial-testflight/archive-verified.json",
+      "sha256": "c64c64598e93635b80da5084af326715fb96361c7b2be5e7d4e7a844a8099123"
+    },
+    "upload-once.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build75-spatial-testflight/upload-once.json",
+      "sha256": "e2471288ff4857d8939797a274c6e5de80630dbbed2610ec0b29746852a6a41a"
+    },
+    "activation-once.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build75-spatial-testflight/activation-once.json",
+      "sha256": "37adaa49ac0f8a240e7242945d794c2a4b4580d81fb80f8d0a30174471e1688c"
+    },
+    "testflight-availability.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build75-spatial-testflight/testflight-availability.json",
+      "sha256": "dd1b4de8b30cf85bd0f508fa30772bd338593569bb14aed2a86a4230b4e1a156"
+    },
+    "closed-proof/receipt.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build75-spatial-testflight/closed-proof/receipt.json",
+      "sha256": "9d4ce43d708885e27e990ab97a977c57532d8f0696137ec355bb888b587de0c0"
+    },
+    "evidence-preserved/preservation-receipt.json": {
+      "path": "/Users/pilksclaes/Rendprop AI/_bridge/build75-spatial-testflight/evidence-preserved/preservation-receipt.json",
+      "sha256": "caae6b2183ea1d99cee1ab8f78a3ff215ff64de621bcf1b72375f84ea376acca"
+    }
+  }
+}
