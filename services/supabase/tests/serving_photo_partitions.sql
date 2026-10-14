@@ -29,7 +29,7 @@ set local role service_role;
 do $$declare
  u uuid:='e1000000-0000-4000-8000-000000000001';v uuid:='e1000000-0000-4000-8000-000000000002';o uuid:='e2000000-0000-4000-8000-000000000001';
  plain uuid:='e2000000-0000-4000-8000-000000000002';empty_org uuid:='e2000000-0000-4000-8000-000000000003';
- f uuid;plain_f uuid;empty_f uuid;r jsonb;role_name text;sig text;t timestamptz:=now()-interval '1 minute';e timestamptz;
+ f uuid;plain_f uuid;empty_f uuid;r jsonb;funded_cash bigint;too_many integer;role_name text;sig text;t timestamptz:=now()-interval '1 minute';e timestamptz;
  components jsonb:='{"storage":10,"delivery":10,"compute":10,"email":10,"support":10,"retention":10,"uncertainty":10}';
  policy text:='one-gemini-1k-4096-plus-one-kontext-20261007';tariff text:='published-standard-20261006';
 begin
@@ -41,7 +41,14 @@ begin
  end loop;
  perform pg_temp.pcheck(not has_table_privilege('service_role','serving_photo_partitions','INSERT,UPDATE,DELETE')and not has_table_privilege('service_role','serving_photo_admissions','INSERT,UPDATE,DELETE'),'service cannot rewrite admission tombstones');
  f:=(provision_serving_funding(o,'retail','synthetic-photo-package',null,1000,0,t,e,1,components,repeat('a',64))->>'funding_id')::uuid;
- perform pg_temp.prefuse(format('select provision_serving_photo_partition(%L,0,3,100,%L,%L,%L)',f,policy,tariff,repeat('b',64)),'RP402','package cannot exceed inclusive funded cash');
+ -- The owner-authorized79 policy allocates50% of this actually collected
+ --1000c receipt, less its70c reserves. A three-photo partition is now funded;
+ -- compute the FIRST unfunded whole operation from the immutable actual slice.
+ perform pg_temp.pcheck((select total_budget_cents=500 and recurring_reserve_cents=70 from serving_funding_slices where funding_id=f and slice_index=0),'current50percent receipt budget preserves70c reserves');
+ select total_budget_cents-recurring_reserve_cents into funded_cash from serving_funding_slices where funding_id=f and slice_index=0;
+ too_many:=floor((funded_cash-100)/35.1296)::integer+1;
+ perform pg_temp.pcheck(ceil(too_many*35.1296)+100>funded_cash and ceil((too_many-1)*35.1296)+100<=funded_cash,'actualfirst unfunded package is one operation above inclusive boundary');
+ perform pg_temp.prefuse(format('select provision_serving_photo_partition(%L,0,%s,100,%L,%L,%L)',f,too_many,policy,tariff,repeat('b',64)),'RP402','package cannot exceed inclusive funded cash');
  perform pg_temp.prefuse(format('select provision_serving_photo_partition(%L,0,2,100,%L,''changed-tariff'',%L)',f,policy,repeat('b',64)),'RP400','unknown tariff refused');
  r:=provision_serving_photo_partition(f,0,2,100,policy,tariff,repeat('b',64));
  perform pg_temp.pcheck(r->>'protected_photo_cents'='71'and r->>'other_ai_cents'='100','aggregate full chain rounded up and separate wallet');

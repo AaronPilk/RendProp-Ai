@@ -77,7 +77,7 @@ select pg_temp.billing_ok('exact-window RPCs service only',not has_function_priv
 select pg_temp.billing_ok('allowance receipt private',not has_table_privilege('authenticated','app_video_allowance_receipts','SELECT,INSERT,UPDATE,DELETE')and not has_table_privilege('service_role','app_video_allowance_receipts','UPDATE,DELETE'));
 select pg_temp.billing_ok('Sandbox ledger private',not has_table_privilege('authenticated','apple_sandbox_receipts','SELECT,INSERT,UPDATE,DELETE')and not has_function_privilege('authenticated','record_apple_sandbox_receipt(uuid,uuid,text,text,text,text,timestamptz)','EXECUTE'));
 set local role service_role;
-do $$declare o uuid;u uuid;other uuid;monthly text;burst text;m jsonb;b jsonb;r jsonb;oldw timestamptz:=now()-interval '31 days';count_before int;before_raw jsonb;
+do $$declare o uuid;u uuid;other uuid;monthly text;burst text;m jsonb;b jsonb;r jsonb;oldw timestamptz:=now()-interval '31 days';count_before int;before_raw jsonb;held_ceiling numeric;
 begin
  select org,actor into o,u from billing_fixture where actor='fa300505-0000-4000-8000-000000000001';other:='fa300505-0000-4000-8000-000000000002';monthly:='reelmo:'||o;burst:='aivideo:'||o;
  perform pg_temp.billing_denied('null quota window cannot create a charge','select bump_rate_receipt(''invalid-window'',null,25,1)','RP400');
@@ -106,9 +106,14 @@ begin
  perform pg_temp.billing_denied('unconfirmed charge cannot admit priced POST',format('select app_video_cost_reserve_v2(%L,%L,%L,''reel'',''fal'',''fixture-model'',%L,24,5,4.8,''{}'',%L,%L,null)',u,o,'not-charged-window',repeat('c',64),oldw,b->>'window_start'),'RP409');
  perform pg_temp.billing_ok('failed receipt admission creates no hold',not exists(select 1 from app_video_cost_reservations where idempotency_key='not-charged-window'));
  -- These are uncertain previously admitted charges, deliberately not expired.
+ -- The reviewed79 Team cash ceiling is10532c, so a historical6000c hold
+ -- no longer exhausts it. The uncertain hold must cover today's whole actual
+ -- ceiling while remaining from the previousmonth and having no chargedreceipt.
+ held_ceiling:=(public.org_entitlement(o)).cogs_ceiling_cents;
+ perform pg_temp.billing_ok('currentTeam ceiling uses reviewed50percent allocation',held_ceiling=10532);
  insert into app_video_cost_reservations(org_id,actor_id,idempotency_key,feature,provider,model,input_sha256,units,unit_cost_cents,total_cents,hold_cents,created_at)
- values(o,u,'unknown-old-hold','drone_render','fal','fixture-topaz',repeat('d',64),1,6000,6000,6000,date_trunc('month',now())-interval '1 day');
- perform pg_temp.billing_ok('old uncertain charged hold remains fenced',app_video_held_cents(o)=6000);
+ values(o,u,'unknown-old-hold','drone_render','fal','fixture-topaz',repeat('d',64),1,held_ceiling,held_ceiling,held_ceiling,date_trunc('month',now())-interval '1 day');
+ perform pg_temp.billing_ok('old uncertain charged hold remains fenced',app_video_held_cents(o)=held_ceiling);
  perform pg_temp.billing_denied('old uncertain hold still blocks fresh priced admission',format('select app_video_cost_reserve(%L,%L,%L,''reel'',''fal'',''fixture-model'',%L,1,1,1,''{}'')',u,o,'blocked-by-held-cost',repeat('e',64)),'RP402');
  -- Sandbox cannot become a retail subscription, including a first old RPC.
  select to_jsonb(x)into before_raw from orgs x where id=(select org from billing_fixture where actor=other);

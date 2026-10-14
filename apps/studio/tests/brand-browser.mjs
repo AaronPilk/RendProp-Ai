@@ -20,7 +20,8 @@ try{
  await context.route('**/*',route=>{const u=new URL(route.request().url());if(u.origin===origin&&route.request().method()==='GET')return route.continue();if(['012345678901234567890123456789ab.r2.cloudflarestorage.com','pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev'].includes(u.hostname)&&route.request().method()==='GET')return route.fulfill({status:200,contentType:'image/png',headers:{'Access-Control-Allow-Origin':'*'},body:png});receipt.externalRequests.push(u.origin);return route.abort();});
  const nav=name=>page.getByRole('navigation',{name:'Studio navigation'}).getByRole('button',{name,exact:true});
  const home=async()=>{if(!await nav('Home').isVisible())await page.getByText('More tools',{exact:true}).click();await nav('Home').click();const tools=page.locator('details.app-all-tools');if(!await tools.evaluate(node=>node.open))await tools.locator('summary').click();await expect(page.getByRole('heading',{name:'Make something',exact:true})).toBeVisible();};
- const openPro=()=>page.getByRole('button',{name:'Pro view',exact:true}).click();
+ const openAdvanced=()=>page.getByRole('button',{name:'Advanced desktop editor',exact:true}).click();
+ const openPro=async()=>{await openAdvanced();await page.getByRole('button',{name:'Pro view',exact:true}).click();};
  const card=id=>page.locator(`.app-dashboard .feature-${id}`);
  const check=s=>receipt.checks.push(s);
  await page.goto(`${origin}/tests/fixtures/branded.html`);await expect(page.getByText(/^Updated \d/)).toBeVisible();await home();await expect(page.locator('.app-property-card')).toHaveCount(2);
@@ -56,14 +57,16 @@ try{
  check('one-home accounts go directly into the tool; zero-home accounts open the creation form');
  await page.goto(`${origin}/tests/fixtures/branded.html`);await home();await expect(page.locator('.app-property-card')).toHaveCount(2);
  await card('reel').click();await page.getByRole('dialog').getByRole('button',{name:/10 Oak Street/}).click();
+ await expect(page.getByRole('heading',{name:'Make a video',exact:true})).toBeVisible();await expect(page.getByLabel('Video property',{exact:true})).toHaveValue(first);await openAdvanced();
  const picker=page.getByRole('region',{name:'Choose property photos and video'});
  await expect(picker).toBeVisible();await expect(picker.getByRole('checkbox')).toHaveCount(3);
  await picker.getByRole('checkbox',{name:'Living room',exact:true}).check();await picker.getByRole('button',{name:'Add 1 file to reel',exact:true}).click();
  await expect(page.getByRole('button',{name:/Select clip 1:/})).toBeVisible();await openPro();await page.getByLabel('Title overlay',{exact:true}).fill('Office reel');
  await expect.poll(()=>page.evaluate(()=>window.brandFixture.calls().filter(c=>c.path==='/functions/v1/studio/documents'&&c.method==='POST').some(c=>c.body.payload.draft?.title==='Office reel'))).toBe(true);
  assert.equal((await page.evaluate(()=>window.brandFixture.calls())).filter(c=>c.path.includes('/uploads')).length,0);
- check('Home Make a reel imports actual selected phone-photo bytes into the editor and autosaves with source reuse, without another upload');
+ check('Home Make a video opens the simple property flow; explicit Advanced imports actual selected phone-photo bytes and autosaves with source reuse, without another upload');
  await home();await page.getByLabel('Home for creation tools').selectOption(second);await card('reel').click();
+ await openAdvanced();
  await expect(picker).toContainText('22 Pine Street');await expect(page.getByLabel('Property reel',{exact:true})).toHaveValue(second);await openPro();await expect(page.getByLabel('Title overlay',{exact:true})).toHaveValue('');
  await picker.getByRole('button',{name:'Close media picker',exact:true}).click();
  await page.getByLabel('Property reel',{exact:true}).selectOption(first);await openPro();await expect(page.getByLabel('Title overlay',{exact:true})).toHaveValue('Office reel');await expect(page.getByRole('button',{name:/Select clip 1:/})).not.toHaveAccessibleName(/original file missing/);
