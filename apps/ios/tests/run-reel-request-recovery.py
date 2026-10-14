@@ -206,7 +206,7 @@ try:
     ]
     choice_variants = [
         ('negative-framing-provider-flag-lost', actual.replace('aspect: aspect, framing: framing, presetVersion: 1,', 'aspect: aspect, framing: nil, presetVersion: 1,'), 'new whole-source framing survives provider admission'),
-        ('negative-framing-saved-batch-lost', actual.replace('preparedJPEG: jpeg, framing: batch.framing)', 'preparedJPEG: jpeg, framing: nil)'), 'saved whole-scene batch resumes exact full sources and framing'),
+        ('negative-framing-saved-batch-lost', actual.replace('preparedJPEG: jpeg, framing: batch.framing,', 'preparedJPEG: jpeg, framing: nil,'), 'saved whole-scene batch resumes exact full sources and framing'),
         ('negative-choice-generic-error-fallback', actual.replace('} catch let refusal as ReelQualityRefusal where refusal.mayRetry {', '} catch {'), 'unavailable recovery must remain held'),
         ('negative-choice-wrong-source', actual.replace('api.aiVideoReelClip(imageBase64: source, mime:', 'api.aiVideoReelClip(imageBase64: Data("different choice JPEG".utf8).base64EncodedString(), mime:'), 'explicit safer retry uses exact saved JPEG'),
         ('negative-choice-wrong-attempt', actual.replace('sourceSpaceType: spaceType, qualityAttempt: 1,', 'sourceSpaceType: spaceType, qualityAttempt: 2,'), 'explicit safer retry persists attempt one'),

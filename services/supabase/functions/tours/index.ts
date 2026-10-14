@@ -502,7 +502,8 @@ Deno.serve(async (req) => {
       if(logo && JSON.stringify(await admittedBusinessLogo(admin,listing.org_id,identity?.org_business && (identity.org_business as Record<string,unknown>).business_logo_url,slug))!==JSON.stringify(logo))throw new HttpError(404,"The logo is no longer published.");
       await assertHostingAvailable(admin, listing.org_id);
       await assertCurrentPresentation();
-      return json(deliveryEnvelope(slug,{orgId:listing.org_id,listingId:listing.id},visibleRefs.keys,render.presentation_kind==='photo_video'?null:render.stream_uid,logo?.key),200,{"Cache-Control":"no-store"});
+      const deliveryHeaders = {"Cache-Control":"no-store"};
+      return json(deliveryEnvelope(slug,{orgId:listing.org_id,listingId:listing.id},visibleRefs.keys,render.presentation_kind==='photo_video'?null:render.stream_uid,logo?.key),200,deliveryHeaders);
     }
     const publicDetails = publicListingDetails(listing.details);
     await assertCurrentPresentation();

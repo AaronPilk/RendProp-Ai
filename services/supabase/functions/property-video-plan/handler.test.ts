@@ -30,7 +30,7 @@ async function invoke(options:{consent?:boolean;guest?:boolean;scope?:boolean;so
  return response({status:'completed',output_text:JSON.stringify({photos:options.invalid?[]:photos.slice(0,options.zero?0:20).map((_,i)=>({index:i+1,scene:i===0?'unknown':'living',confidence:i===0?.2:.9,motion:i===0?'fly_through':'side_glide'}))}),usage:{input_tokens:1000,output_tokens:1000}});
  }
  throw Error('No external transport permitted '+u.hostname);};
- try{const headers={'content-type':'application/json',authorization:'Bearer inert-fixture','x-org-id':org,'idempotency-key':'plan-operation-fixture-1',...(options.consent===false?{}:{'x-rendprop-ai-consent':'property-video-plan-v1'})};
+ try{const headers={'content-type':'application/json',authorization:'Bearer inert-fixture','x-org-id':org,'idempotency-key':'test-key-00000000',...(options.consent===false?{}:{'x-rendprop-ai-consent':'property-video-plan-v1'})};
  const res=await handler(new Request('https://app.fixture.invalid/property-video-plan',{method:'POST',headers,body:JSON.stringify({listing_id:listing,expected_org_id:org,photos:options.zero?[]:photos})}));return{status:res.status,body:await res.json(),providerBodies,ledgers,rpcs,events,heads};}finally{globalThis.fetch=original;}
 }
 Deno.test('real route sends20 actual-owned low-detail images with strict schema after funded admission and returns all IDs safely',async()=>{

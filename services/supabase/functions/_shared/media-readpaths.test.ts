@@ -37,7 +37,8 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
       return response(Object.fromEntries(["assets", "renders", "keys"].map(kind => [kind, Object.fromEntries(args[`p_${kind}`].map((v: string) => [v,
         !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.revokeCoverAtFinal && checks>=5 && [galleryId,galleryKey].includes(v)) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
     }
-    if (url.pathname === "/rest/v1/rpc/publish_render") return response({ id: renderId, listing_id: listing, slug: "fixture-tour", video_key: key });
+    if (url.pathname === "/rest/v1/rpc/property_public_presentation") return response({listing_video:null,website_theme:"basic"});
+    if (url.pathname === "/rest/v1/rpc/publish_recorded_render") return response({ id: renderId, listing_id: listing, slug: "fixture-tour", video_key: key });
     if (url.pathname === "/rest/v1/rpc/public_listing_agent_identity") {
       const args=await req.json();assertEquals(args,{p_listing:listing});profileRead=true;identityReads++;
       if(opts.identityFailure)return new Response(JSON.stringify({message:"private SQL outage detail"}),{status:503,headers:{"content-type":"application/json"}});
