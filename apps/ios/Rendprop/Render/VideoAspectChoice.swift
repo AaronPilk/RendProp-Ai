@@ -3,8 +3,8 @@ import Foundation
 /// One purpose determines both the generated request and the delivered canvas.
 /// Saved reel records already persist their aspect; older records stay portrait.
 enum VideoAspectChoice: String, CaseIterable, Codable, Sendable {
-    case socialMedia = "social_media"
     case listing
+    case socialMedia = "social_media"
 
     var title: String { self == .socialMedia ? "Social media" : "Listing" }
     var portrait: Bool { self == .socialMedia }

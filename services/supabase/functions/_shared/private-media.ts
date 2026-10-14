@@ -1,3 +1,4 @@
+import {backgroundObjectLimits,GENERIC_MEDIA_BYTES,REGISTERED_BACKGROUND_BYTES}from'./background-media-delivery.ts';
 import { libraryAccess, listingLibraryScope } from "./library-access.ts";
 import {propertyMusicRow,hasMusicCopy} from "../studio/property-music.ts";
 import {projectMediaComplete,type ProjectMediaRow} from "../studio/project-media.ts";
@@ -62,7 +63,8 @@ export async function privateMediaAuthority(admin:any,token:unknown,bytes:number
  const c=await verifyPrivateCapability(token);
  // Spend before all ownership/catalogue reads. Failed/ambiguous reads also
  // consume the request; replay cannot create unmetered database work.
- await admitMediaRead(admin,c.org,bytes,true,c.actor);
+ assert(Number.isSafeInteger(bytes)&&bytes>=0&&bytes<=REGISTERED_BACKGROUND_BYTES,400,"Invalid media byte admission.");
+ await admitMediaRead(admin,c.org,bytes>GENERIC_MEDIA_BYTES?0:bytes,true,c.actor);
  const current=async()=>{
   let retentionOrg=c.org;
   if(c.listing!==null){const scope=await listingLibraryScope(admin,c.actor,c.listing);assert(scope.org_id===c.org,404,"Media unavailable.");retentionOrg=scope.library_org_id;}
@@ -143,5 +145,8 @@ export async function privateMediaAuthority(admin:any,token:unknown,bytes:number
  assert(registered,404,"Media unavailable.");
  if(c.listing!==null)await assertMediaVisible(admin,c.listing,{keys:[c.key]});
  await current();
- return{schema:1,slug:"private",objects:{[c.key]:c.bucket},stream_uid:null};
+ const objects={[c.key]:c.bucket};
+ const object_limits=c.listing!==null?await backgroundObjectLimits(admin,{orgId:c.org,listingId:c.listing,actorId:c.actor},objects,bytes,c.key):{};
+ assert(bytes<=GENERIC_MEDIA_BYTES||Object.hasOwn(object_limits,c.key),403,"Large private reads require an exact registered background output.");
+ return{schema:1,slug:"private",objects,stream_uid:null,...(Object.keys(object_limits).length?{object_limits}:{})};
 }

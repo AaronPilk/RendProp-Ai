@@ -30,8 +30,8 @@ COUNT = 270
 REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
     'no gpt-6-astra row is reachable on the free or trial tier',
-    'plan_entitlements match paid plans and 0032 trial/free for every metered feature',
-    'org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)',
+    'plan_entitlements match current paid/trial/free catalog for every metered feature',
+    'org_entitlement on a fitness trial org is the single-location free week (1/20/20/1/1, 1 seat, 1500¢)',
 ]
 NAMES = REQUIRED + [f'synthetic invariant {n:03d}' for n in range(len(REQUIRED) + 1, COUNT + 1)]
 PAID_MARKER = ('PASS: exact paid-plan predicates registered 6 expected outcomes across baseline '

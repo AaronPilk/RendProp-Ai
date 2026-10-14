@@ -30,7 +30,8 @@ listing_path = root / 'apps/ios/Rendprop/Models/Listing.swift'
 drift_path = root / 'apps/ios/Rendprop/Render/DriftCheck.swift'
 capacity_path = root / 'apps/ios/Rendprop/Render/VideoAspectChoice.swift'
 video_metadata_path = root / 'apps/ios/Rendprop/Models/ListingVideo.swift'
-consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, capacity_path, video_metadata_path, Path(__file__).resolve()]
+music_contract_path = root / 'apps/ios/Rendprop/Render/VideoMusicContract.swift'
+consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, capacity_path, video_metadata_path, music_contract_path, Path(__file__).resolve()]
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed}
 def block(s, anchor):
@@ -113,7 +114,7 @@ try:
     review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
     drift = drift_path.read_text()
     drift_types = block(drift, 'struct DriftVerdict: Sendable, Equatable') + '\n' + block(drift, 'struct DriftCheckRequest: Sendable') + '\n' + block(source, 'private struct ReelQualityRefusal: Error, LocalizedError').replace('private struct', 'struct', 1) + '\n'
-    actual = 'import Foundation\nimport CryptoKit\n' + capacity_path.read_text() + '\n' + video_metadata_path.read_text() + '\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n' + block(api, 'struct AIShot: Sendable, Hashable, Identifiable') + '\n' + block(source, 'struct PendingReelBatch: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private enum ReelRecoveryChoice').replace('private enum', 'enum', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
+    actual = 'import Foundation\nimport CryptoKit\n' + capacity_path.read_text() + '\n' + music_contract_path.read_text() + '\n' + video_metadata_path.read_text() + '\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n' + block(api, 'struct AIShot: Sendable, Hashable, Identifiable') + '\n' + block(source, 'struct PendingReelBatch: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private enum ReelRecoveryChoice').replace('private enum', 'enum', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
     for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(', '    nonisolated private static func preparedReelJPEG(', '    nonisolated private static func requireSavedReelReview(', '    nonisolated private static func acknowledgeRecoveredClip(', '    nonisolated private static func resolveSavedQualityRetry(', '    nonisolated private static func completeSavedBatch(']:
         extracted = block(source, anchor).replace('private static', 'static', 1)
         if 'retrieveClip(' in anchor:
@@ -206,7 +207,7 @@ try:
     ]
     choice_variants = [
         ('negative-framing-provider-flag-lost', actual.replace('aspect: aspect, framing: framing, presetVersion: 1,', 'aspect: aspect, framing: nil, presetVersion: 1,'), 'new whole-source framing survives provider admission'),
-        ('negative-framing-saved-batch-lost', actual.replace('preparedJPEG: jpeg, framing: batch.framing)', 'preparedJPEG: jpeg, framing: nil)'), 'saved whole-scene batch resumes exact full sources and framing'),
+        ('negative-framing-saved-batch-lost', actual.replace('preparedJPEG: jpeg, framing: batch.framing,', 'preparedJPEG: jpeg, framing: nil,'), 'saved whole-scene batch resumes exact full sources and framing'),
         ('negative-choice-generic-error-fallback', actual.replace('} catch let refusal as ReelQualityRefusal where refusal.mayRetry {', '} catch {'), 'unavailable recovery must remain held'),
         ('negative-choice-wrong-source', actual.replace('api.aiVideoReelClip(imageBase64: source, mime:', 'api.aiVideoReelClip(imageBase64: Data("different choice JPEG".utf8).base64EncodedString(), mime:'), 'explicit safer retry uses exact saved JPEG'),
         ('negative-choice-wrong-attempt', actual.replace('sourceSpaceType: spaceType, qualityAttempt: 1,', 'sourceSpaceType: spaceType, qualityAttempt: 2,'), 'explicit safer retry persists attempt one'),

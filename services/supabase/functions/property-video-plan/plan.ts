@@ -7,7 +7,7 @@ export type PlanPhoto={photo_id:string;asset_id:string};
 export function planInput(value:Record<string,unknown>){
  assert(typeof value.listing_id==='string'&&UUID.test(value.listing_id)&&typeof value.expected_org_id==='string'&&UUID.test(value.expected_org_id),400,'Choose a connected property before planning its video.');
  assert(Object.keys(value).every(k=>['listing_id','expected_org_id','photos'].includes(k)),400,'Send owned photo references only.');
- assert(Array.isArray(value.photos)&&value.photos.length>=1&&value.photos.length<=20,400,'Plan between1 and20 selected photos per batch.');
+ assert(Array.isArray(value.photos)&&value.photos.length>=1&&value.photos.length<=100,400,'Plan between1 and100 selected photos per batch.');
  const photos=value.photos.map(raw=>{assert(raw&&typeof raw==='object'&&!Array.isArray(raw),400,'Selected photo identity is invalid.');const p=raw as Record<string,unknown>;
  assert(Object.keys(p).length===2&&typeof p.photo_id==='string'&&p.photo_id.length>=1&&p.photo_id.length<=200&&typeof p.asset_id==='string'&&UUID.test(p.asset_id),400,'Send each selected photo and its uploaded source.');return{photo_id:p.photo_id,asset_id:p.asset_id.toLowerCase()};});
  assert(new Set(photos.map(p=>p.photo_id)).size===photos.length&&new Set(photos.map(p=>p.asset_id)).size===photos.length,400,'Each selected photo must have one distinct saved source.');

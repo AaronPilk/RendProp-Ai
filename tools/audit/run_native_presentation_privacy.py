@@ -64,6 +64,7 @@ struct FixtureTour { var url: URL }
     static let standard = Foundation.UserDefaults(suiteName: suite)!
 }
 @MainActor final class FixtureConnection { var cancelled = 0; func cancel() { cancelled += 1 } }
+@MainActor final class FixturePlayer { var pauses = 0; func pause() { pauses += 1 } }
 @MainActor final class FixtureModel { var contactCalls = 0; func refreshClientContact(for id: UUID) async throws { contactCalls += 1 } }
 struct ListingMediaItem {
     struct ScanRequest { let listingID: UUID; let tourURL: URL?; let aerialRelPath: String?; let aerialGeneratedAt: Date? }
@@ -80,6 +81,7 @@ INDEXING
     var currentListing = FixtureListing(); var tour: FixtureTour?
     var listing: FixtureListing { currentListing }; let model = FixtureModel()
     var filesTask: Task<Void, Never>?; var filesStamp: Int?; var mediaItems: [Int] = []
+    var websiteVideoPlayer: FixturePlayer?
     var availableRerenderSource: URL?; var openedFile: Int?; var filePhotoExport: Int?; var filePhotoExportAdmission: (() -> Bool)?
     var filePackageExtras: [Int] = []; var packageError: String?
     var provenance: [Int] = []; var provenanceCanExport: (() -> Bool)?; var auditExport: Int?
@@ -110,6 +112,8 @@ CONTACT
         ("keeps-package-extras", "filePackageExtras = []; packageError = nil", "packageError = nil", "Account invalidation clears old listing package extras"),
         ("keeps-package-error", "filePackageExtras = []; packageError = nil", "filePackageExtras = []", "Account invalidation clears old listing package error"),
         ("keeps-compliance-panel", "        showComplianceDetails = false", "        // omitted disclosure presentation reset", "Invalidation collapses old listing disclosure presentation"),
+        ("keeps-video-playing", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer = nil", "Account invalidation pauses the old property video"),
+        ("keeps-video-reference", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer?.pause()", "Account invalidation drops the old property video reference"),
         ("ignores-scan-cancellation", "!Task.isCancelled, expectedScope", "true, expectedScope", "Cancelled scan cannot restore files after invalidation"),
         ("stale-contact-dispatch", "!Task.isCancelled, hasCurrentPresentationContext, !currentListing.isSample", "!Task.isCancelled, !currentListing.isSample", "Stale account cannot dispatch listing contact request"),
         ("actor-global-indexing", 'return "\\(actor.lowercased()):\\(org.uuidString.lowercased())"', 'return actor.lowercased()', "Indexing opt-in cannot carry into another workspace"),

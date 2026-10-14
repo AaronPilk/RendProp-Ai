@@ -111,6 +111,7 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
     throw new ProviderError(PROVIDER, "validation", "This model cannot preserve photo framing.", 400, true);
   }
 
+  if(extra.property_video_target_aspect!==undefined&&(!['16:9','9:16'].includes(String(extra.property_video_target_aspect))||extra.property_video_target_aspect!==input.aspect))throw new ProviderError(PROVIDER,'validation','The server property-video target canvas changed.',400,true);
   // Seedance 1.0 Pro Fast image-to-video — the reel and the grounded aerial.
   if (model.endsWith("bytedance/seedance/v1/pro/fast/image-to-video")) {
     if (input.task === "video.aerial") {
@@ -130,7 +131,7 @@ export function falInput(step: RouteStep, input: GenerateInput): Record<string, 
       resolution: "1080p",
       duration: String(secondsOf(input, 5)), // Seedance takes duration as a string
       num_frames: secondsOf(input, 5) * 24 + 1,
-      aspect_ratio: input.framing === "preserve_photo" ? "auto" : input.aspect ?? "16:9",
+      aspect_ratio: input.extra?.property_video_target_aspect === input.aspect && ["16:9","9:16"].includes(String(input.aspect)) ? input.aspect : input.framing === "preserve_photo" ? "auto" : input.aspect ?? "16:9",
       camera_fixed: false,
     };
   }

@@ -241,16 +241,16 @@ struct PhotoVersionHistoryTests {
         let latestLibrary = browseIndex.libraryVersions(.latest)
         let cleanLibrary = browseIndex.libraryVersions(.decluttered)
         let stageLibrary = browseIndex.libraryVersions(.staged)
-        check(latestLibrary.count == 2 && stageLibrary.count == 2 && cleanLibrary.count == 2, "each library keeps one version per family")
+        check(latestLibrary.count == 2 && stageLibrary.count == 4 && cleanLibrary.count == 4, "Latest keeps one per family while every saved clean and staging choice remains available")
         check(Dictionary(uniqueKeysWithValues: latestLibrary.map { ($0.familyID, $0.id) }) == latestByFamily, "latest library remains the editing workspace's current versions")
-        check(Dictionary(uniqueKeysWithValues: stageLibrary.map { ($0.familyID, $0.id) }) == latestByFamily, "staged library keeps newest restyle per family")
-        check(Dictionary(uniqueKeysWithValues: cleanLibrary.map { ($0.familyID, $0.id) }) == cleanByFamily, "declutter library keeps newest clean source after two staging outputs")
+        check(Set(stageLibrary.map(\.id)) == Set(["living-modern", "living-rustic", "bedroom-modern", "bedroom-rustic"]), "Staged retains both styles for every original")
+        check(Set(cleanLibrary.map(\.id)) == Set(["living-clean-1", "living-clean-2", "bedroom-clean-1", "bedroom-clean-2"]), "Decluttered retains both saved results after staging")
         check(cleanLibrary.allSatisfy { $0.effects == ["declutter"] }, "declutter exports cannot include furniture effects inherited by staging")
         check(stageLibrary.allSatisfy { $0.effects == ["declutter", "stage"] }, "staged outputs retain truthful declutter lineage")
         check((try? Data(contentsOf: libraryIndexURL)) == beforeBrowsing, "loading and browsing libraries performs no history-state write")
-        for version in cleanLibrary {
+        for version in cleanLibrary.sorted(by: { $0.createdAt < $1.createdAt }) {
             let cleanBytes = try Data(contentsOf: libraryDir.appendingPathComponent(version.imageFile))
-            check(cleanBytes == Data("clean-2-\(version.familyID)".utf8), "downloadable declutter bytes remain separate from staging")
+            check(cleanBytes == Data("clean-\(version.id.hasSuffix("-1") ? "1" : "2")-\(version.familyID)".utf8), "each downloadable declutter retains its own exact result bytes")
             check(version.originalFile == "orig-\(version.familyID).jpg", "declutter download still points to the retained unaltered source")
             check((try? Data(contentsOf: libraryDir.appendingPathComponent(version.originalFile!))) == Data("original-\(version.familyID)".utf8), "library review never changes original pixels")
             try PhotoVersionHistory.selectForPublication(id: version.id, directory: libraryDir)
@@ -278,7 +278,8 @@ struct PhotoVersionHistoryTests {
         let hiddenIndex = try PhotoVersionHistory.load(directory: libraryDir)
         for kind in PhotoVersionHistory.LibraryKind.allCases {
             let visible = hiddenIndex.libraryVersions(kind)
-            check(visible.count == 1 && visible[0].familyID == "bedroom", "every library excludes the whole hidden living-room family")
+            check(visible.allSatisfy { $0.familyID == "bedroom" }, "every library excludes the whole hidden living-room family")
+            check(visible.count == (kind == .original ? 0 : kind == .latest ? 1 : 2), "hidden family exclusion retains every remaining saved choice")
         }
         let beforeHiddenReject = try Data(contentsOf: libraryIndexURL)
         rejected("hidden clean version cannot be selected from an old compare sheet") { try PhotoVersionHistory.selectForPublication(id: "living-clean-2", directory: libraryDir) }
@@ -531,6 +532,40 @@ struct PhotoVersionHistoryTests {
         let skyAfterStage = try PhotoVersionHistory.saveEdit(jpeg: original, id: "sky-after-stage", parentID: stagePreview.id, sourceID: stagePreview.id, edit: "sky", style: nil, disclosure: nil, provenanceID: nil, provenanceRecorded: false, directory: reelReviewDir)
         check(skyAfterStage.caption.contains("Virtually staged") && skyAfterStage.caption.contains("Digitally decluttered") && skyAfterStage.caption.contains("sky was replaced"), "stage declutter sky disclosure retains all recorded effects")
         check(skyPreview.caption.contains("custom or imported AI edit") && skyPreview.caption.contains("sky was replaced"), "custom descendants name both custom changes and preset effects")
+
+        // The Original tab has its own exact image identity. An enhanced ID
+        // cannot be reused for capture bytes, nor can registration change the
+        // reviewed listing selection or remove an earlier staging choice.
+        let originalTabDir = root.appendingPathComponent("original-tab")
+        let captured = Data("exact-captured-room".utf8), brightened = Data("on-device-brightened-room".utf8)
+        try PhotoVersionHistory.saveCapture(original: captured, enhanced: brightened, id: "room", directory: originalTabDir)
+        let beforeOriginals = try PhotoVersionHistory.load(directory: originalTabDir)
+        let registered = try PhotoVersionHistory.ensureOriginalSources(directory: originalTabDir)
+        let originals = registered.libraryVersions(.original)
+        check(originals.count == 1 && originals[0].id == "room-original", "Original has a genuine separate version identity")
+        check(originals[0].imageFile == "orig-room.jpg" && originals[0].originalVerified, "Original is the actual verified retained capture")
+        check(originals[0].originalAssetID == nil && originals[0].provenanceID == nil, "different original bytes cannot inherit enhanced server identity")
+        check(registered.current == beforeOriginals.current && registered.listingSelections == beforeOriginals.listingSelections, "registering Original cannot replace editing/publication choices")
+        check((try? Data(contentsOf: originalTabDir.appendingPathComponent(originals[0].imageFile))) == captured, "Original pixels remain exact")
+        check((try? Data(contentsOf: originalTabDir.appendingPathComponent("enh-room.jpg"))) == brightened, "enhanced bytes also remain exact")
+        let registeredBytes = try Data(contentsOf: originalTabDir.appendingPathComponent(".photo-history.json"))
+        _ = try PhotoVersionHistory.ensureOriginalSources(directory: originalTabDir)
+        check((try? Data(contentsOf: originalTabDir.appendingPathComponent(".photo-history.json"))) == registeredBytes, "repeat Original registration is read-only")
+        for style in ["modern", "rustic"] {
+            let context = try PhotoVersionHistory.editContext(for: originals[0].id, edit: "stage", directory: originalTabDir)
+            let input = context.source
+            check(input.id == originals[0].id && input.imageFile == "orig-room.jpg", "a new staging style starts from the real original")
+            _ = try PhotoVersionHistory.saveEdit(jpeg: Data(style.utf8), id: "room-\(style)",
+                parentID: context.parent.id, sourceID: input.id, edit: "stage", style: style, disclosure: nil,
+                provenanceID: nil, provenanceRecorded: false, directory: originalTabDir)
+        }
+        let styled = try PhotoVersionHistory.load(directory: originalTabDir)
+        check(Set(styled.libraryVersions(.staged).map(\.id)) == Set(["room-modern", "room-rustic"]), "both staging styles remain visible under Staged")
+        check(styled.libraryVersions(.original).map(\.id) == ["room-original"], "new AI work cannot replace the Original tile")
+        try PhotoVersionHistory.selectForPublication(id: "room-modern", directory: originalTabDir, reviewed: true)
+        let selectedOriginalTab = try PhotoVersionHistory.ensureOriginalSources(directory: originalTabDir)
+        check(selectedOriginalTab.isSelectedForListing("room-modern"), "reviewed older staging remains the exact publication/video selection")
+        check(selectedOriginalTab.current["room"] == "room-rustic", "reviewed selection does not overwrite the later saved style")
 
         typealias Layout = PhotoExportLayout
         check(Layout.size(width: 4032, height: 3024, aspect: .original, framing: .crop) == .init(width: 4032, height: 3024), "default preserves every original pixel")

@@ -37,3 +37,12 @@ export function buildPhotoPreservingReelPrompt(sceneNoun: string, motion: typeof
     "Retain the wide scene, including the pictured ceiling, floor and side edges; do not force landscape or portrait framing. The delivery canvas will be added separately. " +
     "Preserve the architecture, layout, straight lines, proportions, doors, windows, fixed finishes and colors, fixtures, furniture and visible exterior exactly. Every object remains stationary. No added or removed objects, repainting, renovation, unseen rooms, warped geometry, flicker, cuts, text, people, logos or music. " + GUARDRAILS;
 }
+
+/** Server-owned jobs deliver a real destination canvas; source-auto1080 cannot
+ * satisfy1080 after a4:3-to16:9 crop. Pixel/provenance QC still runs on actual
+ * source/first/middle/last frames; no outpaint/structural changes are authorized. */
+export function buildPropertyCanvasReelPrompt(sceneNoun:string,motion:typeof REEL_PRESETS[number],aspect:'16:9'|'9:16'):string{
+ return buildPhotoPreservingReelPrompt(sceneNoun,motion)
+  .replace('Begin with the entire supplied photograph at its original aspect ratio and composition.',`Deliver one native1080p ${aspect} shot. Begin with the photographed scene fitted into that canvas using restrained framing/cropping only.`)
+  .replace('Retain the wide scene, including the pictured ceiling, floor and side edges; do not force landscape or portrait framing. The delivery canvas will be added separately.','Keep the visible property readable and its features unchanged. Do not extend the image borders, outpaint, invent space, stretch pixels, add blurred panels or black bars.');
+}

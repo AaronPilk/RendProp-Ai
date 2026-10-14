@@ -4174,10 +4174,10 @@ struct HomeDashboardView: View {
 
     private var featureGrid: some View {
         HomeFeatureGridLayout(columns: shortcutColumns, spacing: 8) {
-            featureButton(.tour)
             featureButton(.photos)
             featureButton(.photoStudio)
             featureButton(.reel)
+            featureButton(.tour)
             comingSoonTile("Aerial intro", "AI opening shots are still being tested", "airplane.departure", id: "aerial")
 #if SPATIAL_CAPTURE_LAB
             featureButton(.floorPlan)
@@ -4257,7 +4257,7 @@ struct HomeDashboardView: View {
 
     private func shortcutTitle(for icon: String, fallback: String) -> String {
         switch icon {
-        case "video.fill": return "Video tours"
+        case "video.fill": return "Recorded walkthrough"
         case "photo.stack": return "Add photos"
         case "wand.and.stars": return "Edit photos"
         case "film.stack": return "Make a video"
@@ -4270,7 +4270,7 @@ struct HomeDashboardView: View {
 
     private func shortcutSubtitle(for icon: String) -> String {
         switch icon {
-        case "video.fill": return "Walkthrough"
+        case "video.fill": return "Optional"
         case "photo.stack": return "Library"
         case "wand.and.stars": return "AI edits"
         case "film.stack": return "Social media or listing"
@@ -4619,8 +4619,9 @@ private struct HomeGlassCardSurface: ViewModifier {
     }
 }
 
-/// Measure the wrapped content once per layout pass, then give every Home
-/// feature the same bounds. No stored maximum survives a width or text change.
+/// Measure each row's wrapped content on every layout pass. Short photo cards
+/// do not inherit the height of a longer experimental-tool title farther down.
+/// Accessibility text uses the existing single-column layout without truncation.
 private struct HomeFeatureGridLayout: Layout {
     let columns: Int
     var spacing: CGFloat = 12
@@ -4630,27 +4631,33 @@ private struct HomeFeatureGridLayout: Layout {
         let naturalWidth = subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
             ?? (naturalWidth * CGFloat(columns) + spacing * CGFloat(columns - 1))
-        let cell = cellSize(width: width, subviews: subviews)
-        let rows = (subviews.count + columns - 1) / columns
-        return CGSize(width: width, height: cell.height * CGFloat(rows) + spacing * CGFloat(rows - 1))
+        let heights = rowHeights(width: width, subviews: subviews)
+        return CGSize(width: width, height: heights.reduce(0, +) + spacing * CGFloat(heights.count - 1))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
-        let cell = cellSize(width: bounds.width, subviews: subviews)
-        for (index, subview) in subviews.enumerated() {
-            let origin = CGPoint(x: bounds.minX + CGFloat(index % columns) * (cell.width + spacing),
-                                 y: bounds.minY + CGFloat(index / columns) * (cell.height + spacing))
-            subview.place(at: origin, anchor: .topLeading,
-                          proposal: ProposedViewSize(width: cell.width, height: cell.height))
+        let cellWidth = max(0, (bounds.width - spacing * CGFloat(columns - 1)) / CGFloat(columns))
+        let heights = rowHeights(width: bounds.width, subviews: subviews)
+        var rowY = bounds.minY
+        for (row, height) in heights.enumerated() {
+            let first = row * columns
+            for index in first..<min(first + columns, subviews.count) {
+                let origin = CGPoint(x: bounds.minX + CGFloat(index % columns) * (cellWidth + spacing), y: rowY)
+                subviews[index].place(at: origin, anchor: .topLeading,
+                                      proposal: ProposedViewSize(width: cellWidth, height: height))
+            }
+            rowY += height + spacing
         }
     }
 
-    private func cellSize(width: CGFloat, subviews: Subviews) -> CGSize {
+    private func rowHeights(width: CGFloat, subviews: Subviews) -> [CGFloat] {
         let cellWidth = max(0, (width - spacing * CGFloat(columns - 1)) / CGFloat(columns))
-        let fittedHeight = subviews.map {
-            $0.sizeThatFits(ProposedViewSize(width: cellWidth, height: nil)).height
-        }.max() ?? 0
-        return CGSize(width: cellWidth, height: max(128, fittedHeight))
+        return stride(from: 0, to: subviews.count, by: columns).map { first in
+            let fittedHeight = (first..<min(first + columns, subviews.count)).map {
+                subviews[$0].sizeThatFits(ProposedViewSize(width: cellWidth, height: nil)).height
+            }.max() ?? 0
+            return max(128, fittedHeight)
+        }
     }
 }
 

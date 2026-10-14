@@ -67,6 +67,7 @@ export async function deliverPush(
   devices: DeviceRow[],
   base: string,
   fetchImpl: typeof fetch = fetch,
+  authorizeDevice?: (device:DeviceRow)=>Promise<boolean>,
 ): Promise<Outcome> {
   // THE INERT PATH. Not an error and not a retry: this row has nowhere to go
   // until somebody sets three secrets, and naming them in last_error is how
@@ -98,7 +99,10 @@ export async function deliverPush(
   const deadTokens: string[] = [];
   let lastReason: string | null = null;
 
+  let authorizedDevices=0;
   for (const device of ownDevices) {
+    if(authorizeDevice&&!await authorizeDevice(device))continue;
+    authorizedDevices++;
     const result = await apns.send({
       deviceToken: device.device_token,
       environment: device.environment === "sandbox" ? "sandbox" : "production",
@@ -123,7 +127,8 @@ export async function deliverPush(
   // EVERY token this person has is gone. Retrying cannot help, so the row is
   // closed as skipped rather than left to burn its five attempts against
   // phones that no longer exist.
-  if (deadTokens.length > 0 && deadTokens.length === ownDevices.length) {
+  if(authorizedDevices===0)return {state:"skipped",reason:"the current account or device enrollment changed",providerId:null,deadTokens};
+  if (deadTokens.length > 0 && deadTokens.length === authorizedDevices) {
     return {
       state: "skipped",
       reason: `every device token for this user was rejected by APNs (${lastReason ?? "unregistered"})`,

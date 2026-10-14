@@ -888,7 +888,7 @@ struct FlythroughDetailView: View {
             // otherwise the workspace default (which is OFF until somebody
             // says otherwise).
             if !listOnGoogleSeeded {
-                listOnGoogle = currentListing.allowSearchIndexing ?? SearchIndexingDefault.value
+                listOnGoogle = currentListing.allowSearchIndexing ?? false
                 listOnGoogleSeeded = true
             }
             // Photos-first: push the photo library the moment this screen
@@ -1310,10 +1310,10 @@ struct FlythroughDetailView: View {
                 Toggle(isOn: Binding(get: { listOnGoogle },
                                      set: { setListOnGoogle($0) })) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("List this tour on Google")
+                        Text("Allow this published property to appear in search engines")
                             .font(.rpBody.weight(.semibold))
                             .foregroundStyle(Theme.ink)
-                        Text("Turning this on lets Google show this page, which makes the address and your \(space.profileCardName.lowercased()) — your name, phone and email — findable by anyone searching. Your leads, your files and your other tours stay private either way, and your link keeps working whether it's on or off.")
+                        Text("Turning this on lets search engines show this page, which makes the address and your \(space.profileCardName.lowercased()) — your name, phone and email — findable by anyone searching. Your leads, your files and your other tours stay private either way, and your link keeps working whether it's on or off.")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1322,8 +1322,8 @@ struct FlythroughDetailView: View {
                 .tint(Theme.accent)
                 .accessibilityIdentifier("listing.listOnGoogle")
                 Text(shareURL == nil
-                     ? "Off unless you turn it on. We'll remember your answer as the default for your next tour."
-                     : "Changing this updates your live page. We'll remember your answer as the default for your next tour.")
+                     ? "Off unless you choose it for this property. Your shared link works either way."
+                     : "Changing this updates the search preference for this property. Search engines decide when to index it.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2526,7 +2526,7 @@ struct FlythroughDetailView: View {
     private func publishWithSession(cellularApproved: Bool = false) {
         guard !isPublishing, tour != nil || currentListing.websiteVideoRelPath != nil, !currentListing.isSample else { return }
         // The toggle above the button is the answer whether or not it was
-        // touched: it is drawn at the workspace's own default, so publishing
+        // touched: it shows this property's saved choice, or Off when unanswered, so publishing
         // without touching it has to mean what it says on screen. A no-op when
         // the listing already carries this answer.
         model.setSearchIndexing(listOnGoogle, for: listing.id)
@@ -4751,7 +4751,7 @@ struct PhotoStudioView: View {
     private var stagingLabel: String { space == .realEstate ? "Virtual staging" : "Furnish & style" }
 
     @State private var photos: [EnhancedPhoto] = []
-    @State private var libraryKind: PhotoVersionHistory.LibraryKind = .latest
+    @State private var libraryKind: PhotoVersionHistory.LibraryKind = .original
     @State private var selectedPhotoIDs: Set<String> = []
     @State private var publicationLabels: [String: String] = [:]
     @State private var galleryRetrying = false
@@ -4779,6 +4779,9 @@ struct PhotoStudioView: View {
     @State private var busyPhotoIDs: Set<String> = []
     @State private var showLibrary = false
     @State private var showCamera = false
+    @State private var showCaptureGuide = false
+    @State private var openCameraAfterGuide = false
+    var captureIntent: CaptureGuideIntent = .listingPhotos
     @State private var localProcessing = false
     @State private var libraryImportID: UUID?
     @State private var libraryImportCancellation: PhotoImportCancellation?
@@ -4941,7 +4944,7 @@ struct PhotoStudioView: View {
             HStack(spacing: 10) {
                 addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
                 addButton("Take a photo", "camera", filled: false) {
-                    showCamera = true
+                    showCaptureGuide = true
                 }
                 .accessibilityIdentifier("photos.takePhoto")
             }
@@ -4965,7 +4968,10 @@ struct PhotoStudioView: View {
                 Picker("Saved photo versions", selection: $libraryKind) {
                     ForEach(PhotoVersionHistory.LibraryKind.allCases) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented).accessibilityIdentifier("photos.savedVersions")
-                Text("Decluttered and staged photos are saved separately. Tap a photo to see its original and all saved versions. Downloading doesn't change your published listing.")
+                Text(libraryKind == .original
+                     ? "Your originals stay unchanged. Start an AI edit here, then review the saved result."
+                     : libraryKind == .latest ? "The latest saved version of each photo. Originals and earlier edits stay available."
+                     : "Your saved results. Review, select for your listing, or share a version you like.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
                 photosGridHint
             }
@@ -4989,13 +4995,14 @@ struct PhotoStudioView: View {
             }
             photoGrid
             if !photos.isEmpty && libraryPhotos.isEmpty {
-                Text(libraryKind == .decluttered ? "No decluttered photos saved yet. Declutter a photo in AI Photo Studio first."
-                     : "No staged photos saved yet. Add furniture in AI Photo Studio first.")
+                Text(libraryKind == .original ? "No retained originals are available here. Add the original photos to start a new edit."
+                     : libraryKind == .decluttered ? "No decluttered photos saved yet. Start from Original and choose Declutter."
+                     : "No staged photos saved yet. Start from Original and choose a staging style.")
                     .font(.rpBody).foregroundStyle(Theme.inkDim)
             }
 
             if !photos.isEmpty {
-                openStudioCard
+                if libraryKind == .original { openStudioCard }
                 shareAllButton
             }
 
@@ -5052,15 +5059,15 @@ struct PhotoStudioView: View {
     /// The line above the library grid. Three verbs, all of them free.
     private var photosGridHint: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(libraryKind == .latest ? "Tap a photo to see its saved versions. Tap the star to make it the cover. Tap the wand to change it."
-                 : "Tap a photo to view or download this saved edit, or choose it for your listing. Later edits stay saved.")
+            Text(libraryKind == .original ? "Tap the wand to edit an original. Tap a photo to review its saved versions."
+                 : "Tap a photo to review, share, or select it for your listing. To try a different edit, return to Original.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
-            Label("Already brightened and sharpened on this phone \u{2014} that part costs nothing.",
+            if libraryKind == .latest { Label("Brightening and sharpening on this phone costs nothing.",
                   systemImage: "sparkles")
                 .font(.rpCaption.weight(.semibold))
                 .foregroundStyle(Theme.good)
-                .fixedSize(horizontal: false, vertical: true)
+                .fixedSize(horizontal: false, vertical: true) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -5078,7 +5085,7 @@ struct PhotoStudioView: View {
                     .background(RPGradient.photo,
                                 in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Change these with AI")
+                    Text("Edit originals with AI")
                         .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
                     Text("Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -5220,8 +5227,15 @@ struct PhotoStudioView: View {
                 pendingShowcaseEdit = nil; pendingShowcaseStyle = nil
             }, onImport: { batch in ingest(batch) }).ignoresSafeArea()
         }
+        .sheet(isPresented: $showCaptureGuide, onDismiss: {
+            if openCameraAfterGuide { openCameraAfterGuide = false; showCamera = true }
+        }) {
+            CaptureOrientationGuide(intent: captureIntent, onContinue: {
+                openCameraAfterGuide = true; showCaptureGuide = false
+            }, onCancel: { openCameraAfterGuide = false; showCaptureGuide = false })
+        }
         .fullScreenCover(isPresented: $showCamera) {
-            GuidedPhotoCamera(purpose: .interior, onPicked: { img in
+            GuidedPhotoCamera(purpose: .interior, captureIntent: captureIntent, onPicked: { img in
                 let error = await withCheckedContinuation { continuation in
                     ingest([img]) { continuation.resume(returning: $0) }
                 }
@@ -5402,7 +5416,14 @@ struct PhotoStudioView: View {
 
     private var photoGrid: some View {
         LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(libraryPhotos) { p in photoCell(p, selectedForListing: selectedPhotoIDs.contains(p.id)) }
+            ForEach(libraryPhotos) { p in
+                VStack(alignment: .leading, spacing: 5) {
+                    photoCell(p, selectedForListing: selectedPhotoIDs.contains(p.id))
+                    if entry == .photos && libraryKind == .staged, let style = p.savedVersion?.style, !style.isEmpty {
+                        Text(style.capitalized).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
+                }
+            }
         }
         // New AI edits and deletions settle into the grid instead of
         // popping — keyed on count so only inserts/removes animate.
@@ -5436,14 +5457,14 @@ struct PhotoStudioView: View {
                                         ? (publicationLabels[p.id] ?? "Selection unavailable") : "")
                     .accessibilityIdentifier("photos.version.\(p.id)")
                     .contextMenu { photoMenu(p) }
-                if !busyPhotoIDs.contains(p.id), entry != .photos || libraryKind == .latest { wandButton(p) }
+                if !busyPhotoIDs.contains(p.id), entry != .photos || libraryKind == .original { wandButton(p) }
                 // THE COVER, on the surface. It was a long-press and nothing
                 // else — an invisible gesture for the one picture that
                 // represents the whole home everywhere it is shared. Only on
                 // the library screen: in the studio a tap means "include this
                 // photo in the change", and a second meaning on the same
                 // thumbnail is a trap.
-                if entry == .photos && libraryKind == .latest { coverButton(p) }
+                if entry == .photos { coverButton(p) }
             } else {
                 Button { toggleBatchSelection(p) } label: {
                     thumb(p).overlay { selectionOverlay(p) }
@@ -5530,7 +5551,7 @@ struct PhotoStudioView: View {
     }
 
     @ViewBuilder private func photoMenu(_ p: EnhancedPhoto) -> some View {
-        if entry != .photos || libraryKind == .latest {
+        if entry != .photos || libraryKind == .original {
         Menu {
             Button { aiEdit(p, "twilight") } label: { Label(EditWords.twilight, systemImage: "moon.stars") }
             Button { aiEdit(p, "sky") } label: { Label(EditWords.sky, systemImage: "cloud.sun") }
@@ -5553,9 +5574,9 @@ struct PhotoStudioView: View {
         Button { animate(p) } label: {
             Label(EditWords.animate, systemImage: "play.rectangle.on.rectangle")
         }
+        }
         Button { setMain(p) } label: {
             Label("Use as cover photo", systemImage: "star")
-        }
         }
         Button { exportingPhotos = PhotoExportSelection(photos: [p]) } label: {
             Label("Export photo", systemImage: "square.and.arrow.up")
@@ -6577,7 +6598,13 @@ struct PhotoStudioView: View {
         // Resolve each family's metadata independently. A missing selected
         // image still stops gallery upload, but doesn't erase other badges.
         do {
-            let index = try PhotoVersionHistory.load(directory: dir)
+            let index = try PhotoVersionHistory.ensureOriginalSources(directory: dir)
+            if entry == .studio {
+                photos = index.libraryVersions(.original).map { version in
+                    let image = dir.appendingPathComponent(version.imageFile)
+                    return EnhancedPhoto(id: version.id, originalURL: image, enhancedURL: image)
+                }
+            }
             selectedPhotoIDs = Set(index.versions.keys.filter(index.isSelectedForListing))
             publicationLabels = Dictionary(uniqueKeysWithValues: index.versions.keys.map {
                 ($0, index.publicationLabel(for: $0) ?? "Not selected for listing")
@@ -6921,11 +6948,15 @@ struct PhotoCompareView: View {
         var kinds: Set<String> = []
         return history.filter { version in
             let effects = version.savedVersion?.effects ?? []
-            let kind = effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
+            let source = version.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } ?? false
+            let kind = source ? "Original" : effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
             return kinds.insert(kind).inserted
         }
     }
     private func choiceTitle(_ version: EnhancedPhoto) -> String {
+        if let saved = version.savedVersion, saved.parentID == nil && saved.imageFile == saved.originalFile {
+            return saved.originalVerified ? "Original" : "Earlier source"
+        }
         let effects = version.savedVersion?.effects ?? []
         return effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
     }
@@ -6953,7 +6984,9 @@ struct PhotoCompareView: View {
                 }.padding(.horizontal)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        if viewed.originalURL != viewed.enhancedURL {
+                        if viewed.originalURL != viewed.enhancedURL && !versionChoices.contains(where: {
+                            $0.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } ?? false
+                        }) {
                             versionChip(viewed.retainedSourceIsVerified ? "Original" : "Earlier source", selected: showOriginal) { showOriginal = true }
                         }
                         ForEach(versionChoices) { version in
@@ -9240,6 +9273,16 @@ struct ReelStudioView: View {
     @State private var automaticOrder = true
     @State private var showVideoAdvanced = false
     @State private var scenePlanningNotice: String?
+    @State private var musicSelection: VideoMusicSelection? = nil
+    @State private var musicPreviewPlayer: AVPlayer?
+    @State private var framingPreviewPhoto: EnhancedPhoto?
+    @State private var allowOriginalPhotoFallback = true
+    @State private var showVideoHelp = false
+    @State private var checkingFraming = false
+    @State private var showFramingReview = false
+    @State private var framingAssessments: [VideoPhotoFramingAssessment] = []
+    @State private var pendingFramingKey: String?
+    @State private var acknowledgedFramingKey: String?
     private var completedClips: Int { get { work.completedClips } nonmutating set { work.completedClips = newValue } }
     private var originalPhotoMotionShots: Int { get { work.originalPhotoMotionShots } nonmutating set { work.originalPhotoMotionShots = newValue } }
     private var totalClips: Int { get { work.totalClips } nonmutating set { work.totalClips = newValue } }
@@ -9318,10 +9361,10 @@ struct ReelStudioView: View {
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
-    private var canGenerate: Bool { VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
+    private var canGenerate: Bool { (work.serverJob == nil || work.serverJob?.reply?.isTerminal == true) && VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
     /// The app-owned job continues when this sheet is dismissed. Only the
     /// explicit Cancel action or a captured permission change stops it.
-    private var isWorking: Bool { work.running || phase == .generating || phase == .stitching }
+    private var isWorking: Bool { work.running || work.isServerRendering || phase == .generating || phase == .stitching }
 
     /// Title + which home this reel is for. iOS 16 has no `navigationSubtitle`,
     /// so the two lines are a principal toolbar item.
@@ -9401,6 +9444,7 @@ struct ReelStudioView: View {
             if !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
             reloadPendingRequest()
             restoreVideoPurposeForSavedWork()
+            restoreServerVideoJob()
             if let reelURL, player == nil { player = AVPlayer(url: reelURL) }
         }
         .onChange(of: voiceMode) { mode in
@@ -9418,7 +9462,7 @@ struct ReelStudioView: View {
             // its playback, microphone and unsent reconnect waiter.
             connection.cancel()
             work.isPresented = false
-            player?.pause(); player = nil; voPlayer?.pause()
+            player?.pause(); player = nil; voPlayer?.pause(); musicPreviewPlayer?.pause()
             if recorder.isRecording { recorder.cancel() }
         }
         .onChange(of: auth.userID) { owner in
@@ -9432,7 +9476,7 @@ struct ReelStudioView: View {
             Button("Discard clips", role: .destructive) { discardParkedClips() }
             Button("Keep them", role: .cancel) {}
         } message: {
-            Text("This deletes saved reel progress and finished clips. Remote requests are kept. Making the deleted clips again costs another round of AI.")
+            Text("This deletes saved video progress and finished clips. Remote requests are kept. Making the deleted clips again costs another round of AI.")
         }
         .confirmationDialog("Forget the saved request?", isPresented: $showDiscardPendingConfirm, titleVisibility: .visible) {
             Button("Forget request", role: .destructive) {
@@ -9457,9 +9501,19 @@ struct ReelStudioView: View {
         // Guideline 5.1.2(i) — each selected photo is animated by a
         // third-party video model. Agreed once per device; declining closes
         // the studio.
+        .sheet(isPresented: $showFramingReview) {
+            VideoFramingReviewSheet(assessments: framingAssessments.filter(\.isMajorCrop), aspect: portrait ? 9.0/16.0 : 16.0/9.0) {
+                acknowledgedFramingKey = pendingFramingKey
+                showFramingReview = false
+                DispatchQueue.main.async { generate() }
+            }
+        }
+        .sheet(item: $framingPreviewPhoto) { photo in
+            VideoFramingPreviewSheet(url: photo.enhancedURL, aspect: portrait ? 9.0/16.0 : 16.0/9.0)
+        }
         .sheet(isPresented: $showReelPhotos, onDismiss: { refreshVideoPhotos() }) {
             NavigationStack {
-                PhotoStudioView(listing: listing, entry: .photos)
+                PhotoStudioView(listing: listing, entry: .photos, captureIntent: portrait ? .socialPhotos : .listingPhotos)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { showReelPhotos = false } } }
             }.environmentObject(model)
         }
@@ -9489,7 +9543,7 @@ struct ReelStudioView: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Where will you use this video?")
                 .font(.rpTitle).foregroundStyle(Theme.ink)
-            Text("Choose the destination. Rendprop sets the right video shape for you.")
+            Text("Choose a video format.")
                 .font(.rpBody).foregroundStyle(Theme.inkDim)
             ForEach(VideoAspectChoice.allCases, id: \.rawValue) { choice in
                 Button {
@@ -9656,7 +9710,7 @@ struct ReelStudioView: View {
                 .font(.rpTitle)
                 .foregroundStyle(Theme.ink)
             Text(extraClipURLs.isEmpty
-                 ? (portrait ? "Choose photos. Rendprop plans the scenes and motion for your social video." : "Choose photos. Rendprop plans the scenes and motion for your listing video.")
+                 ? (portrait ? "Choose photos. We handle the scenes and camera motion." : "Choose photos. We handle the scenes and camera motion.")
                  : "Choose photos. An optional opening clip can be added under Advanced.")
                 .font(.rpBody)
                 .foregroundStyle(Theme.inkDim)
@@ -9673,9 +9727,9 @@ struct ReelStudioView: View {
         HStack(spacing: 8) {
             stepChip("1", "Photos")
             Image(systemName: "arrow.right").font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
-            stepChip("2", "Create")
+            stepChip("2", "Format")
             Image(systemName: "arrow.right").font(.caption2.weight(.bold)).foregroundStyle(Theme.inkDim)
-            stepChip("3", "Review")
+            stepChip("3", "Create")
         }.padding(.top, 2)
     }
 
@@ -9692,9 +9746,10 @@ struct ReelStudioView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("STEP \(number) · \(title)")
                 .font(.rpKicker).foregroundStyle(Theme.accent)
-            Text(note)
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                .fixedSize(horizontal: false, vertical: true)
+            if !note.isEmpty {
+                Text(note).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -9704,21 +9759,26 @@ struct ReelStudioView: View {
     private var stepPhotosCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                stepTitle(1, "PICK PHOTOS", "Choose up to \(VideoSelectionCapacity.maximumPhotos) photos. We organize the scenes for you.")
+                stepTitle(1, "PICK PHOTOS", "Pick your finished photos.")
                 Text("\(selected.count)/\(VideoSelectionCapacity.maximumPhotos)")
                     .font(.rpCaption)
                     .foregroundStyle(selected.count >= 1 ? Theme.accent : Theme.inkDim)
             }
             photoPickerGrid
-            Text("Each photo becomes about 5 seconds of video. Larger selections take longer. Automatic planning works across the entire selection.")
+            Text(videoPurpose == .listing ? "Wide photos work best. Start with the front, then rooms and backyard." : "Upright photos work best for social video.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
-            if videoPurpose == .listing {
-                Text("Include the front exterior, entry, main rooms and backyard for a complete property video. Confident scenes are arranged in a natural order; unclear photos keep their position. Each shot comes from its own photo, without inventing a connected route through the home.")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    private func restoreServerVideoJob() {
+        guard !listing.isSample, let current = model.listings.first(where: { $0.id == listing.id }),
+              let serverID = current.serverID, let actor = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+              let org = WorkspaceContext.selectedOrgID, let jobsAPI = model.api as? PropertyVideoJobsAPI else { return }
+        let context = PropertyVideoJobContext(localListingID: listing.id, listingID: serverID, actorID: actor, orgID: org)
+        PropertyVideoJobRunner.shared.restore(work: work, model: model, api: jobsAPI, context: context)
+        if let saved = work.serverJob { videoPurpose = saved.request.purpose == "listing" ? .listing : .socialMedia }
     }
 
     private func refreshVideoPhotos() {
@@ -9741,7 +9801,7 @@ struct ReelStudioView: View {
             }
         } else if reelPhotos.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-            Text("Add photos to this listing, then return to pick them for your reel.")
+            Text("Add your property photos, then select them here.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -9760,23 +9820,35 @@ struct ReelStudioView: View {
 
     private var stepMakeCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            stepTitle(2, "CREATE YOUR VIDEO", "The scene order and camera motion are automatic. Advanced settings are optional.")
+            stepTitle(2, "FORMAT", "")
             formatRow
-            Text(cameraMove == nil ? "Automatic camera motion for each photo" : "All photos use your \(cameraMove!.title.lowercased()) override")
-                .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
             if let scenePlanningNotice { Text(scenePlanningNotice).font(.rpCaption).foregroundStyle(Theme.inkDim) }
-            videoAdvancedControls
-            Text("Videos export at 1080p. Sharpness depends on the available photos; enlarging a small source cannot restore detail. Motion may crop the edges of a copy; saved photos stay unchanged.")
-                .font(.rpCaption).foregroundStyle(Theme.inkDim)
             makeButton
             aiDisclosureLine
+            videoAdvancedControls
+            videoHelpControls
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
     }
 
+    private var videoHelpControls: some View {
+        DisclosureGroup("Help · photos and video", isExpanded: $showVideoHelp) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Hold sideways for property photos. Use 0.5× to fit the whole room, or 1× when it already fits. Keep the phone level. Social video works best with upright photos.")
+                Text("Each photo becomes about five seconds. Automatic planning organizes confident scenes and varies the camera motion; unclear photos keep their position. Separate photos do not map a physically connected route through the home.")
+                Text("Videos export at 1080p. Small sources cannot recover missing detail. Photos may be cropped to fill the format; we ask you to review large crops before creating. Saved photos stay unchanged.")
+                Text("If AI changes the property, an opted-in shot can use the reviewed photo with restrained 2D movement. Connection, billing and uncertain quality errors stop the job.")
+                Text("Review the finished video before publishing. Listing videos omit app-added branding; check your own narration and text before MLS use.")
+                if let id = selected.first, let photo = reelPhotos.first(where: { $0.id == id }) {
+                    Button { framingPreviewPhoto = photo } label: { Label("Preview selected photo framing", systemImage: "viewfinder") }
+                }
+            }.font(.rpCaption).foregroundStyle(Theme.inkDim).padding(.top, 8)
+        }.accessibilityIdentifier("video.help")
+    }
+
     private var videoAdvancedControls: some View {
-        DisclosureGroup("Advanced · voice, motion and style", isExpanded: $showVideoAdvanced) {
+        DisclosureGroup("Optional · voice, music and style", isExpanded: $showVideoAdvanced) {
             VStack(alignment: .leading, spacing: 16) {
                 Toggle("Automatically arrange the scenes", isOn: $automaticOrder).tint(Theme.accent)
                 Text("Turn this off to keep your selected photo order. Camera motion can still be automatic.")
@@ -9785,6 +9857,14 @@ struct ReelStudioView: View {
                 titleCardToggle
                 bigCaptionsRow
                 transitionRow
+                VideoMusicPicker(selection: $musicSelection) { track in
+                    guard !recorder.isRecording else { voiceNote = "Finish your recording before previewing music."; return }
+                    musicPreviewPlayer?.pause(); voPlayer?.pause()
+                    do { musicPreviewPlayer = AVPlayer(url: try VideoMusicCatalog.localURL(for: track)); musicPreviewPlayer?.play() }
+                    catch { voiceNote = "This music preview isn't available. Choose Off or another track." }
+                }
+                Toggle("Use my selected photo if AI changes the property", isOn: $allowOriginalPhotoFallback)
+                    .tint(Theme.accent)
                 stepVoiceCard
                 if !extraClipURLs.isEmpty { clipsCard }
                 nativeSetupCard
@@ -9906,7 +9986,7 @@ struct ReelStudioView: View {
                         .accessibilityAddTraits(cameraMove == move ? .isSelected : [])
                 }
             }
-            Text("Fly-through adds a short, smooth glide to each photo. It does not map a connected route through the house. Pull-back stays within the original photo. The full photo is sent to the camera model. Your chosen video format fills the frame with one centered crop from the same scene; check the finished reel before publishing.")
+            Text("Fly-through adds a short, smooth glide to each photo. It does not map a connected route through the house. Pull-back stays within the original photo. The full photo is sent to the camera model. Your chosen video format fills the frame with one centered crop from the same scene; check the finished video before publishing.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
             Text(costText).font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -9922,15 +10002,14 @@ struct ReelStudioView: View {
                 .foregroundStyle(canGenerate ? Color.white : Theme.inkDim)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .disabled(!canGenerate)
+        .disabled(!canGenerate || checkingFraming)
         .accessibilityIdentifier("phase1.reelGenerate")
     }
 
     private var aiDisclosureLine: some View {
-        Text("AI motion is quality checked. If the safest AI attempt changes the property, that shot uses your selected photo as a still image instead; reviewed photo edits stay included. Review the finished video before publishing. Aerial clips are AI-generated, not real drone footage.")
-            .font(.rpCaption)
-            .foregroundStyle(Theme.inkDim)
-            .fixedSize(horizontal: false, vertical: true)
+        Text("Review your finished video before publishing.")
+            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
     }
 
     /// Clips from a run that stopped before the stitch — already generated,
@@ -9954,7 +10033,7 @@ struct ReelStudioView: View {
                     Text("\(parkedClipCount) clip\(parkedClipCount == 1 ? "" : "s")")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 }
-                Text("You already made \(parkedClipCount) AI clip\(parkedClipCount == 1 ? "" : "s") for this \(space.spaceNoun) and they're saved on this phone. Putting them together into a reel happens right here and costs nothing.")
+                Text("You already made \(parkedClipCount) AI clip\(parkedClipCount == 1 ? "" : "s") for this \(space.spaceNoun) and they're saved on this phone. Joining them into a video happens here and uses no new AI generation.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
                 Button { finishParkedReel() } label: {
@@ -9983,7 +10062,7 @@ struct ReelStudioView: View {
     @ViewBuilder private var lastReelCard: some View {
         if let url = lastReel {
             VStack(alignment: .leading, spacing: 10) {
-                Text("YOUR LAST REEL").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Text("YOUR LAST VIDEO").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 Button { openExistingReel(url) } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "play.circle.fill")
@@ -10008,7 +10087,7 @@ struct ReelStudioView: View {
                                 in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(ScalePressStyle())
-                Text("Making a new reel generates fresh AI clips. Your last few reels stay on this phone.")
+                Text("Making a new video creates fresh clips. Your recent videos stay on this phone.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -10039,7 +10118,7 @@ struct ReelStudioView: View {
                             .background(RPGradient.aerial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Aerial intro").font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
-                            Text("Opens the reel · AI-generated").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            Text("Opens the video · AI-generated").font(.rpCaption).foregroundStyle(Theme.inkDim)
                         }
                         Spacer()
                         Image(systemName: on ? "checkmark.circle.fill" : "circle")
@@ -10080,7 +10159,7 @@ struct ReelStudioView: View {
             Text(statusText)
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
-            Text("You can close this screen and use the rest of Rendprop. Progress and a completion notification work while iPhone allows the app to run. If the app pauses or closes, open this listing’s Make a video tool to recover and continue saved work.")
+            Text(work.serverJob?.reply != nil ? "Your photos are safely uploaded. Rendering continues on our servers even if you close Rendprop. We’ll notify you when it is ready; reopen this listing to review." : work.serverJob != nil ? "Your request is saved. Check status to confirm server acceptance before starting another video." : "Keep Rendprop open while photos, optional narration and the exact recipe upload. After the server accepts the job, you can leave the app while it renders.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -10090,13 +10169,16 @@ struct ReelStudioView: View {
                     .foregroundStyle(Theme.warn)
                 clipFailureDetails
             }
+            if work.serverJob != nil {
+                Button("Check status") { PropertyVideoJobRunner.shared.checkNow(work) }
+            }
             Button("Cancel", role: .destructive) { cancelWork() }
                 .font(.rpBody)
                 .padding(.top, 6)
             // Say the money part out loud. Cancelling used to delete every clip
             // already generated and charged for, silently (the 4,000 sq ft field
             // test); now it keeps them and this line promises so before the tap.
-            Text("Cancelling keeps the clips you've already paid for — you can finish the reel from them later.")
+            Text(work.serverJob != nil ? "Cancel stops future clip requests. Work already dispatched may still be charged; your saved photos stay unchanged." : "Cancelling keeps the clips you've already paid for — you can finish the video from them later.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -10111,7 +10193,7 @@ struct ReelStudioView: View {
             ProgressView()
                 .scaleEffect(1.3)
                 .padding(.top, 16)
-            Text("Putting your reel together…")
+            Text("Putting your video together…")
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
             Text("Joining everything into one \(portrait ? "tall" : "wide") video, here on your phone.")
@@ -10119,7 +10201,7 @@ struct ReelStudioView: View {
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
             if failedClips > 0 {
-                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the reel uses the rest.")
+                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the video uses the rest.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
             }
@@ -10161,7 +10243,7 @@ struct ReelStudioView: View {
                     .accessibilityIdentifier("reel.originalPhotoMotionSummary")
             }
             if failedClips > 0 {
-                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the reel uses the rest.")
+                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the video uses the rest.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
             }
@@ -10221,7 +10303,8 @@ struct ReelStudioView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private var failedSection: some View {
+    @ViewBuilder private var failedSection: some View {
+        if work.serverJob != nil { serverVideoAttentionSection } else {
         VStack(spacing: 12) {
             if let failure {
                 AIFailureCard(failure: failure,
@@ -10236,7 +10319,7 @@ struct ReelStudioView: View {
             clipFailureDetails
             pendingRequestCard
             if let parkedClips {
-                Text("\(parkedClips.clipURLs.count) finished clip\(parkedClips.clipURLs.count == 1 ? " is" : "s are") saved. You can finish a shorter reel from those clips without generating again.")
+                Text("\(parkedClips.clipURLs.count) finished clip\(parkedClips.clipURLs.count == 1 ? " is" : "s are") saved. You can finish a shorter video from those clips without generating again.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Finish video from saved clips") { finishParkedReel() }
@@ -10251,6 +10334,32 @@ struct ReelStudioView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
+    }
+    }
+
+    private var serverVideoAttentionSection: some View {
+        VStack(spacing: 14) {
+            Label("Your video request is saved", systemImage: "icloud").font(.rpHeadline)
+            if let failure { Text(failure.message).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+            Text(work.serverJob?.wasRefusedBeforeAdmission == true ? "This video was not admitted. Choose fewer photos or check your plan; your saved photos and rejected recipe are kept." : "Check this same request before starting again. Leaving Rendprop does not cancel an accepted server job.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if work.serverJob?.wasRefusedBeforeAdmission == true {
+                Button("Edit photos and setup") { resetToSetup() }
+                    .buttonStyle(.borderedProminent).accessibilityIdentifier("video.server.editRefused")
+            } else if work.serverJob?.reply?.isTerminal == true {
+                if work.serverJob?.reply?.mayResume == true {
+                    Button("Resume saved video") { Task { await PropertyVideoJobRunner.shared.resume(work) } }
+                        .buttonStyle(.borderedProminent).accessibilityIdentifier("video.server.resume")
+                    Text("Uses the same photos and finished clips. Your current plan is checked before more clips start.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                Button("Back to video setup") { resetToSetup() }.buttonStyle(.bordered)
+            } else {
+                Button("Check saved job") { phase = .generating; PropertyVideoJobRunner.shared.checkNow(work) }
+                    .buttonStyle(.borderedProminent).accessibilityIdentifier("video.server.check")
+                Button("Cancel saved job", role: .destructive) { Task { await PropertyVideoJobRunner.shared.cancel(work) } }
+            }
+        }.padding(.vertical, 24)
     }
 
     private var clipFailureDetails: some View {
@@ -10324,7 +10433,7 @@ struct ReelStudioView: View {
 
     private static func voiceModeHintText(_ mode: VoiceMode) -> String {
         switch mode {
-        case .off:     return "No talking. The reel plays with no sound."
+        case .off:     return "No narration. Optional music is separate."
         case .myVoice: return "Record yourself. Your words become captions on the video."
         case .aiVoice: return "Type it, AI reads it. Your words become captions on the video."
         }
@@ -10520,7 +10629,7 @@ struct ReelStudioView: View {
                 .font(.rpCaption).foregroundStyle(Theme.warn)
                 .fixedSize(horizontal: false, vertical: true)
         } else if scriptOverrunsReel {
-            Text("This takes about \(Self.wholeSeconds(scriptReadSeconds)) seconds to read and your reel is \(reelSeconds) seconds long. The video will freeze on its last picture while the voice finishes — add photos, or cut a sentence.")
+            Text("This takes about \(Self.wholeSeconds(scriptReadSeconds)) seconds to read and your video is \(reelSeconds) seconds long. The video will freeze on its last picture while the voice finishes — add photos, or cut a sentence.")
                 .font(.rpCaption).foregroundStyle(Theme.warn)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -10685,7 +10794,7 @@ struct ReelStudioView: View {
         if count == 0 {
             return "About \(budget) characters fits your \(reelSeconds)-second reel."
         }
-        return "About \(wholeSeconds(readSeconds))s to read · your reel is \(reelSeconds)s"
+        return "About \(wholeSeconds(readSeconds))s to read · your video is \(reelSeconds)s"
     }
 
     nonisolated private static func wholeSeconds(_ seconds: Double) -> Int {
@@ -11304,6 +11413,10 @@ struct ReelStudioView: View {
     }
 
     private func cancelWork() {
+        if work.serverJob != nil {
+            Task { await PropertyVideoJobRunner.shared.cancel(work) }
+            return
+        }
         let task = workTask
         work.cancel()
         resetToSetup()
@@ -11322,6 +11435,21 @@ struct ReelStudioView: View {
     }
 
     private func resetToSetup() {
+        if let saved = work.serverJob {
+            guard saved.mayReplaceAfterResolution else {
+                phase = .generating; PropertyVideoJobRunner.shared.checkNow(work); return
+            }
+            // Only the completed server-owned recipe is retired. Existing
+            // legacy local clip requests use their unchanged recovery flow.
+            if saved.wasRefusedBeforeAdmission {
+                guard pendingRequest == nil, pendingBatch?.completedPaths.isEmpty != false else { return }
+                if selected.isEmpty {
+                    let available = Set(reelPhotos.map(\.id))
+                    selected = saved.request.sources.map(\.photoVersionID).filter { available.contains($0) }
+                }
+            }
+            pendingBatch?.clear(); pendingBatch = nil; work.serverJob = nil
+        }
         player?.pause()
         player = nil
         reelURL = nil
@@ -11362,16 +11490,16 @@ struct ReelStudioView: View {
 
     @ViewBuilder private var pendingRequestCard: some View {
         if unreadableBatch {
-            Text("Saved reel progress cannot be read. Your requests and clips are kept; new generation is paused until that progress can be recovered.")
+            Text("Saved video progress cannot be read. Your requests and clips are kept; new generation is paused until that progress can be recovered.")
                 .font(.rpCaption).foregroundStyle(Theme.warn)
         }
         if let batch = pendingBatch, pendingRequest == nil, unreadablePendingContext == nil {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Saved reel: \(batch.completedPaths.count) of \(batch.photos.count) photos finished")
+                Text("Saved video: \(batch.completedPaths.count) of \(batch.photos.count) photos finished")
                     .font(.rpBody.weight(.semibold))
-                Text("Continue uses the saved photo order, keeps finished clips and generates only the remaining photos. You can finish a shorter reel from saved clips instead.")
+                Text("Continue uses the saved photo order, keeps finished clips and generates only the remaining photos. You can finish a shorter video from saved clips instead.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                Button(batch.completedPaths.count == batch.photos.count ? "Finish saved full reel" : "Continue saved reel") {
+                Button(batch.completedPaths.count == batch.photos.count ? "Finish saved full video" : "Continue saved video") {
                     connection.run { continueSavedBatch(batch) }
                 }.disabled(isWorking).accessibilityIdentifier("reel.continue-saved-batch")
                 Button("Discard saved batch…", role: .destructive) { showDiscardParkedConfirm = true }.disabled(isWorking)
@@ -11439,10 +11567,10 @@ struct ReelStudioView: View {
 
     private var pausedSection: some View {
         VStack(spacing: 12) {
-            Text("Your reel is safely paused").font(.rpHeadline)
+            Text("Your video is safely paused").font(.rpHeadline)
             Text("iPhone paused background work. Finished clips and the current request are kept. Open this listing’s Make a video tool to recover and continue; it will not finish while the app is paused.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim).multilineTextAlignment(.center)
-            Button("Continue saved reel") { work.resumeForeground() }.disabled(work.running)
+            Button("Continue saved video") { work.resumeForeground() }.disabled(work.running)
             Button("Stop for now", role: .destructive) { cancelWork() }
         }.frame(maxWidth: .infinity).padding(.vertical, 24)
     }
@@ -11737,14 +11865,45 @@ struct ReelStudioView: View {
 
     // MARK: Generate (sequential clips → on-device stitch)
 
+    private var framingSelectionKey: String {
+        VideoFramingReviewPolicy.selectionKey(aspect: portrait ? "9:16" : "16:9", photoIDs: selected)
+    }
+
     private func generate() {
-        guard phase == .setup, canGenerate else { return }
-        connection.run { generateWithSession() }
+        guard phase == .setup, canGenerate, !checkingFraming else { return }
+        checkingFraming = true
+        let key = framingSelectionKey, actor = auth.userID, revision = auth.syncSessionRevision
+        let org = WorkspaceContext.selectedOrgID, consent = AIConsent.shared.revocationRevision
+        let inputs = selected.compactMap { id in reelPhotos.first(where: { $0.id == id }).map { ($0.id, $0.enhancedURL) } }
+        let aspect = portrait ? 9.0 / 16.0 : 16.0 / 9.0
+        Task { @MainActor in
+            defer { checkingFraming = false }
+            let assessments = await Task.detached(priority: .utility) {
+                inputs.compactMap { input in
+                    autoreleasepool { VideoPhotoFramingReader.read(photoID: input.0, url: input.1, aspect: aspect) }
+                }
+            }.value
+            guard work.isPresented, phase == .setup, canGenerate, framingSelectionKey == key,
+                  auth.userID == actor, auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == org,
+                  AIConsent.shared.revocationRevision == consent else { return }
+            guard assessments.count == inputs.count else {
+                savedPhotoError = "A selected photo couldn't be read. Review it in Photos before creating this video."
+                return
+            }
+            framingAssessments = assessments
+            if VideoFramingReviewPolicy.needsAcknowledgment(assessments: assessments, selectionKey: key, acknowledgedKey: acknowledgedFramingKey) {
+                pendingFramingKey = key
+                showFramingReview = true
+                return
+            }
+            connection.run { generateWithSession() }
+        }
     }
 
     private func generateWithSession() {
         let model = self.model, auth = self.auth
         guard phase == .setup, canGenerate else { return }
+        musicPreviewPlayer?.pause(); voPlayer?.pause()
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
         let chosen = selected.compactMap { id in reelPhotos.first(where: { $0.id == id }) }
         do {
@@ -11777,6 +11936,8 @@ struct ReelStudioView: View {
         // Sendable values like everything else this Task reads.
         let shotStyle: ReelComposer.ShotCaptionStyle = bigCaptionsOn ? bigCaptionStyle : .off
         let transition = reelTransition
+        let frozenMusic = musicSelection
+        let keepOriginalPhoto = allowOriginalPhotoFallback
         let spaceRaw = space.rawValue
         work.configuration = ReelWorkJob.Configuration(extras: extras, captions: captions, voice: voiceover,
             captionStyle: captionStyle, shotStyle: shotStyle, transition: transition,
@@ -11901,6 +12062,47 @@ struct ReelStudioView: View {
                         scenePlanningNotice: planningNotice, automaticOrder: arrangeScenes, usedPlanningFallback: planningFallback)
                     try requireCurrent()
                     try batch?.save()
+                }
+                if !isSample, extras.isEmpty, let prepared = batch, let targetServerID,
+                   let actor = reelActor.flatMap(UUID.init(uuidString:)), let org = reelWorkspace,
+                   let jobsAPI = api as? PropertyVideoJobsAPI {
+                    try requireCurrent()
+                    guard frozenMusic == nil || frozenMusic?.checked(catalog: VideoMusicCatalog.tracks) != nil else {
+                        throw PropertyVideoJobStore.Failure.invalidReceipt
+                    }
+                    let context = PropertyVideoJobContext(localListingID: listingID, listingID: targetServerID, actorID: actor, orgID: org)
+                    let sources = try prepared.photos.map { photo -> PropertyVideoJobSource in
+                        guard let asset = photo.sourceAssetID.flatMap(UUID.init(uuidString:)) else { throw PropertyVideoJobStore.Failure.invalidReceipt }
+                        return PropertyVideoJobSource(photoID: photo.id, photoAssetID: asset, photoVersionID: photo.id,
+                            photoProvenanceID: photo.photoProvenanceID.flatMap(UUID.init(uuidString:)), motion: photo.shot?.motion ?? selectedMove)
+                    }
+                    let title = captions.map { PropertyVideoPresentation.Title(title: $0.title, subtitle: $0.subtitle, watermark: $0.watermark) }
+                    let presentation = PropertyVideoPresentation(transition: transition.rawValue, shotCaptionStyle: shotStyle.rawValue,
+                        spokenCaptions: captionStyle.enabled && voiceover != nil, titleCard: title,
+                        shotLabels: prepared.photos.map { shotStyle.isOn ? $0.shot?.onScreenText : nil })
+                    let narrationResult = voiceover?.sharedReference?.resultID(ownerID: actor, listingID: targetServerID)
+                    var request = PropertyVideoJobRequest(operationID: UUID(), listingID: targetServerID, expectedOrgID: org,
+                        purpose: isPortrait ? "social" : "listing", aspect: isPortrait ? "9:16" : "16:9", sources: sources,
+                        narrationResultID: narrationResult, music: frozenMusic, allowOriginalPhotoFallback: keepOriginalPhoto, presentation: presentation)
+                    if let voiceover, narrationResult == nil {
+                        statusText = "Uploading your optional narration…"
+                        request.narrationAssetID = try await PropertyVideoNarrationUpload.upload(voiceover, operationID: request.operationID,
+                            context: context, requireCurrent: requireCurrent)
+                        request.narrationWords = captionStyle.enabled ? voiceover.words.map { .init(text: $0.text, start: $0.start, end: $0.end) } : nil
+                        try requireCurrent()
+                    }
+                    let saved = PropertyVideoSavedJob(context: context, request: request, createdAt: Date())
+                    try PropertyVideoJobStore.start(saved, documents: FileStore.documents) // Persist before enqueue.
+                    work.serverJob = saved
+                    statusText = "Sending your saved video recipe…"
+                    try await PropertyVideoJobRunner.shared.enqueue(saved, work: work, model: model, api: jobsAPI)
+                    try requireCurrent()
+                    prepared.clear(); pendingBatch = nil
+                    try? FileManager.default.removeItem(at: tmpDir)
+                    return // No native provider polling or stitching after server acceptance.
+                }
+                guard frozenMusic == nil else {
+                    throw AIImagePrep.error("Music is available for background photo videos. Remove the opening clip or choose Off; no new clips were requested.")
                 }
                 for (i, photo) in ordered.enumerated() {
                     try Task.checkCancellation()
@@ -12340,7 +12542,7 @@ struct ReelStudioView: View {
             guard (1...saved.photos.count).contains(request.photoNumber),
                   saved.photos[request.photoNumber - 1].jpegBase64 == request.sourceJPEGBase64,
                   saved.completedPaths.count == request.photoNumber - 1 || saved.completedPaths.count == request.photoNumber else {
-                throw AIImagePrep.error("The recovered photo does not match saved reel progress. Its request has been kept.")
+                throw AIImagePrep.error("The recovered photo does not match saved video progress. Its request has been kept.")
             }
             if saved.completedPaths.count == request.photoNumber {
                 try await requireCurrent()

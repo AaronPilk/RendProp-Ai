@@ -53,6 +53,7 @@ struct ListingVideoRecord: Codable, Hashable, Sendable, Identifiable {
     let includesOpeningClip: Bool
     let createdAt: Date
     var brandingPolicy: String? = nil
+    var music: VideoMusicSelection? = nil
 
     var canSelectForWebsite: Bool {
         schema == 1 && brandingPolicy == "unbranded" && purpose == .listing && width >= 1920 && height >= 1080 &&
@@ -198,6 +199,16 @@ enum ListingVideoStore {
         guard receipt.record == record, UUID(uuidString: receipt.outputAssetID) != nil,
               UUID(uuidString: receipt.posterAssetID) != nil else { throw Failure.invalidRecord }
         return receipt
+    }
+    static func retainServerAssets(_ record: ListingVideoRecord, outputAssetID: String, posterAssetID: String, documents: URL) throws {
+        let receipt = ListingVideoUploadedAssets(record: record, outputAssetID: outputAssetID, posterAssetID: posterAssetID)
+        guard UUID(uuidString: outputAssetID) != nil, UUID(uuidString: posterAssetID) != nil else { throw Failure.invalidRecord }
+        if let existing = try uploadedAssets(for: record, documents: documents), existing != receipt { throw Failure.invalidRecord }
+        let target = try fileURL(record, documents: documents).appendingPathExtension("website-assets.json")
+        let bytes = try JSONEncoder().encode(receipt)
+        guard bytes.count <= 131072 else { throw Failure.invalidRecord }
+        try bytes.write(to: target, options: .atomic)
+        guard try Data(contentsOf: target) == bytes else { throw Failure.invalidRecord }
     }
     static func retainUploadedAssets(_ publication: ListingVideoPublication, documents: URL) throws {
         guard let output = publication.outputAssetID, let poster = publication.posterAssetID,

@@ -165,7 +165,7 @@ async function actualPublish(options: Options = {}, replay = false, removeLibrar
         ? new Response(JSON.stringify({ message: options.recordError }), { status: 403, headers: { "content-type": "application/json" } })
         : response({ attested: true, duration_s: body.p_duration, billable_s: body.p_billable });
       if (name === "create_render_job") return response({ id: job, listing_id: scope.listing, capture_asset_id: scope.asset });
-      if (name === "publish_render") return response({ id: render, job_id: job, listing_id: scope.listing, slug: "synthetic-trial-tour", duration_s: body.p_duration });
+      if (name === "publish_recorded_render") return response({ id: render, job_id: job, listing_id: scope.listing, slug: "synthetic-trial-tour", duration_s: body.p_duration });
       if (name === "studio_presenter_media_visibility") return response(Object.fromEntries(["assets", "renders", "keys"].map(kind =>
         [kind, Object.fromEntries((body[`p_${kind}`] ?? []).map((value: string) => [value, true]))])));
       throw new Error("unexpected fixture RPC");
@@ -190,7 +190,7 @@ async function actualPublish(options: Options = {}, replay = false, removeLibrar
           const anchor="const org = await contentOrgForUser(user.id, preferredOrg(req), listing, true);";
           ok(source.includes(anchor));
           const mutant=source.replace(anchor,"const org = property.org_id;")
-            .replace(/from "(\.\.\/[^"]+)"/g,(_all,path)=>`from ${JSON.stringify(new URL(path,url).href)}`);
+            .replace(/from (["'])(\.\.\/[^"']+)\1/g,(_all,_quote,path)=>`from ${JSON.stringify(new URL(path,url).href)}`);
           await import("data:application/typescript,"+encodeURIComponent(mutant));
         }else{await import("../renders/index.ts");actualRenders=run;}
       } finally { Object.defineProperty(Deno, "serve", descriptor); }
@@ -213,11 +213,11 @@ Deno.test("actual publish-app probes and records owned duration before either re
 });
 Deno.test("actual publish-app rejects over90 before any walkthrough/publication RPC", async () => {
   const result = await actualPublish({ seconds: 91 }); eq(result.status, 402);
-  ok(!result.operations.includes("create_render_job") && !result.operations.includes("publish_render"));
+  ok(!result.operations.includes("create_render_job") && !result.operations.includes("publish_recorded_render"));
 });
 Deno.test("actual publish-app rejects authority lost after probe before any credit RPC", async () => {
   const result = await actualPublish({ recordError: "RP403: Current video workspace authority is required" }); eq(result.status, 403);
-  ok(!result.operations.includes("create_render_job") && !result.operations.includes("publish_render"));
+  ok(!result.operations.includes("create_render_job") && !result.operations.includes("publish_recorded_render"));
 });
 Deno.test("actual recorded publication replay skips all duration reads and attestations", async () => {
   const result = await actualPublish({ seconds: 91 }, true); eq(result.status, 201);
@@ -235,13 +235,13 @@ Deno.test("actual publish-app refuses a foreign logical library before probing o
   const result=await actualPublish({logicalOrg:id(9),selectedOrg:id(99)});
   eq(result.status,403);ok(!result.operations.includes("HEAD"));
   ok(!result.operations.includes("subscription_trial_video_context"));
-  ok(!result.operations.includes("create_render_job")&&!result.operations.includes("publish_render"));
+  ok(!result.operations.includes("create_render_job")&&!result.operations.includes("publish_recorded_render"));
 });
 Deno.test("actual publish-app rechecks library authority after RLS reads; compiled guard removal fails that oracle",async()=>{
   const oracle=async(remove:boolean)=>{
     const result=await actualPublish({logicalOrg:id(9),selectedOrg:id(9),libraryError:"RP403: The Team library relationship was removed"},false,remove);
     eq(result.status,403);ok(!result.operations.includes("HEAD"));
-    ok(!result.operations.includes("create_render_job")&&!result.operations.includes("publish_render"));
+    ok(!result.operations.includes("create_render_job")&&!result.operations.includes("publish_recorded_render"));
   };
   await oracle(false);await assertRejects(()=>oracle(true),Error,"assertion failed");
 });

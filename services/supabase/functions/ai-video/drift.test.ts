@@ -656,7 +656,7 @@ Deno.test("wiring: the check is role-gated and org-scoped like every other route
   assertStringIncludes(guard, "await requireLibraryWrite(adminClient(), userId, orgId)");
   assert(guard.indexOf("requireLibraryWrite") < guard.indexOf("durableRateLimit"),
     "fresh writable-library authority precedes the quality-check charge");
-  assertStringIncludes(INDEX_SRC, "async function guardDriftCheck(user: PaidAiCaller, req: Request)");
+  assertStringIncludes(INDEX_SRC, "async function guardDriftCheck(user: PaidAiCaller, req: Request, listing?: string)");
   assertStringIncludes(INDEX_SRC, "orgForUser(user.id, preferredOrg(req))");
   // The org handed to the audit RPC is the one the JWT resolved to, never one
   // out of the request body.

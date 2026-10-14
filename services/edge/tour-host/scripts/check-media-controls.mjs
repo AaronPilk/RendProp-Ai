@@ -23,4 +23,17 @@ for(const[name,needle,replacement]of mutants){
  assert.notEqual(result.status,0,`${name} must fail unchanged byte gate`);assert.match(result.stderr,/AssertionError/,`${name} must fail an assertion, not loading/compilation`);
  results.push({name,compiled:true,exit:result.status,assertionRejected:true});
 }
+const largeMutants=[
+ ["unregistered-large-ceiling","videoLimit?MAX_REGISTERED_VIDEO_BYTES:MAX_OBJECT_BYTES","MAX_REGISTERED_VIDEO_BYTES"],
+ ["registered-bytes-mismatch","||videoLimit&&head.size!==videoLimit.bytes",""],
+ ["registered-authority-change","&&sameVideoLimit(current.value.object_limits?.[key],delivery.object_limits?.[key])",""],
+];
+for(const[name,needle,replacement]of largeMutants){
+ assert.equal(source.split(needle).length,2,`Unique compiled mutation target ${name}`);
+ const compiled=ts.transpileModule(source.replace(needle,replacement),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext,isolatedModules:true}}).outputText.replace('from "./upstream"','from "./upstream.js"');
+ const filename=join(destination,name+".mjs");writeFileSync(filename,compiled);
+ const result=spawnSync(process.execPath,[join(ROOT,"scripts/check-large-media-delivery.mjs")],{encoding:"utf8",env:{...process.env,MEDIA_LARGE_MUTATION_MODULE:pathToFileURL(filename).href}});
+ assert.notEqual(result.status,0,`${name} must fail unchanged large-master gate`);assert.match(result.stderr,/AssertionError/,`${name} must fail an assertion, not loading/compilation`);
+ results.push({name,compiled:true,exit:result.status,assertionRejected:true});
+}
 console.log(JSON.stringify({success:true,controls:results,live:false}));

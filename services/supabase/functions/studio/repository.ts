@@ -1,7 +1,7 @@
 import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2.116.0";
 import { mediaVisibility } from "../_shared/media-source-access.ts";
 import { HttpError } from "../_shared/http.ts";
-import { PAGE_SIZE, type StudioDependencies } from "./handler.ts";
+import { PAGE_SIZE, type StudioDependencies, type PhotoEditProof } from "./handler.ts";
 
 export interface StudioRepositoryDependencies {
   userClient(req: Request): SupabaseClient;
@@ -105,11 +105,30 @@ export function createStudioRepository(
           }
         }
       }
+      const selectedKeys = [...new Set([...photos.data.map(photo => photo.enhanced_key || photo.original_key),
+        ...assets.data.filter(asset => asset.kind === "photo").map(asset => asset.storage_key)].filter((key): key is string => typeof key === "string" && key.startsWith(`renders/${scope.orgId}/${scope.listingId}/`)))];
+      const photoEdits: Record<string, PhotoEditProof> = {};
+      const conflictingEdits = new Set<string>();
+      if (selectedKeys.length) {
+        const proof = await db().from("media_provenance").select("org_id,listing_id,kind,edit,original_key,altered_key,qc")
+          .eq("org_id", scope.orgId).eq("listing_id", scope.listingId).in("altered_key", selectedKeys).limit(205).abortSignal(req.signal);
+        if (proof.error || !Array.isArray(proof.data) || proof.data.length > 204 || proof.data.some(row => row.org_id !== scope.orgId || row.listing_id !== scope.listingId || !selectedKeys.includes(row.altered_key))) throw new HttpError(503, "Saved photo history could not be verified.");
+        for (const row of proof.data) {
+          if (!["photo_edit", "virtual_stage", "declutter"].includes(row.kind) || row.qc?.publishable === false) continue;
+          const edit = row.kind === "virtual_stage" ? "stage" : row.kind === "declutter" ? "declutter" : ["declutter", "stage", "sky", "twilight", "lawn", "custom"].includes(row.edit) ? row.edit : null;
+          const next = { edit, originalKey: typeof row.original_key === "string" ? row.original_key : null } as PhotoEditProof;
+          const previous = photoEdits[row.altered_key];
+          // Conflicting legacy records are review-only, never inferred from a caption.
+          if (previous && (previous.edit !== next.edit || previous.originalKey !== next.originalKey)) conflictingEdits.add(row.altered_key);
+          photoEdits[row.altered_key] = conflictingEdits.has(row.altered_key) ? { edit: null, originalKey: null } : next;
+        }
+      }
       return {
         photos: photos.data,
         assets: assets.data,
         renders: renders.data,
         photoAssetAliases: [...photoAssetAliases],
+        photoEdits,
       };
     },
   };

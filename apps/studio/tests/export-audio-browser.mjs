@@ -46,7 +46,23 @@ try{
   const result=await page.evaluate(()=>window.audioExportFixture.result),record={name,...config,ok:result.ok,decodeCalls:result.decodeCalls,injected:result.injected,error:result.error,cause:result.cause};receipt.cases.push(record);
   if(config.stall||config.hiccup||config.playResolutionDelayMs)assert(result.injected,"Forced playback fixture not injected");
   if(cancelled){assert.equal(result.ok,false);assert.match(result.error,/Synthetic export cancelled/);assert.equal(result.base64,undefined);return;}
-  if(refused){assert.equal(result.ok,false,"A media-audio stall must refuse an export");assert.match(result.error,/Original audio playback stalled/);assert.equal(result.base64,undefined);return;}
+  if(refused){
+   assert.equal(result.ok,false,"A media-audio stall must refuse an export");
+   // The independently measured recording-clock guard can observe the forced
+   // stall before the original-audio guard. Accept only that exact refusal,
+   // with its own two successive measured losses; never accept arbitrary errors.
+   if(result.error === "Error: Audio and picture timing drifted during export. No download was created. Close other busy tabs and retry.") {
+    assert(config.stall && result.injected,"The forced stall must have executed");
+    const readings=result.cause?.readings;
+    assert(Array.isArray(readings) && readings.length>=2 && Number.isFinite(result.cause.maxLossSeconds) && result.cause.maxLossSeconds>2/30,"Clock refusal must include measured loss");
+    for(const reading of readings.slice(-2)) {
+     assert(Number.isFinite(reading.wall) && Number.isFinite(reading.timeline) && (reading.audio===undefined || Number.isFinite(reading.audio)),"Clock readings must be finite");
+     const drift=Math.max(Math.abs(reading.wall-reading.timeline),reading.audio===undefined?0:Math.abs(reading.wall-reading.audio));
+     assert(drift>2/30 && Math.abs(reading.drift-drift)<1e-9,"Both consecutive readings must prove real timing loss");
+    }
+   } else assert.match(result.error,/Original audio playback stalled/);
+   assert.equal(result.base64,undefined);return;
+  }
   assert.equal(result.ok,true,result.error);
   const path=join(artifacts,`${name}.mp4`);await writeFile(path,Buffer.from(result.base64,"base64"));
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",path],{encoding:"utf8"}));record.probe=probe;

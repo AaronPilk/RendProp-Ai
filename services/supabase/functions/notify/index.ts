@@ -47,6 +47,7 @@ import { deliverEmail, deliverPush, type DeviceRow, type OutboxRow } from "./del
 import { prepareClientMessage } from "./client-delivery.ts";
 import { hostingNoticeCurrent } from "../_shared/hosting-retention.ts";
 import { opsAlertCurrent } from "../_shared/ops-alert.ts";
+import {propertyVideoJob,propertyVideoNoticeCurrent,propertyVideoDeviceCurrent}from'./property-video.ts';
 
 /** Same default as functions/me: the routed domain, never rendprop.app. */
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -189,8 +190,9 @@ async function handleDrain(limit: number): Promise<Response> {
       // An admin alert is re-validated at delivery: the finding must still be
       // present and the recipient must still be an admin, or SQL expires it.
       if(!await opsAlertCurrent(admin,row)){skipped++;continue;}
+      if(!await propertyVideoNoticeCurrent(admin,row)){await mark(row.id,"skipped","The private video job or account access changed.",null);skipped++;continue;}
       const outcome = row.channel === "push"
-        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE)
+        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE,fetch,propertyVideoJob(row)?device=>propertyVideoDeviceCurrent(admin,row,device):undefined)
         // to_email wins. An invitee has no profile to look an address up
         // from — that is precisely what is being invited — so the row carries
         // the destination itself (migration 0053). Ordinary rows leave it null

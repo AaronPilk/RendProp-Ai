@@ -101,7 +101,7 @@ do $$declare u uuid:='b9100000-0000-4000-8000-000000000001';o uuid;env jsonb;sta
   perform pg_temp.grace_refuse(format('select public.serving_envelope_admit(%L,1,''no-verified-paid-money'')',o),'no new allowance without a recoverable verified paid term');
  end loop;
  env:=public.plan_serving_ceiling('b9200000-0000-4000-8000-000000000006');
- perform pg_temp.grace_ok(env->>'kind'='manual'and(env->>'ceiling_cents')::numeric=2400 and(env->>'period_start')::timestamptz=date_trunc('month',now()),'manual plan without a receipt keeps its existing calendar budget');
+ perform pg_temp.grace_ok(env->>'kind'='manual'and(env->>'ceiling_cents')::numeric=4157 and(env->>'period_start')::timestamptz=date_trunc('month',now()),'manual plan without a receipt uses its configured4157c calendar budget');
  env:=public.plan_serving_ceiling('b9200000-0000-4000-8000-000000000007');
  perform pg_temp.grace_ok(env->>'kind'='retail'and env->>'window'='calendar_month'and(env->>'period_start')::timestamptz=date_trunc('month',now()),'legacy no-receipt fallback remains unchanged');
 end$$;

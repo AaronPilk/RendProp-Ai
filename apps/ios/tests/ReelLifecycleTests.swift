@@ -67,7 +67,30 @@ final class ClosedChange {
 }
 protocol ObservableObject { var objectWillChange: ClosedChange { get } }
 extension ObservableObject { var objectWillChange: ClosedChange { .shared } }
-struct Listing { let id: UUID; let address: String }
+struct Listing { let id: UUID; let address: String; var isSample=false;var cloudUnavailable:Bool?=nil;var serverID:UUID?=nil }
+protocol PropertyVideoJobsAPI {}
+@MainActor final class AppModel {var listings:[Listing]=[];var api:Any?=nil}
+struct PropertyVideoJobContext {let localListingID:UUID;let listingID:UUID;let actorID:UUID;let orgID:UUID}
+struct PropertyVideoSavedJob {struct Request {var sources:[Int]=[]};struct Reply {var isTerminal=false};var request=Request();var reply:Reply?=nil}
+enum FileStore {static let documents=URL(fileURLWithPath:"/closed-no-server-jobs")}
+enum PropertyVideoJobStore {static func url(context:PropertyVideoJobContext,documents:URL)->URL{documents.appendingPathComponent("closed")}}
+@MainActor final class PropertyVideoJobRunner {
+ static let shared=PropertyVideoJobRunner()
+ static func status(_ reply:PropertyVideoSavedJob.Reply)->String{"Closed server adapter"}
+ func suspendForeground(){};func resumeForeground(){}
+ func restore(work:ReelWorkJob,model:AppModel,api:PropertyVideoJobsAPI,context:PropertyVideoJobContext){}
+}
+@MainActor final class PropertyVideoJobCancellation {
+ static let shared=PropertyVideoJobCancellation()
+ var delayRequest=false,requestBegan=false
+ var pendingRequest:CheckedContinuation<Void,Never>?
+ func request(reason:String)async throws {
+  requestBegan=true
+  if delayRequest {await withCheckedContinuation {pendingRequest=$0}}
+ }
+ func releaseRequest(){let pending=pendingRequest;pendingRequest=nil;delayRequest=false;pending?.resume()}
+ func consentWasRevoked(){};func retryPending(){}
+}
 struct ReelTitleCard {}
 struct Voiceover {}
 struct CaptionStyle {}
@@ -356,6 +379,18 @@ final class ClosedLifetime { let id = UUID() }
         check(erased && writerFinished, "local erasure completes after the paid writer terminates")
         check(!queue.jobs.contains(where: { $0.id == erasing.id }) && queue.jobs.contains(where: { $0.id == replacementJob.id }), "erasure removes only captured jobs, preserving replacement work")
         check(erasing.reelURL == nil && erasing.pendingRequest == nil && erasing.pendingBatch == nil && erasing.parkedClips == nil && erasing.configuration == nil, "erasure drops embedded source and playback presentation references")
+        // A server cancellation acknowledgment may be delayed while a new
+        // account opens a job. Erasure must retain its pre-await snapshot.
+        reset()
+        let stopBoundary=PropertyVideoJobCancellation.shared
+        stopBoundary.delayRequest=true;stopBoundary.requestBegan=false
+        let oldContextJob=queue.job(for:Listing(id:UUID(),address:"Outgoing before server acknowledgment"))
+        let delayedErase=Task {await queue.cancelForLocalDataErasure()}
+        await tick()
+        check(stopBoundary.requestBegan && stopBoundary.pendingRequest != nil,"erasure waits at the captured server cancellation boundary")
+        let arrivedDuringStop=queue.job(for:Listing(id:UUID(),address:"Replacement during server acknowledgment"))
+        stopBoundary.releaseRequest();await delayedErase.value
+        check(!queue.jobs.contains(where:{$0.id==oldContextJob.id}) && queue.jobs.contains(where:{$0.id==arrivedDuringStop.id}),"server cancellation wait cannot erase later account work")
         print("PASS: \(checks) actual app-owned reel task/expiry/identity and notification enqueue assertions; closed OS boundaries")
     }
 }

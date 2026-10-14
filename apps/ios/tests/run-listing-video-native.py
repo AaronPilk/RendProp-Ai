@@ -12,7 +12,10 @@ paths = [ROOT / x for x in ['apps/ios/Rendprop/Models/ListingVideo.swift', 'apps
     'apps/ios/Rendprop/Networking/APIClient.swift', 'apps/ios/Rendprop/Networking/LiveAPIClient.swift',
     'apps/ios/tests/ListingVideoNativeTests.swift', 'apps/ios/tests/run-listing-video-native.py']]
 hashes = lambda: {str(x.relative_to(ROOT)): hashlib.sha256(x.read_bytes()).hexdigest() for x in paths}
-before = hashes(); metadata, aspect, app, view, api, live, fixture = [x.read_text() for x in paths[:-1]]
+music_contract = ROOT / 'apps/ios/Rendprop/Render/VideoMusicContract.swift'
+paths.append(music_contract)
+before = hashes(); metadata, aspect, app, view, api, live, fixture = [x.read_text() for x in paths[:-2]]
+metadata = music_contract.read_text() + '\n' + metadata
 def block(text, anchor):
     start = text.index(anchor); opening = text.index('{', start); depth = 1; end = opening + 1
     while depth: depth += (text[end] == '{') - (text[end] == '}'); end += 1

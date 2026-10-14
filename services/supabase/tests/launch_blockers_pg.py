@@ -110,13 +110,13 @@ try:
        ('race-starter-original','{starter}','{actor}','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval '20 days',true,'race-starter-tx',now()-interval '10 days',now()-interval '1 day'),
        ('race-negative-original','{negative}','{actor}','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval '20 days',true,'race-negative-tx',now()-interval '10 days',now()-interval '1 day');
       insert into cost_ledger(org_id,feature,provider,model,units,unit_cost_cents,total_cents,created_at)values
-       ('{starter}','photo_edit','gemini','gemini-3.1-flash-image',1,980,980,now()-interval '1 day'),('{negative}','photo_edit','gemini','gemini-3.1-flash-image',1,980,980,now()-interval '1 day');
+       ('{starter}','photo_edit','gemini','gemini-3.1-flash-image',1,2021,2021,now()-interval '1 day'),('{negative}','photo_edit','gemini','gemini-3.1-flash-image',1,2021,2021,now()-interval '1 day');
       insert into listings(id,org_id,agent_id,address)values
        ('{listings[0]}','{free_org}','{actor}','Synthetic race listing 1'),('{listings[1]}','{free_org}','{actor}','Synthetic race listing 2'),
        ('{listings[2]}','{free_negative}','{actor}','Synthetic race listing 3'),('{listings[3]}','{free_negative}','{actor}','Synthetic race listing 4');
     """)
 
-    # ── Money admission at the envelope boundary (991c; 980 spent). Two writers,
+    # ── Money admission at the envelope boundary (2032c;2021 spent). Two writers,
     # one authority: a photo serving reservation and a legacy video hold race
     # through the actual private-library envelope under its parent money lock.
     admit = definition("public.library_serving_envelope_admit(uuid,uuid,numeric,text)")
@@ -132,13 +132,13 @@ try:
     outcomes = race("mixed-writer-envelope-race", requests(starter, "a"))
     assert sorted(code for code, _ in outcomes) == [0, 3], outcomes
     assert sum("RP402: AI usage limit reached" in output for _, output in outcomes) == 1, outcomes
-    receipt["mixedWriterEnvelopeRace"] = {"accepted": 1, "refused": 1, "ceilingCents": 991, "spentCents": 980, "attemptCents": 6, "writers": ["serving_cost_reserve", "app_video_cost_reserve"]}
+    receipt["mixedWriterEnvelopeRace"] = {"accepted": 1, "refused": 1, "ceilingCents": 2032, "spentCents": 2021, "attemptCents": 6, "writers": ["serving_cost_reserve", "app_video_cost_reserve"]}
     # Same-writer race (two photo attempts) through the same authority.
     photo_pair = [f"select serving_cost_reserve('{actor}','{negative}','race-photo-{i}','{stage}','gemini','gemini-3.1-flash-image',repeat('a',64),6,'verified');" for i, stage in enumerate(("photo.stage:0", "photo.sky:0"))]
     outcomes = race("ceiling-budget-race", photo_pair)
     assert sorted(code for code, _ in outcomes) == [0, 3], outcomes
     assert sum("RP402: AI usage limit reached" in output for _, output in outcomes) == 1, outcomes
-    receipt["ceilingBudgetRace"] = {"accepted": 1, "refused": 1, "ceilingCents": 991, "spentCents": 980, "attemptCents": 6}
+    receipt["ceilingBudgetRace"] = {"accepted": 1, "refused": 1, "ceilingCents": 2032, "spentCents": 2021, "attemptCents": 6}
     run("release-negative-fixture", [*psql, "-Atq"], f"delete from serving_cost_reservations where org_id='{negative}';")
     lock_anchor = " perform pg_advisory_xact_lock(hashtextextended('org_month_spend:'||p_billing_org::text,42));"
     assert instrumented.count(lock_anchor) == 1

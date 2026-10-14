@@ -22,7 +22,10 @@ create function pg_temp.refuse(statement text,expected text,label text)returns v
 -- Ceiling mode is the live default; pin it and the launch pool explicitly for this transaction.
 update public.app_config set value=jsonb_build_object('mode','ceiling','free_published_listings',1)where key='serving_mode';
 -- Pin the commission: the dated Small Business switch is asserted on its own below.
-update public.app_config set value=(value-'reduced_commission_bps'-'reduced_commission_from')||'{"apple_commission_bps":3000}'::jsonb where key='serving_envelope';
+update public.app_config set value=(value-'reduced_commission_bps'-'reduced_commission_from')||'{"apple_commission_bps":3000,"net_margin_bps":7500,"trial_ceiling_cents":500}'::jsonb where key='serving_envelope';
+-- These dated launch-window arithmetic fixtures retain their historical25%
+-- allocation/500c trial. Current50%/1500c and old-slice preservation are
+-- exercised separately by property_video_jobs.sql on this same final schema.
 update public.app_config set value=jsonb_build_object('cap_cents',29000,'starts_at',to_char(now()-interval '1 day','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'ends_at',to_char(now()+interval '30 days','YYYY-MM-DD"T"HH24:MI:SS"Z"'))where key='trial_sponsor_pool';
 
 insert into auth.users(id,email,is_anonymous,email_confirmed_at)values
@@ -157,7 +160,7 @@ do $$declare c jsonb;begin
  c:=public.plan_serving_ceiling('d2000000-0000-4000-8000-000000000005');
  perform pg_temp.ok((c->>'ceiling_cents')::int=300 and c->>'basis'='lifetime'and c->>'window'='lifetime'and c->'period_start'='null'::jsonb,'free tier is a 300c lifetime sample');
  c:=public.plan_serving_ceiling('d2000000-0000-4000-8000-000000000007');
- perform pg_temp.ok((c->>'ceiling_cents')::int=2400 and c->>'kind'='manual'and c->>'window'='calendar_month','owner-granted plan keeps its entitlement ceiling per calendar month');
+ perform pg_temp.ok((c->>'ceiling_cents')::int=4157 and c->>'kind'='manual'and c->>'window'='calendar_month','owner-granted plan keeps its entitlement ceiling per calendar month');
  c:=public.plan_serving_ceiling('d2000000-0000-4000-8000-000000000008');
  perform pg_temp.ok((c->>'ceiling_cents')::int=2147483647 and c->>'kind'='sponsored','testing grant is sponsored');
  update public.app_config set value=value-'net_margin_bps' where key='serving_envelope';

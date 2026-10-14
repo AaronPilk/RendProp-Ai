@@ -19,7 +19,7 @@ final class ReelWorkQueue: ObservableObject {
         for (name, active) in [(UIApplication.didBecomeActiveNotification, true),
                                (UIApplication.willResignActiveNotification, false)] {
             sceneObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.updateScreenAwakeHold(isActive: active) }
+                Task { @MainActor in self?.updateScreenAwakeHold(isActive: active); if !active { PropertyVideoJobRunner.shared.suspendForeground() } }
             })
         }
     }
@@ -40,6 +40,7 @@ final class ReelWorkQueue: ObservableObject {
     /// A replacement account's job created during that wait is left alone.
     func cancelForLocalDataErasure() async {
         let outgoing = jobs
+        try? await PropertyVideoJobCancellation.shared.request(reason: "local_data_erasure")
         for job in outgoing { job.cancel() }
         for job in outgoing { await job.task?.value }
         let outgoingIDs = Set(outgoing.map(\.id))
@@ -59,16 +60,29 @@ final class ReelWorkQueue: ObservableObject {
         return job
     }
     var visibleJobs: [ReelWorkJob] {
-        jobs.filter { $0.isContextCurrent && !$0.bannerDismissed && ($0.running || $0.paused || $0.phase == .done || $0.phase == .failed) }
+        jobs.filter { $0.isContextCurrent && !$0.bannerDismissed && ($0.running || $0.isServerRendering || $0.paused || $0.phase == .done || $0.phase == .failed) }
     }
-    var currentJob: ReelWorkJob? { visibleJobs.first(where: { $0.running || $0.paused }) ?? visibleJobs.last }
+    var currentJob: ReelWorkJob? { visibleJobs.first(where: { $0.running || $0.isServerRendering || $0.paused }) ?? visibleJobs.last }
     func dismissResult(listingID: UUID) { visibleJobs.first(where: { $0.listingID == listingID })?.dismissResult() }
     func reconcileIdentity() {
+        PropertyVideoJobCancellation.shared.consentWasRevoked()
         for job in jobs where !job.isContextCurrent { job.cancel() }
     }
+    func restoreServerJobs(model: AppModel) {
+        guard let actor = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)), let org = WorkspaceContext.selectedOrgID,
+              let api = model.api as? PropertyVideoJobsAPI else { return }
+        for listing in model.listings where !listing.isSample && listing.cloudUnavailable != true {
+            guard let serverID = listing.serverID else { continue }
+            let context = PropertyVideoJobContext(localListingID: listing.id, listingID: serverID, actorID: actor, orgID: org)
+            guard FileManager.default.fileExists(atPath: PropertyVideoJobStore.url(context: context, documents: FileStore.documents).path) else { continue }
+            PropertyVideoJobRunner.shared.restore(work: job(for: listing), model: model, api: api, context: context)
+        }
+    }
     func resumeForeground() {
+        PropertyVideoJobCancellation.shared.retryPending()
         reconcileIdentity()
         for job in jobs { job.resumeForeground() }
+        PropertyVideoJobRunner.shared.resumeForeground()
     }
 }
 
@@ -119,6 +133,14 @@ final class ReelWorkJob: ObservableObject, Identifiable {
     @Published var parkedClips: PendingReelClips?
     @Published var pendingRequest: PendingReelRequest?
     @Published var pendingBatch: PendingReelBatch?
+    @Published var serverJob: PropertyVideoSavedJob?
+    var isServerRendering: Bool { serverJob != nil && phase == .generating }
+    func adoptServerJob(_ saved: PropertyVideoSavedJob) {
+        serverJob = saved; totalClips = saved.request.sources.count; phase = .generating; paused = false
+        statusText = saved.reply.map(PropertyVideoJobRunner.status) ?? "Your request is saved. Checking server acceptance…"
+        noticeIdentity = PushManager.currentIdentity
+        endBackgroundHold(); ReelWorkQueue.shared.updateScreenAwakeHold()
+    }
     @Published var unreadableBatch = false
     @Published var recoveredRetryRequestID: String?
     @Published var unreadablePendingContext: PendingReelRequest.Context?
@@ -141,7 +163,7 @@ final class ReelWorkJob: ObservableObject, Identifiable {
     private var resumeAction: (() -> Void)?
     private var followUp: (() -> Void)?
     private var identityCheck: (() -> Bool)?
-    private var noticeIdentity: PushAccountIdentity?
+    private(set) var noticeIdentity: PushAccountIdentity?
 
     init(scope: Scope, title: String) { self.scope = scope; self.title = title }
     var isContextCurrent: Bool { scope.isCurrent && (identityCheck?() ?? true) }
@@ -177,7 +199,7 @@ final class ReelWorkJob: ObservableObject, Identifiable {
             let next = self.followUp; self.followUp = nil
             if let next { self.resumeAction = nil; self.identityCheck = nil; next(); return }
             self.resumeAction = nil; self.identityCheck = nil
-            if self.phase == .generating || self.phase == .stitching { self.phase = .setup }
+            if self.serverJob == nil && (self.phase == .generating || self.phase == .stitching) { self.phase = .setup }
             if self.phase == .done || self.phase == .failed {
                 ReelCompletionNotice.post(success: self.phase == .done, identity: self.noticeIdentity,
                     listingID: self.listingID, jobID: self.id)
@@ -194,7 +216,7 @@ final class ReelWorkJob: ObservableObject, Identifiable {
     }
     func clearErasedState() {
         player?.pause(); player = nil; configuration = nil
-        reelURL = nil; lastReel = nil; parkedClips = nil; pendingRequest = nil; pendingBatch = nil
+        reelURL = nil; lastReel = nil; parkedClips = nil; pendingRequest = nil; pendingBatch = nil; serverJob = nil
         unreadablePendingContext = nil; recoveredRetryRequestID = nil; unreadableBatch = false
         resumeAction = nil; followUp = nil; identityCheck = nil; noticeIdentity = nil
         phase = .setup; statusText = ""; failure = nil; clipIssues = []

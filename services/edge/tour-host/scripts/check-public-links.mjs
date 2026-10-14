@@ -48,6 +48,8 @@ async function inspect(target, record = false) {
 const count = await inspect(worker, true);
 const { buildDemoTour } = await load("demo");
 const existing = { ...buildDemoTour(), slug: "closed-published", share_url: "https://rendprop.com/f/closed-published", published_at: "2026-10-14T00:00:00Z" };
+const { propertyAddressPath } = await load("property-seo");
+const descriptivePath = propertyAddressPath(existing.slug, existing.listing.address);
 let published = true, reads = 0;
 globalThis.fetch = async (url, init) => {
   if (url !== env.SUPABASE_FUNCTIONS_URL + "/tours/closed-published" || init.cache !== "no-store") throw Error("Unexpected alias upstream");
@@ -64,11 +66,11 @@ for (const page of ["home", "gallery", "location", "contact"]) {
   aliasAssert(response.headers.get("cache-control") === "no-store", "Alias must check current publication");
   aliasAssert(html.includes("property-page-" + page), "Alias selects actual property page");
   for (const target of ["home", "gallery", "location", "contact"]) {
-    const href = "/property/closed-published" + (target === "home" ? "" : "?page=" + target);
+    const href = descriptivePath + (target === "home" ? "" : "?page=" + target);
     aliasAssert(html.includes('href="' + href + '"'), "Alias navigation must stay in the browser-only path");
   }
   aliasAssert(!html.includes('href="/f/closed-published'), "No internal navigation returns to cached app-only path");
-  aliasAssert(html.includes("https://rendprop.com/f/closed-published"), "Canonical published identity remains /f");
+  aliasAssert(html.includes('rel="canonical" href="https://rendprop.com' + descriptivePath + (page === "home" ? "" : "?page=" + page) + '"'), "Canonical follows the same property and selected page through its readable address");
   if (page === "contact") aliasAssert(html.includes('id="leadform"') && html.includes('closed-published'), "Alias retains actual listing enquiry form/token");
 }
 aliasAssert(reads === 4, "Every alias page performs one current published lookup");

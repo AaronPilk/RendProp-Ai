@@ -53,10 +53,12 @@ export function verifyConnectedBundle(chunks, config) {
   for (const name of PUBLIC_NAMES) assert(found.has(name), `Built JavaScript is missing the exact configured ${name} property; rebuild connected production assets.`);
 }
 
-// Build 68 adds the recording clock guard and its bounded diagnostic readings.
-// Allow 5 KB total headroom; the initial and Create loading budgets stay fixed.
-export const DIST_BUDGETS = Object.freeze({ initial: 160_000, create: 260_000, total: 355_000 });
-export const CREATE_ENTRIES = ["index.html", "src/features/projects/Projects.tsx", "src/features/sync/PropertyReels.tsx"];
+// Build79 adds a separate beginner photo-to-video workspace with durable jobs,
+// voice/music and review. Root approved400k total on2026-10-14 (prior355k).
+// Keep initial160k/Create260k, include the actual default simple dynamic entry,
+// and leave the existing advanced editor lazy until explicitly opened.
+export const DIST_BUDGETS = Object.freeze({ initial: 160_000, create: 260_000, total: 400_000 });
+export const CREATE_ENTRIES = ["index.html", "src/features/projects/Projects.tsx", "src/features/sync/PropertyReels.tsx", "src/features/sync/MakeVideo.tsx"];
 export const PROXY_ENTRY = "src/editor/ProxyPanel.tsx";
 export function manifestClosure(manifest, entries) {
   const visited = new Set(), files = new Set();

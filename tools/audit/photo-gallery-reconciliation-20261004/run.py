@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -74,10 +75,11 @@ log = result.stdout + result.stderr
 if expected:
     passed = result.returncode != 0 and expected in log and ('Precondition failed:' in log or 'Fatal error:' in log)
 else:
-    # Retain the original 536 cases plus 60 geometry checks for Instagram's
-    # .feed (4:5) aspect, plus 12 review, disclosure and explicit feed-ratio
-    # assertions added for build 68. Named corruption controls stay required.
-    passed = result.returncode == 0 and 'Photo history/export geometry: 608 passed' in log
+    # Preserve the original coverage plus the 32 Original-tab/source-retention
+    # checks added in build 79. Additional cases may increase the count without making
+    # this positive-output binding stale; every named corruption control stays.
+    summary = re.search(r'^Photo history/export geometry: ([0-9]+) passed$', log, re.MULTILINE)
+    passed = result.returncode == 0 and summary is not None and int(summary.group(1)) >= 640
 receipt = {'passed': passed, 'fault': args.inject_fault, 'expected_runtime_assertion': expected,
            'compile_exit': compile_result.returncode, 'runtime_exit': result.returncode,
            'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),

@@ -115,6 +115,16 @@ final class ReelWireClient {
             listingServerID:listing,label:nil,idempotencyKey:"legacy-key")
         let oldBody = try JSONSerialization.jsonObject(with:ReelWireProtocol.requests()[0].httpBody!) as! [String:Any]
         check(oldBody["framing"] == nil, "actual legacy overload forwards absent framing")
+        ReelWireProtocol.reset()
+        let sourceAsset=UUID().uuidString,sourceProvenance=UUID().uuidString
+        _ = try await client.aiVideoReelClip(imageBase64:source,mime:"image/jpeg",prompt:nil,seconds:5,
+            aspect:"16:9",framing:"preserve_photo",presetVersion:1,motion:"side_glide",room:nil,shotIndex:99,shotCount:100,
+            listingServerID:listing,label:nil,idempotencyKey:"exact-selected-source",sourceAssetID:sourceAsset,sourceProvenanceID:sourceProvenance)
+        let boundBody=try JSONSerialization.jsonObject(with:ReelWireProtocol.requests()[0].httpBody!) as! [String:Any]
+        check(boundBody["source_asset_id"] as? String == sourceAsset && boundBody["source_provenance_id"] as? String == sourceProvenance,
+            "actual exact-source overload retains prepared selected asset and provenance")
+        check(boundBody["aspect"] as? String == "16:9" && boundBody["shot_index"] as? Int == 99 && boundBody["shot_count"] as? Int == 100,
+            "actual listing wire retains widescreen destination and all hundred shot positions")
         check(oldBody["image_b64"] as? String == source, "actual legacy overload keeps its saved source bytes")
         ReelWireProtocol.reset()
         do { _ = try await submit("crop_and_invent"); preconditionFailure("unsupported framing must refuse") }

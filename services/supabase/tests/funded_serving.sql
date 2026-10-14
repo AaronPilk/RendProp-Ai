@@ -1,5 +1,8 @@
 \set ON_ERROR_STOP on
 begin;
+-- This legacy25-percent fixture deliberately pins its tariff. New allocation
+-- and old-slice replay are tested in property_video_jobs.sql.
+update public.app_config set value=jsonb_set(value,'{net_margin_bps}','7500'::jsonb)where key='serving_envelope';
 -- Funded-model regression: pin funded serving mode for this transaction. The
 -- live default since 2026-10-08 is ceiling mode (migration 20261008201736);
 -- ceiling-mode admission is covered by launch_blockers.sql.

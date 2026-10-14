@@ -4,6 +4,9 @@ begin;
 -- live default since 2026-10-08 is ceiling mode (migration 20261008201736);
 -- ceiling-mode admission is covered by launch_blockers.sql.
 update public.app_config set value=value||'{"mode":"funded"}'::jsonb where key='serving_mode';
+-- Historical five-edit grant custody/exhaustion fixture. New20-edit/1500c
+-- default grants and recipe quotes are exercised in property_video_jobs.sql.
+update public.subscription_trial_config set photo_edits=5;
 create temp table trial_checks(n integer default 0);
 insert into trial_checks default values;
 grant all on trial_checks to service_role,authenticated;

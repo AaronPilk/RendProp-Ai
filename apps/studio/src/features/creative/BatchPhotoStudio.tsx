@@ -6,7 +6,7 @@ import { businessApi } from "../business/api";
 import { uploadListingAsset } from "../listings/uploads";
 import type { UploadedAsset, UploadJournal } from "../listings/uploads";
 import { editedImage } from "./media";
-import { inputForEdit, photoDelivery, propertyPhoto, type PhotoSource, type PhotoDelivery } from "./photo-lineage";
+import { inputForEdit, photoDelivery, propertyOriginalPhoto, type PhotoSource, type PhotoDelivery } from "./photo-lineage";
 import PhotoExportPanel from "./PhotoExportPanel";
 import CustomPhotoPromptHelp, { analyzeCustomPhotoPrompt } from "./CustomPhotoPromptHelp";
 import type { SourceImage } from "./media";
@@ -185,7 +185,7 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
       const next = new PhotoBatch(choices, listing.id, { edit, style, prompt }, {
         assertScope,
         prepare: async (photo, signal) => {
-          const source = await propertyPhoto(photo, signal);
+          const source = await propertyOriginalPhoto(photo, signal);
           return { ...source, originalVerified: source.originalVerified || confirmedOriginals.includes(photo.id) };
         },
         upload: (file, role, signal, resume, onJournal) => uploadListingAsset(services, { orgId: workspace.org.id, listingId: listing.id, file, role, signal, resume, onJournal }),
@@ -223,9 +223,9 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
       <fieldset disabled={!!disabled || !canCreate}><legend>2. Choose the photos to change</legend>
         {!eligible.length ? <p>Add photos to this property first. Edited photos need their untouched original before another edit.</p> : <div className="batch-photo-grid">{eligible.map((photo, index) => <label className="batch-photo-choice" key={photo.id}><input type="checkbox" checked={selected.includes(photo.id)} disabled={!selected.includes(photo.id) && choices.length >= MAX_BATCH_PHOTOS} onChange={event => setSelected(ids => event.target.checked ? [...ids, photo.id] : ids.filter(id => id !== photo.id))} /><img src={photo.url} alt="" loading="lazy" referrerPolicy="no-referrer" /><span>{photo.caption || `Photo ${index + 1}`}</span></label>)}</div>}
       </fieldset>
-      {choices.filter(photo => photo.isAltered || photo.isStaged).map(photo => <details key={photo.id}><summary>Verify the original for {photo.caption || "this edited photo"}</summary><img src={photo.originalUrl!} alt="Paired source to verify" style={{ maxWidth: "100%", maxHeight: 240 }} /><p>The current edited photo will be used. Earlier source history is not verified automatically.</p><label><input type="checkbox" checked={confirmedOriginals.includes(photo.id)} onChange={event => setConfirmedOriginals(ids => event.target.checked ? [...ids, photo.id] : ids.filter(id => id !== photo.id))} />This is the actual unedited original.</label></details>)}
+      {choices.filter(photo => (photo.isAltered || photo.isStaged) && !photo.originalVerified).map(photo => <details key={photo.id}><summary>Verify the original for {photo.caption || "this edited photo"}</summary><img src={photo.originalUrl!} alt="Paired source to verify" style={{ maxWidth: "100%", maxHeight: 240 }} /><p>A new edit uses this original; it does not edit the saved result.</p><label><input type="checkbox" checked={confirmedOriginals.includes(photo.id)} onChange={event => setConfirmedOriginals(ids => event.target.checked ? [...ids, photo.id] : ids.filter(id => id !== photo.id))} />This is the actual unedited original.</label></details>)}
       <p>{choices.length} selected. This starts {choices.length} separate AI edit{choices.length === 1 ? "" : "s"}. Review and save the previews below before leaving this property.</p>
-      <button className="creative-primary" disabled={!!disabled || !canCreate || !choices.length || choices.some(photo => (photo.isAltered || photo.isStaged) && !confirmedOriginals.includes(photo.id)) || !!allowance && choices.length > Math.max(0, allowance.cap - allowance.used) || edit === "custom" && analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"} onClick={() => void start()}>Generate {choices.length || "selected"} photo previews</button>
+      <button className="creative-primary" disabled={!!disabled || !canCreate || !choices.length || choices.some(photo => (photo.isAltered || photo.isStaged) && !photo.originalVerified && !confirmedOriginals.includes(photo.id)) || !!allowance && choices.length > Math.max(0, allowance.cap - allowance.used) || edit === "custom" && analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"} onClick={() => void start()}>Generate {choices.length || "selected"} photo previews</button>
     </> : <>
       <div className="creative-actions"><p role="status">{batch.entries.filter(e => e.state === "saved").length} saved · {batch.entries.filter(e => e.state === "ready").length} ready to review · {batch.entries.filter(e => e.state === "failed").length} failed · {batch.entries.filter(e => e.state === "stopped").length} not started</p>{busy ? <button disabled={batch.stopRequested} onClick={() => batch.stop()}>{batch.stopRequested ? "Stopping after this photo…" : "Stop remaining photos"}</button> : <button onClick={reset}>Choose another batch</button>}</div>
       {busy && <p>Keep this property open. Stopping leaves an edit already sent to AI running; no further photo will be sent.</p>}

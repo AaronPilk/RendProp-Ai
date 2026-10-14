@@ -21,9 +21,9 @@ finally { Object.defineProperty(Deno, "serve", descriptor); }
 const { handleCreative } = await import("../studio/creative.ts");
 const { adminClient } = await import("./supabase.ts");
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
-type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean; noDiscovery?:boolean; withdrawDiscovery?:boolean; clientFailure?:boolean; discovery?:unknown; emptyPortfolio?:boolean; withdrawPortfolio?:boolean; foreignPortfolioAgent?:boolean; removePortfolioMember?:boolean; deletingPortfolioActor?:boolean; legacyPortfolio?:boolean; expiredHosting?:boolean; hostingExpiresAfterAssembly?:boolean };
+type Options = { delivery?:boolean; largeBytes?:number; backgroundMaster?:boolean; backgroundUnregistered?:boolean; backgroundRevoked?:boolean; publishedAlteredVideo?: boolean; denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean; noDiscovery?:boolean; withdrawDiscovery?:boolean; clientFailure?:boolean; discovery?:unknown; emptyPortfolio?:boolean; withdrawPortfolio?:boolean; foreignPortfolioAgent?:boolean; removePortfolioMember?:boolean; deletingPortfolioActor?:boolean; legacyPortfolio?:boolean; expiredHosting?:boolean; hostingExpiresAfterAssembly?:boolean };
 async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "history" | "portfolio", opts: Options = {}) {
-  const previous = globalThis.fetch; let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0,hostingReads=0; const seen: Record<string, unknown>[] = [];
+  const previous = globalThis.fetch; const priorGateway=Deno.env.get("MEDIA_GATEWAY_SECRET");if(opts.delivery)Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64)); let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0,hostingReads=0; const seen: Record<string, unknown>[] = [];
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init), url = new URL(req.url);
     assertEquals(url.hostname, "media-privacy-fixture.invalid");
@@ -35,9 +35,12 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
       if (opts.missingVisibility) return response({ assets: {}, renders: {}, keys: {} });
       if (opts.invalidVisibility) return response({ assets: {}, renders: { [renderId]: "true" }, keys: {} });
       return response(Object.fromEntries(["assets", "renders", "keys"].map(kind => [kind, Object.fromEntries(args[`p_${kind}`].map((v: string) => [v,
-        !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.revokeCoverAtFinal && checks>=5 && [galleryId,galleryKey].includes(v)) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
+        !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.revokeCoverAtFinal && profileRead && [galleryId,galleryKey].includes(v)) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
     }
-    if (url.pathname === "/rest/v1/rpc/publish_render") return response({ id: renderId, listing_id: listing, slug: "fixture-tour", video_key: key });
+    if(url.pathname==='/rest/v1/rpc/media_delivery_admit'){const args=await req.json();seen.push(args);assertEquals(args.p_bytes,0);return response({admitted:true,legacy_unbudgeted:false});}
+    if(url.pathname==='/rest/v1/rpc/background_video_delivery'){const args=await req.json();seen.push(args);assertEquals(args.p_org,org);assertEquals(args.p_listing,listing);assertEquals(args.p_actor,null);return opts.backgroundRevoked?new Response(JSON.stringify({message:'RP404: Background video was withdrawn'}),{status:400,headers:{'content-type':'application/json'}}):response(opts.backgroundUnregistered?null:{kind:'registered_background_video',asset_id:asset,bytes:350*1024*1024,sha256:'b'.repeat(64),max_object_bytes:1536*1024*1024});}
+    if (url.pathname === "/rest/v1/rpc/property_public_presentation") return response({listing_video:null,website_theme:"basic"});
+    if (url.pathname === "/rest/v1/rpc/publish_recorded_render") return response({ id: renderId, listing_id: listing, slug: "fixture-tour", video_key: key });
     if (url.pathname === "/rest/v1/rpc/public_listing_agent_identity") {
       const args=await req.json();assertEquals(args,{p_listing:listing});profileRead=true;identityReads++;
       if(opts.identityFailure)return new Response(JSON.stringify({message:"private SQL outage detail"}),{status:503,headers:{"content-type":"application/json"}});
@@ -47,7 +50,7 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
     if (url.pathname === "/rest/v1/rpc/assert_studio_edit_quality") return response(null);
     if (url.pathname === "/rest/v1/rpc/hosting_retention_state") { hostingReads++; return response(opts.expiredHosting || opts.hostingExpiresAfterAssembly && hostingReads >= (handler === "portfolio" ? 3 : 2) ? {org_id:org,policy:"prospective_90_day_grace",protected:false,retention_ends_at:"2020-01-01T00:00:00Z",hosting_available:false} : {org_id:org,policy:"preserved",protected:false,retention_ends_at:null,hosting_available:true}); }
     const table = url.pathname.split("/").pop();
-    if (table === "renders") { const row = { id: renderId, job_id: jobId, listing_id: listing, slug: "fixture-tour", video_key: key, poster_key: `${prefix}/poster.jpg`, published_at: "2026-09-24T00:00:00Z", duration_s: 5 }; return response(handler === "portfolio" ? [row] : row); }
+    if (table === "renders") { const row = { id: renderId, job_id: jobId, listing_id: listing, slug: "fixture-tour", video_key: opts.backgroundMaster ? `${prefix}/background/${jobId}/${org}/master.mp4` : opts.publishedAlteredVideo ? altered : key, poster_key: `${prefix}/poster.jpg`, published_at: "2026-09-24T00:00:00Z", duration_s: 5 }; return response(handler === "portfolio" ? [row] : row); }
     if (table === "listings") {listingReads++; const row = { id: listing, org_id: org, agent_id: opts.foreignPortfolioAgent ? org : user, deleted_at: null, details: {allow_indexing: opts.noDiscovery || opts.withdrawDiscovery && profileRead ? false : "discovery" in opts ? opts.discovery : true}, address: "Synthetic listing",main_photo_key:opts.mainPhotoKey??null,gallery_asset_ids:opts.changeSelection&&listingReads>1?[]:opts.selection??null }; return response(handler === "portfolio" && !url.searchParams.get("id")?.startsWith("eq.") ? [row] : row); }
     if(table === "member_portfolios") return response({id:portfolioId,org_id:org,user_id:user,listing_ids:opts.emptyPortfolio || opts.withdrawPortfolio && profileRead ? []:[listing],revision:1});
     if(table === "memberships") return response(opts.removePortfolioMember && profileRead ? null : {user_id:user});
@@ -78,12 +81,12 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
     throw new Error(`Unmodelled fixture request ${url.pathname}`);
   };
   try {
-    const req = new Request(`https://app.fixture.invalid/${handler === "tour" ? "tours/fixture-tour" : handler === "renders" ? `renders/${jobId}` : handler === "publish" ? `renders/${jobId}/publish` : handler === "history" ? `studio/creative-results?listing_id=${listing}` : handler === "portfolio" ? opts.legacyPortfolio ? "portfolio/fixture" : `portfolio/member-${portfolioId}` : "studio/sign-media"}`, {
-      method: ["creative", "publish"].includes(handler) ? "POST" : "GET", headers: { authorization: "Bearer synthetic-user" }, ...(["creative", "publish"].includes(handler) ? { body: JSON.stringify({ result_id: resultId }) } : {}),
+    const req = new Request(`https://app.fixture.invalid/${handler === "tour" ? opts.delivery?`tours/fixture-tour/delivery?bytes=${opts.largeBytes??0}&key=${encodeURIComponent(opts.backgroundMaster?`${prefix}/background/${jobId}/${org}/master.mp4`:key)}`:"tours/fixture-tour" : handler === "renders" ? `renders/${jobId}` : handler === "publish" ? `renders/${jobId}/publish` : handler === "history" ? `studio/creative-results?listing_id=${listing}` : handler === "portfolio" ? opts.legacyPortfolio ? "portfolio/fixture" : `portfolio/member-${portfolioId}` : "studio/sign-media"}`, {
+      method: ["creative", "publish"].includes(handler) ? "POST" : "GET", headers: { authorization: "Bearer synthetic-user",...(opts.delivery?{"X-Rendprop-Media-Gateway":"a".repeat(64)}:{}) }, ...(["creative", "publish"].includes(handler) ? { body: JSON.stringify({ result_id: resultId }) } : {}),
     });
     const result = ["creative", "history"].includes(handler) ? await handleCreative(req, { userId: user, orgId: org, db: adminClient(), admin: adminClient(), authorizeListing: () => Promise.resolve() }) : await (handler === "tour" ? tour : handler === "portfolio" ? portfolio : renders)(req);
     assert(result); return { status: result.status, body: await result.json(), checks, seen };
-  } finally { globalThis.fetch = previous; }
+  } finally { globalThis.fetch = previous;if(opts.delivery)priorGateway===undefined?Deno.env.delete("MEDIA_GATEWAY_SECRET"):Deno.env.set("MEDIA_GATEWAY_SECRET",priorGateway); }
 }
 Deno.test("actual public tour service handler denies revoked published render lineage", async () => {
   const r = await invoke("tour", { denyRender: true }); assertEquals(r.status, 404); assert(!JSON.stringify(r.body).includes("media-fixture.invalid"));
@@ -91,7 +94,16 @@ Deno.test("actual public tour service handler denies revoked published render li
 Deno.test("actual public tour filters revoked disclosure and gallery objects", async () => {
   const r = await invoke("tour", { denyOptional: true }); assertEquals(r.status, 200);
   assertEquals(r.body.gallery, []); assertEquals(r.body.altered_media, []); assert(r.body.video_url);
-  assert(r.seen.some(call => (call.p_keys as string[]).includes(altered)));
+  // This edited-video version was never selected as the published master.
+  assert(!r.seen.some(call => (call.p_keys as string[]).includes(altered)));
+});
+Deno.test("actual public tour retains provenance for the selected edited video and fences its revocation",async()=>{
+ const current=await invoke("tour",{publishedAlteredVideo:true});assertEquals(current.status,200);
+ assertEquals(current.body.video_url,`https://media-fixture.invalid/${altered}`);
+ assertEquals(current.body.altered_media.map((row:{kind:string})=>row.kind),["video_reflection_removal"]);
+ assert(current.seen.some(call=>(call.p_keys as string[]).includes(altered)));
+ const revoked=await invoke("tour",{publishedAlteredVideo:true,denyOptional:true});assertEquals(revoked.status,404);
+ assert(!JSON.stringify(revoked.body).includes("media-fixture.invalid"));
 });
 Deno.test("actual public tour discards URLs on revocation during response assembly", async () => {
   const r = await invoke("tour", { revokeAfterFirst: true }); assertEquals(r.status, 404); assert(!JSON.stringify(r.body).includes("media-fixture.invalid"));
@@ -201,15 +213,15 @@ Deno.test("actual tour explicit current gallery excludes historical staged uploa
   assertEquals(current.body.gallery,[{url:`https://media-fixture.invalid/${galleryKey}`}]);assertEquals(current.body.cover_url,`https://media-fixture.invalid/${galleryKey}`);
   assert(!JSON.stringify(current.body.gallery).includes("old-staged"));
   assert(!JSON.stringify(current.body.altered_media).includes("old-staged"));
-  assertEquals(current.body.altered_media.map((r:{kind:string})=>r.kind),["video_reflection_removal","declutter"]);
-  assert(current.body.altered_media[1].disclosure.includes("Compare with the original"));
+  assertEquals(current.body.altered_media.map((r:{kind:string})=>r.kind),["declutter"]);
+  assert(current.body.altered_media[0].disclosure.includes("Compare with the original"));
   const ordered=await invoke("tour",{selection:[galleryId,olderGalleryId],withHistoricalPhoto:true});assertEquals(ordered.body.gallery,[{url:`https://media-fixture.invalid/${galleryKey}`},{url:`https://media-fixture.invalid/${olderGalleryKey}`}]);
   const legacy=await invoke("tour",{withHistoricalPhoto:true});assertEquals(legacy.body.gallery.length,2);
 });
 Deno.test("actual tour empty gallery selection hides property photos and saved cover without changing video",async()=>{
   const r=await invoke("tour",{selection:[],withHistoricalPhoto:true,mainPhotoKey:galleryKey});assertEquals(r.status,200);
   assertEquals(r.body.gallery,[]);assertEquals(r.body.cover_url,null);assert(r.body.video_url);
-  assertEquals(r.body.altered_media.map((r:{kind:string})=>r.kind),["video_reflection_removal"]);
+  assertEquals(r.body.altered_media.map((r:{kind:string})=>r.kind),[]);
   const excludedCover=await invoke("tour",{selection:[olderGalleryId],mainPhotoKey:galleryKey,withHistoricalPhoto:true});assertEquals(excludedCover.body.cover_url,null);
 });
 Deno.test("actual tour discards a retired version if gallery selection changes during assembly",async()=>{
@@ -242,4 +254,14 @@ Deno.test("actual member portfolio refuses removed or deleting actors after asse
 
 Deno.test("actual public tour and member portfolio deny expired hosting and final deadline withdrawal",async()=>{
  for(const route of["tour","portfolio"]as const)for(const opts of[{expiredHosting:true},{hostingExpiresAfterAssembly:true}])assertEquals((await invoke(route,opts)).status,404);
+});
+
+Deno.test("actual public large-master delivery emits exact authority and charges only its atomic registered read",async()=>{
+ const bg=`${prefix}/background/${jobId}/${org}/master.mp4`,r=await invoke('tour',{delivery:true,backgroundMaster:true,largeBytes:350*1024*1024});assertEquals(r.status,200);
+ assertEquals(r.body.object_limits[bg],{kind:'registered_background_video',asset_id:asset,bytes:350*1024*1024,sha256:'b'.repeat(64),max_object_bytes:1536*1024*1024});
+ assert(r.seen.some(call=>call.p_key===bg&&call.p_bytes===350*1024*1024));
+ for(const opts of[{backgroundUnregistered:true},{backgroundRevoked:true}]){
+  const denied=await invoke('tour',{delivery:true,backgroundMaster:true,largeBytes:350*1024*1024,...opts});assertEquals(denied.status,opts.backgroundRevoked?404:403);assert(!JSON.stringify(denied.body).includes(bg));
+ }
+ const ordinary=await invoke('tour',{delivery:true,largeBytes:350*1024*1024});assertEquals(ordinary.status,403);
 });

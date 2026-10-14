@@ -7,9 +7,9 @@ import argparse,hashlib,json,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3]
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);a=p.parse_args()
 out=(a.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-stage-video-'))).resolve();out.mkdir(parents=True,exist_ok=True)
-paths=[ROOT/x for x in ['apps/ios/Rendprop/Screens/FlythroughDetailView.swift','apps/ios/Rendprop/RendpropApp.swift','apps/ios/Rendprop/Photos/PhotoVersionHistory.swift','apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift','apps/ios/Rendprop/Photos/PhotoImportSequence.swift','apps/ios/Rendprop/Render/PropertyVideoPlanner.swift','apps/ios/Rendprop/Models/ListingVideo.swift','apps/ios/Rendprop/Render/VideoAspectChoice.swift','apps/ios/Rendprop/Networking/APIClient.swift','apps/ios/tests/StagedVideoSourceTests.swift','apps/ios/tests/run-staged-video-source.py']]
+paths=[ROOT/x for x in ['apps/ios/Rendprop/Screens/FlythroughDetailView.swift','apps/ios/Rendprop/RendpropApp.swift','apps/ios/Rendprop/Photos/PhotoVersionHistory.swift','apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift','apps/ios/Rendprop/Photos/PhotoImportSequence.swift','apps/ios/Rendprop/Render/PropertyVideoPlanner.swift','apps/ios/Rendprop/Render/VideoMusicContract.swift','apps/ios/Rendprop/Models/ListingVideo.swift','apps/ios/Rendprop/Render/VideoAspectChoice.swift','apps/ios/Rendprop/Networking/APIClient.swift','apps/ios/tests/StagedVideoSourceTests.swift','apps/ios/tests/run-staged-video-source.py']]
 hashes=lambda:{str(x.relative_to(ROOT)):hashlib.sha256(x.read_bytes()).hexdigest() for x in paths}
-before=hashes();view,app,history,capture,sequence,planner,metadata,aspect,api,tests=[x.read_text() for x in paths[:-1]]
+before=hashes();view,app,history,capture,sequence,planner,music,metadata,aspect,api,tests=[x.read_text() for x in paths[:-1]]
 def block(text,anchor):
  start=text.index(anchor);opening=text.index('{',start);depth=1;end=opening+1
  while depth:depth+=(text[end]=='{')-(text[end]=='}');end+=1
@@ -38,7 +38,7 @@ source+='private enum DiskScan {\n'+block(view,'nonisolated static func entries(
 source+=block(view,'struct EnhancedPhoto: Identifiable')+'\nextension EnhancedPhoto {\n'+'\n'.join(block(view,x) for x in ['nonisolated static func loadAll(listingID:','nonisolated static func loadForListing(','static func directory(for listingID:','nonisolated fileprivate static func dated(in entries:'])+'\n}\n'
 source+=block(api,'struct AIShot: Sendable')+'\n'+block(view,'struct PendingReelBatch: Codable')+'\n'
 source+='enum SourcePreparation {\n'+block(reel,'nonisolated private static func preparedReelJPEG(').replace('private static','static')+'\n'+block(reel,'nonisolated private static func requireSavedReelReview(').replace('private static','static')+'\n}\n'
-source+=aspect+'\n'+metadata+'\n'+planner
+source+=aspect+'\n'+music+'\n'+metadata+'\n'+planner
 receipt={'passed':False,'sourceHashes':before,'runs':[],'limitations':['Actual local catalog, version review, batch save/load, source-metadata/fallback composition. UIImage decoding/resampling is a closed byte-preserving boundary; classifier is closed; no UI, paid model, actual upload or server publication executed. Existing real compositor and paid recovery gates provide separate coverage.']}
 variants=[('actual',source,None),
  ('editing-preview-substitution',source.replace('return choices.sorted { a, b in','return index.libraryVersions(.latest).sorted { a, b in'),'video collection resolves the reviewed staged file instead of a newer preview'),

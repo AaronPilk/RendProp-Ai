@@ -6,8 +6,8 @@ export function propertyPage(value: unknown): PropertyPage {
   return value === "gallery" || value === "location" || value === "contact" ? value : "home";
 }
 
-export function propertyPageHref(slug: string, page: PropertyPage, publicBase: "/f" | "/property" = "/f", previewTheme?: import("./property-design").WebsiteTheme | null): string {
-  const base = `${publicBase}/${encodeURIComponent(slug)}`;
+export function propertyPageHref(slug: string, page: PropertyPage, publicBase: "/f" | "/property" = "/f", previewTheme?: import("./property-design").WebsiteTheme | null, addressPath?: string): string {
+  const base = addressPath || `${publicBase}/${encodeURIComponent(slug)}`;
   const params = new URLSearchParams();
   if (page !== "home") params.set("page", page);
   if (previewTheme) params.set("preview_theme", previewTheme);

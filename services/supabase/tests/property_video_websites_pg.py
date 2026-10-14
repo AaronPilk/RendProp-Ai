@@ -36,6 +36,8 @@ try:
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  for migration in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
  newest=SQL/'migrations/20261014162938_property_video_websites.sql';run('replay-property-migration',[*PSQL,'-q','-1','-f',newest])
+ for newer in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))):
+  if newer.name!='20261014162938_property_video_websites.sql':run('replay-'+newer.stem,[*PSQL,'-q','-1','-f',newer])
  unit=run('actual-rpc-roles',[*PSQL,'-Atq','-f',SQL/'tests/property_video_websites.sql']);rows=[json.loads(s)for s in unit.splitlines()if s.startswith('{')and 'assertions'in s];assert len(rows)==1 and rows[0]['passed'];receipt['unit']=rows[0]
  actor='eb100000-0000-4000-8000-000000000001';listings=[f'eb300000-0000-4000-8000-00000000000{i}'for i in range(1,5)]
  run('race-fixtures',[*PSQL,'-Atq'],f"""insert into auth.users(id,email,is_anonymous)values('{actor}','race-upgrade@fixture.invalid',false);

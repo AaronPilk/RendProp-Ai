@@ -1,6 +1,7 @@
 import Foundation
 
-@MainActor final class ReelWorkJob { let id:UUID; let listingID:UUID; init(_ id:UUID,_ listingID:UUID){self.id=id;self.listingID=listingID} }
+struct ClosedServerJob { struct Reply { let jobID:UUID };var reply:Reply? }
+@MainActor final class ReelWorkJob { var serverJob:ClosedServerJob?; let id:UUID; let listingID:UUID; init(_ id:UUID,_ listingID:UUID){self.id=id;self.listingID=listingID} }
 struct Listing { let id:UUID; var isSample=false; var cloudUnavailable:Bool? }
 struct PushAccountIdentity:Equatable {let owner:UUID;let revision:UInt64}
 @MainActor final class UIApplication {enum State {case active,inactive,background};static let shared=UIApplication();var applicationState=State.background}
@@ -34,6 +35,13 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
   check(ReelWorkReviewAdmission.listing(jobID:id,visibleJobs:[job],listings:[.init(id:wrongID)])==nil,"job cannot route to a different listing")
   check(ReelWorkReviewAdmission.listing(jobID:id,visibleJobs:[job],listings:[.init(id:listingID,isSample:true)])==nil,"sample listing cannot receive real job result")
   check(ReelWorkReviewAdmission.listing(jobID:id,visibleJobs:[job],listings:[.init(id:listingID,cloudUnavailable:true)])==nil,"unavailable listing cannot be reopened by notification")
+  let serverID=UUID()
+  job.serverJob = .init(reply:.init(jobID:serverID))
+  check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[job],listings:[listing])?.id==listingID,"accepted server job alias opens only its exact owned listing")
+  check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[],listings:[listing])==nil,"hidden server job alias cannot reopen an old account listing")
+  check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[job],listings:[.init(id:wrongID)])==nil,"server alias cannot substitute another existing listing")
+  job.serverJob=nil
+  check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[job],listings:[listing])==nil,"cleared server job receipt cannot reopen its former result")
   check(ReelWorkBannerCopy.title(running:true,paused:false,ready:false,stitching:false,completed:3,total:8)=="Making reel · 3 of 8 photos ready","banner counts actual selected photos")
   check(ReelWorkBannerCopy.title(running:true,paused:false,ready:false,stitching:true,completed:8,total:8).hasPrefix("Finishing reel"),"stitching is not advertised as completed")
   check(ReelWorkBannerCopy.title(running:false,paused:true,ready:false,stitching:false,completed:3,total:8)=="Reel paused","expired OS execution is not advertised as completed")
@@ -54,6 +62,18 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
   check(push.pendingReelJobID==nil,"foreign recipient cannot route a reel")
   push.handle(payload:["recipient_user_id":owner.owner.uuidString,"category":"reel_done","reel_job_id":"not-a-uuid","deep_link":"rendprop://f/ignored"])
   check(push.pendingReelJobID==nil && push.pendingRoute==nil,"malformed reel notification cannot fall through to unrelated tour")
+  reset()
+  let remote:[AnyHashable:Any] = ["recipient_user_id":owner.owner.uuidString,"category":"render_ready","data":["property_video_job_id":serverID.uuidString,"reel_job_id":serverID.uuidString,"listing_id":listingID.uuidString]]
+  push.handle(payload:remote)
+  check(push.pendingReelJobID==serverID && push.pendingRoute==nil,"server-ready notification routes through saved job review")
+  push.clearPendingReelJob()
+  var foreign=remote;foreign["recipient_user_id"]=other.owner.uuidString
+  push.handle(payload:foreign)
+  check(push.pendingReelJobID==nil && push.pendingRoute==nil,"foreign recipient cannot route a server property video")
+  push.handle(payload:["recipient_user_id":owner.owner.uuidString,"category":"render_ready","data":["property_video_job_id":serverID.uuidString,"reel_job_id":"invalid"],"deep_link":"rendprop://f/ignored"])
+  check(push.pendingReelJobID==nil && push.pendingRoute==nil,"malformed server-ready notice cannot fall through to unrelated tour")
+  push.handle(payload:["recipient_user_id":owner.owner.uuidString,"category":"render_ready","data":["slug":"recorded-tour"],"deep_link":"rendprop://f/recorded-tour"])
+  check(push.pendingReelJobID==nil && push.pendingRoute != nil,"ordinary recorded render notification keeps its existing tour route")
   reset();ReelCompletionNotice.post(success:true,identity:owner,listingID:listingID,jobID:id)
   PushManager.currentIdentity=other;center.answer(.authorized);await tick()
   check(center.requests.isEmpty,"account replacement during OS settings cannot enqueue old result")

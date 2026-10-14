@@ -720,6 +720,8 @@ test("private media is bound to org and listing and rejects unsafe or expired UR
   };
   const result = decodeMedia(dto, ORG, LISTING);
   assert.equal(result.photos[0]?.isStaged, true);
+  assert.equal(decodeMedia({ ...dto, photos: [{ ...dto.photos[0], edit_kind: "stage", original_verified: true }] }, ORG, LISTING).photos[0]?.editKind, "stage");
+  for (const extra of [{ edit_kind: "caption-guessed-stage" }, { original_verified: "true" }]) assert.throws(() => decodeMedia({ ...dto, photos: [{ ...dto.photos[0], ...extra }] }, ORG, LISTING));
   assert.throws(
     () => decodeMedia({ ...dto, org_id: OTHER_ORG }, ORG, LISTING),
     code("identity-mismatch"),
@@ -1231,4 +1233,19 @@ test("all listing pages share one total deadline rather than resetting per page"
   await services.loadWorkspace();const pending=services.listListings(ORG);const signal=await started.promise;
   clock.advance(10);await assert.rejects(pending,code("timeout"));assert.equal(signal.aborted,true);
   late.reject(new Error("late synthetic page"));await new Promise(resolve=>setImmediate(resolve));assert.equal(clock.pending(),0);services.dispose();
+});
+
+test("property video consent is sent only to exact admitted routes and owned audio is bounded without automatic replay",async()=>{
+ const auth=mockAuth();const calls:{path:string;headers:Headers;body:unknown}[]=[];
+ const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
+  if(url.pathname.includes('/property-video-')){calls.push({path:url.pathname,headers:new Headers(options.headers),body:options.body});return options.method==='PUT'?json({},401):json({accepted:true});}return fixtureResponse(url);
+ })});await services.loadWorkspace();
+ await services.api('/functions/v1/property-video-jobs',{orgId:ORG,method:'POST',body:{},aiConsent:'property-video-jobs-v1'});
+ await services.api('/functions/v1/property-video-plan',{orgId:ORG,method:'POST',body:{},aiConsent:'property-video-plan-v1'});
+ assert.equal(calls[0]!.headers.get('X-Rendprop-AI-Consent'),'property-video-jobs-v1');assert.equal(calls[1]!.headers.get('X-Rendprop-AI-Consent'),'property-video-plan-v1');
+ for(const [path,method,consent]of [['/functions/v1/studio/voice','POST','property-video-jobs-v1'],['/functions/v1/property-video-jobs','GET','property-video-jobs-v1'],['/functions/v1/property-video-plan','POST','property-video-jobs-v1']])await assert.rejects(services.api(path!,{orgId:ORG,method:method!,aiConsent:consent!}as any));
+ const path=`/functions/v1/property-video-jobs/audio/${PHOTO}/content`,file=new Blob(['owned voice']);
+ for(const options of [{method:'POST',binary:file},{method:'PUT',binary:new Blob([])},{method:'PUT',binary:new Blob([new Uint8Array(20*1024*1024+1)])},{method:'PUT',binary:file,body:{}}])await assert.rejects(services.api(path,{orgId:ORG,...options}as any));
+ await services.api(`/functions/v1/property-video-jobs/${PHOTO}/resume`,{orgId:ORG,method:'POST',body:{},aiConsent:'property-video-jobs-v1'});assert.equal(calls[2]!.headers.get('X-Rendprop-AI-Consent'),'property-video-jobs-v1');
+ assert.equal(calls.length,3);await assert.rejects(services.api(path,{orgId:ORG,method:'PUT',binary:file}));assert.equal(calls.length,4);assert.equal(calls[3]!.headers.get('Content-Type'),'application/octet-stream');assert.equal(calls[3]!.headers.get('X-Org-Id'),ORG);assert.equal(calls[3]!.body,file);assert.equal(auth.refreshCalls(),0);services.dispose();
 });

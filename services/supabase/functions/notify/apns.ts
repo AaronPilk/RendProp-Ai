@@ -157,7 +157,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * Keep only identifiers needed for navigation; never buyer or account facts. */
 export function pushRouteData(input: Record<string, unknown>): Record<string, string> {
   const data: Record<string, string> = {};
-  for (const key of ["lead_id", "listing_id", "render_id"]) {
+  for (const key of ["lead_id", "listing_id", "render_id", "property_video_job_id", "reel_job_id"]) {
     const value = input[key];
     if (typeof value === "string" && UUID.test(value)) data[key] = value;
   }

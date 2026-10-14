@@ -7,10 +7,11 @@ import CoreMotion
 /// ultra-wide lens, provider call or durable-save claim is involved here.
 struct GuidedPhotoCamera: UIViewControllerRepresentable {
     let purpose: PhotoCapturePurpose
+    var captureIntent: CaptureGuideIntent = .listingPhotos
     let onPicked: @MainActor (UIImage) async -> String?
     let onCancel: () -> Void
     func makeUIViewController(context: Context) -> UIViewController {
-        GuidedPhotoController(purpose: purpose, onPicked: onPicked, onCancel: onCancel)
+        GuidedPhotoController(purpose: purpose, captureIntent: captureIntent, onPicked: onPicked, onCancel: onCancel)
     }
     func updateUIViewController(_ controller: UIViewController, context: Context) {
         (controller as? GuidedPhotoController)?.checkIdentity()
@@ -243,6 +244,7 @@ private final class GuidedPhotoSurface: UIView {
 
 @MainActor private final class GuidedPhotoController: UIViewController {
     private let purpose: PhotoCapturePurpose
+    private let captureIntent: CaptureGuideIntent
     private let onPicked: @MainActor (UIImage) async -> String?
     private let onCancel: () -> Void
     private let owner: String?
@@ -266,8 +268,8 @@ private final class GuidedPhotoSurface: UIView {
         MainActor.assumeIsolated { self?.receive(token: token, event: event) }
     }
 
-    init(purpose: PhotoCapturePurpose, onPicked: @escaping @MainActor (UIImage) async -> String?, onCancel: @escaping () -> Void) {
-        self.purpose = purpose; self.onPicked = onPicked; self.onCancel = onCancel
+    init(purpose: PhotoCapturePurpose, captureIntent: CaptureGuideIntent, onPicked: @escaping @MainActor (UIImage) async -> String?, onCancel: @escaping () -> Void) {
+        self.purpose = purpose; self.captureIntent = captureIntent; self.onPicked = onPicked; self.onCancel = onCancel
         owner = AuthStore.shared.userID; revision = AuthStore.shared.syncSessionRevision
         workspaceID = WorkspaceContext.selectedOrgID
         super.init(nibName: nil, bundle: nil)
@@ -325,9 +327,9 @@ private final class GuidedPhotoSurface: UIView {
         value.addTarget(self, action: action, for: .touchUpInside); canvas.addSubview(value)
     }
     private var compositionHint: String {
-        purpose == .interior
-            ? "Hold landscape from a corner. Keep walls straight. Step back for 1×."
-            : "Hold landscape. Fit the roof and both sides. Keep phone upright."
+        captureIntent == .socialPhotos ? "Hold portrait for social video. Keep important features in the middle. Keep the horizon level." : purpose == .interior
+            ? "Hold sideways. Use 0.5× when needed to fit the room. Keep the phone level."
+            : "Hold landscape. Fit the roof and both sides. Keep the horizon level."
     }
     private func updateControlFonts() {
         // The body/error message retains full Dynamic Type. Fixed-height camera

@@ -100,7 +100,7 @@ async function compiled(mutation?: Mutation) {
     ${functionBody("spaceTypeOf")}
     ${functionBody("driftMotionText")}
     export function make(deps:any){
-      const adminClient=()=>deps.admin,orgForUser=deps.orgForUser,contentOrgForUser=deps.contentOrg;
+      const adminClient=()=>deps.admin,orgForUser=deps.orgForUser,contentOrgForUser=deps.contentOrg;const rpc=(name:string,args:any)=>adminClient().rpc(name,args);
       const requireLibraryWrite=deps.libraryWrite,assertPaidAiIdentity=deps.paidIdentity;
       const preferredOrg=(req:Request)=>req.headers.get("x-org-id")||undefined;
       const durableRateLimit=deps.rate;
@@ -111,7 +111,7 @@ async function compiled(mutation?: Mutation) {
       const refundRateLimit=trap("refundRate"),refundRejectedClipAllowance=trap("allowanceRefund"),recordRoutedAiCost=trap("costWrite"),stampProvenanceQc=trap("provenanceWrite");
       ${functionBody("guardDriftCheck")}
       ${cache}
-      return async(req:Request)=>{const user={id:deps.actor},seg=["drift"];try{${route}\nthrow new HttpError(405,"missing route");}catch(error){return respondError(error);}};
+      return async(req:Request)=>{const worker=undefined,user={id:deps.actor},seg=["drift"];try{${route}\nthrow new HttpError(405,"missing route");}catch(error){return respondError(error);}};
     }
   `));
 }

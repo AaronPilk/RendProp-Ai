@@ -6,6 +6,17 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
+The build79 source adds a beginner **Make a video** flow using exact saved property
+photos, up to100 shots, Listing16:9 or Social9:16, optional voice/music, private
+review and explicit website selection. **Advanced desktop editor** stays available
+and loads only when opened. Large selected masters use a server-registered video
+processing copy; unchanged originals remain available for export. Matching job,
+preparation and renderer deployment plus real-provider/browser acceptance are
+required before calling this flow live. The total gzip budget is now400,000B
+(owner-approved14 October), with initial160,000B and Create260,000B unchanged;
+historical350,000B limits below describe their dated releases. The default
+MakeVideo dynamic entry is included in the measured Create closure.
+
 The [6 October candidate](../../docs/handoff/LAUNCH-READINESS-20261006.md) adds
 personal contact cards with explicit Save, separate workspace branding,
 deliberately selected per-member hosted listings, industry-specific detail forms,

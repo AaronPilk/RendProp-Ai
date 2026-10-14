@@ -1,5 +1,5 @@
 import { requireLibraryWrite, libraryBillingOrg, listingLibraryScope } from "../_shared/library-access.ts";
-import { fundingContext, fundedAttempt, completeFundingOperation, FundingAdmissionError, textAttemptQuote, visionInputTokenBound, unlimitedSponsored, type FundingContext } from "../_shared/funded-serving.ts";
+import { fundingContext, fundedAttempt, completeFundingOperation, FundingAdmissionError, textAttemptQuote, routeCatalogQuote, ceilingVerifiedQuote, visionInputTokenBound, unlimitedSponsored, type FundingContext } from "../_shared/funded-serving.ts";
 import { beginDriftCheck, finishDriftCheck } from "./drift-funding.ts";
 // ai-video — server-side AI video suite on fal.ai (owner-authenticated).
 //
@@ -210,7 +210,7 @@ import { durableRateLimit, refundRateLimit, chargeRateReceipt, refundRateReceipt
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
 import { entitlementFor, entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
-import { optionalUuid, recordProvenance } from "../_shared/provenance.ts";
+import { optionalUuid, recordProvenance, type ProvenanceArgs, type ProvenanceResult } from "../_shared/provenance.ts";
 import {
   DRIFT_SOURCE_EXTRA_INPUT_TOKENS,
   MAX_DRIFT_FRAME_B64_CHARS,
@@ -238,7 +238,7 @@ import { createRoutedOutput } from "./routed-output.ts";
 import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
 import { ownerQaReelStep, prepareOwnerQaReelInput } from "./owner-reel-qa.ts";
-import { buildPhotoPreservingReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
+import { buildPhotoPreservingReelPrompt, buildPropertyCanvasReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
 import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
@@ -520,9 +520,9 @@ const DRIFT_LINEAGE_WINDOW_SECONDS = 6 * 3600;
 // SQL app_video_refund_drift caps current-window refunds at 20.
 
 /** Role gate + burst limiter for the check. Mirrors ai-copy's guardAssist(). */
-async function guardDriftCheck(user: PaidAiCaller, req: Request): Promise<string> {
+async function guardDriftCheck(user: PaidAiCaller, req: Request, listing?: string): Promise<string> {
   const userId = user.id;
-  const orgId = await orgForUser(userId, preferredOrg(req));
+  const orgId = listing ? await contentOrgForUser(userId, preferredOrg(req), listing, true) : await orgForUser(userId, preferredOrg(req));
   await requireLibraryWrite(adminClient(), userId, orgId);
   await assertPaidAiIdentity(user, orgId);
   if (!(await durableRateLimit(`aidrift:${orgId}`, DRIFT_MAX_PER_WINDOW, DRIFT_WINDOW_SECONDS))) {
@@ -1092,13 +1092,33 @@ const eraseHandler = createEraseHandler({
   }),
 });
 
-Deno.serve(async (req) => {
+/** Trusted in-process worker scope, built only after service job/lease authority.
+ * HTTP entry below never accepts this object or an actor header. No JWT stored. */
+/** Current route catalog and existing paid judge bounds; no dispatch/meter.
+ * This recipe quote is a precheck, not an atomic promise of future capacity. */
+export async function propertyVideoRecipeQuote(actor:string,org:string,listing:string,aspect:'16:9'|'9:16',count:number){
+ const ent=await entitlementForCharge(org),task='video.reel_clip';
+ const owner=await ownerQaReelStep({actorId:actor,orgId:org,listingId:listing,seconds:5,framing:'preserve_photo'});
+ const candidates=owner?[owner]:await resolveChain(task,{plan:ent.plan,needs:['i2v','1080p','5s'],carries_customer_media:true},legacyVideoStep(task,MODEL_I2V,'second',APP_AI_UNIT_CENTS.seedance_per_s,['i2v','1080p','5s','16:9','9:16']));
+ const steps=reelFramingSteps(candidates,'preserve_photo');assert(steps.length>0,503,'No supported property-video quality route is currently available.');
+ const input={task,seconds:5,resolution:'1080p',aspect,framing:'preserve_photo',extra:{...(owner?paramsOf(owner)??{}:{}),property_video_target_aspect:aspect}};
+ const step=steps[0],catalog=routeCatalogQuote(step,input),verified=ceilingVerifiedQuote(step,input,catalog);assert(catalog&&verified,503,'The complete video recipe could not be priced safely.');
+ const perShot=Math.max(catalog.cents,verified.cents),rubric=driftRubric({kind:'reel',sceneNoun:'property',motionText:'X'.repeat(2000)}),judgeSteps=await driftChain(ent.plan);
+ const quotes=judgeSteps.map(s=>textAttemptQuote(s,rubric,'',DRIFT_MAX_TOKENS,true,visionInputTokenBound(4,new TextEncoder().encode(rubric).length)+DRIFT_SOURCE_EXTRA_INPUT_TOKENS));assert(quotes.length&&quotes.every(q=>q&&Number.isFinite(q.cents)&&q.cents>0),503,'The complete video quality review could not be priced safely.');
+ const perQC=2*quotes.reduce((total,q)=>total+q!.cents,0),estimated=Math.ceil((perShot+perQC)*count*10000)/10000;
+ return{source_count:count,estimated_cents:estimated,reel_cents:perShot*count,qc_cents:perQC*count,planning_cents:0,narration_cents:0,provider:step.provider,model:step.model,basis:'current_catalog_and_documented_bounds',atomic_reservation:false};
+}
+export interface AiVideoWorkerScope {user:PaidAiCaller;listing:string;targetAspect?:'16:9'|'9:16';accepted?:(receipt:{request_id:string;status_url:string;response_url:string;model_id:string;seconds:number})=>Promise<void>;authorize:()=>Promise<void>;provenance:(args:ProvenanceArgs)=>Promise<ProvenanceResult>}
+export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {
   if (req.method === "OPTIONS") return handleOptions();
 
   try {
-    const user = await getUser(req); // auth required on every route (also guards the FAL key)
-    const db = userClient(req); // RLS: the caller only sees their own org's assets
+    const user = worker?.user ?? await getUser(req); // ordinary HTTP always validates Auth
+    const db = worker ? adminClient() : userClient(req);
     const seg = pathSegments(req, "ai-video");
+    if(worker){await worker.authorize();assert(seg.length===1&&((req.method==='POST'&&['reel-clip','drift'].includes(seg[0]))||(req.method==='GET'&&seg[0]==='status')),403,'This worker scope is limited to its admitted photo clip.');}
+    const rpc=async(name:string,args:Record<string,unknown>)=>{if(worker&&['app_video_cost_reserve_v2','serving_cost_reserve'].includes(name))await worker.authorize();return await adminClient().rpc(name,args);};
+    const provenance=(args:ProvenanceArgs)=>worker?worker.provenance(args):recordProvenance(req,args);
 
     // Reflection removal has durable, caller-scoped jobs. Other video routes
     // keep their existing status transport and allowance behavior.
@@ -1201,7 +1221,7 @@ Deno.serve(async (req) => {
           meta: { tier, upscale_factor: upscale, target_fps: fps, interpolated: interpolate,
             estimate_cents: reservation.cents, output_fps: outputFps },
         }, {
-          rpc: async (name, args) => await adminClient().rpc(name, args),
+          rpc,
           submit: (step) => runChain(task, [step], (selected) => adapterFor(selected.provider).submit(selected, genInput)),
         });
       } catch (e) {
@@ -1347,7 +1367,7 @@ Deno.serve(async (req) => {
           meta: { grounded, seconds, aspect, motion: aerialMove.motion,
             ...(aerialMove.substituted ? { motion_requested: aerialMove.requested } : {}) },
         }, {
-          rpc: async (name, args) => await adminClient().rpc(name, args),
+          rpc,
           submit: (step) => runChain(task, [step], (selected) => adapterFor(selected.provider).submit(selected, genInput)),
         });
       } catch (e) {
@@ -1364,7 +1384,7 @@ Deno.serve(async (req) => {
       // disclosure test names exactly this case, and WI Act 69 covers generated
       // video from 1 Jan 2027. Recorded at submit; the app attaches the finished
       // clip later via PATCH /me/compliance/:id.
-      const prov = await recordProvenance(req, {
+      const prov = await provenance({
         listingId: body.listing_id ?? assetListingId,
         kind: "aerial",
         label: body.label ?? "Aerial intro",
@@ -1496,7 +1516,7 @@ Deno.serve(async (req) => {
       }
       const reelText = presetVersion === 1
         ? framing === "preserve_photo"
-          ? buildPhotoPreservingReelPrompt(SCENE_NOUN[space], shotMotion as typeof REEL_PRESETS[number])
+          ? worker?.targetAspect ? buildPropertyCanvasReelPrompt(SCENE_NOUN[space],shotMotion as typeof REEL_PRESETS[number],worker.targetAspect) : buildPhotoPreservingReelPrompt(SCENE_NOUN[space], shotMotion as typeof REEL_PRESETS[number])
           : buildSeedanceReelPreset(SCENE_NOUN[space], shotMotion as typeof REEL_PRESETS[number])
         : userMotion
         ? guardedUserPrompt(userMotion, space, "Animate")
@@ -1556,7 +1576,7 @@ Deno.serve(async (req) => {
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
         ...(framing ? { framing } : {}),
-        ...(ownerQaStep?.model === "kling-3.0/video" ? { extra: paramsOf(ownerQaStep) ?? {} } : {}),
+        ...((ownerQaStep?.model === "kling-3.0/video" || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}) } } : {}),
       };
       // A priced hold precedes one POST. Definitive refusal releases it;
       // transport ambiguity retains it without another provider attempt.
@@ -1574,9 +1594,10 @@ Deno.serve(async (req) => {
           // (TestFlight 59, 2026-10-11). The preset is identified by `motion`.
           meta: { seconds: secs, ...(chosenMotion ? { motion: chosenMotion } : {}), ...(presetVersion === 1 && reelAspect ? { aspect: reelAspect } : {}) },
         }, {
-          rpc: async (name, args) => await adminClient().rpc(name, args),
+          rpc,
           submit: (selected) => runChain(task, [selected], async (step) => {
           try {
+            if(worker)await worker.authorize();
             const providerInput = ownerQaStep ? await prepareOwnerQaReelInput(
               { actorId: user.id, orgId, listingId: String(body.listing_id ?? reelListingId) }, genInput, {
                 authorize: async () => {
@@ -1629,11 +1650,12 @@ Deno.serve(async (req) => {
         throw e;
       }
       const step = attempt.step;
-      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id, listingId: body.listing_id ?? reelListingId });
+      const sub = await submitEnvelope(req, routerOn || !!worker, task, attempt.value, { orgId, userId: user.id, listingId: body.listing_id ?? reelListingId });
+      if(worker?.accepted)await worker.accepted({...sub,model_id:step.model,seconds:secs});
 
       // submitReservedVideo settled one ledger row or retained its priced hold.
 
-      const prov = await recordProvenance(req, {
+      const prov = await provenance({
         listingId: body.listing_id ?? reelListingId,
         kind: "reel",
         label: body.label ?? null,
@@ -1714,7 +1736,7 @@ Deno.serve(async (req) => {
       assert(body.listing_id == null || optionalUuid(body.listing_id) !== null,
         400, "listing_id must be a valid listing identifier.", "validation");
 
-      const orgId = await guardDriftCheck(user, req);
+      const orgId = await guardDriftCheck(user, req,worker?.listing);
 
       const cached = await cachedDriftResponse({ actor: user.id, orgId, requestId, kind,
         sourceB64: source.b64, listingId: optionalUuid(body.listing_id), provenanceId, sourceAssetId });
@@ -1725,7 +1747,7 @@ Deno.serve(async (req) => {
       // Old uncertain holds stay counted; changed client nonces cannot replay.
       const check = await beginDriftCheck({ actor: user.id, orgId, requestId, kind,
         sourceHash: await driftLineageKey(source.b64), listingId: optionalUuid(body.listing_id),
-        req, input: body, rpc: (name,args)=>adminClient().rpc(name,args) });
+        req, input: body, rpc });
       if (check.replay) return json(check.replay);
       const funding = check.funding!;
       let judged: JudgeOutcome;
@@ -2001,7 +2023,8 @@ Deno.serve(async (req) => {
   } catch (err) {
     return respondError(err);
   }
-});
+}
+if(import.meta.main)Deno.serve(req=>handleAiVideo(req));
 
 // ── routed job status (poll + persist through the adapter) ────────────────────
 

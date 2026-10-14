@@ -22,42 +22,15 @@
 //      and a disclosure the owner never agreed to. Every tour handed to this
 //      builder must already have been filtered by that same predicate.
 //
-// WHAT IT CAN ENUMERATE TODAY, AND WHAT IS MISSING
-// Nothing in `services/supabase/functions` can list published tours: `tours/`
-// answers `GET /tours/:slug` (one slug) and `portfolio/` answers
-// `GET /portfolio/:handle` (one handle). There is no index route, and adding
-// one is a Supabase change, not a Worker change. So this ships with exactly
-// what the Worker can know on its own — the marketing pages, the legal pages,
-// the demo tour and the demo portfolio, all of which are Rendprop's own content
-// — and the `tours`/`portfolios` inputs below are already the shape the missing
-// endpoint has to fill.
-//
-//   THE ENDPOINT THIS NEEDS (to be added to services/supabase/functions/tours):
-//
-//     GET /tours/index?since=<iso>&cursor=<opaque>&limit=<n>
-//       → { tours: [ { slug, published_at, allow_indexing } ],
-//           portfolios: [ { handle, updated_at } ],
-//           next_cursor: string | null }
-//
-//     • `slug`          renders.slug of the LATEST published render per listing
-//                       (the same row `GET /tours/:slug` resolves).
-//     • `published_at`  renders.published_at — the real timestamp, for lastmod.
-//     • `allow_indexing` the resolved opt-in: listings.details.allow_indexing
-//                       ?? orgs.brand_kit.allow_indexing, i.e. exactly what
-//                       `allowsIndexing()` reads. It must be resolved SERVER
-//                       side: the Worker cannot fetch every tour to find out.
-//     • Only rows with `published_at IS NOT NULL`, `listings.deleted_at IS
-//       NULL` and `status <> 'archived'` — an unpublished or deleted tour must
-//       leave the sitemap the same day it leaves the site.
-//     • `portfolios`    orgs.handle for every org with at least one such tour,
-//                       with the newest of those `published_at` as `updated_at`.
-//     • Paginated: a sitemap file caps at 50,000 URLs / 50 MB, so a cursor is
-//       needed before the first 50,000 tours, not after.
-//
-// Until that exists this file adds nothing invented. A sitemap that lists tours
-// it cannot prove are published is worse than a small one.
+// Current customer enumeration comes from the fresh, service-filtered
+// `GET /tours/index`. The index names bounded200-publication child files.
+// The static marketing/demo child keeps its actual edit dates separately.
+// Neither an upstream failure nor a truncated page list becomes a partial
+// success. Customer index/child responses are no-store for publication revocation.
 
 /** One `<url>` entry. `lastmod` is omitted when there is no real date for it. */
+import { propertyAddressPath } from "./property-seo";
+
 export interface SitemapEntry {
   loc: string;
   lastmod?: string;
@@ -186,4 +159,54 @@ export function sitemapXml(
 ${entries.map((e) => urlBlock(base, e)).join("\n")}
 </urlset>
 `;
+}
+
+const CURSOR_RE = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
+export const sitemapCursor = (value: unknown): value is string =>
+  typeof value === "string" && CURSOR_RE.test(value);
+
+/** Each child is at most200 current, opted-in publications. An incomplete
+ * index refuses instead of silently hiding listings after a service limit. */
+export function propertySitemapCursors(value: unknown): (string | null)[] | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (v.page_size !== 200 || v.truncated !== false || !Array.isArray(v.pages)
+      || v.pages.length < 1 || v.pages.length > 250) return null;
+  const cursors: (string | null)[] = [];
+  for (const row of v.pages) {
+    if (!row || typeof row !== "object") return null;
+    const cursor = (row as Record<string, unknown>).cursor;
+    if (cursors.length === 0 ? cursor !== null : !sitemapCursor(cursor)) return null;
+    if (cursors.includes(cursor as string | null)) return null;
+    cursors.push(cursor as string | null);
+  }
+  return cursors;
+}
+
+export function sitemapIndexXml(origin: string, cursors: (string | null)[]): string {
+  const paths = ["/sitemap-site.xml", ...cursors.map(cursor =>
+    "/sitemap-properties.xml" + (cursor ? "?cursor=" + encodeURIComponent(cursor) : ""))];
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${paths.map(path => `  <sitemap><loc>${escapeXml(origin + path)}</loc></sitemap>`).join("\n")}\n</sitemapindex>\n`;
+}
+
+/** Refuse a malformed upstream page as a whole. No private or opted-out
+ * fallback rows, guessed addresses, preview links or unbranded URLs. */
+export function propertySitemapXml(origin: string, value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (!Array.isArray(v.tours) || v.tours.length > 200
+      || !(v.next_cursor === null || sitemapCursor(v.next_cursor))) return null;
+  const entries: SitemapEntry[] = [];
+  const seen = new Set<string>();
+  for (const item of v.tours) {
+    if (!item || typeof item !== "object") return null;
+    const row = item as Record<string, unknown>;
+    if (typeof row.slug !== "string" || !SLUG_RE.test(row.slug)
+        || seen.has(row.slug) || row.allow_indexing !== true
+        || typeof row.published_at !== "string" || !lastmodOf(row.published_at)
+        || (row.address != null && (typeof row.address !== "string" || row.address.length > 500))) return null;
+    seen.add(row.slug);
+    entries.push({loc: propertyAddressPath(row.slug, row.address), lastmod: lastmodOf(row.published_at)});
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${entries.map(e => urlBlock(origin, e)).join("\n")}\n</urlset>\n`;
 }

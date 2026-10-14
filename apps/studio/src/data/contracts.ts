@@ -81,6 +81,8 @@ export type StudioPhoto = {
   isStaged: boolean;
   isAltered?: boolean;
   originalUrl?: string | null;
+  editKind?: "declutter" | "stage" | "sky" | "twilight" | "lawn" | "custom" | null;
+  originalVerified?: boolean;
   sort: number;
 };
 export type StudioVideo = {
@@ -156,6 +158,10 @@ export type StudioPhotoDTO = {
   expires_at: string;
   caption: string | null;
   is_staged: boolean;
+  is_altered?: boolean;
+  original_url?: string | null;
+  edit_kind?: StudioPhoto["editKind"];
+  original_verified?: boolean;
   sort: number;
 };
 export type StudioVideoDTO = {
@@ -617,12 +623,16 @@ export function decodeMedia(
   const photos = photoRows.map((raw) => {
     const { item, ...base } = common(raw);
     if (typeof item.is_staged !== "boolean") invalid("photo is_staged");
+    if (item.edit_kind !== undefined && item.edit_kind !== null && !["declutter", "stage", "sky", "twilight", "lawn", "custom"].includes(String(item.edit_kind))) invalid("photo edit_kind");
+    if (item.original_verified !== undefined && typeof item.original_verified !== "boolean") invalid("photo original_verified");
     return {
       ...base,
       caption: nullableString(item.caption, "photo caption"),
       isStaged: item.is_staged,
       ...(item.is_altered === undefined ? {} : { isAltered: item.is_altered === true }),
       ...(item.original_url === undefined ? {} : { originalUrl: item.original_url === null ? null : mediaURL(item.original_url, orgId, listingId, base.expiresAt, now, actor) }),
+      ...(item.edit_kind === undefined ? {} : { editKind: item.edit_kind as StudioPhoto["editKind"] }),
+      ...(item.original_verified === undefined ? {} : { originalVerified: item.original_verified }),
       sort: integer(item.sort, "photo sort"),
     };
   });

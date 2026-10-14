@@ -566,7 +566,7 @@ final class PushManager: ObservableObject {
         let type = ((payload["category"] as? String) ?? (bag["type"] as? String))?.lowercased() ?? ""
         let facts = (payload["data"] as? [AnyHashable: Any]) ?? bag
 
-        if type == "reel_done" {
+        if type == "reel_done" || (type == "render_ready" && facts["property_video_job_id"] != nil) {
             if let raw = facts["reel_job_id"] as? String, let jobID = UUID(uuidString: raw) {
                 pendingReelJobID = jobID
             }

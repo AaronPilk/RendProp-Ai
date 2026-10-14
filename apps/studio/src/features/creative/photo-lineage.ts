@@ -32,8 +32,23 @@ export async function propertyPhoto(photo: StudioPhoto, signal: AbortSignal): Pr
       : Promise.resolve(null),
   ]);
   signal.throwIfAborted();
-  return { ...current, original: altered ? original : current, originalVerified: !altered,
+  return { ...current, original: altered ? original : current, originalVerified: !altered || !!original && photo.originalVerified === true,
     disclosures: altered && photo.caption ? [photo.caption] : [], edits: altered ? ["Earlier AI edits"] : [] };
+}
+/** Main editing always starts from the actual paired original, never the saved result. */
+export async function propertyOriginalPhoto(photo: StudioPhoto, signal: AbortSignal): Promise<PhotoSource> {
+  const altered = photo.isAltered || photo.isStaged;
+  const url = altered ? photo.originalUrl : photo.url;
+  if (!url) throw new Error("This saved result has no available original. Import the original to make a new edit.");
+  const original = await imageFromURL(url, "original-photo.jpg", signal);
+  signal.throwIfAborted();
+  return { ...importedPhoto(original), originalVerified: !altered || photo.originalVerified === true };
+}
+export type PhotoLibraryTab = "original" | "declutter" | "stage" | "saved";
+export function photosInTab(photos: readonly StudioPhoto[], tab: PhotoLibraryTab): StudioPhoto[] {
+  if (tab === "original") return photos.filter(photo => !(photo.isAltered || photo.isStaged) || !!photo.originalUrl);
+  if (tab === "saved") return photos.filter(photo => (photo.isAltered || photo.isStaged) && photo.editKind !== "declutter" && photo.editKind !== "stage");
+  return photos.filter(photo => (photo.isAltered || photo.isStaged) && photo.editKind === tab);
 }
 export function inputForEdit(source: PhotoSource, edit: Edit): PhotoSource {
   return edit === "stage" && source.stageBase ? source.stageBase : source;

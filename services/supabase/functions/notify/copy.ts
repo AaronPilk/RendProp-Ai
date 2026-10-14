@@ -180,6 +180,7 @@ export function render(category: string, payload: Data): RenderedMessage {
     }
 
     case "render_ready": {
+      if(str(data,"property_video_job_id"))return {title:"Your property video is ready",body:"Open Rendprop to review it before publishing."};
       const what = str(data, "listing_address") ?? "your listing";
       return {
         title: `Your tour of ${what} is ready`,

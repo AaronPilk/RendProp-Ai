@@ -95,7 +95,7 @@ enum PhotoVersionHistory {
         }
     }
     enum LibraryKind: String, CaseIterable, Identifiable, Sendable {
-        case latest = "Latest", decluttered = "Decluttered", staged = "Staged"
+        case original = "Original", latest = "Latest", decluttered = "Decluttered", staged = "Staged"
         var id: String { rawValue }
     }
     struct Version: Codable, Hashable, Sendable, Identifiable {
@@ -125,6 +125,9 @@ enum PhotoVersionHistory {
         var customReviewed: Bool? = nil
 
         var needsCustomReview: Bool { customReviewed == false }
+        var isRetainedOriginalSource: Bool {
+            parentID == nil && effects.isEmpty && imageFile == originalFile
+        }
         var needsStagingReview: Bool { effects.contains("stage") && stagingReviewed != true }
         var canAutomaticallySelectForListing: Bool { !effects.contains("stage") && !needsCustomReview }
 
@@ -153,6 +156,7 @@ enum PhotoVersionHistory {
         }
 
         var caption: String {
+            if edit == "capture-original" { return "Original capture. Its saved bytes stay unchanged when you create an AI edit." }
             var parts: [String] = []
             if let visibleLabel { parts.append(visibleLabel + ".") }
             if let reviewDisclosure, !reviewDisclosure.isEmpty { parts.append(reviewDisclosure) }
@@ -162,6 +166,7 @@ enum PhotoVersionHistory {
 
         var title: String {
             switch edit {
+            case "capture-original": return "Original"
             case "capture": return "Original enhancement"
             case "legacy": return "Earlier photo · history unverified"
             case "stage": return "Virtual staging" + (style.map { " · \($0.capitalized)" } ?? "")
@@ -179,6 +184,7 @@ enum PhotoVersionHistory {
         var exportSlug: String {
             let base: String
             switch edit {
+            case "capture-original": base = "original"
             case "capture": base = "enhanced"
             case "legacy": base = "earlier-unverified"
             case "stage": base = "virtually-staged" + (style.map { "-" + $0 } ?? "")
@@ -226,18 +232,19 @@ enum PhotoVersionHistory {
             guard let version = versions[id] else { return true }
             return !hiddenFamilies.contains(version.familyID) && current[version.familyID] == id
         }
-        /// A saved declutter remains available after staging. Choose one newest
-        /// matching version per photo; a staged photo is never a declutter-only
-        /// export, even when its lineage includes decluttering.
+        /// Every saved edit remains available. Originals and Latest have one
+        /// tile per source family; Staged and Decluttered retain every choice.
         func libraryVersions(_ kind: LibraryKind) -> [Version] {
             let candidates = versions.values.filter { version in
                 guard !hiddenFamilies.contains(version.familyID) else { return false }
                 switch kind {
+                case .original: return version.parentID == nil && version.effects.isEmpty && version.imageFile == version.originalFile
                 case .latest: return current[version.familyID] == version.id
                 case .decluttered: return version.effects.contains("declutter") && !version.effects.contains("stage")
                 case .staged: return version.effects.contains("stage")
                 }
             }.sorted { $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.id > $1.id }
+            if kind == .staged || kind == .decluttered { return candidates }
             var families: Set<String> = []
             return candidates.filter { families.insert($0.familyID).inserted }
         }
@@ -386,6 +393,35 @@ enum PhotoVersionHistory {
               values.isRegularFile == true, (values.fileSize ?? 0) > 0 else { throw Failure.missingImage }
     }
 
+    /// Register the exact retained capture as an immutable editing source.
+    /// Existing enhanced/AI IDs must never be reused for different image bytes.
+    /// Current and explicit publication selections stay unchanged.
+    static func ensureOriginalSources(directory: URL) throws -> Index {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        var changed = false
+        let captures = index.versions.values.filter {
+            $0.originalVerified && $0.parentID == nil && $0.effects.isEmpty && $0.originalFile != nil
+        }.sorted { $0.createdAt < $1.createdAt }
+        for capture in captures {
+            guard !index.hiddenFamilies.contains(capture.familyID), let file = capture.originalFile else { continue }
+            try requireImage(file, directory: directory)
+            if index.versions.values.contains(where: {
+                $0.familyID == capture.familyID && $0.parentID == nil && $0.imageFile == file && $0.originalFile == file
+            }) { continue }
+            let id = capture.familyID + "-original"
+            guard safeName(id), index.versions[id] == nil else { throw Failure.invalidHistory }
+            index.versions[id] = Version(id: id, familyID: capture.familyID, imageFile: file,
+                originalFile: file, originalVerified: true, parentID: nil, sourceID: nil, stagingBaseID: nil,
+                edit: "capture-original", style: nil, effects: [], sourceHistoryKnown: true, disclosure: nil,
+                provenanceID: nil, originalAssetID: nil, serverListingID: nil, provenanceRecorded: false,
+                createdAt: capture.createdAt)
+            changed = true
+        }
+        if changed { try save(index, directory: directory) }
+        return index
+    }
+
     /// Register only a newly captured/imported image whose pre-enhancement bytes
     /// this call owns. Older orig-* files may be AI predecessors, so never infer
     /// this guarantee from a filename.
@@ -441,15 +477,29 @@ enum PhotoVersionHistory {
     /// Other edits start from the current image. Missing bases fail rather than
     /// silently generating on top of old virtual furniture.
     static func source(for id: String, edit: String, directory: URL) throws -> Version {
+        try editContext(for: id, edit: edit, directory: directory).source
+    }
+
+    /// An original can start a new style while the family's newest saved edit
+    /// remains its concurrency parent. Freeze both before any paid request.
+    static func editContext(for id: String, edit: String, directory: URL) throws -> (parent: Version, source: Version) {
         let index = try load(directory: directory)
-        guard let parent = index.versions[id], index.isVisible(id) else { throw Failure.changedVersion }
+        guard let requested = index.versions[id], !index.hiddenFamilies.contains(requested.familyID) else { throw Failure.changedVersion }
+        if requested.isRetainedOriginalSource {
+            guard let currentID = index.current[requested.familyID], let parent = index.versions[currentID],
+                  index.isVisible(currentID) else { throw Failure.changedVersion }
+            try requireImage(requested.imageFile, directory: directory)
+            return (parent, requested)
+        }
+        guard index.isVisible(id) else { throw Failure.changedVersion }
+        let parent = requested
         let source: Version
         if edit == "stage", let base = parent.stagingBaseID {
             guard let saved = index.versions[base], saved.familyID == parent.familyID else { throw Failure.invalidHistory }
             source = saved
         } else { source = parent }
         try requireImage(source.imageFile, directory: directory)
-        return source
+        return (parent, source)
     }
 
     /// The image is staged under a name the legacy disk scanner cannot expose.
@@ -467,7 +517,7 @@ enum PhotoVersionHistory {
         guard let parent = index.versions[parentID], let source = index.versions[sourceID],
               parent.familyID == source.familyID, index.isVisible(parentID) else { throw Failure.changedVersion }
         let expectedSourceID = edit == "stage" ? (parent.stagingBaseID ?? parentID) : parentID
-        guard sourceID == expectedSourceID else { throw Failure.changedVersion }
+        guard sourceID == expectedSourceID || source.isRetainedOriginalSource else { throw Failure.changedVersion }
         try requireImage(source.imageFile, directory: directory)
         if let stagingReferenceID {
             guard edit == "stage", let reference = index.versions[stagingReferenceID],

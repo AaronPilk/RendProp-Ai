@@ -952,6 +952,8 @@ struct VideoSourcePicker: View {
     var onAsset: (CaptureAsset) -> Void
 
     @State private var showCapture = false
+    @State private var showOrientationGuide = false
+    @State private var captureAfterGuide = false
     @State private var showUploadChoice = false
     @State private var showPhotoPicker = false
     @State private var showFilesPicker = false
@@ -980,7 +982,7 @@ struct VideoSourcePicker: View {
                 subtitle: "Optional — walk slowly and steadily, with gentle turns",
                 icon: "record.circle.fill",
                 filled: onPhotosFirst == nil
-            ) { showCapture = true }
+            ) { showOrientationGuide = true }
 
             bigActionButton(
                 title: "Upload a video",
@@ -1004,6 +1006,13 @@ struct VideoSourcePicker: View {
                 }
                 .padding(.top, 4)
             }
+        }
+        .sheet(isPresented: $showOrientationGuide, onDismiss: {
+            if captureAfterGuide { captureAfterGuide = false; showCapture = true }
+        }) {
+            CaptureOrientationGuide(intent: .optionalWalkthrough, onContinue: {
+                captureAfterGuide = true; showOrientationGuide = false
+            }, onCancel: { captureAfterGuide = false; showOrientationGuide = false })
         }
         .fullScreenCover(isPresented: $showCapture) {
             CaptureView { asset in

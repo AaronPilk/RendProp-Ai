@@ -55,7 +55,10 @@ home_grid = block(app, 'private var featureGrid:')
 assert 'comingSoonTile("Floor plans & measurements"' in home_grid and home_grid.count('featureButton(.floorPlan)') == 1
 assert '#if SPATIAL_CAPTURE_LAB' in home_grid and '#else' in home_grid and '3dFloorPlan' not in home_grid
 assert 'Button("Add photos") { showReelPhotos = true }' in block(fly, 'private var photoPickerGrid:')
-assert 'refreshedPhotos = EnhancedPhoto.loadAll' in fly
+refresh_photos = block(fly, 'private func refreshVideoPhotos()')
+assert 'refreshedPhotos = try EnhancedPhoto.loadForListing(listingID: listing.id)' in refresh_photos
+assert 'refreshedPhotos = []' in refresh_photos and 'savedPhotoError = ' in refresh_photos
+assert 'selected.removeAll { !available.contains($0) }' in refresh_photos
 assert 'let chosen = selected.compactMap { id in reelPhotos.first' in fly
 assert 'let canPresent = mayPresentIncomingRoutes && scenePhase == .active' in block(app, 'private func drainIncomingRoutes()')
 assert 'NativeAccountLaunchAdmission.allowsRoutes(accountReady: accountReady, hasOnboarded: hasOnboarded)' in block(app, 'private var mayPresentIncomingRoutes:')

@@ -113,8 +113,9 @@ async function routingFixture() {
   assert(fragment.includes('const charge = await guardGenerate(user, req, "reel"'));
   assert(fragment.indexOf("guardGenerate(") < fragment.indexOf("ownerQaReelStep("));
   const dispatch = source.indexOf("await submitReservedVideo({", end);
-  const provenance = source.indexOf("await recordProvenance(req,", dispatch);
+  const provenance = source.indexOf("const prov = await provenance({", dispatch);
   assert(dispatch > end && provenance > dispatch, "Owner route bypassed priced dispatch/provenance");
+  assert(source.includes("const provenance=(args:ProvenanceArgs)=>worker?worker.provenance(args):recordProvenance(req,args);"),"ordinary HTTP provenance remains the existing authenticated writer");
   assert(source.slice(dispatch, provenance).includes('feature: "reel", steps, input: genInput, seconds: secs'));
   const module = await import(encode(`
     import {assert,HttpError} from ${JSON.stringify(new URL("../_shared/http.ts", import.meta.url).href)};

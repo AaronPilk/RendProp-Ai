@@ -75,7 +75,8 @@ for(const theme of ['basic','signature-estate','coastal-luxe'])for(const page of
   check(cfg(html).preview===true&&cfg(html).listingVideo.url===spec().url,'Preview uses exact authorized media, never fake template data');
   for(const target of ['home','gallery','location','contact']){
     const query=(target==='home'?'':'page='+target+'&amp;')+'preview_theme='+theme;
-    check(html.includes('href="/property/synthetic-video?'+query+'"'),'Preview navigation retains alias and chosen style');
+    const {propertyAddressPath}=await load('property-seo');
+    check(html.includes('href="'+propertyAddressPath(current.slug,current.listing.address)+'?'+query+'"'),'Preview navigation retains readable browser-only identity and chosen style');
   }
   upstreamStatus=404;const revoked=await get('/property/synthetic-video?'+suffix);
   check(revoked.status===404&&!(await revoked.text()).includes('123 Synthetic'),'Revoked listing has no remaining preview');upstreamStatus=200;

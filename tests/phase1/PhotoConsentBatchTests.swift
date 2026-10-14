@@ -106,18 +106,36 @@ struct UIImage {
     func jpegData(compressionQuality: Double) -> Data? { data }
 }
 @MainActor enum PhotoVersionHistory {
-    enum Failure: Error { case missingImage, changedVersion, reviewRequired }
+    enum Failure: Error { case missingImage, changedVersion, reviewRequired, invalidHistory }
     struct Version {
         var id: String; var imageFile: String; var originalFile: String?; var originalVerified = true
         var effects: [String] = []
+        var familyID: String { id }
+        var parentID: String? = nil
+        var stagingBaseID: String? = nil
 __VERSION_SELECTION_MEMBERS__
+    }
+    // File/history reads remain closed; source/parent selection above them is
+    // installed byte-for-byte from the production history implementation.
+    struct Index {
+        let versions: [String: Version]
+        var current: [String: String] { Dictionary(uniqueKeysWithValues: versions.keys.map { ($0, $0) }) }
+        let hiddenFamilies: Set<String> = []
+        func isVisible(_ id: String) -> Bool { versions[id] != nil }
+    }
+    static func load(directory: URL) throws -> Index {
+        Index(versions: Dictionary(uniqueKeysWithValues: PhotoBoundary.originals.keys.map { file in
+            let id = String(file.dropLast(4))
+            return (id, Version(id: id, imageFile: file, originalFile: file))
+        }))
+    }
+    static func requireImage(_ name: String, directory: URL) throws {
+        guard PhotoBoundary.originals[name] != nil else { throw Failure.missingImage }
     }
     static func trackExisting(id: String, imageFile: String, priorFile: String?, directory: URL) throws -> Version {
         .init(id: id, imageFile: imageFile, originalFile: priorFile ?? imageFile)
     }
-    static func source(for parent: String, edit: String, directory: URL) throws -> Version {
-        .init(id: parent, imageFile: parent + ".jpg", originalFile: parent + ".jpg")
-    }
+__ACTUAL_EDIT_CONTEXT__
     static func stagingReference(id: String, directory: URL) throws -> Version {
         throw Failure.reviewRequired // These consent-only cases never opt in.
     }

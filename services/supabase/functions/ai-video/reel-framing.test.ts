@@ -112,3 +112,8 @@ Deno.test("actual FAL Seedance preserves both legacy aspects and sends source-au
   }
   assertThrows(()=>falInput({...fal,model:"fal-ai/veo3.1/fast/image-to-video"},input),ProviderError);
 });
+
+Deno.test("server background targetcanvas reaches actualKlingPro andFAL1080 schemas, old native remains sourceauto",async()=>{
+ for(const aspect of['16:9','9:16']as const){const targeted={...input,aspect,extra:{...input.extra,property_video_target_aspect:aspect}};const r=await capturedSubmit(kieAdapter,step,targeted);assertEquals(r.calls[0].body.input.aspect_ratio,aspect);assertEquals(r.calls[0].body.input.mode,'pro');assertEquals(r.calls[0].body.input.duration,'5');assertEquals(r.calls[0].body.input.image_urls,[input.image_url]);const f=falInput({...step,provider:'fal',model:'bytedance/seedance/v1/pro/fast/image-to-video'},targeted);assertEquals(f.aspect_ratio,aspect);assertEquals(f.resolution,'1080p');assertEquals(f.image_url,input.image_url);assertEquals(f.duration,'5');}
+ const legacy=falInput({...step,provider:'fal',model:'bytedance/seedance/v1/pro/fast/image-to-video'},input);assertEquals(legacy.aspect_ratio,'auto');assertThrows(()=>falInput({...step,provider:'fal',model:'bytedance/seedance/v1/pro/fast/image-to-video'},{...input,extra:{property_video_target_aspect:'16:9'}}),ProviderError);await assertRejects(()=>capturedSubmit(kieAdapter,step,{...input,extra:{...input.extra,property_video_target_aspect:'16:9'}}),ProviderError);
+});

@@ -1,5 +1,9 @@
 \set ON_ERROR_STOP on
 begin;
+-- This oracle also executes at historical schema points. OrdinaryTeam must
+-- retain its unsponsored catalog money bound; all270 invariants pin the
+-- current50percent allocation catalog independently.
+
 do $$begin
  if current_database()<>'rendprop_private_testing' or inet_server_addr()is not null then raise exception 'Owned socket-only private testing fixture required';end if;
 end$$;
@@ -189,7 +193,7 @@ select pg_temp.private_denied('hard deleted grant retains private insertion fenc
 insert into org_internal_testing_grants(org_id,owner_user_id,unmetered_business_allowances)select host_org,host,true from private_fixture;
 select remove_private_internal_tester(host,host_org,benef)from private_fixture;
 select pg_temp.private_ok('removal preserves private content and default',not org_has_private_internal_testing(private_org)and org_seats_used(host_org)=1 and exists(select 1 from listings where id=f.private_listing)and(select active_org_id=f.empty_org from user_workspace_state where user_id=f.benef))from private_fixture f;
-select pg_temp.private_ok('retail Team context is absent and standard',private_internal_testing_host_mode(retail_user,retail_org)is null and private_internal_testing_context(retail_user,retail_org)is null and(org_entitlement(retail_org)).seats=2 and(org_entitlement(retail_org)).cogs_ceiling_cents=6000)from private_fixture;
+select pg_temp.private_ok('retail Team context is absent and standard',private_internal_testing_host_mode(retail_user,retail_org)is null and private_internal_testing_context(retail_user,retail_org)is null and(org_entitlement(retail_org)).seats=2 and(org_entitlement(retail_org)).cogs_ceiling_cents=(select cogs_ceiling_cents from public.plan_entitlements where plan='team'))from private_fixture;
 select create_org_invite(retail_user,retail_org,null,'marketing',repeat('8',64))from private_fixture;
 select accept_org_invite(foreign_user,repeat('8',64))from private_fixture;
 select pg_temp.private_ok('ordinary customer marketing seat keeps private library',exists(select 1 from memberships where user_id=f.foreign_user and org_id=f.retail_org and role='marketing')and(select not private_testing from org_invites where token_hash=repeat('8',64))and exists(select 1 from team_private_libraries where team_org_id=f.retail_org and agent_user_id=f.foreign_user and private_org_id=f.foreign_org)and not library_content_access(f.foreign_user,f.retail_org,false))from private_fixture f;

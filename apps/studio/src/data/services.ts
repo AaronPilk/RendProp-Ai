@@ -116,6 +116,7 @@ export type StudioRequestOptions = {
   body?: unknown;
   signal?: AbortSignal;
   idempotencyKey?: string;
+  aiConsent?: "property-video-jobs-v1" | "property-video-plan-v1";
   timeoutMs?: number;
   maxResponseBytes?: number;
 };
@@ -389,6 +390,7 @@ export function createStudioServices(
             if (options?.body !== undefined) headers["Content-Type"] = "application/json";
             if (options?.binary) headers["Content-Type"] = "application/octet-stream";
             if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
+            if (options?.aiConsent) headers["X-Rendprop-AI-Consent"] = options.aiConsent;
             const response = await fetcher(`${config.supabaseUrl}${path}`, {
               method,
               body: options?.binary ?? (options?.body === undefined ? undefined : JSON.stringify(options.body)),
@@ -514,7 +516,10 @@ export function createStudioServices(
       if (!/^\/functions\/v1\/[a-z][a-z0-9-]*(?:[/?][^#\\]*)?$/.test(path) ||
         path.includes("..") || /%2e|%2f|%5c|[\u0000-\u0020]/i.test(path))
         throw new StudioError("request-path", "Choose a valid Rendprop action.");
-      if (options.binary && (options.body !== undefined || options.method !== "PUT" || !/^\/functions\/v1\/studio\/project-media\/[a-f0-9-]{36}\/(?:[0-9]|1[0-5])$/.test(path) || options.binary.size < 1 || options.binary.size > 8*1024*1024))
+      const audioUpload = /^\/functions\/v1\/property-video-jobs\/audio\/[a-f0-9-]{36}\/content$/.test(path);
+      if (options.binary && (options.body !== undefined || options.method !== "PUT" ||
+        !(audioUpload || /^\/functions\/v1\/studio\/project-media\/[a-f0-9-]{36}\/(?:[0-9]|1[0-5])$/.test(path)) ||
+        options.binary.size < 1 || options.binary.size > (audioUpload ? 20 : 8)*1024*1024))
         throw new StudioError("request-size", "Choose a bounded project upload part.");
       const selected = uuid(options.orgId, "selected organization");
       const actor = await identity(options.signal);
@@ -526,6 +531,10 @@ export function createStudioServices(
         throw new StudioError("configuration", "The response limit is invalid.");
       if (options.idempotencyKey && !/^[a-zA-Z0-9:_-]{1,128}$/.test(options.idempotencyKey))
         throw new StudioError("request-key", "The action identifier is invalid.");
+      if (options.aiConsent && !(options.method === "POST" &&
+        ((path === "/functions/v1/property-video-jobs" || /^\/functions\/v1\/property-video-jobs\/[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}\/resume$/.test(path)) && options.aiConsent === "property-video-jobs-v1" ||
+         path === "/functions/v1/property-video-plan" && options.aiConsent === "property-video-plan-v1")))
+        throw new StudioError("request-consent", "Confirm AI processing for this saved-photo video action.");
       if (options.body !== undefined && new TextEncoder().encode(JSON.stringify(options.body)).byteLength > 32 * 1024 * 1024)
         throw new StudioError("request-size", "This request is too large. Choose a smaller image.");
       if (options.body !== undefined && (!options.method || options.method === "GET"))

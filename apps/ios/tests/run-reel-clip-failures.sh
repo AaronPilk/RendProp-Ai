@@ -36,7 +36,7 @@ cases=space[space.index('    case realEstate =',space.index('enum SpaceType:')):
 helpers+='enum SpaceType: String {\n'+cases+'}\n'
 loop=block(source,'                for (i, photo) in ordered.enumerated()')
 park=block(source,'    nonisolated private static func parkClips(').replace('private static','static',1)
-pending=(root/'apps/ios/Rendprop/Render/VideoAspectChoice.swift').read_text()+'\n'+(root/'apps/ios/Rendprop/Models/ListingVideo.swift').read_text()+'\n'+helpers+'\n'+pending
+pending=(root/'apps/ios/Rendprop/Render/VideoMusicContract.swift').read_text()+'\n'+(root/'apps/ios/Rendprop/Render/VideoAspectChoice.swift').read_text()+'\n'+(root/'apps/ios/Rendprop/Models/ListingVideo.swift').read_text()+'\n'+helpers+'\n'+pending
 assert 'Self.parkClips(billedClips, for: listingID, tmpDir: tmpDir)' in source
 assert 'failure = ReelClipIssue.failure(for: error' in source
 assert 'Button("Finish video from saved clips") { finishParkedReel() }' in source

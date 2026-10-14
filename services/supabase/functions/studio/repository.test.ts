@@ -26,6 +26,7 @@ function fixture() {
     photos: { data: [], error: null },
     capture_assets: { data: [], error: null },
     renders: { data: [], error: null },
+    media_provenance: { data: [], error: null },
   };
   const client = {
     rpc(_name: string, args: Record<string, string[]>) { return Promise.resolve({ data: { assets: Object.fromEntries(args.p_assets.map(id => [id, true])), renders: Object.fromEntries(args.p_renders.map(id => [id, true])), keys: Object.fromEntries(args.p_keys.map(key => [key, true])) }, error: null }); },
@@ -302,4 +303,30 @@ Deno.test("client headshots never consume property media page slots", async () =
   ];
   const data = await createStudioRepository(req, f.deps).read({ userId: user, orgId: org, listingId: listing }, 0);
   assertEquals(data.assets.map(row => row.id), [id(100)]);
+});
+
+Deno.test("selected-key provenance projection classifies saved results and refuses caption inference/conflicting legacy proofs", async () => {
+  const f = fixture(), repository = createStudioRepository(req, f.deps);
+  const original = `uploads/${org}/${listing}/original.jpg`, altered = `renders/${org}/${listing}/result.jpg`;
+  f.results.photos.data = [{ id: user, listing_id: listing, original_key: original, enhanced_key: altered, caption: "Decluttered · misleading editable caption", is_staged: true, sort: 0, created_at: "2026-10-14T00:00:00Z" }];
+  f.results.media_provenance.data = [{ org_id: org, listing_id: listing, altered_key: altered, original_key: original, kind: "virtual_stage", edit: "stage", qc: { publishable: true } }];
+  const handler = createStudioHandler({ ...repository, authorize: async () => ({ userId: user, orgId: org, listingId: listing }), rateLimit: async () => true, sign: async (_bucket, key) => `https://fixture.invalid/read/${encodeURIComponent(key)}`, now: () => 0 });
+  const request = () => new Request(`https://fixture.invalid/functions/v1/studio/media?org_id=${org}&listing_id=${listing}`);
+  const body = await (await handler(request())).json();
+  assertEquals(body.photos[0].edit_kind, "stage"); assertEquals(body.photos[0].original_verified, true);
+  const query = f.queries.find(query => query.table === "media_provenance")!;
+  assert(query.operations.some(op => op[0] === "eq" && op[1] === "org_id" && op[2] === org));
+  assert(query.operations.some(op => op[0] === "eq" && op[1] === "listing_id" && op[2] === listing));
+  assertEquals(query.operations.find(op => op[0] === "in"), ["in", "altered_key", [altered]]);
+  assertEquals(query.operations.find(op => op[0] === "limit"), ["limit", 205]);
+  const stage = (f.results.media_provenance.data as Record<string, unknown>[])[0];
+  f.results.media_provenance.data = [stage, { ...stage, kind: "declutter", edit: "declutter" }, stage];
+  const conflicting = await (await handler(request())).json();
+  assertEquals(conflicting.photos[0].edit_kind, null); assertEquals(conflicting.photos[0].original_verified, false);
+  f.results.media_provenance.data = [{ ...stage, qc: { publishable: false } }];
+  assertEquals((await (await handler(request())).json()).photos[0].edit_kind, null);
+  f.results.media_provenance.data = [];
+  assertEquals((await (await handler(request())).json()).photos[0].edit_kind, null);
+  f.results.media_provenance.data = [{ ...stage, org_id: user }];
+  assertEquals((await handler(request())).status, 503);
 });

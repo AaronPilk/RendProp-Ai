@@ -39,7 +39,7 @@ body = 'import Foundation\n' + body.replace('private(set)', '').replace('private
 body += '\n' + block(push.read_text(), 'enum ReelCompletionNotice {')
 reel_view = screen[screen.index('struct ReelStudioView:'):screen.index('// MARK: Sections', screen.index('struct ReelStudioView:'))]
 cleanup = block(reel_view, '        .onDisappear {')
-body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJob; let work: ReelWorkJob; let connection = ClosedConnection(); var player: ClosedPlayer? { get { work.player } set { work.setPlaybackPlayer(newValue) } }; var voPlayer: ClosedPlayer? = ClosedPlayer(); let recorder = ClosedRecorder()\ninit(job: ReelWorkJob) { self.job = job; self.work = job; job.isPresented = true; job.setPlaybackPlayer(ClosedPlayer()) }\nfunc onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n}\n'
+body += '\n@MainActor final class ReelPresentationHarness {\nlet job: ReelWorkJob; let work: ReelWorkJob; let connection = ClosedConnection(); var player: ClosedPlayer? { get { work.player } set { work.setPlaybackPlayer(newValue) } }; var voPlayer: ClosedPlayer? = ClosedPlayer(); var musicPreviewPlayer:ClosedPlayer?; let recorder = ClosedRecorder()\ninit(job: ReelWorkJob) { self.job = job; self.work = job; job.isPresented = true; job.setPlaybackPlayer(ClosedPlayer()) }\nfunc onDisappearCleanup() ' + cleanup[cleanup.index('{'):] + '\n}\n'
 assert '@ObservedObject private var work: ReelWorkJob' in reel_view
 assert '@State private var workTask' not in reel_view
 assert 'workTask?.cancel()' not in cleanup and 'endBackgroundHold()' not in cleanup
@@ -51,6 +51,7 @@ assert 'resumeBatch: true' in screen and 'work.afterCurrentOperation { continueS
 assert 'work.configuration ?? snapshotReelConfiguration()' in screen
 variants = [
     ('actual', body, None),
+    ('negative-erasure-late-snapshot', body.replace('let outgoing = jobs\n        try? await PropertyVideoJobCancellation.shared.request(reason: "local_data_erasure")', 'try? await PropertyVideoJobCancellation.shared.request(reason: "local_data_erasure")\n        let outgoing = jobs'), 'server cancellation wait cannot erase later account work'),
     ('negative-no-reel-idle-hold', body.replace('if wanted { IdleTimer.hold() } else { IdleTimer.release() }', 'if wanted {} else { IdleTimer.release() }'), 'active app-wide reel work keeps the screen awake'),
     ('negative-duplicate-idle-hold', body.replace('guard wanted != holdsIdleTimer else { return }', 'guard wanted || holdsIdleTimer else { return }'), 'concurrent jobs share one balanced reel idle hold'),
     ('negative-background-idle-hold', body.replace('let wanted = sceneIsActive && jobs.contains', 'let wanted = jobs.contains'), 'inactive scene releases only the reel idle hold'),

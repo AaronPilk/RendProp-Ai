@@ -537,7 +537,7 @@ async function main() {
   // so the file would have shadowed the route). Two rules are non-negotiable:
   // never an unbranded URL, and never a tour that is not opted into indexing.
   {
-    const sm = await get(worker, "/sitemap.xml");
+    const sm = await get(worker, "/sitemap-site.xml");
     expect(sm.status === 200, `[/sitemap.xml] want 200, got ${sm.status}`);
     expect((sm.h("content-type") || "").includes("application/xml"),
       `[/sitemap.xml] want application/xml, got ${sm.h("content-type")}`);

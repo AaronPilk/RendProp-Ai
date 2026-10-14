@@ -38,7 +38,7 @@ import {
 import "./creative.css";
 import BatchPhotoStudio from "./BatchPhotoStudio";
 import PhotoExportPanel from "./PhotoExportPanel";
-import { continuePhoto, importedPhoto, inputForEdit, photoDelivery, propertyPhoto, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
+import { importedPhoto, inputForEdit, photoDelivery, propertyPhoto, propertyOriginalPhoto, photosInTab, type PhotoLibraryTab, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
 const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
 const PromptLibrary = lazy(() => import("../prompts/PromptLibrary"));
@@ -190,6 +190,7 @@ function ListingCreative(
     [style, setStyle] = useState("modern"),
     [prompt, setPrompt] = useState(""),
     [room, setRoom] = useState("");
+  const [photoTab, setPhotoTab] = useState<PhotoLibraryTab>("original");
   const [suggestions, setSuggestions] = useState<
       { edit: Edit; reason: string }[]
     >([]),
@@ -600,6 +601,7 @@ function ListingCreative(
   }
   async function generatePhoto() {
     if (!source) throw new Error("Choose a photo first.");
+    if (photoTab !== "original" || source.edits.length) throw new Error("Choose the Original tab to create a new edit.");
     if (edit === "custom") {
       const decision = analyzeCustomPhotoPrompt(prompt, listing.spaceType);
       if (decision.status !== "ready") throw new Error(decision.message);
@@ -1043,11 +1045,14 @@ function ListingCreative(
   const selectedPhotoDelivery = useMemo(() => source && source.edits.length ? [{ file: source.file, original: source.original?.file ?? null,
     originalPreview: source.original?.preview ?? null, originalVerified: source.originalVerified, disclosures: source.disclosures,
     edits: source.edits, provenanceId: null }] : [], [source]);
+  const originalEditing = panel === "photos" && photoTab === "original";
+  const savedPhotoReview = panel === "photos" && !originalEditing;
+  const displayedPhotos = panel === "photos" ? photosInTab(photos, photoTab) : photos;
   const sourcePicker = (
     <div className="creative-source">
-      <h2>Choose your photo</h2>
-      <p>Use a saved property photo from your phone, or add one from this computer.</p>
-      <label className="creative-upload">
+      <h2>{originalEditing ? "Choose your original" : savedPhotoReview ? "Review saved results" : "Choose your photo"}</h2>
+      <p>{originalEditing ? "New edits start from the original. Finished versions stay saved separately." : savedPhotoReview ? "Review and download these finished photos. Choose Original to create another edit." : "Use your chosen saved property photo, or import one from this computer."}</p>
+      {!savedPhotoReview && <label className="creative-upload">
         Import a photo<input
           type="file"
           accept="image/jpeg,image/png,image/webp"
@@ -1063,8 +1068,8 @@ function ListingCreative(
             e.target.value = "";
           }}
         />
-      </label>
-      {photos.length > 0 && (
+      </label>}
+      {displayedPhotos.length > 0 && (
         <label>
           Or use a property photo<select
             aria-label="Source property photo"
@@ -1075,7 +1080,7 @@ function ListingCreative(
               if (photo) {
                 void run("Opening photo", async () => {
                   await chooseSource(
-                    await propertyPhoto(photo, signal),
+                    await (originalEditing ? propertyOriginalPhoto(photo, signal) : propertyPhoto(photo, signal)),
                   );
                   setRoom((photo.caption || "").split(" · ")[0]!.slice(0, 60));
                 });
@@ -1083,10 +1088,10 @@ function ListingCreative(
             }}
           >
             <option value="">Choose a cloud photo</option>
-            {photos.map((p, i) => (
+            {displayedPhotos.map((p, i) => (
               <option key={p.id} value={p.id}>
                 {p.caption || `Photo ${i + 1}`}
-                {p.isStaged ? " · AI edited" : ""}
+                {originalEditing && (p.isAltered || p.isStaged) ? " · paired original" : !originalEditing && (p.isAltered || p.isStaged) ? " · saved edit" : ""}
               </option>
             ))}
           </select>
@@ -1096,28 +1101,22 @@ function ListingCreative(
         ? (
           <figure>
             <img src={source.preview} alt="Selected source property" />
-            <figcaption>{source.file.name} · current editing image</figcaption>
+            <figcaption>{source.file.name} · {originalEditing ? "original editing image" : "chosen saved photo"}</figcaption>
             {!source.originalVerified && source.original && <details open><summary>Check the paired original</summary>
               <img src={source.original.preview} alt="Paired source to verify" />
-              <p>This saved edit predates verified history. Check this source before another AI edit.</p>
+              <p>This photo predates verified source history. Confirm the original before a new edit.</p>
               <label><input type="checkbox" disabled={isBusy} onChange={event => setSource({ ...source, originalVerified: event.target.checked })} />This is the actual unedited original.</label>
             </details>}
-            {edit === "stage" && source.stageBase && <div>
-              <p>Restyling starts from this pre-staging image. Changes made after staging are not included in the new version.</p>
-              <img src={source.stageBase.preview} alt="Pre-staging input for new style" />
-            </div>}
-            {edit === "stage" && source.edits.length > 0 && !source.stageBase && <p>Staging uses the current photo. If it already has virtual furniture, start from the original or choose the saved decluttered version to avoid adding furniture twice.</p>}
-            {source.edits.length > 0 && <button disabled={isBusy || !source.originalVerified} onClick={() => void chooseSource(importedPhoto(source.original!))}>Start again from original</button>}
+            {savedPhotoReview && source.original && <button disabled={isBusy} onClick={() => { setPhotoTab("original"); void chooseSource({ ...importedPhoto(source.original!), originalVerified: source.originalVerified, originalAssetId: source.originalAssetId }); }}>Edit original with AI</button>}
           </figure>
         )
         : (
           <div className="creative-source-placeholder">
-            Choose a photo from your phone's synced library or import one from
-            your computer.
+            {displayedPhotos.length ? "Choose a photo from this property." : savedPhotoReview ? "No saved results in this category yet." : "Import a photo, or sync your saved property photos."}
           </div>
         )}
       {selectedPhotoDelivery.length > 0 && <PhotoExportPanel photos={selectedPhotoDelivery} assertScope={() => assertPhotoScope(false)} disabled={isBusy} />}
-      {source && (
+      {source && !savedPhotoReview && (
         <label>
           Room or view<input
             maxLength={60}
@@ -1238,7 +1237,7 @@ function ListingCreative(
           <button
             key={item.id}
             aria-current={panel === item.id ? "page" : undefined}
-            onClick={() => { if (item.id === panel || panel !== "presenter" || canLeavePresenter()) setPanel(item.id); }}
+            onClick={() => { if (item.id === panel || panel !== "presenter" || canLeavePresenter()) { if (item.id === "photos" && photoTab === "original" && source?.edits.length) setSource(source.original ? { ...importedPhoto(source.original), originalVerified: source.originalVerified, originalAssetId: source.originalAssetId } : null); setPanel(item.id); } }}
           >
             {item.label}
           </button>
@@ -1276,7 +1275,10 @@ function ListingCreative(
       {panel === "presenter" && <Suspense fallback={<p role="status">Loading AI Presenter…</p>}><PresenterPanel services={services} workspace={workspace} listing={listing} onChanged={onChanged} onPendingChange={presenterChanged} onUseAgentPlan={onUseAgentPlan} /></Suspense>}
       {panel === "photos" && (
         <div className="creative-two-column">
-          <div className="creative-card">
+          <nav className="creative-tabs creative-wide" aria-label="Photo versions">
+            {([["original", "Original"], ["declutter", "Decluttered"], ["stage", "Staged"], ["saved", "Saved edits"]] as const).map(([id, label]) => <button key={id} disabled={isBusy} aria-current={photoTab === id ? "page" : undefined} onClick={() => { setPhotoTab(id); setSource(null); setSuggestions([]); }}>{label}</button>)}
+          </nav>
+          {photoTab === "original" && <div className="creative-card">
             <h2>What would you like to change?</h2>
             <p>
               Choose an edit, then pick your photo. Review the preview before
@@ -1351,7 +1353,7 @@ function ListingCreative(
             )}
             <div className="creative-actions">
               <button
-                disabled={!source || isBusy || !canCreate}
+                disabled={!source || source.edits.length > 0 || isBusy || !canCreate}
                 onClick={() =>
                   run("Finding suitable edits", async () => {
                     const response = record(
@@ -1380,7 +1382,7 @@ function ListingCreative(
               </button>
               <button
                 className="creative-primary"
-                disabled={!source || !source.originalVerified || isBusy || !canCreate || edit === "custom" && analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"}
+                disabled={!source || source.edits.length > 0 || !source.originalVerified || isBusy || !canCreate || edit === "custom" && analyzeCustomPhotoPrompt(prompt, listing.spaceType).status !== "ready"}
                 onClick={() => run("Creating your photo", generatePhoto)}
               >
                 Generate preview
@@ -1397,7 +1399,7 @@ function ListingCreative(
                 <span>{s.reason}</span>
               </button>
             ))}
-          </div>
+          </div>}
           {sourcePicker}
           {photoResult && (
             <section className="creative-card creative-wide">
@@ -1431,18 +1433,19 @@ function ListingCreative(
                     ? "Saved to gallery"
                     : "Save to property gallery"}
                 </button>
-                <button disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} onClick={() => void run("Preparing next edit", async () => {
+                <button disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} onClick={() => void run("Opening original", async () => {
                   if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare and confirm this custom edit before continuing.");
-                  const next = await continuePhoto(photoResult.source, photoResult, photoResult.edit, signal);
+                  const next = { ...importedPhoto(photoResult.source.original!), originalAssetId: photoResult.originalAssetId };
+                  setPhotoTab("original");
                   await chooseSource(next);
-                })}>Continue editing this result</button>
+                })}>Edit original again</button>
                 <PhotoExportPanel photos={[photoResult]} assertScope={() => assertPhotoScope(false)} disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} />
               </div>
             </section>
           )}
         </div>
       )}
-      <div hidden={panel !== "photos"}>
+      <div hidden={panel !== "photos" || photoTab !== "original"}>
         <BatchPhotoStudio services={services} workspace={workspace} listing={listing}
           photos={photos} canCreate={canCreate} onChanged={onChanged}
           onComplete={() => void loadPhotos().catch((error) => {

@@ -41,6 +41,8 @@ const services = {
   api: async (path: string, options: { method?: string; orgId: string; body?: Record<string, unknown> }) => {
     if (options.orgId !== org) throw new Error("Unexpected fixture workspace");
     const body = options.body;
+    if(path.includes("/property-video-jobs/sources?")){const target=new URL(path,"https://fixture.invalid").searchParams.get("listing_id");return {listing_id:target,org_id:org,selected_library_org_id:org,selected_count:0,sources:[],next_offset:null};}
+    if(path.includes("/property-video-jobs?"))return {jobs:[],next_offset:null};
     if(path.endsWith("/production-review/narration")){
       const saved=(body?.document_user_id===user?cloud.documents:otherDocuments)[String(body?.key)],draft=saved?.payload.draft as {narration?:{resultId:string}}|undefined;
       if(!saved||saved.revision!==body?.expected_document_revision||draft?.narration?.resultId!==body?.result_id||body?.result_id!==voiceId)throw new StudioError("missing","Saved review narration is unavailable.",404);

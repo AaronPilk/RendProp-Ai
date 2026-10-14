@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { photoFrame, buildPhotoDownload, photoCaption } from "../src/features/creative/photo-export";
-import { importedPhoto, inputForEdit, photoDelivery } from "../src/features/creative/photo-lineage";
+import { importedPhoto, inputForEdit, photoDelivery, photosInTab } from "../src/features/creative/photo-lineage";
 import type { PhotoDelivery } from "../src/features/creative/photo-lineage";
 
 const original = new File([Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10])], "original.png", { type: "image/png" });
@@ -9,6 +9,15 @@ const current = new File(["different edited bytes"], "edited.png", { type: "imag
 const source = importedPhoto({ file: original, base64: "original", mime: "image/jpeg", preview: "original-preview" });
 const delivery = photoDelivery(source, current, "declutter", "Movable clutter removed with AI.", null);
 const renderer = async () => ({ blob: new Blob(["jpeg-render-fixture"]), ...photoFrame(1200, 800, "original") });
+test("saved photo categories require exact typed history rather than staged flag or editable caption", () => {
+  const photo = { id: "original", listingId: "listing", url: "private", expiresAt: "future", caption: "Virtually staged", isStaged: false, sort: 0 };
+  const rows = [photo, { ...photo, id: "declutter", isStaged: true, editKind: "declutter" as const, originalUrl: "original" }, { ...photo, id: "staged", isStaged: true, editKind: "stage" as const, originalUrl: "original" }, { ...photo, id: "unknown", isStaged: true, originalUrl: "original" }, { ...photo, id: "missing", isStaged: true }];
+  assert.deepEqual(photosInTab(rows, "declutter").map(row => row.id), ["declutter"]);
+  assert.deepEqual(photosInTab(rows, "stage").map(row => row.id), ["staged"]);
+  assert.deepEqual(photosInTab(rows, "saved").map(row => row.id), ["unknown", "missing"]);
+  assert.deepEqual(photosInTab(rows, "original").map(row => row.id), ["original", "declutter", "staged", "unknown"]);
+  assert.equal(rows.length, 5, "changing the view does not remove saved versions");
+});
 async function files(blob: Blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer()), view = new DataView(bytes.buffer), result = new Map<string, Uint8Array>();
   let offset = 0;

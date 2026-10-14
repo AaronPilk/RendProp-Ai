@@ -71,7 +71,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     )
   }
   `);
-  const start = source.indexOf("Deno.serve(async (req) => {");
+  const start = source.indexOf("export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {");
   const drone = source.indexOf(
     '    if (req.method === "POST" && seg.length === 1 && seg[0] === "drone")',
     start,
@@ -79,8 +79,8 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
   const end = source.indexOf("    // ---- POST /ai-video/drift ----", drone);
   assert(start > 0 && drone > start && end > drone);
   const prelude = source.slice(start, drone).replace(
-    "Deno.serve(async (req) => {",
-    "export const handler = async (req: Request) => {",
+    "export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {",
+    `export const handler = async (req: Request) => {const worker=state.options.background?{user:{id:"actor-synthetic",is_anonymous:false},targetAspect:"16:9",authorize:async()=>{state.events.push("fresh-worker-authority");},accepted:async(r:any)=>{state.accepted=r;state.events.push("saved-accepted-receipt");},provenance:async()=>{state.events.push("worker-provenance");if(state.options.provenanceError)throw Error("closed provenance outage");return{id:"provenance-synthetic",recorded:true};}}:undefined;`,
   );
   let routes = source.slice(drone, end);
   if(dropSigningReadiness){
@@ -131,7 +131,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {ownerQaReelStep as actualOwnerQaReelStep,prepareOwnerQaReelInput} from ${
     JSON.stringify(new URL("./owner-reel-qa.ts", import.meta.url).href)
   };
-    import {parseReelFraming,reelFramingSteps,buildPhotoPreservingReelPrompt} from ${
+    import {parseReelFraming,reelFramingSteps,buildPhotoPreservingReelPrompt,buildPropertyCanvasReelPrompt} from ${
     JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)
   };
     import {paramsOf} from ${
@@ -180,7 +180,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     class ProviderError extends Error {status?:number;error_class?:string;}
     const echo={request_id:"accepted-provider-id",status_url:"https://fixture.invalid/ai-video/status?job=opaque-fixture",response_url:"https://queue.fal.run/model/requests/accepted-provider-id"};
     const falSubmitEcho=(_id:string)=>echo;
-    const routerStatusUrl=async(..._a:any[])=>{if(state.options.signerMissing)throw Error("No signer");return "https://fixture.invalid/ai-video/status?job=opaque-fixture";};
+    const routerStatusUrl=async(..._a:any[])=>{if(state.options.background)state.events.push("signed-worker-receipt");if(state.options.signerMissing)throw Error("No signer");return "https://fixture.invalid/ai-video/status?job=opaque-fixture";};
     const recordProvenance=async(..._a:any[])=>({id:"provenance-synthetic",recorded:true,disclosure:"AI edited video"});
     const recordRoutedAiCost=async(..._a:any[])=>{state.oldLedger++;throw Error("Legacy ledger double booking reached");};
     const recordAppAiCost=recordRoutedAiCost;
@@ -698,3 +698,5 @@ Deno.test("compiled omitted Aerial launch gate is caught before any ordinary pai
   await assertRejects(()=>refusedOrdinaryAerial(mutant),Error,"Ordinary Aerial must decline before paid admission");
   assertEquals(mutant.state.posts.length,1);assertEquals(mutant.state.charges.length,1);
 });
+
+Deno.test("background actual reel route saves signedaccepted receipt withrouteroff evenifledger/provenance reconciliationisdown",async()=>{const f=await fixture();f.reset({background:true,ordinary:true,routerOn:false,settleError:true,provenanceError:true});const r=await f.handler(req('reel-clip','background-source-op',{preset_version:1,framing:'preserve_photo',aspect:'16:9',motion:'push_in'}));assert(r.status>=500);assertEquals(f.state.posts.length,1);assertEquals(f.state.holds.size,1);assertEquals(f.state.accepted.request_id,'accepted-provider-id');assertEquals(f.state.accepted.model_id,f.state.posts[0].step.model);assert(f.state.accepted.status_url.includes('?job='));assert(f.state.events.indexOf('signed-worker-receipt')<f.state.events.indexOf('saved-accepted-receipt'));assert(f.state.events.indexOf('saved-accepted-receipt')<f.state.events.indexOf('worker-provenance'));assertEquals(f.state.refunds,0);});

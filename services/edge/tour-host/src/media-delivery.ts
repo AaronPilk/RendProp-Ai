@@ -4,15 +4,27 @@ import { fetchUpstreamJSON } from "./upstream";
 const headers = {"Access-Control-Allow-Origin":"https://studio.rendprop.com","Access-Control-Expose-Headers":"Content-Length, Content-Range, ETag, Content-Type, Content-Disposition, Last-Modified","Cache-Control":"no-store, max-age=0","CDN-Cache-Control":"no-store","Cloudflare-CDN-Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Robots-Tag":"noindex, nofollow"};
 const unavailable=(status=404)=>new Response(null,{status,headers});
 const MAX_OBJECT_BYTES = 256 * 1024 * 1024;
+const MAX_REGISTERED_VIDEO_BYTES = 1536 * 1024 * 1024;
 const MAX_STREAM_BYTES = 8 * 1024 * 1024;
 const BODY_DEADLINE_MS = 60_000;
-type Delivery={schema:1;slug:string;objects:Record<string,"renders"|"uploads">;stream_uid:string|null};
+const REGISTERED_VIDEO_DEADLINE_MS = 30 * 60_000;
+const REGISTERED_VIDEO_IDLE_MS = 60_000;
+type RegisteredVideoLimit={kind:"registered_background_video";asset_id:string;bytes:number;sha256:string;max_object_bytes:1610612736};
+type Delivery={schema:1;slug:string;objects:Record<string,"renders"|"uploads">;stream_uid:string|null;object_limits?:Record<string,RegisteredVideoLimit>};
 function safeIdentity(value:string):boolean{return value.length>0&&value.length<=1024&&!value.split("/").some(v=>!v||v==="."||v===".."||/[\\%?#\u0000-\u001f]/.test(v));}
 function decode(value:string):string|null{try{return decodeURIComponent(value);}catch{return null;}}
 function contract(value:unknown,slug:string):value is Delivery{
   if(!value||typeof value!=="object"||Array.isArray(value))return false;
   const d=value as Delivery;
-  return d.schema===1&&d.slug===slug&&Boolean(d.objects)&&typeof d.objects==="object"&&!Array.isArray(d.objects)&&Object.keys(d.objects).length<=500&&Object.entries(d.objects).every(([k,v])=>safeIdentity(k)&&["uploads","renders"].includes(v))&&(d.stream_uid===null||/^[a-f0-9]{32}$/.test(d.stream_uid));
+  return d.schema===1&&d.slug===slug&&Boolean(d.objects)&&typeof d.objects==="object"&&!Array.isArray(d.objects)&&Object.keys(d.objects).length<=500&&Object.entries(d.objects).every(([k,v])=>safeIdentity(k)&&["uploads","renders"].includes(v))&&(d.stream_uid===null||/^[a-f0-9]{32}$/.test(d.stream_uid))&&
+    (d.object_limits===undefined||Boolean(d.object_limits)&&typeof d.object_limits==="object"&&!Array.isArray(d.object_limits)&&Object.keys(d.object_limits).length<=500&&Object.entries(d.object_limits).every(([key,limit])=>
+      Object.hasOwn(d.objects,key)&&d.objects[key]==="renders"&&Boolean(limit)&&typeof limit==="object"&&!Array.isArray(limit)&&
+      Object.keys(limit).length===5&&Object.keys(limit).every(k=>["kind","asset_id","bytes","sha256","max_object_bytes"].includes(k))&&
+      limit.kind==="registered_background_video"&&/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(limit.asset_id)&&
+      Number.isSafeInteger(limit.bytes)&&limit.bytes>0&&limit.bytes<=MAX_REGISTERED_VIDEO_BYTES&&/^[a-f0-9]{64}$/.test(limit.sha256)&&limit.max_object_bytes===MAX_REGISTERED_VIDEO_BYTES));
+}
+function sameVideoLimit(left:RegisteredVideoLimit|undefined,right:RegisteredVideoLimit|undefined):boolean{
+  return left===undefined?right===undefined:Boolean(right)&&left.kind===right!.kind&&left.asset_id===right!.asset_id&&left.bytes===right!.bytes&&left.sha256===right!.sha256&&left.max_object_bytes===right!.max_object_bytes;
 }
 function etagMatch(header:string|null,etag:string,weak=true):boolean{return Boolean(header&&header.split(",").some(v=>v.trim()==="*"||(weak?v.trim().replace(/^W\//,""):v.trim())===etag));}
 /** Authorization is deliberately before HEAD, Range, 304, 412 and object bytes.
@@ -25,7 +37,7 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
   if(privateMatch&&privateMatch[1].length>4096)return unavailable();
   const slug=privateMatch?"private":brand?brand[2]:match![1],kind=privateMatch||brand?"r2":match![2],encodedPath=match?.[4];
   const authorityPath=privateMatch?"/tours/private-media":brand?`/tours/business-logo/${slug}?key=${encodeURIComponent(brand[1])}`:`/tours/${encodeURIComponent(slug)}/delivery`;
-  const authority=(bytes=0)=>fetchUpstreamJSON(privateMatch?authorityPath:authorityPath+(bytes?`${authorityPath.includes("?")?"&":"?"}bytes=${bytes}`:""),env,true,privateMatch?{cap:privateMatch[1],bytes}:undefined);
+  const authority=(bytes=0,objectKey?:string)=>fetchUpstreamJSON(privateMatch?authorityPath:authorityPath+(bytes?`${authorityPath.includes("?")?"&":"?"}bytes=${bytes}${objectKey?`&key=${encodeURIComponent(objectKey)}`:""}`:""),env,true,privateMatch?{cap:privateMatch[1],bytes}:undefined);
   const auth=await authority();
   if(auth.kind!=="ok")return unavailable(auth.kind==="not-found"?404:auth.status);
   if(!contract(auth.value,slug))return unavailable(503);
@@ -33,10 +45,10 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
   const key=privateMatch?Object.keys(delivery.objects).length===1?Object.keys(delivery.objects)[0]:null:brand?brand[1]:decode(match![3]);
   if(!key||!safeIdentity(key)||privateMatch&&delivery.stream_uid!==null)return unavailable();
   const revalidate=async(bytes=0)=>{
-    const current=await authority(bytes);
+    const current=await authority(bytes,kind==="r2"&&!brand?key:undefined);
     if(current.kind!=="ok")return current.kind==="not-found"?404:current.status;
     if(!contract(current.value,slug))return 503;
-    return kind==="stream" ? current.value.stream_uid===key?200:404 : Object.hasOwn(current.value.objects,key)&&current.value.objects[key]===delivery.objects[key]?200:404;
+    return kind==="stream" ? current.value.stream_uid===key?200:404 : Object.hasOwn(current.value.objects,key)&&current.value.objects[key]===delivery.objects[key]&&sameVideoLimit(current.value.object_limits?.[key],delivery.object_limits?.[key])?200:404;
   };
   if(kind==="stream"){
     const path=encodedPath&&decode(encodedPath);
@@ -48,7 +60,10 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
   if(!bucket)return unavailable(503);
   const head=await bucket.head(key);
   if(!head)return unavailable();
-  if(!Number.isSafeInteger(head.size)||head.size<1||head.size>MAX_OBJECT_BYTES)return unavailable(503);
+  // Larger reads require a ready, registered master receipt from the authority;
+  // an R2 key or caller-supplied kind never grants the larger ceiling.
+  const videoLimit=delivery.object_limits?.[key];
+  if(!Number.isSafeInteger(head.size)||head.size<1||head.size>(videoLimit?MAX_REGISTERED_VIDEO_BYTES:MAX_OBJECT_BYTES)||videoLimit&&head.size!==videoLimit.bytes)return unavailable(503);
   const fresh=await revalidate();if(fresh!==200)return unavailable(fresh);
   const h=new Headers(headers);head.writeHttpMetadata(h);
   for(const [name,value]of Object.entries(headers))h.set(name,value);
@@ -76,7 +91,7 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
   const object=await bucket.get(key,{onlyIf:{etagMatches:head.etag},...(range?{range}:{})});
   if(!object||!("body"in object))return unavailable(503);
   const final=await revalidate();if(final!==200){void object.body.cancel().catch(()=>{});return unavailable(final);}
-  return new Response(boundedBody(object.body,range?.length??head.size),{status,headers:h});
+  return new Response(boundedBody(object.body,range?.length??head.size,true,videoLimit!==undefined),{status,headers:h});
 }
 
 /** Signed Stream tokens never reach viewers. Every playlist, segment, init file,
@@ -123,22 +138,26 @@ async function boundedManifest(response:Response):Promise<string|null>{
   try{while(true){const part=await reader.read();if(part.done)break;if(!part.value.byteLength){if(++empty>64)return null;continue;}empty=0;size+=part.value.byteLength;if(size>524288)return null;text+=decoder.decode(part.value,{stream:true});}return text+decoder.decode();}catch{return null;}finally{void reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 
-/** Forward with backpressure, a byte ceiling and one whole-body deadline.
+/** Forward with backpressure, exact byte accounting and a whole-body deadline.
+ * Registered masters also stop a stalled pending storage read. The idle timer
+ * does not run while a client intentionally applies backpressure between pulls.
  * Once response headers leave the edge a size/timeout violation aborts the
  * stream; it cannot be converted into an apparently complete HTTP success. */
-function boundedBody(body:ReadableStream<Uint8Array>,expected:number,exact=true):ReadableStream<Uint8Array>{
+function boundedBody(body:ReadableStream<Uint8Array>,expected:number,exact=true,registeredVideo=false):ReadableStream<Uint8Array>{
   const reader=body.getReader();let size=0,empty=0,closed=false;
   let timer:ReturnType<typeof setTimeout>;
-  const stop=()=>{closed=true;clearTimeout(timer);void reader.cancel().catch(()=>{});};
+  let idleTimer:ReturnType<typeof setTimeout>|undefined;
+  const stop=()=>{closed=true;clearTimeout(timer);if(idleTimer!==undefined)clearTimeout(idleTimer);void reader.cancel().catch(()=>{});};
   return new ReadableStream<Uint8Array>({
-    start(controller){timer=setTimeout(()=>{if(!closed){stop();controller.error(new Error("Media body deadline exceeded"));}},BODY_DEADLINE_MS);},
+    start(controller){timer=setTimeout(()=>{if(!closed){stop();controller.error(new Error("Media body deadline exceeded"));}},registeredVideo?REGISTERED_VIDEO_DEADLINE_MS:BODY_DEADLINE_MS);},
     async pull(controller){
       try{
+        if(registeredVideo)idleTimer=setTimeout(()=>{if(!closed){stop();controller.error(new Error("Media body made no progress"));}},REGISTERED_VIDEO_IDLE_MS);
         while(!closed){const part=await reader.read();if(closed)return;
           if(part.done){if(exact&&size!==expected)throw new Error("Media size changed");stop();controller.close();return;}
           if(!(part.value instanceof Uint8Array)||part.value.byteLength>expected-size)throw new Error("Media size changed");
           if(!part.value.byteLength){if(++empty>64)throw new Error("Media body made no progress");continue;}
-          empty=0;size+=part.value.byteLength;controller.enqueue(part.value);return;
+          empty=0;size+=part.value.byteLength;if(idleTimer!==undefined)clearTimeout(idleTimer);idleTimer=undefined;controller.enqueue(part.value);return;
         }
       }catch{if(!closed){stop();controller.error(new Error("Media body could not be completed"));}}
     },

@@ -1,7 +1,7 @@
 import type { Env } from "./types";
 
 // Operational safety budgets, not provider limits or a promised response SLA.
-// Tours contain metadata/URLs (gallery and disclosures are each capped at 40
+// Tours contain metadata/URLs (gallery and disclosures are each capped at100
 // upstream), not media bytes. Portfolio cardinality/freeform text is not fully
 // bounded upstream: over-cap payloads must fail explicitly, never be truncated.
 const UPSTREAM_TIMEOUT_MS = 8_000;

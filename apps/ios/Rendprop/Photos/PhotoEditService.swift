@@ -52,9 +52,10 @@ final class PhotoEditService {
             try requireUnsentWork()
         }
         let prior = p.originalURL == p.enhancedURL ? nil : p.originalURL.lastPathComponent
-        let parent = try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
+        let requested = try PhotoVersionHistory.trackExisting(id: p.id, imageFile: p.enhancedURL.lastPathComponent,
                                                            priorFile: prior, directory: directory)
-        let sourceVersion = try PhotoVersionHistory.source(for: parent.id, edit: edit, directory: directory)
+        let context = try PhotoVersionHistory.editContext(for: requested.id, edit: edit, directory: directory)
+        let parent = context.parent, sourceVersion = context.source
         guard let b64 = await AIImagePrep.jpegBase64(at: directory.appendingPathComponent(sourceVersion.imageFile),
                                                    maxDimension: 2048, quality: 0.9) else {
             throw AIImagePrep.error("Couldn't read that photo.")

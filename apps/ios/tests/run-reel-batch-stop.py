@@ -23,6 +23,7 @@ paths = [root / path for path in [
     'apps/ios/Rendprop/Models/Listing.swift',
     'apps/ios/Rendprop/Models/ListingVideo.swift',
     'apps/ios/Rendprop/Render/VideoAspectChoice.swift',
+    'apps/ios/Rendprop/Render/VideoMusicContract.swift',
     'apps/ios/tests/ReelClipFailureTests.swift',
     'apps/ios/tests/run-reel-clip-failures.sh',
     'apps/ios/tests/run-reel-batch-stop.py',

@@ -220,6 +220,10 @@ export const kieAdapter: ProviderAdapter = {
         jobInput.duration = duration;
         jobInput.mode = "pro";
         jobInput.multi_shots = false;
+        if(input.extra?.property_video_target_aspect!==undefined){
+          if(!['16:9','9:16'].includes(String(input.extra.property_video_target_aspect))||input.extra.property_video_target_aspect!==input.aspect)throw new ProviderError(PROVIDER,'validation','The server property-video target canvas changed.',400,true);
+          jobInput.aspect_ratio=input.extra.property_video_target_aspect;
+        }
       } else {
         if (imageUrl) jobInput.image_url = imageUrl;
         jobInput.resolution = resolution;

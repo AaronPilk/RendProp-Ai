@@ -108,7 +108,7 @@ try:
       insert into orgs(id,name,plan,plan_source)values('{positive}','Synthetic funded race','pro','manual'),('{negative}','Synthetic negative race','pro','manual');
       insert into memberships(user_id,org_id,role)values('{actor}','{positive}','owner'),('{actor}','{negative}','owner');
       set role service_role;
-      select provision_serving_funding(id,'retail','race-receipt:'||id,null,400,0,now()-interval '1 minute',now()-interval '1 minute'+interval '1 month',1,
+      select provision_serving_funding(id,'retail','race-receipt:'||id,null,200,0,now()-interval '1 minute',now()-interval '1 minute'+interval '1 month',1,
        '{{"storage":0,"delivery":0,"compute":0,"email":0,"support":0,"retention":0,"uncertainty":0}}',repeat('a',64))from orgs where id in('{positive}','{negative}');
     """)
     authority = run("actual-final-cost-definition", [*psql, "-Atq"], "select pg_get_functiondef('" + signature + "'::regprocedure);")
@@ -124,7 +124,7 @@ try:
     outcomes = race("shared-budget-race", requests(positive))
     assert sorted(code for code, _ in outcomes) == [0, 3], outcomes
     assert sum("RP402" in output for _, output in outcomes) == 1, outcomes
-    receipt["sharedBudgetRace"] = {"accepted": 1, "refused": 1, "limitCents": 100, "attemptCents": 60}
+    receipt["sharedBudgetRace"] = {"accepted": 1, "refused": 1, "limitCents": 100, "netReceiptsCents": 200, "allocationShareBps": 5000, "attemptCents": 60}
     same = f"select serving_operation_begin('{actor}','{positive}','race-operation-key','coach.chat',repeat('a',64));"
     outcomes = race("operation-replay-race", [same, same])
     assert sorted(code for code, _ in outcomes) == [0, 3], outcomes

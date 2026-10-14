@@ -18,9 +18,9 @@ export function propertyGalleryKey(key: unknown, scope: Scope): key is string {
 
 export function gallerySelection(value: unknown): string[] | null {
   if (value === null) return null;
-  assert(Array.isArray(value) && value.length <= 40 &&
+  assert(Array.isArray(value) && value.length <= 100 &&
     value.every(id => typeof id === "string" && UUID.test(id)),400,
-    "Choose up to 40 uploaded gallery photos.");
+    "Choose up to 100 uploaded gallery photos.");
   const ids=value.map(id=>id.toLowerCase());
   assert(new Set(ids).size===ids.length,400,"Choose each gallery photo once.");
   return ids;

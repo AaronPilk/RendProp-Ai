@@ -5,6 +5,8 @@ create temp table checks(name text primary key,ok boolean not null);
 create function pg_temp.ok(v boolean,n text)returns void language plpgsql as $$begin if v is distinct from true then raise exception 'TEAM PRIVATE FAIL: %',n;end if;insert into checks values(n,true);end$$;
 create function pg_temp.denied(q text,p text,n text)returns void language plpgsql as $$declare e text;begin begin execute q;exception when others then e:=sqlerrm;end;perform pg_temp.ok(e like p||'%',n);end$$;
 create temp table f(owner_id uuid,sally uuid,tom uuid,outsider uuid,team uuid,sally_org uuid,tom_org uuid,out_org uuid,owner_listing uuid,sally_listing uuid,tom_listing uuid,legacy_sally uuid,legacy_tom uuid,sally_invite uuid,tom_invite uuid);
+-- Two identical child holds exceed the exact configured parent envelope.
+create function pg_temp.team_shared_hold()returns numeric language sql as $$select floor((public.plan_serving_ceiling((select team from f))->>'ceiling_cents')::numeric/2)+1$$;
 -- The fixture expands seats to three only to prove sibling isolation and a
 -- shared financial boundary; no production allowance or price is changed.
 select pg_temp.ok(not has_table_privilege('authenticated','public.team_private_libraries','SELECT,INSERT,UPDATE,DELETE')and not has_table_privilege('anon','public.team_private_libraries','SELECT,INSERT,UPDATE,DELETE')and(select relrowsecurity from pg_class where oid='public.team_private_libraries'::regclass)and not exists(select 1 from pg_policy where polrelid='public.team_private_libraries'::regclass),'Team relation is service-only deny-all RLS');
@@ -151,7 +153,9 @@ do $$declare x record;prior_bound boolean:=false;period_bound boolean:=false;bud
     values(x.sally_org,'fixture-old-booked','gemini',70,date_trunc('month',now())-interval '1 day');
    prior_bound:=public.org_month_spend_cents(x.team)=105 and public.org_month_spend_cents(x.tom_org)=105;
    period_bound:=public.serving_ceiling_spent_cents(x.team,date_trunc('month',now()),date_trunc('month',now())+interval '1 month')=105;
-   begin perform public.library_serving_envelope_admit(x.tom_org,x.team,5896,'team-rollover-new');exception when others then budget_refused:=sqlerrm like 'RP402:%';end;
+   -- The attempted hold plus105c carried liability exceeds the configured
+   -- current/historical Team ceiling by exactly1c.
+   begin perform public.library_serving_envelope_admit(x.tom_org,x.team,(public.plan_serving_ceiling(x.team)->>'ceiling_cents')::numeric-104,'team-rollover-new');exception when others then budget_refused:=sqlerrm like 'RP402:%';end;
    raise exception using errcode='PZ001',message='Synthetic rollover fixture rollback';
   exception when sqlstate 'PZ001'then null;end;
   perform pg_temp.ok(prior_bound,'parent and sibling retain prior-month unknown provider holds');
@@ -176,13 +180,13 @@ do $$declare x record;old_role text;begin select *into x from f;
  perform pg_temp.denied(format('select public.library_access(%L,%L)',x.owner_id,x.sally_org),'RP403:','co-owner ambiguity denies delegation');
  update public.memberships set role='agent'where org_id=x.team and user_id=x.tom;
  -- Normal finite dollars are not cloned into child accounts.
- perform public.serving_cost_reserve(x.sally,x.sally_org,'team-fixture-001','copy.caption:0','gemini','fixture',repeat('c',64),3001,'fixture-v1');
- perform pg_temp.ok(public.serving_ceiling_spent_cents(x.team,null,null)=3001 and public.serving_ceiling_spent_cents(x.tom_org,null,null)=3001,'parent and second child observe same admitted liability');
- perform pg_temp.denied(format('select public.serving_cost_reserve(%L,%L,%L,%L,%L,%L,%L,3001,%L)',x.tom,x.tom_org,'team-fixture-002','copy.caption:0','gemini','fixture',repeat('d',64),'fixture-v1'),'RP402:','second child cannot clone parent financial allowance');
+ perform public.serving_cost_reserve(x.sally,x.sally_org,'team-fixture-001','copy.caption:0','gemini','fixture',repeat('c',64),pg_temp.team_shared_hold(),'fixture-v1');
+ perform pg_temp.ok(public.serving_ceiling_spent_cents(x.team,null,null)=pg_temp.team_shared_hold() and public.serving_ceiling_spent_cents(x.tom_org,null,null)=pg_temp.team_shared_hold(),'parent and second child observe same admitted liability');
+ perform pg_temp.denied(format('select public.serving_cost_reserve(%L,%L,%L,%L,%L,%L,%L,%L,%L)',x.tom,x.tom_org,'team-fixture-002','copy.caption:0','gemini','fixture',repeat('d',64),pg_temp.team_shared_hold(),'fixture-v1'),'RP402:','second child cannot clone parent financial allowance');
  perform pg_temp.ok((select billing_org_id=x.team and org_id=x.sally_org from public.serving_cost_reservations where request_key='team-fixture-001'),'liability retains original content org and immutable parent billing');
  perform public.remove_org_member(x.team,x.owner_id,x.sally);
  perform pg_temp.ok(public.library_billing_org(x.sally_org)=x.sally_org,'removed seat loses future parent allowance');
- perform pg_temp.ok(public.serving_ceiling_spent_cents(x.team,null,null)=3001,'seat removal cannot erase prior parent liability');
+ perform pg_temp.ok(public.serving_ceiling_spent_cents(x.team,null,null)=pg_temp.team_shared_hold(),'seat removal cannot erase prior parent liability');
  perform pg_temp.denied(format('select public.library_access(%L,%L)',x.owner_id,x.sally_org),'RP403:','removed seat loses owner cross-library access');
  perform pg_temp.ok(public.library_content_access(x.sally,x.sally_org,true),'removed agent retains own original private library');
  insert into public.render_jobs(id,listing_id,capture_asset_id)select 'e9010003-0000-4000-8000-000000000001',x.legacy_sally,a.id from public.capture_assets a where a.listing_id=x.legacy_sally limit 1;
@@ -209,7 +213,7 @@ do $$declare x record;old_role text;begin select *into x from f;
  perform pg_temp.denied(format('select public.lead_library_scope(%L,%L)',x.owner_id,'e9010002-0000-4000-8000-000000000002'),'RP403:','former owner cannot read removed agent inquiry');
  perform public.serving_cost_reserve(x.sally,x.team,'retained-legacy-001','copy.caption:0','gemini','fixture',repeat('e',64),10,'fixture-v1');
  perform pg_temp.ok((select billing_org_id=x.sally_org and org_id=x.team from public.serving_cost_reservations where request_key='retained-legacy-001'),'new legacy processing uses own allowance after removal');
- perform pg_temp.ok(public.serving_ceiling_spent_cents(x.team,null,null)=3001,'retained legacy processing does not debit former Team');
+ perform pg_temp.ok(public.serving_ceiling_spent_cents(x.team,null,null)=pg_temp.team_shared_hold(),'retained legacy processing does not debit former Team');
  perform public.serving_cost_finish(x.sally,x.sally_org,'team-fixture-001','copy.caption:0','succeeded');
  insert into public.cost_ledger(org_id,feature,provider,model,units,unit_cost_cents,total_cents,idempotency_key,meta)
  values(x.sally_org,'caption','gemini','fixture',1,7.1,7.1,'different-receipt-key',jsonb_build_object('request_key','team-fixture-001','stage','copy.caption:0','actor_id',x.sally));

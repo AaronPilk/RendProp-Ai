@@ -1,5 +1,9 @@
 \set ON_ERROR_STOP on
 begin;
+-- Shared historical/current grant oracle: standardTeam financial/shot caps
+-- come from its unsponsored catalog at this exact schema point. The current
+-- catalog values are independently pinned by all270 invariants.
+
 do $$begin
  if current_database()<>'rendprop_testing_grant' or inet_server_addr() is not null then
   raise exception 'Use only the owned socket-only testing-grant fixture';
@@ -44,7 +48,7 @@ select pg_temp.testing_ok('private grant RLS has no client policies',(select rel
 select pg_temp.testing_ok('private grant denies all client privileges '||r,not has_table_privilege(r,'org_internal_testing_grants','SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))from unnest(array['anon','authenticated'])r;
 select pg_temp.testing_ok('helper is pinned and not public',(select prosecdef and proconfig=array['search_path=""']and not has_function_privilege('anon',oid,'execute')from pg_proc where oid='org_has_internal_testing_grant(uuid)'::regprocedure));
 set local role service_role;
-select pg_temp.testing_ok('ordinary manual Team has exact standard allowances',(select plan='team'and renders_per_month=25 and photo_edits_per_month=400 and reels_per_month=25 and aerials_per_month=8 and topaz_per_month=2 and seats=2 and cogs_ceiling_cents=6000 and price_cents=24900 from org_entitlement(org_id)))from testing_fixture;
+select pg_temp.testing_ok('ordinary manual Team has exact standard allowances',(select plan='team'and renders_per_month=25 and photo_edits_per_month=400 and reels_per_month=(select reels_per_month from public.plan_entitlements where plan='team') and aerials_per_month=8 and topaz_per_month=2 and seats=2 and cogs_ceiling_cents=(select cogs_ceiling_cents from public.plan_entitlements where plan='team') and price_cents=24900 from org_entitlement(org_id)))from testing_fixture;
 select pg_temp.testing_ok('ordinary Team has two seats',org_seats_allowed(org_id)=2 and org_seats_used(org_id)=2)from testing_fixture;
 select pg_temp.testing_denied('ordinary Team refuses third-seat invitation',format('select create_org_invite(%L,%L,NULL,''agent'',%L)',owner_id,org_id,repeat('a',64)),'RP402:')from testing_fixture;
 select pg_temp.testing_denied('ordinary Team refuses video hold beyond monthly budget',format('select app_video_cost_reserve(%L,%L,''before-grant-budget'',''reel'',''fal'',''fixture-model'',%L,6001,1,6001,''{}'')',owner_id,org_id,repeat('a',64)),'RP402:')from testing_fixture;
@@ -157,7 +161,7 @@ update org_internal_testing_grants set revoked_at=now();
 select pg_temp.testing_denied('revoked grant refuses further oversubscribed invitation',format('select create_org_invite(%L,%L,NULL,''agent'',%L)',owner_id,org_id,repeat('c',64)),'RP402:')from testing_fixture;
 select pg_temp.testing_denied('revoked grant refuses new paid reservation over retail budget',format('select app_video_cost_reserve(%L,%L,''revoked-grant-budget'',''reel'',''fal'',''fixture-model'',%L,1,1,1,''{}'')',owner_id,org_id,repeat('a',64)),'RP402:')from testing_fixture;
 reset role;
-select pg_temp.testing_ok('ungranted ordinary Team remains unchanged',(org_entitlement(ordinary_org)).seats=2 and(org_entitlement(ordinary_org)).cogs_ceiling_cents=6000 and not org_has_internal_testing_grant(ordinary_org))from testing_fixture;
+select pg_temp.testing_ok('ungranted ordinary Team remains unchanged',(org_entitlement(ordinary_org)).seats=2 and(org_entitlement(ordinary_org)).cogs_ceiling_cents=(select cogs_ceiling_cents from public.plan_entitlements where plan='team') and not org_has_internal_testing_grant(ordinary_org))from testing_fixture;
 select pg_temp.testing_ok('all retail plans and industry overrides remain unchanged',plans=(select jsonb_agg(to_jsonb(p)order by p.plan)from plan_entitlements p)and overrides=(select jsonb_agg(to_jsonb(o)order by o.plan,o.space_type)from plan_entitlement_overrides o))from retail_snapshot;
 select count(*)as testing_grant_assertions from testing_checks;
 select 'PASS: internal testing grant SQL assertions; all fixtures rolled back.';

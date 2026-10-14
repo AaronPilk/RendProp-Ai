@@ -42,7 +42,9 @@ test("mixed JWT preserved; live drift, missing/duplicate functions and undeclare
   assert.throws(() => selectedPolicy({ studio: "true" }, ["studio"]));
 });
 test("first deployment requires explicit reviewed endpoint names; policy mismatch or absent ordinary functions still refuse",()=>{
-  assert.deepEqual(NEW_FUNCTION_POLICIES,{"property-sites":true,"property-video-plan":true});
+  assert.deepEqual(NEW_FUNCTION_POLICIES,{"property-sites":true,"property-video-plan":true,"property-video-jobs":true,"property-video-worker":false});
+  assert.deepEqual(verifyDeploymentBefore([],{"property-video-worker":false},["property-video-worker"]),{"property-video-worker":{create:true,verifyJwt:false}});
+  assert.throws(()=>verifyDeploymentBefore([],{"property-video-worker":true},["property-video-worker"]),/reviewed JWT/);
   assert.deepEqual(parseDeploymentArgs(["--functions","studio,property-sites,property-video-plan","--create-new","property-sites,property-video-plan"]),{functions:["studio","property-sites","property-video-plan"],run:false,createNew:["property-sites","property-video-plan"]});
   for(const args of [["--functions","studio","--create-new","studio"],["--functions","property-sites","--create-new","property-video-plan"],["--functions","property-sites","--create-new"],["--functions","property-sites","--create-new","property-sites,property-sites"],["--functions","property-sites","--create-new","unreviewed-function"]])assert.throws(()=>parseDeploymentArgs(args));
   const policy={studio:true,"property-sites":true,"property-video-plan":true},studio={name:"studio",verify_jwt:true,status:"ACTIVE",import_map:false};
@@ -133,12 +135,15 @@ test("workflow budgets follow static imports/CSS, reject missing entries and kee
     "index.html": { file: "assets/index.js", css: ["assets/index.css"], isEntry: true },
     "src/features/projects/Projects.tsx": { file: "assets/projects.js", imports: ["shared"], isDynamicEntry: true },
     "src/features/sync/PropertyReels.tsx": { file: "assets/reels.js", imports: ["shared"], isDynamicEntry: true },
+    "src/features/sync/MakeVideo.tsx": { file: "assets/make-video.js", imports: ["shared"], isDynamicEntry: true },
     shared: { file: "assets/shared.js", css: ["assets/shared.css"], imports: ["index.html"] },
     [PROXY_ENTRY]: { file: "assets/proxy.js", imports: ["shared"], isDynamicEntry: true },
   };
   const groups = releaseAssetGroups(manifest);
-  assert.deepEqual(groups.initial, ["assets/index.css", "assets/index.js"]); assert.equal(groups.create.length, 6); assert.equal(groups.withLargeVideo.length, 7);
+  assert.deepEqual(groups.initial, ["assets/index.css", "assets/index.js"]); assert.equal(groups.create.length, 7); assert.equal(groups.withLargeVideo.length, 8);
   assert.throws(() => manifestClosure(manifest, ["renamed-or-missing"]), /Missing required/);
+  const missingSimple = {...manifest}; delete missingSimple["src/features/sync/MakeVideo.tsx"];
+  assert.throws(() => releaseAssetGroups(missingSimple), /Missing required/);
   assert.throws(() => releaseAssetGroups({ ...manifest, shared: { ...manifest.shared, imports: [PROXY_ENTRY] } }), /outside the Create/);
   assert.throws(() => manifestClosure({ bad: { file: "../secret.js" } }, ["bad"]), /Unsafe/);
 });

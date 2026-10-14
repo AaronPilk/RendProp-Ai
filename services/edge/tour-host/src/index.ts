@@ -37,12 +37,13 @@ import { joinPage, normalizeJoinCode } from "./join";
 import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
-import { sitemapXml } from "./sitemap";
+import { sitemapXml, sitemapCursor, propertySitemapCursors, sitemapIndexXml, propertySitemapXml } from "./sitemap";
 import { fetchUpstreamJSON } from "./upstream";
 import { spatialData, spatialModule, spatialPage } from "./spatial";
 import { handleMediaDelivery } from "./media-delivery";
 import { handleRecipientConfirmation } from "./recipient-confirmation";
 import { propertyPage } from "./property-site";
+import { propertyAddressPath } from "./property-seo";
 import { previewWebsiteTheme } from "./property-design";
 import { isPublicLocation, lookupNearbyPlaces } from "./nearby-places";
 
@@ -295,11 +296,22 @@ async function handleTour(
   }
 
   const publicBase: "/f" | "/property" = url.pathname.startsWith("/property/") ? "/property" : "/f";
-  const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase, previewTheme };
+  const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase, previewTheme, addressUrls: !demo };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
   const finish = (tour: Tour): Response => {
     if (previewTheme && (tour.space_type || "real_estate") !== "real_estate") return notFound();
+    // Resolve the address only after the normal current-publication/hosting
+    // authority has admitted this tour. Old short links keep working; an old
+    // address spelling redirects to today's actual property without leaking a
+    // private/unpublished address or treating the descriptor as identity.
+    if (!demo && !unbranded && (tour.space_type || "real_estate") === "real_estate" && /^\/property\/[^/]+\/[^/]+$/.test(url.pathname)) {
+      const canonicalPath = propertyAddressPath(tour.slug, tour.listing?.address);
+      if (url.pathname !== canonicalPath) {
+        const target = new URL(canonicalPath, url.origin); target.search = url.search;
+        return new Response(null, { status: 308, headers: { Location: target.href, "Cache-Control": "no-store" } });
+      }
+    }
     const t = demo && !previewTheme ? ttl(env) : 0;
     const html = renderTourPage(
       tour,
@@ -403,33 +415,33 @@ async function handleNearbyPlaces(slug: string, req: Request, url: URL, env: Env
   return reply(200, { ...await lookupNearbyPlaces(upstream.value, env), license_url: "https://www.openstreetmap.org/copyright" });
 }
 
-/**
- * GET /sitemap.xml — served by the Worker, not by Static Assets.
- *
- * `public/sitemap.xml` (a hand-maintained eight-URL file that never once named
- * a real tour) was DELETED as part of this route: an exact file match under
- * ./public is answered by Static Assets before this script runs, so leaving it
- * in place would have made this handler unreachable.
- *
- * What it can and cannot enumerate today, and the upstream endpoint that would
- * let it list real tours, are documented in src/sitemap.ts. Both of that file's
- * hard rules — no `/u/` URL, and no tour that is not opted into indexing — are
- * enforced by construction: this handler passes no tours at all, because there
- * is no endpoint that can tell it which ones qualify.
- *
- * Cached for an hour at the edge and in the browser. A sitemap is polled by
- * crawlers, not by people, and an hour is short enough that a newly published
- * tour appears the same day once the upstream index exists.
- */
-function sitemapResponse(url: URL): Response {
-  return new Response(sitemapXml(url.origin), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/xml; charset=utf-8",
-      "Cache-Control": "public, max-age=3600, s-maxage=3600",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
+/** Static marketing and fresh, opt-in customer child sitemaps. Customer
+ * enumeration is bounded by the same public authority as the property page. */
+async function sitemapResponse(url: URL, env: Env): Promise<Response> {
+  const siteOnly = url.pathname === "/sitemap-site.xml";
+  const headers = { "Content-Type": "application/xml; charset=utf-8",
+    "Cache-Control": siteOnly ? "public, max-age=3600, s-maxage=3600" : "no-store",
+    "X-Content-Type-Options": "nosniff" };
+  if (siteOnly) return new Response(sitemapXml(url.origin), {headers});
+  const page = url.pathname === "/sitemap-properties.xml";
+  const keys = [...url.searchParams.keys()], cursor = url.searchParams.get("cursor");
+  if (keys.length > (page ? 1 : 0) || keys.some(key => key !== "cursor")
+      || (page && keys.length > 0 && !sitemapCursor(cursor))) {
+    return new Response("Invalid sitemap page.", {status:400, headers:{"Cache-Control":"no-store","X-Robots-Tag":"noindex"}});
+  }
+  const query = page ? "?limit=200" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : "") : "?pages=1";
+  const upstream = await fetchUpstreamJSON("/tours/index" + query, env);
+  let body: string | null = null;
+  if (upstream.kind === "ok") {
+    if (page) body = propertySitemapXml(url.origin, upstream.value);
+    else {
+      const cursors = propertySitemapCursors(upstream.value);
+      if (cursors) body = sitemapIndexXml(url.origin, cursors);
+    }
+  }
+  return body === null
+    ? new Response("Sitemap temporarily unavailable.", {status:503,headers:{"Cache-Control":"no-store","X-Robots-Tag":"noindex","Retry-After":"60"}})
+    : new Response(body, {headers});
 }
 
 async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -492,9 +504,10 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   }
   // A browser-only alias avoids previously cached app-link rules. This is
   // the same validated published slug/read path, never a redirect to /f/.
-  const fMatch = path.match(/^\/(?:f|property)\/([^/]+)$/);
+  const addressMatch = path.match(/^\/property\/([a-z0-9][a-z0-9-]{0,119})\/([^/]+)$/);
+  const fMatch = addressMatch || path.match(/^\/(?:f|property)\/([^/]+)$/);
   if (fMatch) {
-    const slug = safeDecode(fMatch[1]);
+    const slug = safeDecode(fMatch[addressMatch ? 2 : 1]);
     if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
     return handleTour(slug, req, url, env, ctx);
   }
@@ -536,8 +549,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
 
-  if (path === "/sitemap.xml") {
-    const resp = sitemapResponse(url);
+  if (["/sitemap.xml", "/sitemap-site.xml", "/sitemap-properties.xml"].includes(path)) {
+    const resp = await sitemapResponse(url, env);
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
 

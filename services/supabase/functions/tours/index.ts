@@ -1,3 +1,4 @@
+import{backgroundObjectLimits,GENERIC_MEDIA_BYTES,REGISTERED_BACKGROUND_BYTES}from'../_shared/background-media-delivery.ts';
 // tours — PUBLIC read of a published tour by slug (for the Cloudflare tour host).
 //
 //   GET /tours/:slug -> { listing (public subset), video_url, poster, chapters,
@@ -37,6 +38,7 @@
 //     render the floor plan above the gallery (buyers rate floor plans 57%
 //     "very useful" vs virtual tours 38%, NAR 2025).
 
+import{propertyTourIndex}from'./property-index.ts';
 import { handleOptions } from "../_shared/cors.ts";
 import { assert, HttpError, json, pathSegments, respondError, readJsonLimited } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
@@ -78,7 +80,7 @@ const unbrandedUrl = (slug: string) => `${TOUR_BASE}/u/${slug}`;
 
 // How many disclosure lines a single tour will ever print. A listing is capped
 // at 500 provenance rows by the RPC; the page shows the most recent 40.
-const MAX_ALTERED_MEDIA = 40;
+const MAX_ALTERED_MEDIA = 100;
 
 /** Measurement drafts sync with the owner's listing, independently of public
  * plan export. Keep their versioned metadata out of every public tour payload;
@@ -115,14 +117,16 @@ interface AlteredMedium {
  */
 // deno-lint-ignore no-explicit-any
 async function alteredMediaFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selectedKeys: ReadonlySet<string> | null, slug: string): Promise<AlteredMedium[]> {
-  const { data, error } = await admin
-    .from("media_provenance")
+  if(selectedKeys!==null&&selectedKeys.size===0)return [];
+  let query=admin.from("media_provenance")
     .select("kind, edit, label, disclosure, original_key, altered_key, created_at")
     .eq("listing_id", listingId)
     .order("created_at", { ascending: false })
-    // The private log is capped at 500. Filter before the public 40-item cap
-    // so recent retired edits cannot crowd out a currently selected version.
     .limit(selectedKeys===null?MAX_ALTERED_MEDIA:500);
+  // Read exact published keys before the bound. Private generated-shot logs
+  // and retired edits cannot crowd out selected photo disclosures.
+  if(selectedKeys!==null)query=query.in("altered_key",[...selectedKeys]);
+  const {data,error}=await query;
   // A disclosure lookup must never take the tour down: log and serve the tour
   // without the block rather than 500 the whole page.
   if (error) {
@@ -130,7 +134,6 @@ async function alteredMediaFor(admin: any, orgId: string, listingId: string, ref
     return [];
   }
   const current=(data??[]).filter((r:Record<string,unknown>)=>selectedKeys===null ||
-    ["aerial","reel","video_reflection_removal"].includes(String(r.kind)) ||
     (typeof r.altered_key==="string" && selectedKeys.has(r.altered_key))).slice(0,MAX_ALTERED_MEDIA);
   const scopedKeys = current.flatMap((r: Record<string, unknown>) => [r.original_key, r.altered_key]).filter((key: unknown): key is string => bucketForKey(key, { orgId, listingId }) !== null);
   const visible = await mediaVisibility(admin, listingId, { keys: scopedKeys });
@@ -148,8 +151,8 @@ async function alteredMediaFor(admin: any, orgId: string, listingId: string, ref
 }
 
 /** How many gallery photos a tour page will carry. A listing with more than
- * this many is not a gallery, it is a contact sheet. */
-const MAX_GALLERY = 40;
+ * this many uses a bounded selected gallery; the owned library remains larger. */
+const MAX_GALLERY = 100;
 
 /**
  * The listing's own photos, for the gallery on the tour page.
@@ -373,6 +376,7 @@ Deno.serve(async (req) => {
       return json(await privateMediaAuthority(adminClient(),body.cap,body.bytes),200,{"Cache-Control":"no-store"});
     }
     if (req.method !== "GET") throw new HttpError(405, "Only GET is supported");
+    if(seg.length===1&&seg[0]==='index')return await propertyTourIndex(req);
     const slug = seg[0];
     if(seg[0]==="business-logo"&&seg.length===2&&/^[a-f0-9-]{36}$/.test(seg[1])) {
       await requireMediaGateway(req);
@@ -395,7 +399,8 @@ Deno.serve(async (req) => {
     const context = await publishedTourContext(admin, slug, seg[1] === "location");
     const { render, listing, visibleRefs } = context;
     if (seg[1] === "location") return json(await publishedLocation(admin, context), 200, { "Cache-Control": "no-store" });
-    if (seg[1] === "delivery") await admitMediaRead(admin,listing.org_id,deliveryBytes(req));
+    const requestedDeliveryBytes=seg[1]==='delivery'?deliveryBytes(req,REGISTERED_BACKGROUND_BYTES):0;
+    if (seg[1] === "delivery") await admitMediaRead(admin,listing.org_id,requestedDeliveryBytes>GENERIC_MEDIA_BYTES?0:requestedDeliveryBytes);
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
     const selectedPhotos=listing.gallery_asset_ids??null;
@@ -409,8 +414,9 @@ Deno.serve(async (req) => {
       admin.from("listing_client_contacts").select("listing_id,org_id,enabled,public_card,hide_rendprop_branding,photo_asset_id,revision")
         .eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle(),
     ]);
+    const presentation=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,visibleRefs,publishedR2Url);
     const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
-      selectedPhotos===null?null:new Set(visibleRefs.keys),slug);
+      new Set([...visibleRefs.keys,...(render.presentation_kind!=="photo_video"&&typeof render.video_key==="string"?[render.video_key]:[])]),slug);
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: SpatialChapter[] = [];
@@ -458,7 +464,7 @@ Deno.serve(async (req) => {
     // (HLS) re-encodes away the all-intra GOP and snaps seeks to keyframes, so it
     // degrades scrubbing to keyframe-stepping. Therefore the R2 mp4 is the PRIMARY
     // scrub source; HLS is exposed separately as an adaptive fallback (long/4K).
-    const presentation=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,visibleRefs,publishedR2Url);
+
     const scrub_url = render.presentation_kind==='photo_video'?null:publishedR2Url(slug,render.video_key as string);
     const hls_url = render.presentation_kind==='photo_video'?null:publishedStreamUrl(slug,render.stream_uid as string);
     const video_url = scrub_url ?? hls_url;
@@ -502,7 +508,10 @@ Deno.serve(async (req) => {
       if(logo && JSON.stringify(await admittedBusinessLogo(admin,listing.org_id,identity?.org_business && (identity.org_business as Record<string,unknown>).business_logo_url,slug))!==JSON.stringify(logo))throw new HttpError(404,"The logo is no longer published.");
       await assertHostingAvailable(admin, listing.org_id);
       await assertCurrentPresentation();
-      return json(deliveryEnvelope(slug,{orgId:listing.org_id,listingId:listing.id},visibleRefs.keys,render.presentation_kind==='photo_video'?null:render.stream_uid,logo?.key),200,{"Cache-Control":"no-store"});
+      const deliveryHeaders = {"Cache-Control":"no-store"};
+      const envelope=deliveryEnvelope(slug,{orgId:listing.org_id,listingId:listing.id},visibleRefs.keys,render.presentation_kind==='photo_video'?null:render.stream_uid,logo?.key);
+      const object_limits=await backgroundObjectLimits(admin,{orgId:listing.org_id,listingId:listing.id},envelope.objects,requestedDeliveryBytes,new URL(req.url).searchParams.get('key')??undefined);
+      return json({...envelope,...(Object.keys(object_limits).length?{object_limits}:{})},200,deliveryHeaders);
     }
     const publicDetails = publicListingDetails(listing.details);
     await assertCurrentPresentation();

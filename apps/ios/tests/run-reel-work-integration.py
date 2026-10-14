@@ -53,6 +53,8 @@ for anchor in ['    static func accepts(payload:','    func handle(payload:','  
 body+='}\n'
 controls=[
  ('unknown-job', '$0.id == jobID', '$0.id == $0.id', 'unknown job cannot open another existing listing'),
+ ('lost-server-alias', '$0.serverJob?.reply?.jobID == jobID', 'false', 'accepted server job alias opens only its exact owned listing'),
+ ('lost-server-ready', '(type == "render_ready" && facts["property_video_job_id"] != nil)', 'false', 'server-ready notification routes through saved job review'),
  ('wrong-listing', '$0.id == job.listingID', '$0.id == $0.id', 'job cannot route to a different listing'),
  ('sample-review', '!listing.isSample, listing.cloudUnavailable != true', 'true, listing.cloudUnavailable != true', 'sample listing cannot receive real job result'),
  ('unavailable-review', 'listing.cloudUnavailable != true', 'true', 'unavailable listing cannot be reopened by notification'),

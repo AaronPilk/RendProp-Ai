@@ -4,10 +4,11 @@ import {HttpError} from "./http.ts";
 const actor="10000000-0000-4000-8000-000000000001",org="20000000-0000-4000-8000-000000000002",listing="30000000-0000-4000-8000-000000000003",other="40000000-0000-4000-8000-000000000004",key=`renders/${org}/${listing}/photo.jpg`;
 async function setup<T>(fn:()=>Promise<T>){const prior=Deno.env.get("MEDIA_GATEWAY_SECRET"),flag=Deno.env.get("PRIVATE_MEDIA_DELIVERY");Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64));Deno.env.set("PRIVATE_MEDIA_DELIVERY","gateway-v1");try{return await fn();}finally{for(const[name,value]of [["MEDIA_GATEWAY_SECRET",prior],["PRIVATE_MEDIA_DELIVERY",flag]])value===undefined?Deno.env.delete(name!):Deno.env.set(name!,value!);}}
 async function token(extra:Record<string,unknown>={}){return new URL(await privateMediaUrl({actor,org,listing,bucket:"renders",key,...extra} as any)).pathname.slice(15);}
-function admin(fault=""){
+function admin(fault="",mediaKey=key){
  let reads=0,admits=0;const order:string[]=[];
  const rpc=async(name:string,args:any)=>{order.push(name);if(name==="library_media_delivery_admit"){admits++;assertEquals(args.p_org,org);assertEquals(args.p_actor,actor);assertEquals(args.p_required,true);return fault==="budget"?{data:null,error:{message:"RP429: Media serving allowance exhausted"}}:{data:{admitted:true,legacy_unbudgeted:false},error:null};}
- if(name==="library_access"||name==="listing_library_scope") {
+ if(name==='background_video_delivery')return fault==='unregistered-bg'?{data:null,error:null}:fault==='revoked-bg'?{data:null,error:{message:'RP404: Background video was withdrawn'}}:{data:{kind:'registered_background_video',asset_id:other,bytes:350*1024*1024,sha256:'b'.repeat(64),max_object_bytes:1536*1024*1024},error:null};
+ if(name=="library_access"||name=="listing_library_scope") {
   if(fault==="membership")return {data:null,error:{message:"RP403: Revoked library"}};
   return {data:{actor_id:actor,org_id:org,library_owner_user_id:actor,role:"owner",access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:org,team_org_id:null,
     ...(name==="listing_library_scope"?{listing_id:listing,library_org_id:fault==="legacy"?other:org,listing_owner_user_id:actor}:{})},error:null};
@@ -17,7 +18,7 @@ function admin(fault=""){
  if(name==="studio_production_review")return{data:{document:{revision:1,payload:{draft:{narration:{resultId:other}}}},source_revision:1,review:{status:fault==="review"?"draft":"submitted",submitted_at:"2026-10-07"}},error:null};
  throw Error("Unknown RPC "+name);};
  const from=(table:string)=>{reads++;order.push(table);const filters:any={};const q:any={select:()=>q,eq:(k:string,v:any)=>{filters[k]=v;return q;},is:()=>q,in:()=>q,limit:()=>q,maybeSingle:()=>Promise.resolve(reply()),then:(resolve:any)=>Promise.resolve(reply()).then(resolve)};
- function reply(){let data:any=null;if(table==="memberships")data={user_id:actor,org_id:org,role:fault==="membership"?"viewer":"agent"};if(table==="profiles")data={id:actor};if(table==="deletion_requests")data=fault==="deletion"?[{id:other}]:[];if(table==="listings")data={id:listing,org_id:fault==="other-org"?other:org,deleted_at:null};if(table==="capture_assets")data=fault==="unregistered"?null:{id:other,listing_id:listing,bucket:"renders",storage_key:key,uploaded:true};if(["photos","renders","media_provenance"].includes(table))data=[];
+ function reply(){let data:any=null;if(table==="memberships")data={user_id:actor,org_id:org,role:fault==="membership"?"viewer":"agent"};if(table==="profiles")data={id:actor};if(table==="deletion_requests")data=fault==="deletion"?[{id:other}]:[];if(table==="listings")data={id:listing,org_id:fault==="other-org"?other:org,deleted_at:null};if(table==="capture_assets")data=fault==="unregistered"?null:{id:other,listing_id:listing,bucket:"renders",storage_key:mediaKey,uploaded:true};if(["photos","renders","media_provenance"].includes(table))data=[];
  if(table==="studio_project_media")data={id:other,actor_id:actor,org_id:org,bytes:2,parts:1,receipts:{"0":{state:fault==="project"?"writing":"complete",bytes:2,sha256:"c".repeat(64)}}};
  if(table==="studio_creative_results")data={id:other,user_id:other,org_id:org,listing_id:listing,kind:"voice",bucket:"uploads",storage_key:`ai-voice/${org}/${other}.mp3`,metadata:{state:"completed"}};
  return {data,error:null};}return q;};return{rpc,from,stats:()=>({reads,admits,order})};
@@ -50,4 +51,12 @@ Deno.test("retained legacy media keeps physical keys but retention follows its c
  const t=await token(),a=admin("legacy");
  assertEquals((await privateMediaAuthority(a,t,7)).objects,{[key]:"renders"});
  assertEquals(a.stats().order.filter(n=>n==="hosting_retention_state").length,2);
+}));
+
+Deno.test("actual private signed master emits exact registered limit and refuses forged/revokedlarge source",()=>setup(async()=>{
+ const bg=`renders/${org}/${listing}/background/${other}/${actor}/master.mp4`,t=await token({key:bg}),db=admin('',bg);
+ const r=await privateMediaAuthority(db,t,350*1024*1024);assertEquals(r.object_limits?.[bg],{kind:'registered_background_video',asset_id:other,bytes:350*1024*1024,sha256:'b'.repeat(64),max_object_bytes:1536*1024*1024});
+ assertEquals(db.stats().order[0],'library_media_delivery_admit');assert(db.stats().order.includes('background_video_delivery'));
+ for(const fault of['unregistered-bg','revoked-bg'])await assertRejects(()=>privateMediaAuthority(admin(fault,bg),t,350*1024*1024),HttpError);
+ await assertRejects(async()=>privateMediaAuthority(admin(),await token(),350*1024*1024),HttpError);
 }));

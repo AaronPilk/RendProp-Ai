@@ -61,6 +61,9 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
     'func reconcileAfterRestore()', 'func reseedSamples()', 'func persist()'].map(declaration).join('\n');
   const store = app.slice(app.indexOf('enum PersistentStore {'), app.indexOf('// MARK: - Entry'));
   assert.ok(store.includes('extension PersistentStore.PersistedState'));
+  const videoStore = readFileSync(root + 'apps/ios/Rendprop/Models/ListingVideo.swift', 'utf8');
+  const pendingFile = videoStore.match(/    static func pendingFile\(listingID: UUID, documents: URL\) -> URL \{\n[^\n]+\n    \}/g);
+  assert.equal(pendingFile?.length, 1, 'extract the one actual listing-video publication path dependency');
   // Mechanical extraction, no function-body edits. Only unavailable app/OS
   // dependencies are inert. Full model types and the current CloudDraftCreation
   // implementation are real; do not replace its identity/fingerprint/save logic.
@@ -73,6 +76,7 @@ enum WorkspaceContext {
  static func read(owner: UUID) -> Snapshot? { ownerSelections[owner].map { Snapshot(selectedOrgID: $0) } }
 }
 enum AccountExportFiles { static func purge() {} }
+enum ListingVideoStore { ${pendingFile[0]} }
 @MainActor final class WorkspaceStore { static let shared = WorkspaceStore(); func refresh() async {}; func canViewLibrary(_ org: UUID) -> Bool { org == WorkspaceContext.selectedOrgID } }
 enum FileStore {
  static var documents = URL(fileURLWithPath: "/nonexistent/fixture-not-initialized")

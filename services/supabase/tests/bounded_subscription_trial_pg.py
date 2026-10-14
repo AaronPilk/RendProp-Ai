@@ -173,7 +173,7 @@ try:
       select prepare_subscription_trial_purchase('{actor}','{org}','com.rendprop.app.starter.monthly');
       select apply_apple_entitlement_v2('{org}','{actor}','synthetic-race-original','synthetic-race-tx','com.rendprop.app.starter.monthly','starter','Production','active',now()+interval '7 days',true,'SUBSCRIBED',now(),now(),now(),now());
       select fund_reserved_subscription_trial('{actor}','{org}','synthetic-race-original','synthetic-race-tx','com.rendprop.app.starter.monthly',0,'USD','USA',1,'FREE_TRIAL',now(),now()+interval '7 days',now(),repeat('a',64));
-      select serving_cost_reserve('{actor}','{org}','race-photo-key-'||i,'photo.sky:0','gemini','synthetic',repeat('a',64),1,'synthetic')from generate_series(1,4)i;
+      select serving_cost_reserve('{actor}','{org}','race-photo-key-'||i,'photo.sky:0','gemini','synthetic',repeat('a',64),1,'synthetic')from generate_series(1,19)i;
       commit;
     """)
     race_mode=run("race-serving-mode",[*psql,"-Atq"],"select public.serving_mode();").strip()
@@ -183,17 +183,17 @@ try:
     outcomes=race("last-credit-race",statements)
     assert sorted(code for code,_ in outcomes)==[0,3],outcomes
     assert sum("RP402"in output for _,output in outcomes)==1,outcomes
-    receipt["photoCreditRace"]={"admitted":1,"refused":1,"lifetimeCap":5}
+    receipt["photoCreditRace"]={"admitted":1,"refused":1,"lifetimeCap":20}
     used=run("after-credit-race",[*psql,"-Atq"],f"select count(*)from subscription_trial_actions where org_id='{org}'and kind='photo';").strip()
-    assert used=="5",used
-    # Executed negative control: remove the actual trigger, then the sixth real
+    assert used=="20",used
+    # Executed negative control: remove the actual trigger, then the21st real
     # financial reservation succeeds. The test proves quota admission behavior,
     # not an implementation text fingerprint.
     run("negative-remove-trigger",[*psql,"-q"],"alter table serving_cost_reservations disable trigger subscription_trial_cost_admission;")
-    negative=run("negative-sixth-credit",[*psql,"-Atq"],f"set role service_role;select serving_cost_reserve('{actor}','{org}','sixth-photo-no-trigger','photo.sky:0','gemini','synthetic',repeat('a',64),1,'synthetic');")
+    negative=run("negative-21st-credit",[*psql,"-Atq"],f"set role service_role;select serving_cost_reserve('{actor}','{org}','21st-photo-no-trigger','photo.sky:0','gemini','synthetic',repeat('a',64),1,'synthetic');")
     assert '"reserved": true'in negative
     run("restore-trigger",[*psql,"-q"],"alter table serving_cost_reservations enable trigger subscription_trial_cost_admission;")
-    receipt["negativeControl"]={"removed":"actual trial admission trigger","sixthProviderReservationAccepted":True}
+    receipt["negativeControl"]={"removed":"actual trial admission trigger","21stProviderReservationAccepted":True}
     listing="d3000000-0000-4000-8000-000000000001"
     def ticket(n, idem):
         asset=str(uuid.uuid4())

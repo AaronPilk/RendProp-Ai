@@ -48,6 +48,7 @@ import { listingVideo, listingVideoStage, PROPERTY_VIDEO_CSS, PROPERTY_VIDEO_JS 
 import { spatialAnchor } from "./spatial-manifest";
 import { APP_STORE_ID, appStoreUrl, siteUrl } from "./attribution";
 import { tourJsonLd } from "./jsonld";
+import { propertyAddressPath, propertyCanonical, propertySearchMeta } from "./property-seo";
 import {
   type AgentModel,
   absolutize,
@@ -325,12 +326,12 @@ function composeAlteredLabel(label: string, kind: string, phrase: string): strin
 /**
  * Read `tour.altered_media[]` defensively: the field is optional (older
  * deployed `tours` functions omit it entirely), each row is freeform, and the
- * server caps at 40 — we cap again.
+ * server caps selected public media at100 — we cap again.
  */
 function alteredItems(tour: Tour): AlteredItem[] {
   const raw = Array.isArray(tour.altered_media) ? tour.altered_media : [];
   const out: AlteredItem[] = [];
-  for (const row of raw.slice(0, 40)) {
+  for (const row of raw.slice(0, 100)) {
     if (!row || typeof row !== "object") continue;
     const m = row as AlteredMedium;
     const rawKind = first(m.kind).toLowerCase().replace(/[^a-z_]/g, "");
@@ -593,7 +594,7 @@ function buildHeader(tour: Tour, unbranded = false): HeaderModel {
     if (price && l.address) lines.push(l.address);
 
     const titleText = l.address || "Property tour";
-    const ogDesc = (sold ? "Sold. " : "") + "Explore this home’s photos, details and fly-through." +
+    const ogDesc = (sold ? "Sold. " : "") + "Explore this home’s photos and property details." +
       (bits.length ? " " + bits.join(" · ") : "") +
       (price ? " · " + price : "");
     return {
@@ -2563,7 +2564,7 @@ function mediaDateNote(tour: Tour): string {
   return `<p class="lp-fine lp-mediadate"><time datetime="${escapeAttr(when.toISOString().slice(0, 10))}">This tour was published on ${escapeHtml(text)}.</time> Ask the agent before assuming anything shown here is still current.</p>`;
 }
 
-function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null, publicBase: "/f" | "/property" = "/f", previewTheme: WebsiteTheme | null = null): string {
+function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null, publicBase: "/f" | "/property" = "/f", previewTheme: WebsiteTheme | null = null, addressPath?: string): string {
   const l = tour.listing;
   const isRE = isRealEstate(tour);
   const sold = isSoldOrArchived(tour);
@@ -2620,7 +2621,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
       return `<figure class="lp-gcell"><a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}"><img class="property-thumb" data-property-src="${escapeAttr(g.url)}" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="${alt}" loading="lazy" decoding="async" fetchpriority="low"><noscript>${image}</noscript></a>${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
     };
     out.push(sec("gallery", "Gallery", "A closer look",
-      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase, previewTheme))}">View all ${imgs.length} photos</a></p>` : ""}`, page !== "gallery"));
+      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase, previewTheme, addressPath))}">View all ${imgs.length} photos</a></p>` : ""}`, page !== "gallery"));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Explore the rooms" : "Explore the space",
       `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
@@ -3018,6 +3019,8 @@ export interface RenderOpts {
   page?: PropertyPage;
   /** Browser-only public alias; the canonical server URL is unchanged. */
   publicBase?: "/f" | "/property";
+  /** Descriptive browser URLs derived only from the authoritative public address. */
+  addressUrls?: boolean;
   /** Presentation-only preview of already-published data; grants no design. */
   previewTheme?: WebsiteTheme | null;
 }
@@ -3035,11 +3038,14 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const preview = previewTheme !== null;
   const theme = previewTheme || websiteTheme(tour.website_theme);
   const primaryVideo = !embed && isRealEstate(tour) ? listingVideo(tour.listing_video) : null;
-  const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target, publicBase, previewTheme);
+  const addressPath = polished && opts.addressUrls ? propertyAddressPath(tour.slug, tour.listing?.address) : undefined;
+  const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target, publicBase, previewTheme, addressPath);
 
   const hideVendor = hidesVendorBranding(tour);
   const agent = extractAgent(tour.client_mode === true ? { ...tour.agent_card, handle: null } : tour.agent_card || {});
   const header = buildHeader(tour, unbranded);
+  const searchMeta = propertySearchMeta(page, header.pageTitle, header.ogDesc, header.entityName);
+  const socialMeta = propertySearchMeta(page, header.ogTitle, header.ogDesc, header.entityName);
   const poster = safeUrl(tour.poster || "");
   const coverImage = safeUrl(tour.cover_url || "") || galleryItems(tour)[0]?.url || poster;
   const staged = !!tour.staged;
@@ -3114,7 +3120,11 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // UNBRANDED: no og:*/twitter cards and no canonical at all. og:url and the
   // canonical are rendprop.com URLs, and share metadata is a social-sharing
   // (i.e. branded) affordance — the MLS page is noindex and shares nothing.
-  const shareUrl = unbranded ? "" : safeUrl(tour.share_url || "") || canonicalFor(tour.slug, opts.origin);
+  const shareUrl = unbranded ? "" : addressPath && opts.origin
+    ? propertyCanonical(opts.origin, addressPath, null)
+    : safeUrl(tour.share_url || "") || canonicalFor(tour.slug, opts.origin);
+  const pageCanonical = /^https?:\/\//i.test(shareUrl) && page && page !== "home"
+    ? propertyCanonical(new URL(shareUrl).origin, new URL(shareUrl).pathname, page) : shareUrl;
   // F-H-19: a customer's tour is not offered to search engines unless its owner
   // asked for it. og:* still ships — sharing a link in a message is not the
   // same decision as being listed in a search index forever.
@@ -3184,7 +3194,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     ${primaryVideo && hasVideo ? `<details class="property-recorded-option"><summary>Optional recorded walkthrough</summary><p>Explore the separately recorded tour.</p><button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Open recorded walkthrough</button></details>` : ""}
     ${polished ? "</div>" : ""}
   </section>`;
-  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page, publicBase, previewTheme);
+  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page, publicBase, previewTheme, addressPath);
   // The end card IS the branding: agent card + CTA/lead form. `/u/` has none.
   const endcardHtml = embed || unbranded || (page && page !== "home" && page !== "contact") ? "" : `<section id="endcard">
   <div class="panel">
@@ -3218,7 +3228,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // this is the SAME predicate as the robots tag by construction: a page that
   // is asked not to be indexed never hands a crawler a machine-readable copy
   // of the owner's name, phone, email and the listing address.
-  const jsonLdHtml = indexable
+  const jsonLdHtml = indexable && (!page || page === "home")
     ? tourJsonLd({
         tour,
         agent,
@@ -3227,6 +3237,8 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
         description: header.ogDesc,
         poster: absolutize(primaryVideo ? primaryVideo.poster_url || coverImage : poster, shareUrl),
         videoUrl: primaryVideo?.url || scrubUrl,
+        videoDurationS: primaryVideo?.duration_s ?? tour.duration_s ?? undefined,
+        videoEmbedUrl: primaryVideo ? null : undefined,
         // priceText() already returns "" for 0 / absent; price_cents is the
         // only numeric source, so a listing with a display price but no cents
         // emits no Offer rather than an Offer with a parsed guess in it.
@@ -3260,16 +3272,16 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0d10">
-<title>${escapeHtml(page && page !== "home" ? `${page[0].toUpperCase() + page.slice(1)} · ${header.pageTitle}` : header.pageTitle)}</title>
-<meta name="description" content="${escapeAttr(header.ogDesc)}">
+<title>${escapeHtml(searchMeta.title)}</title>
+<meta name="description" content="${escapeAttr(searchMeta.description)}">
 ${embed || unbranded ? `<meta name="robots" content="noindex">` : indexable ? "" : `<meta name="robots" content="noindex, nofollow">`}
 ${appBanner}
-${unbranded ? "" : `${shareUrl ? `<link rel="canonical" href="${escapeAttr(shareUrl)}">` : ""}
+${unbranded ? "" : `${pageCanonical ? `<link rel="canonical" href="${escapeAttr(pageCanonical)}">` : ""}
 ${hideVendor ? "" : `<link rel="icon" href="/favicon.svg" type="image/svg+xml">`}
-<meta property="og:title" content="${escapeAttr(header.ogTitle)}">
-<meta property="og:description" content="${escapeAttr(header.ogDesc)}">
+<meta property="og:title" content="${escapeAttr(socialMeta.title)}">
+<meta property="og:description" content="${escapeAttr(socialMeta.description)}">
 <meta property="og:type" content="website">
-${shareUrl ? `<meta property="og:url" content="${escapeAttr(shareUrl)}">` : ""}
+${pageCanonical ? `<meta property="og:url" content="${escapeAttr(pageCanonical)}">` : ""}
 <meta name="twitter:card" content="summary_large_image">
 ${ogImage}
 ${jsonLdHtml}`}

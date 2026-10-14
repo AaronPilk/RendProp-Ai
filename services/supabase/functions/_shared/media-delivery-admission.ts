@@ -15,12 +15,12 @@ export async function requireMediaGateway(req: Request): Promise<void> {
   assert(difference === 0, 403, "Media gateway verification required.");
 }
 
-export function deliveryBytes(req: Request): number {
+export function deliveryBytes(req: Request, maximum=256*1024*1024): number {
   const value = new URL(req.url).searchParams.get("bytes");
   if (value === null) return 0;
-  assert(/^(0|[1-9][0-9]{0,8})$/.test(value), 400, "Invalid media byte admission.");
+  assert(/^(0|[1-9][0-9]{0,9})$/.test(value), 400, "Invalid media byte admission.");
   const bytes = Number(value);
-  assert(Number.isSafeInteger(bytes) && bytes <= 256 * 1024 * 1024, 400, "Invalid media byte admission.");
+  assert(Number.isSafeInteger(bytes) && bytes <= maximum, 400, "Invalid media byte admission.");
   return bytes;
 }
 

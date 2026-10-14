@@ -5,7 +5,7 @@ import argparse,hashlib,json,platform,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[3]
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);p.add_argument('--simulator');a=p.parse_args()
 out=(a.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-video-delivery-'))).resolve();out.mkdir(parents=True,exist_ok=True)
-paths=[ROOT/'apps/ios/Rendprop/Render/ReelComposer.swift',ROOT/'apps/ios/Rendprop/Render/VideoAspectChoice.swift',ROOT/'apps/ios/Rendprop/Voice/VoiceTypes.swift',ROOT/'apps/ios/Rendprop/Voice/CaptionRenderer.swift',ROOT/'apps/ios/tests/VideoDeliveryEncodingTests.swift',ROOT/'apps/ios/Rendprop/Models/ListingVideo.swift',ROOT/'apps/ios/Rendprop/Render/ListingVideoPreparation.swift',Path(__file__).resolve()]
+paths=[ROOT/'apps/ios/Rendprop/Render/ReelComposer.swift',ROOT/'apps/ios/Rendprop/Render/VideoAspectChoice.swift',ROOT/'apps/ios/Rendprop/Voice/VoiceTypes.swift',ROOT/'apps/ios/Rendprop/Voice/CaptionRenderer.swift',ROOT/'apps/ios/tests/VideoDeliveryEncodingTests.swift',ROOT/'apps/ios/Rendprop/Models/ListingVideo.swift',ROOT/'apps/ios/Rendprop/Render/ListingVideoPreparation.swift',ROOT/'apps/ios/Rendprop/Render/VideoMusicContract.swift',Path(__file__).resolve()]
 hashes=lambda:{str(x.relative_to(ROOT)):hashlib.sha256(x.read_bytes()).hexdigest() for x in paths}
 before=hashes()
 def command(label,cmd,timeout=240):

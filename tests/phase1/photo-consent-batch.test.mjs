@@ -22,6 +22,13 @@ const apiEnd = api.indexOf('// MARK: - Admin console models', apiBegin);
 assert.ok(apiBegin >= 0 && apiEnd > apiBegin, 'require exact production API error boundaries');
 const errors = `import Foundation\n${api.slice(apiBegin, apiEnd)}\n`;
 const history = readFileSync(new URL('../../apps/ios/Rendprop/Photos/PhotoVersionHistory.swift', import.meta.url), 'utf8');
+function actualDeclaration(marker) {
+  assert.equal(history.split(marker).length - 1, 1, 'require unique production history policy');
+  const start = history.indexOf(marker), opening = history.indexOf('{', start);
+  let depth = 1, end = opening + 1;
+  while (depth > 0) { depth += (history[end] === '{') - (history[end] === '}'); end += 1; }
+  return history.slice(start, end);
+}
 const versionMembers = ['        var customReviewed: Bool? = nil',
   '        var needsCustomReview: Bool {', '        var canAutomaticallySelectForListing: Bool {'].map(marker => {
   assert.equal(history.split(marker).length - 1, 1, 'require unique production version member');
@@ -29,8 +36,11 @@ const versionMembers = ['        var customReviewed: Bool? = nil',
   return history.slice(start, history.indexOf('\n', start));
 }).join('\n');
 const fixture = readFileSync(new URL('PhotoConsentBatchTests.swift', import.meta.url), 'utf8')
-  .replace('__VERSION_SELECTION_MEMBERS__', versionMembers);
+  .replace('__VERSION_SELECTION_MEMBERS__', versionMembers + '\n' + actualDeclaration('        var isRetainedOriginalSource: Bool {'))
+  .replace('__ACTUAL_EDIT_CONTEXT__', actualDeclaration('    static func source(for id: String, edit: String, directory: URL)') + '\n' +
+    actualDeclaration('    static func editContext(for id: String, edit: String, directory: URL)'));
 assert.ok(!fixture.includes('__VERSION_SELECTION_MEMBERS__'), 'actual version selection members must be installed');
+assert.ok(!fixture.includes('__ACTUAL_EDIT_CONTEXT__'), 'actual original/source/parent policy must be installed');
 
 test('actual photo batch fences revoked grants before dispatch and retains already-dispatched outputs', () => {
   const directory = mkdtempSync(join(tmpdir(), 'rendprop-photo-consent.'));
