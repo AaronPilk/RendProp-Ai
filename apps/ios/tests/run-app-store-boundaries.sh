@@ -9,6 +9,7 @@ app = (root/'apps/ios/Rendprop/RendpropApp.swift').read_text()
 config = (root/'apps/ios/Rendprop/Config.swift').read_text()
 settings = (root/'apps/ios/Rendprop/Screens/SettingsView.swift').read_text()
 uploader = (root/'apps/ios/Rendprop/Upload/SpatialUploadCoordinator.swift').read_text()
+hub = (root/'apps/ios/Rendprop/Screens/SpatialTestingHubView.swift').read_text()
 def block(source, anchor):
     start = source.index(anchor)
     opening = source.index('{', start)
@@ -25,8 +26,12 @@ refresh = block(app, '    func refreshSpatialCapability() {')
 footer = block(settings, '    private var aiProcessingFooter: String {')
 route = app[app.index('            case .spatial:', app.index('@ViewBuilder private var routeDestination')):]
 route = route[:route.index('            case .tour:')]
-assert route.index('if model.isSpatialWalkthroughAvailable') < route.index('SpatialTourView(')
-assert 'else {' in route and 'FlythroughDetailView(listing: route.listing)' in route
+assert '#if SPATIAL_CAPTURE_LAB' in route and '#else' in route
+assert 'SpatialTestingHubView(listing: route.listing)' in route and 'FlythroughDetailView(listing: route.listing)' in route
+assert 'SpatialTourView(' not in route, 'Home lab entry must not bypass the hub cloud gate'
+cloud = block(hub, '    @ViewBuilder private func cloudCard(')
+assert cloud.index('else if capability?.enabled == true') < cloud.index('SpatialTourView(')
+assert hub.startswith('#if SPATIAL_CAPTURE_LAB\n'), 'The local test hub must not ship as a public route'
 assert sum(p.read_text().count('SpatialTourView(') for p in (root/'apps/ios/Rendprop').rglob('*.swift')) == 1, 'Every spatial route must reach the sole guarded constructor'
 assert 'case .spatial' not in (root/'apps/ios/Rendprop/Coach/CoachModel.swift').read_text()
 deep_link = (root/'apps/ios/Rendprop/DeepLink/DeepLink.swift').read_text()
@@ -167,7 +172,7 @@ background_header = (root/'apps/ios/tests/SpatialBackgroundAdmissionTests.swift'
 ''')
 print('PASS: regular scheme archives only the app in Release; Settings mirrors consent processors')
 inputs = ['apps/ios/Rendprop/RendpropApp.swift', 'apps/ios/Rendprop/Config.swift',
-    'apps/ios/Rendprop/Screens/SettingsView.swift', 'apps/ios/Rendprop/Upload/SpatialUploadCoordinator.swift',
+    'apps/ios/Rendprop/Screens/SettingsView.swift', 'apps/ios/Rendprop/Screens/SpatialTestingHubView.swift', 'apps/ios/Rendprop/Upload/SpatialUploadCoordinator.swift',
     'apps/ios/Rendprop/Coach/CoachModel.swift', 'apps/ios/Rendprop/DeepLink/DeepLink.swift',
     'apps/ios/Rendprop.xcodeproj/project.pbxproj',
     'apps/ios/Rendprop.xcodeproj/xcshareddata/xcschemes/Rendprop.xcscheme',

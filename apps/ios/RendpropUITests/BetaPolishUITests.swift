@@ -809,10 +809,17 @@ final class BetaPolishUITests: XCTestCase {
 
     func testMeasurementsIsComingSoonOnTheListingPage() {
         launchDetail()
+#if SPATIAL_CAPTURE_LAB
+        let plans = app.buttons["detail.floorPlanLab"]
+        scrollTo(plans)
+        XCTAssertTrue(plans.exists && plans.isEnabled, app.debugDescription)
+        XCTAssertTrue(plans.label.contains("Floor plans & measurements"), plans.label)
+        XCTAssertFalse(element("detail.measurementsComingSoon").exists)
+#else
         let card = element("detail.measurementsComingSoon")
         scrollTo(card)
         XCTAssertTrue(card.exists, app.debugDescription)
-        XCTAssertTrue(card.label.contains("Measurements"), card.label)
+        XCTAssertTrue(card.label.contains("Floor plans & measurements"), card.label)
         XCTAssertTrue(card.label.contains("Coming soon"), card.label)
         XCTAssertFalse(app.buttons["detail.measurementsComingSoon"].exists, "Coming soon must not open a feature")
         XCTAssertFalse(app.buttons["detail.floorPlan"].exists, "The listing toolbox must not keep a live Measurements link")
@@ -820,19 +827,20 @@ final class BetaPolishUITests: XCTestCase {
         // The owner's report was "still clickable": tapping must do nothing.
         card.tap()
         attach("listing-measurements-coming-soon-tapped")
-        XCTAssertFalse(app.navigationBars["Measurements & plans"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.navigationBars["Floor plans & measurements"].waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertFalse(app.navigationBars["Floor plan"].exists, app.debugDescription)
         XCTAssertFalse(app.navigationBars["Measurements"].exists, app.debugDescription)
         XCTAssertFalse(app.buttons["floorPlan.measurements"].exists, app.debugDescription)
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].exists, "Tapping Coming soon must not navigate: \(app.debugDescription)")
         XCTAssertTrue(app.buttons["detail.photos"].waitForExistence(timeout: 10), app.debugDescription)
         // Its neighbours keep the identical contract.
-        for id in ["detail.floorPlanComingSoon", "detail.spatialComingSoon"] {
+        for id in ["detail.spatialComingSoon"] {
             let neighbour = element(id)
             scrollTo(neighbour)
             XCTAssertTrue(neighbour.exists && neighbour.label.contains("Coming soon"), "\(id): \(neighbour.label)")
             XCTAssertFalse(app.buttons[id].exists, "Coming soon must not open a feature: \(id)")
         }
+#endif
     }
 
     func testManualMeasurementsCreateEditExportAndKeepScanChoice() throws {

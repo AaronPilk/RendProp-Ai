@@ -81,12 +81,6 @@ struct SettingsView: View {
     /// docs/COACH-CONTRACT.md.
     @State private var showCoach = false
 
-#if SPATIAL_CAPTURE_LAB
-    // Only the explicit TestFlight project includes the local capture harness.
-    // The reviewed App Store configuration must not acquire an experimental door.
-    @State private var showSpatialCaptureLab = false
-#endif
-
     /// True when a server account exists to sign into / delete. In the offline
     /// (mock) build there is no account — only data on this phone.
     private var serverAccountsEnabled: Bool { Config.useLiveBackend && Config.enableAuth }
@@ -133,21 +127,15 @@ struct SettingsView: View {
 #if SPATIAL_CAPTURE_LAB
             Section {
                 NavigationLink {
-                    GuidedPanoramaLabView()
+                    SpatialTestingListingPicker()
                 } label: {
-                    Label("Guided room tour", systemImage: "pano")
+                    Label("3D tours", systemImage: "rotate.3d")
                 }
-                .accessibilityIdentifier("settings.guidedRoomTour")
-                Button {
-                    showSpatialCaptureLab = true
-                } label: {
-                    Label("Spatial capture (TestFlight)", systemImage: "viewfinder")
-                }
-                .accessibilityIdentifier("settings.spatialCapture")
+                .accessibilityIdentifier("settings.spatialTestingHub")
             } header: {
                 Text("TestFlight lab")
             } footer: {
-                Text("Guided room tours and walking capture are local tests. Photos stay on this iPhone until you export them. These tests do not publish a tour.")
+                Text("Open the same 3D tours test available on Home and in each listing's toolbox.")
             }
 #endif
             Section {
@@ -514,11 +502,6 @@ struct SettingsView: View {
         .sheet(isPresented: $showCoach) {
             CoachView(model: model, originScreen: "settings")
         }
-#if SPATIAL_CAPTURE_LAB
-        .fullScreenCover(isPresented: $showSpatialCaptureLab) {
-            SpatialCaptureLabView()
-        }
-#endif
         .onChange(of: auth.isSignedIn) { signedIn in
             if signedIn {
                 adminProbeDone = false

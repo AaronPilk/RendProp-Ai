@@ -20,6 +20,7 @@ struct FloorMeasurementsView: View {
     @State private var workspaceAtOpen: UUID?
     @State private var didOpen = false
     @State private var confirmPhoneDetails = false
+    @State private var showOutlineTools = false
 
     init(listing: Listing) {
         self.listing = listing
@@ -89,16 +90,6 @@ struct FloorMeasurementsView: View {
                         .padding().background(Theme.card).clipShape(RoundedRectangle(cornerRadius: Theme.radius))
                 } else {
                     settings
-                    outlineLayout
-                    outlineList
-                    Button { addOutline() } label: {
-                        Label("Draw a floor outline", systemImage: "pencil.and.outline")
-                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(15)
-                            .background(plan.outlines.count < FloorMeasurementPlan.maximumOutlines ? Theme.accent : Theme.disabledFill)
-                            .foregroundStyle(plan.outlines.count < FloorMeasurementPlan.maximumOutlines ? Color.white : Theme.disabledInk)
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                    }.disabled(plan.outlines.count >= FloorMeasurementPlan.maximumOutlines)
-                        .accessibilityIdentifier("measurements.addOutline")
                     if !rooms.isEmpty { layout }
                     roomList
                     Button { addRoom() } label: {
@@ -110,6 +101,24 @@ struct FloorMeasurementsView: View {
                     }
                     .disabled(plan.rooms.count >= 24)
                     .accessibilityIdentifier("measurements.addRoom")
+                    DisclosureGroup("Building outline · advanced", isExpanded: $showOutlineTools) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Use this when you have measured every outside wall. Enter wall lengths and directions to draw an irregular floor, then review its area worksheet.")
+                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            outlineLayout
+                            outlineList
+                            Button { addOutline() } label: {
+                                Label("Draw a floor outline", systemImage: "pencil.and.outline")
+                                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(15)
+                                    .background(plan.outlines.count < FloorMeasurementPlan.maximumOutlines ? Theme.accent : Theme.disabledFill)
+                                    .foregroundStyle(plan.outlines.count < FloorMeasurementPlan.maximumOutlines ? Color.white : Theme.disabledInk)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                            }.disabled(plan.outlines.count >= FloorMeasurementPlan.maximumOutlines)
+                                .accessibilityIdentifier("measurements.addOutline")
+                        }.padding(.top, 10)
+                    }
+                    .font(.rpBody.weight(.semibold)).tint(Theme.accent)
+                    .accessibilityIdentifier("measurements.outlineTools")
                     if hasFloorGeometry { outputActions }
                 }
                 if let error {
@@ -131,6 +140,7 @@ struct FloorMeasurementsView: View {
             didOpen = true; ownerAtOpen = auth.userID
             revisionAtOpen = auth.syncSessionRevision; workspaceAtOpen = WorkspaceContext.selectedOrgID
             floor = plan.outlines.first?.floor ?? plan.rooms.first?.floor ?? 0
+            showOutlineTools = !plan.outlines.isEmpty
         }
         .sheet(item: $outlineEditor) { item in
             MeasurementOutlineForm(outline: item.outline, unit: plan.unit,
@@ -141,7 +151,7 @@ struct FloorMeasurementsView: View {
                     changed.outlines[index] = outline
                 } else { changed.outlines.append(outline) }
                 changed.version = 2
-                try persist(changed); floor = outline.floor; outlineEditor = nil
+                try persist(changed); floor = outline.floor; showOutlineTools = true; outlineEditor = nil
             } onDelete: {
                 var changed = plan
                 changed.outlines.removeAll { $0.id == item.outline.id || $0.deductionFromID == item.outline.id }
@@ -199,7 +209,9 @@ struct FloorMeasurementsView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Turn measurements into a floor plan", systemImage: "ruler")
                 .font(.rpHeadline).foregroundStyle(Theme.ink)
-            Text("Draw the outside of a floor by entering each wall's length and direction. Add a garage, porch or opening separately. For a quick room layout, enter length and width instead.")
+            Text("Start with one room. Choose feet & inches or metres below, then tap Add a room. Enter the room's name, measured length and width, and tap Save.")
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+            Text("Add the next room and drag the rooms into place. Your plan updates as you save. Download the image or PDF when you have reviewed the layout.")
                 .font(.rpBody).foregroundStyle(Theme.inkDim)
             Text("Works with furnished rooms and on phones without LiDAR.")
                 .font(.rpCaption).foregroundStyle(Theme.accent)

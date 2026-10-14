@@ -9,7 +9,11 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     private let tileIDs = ["detail.photos", "detail.photoStudio", "detail.reelStudio", "detail.roomTags"]
     /// Plain cards, never buttons — the same contract as Home's
     /// `home.comingSoon.*`. Measurements joined them in build 57.
-    private let comingSoonIDs = ["detail.aerialComingSoon", "detail.measurementsComingSoon", "detail.floorPlanComingSoon", "detail.spatialComingSoon"]
+#if SPATIAL_CAPTURE_LAB
+    private let comingSoonIDs = ["detail.aerialComingSoon"]
+#else
+    private let comingSoonIDs = ["detail.aerialComingSoon", "detail.measurementsComingSoon", "detail.spatialComingSoon"]
+#endif
 
     override func setUpWithError() throws {
 #if targetEnvironment(simulator)
@@ -272,6 +276,15 @@ final class DetailMetadataRegressionUITests: XCTestCase {
             XCTAssertTrue(card.label.contains("Coming soon"), "\(id) must read Coming soon: \(card.label)")
             XCTAssertFalse(app.buttons[id].exists, "Coming soon must not open a feature: \(id)")
         }
+#if SPATIAL_CAPTURE_LAB
+        for id in ["detail.floorPlanLab", "detail.spatialLab"] {
+            let tile = app.buttons[id]
+            scrollTo(tile)
+            XCTAssertTrue(tile.exists, "Missing lab entry: \(id)")
+            XCTAssertEqual(tile.isEnabled, !sample, "Samples cannot open lab destinations: \(id)")
+        }
+#endif
+        XCTAssertFalse(element("detail.floorPlanComingSoon").exists, "Plans and measurements must have one shared entry")
         XCTAssertFalse(element("detail.floorPlan").exists, "The listing toolbox must not keep a live Measurements link")
         XCTAssertFalse(element("detail.clientContact").exists, "Listing contact must not be duplicated in the Toolbox")
         if !sample {
@@ -288,18 +301,26 @@ final class DetailMetadataRegressionUITests: XCTestCase {
     /// it was — no push, no sheet, no "Measurements & plans" or "Floor plan"
     /// navigation bar — and Measurements must not reappear as a button.
     private func assertMeasurementsStaysComingSoon(fixture: String) {
+#if SPATIAL_CAPTURE_LAB
+        let plans = app.buttons["detail.floorPlanLab"]
+        scrollTo(plans)
+        XCTAssertTrue(plans.exists && plans.isEnabled, app.debugDescription)
+        XCTAssertTrue(plans.label.contains("Floor plans & measurements"), plans.label)
+        XCTAssertFalse(element("detail.measurementsComingSoon").exists)
+#else
         let card = element("detail.measurementsComingSoon")
         scrollTo(card)
         XCTAssertTrue(card.exists, app.debugDescription)
-        XCTAssertTrue(card.label.contains("Measurements"), card.label)
+        XCTAssertTrue(card.label.contains("Floor plans & measurements"), card.label)
         XCTAssertTrue(card.label.contains("Coming soon"), card.label)
         XCTAssertFalse(app.buttons["detail.measurementsComingSoon"].exists, "Coming soon must not open a feature")
         XCTAssertFalse(app.buttons["detail.floorPlan"].exists, app.debugDescription)
         card.tap()
         attach("destination-detail.measurementsComingSoon")
-        XCTAssertFalse(app.navigationBars["Measurements & plans"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(app.navigationBars["Floor plans & measurements"].waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertFalse(app.navigationBars["Floor plan"].exists, app.debugDescription)
         XCTAssertFalse(app.navigationBars["Measurements"].exists, app.debugDescription)
+#endif
         XCTAssertTrue(app.navigationBars["Detail fixture \(fixture)"].exists, "Tapping Coming soon must not navigate: \(app.debugDescription)")
         // SwiftUI restores the detail scroll position. The first lazy-grid
         // row may be offscreen and absent from accessibility after returning

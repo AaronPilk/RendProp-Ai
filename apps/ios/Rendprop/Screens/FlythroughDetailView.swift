@@ -247,30 +247,31 @@ private struct ListingToolboxGrid: View {
                                       icon: "shippingbox.fill", gradient: RPGradient.share, dimmed: sample || !hasAnythingToShare),
                 disabled: sample || !hasAnythingToShare, accessibilityID: "detail.sharePackage", action: sharePackage
             )
-            // Measurements stays Coming soon. Only the explicit TestFlight lab
-            // opens the existing RoomPlan scan/preview; public builds keep an
-            // inert card and do not create its destination.
-            ListingToolCard(title: "Measurements", sub: "Coming soon",
-                            icon: "ruler", gradient: RPGradient.plan, dimmed: true)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("detail.measurementsComingSoon")
+            // One entry for plans and measurements, and one for room tours.
+            // Only the explicit TestFlight lab creates either destination.
 #if SPATIAL_CAPTURE_LAB
             ListingToolLinkTile(
-                card: ListingToolCard(title: "3D floor plan", sub: sample ? createFirst : "TestFlight · scan rooms",
-                                      icon: "cube.transparent", gradient: RPGradient.plan, dimmed: sample),
+                card: ListingToolCard(title: "Floor plans & measurements", sub: sample ? createFirst : "Scan · measure · upload",
+                                      icon: "ruler", gradient: RPGradient.plan, dimmed: sample),
                 disabled: sample, accessibilityID: "detail.floorPlanLab",
                 destination: { AnyView(FloorPlanView(listing: destinationListing())) }
             )
+            ListingToolLinkTile(
+                card: ListingToolCard(title: "3D tours", sub: sample ? createFirst : "Capture & explore rooms",
+                                      icon: "rotate.3d", gradient: RPGradient.drone, dimmed: sample),
+                disabled: sample, accessibilityID: "detail.spatialLab",
+                destination: { AnyView(SpatialTestingHubView(listing: destinationListing())) }
+            )
 #else
-            ListingToolCard(title: "3D floor plan", sub: "Coming soon",
-                            icon: "cube.transparent", gradient: RPGradient.plan, dimmed: true)
+            ListingToolCard(title: "Floor plans & measurements", sub: "Coming soon",
+                            icon: "ruler", gradient: RPGradient.plan, dimmed: true)
                 .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("detail.floorPlanComingSoon")
-#endif
-            ListingToolCard(title: "3D walkthrough", sub: "Coming soon",
+                .accessibilityIdentifier("detail.measurementsComingSoon")
+            ListingToolCard(title: "3D tours", sub: "Coming soon",
                             icon: "rotate.3d", gradient: RPGradient.drone, dimmed: true)
                 .accessibilityElement(children: .combine)
                 .accessibilityIdentifier("detail.spatialComingSoon")
+#endif
         }
     }
 }
@@ -12465,13 +12466,15 @@ struct FloorPlanView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
-                measurementsSection
+                Text("Choose a phone scan, your own measurements, or an existing plan.")
+                    .font(.rpBody).foregroundStyle(Theme.inkDim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if RoomCaptureSession.isSupported {
                     VStack(spacing: 10) {
                         Image(systemName: planExists ? "cube.fill" : "cube.transparent")
                             .font(.system(size: 44, weight: .light))
                             .foregroundStyle(Theme.accent)
-                        Text(planExists ? "Floor plan ready" : "Scan the floor plan")
+                        Text(planExists ? "Your room scan" : "Scan rooms with your phone")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
                         // TRUE copy (F-A-17): say what the scanner actually does.
@@ -12520,32 +12523,33 @@ struct FloorPlanView: View {
                         primaryButton("Start scan", "cube.transparent") { showScanner = true }
                     }
 
-                    Divider().padding(.vertical, 6)
-                    Text("Already have a blueprint?")
-                        .font(.rpKicker).foregroundStyle(Theme.inkDim)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    uploadSection
                 } else {
                     VStack(spacing: 10) {
-                        Image(systemName: uploadedURL != nil ? "doc.richtext" : "square.and.arrow.up.on.square")
-                            .font(.system(size: 40, weight: .light))
-                            .foregroundStyle(Theme.accent)
-                        Text(uploadedURL != nil ? "Floor plan ready" : "Upload a floor plan")
-                            .font(.rpTitle)
+                        Label("Phone scanning needs LiDAR", systemImage: "camera.viewfinder")
+                            .font(.rpHeadline)
                             .foregroundStyle(Theme.ink)
-                        Text("Enter measurements above or upload a PDF or image from your measuring software. Automatic 3D scanning requires an iPhone or iPad with LiDAR.")
+                        Text("This device cannot scan rooms automatically. You can still enter measurements or upload a floor plan below.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
-                            .multilineTextAlignment(.center)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 28)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 12)
+                }
+                Divider().padding(.vertical, 6)
+                measurementsSection
+                Divider().padding(.vertical, 6)
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Upload an existing plan", systemImage: "doc.richtext")
+                        .font(.rpHeadline).foregroundStyle(Theme.ink)
+                    Text("Keep a PDF or image from your measuring software with this listing.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     uploadSection
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding()
         }
         .background(Theme.bg)
-        .navigationTitle("Measurements & plans")
+        .navigationTitle("Floor plans & measurements")
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.floorPlan, listingID: listing.id)
         .onAppear { refreshState() }

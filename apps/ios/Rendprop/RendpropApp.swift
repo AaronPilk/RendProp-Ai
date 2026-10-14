@@ -3627,9 +3627,6 @@ struct HomeDashboardView: View {
                     .modifier(Reveal(index: 0, on: revealed))
                 showroomSection
                     .modifier(Reveal(index: 1, on: revealed))
-#if SPATIAL_CAPTURE_LAB
-                GuidedPanoramaEntryCard()
-#endif
                 // Plan state remains one tap away, below the creation and listing
                 // sections. Its existing loader and purchase flow are unchanged.
                 PlanBanner()
@@ -3904,14 +3901,13 @@ struct HomeDashboardView: View {
                 FlythroughDetailView(listing: route.listing)
 #endif
             case .spatial:
-                // Same gate as the tile: the product only opens while the
-                // server says its pipeline is on. A route that arrives anyway
-                // (a coach action, a stale push) lands on the home itself.
-                if model.isSpatialWalkthroughAvailable {
-                    SpatialTourView(listing: route.listing)
-                } else {
-                    FlythroughDetailView(listing: route.listing)
-                }
+#if SPATIAL_CAPTURE_LAB
+                // Local capture and saved previews work without a cloud
+                // provider. The hub gates its cloud option separately.
+                SpatialTestingHubView(listing: route.listing)
+#else
+                FlythroughDetailView(listing: route.listing)
+#endif
             case .tour:
                 tourDestination(route.listing)
             case .aerial:
@@ -4017,26 +4013,13 @@ struct HomeDashboardView: View {
             featureButton(.photoStudio)
             featureButton(.reel)
             comingSoonTile("Aerial intro", "AI opening shots are still being tested", "airplane.departure", id: "aerial")
-            // Only while the server says the 3D pipeline is on — for everyone,
-            // the same flag. Unknown, offline or disabled stays non-actionable.
-            if model.isSpatialWalkthroughAvailable {
-                featureButton(.spatial)
-            }
-            comingSoonTile("Measurements", "Draw an outline or upload a plan", "ruler", id: "floorPlan")
 #if SPATIAL_CAPTURE_LAB
-            Button { open(.floorPlan) } label: {
-                HomeShortcutCard(title: "3D plans", subtitle: "TestFlight · scan rooms",
-                                 icon: "cube.transparent", assetName: "BrandFloorPlanTools")
-            }
-            .buttonStyle(ScalePressStyle())
-            .accessibilityLabel("3D floor plan. TestFlight room scan.")
-            .accessibilityIdentifier("home.feature.3dFloorPlanLab")
+            featureButton(.floorPlan)
+            featureButton(.spatial)
 #else
-            comingSoonTile("3D floor plan", "Scan and build a room model", "cube.transparent", id: "3dFloorPlan")
+            comingSoonTile("Floor plans & measurements", "Scan rooms, enter measurements or upload a plan", "ruler", id: "floorPlan")
+            comingSoonTile("3D tours", "Explore your captured rooms", "rotate.3d", id: "spatial")
 #endif
-            if !model.isSpatialWalkthroughAvailable {
-                comingSoonTile("3D walkthrough", "Room-by-room exploration", "rotate.3d", id: "spatial")
-            }
         }
     }
 
@@ -4113,8 +4096,7 @@ struct HomeDashboardView: View {
         case "wand.and.stars": return "Edit photos"
         case "film.stack": return "Social media"
         case "airplane.departure": return "Aerial intro"
-        case "ruler": return "Floor plans"
-        case "cube.transparent": return "3D plans"
+        case "ruler": return "Floor plans & measurements"
         case "rotate.3d": return "3D tours"
         default: return fallback
         }
@@ -4127,7 +4109,8 @@ struct HomeDashboardView: View {
         case "wand.and.stars": return "AI edits"
         case "film.stack": return "Reels"
         case "airplane.departure": return "Intro"
-        case "rotate.3d": return "Explore"
+        case "ruler": return "Plans & room scans"
+        case "rotate.3d": return "Capture & explore"
         default: return "Create content"
         }
     }
@@ -4918,11 +4901,11 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var actionTitle: String {
         switch self {
         case .tour:      return "Make a tour"
-        case .spatial:   return "3D walkthrough"
+        case .spatial:   return "3D tours"
         case .photos:    return "Add photos"
         case .photoStudio: return "AI Photo Studio"
         case .reel:      return "Make a reel"
-        case .floorPlan: return "Measurements"
+        case .floorPlan: return "Floor plans & measurements"
         case .aerial:    return "Make an aerial shot"
         }
     }
@@ -4932,13 +4915,13 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var promise: String {
         switch self {
         case .tour:      return "Walk it once — glide forever"
-        case .spatial:   return "Scan rooms. Walk through them."
+        case .spatial:   return "Capture and explore your rooms"
         case .photos:    return "Brightened automatically \u{2014} free"
         case .photoStudio: return SpaceType.current == .realEstate
             ? "Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky"
             : "Declutter \u{00B7} furnish it \u{00B7} twilight \u{00B7} sky"
         case .reel:      return "Photos → one social video"
-        case .floorPlan: return "Draw an outline or upload a plan"
+        case .floorPlan: return "Scan, measure or upload a plan"
         case .aerial:    return "A cinematic opening shot"
         }
     }

@@ -44,15 +44,16 @@ for anchor in ['private func openCustomEdit(', 'private func aiEdit(', 'private 
 assert 'if RoomCaptureSession.isSupported {' in fly and 'RoomCaptureSession.isSupported && planExists' not in fly
 assert 'primaryButton("Start scan", "cube.transparent") { showScanner = true }' in fly
 assert 'showRescanConfirm = true' in fly
-# Build 57: Measurements is a Coming soon card on the listing page, exactly like
-# Home. FloorPlanView stays compiled (the scan asserts above) but neither the
-# toolbox nor Home links to it; Home keeps its own Coming soon tile.
+# One plans/measurements entry remains inert in public builds; the explicit
+# TestFlight lab links to its existing scan and measurement view.
 toolbox = block(fly, 'private struct ListingToolboxGrid:')
-assert 'ListingToolCard(title: "Measurements", sub: "Coming soon"' in toolbox
+assert 'ListingToolCard(title: "Floor plans & measurements", sub: "Coming soon"' in toolbox
 assert '.accessibilityIdentifier("detail.measurementsComingSoon")' in toolbox
-assert 'detail.floorPlan"' not in toolbox and 'FloorPlanView(' not in toolbox
+assert 'detail.floorPlan"' not in toolbox and '#if SPATIAL_CAPTURE_LAB' in toolbox
+assert toolbox.count('FloorPlanView(') == 1 and '#else' in toolbox
 home_grid = block(app, 'private var featureGrid:')
-assert 'comingSoonTile("Measurements"' in home_grid and 'featureButton(.floorPlan)' not in home_grid
+assert 'comingSoonTile("Floor plans & measurements"' in home_grid and home_grid.count('featureButton(.floorPlan)') == 1
+assert '#if SPATIAL_CAPTURE_LAB' in home_grid and '#else' in home_grid and '3dFloorPlan' not in home_grid
 assert 'Button("Add photos") { showReelPhotos = true }' in block(fly, 'private var photoPickerGrid:')
 assert 'refreshedPhotos = EnhancedPhoto.loadAll' in fly
 assert 'let chosen = selected.compactMap { id in reelPhotos.first' in fly

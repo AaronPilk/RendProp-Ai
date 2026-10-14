@@ -111,12 +111,13 @@ final class RendpropUITests: XCTestCase {
         let activeIDs = ["tour", "photos", "photoStudio", "reel"]
             .map { "home.feature.\($0)" }
         var identifiers = activeIDs
-        let spatial = app.buttons["home.feature.spatial"]
-        let spatialAvailable = spatial.exists
-        if spatialAvailable { identifiers.append("home.feature.spatial") }
         let activeCount = identifiers.count
-        identifiers += ["home.comingSoon.aerial", "home.comingSoon.floorPlan", "home.comingSoon.3dFloorPlan"]
-        if !spatialAvailable { identifiers.append("home.comingSoon.spatial") }
+        identifiers.append("home.comingSoon.aerial")
+#if SPATIAL_CAPTURE_LAB
+        identifiers += ["home.feature.floorPlan", "home.feature.spatial"]
+#else
+        identifiers += ["home.comingSoon.floorPlan", "home.comingSoon.spatial"]
+#endif
         let cards = identifiers.map { app.descendants(matching: .any).matching(identifier: $0).firstMatch }
         for card in cards { XCTAssertTrue(card.exists, card.identifier) }
         func revealCard(_ card: XCUIElement) {
@@ -152,7 +153,15 @@ final class RendpropUITests: XCTestCase {
         for identifier in identifiers where identifier.hasPrefix("home.comingSoon.") {
             XCTAssertFalse(app.buttons[identifier].exists, "Coming soon must not open a feature")
         }
+#if SPATIAL_CAPTURE_LAB
+        XCTAssertTrue(app.buttons["home.feature.floorPlan"].exists)
+        XCTAssertTrue(app.buttons["home.feature.spatial"].exists)
+#else
         XCTAssertFalse(app.buttons["home.feature.floorPlan"].exists)
+        XCTAssertFalse(app.buttons["home.feature.spatial"].exists)
+#endif
+        XCTAssertFalse(app.descendants(matching: .any)["home.comingSoon.3dFloorPlan"].exists,
+                       "Plans and measurements must have one shared card")
         XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label CONTAINS %@",
             "You, on every tour you send")).count, 0)
         XCTAssertTrue(app.tabBars.buttons["Profile"].exists)

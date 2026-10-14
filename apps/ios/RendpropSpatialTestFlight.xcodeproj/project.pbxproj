@@ -164,6 +164,7 @@
 		DA5BEE737251DBAB32344EB8 /* ClientContactView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEF704B56E506598504EB00E /* ClientContactView.swift */; };
 		E06C4D8832956C7813B7EAF1 /* PaywallShot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A54D1B2CA8F4917C2E4DF9CF /* PaywallShot.swift */; };
 		E638C5F8080CC52C680A2FC2 /* ReflectionRemovalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9407EDBABEFA6BC8C87D96E0 /* ReflectionRemovalView.swift */; };
+		E64472F601DCED04DE2F75EC /* SpatialTestingHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAEB10ECC7E699019114FBB8 /* SpatialTestingHubView.swift */; };
 		E7097B62963A90330A37EA48 /* WorkspaceContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = B61512D0B2D4201650F507F3 /* WorkspaceContext.swift */; };
 		E76031A5A938969D809B12B4 /* NotificationPrefs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1994F5FD18BF8B6EFE472509 /* NotificationPrefs.swift */; };
 		E7B7FBF6D5F0AB1B102B85F4 /* VoiceTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FBF2EB8B20BFC4EA5F2BE50 /* VoiceTypes.swift */; };
@@ -344,6 +345,7 @@
 		C75899F4461006AB1C3681CA /* CloudPhotoReferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudPhotoReferences.swift; sourceTree = "<group>"; };
 		C85920512C4F2DFF5FFCA96A /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		C9A6777C29B7AC540B0AB8CE /* DetailMetadataRegressionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailMetadataRegressionUITests.swift; sourceTree = "<group>"; };
+		CAEB10ECC7E699019114FBB8 /* SpatialTestingHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialTestingHubView.swift; sourceTree = "<group>"; };
 		CBEBC11B92007478BEB66E95 /* MediaImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImporter.swift; sourceTree = "<group>"; };
 		CCA7A0B7D01EBED4F8452179 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		CD562015539E4AFC5F007857 /* GuidedPanoramaCaptureController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidedPanoramaCaptureController.swift; sourceTree = "<group>"; };
@@ -502,6 +504,7 @@
 				E5D4E9B2B50AF014B16DF850 /* RenderStatusView.swift */,
 				BADA8D7E30F70E1206053437 /* ReviewSubmitView.swift */,
 				0FA7AFF2A21F01B31691A7EB /* SettingsView.swift */,
+				CAEB10ECC7E699019114FBB8 /* SpatialTestingHubView.swift */,
 				C480A25C3876A80D8316B4C3 /* SpatialTourView.swift */,
 				A7754907E4949351FB2C9F71 /* TourViewerView.swift */,
 			);
@@ -1073,6 +1076,7 @@
 				B458FFDE10CD162110CE176D /* SpatialCaptureLabView.swift in Sources */,
 				02908F1D1EFA2531DB5EB4BC /* SpatialCaptureViewController.swift in Sources */,
 				3DCE1F694031E6874F11F852 /* SpatialModels.swift in Sources */,
+				E64472F601DCED04DE2F75EC /* SpatialTestingHubView.swift in Sources */,
 				21577F670517C4346E132C63 /* SpatialTourView.swift in Sources */,
 				B41514D0BC3469F3AF4491C9 /* SpatialUploadCoordinator.swift in Sources */,
 				276886A0CFEEFFEEF4BF4FC4 /* SpatialUploadRecovery.swift in Sources */,
@@ -1148,7 +1152,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 75;
+				CURRENT_PROJECT_VERSION = 76;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -1231,7 +1235,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 75;
+				CURRENT_PROJECT_VERSION = 76;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
