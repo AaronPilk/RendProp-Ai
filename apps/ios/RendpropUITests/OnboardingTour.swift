@@ -474,18 +474,24 @@ final class OnboardingTour: XCTestCase {
                 return
             }
             scrollToTop()
-            let card = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout)
+            let card = find(ids: ["detail.reelStudio"], labels: ["Make a video"], timeout: shortTimeout)
             guard let card, card.isEnabled, card.isHittable else {
                 note("The \"Make a reel\" card is disabled (it needs 2 photos) — resting on it instead of opening Reel Studio.")
                 beat(4.0)
                 return
             }
             tap(card)
-            guard waitForAny(ids: [], labels: ["Reel Studio", "PICK PHOTOS"], timeout: screenTimeout) else {
+            guard waitForAny(ids: [], labels: ["Make a video", "PICK PHOTOS"], timeout: screenTimeout) else {
                 note("SKIPPED: Reel Studio did not open.")
                 beat(2.0)
                 return
             }
+            guard let social = find(ids: ["video.purpose.social_media"], labels: [], timeout: shortTimeout), social.isHittable else {
+                note("SKIPPED: Social media video destination did not open.")
+                dismissTopScreen()
+                return
+            }
+            tap(social)
             beat(1.5)
             if scrollTo(ids: ["reel.step.voice"], labels: ["STEP 2 · ADD YOUR VOICE", "My voice"], swipes: 6) != nil {
                 if let myVoice = find(ids: [], labels: ["My voice"], timeout: 2), myVoice.isHittable {

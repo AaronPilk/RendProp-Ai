@@ -127,7 +127,8 @@ if not args.inject_fault:
     gallery_file.write_text(gallery_source)
     gallery_binary = output / 'actual-gallery'
     gallery_root = output / 'isolated-gallery-files'; gallery_root.mkdir(exist_ok=True)
-    command = ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', str(ROOT / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(source), str(gallery_file), '-o', str(gallery_binary)]
+    import_order_source = ROOT / 'apps/ios/Rendprop/Photos/PhotoImportSequence.swift'
+    command = ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', str(ROOT / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(source), str(import_order_source), str(gallery_file), '-o', str(gallery_binary)]
     compile_result = subprocess.run(command, text=True, capture_output=True)
     (output / 'gallery-compile.log').write_text(compile_result.stdout + compile_result.stderr)
     if compile_result.returncode:
@@ -139,6 +140,7 @@ if not args.inject_fault:
                        'app_source_sha256': hashlib.sha256(app_path.read_bytes()).hexdigest(),
                        'detail_source_sha256': hashlib.sha256(detail_path.read_bytes()).hexdigest(),
                        'history_source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+                       'import_order_source_sha256': hashlib.sha256(import_order_source.read_bytes()).hexdigest(),
                        'actual_sync_body_sha256': hashlib.sha256(replacements['__SYNC__'].encode()).hexdigest(),
                        'compiled_fixture_sha256': hashlib.sha256(gallery_source.encode()).hexdigest(),
                        'baseline_fixture_sha256': hashlib.sha256(module.TEMPLATE.read_bytes()).hexdigest(),

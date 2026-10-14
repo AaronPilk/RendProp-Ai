@@ -165,46 +165,21 @@ const APEX_HOST = "rendprop.com";
  * ("Always Use HTTPS" + a www→apex Redirect Rule) are still required; this is
  * the Worker's half of the fix and a safety net if a setting is ever toggled off.
  */
-/**
- * apple-app-site-association — what makes a rendprop.com link open the iOS app
- * instead of Safari.
- *
- * Apple fetches this over HTTPS PER HOST in the app's entitlement, does NOT
- * follow redirects, and requires `application/json`. Both of those shape the
- * routing below: it is answered before `canonicalRedirect`, so the www host
- * serves its own copy rather than 301-ing to the apex, and it is served at the
- * legacy root path as well as `/.well-known/` because older iOS versions only
- * look at the root.
- *
- * `components` rather than the deprecated `paths` array (TN3155). `/u/*` is in
- * here on purpose: the MLS-unbranded twin is the same tour, and a buyer who
- * taps one inside the app is not in an MLS context - the page it loads is
- * still the unbranded one, so the gate does not move.
- *
- * The appID is <TeamID>.<bundle id>. If either ever changes, this and
- * apps/ios/Rendprop/Rendprop.entitlements change together or links silently
- * stop opening the app - silently, because a failed AASA fetch looks exactly
- * like a link that was never meant for an app.
- */
+/** Buyer-facing property pages stay in the browser, including when Rendprop
+ * is installed. Only team invites use HTTPS app routing. Apple fetches AASA
+ * per entitled host without redirects, so serve both hosts before canonical
+ * normalization. Devices may cache the previous rules; the native incoming
+ * URL handler also hands public pages back to the browser. */
 const AASA = JSON.stringify({
   applinks: {
     details: [
       {
         appIDs: ["5F5C5G25Y6.com.rendprop.app"],
         components: [
-          { "/": "/f/*", comment: "a published tour" },
-          { "/": "/a/*", comment: "an agent's portfolio" },
-          // /join/* opens the app straight onto the Join sheet with the code
-          // already filled in. Without this entry the invite link only ever
-          // reaches Safari, and the agent is back to copying a code by hand —
-          // which is the exact complaint this whole path exists to answer.
+          { "/": "/f/*", exclude: true, comment: "published property website — open in browser" },
+          { "/": "/u/*", exclude: true, comment: "MLS-unbranded property website — open in browser" },
+          { "/": "/a/*", exclude: true, comment: "public agent portfolio — open in browser" },
           { "/": "/join/*", comment: "a team invite" },
-          // /u/* is EXCLUDED, deliberately. It is the URL an agent puts in an
-          // MLS field because the MLS forbids agent branding and contact
-          // capture on it; opening it in the app wrapped a compliant page in
-          // branded chrome. An unbranded link stays a plain web page.
-          { "/": "/u/*", exclude: true,
-            comment: "MLS-unbranded — never open in the app" },
         ],
       },
     ],
@@ -317,7 +292,8 @@ async function handleTour(
     if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
   }
 
-  const renderOpts = { embed, unbranded, origin: url.origin, page };
+  const publicBase: "/f" | "/property" = url.pathname.startsWith("/property/") ? "/property" : "/f";
+  const renderOpts = { embed, unbranded, origin: url.origin, page, publicBase };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
   const finish = (tour: Tour): Response => {
@@ -511,7 +487,9 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     const slug = safeDecode(nearbyMatch[1]);
     return handleNearbyPlaces(slug || "", req, url, env);
   }
-  const fMatch = path.match(/^\/f\/([^/]+)$/);
+  // A browser-only alias avoids previously cached app-link rules. This is
+  // the same validated published slug/read path, never a redirect to /f/.
+  const fMatch = path.match(/^\/(?:f|property)\/([^/]+)$/);
   if (fMatch) {
     const slug = safeDecode(fMatch[1]);
     if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
@@ -606,7 +584,7 @@ export default {
       let unbranded = false;
       try {
         const p = new URL(req.url).pathname;
-        kind = /^\/f\//.test(p) ? "tour" : "page";
+        kind = /^\/(?:f|property)\//.test(p) ? "tour" : "page";
         // A crash on /u/ must not answer with the branded error page.
         unbranded = /^\/u\//.test(p);
       } catch { /* keep "page" */ }

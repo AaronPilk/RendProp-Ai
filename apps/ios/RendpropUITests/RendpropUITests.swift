@@ -372,11 +372,17 @@ final class RendpropUITests: XCTestCase {
             tap(card)
             nameFirstProjectIfAsked()
 
-            guard app.navigationBars["Reel Studio"].waitForExistence(timeout: screenTimeout) else {
+            guard app.navigationBars["Make a video"].waitForExistence(timeout: screenTimeout) else {
                 note("SKIPPED: Reel Studio did not open.")
                 return
             }
 
+            let social = app.buttons["video.purpose.social_media"]
+            guard social.waitForExistence(timeout: screenTimeout), social.isHittable else {
+                note("Required Social media video destination did not open.")
+                return
+            }
+            tap(social)
             let photos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reel.photo."))
             guard photos.element(boundBy: 1).waitForExistence(timeout: screenTimeout) else {
                 note("Reel Studio has fewer than two synthetic photos; test-only seed import failed.")
@@ -390,7 +396,7 @@ final class RendpropUITests: XCTestCase {
                 }
                 tap(visible)
             }
-            XCTAssertTrue(waitForAny(ids: [], labels: ["2/8"], timeout: shortTimeout),
+            XCTAssertTrue(waitForAny(ids: [], labels: ["2/100"], timeout: shortTimeout),
                           "Reel Studio did not select both synthetic photos")
             guard let myVoice = scrollTo(ids: [], labels: ["My voice"], swipes: 8) else {
                 note("Required My voice segment did not scroll into view.")

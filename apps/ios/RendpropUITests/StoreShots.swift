@@ -331,7 +331,7 @@ final class StoreShots: XCTestCase {
                 note("SKIPPED: the photo studio was never reached, so its reel card is unreachable.")
                 return
             }
-            guard let card = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout),
+            guard let card = find(ids: ["detail.reelStudio"], labels: ["Make a video"], timeout: shortTimeout),
                   card.isEnabled else {
                 note("SKIPPED: the \"Make a reel\" card is disabled — it needs 2 photos on this home "
                      + "and the simulator's photo library supplied fewer. Seed it with "
@@ -339,10 +339,15 @@ final class StoreShots: XCTestCase {
                 return
             }
             tap(card)
-            guard waitForAny(ids: [], labels: ["Reel Studio"], timeout: screenTimeout) else {
+            guard waitForAny(ids: [], labels: ["Make a video"], timeout: screenTimeout) else {
                 note("SKIPPED: Reel Studio did not open.")
                 return
             }
+            guard let social = find(ids: ["video.purpose.social_media"], labels: [], timeout: shortTimeout), social.isHittable else {
+                note("SKIPPED: Social media video destination did not open.")
+                return
+            }
+            tap(social)
             settle(1.5)
             shot("s05-reel-studio")
             dismissTopScreen()          // Close → back to the photo studio
@@ -470,7 +475,7 @@ final class StoreShots: XCTestCase {
                 return
             }
             scrollToTop()
-            guard let tile = scrollTo(ids: ["detail.reelStudio"], labels: ["Make a reel"], swipes: 8),
+            guard let tile = scrollTo(ids: ["detail.reelStudio"], labels: ["Make a video"], swipes: 8),
                   tile.isEnabled else {
                 note("SKIPPED: the \"Make a reel\" tool card is absent or disabled on this home.")
                 popToRoot()
@@ -488,7 +493,13 @@ final class StoreShots: XCTestCase {
             // counts: the toolbox tile underneath may still be in the tree.
             if let card = hittableElement(id: "detail.reelStudio"), card.isEnabled {
                 tap(card)
-                if waitForAny(ids: [], labels: ["Reel Studio"], timeout: screenTimeout) {
+                if waitForAny(ids: [], labels: ["Make a video"], timeout: screenTimeout) {
+                    guard let social = find(ids: ["video.purpose.social_media"], labels: [], timeout: shortTimeout), social.isHittable else {
+                        note("SKIPPED: Social media video destination did not open.")
+                        dismissTopScreen()
+                        return
+                    }
+                    tap(social)
                     settle(1.5)
                     shot("s12-reel-studio")
                     note("s12 is the Reel Studio itself — this home already had two photos.")

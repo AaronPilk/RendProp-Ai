@@ -160,6 +160,10 @@ jobs:
         run: python3 apps/ios/tests/run-native-ux-audit.py --evidence-dir "$RUNNER_TEMP/rendprop-native-ux-audit"
       - name: Native client verification and lead deletion require scoped receipts
         run: python3 apps/ios/tests/run-native-lead-privacy.py --evidence-dir "$RUNNER_TEMP/rendprop-native-lead-privacy"
+      - name: Leads tab groups exact listing identities and preserves existing destinations
+        run: python3 apps/ios/tests/run-lead-inbox-grouping.py --evidence-dir "$RUNNER_TEMP/rendprop-lead-inbox"
+      - name: Public buyer links stay in the browser and preserve publication identity
+        run: python3 apps/ios/tests/run-public-website-links.py --evidence-dir "$RUNNER_TEMP/rendprop-public-links"
       - name: Private library identity, delegation, purchase scope and refusal controls
         run: python3 apps/ios/tests/run-private-library-context.py --out "$RUNNER_TEMP/rendprop-private-library-context"
       - name: Push account switch cleanup, stale acknowledgments and recipient fences
@@ -170,6 +174,10 @@ jobs:
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
         run: bash apps/ios/tests/run-photo-delivery.sh
+      - name: Large photo imports preserve selection order, source bytes and partial failures
+        run: python3 apps/ios/tests/run-photo-import.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-import"
+      - name: Browser originals retain full resolution, orientation and color with exact local sources
+        run: python3 apps/ios/tests/run-photo-browser-original.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-browser-original"
       - name: Photo review previews and pre-sign-in playback preserve local privacy
         run: python3 apps/ios/tests/run-photo-review-preview.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-preview"
       - name: Bundled quick-start video stays within 60 seconds with a readable transcript
@@ -202,6 +210,24 @@ jobs:
         run: python3 apps/ios/tests/run-video-drift-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-video-drift-wire"
       - name: Full-photo reel framing preserves wire intent and legacy receipts
         run: python3 apps/ios/tests/run-reel-framing-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-framing-wire"
+      - name: Video destination and larger photo sequences survive saved work and recovery
+        run: python3 apps/ios/tests/run-video-purpose.py --evidence-dir "$RUNNER_TEMP/rendprop-video-purpose"
+      - name: Large video batches retain every selected photo and recover both output formats
+        run: python3 apps/ios/tests/run-reel-request-recovery.py --large-only --evidence-dir "$RUNNER_TEMP/rendprop-video-large"
+      - name: Retain video purpose and buyer navigation regression evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: listing77-native-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-lead-inbox/receipt.json
+            ${{ runner.temp }}/rendprop-lead-inbox/*.log
+            ${{ runner.temp }}/rendprop-public-links/receipt.json
+            ${{ runner.temp }}/rendprop-public-links/*.log
+            ${{ runner.temp }}/rendprop-video-purpose/receipt.json
+            ${{ runner.temp }}/rendprop-video-purpose/*.log
+            ${{ runner.temp }}/rendprop-video-large/receipt.json
+            ${{ runner.temp }}/rendprop-video-large/*.log
       - name: Reel completion notices and background expiry remain generation scoped
         run: python3 apps/ios/tests/run-reel-lifecycle.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-lifecycle"
       - name: Global reel banner and completion taps preserve current job identity
@@ -360,6 +386,12 @@ jobs:
             ${{ runner.temp }}/rendprop-photo-review-preview/receipt.json
             ${{ runner.temp }}/rendprop-photo-review-preview/*.log
             ${{ runner.temp }}/rendprop-photo-review-preview/*.swift
+            ${{ runner.temp }}/rendprop-photo-import/receipt.json
+            ${{ runner.temp }}/rendprop-photo-import/*.log
+            ${{ runner.temp }}/rendprop-photo-import/*.swift
+            ${{ runner.temp }}/rendprop-photo-browser-original/receipt.json
+            ${{ runner.temp }}/rendprop-photo-browser-original/*.log
+            ${{ runner.temp }}/rendprop-photo-browser-original/*.swift
             ${{ runner.temp }}/rendprop-quick-start-video/receipt.json
             ${{ runner.temp }}/rendprop-quick-start-video/ffprobe.json
             ${{ runner.temp }}/rendprop-quick-start-video/ffprobe.stderr

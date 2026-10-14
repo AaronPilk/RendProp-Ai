@@ -45,11 +45,13 @@ async function capturedSubmit(adapter=kieAdapter,selected=step,value=input){
   globalThis.fetch=((url:string|URL|Request,init?:RequestInit)=>{calls.push({url:String(url),method:String(init?.method),body:JSON.parse(String(init?.body))});return Promise.resolve(new Response(JSON.stringify({code:200,data:{taskId:"closed-owned-task"}}),{headers:{"content-type":"application/json"}}));}) as typeof fetch;
   try{return {calls,job:await adapter.submit(selected,value)}}finally{globalThis.fetch=oldFetch;oldKey===undefined?Deno.env.delete("KIE_API_KEY"):Deno.env.set("KIE_API_KEY",oldKey);}
 }
-Deno.test("actual Kling Pro silent adapter emits only documented full-source auto fields",async()=>{
-  const result=await capturedSubmit();
-  assertEquals(result.calls,[{url:"https://api.kie.ai/api/v1/jobs/createTask",method:"POST",body:{model:"kling-3.0/video",input:{prompt:input.prompt,image_urls:[input.image_url],sound:false,duration:"5",mode:"pro",multi_shots:false}}}]);
-  assertEquals([result.job.id,result.job.provider,result.job.model],["closed-owned-task","kie",step.model]);
-  assert(!JSON.stringify(result.calls).includes("aspect_ratio")&&!JSON.stringify(result.calls).includes('"resolution"'));
+Deno.test("actual Kling Pro preserves full-source auto fields for both delivery formats",async()=>{
+  for (const aspect of ["9:16","16:9"] as const) {
+    const result=await capturedSubmit(kieAdapter,step,{...input,aspect});
+    assertEquals(result.calls,[{url:"https://api.kie.ai/api/v1/jobs/createTask",method:"POST",body:{model:"kling-3.0/video",input:{prompt:input.prompt,image_urls:[input.image_url],sound:false,duration:"5",mode:"pro",multi_shots:false}}}]);
+    assertEquals([result.job.id,result.job.provider,result.job.model],["closed-owned-task","kie",step.model]);
+    assert(!JSON.stringify(result.calls).includes("aspect_ratio")&&!JSON.stringify(result.calls).includes('"resolution"'));
+  }
 });
 Deno.test("actual Kling adapter refuses unsupported task, framing, mode, sound, duration and shape before POST",async()=>{
   const oldFetch=globalThis.fetch;let posts=0;globalThis.fetch=(()=>{posts++;throw Error("No vendor request permitted");}) as typeof fetch;
@@ -98,9 +100,15 @@ Deno.test("compiled framing, payload and money controls expose lost crop, sound 
   console.log("PHOTO_FRAMING_COMPILED_CONTROLS=5");
 });
 
-Deno.test("actual FAL Seedance preserves legacy aspect but sends documented auto for the full-photo marker",()=>{
+Deno.test("actual FAL Seedance preserves both legacy aspects and sends source-auto for either full-photo delivery",()=>{
   const fal={...step,provider:"fal",model:"fal-ai/bytedance/seedance/v1/pro/fast/image-to-video"};
-  const preserved=falInput(fal,input);assertEquals(preserved.aspect_ratio,"auto");assertEquals(preserved.image_url,input.image_url);
-  assertEquals(falInput(fal,{...input,framing:undefined}).aspect_ratio,"9:16");
+  for (const aspect of ["9:16","16:9"] as const) {
+    const source={...input,aspect};
+    const preserved=falInput(fal,source);
+    assertEquals(preserved.aspect_ratio,"auto");assertEquals(preserved.image_url,input.image_url);
+    assertEquals(preserved.resolution,"1080p");assertEquals(preserved.duration,"5");
+    assertEquals(preserved.num_frames,121);assertEquals(preserved.camera_fixed,false);
+    assertEquals(falInput(fal,{...source,framing:undefined}).aspect_ratio,aspect);
+  }
   assertThrows(()=>falInput({...fal,model:"fal-ai/veo3.1/fast/image-to-video"},input),ProviderError);
 });

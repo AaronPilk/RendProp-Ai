@@ -211,6 +211,9 @@ enum PhotoVersionHistory {
         /// Staged previews stay separate from the approved public choice.
         /// Optional so older on-disk indexes continue to decode unchanged.
         var listingSelections: [String: String]? = nil
+        /// Selected library order is separate from capture/edit timestamps.
+        /// Optional for older indexes; every descendant retains its family key.
+        var importOrder: [String: String]? = nil
         var hiddenFamilies: Set<String> = []
 
         func history(for id: String) -> [Version] {
@@ -387,6 +390,7 @@ enum PhotoVersionHistory {
     /// this call owns. Older orig-* files may be AI predecessors, so never infer
     /// this guarantee from a filename.
     static func saveCapture(original: Data, enhanced: Data, id: String, directory: URL,
+                            importOrderID: String? = nil,
                             write: (Data, URL) throws -> Void = { try $0.write(to: $1, options: .atomic) }) throws {
         lock.lock(); defer { lock.unlock() }
         var index = try loadUnlocked(directory: directory)
@@ -401,6 +405,10 @@ enum PhotoVersionHistory {
                                   provenanceRecorded: false, createdAt: Date())
             index.versions[id] = version; index.current[id] = id
             index.listingSelections?[id] = id
+            if let importOrderID {
+                if index.importOrder == nil { index.importOrder = [:] }
+                index.importOrder?[id] = importOrderID
+            }
             try save(index, directory: directory, write: write)
         } catch {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(originalName))

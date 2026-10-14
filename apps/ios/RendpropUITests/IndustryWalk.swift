@@ -613,7 +613,7 @@ final class IndustryWalk: XCTestCase {
             if let studio { studioState = "isEnabled=\(studio.isEnabled)" } else { studioState = "tile missing" }
             check("\(i.tag): AI Photo Studio tile present and DISABLED on the sample",
                   studio != nil && studio?.isEnabled == false, actual: studioState)
-            let reel = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout)
+            let reel = find(ids: ["detail.reelStudio"], labels: ["Make a video"], timeout: shortTimeout)
             let reelState: String
             if let reel { reelState = "isEnabled=\(reel.isEnabled)" } else { reelState = "tile missing" }
             check("\(i.tag): Make a reel tile present and DISABLED on the sample",
@@ -761,7 +761,7 @@ final class IndustryWalk: XCTestCase {
             for chip in i.studioChipsAbsent {
                 checkAbsent("\(i.tag): edit \"\(chip)\" NOT offered to a \(i.noun)", chip)
             }
-            let reel = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout)
+            let reel = find(ids: ["detail.reelStudio"], labels: ["Make a video"], timeout: shortTimeout)
             let reelState: String
             if let reel { reelState = "isEnabled=\(reel.isEnabled)" } else { reelState = "card missing" }
             check("\(i.tag): \"Make a reel\" card present and disabled with no photos", reel != nil && reel?.isEnabled == false,
@@ -912,20 +912,23 @@ final class IndustryWalk: XCTestCase {
                 return
             }
             scrollToTop()
-            guard let tile = scrollTo(ids: ["detail.reelStudio"], labels: ["Make a reel"], swipes: 8), tile.isEnabled else {
+            guard let tile = scrollTo(ids: ["detail.reelStudio"], labels: ["Make a video"], swipes: 8), tile.isEnabled else {
                 note("SKIPPED: the \"Make a reel\" tool card is absent or disabled.")
                 return
             }
             tap(tile)
-            guard waitForAny(ids: [], labels: ["AI Photo Studio"], timeout: screenTimeout) else {
-                note("SKIPPED: the studio did not open from the reel tile.")
+            guard waitForAny(ids: [], labels: ["Make a video"], timeout: screenTimeout),
+                  let social = find(ids: ["video.purpose.social_media"], labels: [], timeout: shortTimeout), social.isHittable else {
+                note("SKIPPED: the video destination chooser did not open from the toolbox.")
                 dismissTopScreen()
                 return
             }
+            tap(social)
             settle(1.2)
             shot("\(i.tag)-14-reel-entry")
-            checkContains("\(i.tag): reel card names \"Voice + captions\"", "Voice + captions")
-            checkContains("\(i.tag): reel card explains \"Add 2 photos to start\"", "Add 2 photos to start")
+            check("\(i.tag): Social media destination opens video setup",
+                  find(ids: ["video.deliveryFormat"], labels: [], timeout: shortTimeout) != nil,
+                  actual: "No generation or recording is started.")
             dismissTopScreen()              // Back to the detail
             settle(0.5)
         }

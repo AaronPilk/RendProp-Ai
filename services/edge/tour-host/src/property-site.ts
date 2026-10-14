@@ -6,8 +6,8 @@ export function propertyPage(value: unknown): PropertyPage {
   return value === "gallery" || value === "location" || value === "contact" ? value : "home";
 }
 
-export function propertyPageHref(slug: string, page: PropertyPage): string {
-  const base = `/f/${encodeURIComponent(slug)}`;
+export function propertyPageHref(slug: string, page: PropertyPage, publicBase: "/f" | "/property" = "/f"): string {
+  const base = `${publicBase}/${encodeURIComponent(slug)}`;
   return page === "home" ? base : `${base}?page=${page}`;
 }
 

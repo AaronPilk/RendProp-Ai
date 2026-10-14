@@ -401,11 +401,11 @@ final class BetaPolishUITests: XCTestCase {
         app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "empty"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Detail fixture empty"].waitForExistence(timeout: 30), app.debugDescription)
-        openDetail("detail.reelStudio", title: "Reel Studio")
+        openDetail("detail.reelStudio", title: "Make a video", videoPurpose: "listing")
         let add = app.buttons["reel.addPhotos"]
         scrollTo(add); XCTAssertTrue(add.isEnabled)
-        let wide = app.segmentedControls.buttons["Wide · 16:9"]
-        scrollTo(wide); wide.tap(); XCTAssertTrue(wide.isSelected)
+        let wide = app.staticTexts["Landscape · 16:9 · 1920 × 1080"]
+        scrollTo(wide); XCTAssertTrue(wide.exists)
         scrollTo(add); add.tap()
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.version.")).firstMatch.exists,
@@ -413,8 +413,8 @@ final class BetaPolishUITests: XCTestCase {
         attach("empty-reel-add-photos-library")
         let done = app.navigationBars["Photos"].buttons["Done"]
         XCTAssertTrue(done.isHittable); done.tap()
-        XCTAssertTrue(app.navigationBars["Reel Studio"].waitForExistence(timeout: 10), app.debugDescription)
-        scrollTo(wide); XCTAssertTrue(wide.isSelected, "Returning from Photos preserves the user's reel setup")
+        XCTAssertTrue(app.navigationBars["Make a video"].waitForExistence(timeout: 10), app.debugDescription)
+        scrollTo(wide); XCTAssertTrue(wide.exists, "Returning from Photos preserves the user's listing video format")
         scrollTo(add); XCTAssertTrue(add.isEnabled)
         XCTAssertTrue(app.staticTexts["Add photos to this listing, then return to pick them for your reel."].exists)
         XCTAssertFalse(app.staticTexts["Your reel is ready"].exists, "The recovery path never automatically generates a video")
@@ -425,7 +425,7 @@ final class BetaPolishUITests: XCTestCase {
         app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "empty", "-ui.photoQuotaFixture"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Detail fixture empty"].waitForExistence(timeout: 30), app.debugDescription)
-        openDetail("detail.reelStudio", title: "Reel Studio")
+        openDetail("detail.reelStudio", title: "Make a video")
         let add = app.buttons["reel.addPhotos"]
         scrollTo(add); add.tap()
         let upgrade = app.alerts.buttons["Upgrade plan"]
@@ -447,7 +447,7 @@ final class BetaPolishUITests: XCTestCase {
         let hidden = NSPredicate { _, _ in !self.element("paywall.root").exists }
         expectation(for: hidden, evaluatedWith: app); waitForExpectations(timeout: 5)
         app.navigationBars["Photos"].buttons["Done"].tap()
-        XCTAssertTrue(app.navigationBars["Reel Studio"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.navigationBars["Make a video"].waitForExistence(timeout: 10), app.debugDescription)
         scrollTo(add); XCTAssertTrue(add.isEnabled, "Closing the paywall preserves the original reel setup")
         attach("quota-paywall-dismissed-to-same-reel")
     }
@@ -1228,10 +1228,16 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 30), app.debugDescription)
         XCTAssertFalse(element("detail.fixtureFailure").exists, app.debugDescription)
     }
-    private func openDetail(_ id: String, title: String) {
+    private func openDetail(_ id: String, title: String, videoPurpose: String = "social_media") {
         let control = app.buttons[id]
         scrollTo(control); control.tap()
         XCTAssertTrue(app.navigationBars[title].waitForExistence(timeout: 15), app.debugDescription)
+        if id == "detail.reelStudio" {
+            let purpose = app.buttons["video.purpose.\(videoPurpose)"]
+            XCTAssertTrue(purpose.waitForExistence(timeout: 10), app.debugDescription)
+            scrollTo(purpose); XCTAssertTrue(purpose.isHittable); purpose.tap()
+            XCTAssertFalse(element("video.purposeChooser").exists, "A destination opens the existing video setup")
+        }
     }
     private func replace(_ field: XCUIElement, with value: String) {
         let old = field.value as? String ?? ""

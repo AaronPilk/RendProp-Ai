@@ -2556,7 +2556,7 @@ function mediaDateNote(tour: Tour): string {
   return `<p class="lp-fine lp-mediadate"><time datetime="${escapeAttr(when.toISOString().slice(0, 10))}">This tour was published on ${escapeHtml(text)}.</time> Ask the agent before assuming anything shown here is still current.</p>`;
 }
 
-function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null): string {
+function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", page: PropertyPage | null = null, publicBase: "/f" | "/property" = "/f"): string {
   const l = tour.listing;
   const isRE = isRealEstate(tour);
   const sold = isSoldOrArchived(tour);
@@ -2614,7 +2614,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
       return `<figure class="lp-gcell"><a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}"><img class="property-thumb" data-property-src="${escapeAttr(g.url)}" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="${alt}" loading="lazy" decoding="async" fetchpriority="low"><noscript>${image}</noscript></a>${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
     };
     out.push(sec("gallery", "Gallery", "A closer look",
-      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery"))}">View all ${imgs.length} photos</a></p>` : ""}`));
+      `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase))}">View all ${imgs.length} photos</a></p>` : ""}`));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Explore the rooms" : "Explore the space",
       `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
@@ -3010,6 +3010,8 @@ export interface RenderOpts {
   origin?: string;
   /** Branded real-estate page navigation. Unknown values resolve to Home. */
   page?: PropertyPage;
+  /** Browser-only public alias; the canonical server URL is unchanged. */
+  publicBase?: "/f" | "/property";
 }
 
 export function renderTourPage(input: Tour, functionsBase: string, anonKey: string, turnstileSiteKey = "", opts: RenderOpts = {}): string {
@@ -3020,7 +3022,8 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   const tour = unbranded ? sanitizeTourForUnbranded(input) : input;
   const polished = !embed && !unbranded && isRealEstate(tour);
   const page = polished ? propertyPage(opts.page) : null;
-  const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target);
+  const publicBase = opts.publicBase === "/property" ? "/property" : "/f";
+  const pageHref = (target: PropertyPage) => propertyPageHref(tour.slug, target, publicBase);
 
   const hideVendor = hidesVendorBranding(tour);
   const agent = extractAgent(tour.client_mode === true ? { ...tour.agent_card, handle: null } : tour.agent_card || {});
@@ -3165,7 +3168,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     ${staged || hasAltered ? `<span class="listing-media-label">${escapeHtml(chipLabel)}${hasDisclosureSection ? ` · <a href="#disclosure">See disclosures and originals</a>` : ""}</span>` : ""}
     ${polished ? "</div>" : ""}
   </section>`;
-  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page);
+  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page, publicBase);
   // The end card IS the branding: agent card + CTA/lead form. `/u/` has none.
   const endcardHtml = embed || unbranded || (page && page !== "home" && page !== "contact") ? "" : `<section id="endcard">
   <div class="panel">

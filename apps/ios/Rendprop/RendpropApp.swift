@@ -3195,10 +3195,8 @@ struct RendpropApp: App {
             }
             // Universal Links. `onContinueUserActivity` is the https path (a
             // tap in Messages, Mail, Safari); `onOpenURL` catches the
-            // rendprop:// custom scheme. A URL this app has no screen for
-            // returns nil from `DeepLink.parse` and is left alone rather than
-            // swallowed - opening the app to nothing is worse than not opening
-            // it.
+            // rendprop:// custom scheme. Buyer-facing website URLs are
+            // handed to the browser before any account or viewer routing.
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                 guard let url = activity.webpageURL else { return }
                 enqueueIncomingURL(url)
@@ -3343,6 +3341,12 @@ struct RendpropApp: App {
     }
 
     @MainActor private func enqueueIncomingURL(_ url: URL) {
+        if let website = DeepLink.publicWebsiteURL(url) {
+            // UIKit does not route an app's own universal link back to itself.
+            // This also covers devices still using the previous cached AASA.
+            UIApplication.shared.open(website)
+            return
+        }
         if let link = DeepLink.parse(url) { incomingQueue.enqueue(.link(link)); return }
         // An unsupported external or MLS-unbranded URL is never turned into
         // branded app chrome. Malformed supported routes get an actionable error.
@@ -3409,30 +3413,47 @@ struct NativePresentationScope: Hashable {
     }
 }
 
+/// Tab identity stays stable when display order changes. Existing Profile and
+/// Settings routes keep their original tags; Leads gets its own new identity.
+enum NativeRootTab: Int {
+    case home = 0, listings = 1, profile = 2, settings = 3, leads = 4
+
+    static func destination(for route: CoachRoute) -> NativeRootTab? {
+        switch route {
+        case .project, .startProject, .home: return .home
+        case .planUsage: return .settings
+        case .support: return nil
+        }
+    }
+}
+
 struct RootTabView: View {
     @ObservedObject private var workspace = WorkspaceStore.shared
     @ObservedObject private var workspaceAuth = AuthStore.shared
     @EnvironmentObject var model: AppModel
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
-    @State private var tab = 0
+    @State private var tab = NativeRootTab.home.rawValue
 
     private var tabs: some View {
         TabView(selection: $tab) {
-            NavigationStack { HomeDashboardView(goToListings: { tab = 1 }) }
+            NavigationStack { HomeDashboardView(goToListings: { tab = NativeRootTab.listings.rawValue }) }
                 .tabItem { Label("Home", systemImage: "house.fill") }
-                .tag(0)
+                .tag(NativeRootTab.home.rawValue)
             HomeListingsView()
                 .tabItem {
                     Label(SpaceType.current == .realEstate ? "Listings" : "\(SpaceType.current.spaceNounCap)s",
                           systemImage: SpaceType.current == .realEstate ? "list.bullet.rectangle" : SpaceType.current.systemImage)
                 }
-                .tag(1)
+                .tag(NativeRootTab.listings.rawValue)
+            NavigationStack { LeadsView() }
+                .tabItem { Label("Leads", systemImage: "person.crop.circle.badge.checkmark") }
+                .tag(NativeRootTab.leads.rawValue)
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "person.crop.circle.fill") }
-                .tag(2)
+                .tag(NativeRootTab.profile.rawValue)
             NavigationStack { SettingsView() }
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-                .tag(3)
+                .tag(NativeRootTab.settings.rawValue)
         }
     }
 
@@ -3465,12 +3486,9 @@ struct RootTabView: View {
         // delivers to the other view's `.onChange` at all.
         .onChange(of: model.coachRoute) { route in
             guard let route else { return }
-            switch route {
-            case .project, .startProject, .home:
-                tab = 0
-            case .planUsage:
-                tab = 3
-            case .support:
+            if let destination = NativeRootTab.destination(for: route) {
+                tab = destination.rawValue
+            } else if case .support = route {
                 UIApplication.shared.open(SettingsView.supportMailURL(subject: "Rendprop support"))
             }
             DispatchQueue.main.async { model.coachRoute = nil }
@@ -4094,7 +4112,7 @@ struct HomeDashboardView: View {
         case "video.fill": return "Video tours"
         case "photo.stack": return "Add photos"
         case "wand.and.stars": return "Edit photos"
-        case "film.stack": return "Social media"
+        case "film.stack": return "Make a video"
         case "airplane.departure": return "Aerial intro"
         case "ruler": return "Floor plans & measurements"
         case "rotate.3d": return "3D tours"
@@ -4107,7 +4125,7 @@ struct HomeDashboardView: View {
         case "video.fill": return "Walkthrough"
         case "photo.stack": return "Library"
         case "wand.and.stars": return "AI edits"
-        case "film.stack": return "Reels"
+        case "film.stack": return "Social media or listing"
         case "airplane.departure": return "Intro"
         case "ruler": return "Plans & room scans"
         case "rotate.3d": return "Capture & explore"
@@ -4904,7 +4922,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         case .spatial:   return "3D tours"
         case .photos:    return "Add photos"
         case .photoStudio: return "AI Photo Studio"
-        case .reel:      return "Make a reel"
+        case .reel:      return "Make a video"
         case .floorPlan: return "Floor plans & measurements"
         case .aerial:    return "Make an aerial shot"
         }
@@ -4920,7 +4938,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         case .photoStudio: return SpaceType.current == .realEstate
             ? "Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky"
             : "Declutter \u{00B7} furnish it \u{00B7} twilight \u{00B7} sky"
-        case .reel:      return "Photos → one social video"
+        case .reel:      return "A social media or listing video"
         case .floorPlan: return "Scan, measure or upload a plan"
         case .aerial:    return "A cinematic opening shot"
         }

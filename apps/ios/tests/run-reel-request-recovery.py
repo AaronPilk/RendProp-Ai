@@ -17,6 +17,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--evidence-dir', type=Path)
 parser.add_argument('--choices-only', action='store_true', help='Run exact saved-quality choices and batch continuation with focused compiled controls')
 parser.add_argument('--quality-only', action='store_true', help='Compile/run only the new exact quality routing controls; full gate remains default')
+parser.add_argument('--large-only', action='store_true', help='Run >8 photo recovery/order and recipe bounds with focused controls')
 args = parser.parse_args()
 out = args.evidence_dir or Path(tempfile.mkdtemp(prefix='rendprop-reel-request-recovery-'))
 out.mkdir(parents=True, exist_ok=True)
@@ -27,7 +28,8 @@ fixture_path = root / 'apps/ios/tests/ReelRequestRecoveryTests.swift'
 adoption_path = root / 'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift'
 listing_path = root / 'apps/ios/Rendprop/Models/Listing.swift'
 drift_path = root / 'apps/ios/Rendprop/Render/DriftCheck.swift'
-consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, Path(__file__).resolve()]
+capacity_path = root / 'apps/ios/Rendprop/Render/VideoAspectChoice.swift'
+consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, capacity_path, Path(__file__).resolve()]
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed}
 def block(s, anchor):
@@ -110,7 +112,7 @@ try:
     review_helpers += 'enum SpaceType: String {\n' + cases + '}\n'
     drift = drift_path.read_text()
     drift_types = block(drift, 'struct DriftVerdict: Sendable, Equatable') + '\n' + block(drift, 'struct DriftCheckRequest: Sendable') + '\n' + block(source, 'private struct ReelQualityRefusal: Error, LocalizedError').replace('private struct', 'struct', 1) + '\n'
-    actual = 'import Foundation\nimport CryptoKit\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n' + block(api, 'struct AIShot: Sendable, Hashable, Identifiable') + '\n' + block(source, 'struct PendingReelBatch: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private enum ReelRecoveryChoice').replace('private enum', 'enum', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
+    actual = 'import Foundation\nimport CryptoKit\n' + capacity_path.read_text() + '\n' + drift_types + block(api, 'enum APIError: Error, LocalizedError') + '\n' + block(api, 'struct AIVideoJob: Codable, Sendable') + '\n' + block(api, 'enum AIVideoStatus: Sendable') + '\n' + block(source, 'struct PendingReelRequest: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'struct PendingReelClips: Codable').replace('private struct', 'struct', 1) + '\n' + block(api, 'struct AIShot: Sendable, Hashable, Identifiable') + '\n' + block(source, 'struct PendingReelBatch: Codable, Sendable').replace('private struct', 'struct', 1) + '\n' + block(source, 'private enum ReelRecoveryChoice').replace('private enum', 'enum', 1) + '\n@MainActor enum ReelReceiptHarness {\n'
     for anchor in ['    nonisolated private static func makeClip(', '    nonisolated private static func isDefinitiveRefusal(', '    nonisolated static func clipPath(', '    nonisolated static func isDroppedPoll(', '    nonisolated private static func retrieveClip(', '    nonisolated private static func clipLabel(', '    nonisolated private static func retainRecoveredClip(', '    nonisolated private static func parkClips(', '    nonisolated private static func preparedReelJPEG(', '    nonisolated private static func requireSavedReelReview(', '    nonisolated private static func acknowledgeRecoveredClip(', '    nonisolated private static func resolveSavedQualityRetry(', '    nonisolated private static func completeSavedBatch(']:
         extracted = block(source, anchor).replace('private static', 'static', 1)
         if 'retrieveClip(' in anchor:
@@ -211,7 +213,13 @@ try:
         ('negative-batch-source-binding', actual.replace('saved.photos[request.photoNumber - 1].jpegBase64 == request.sourceJPEGBase64,', 'true,'), 'wrong source cannot advance progress'),
         ('negative-batch-skips-photo', actual.replace('let index = batch.completedPaths.count, photo = batch.photos[index]', 'let index = batch.completedPaths.count + 1, photo = batch.photos[index]'), 'batch continuation generates each remaining photo in order'),
     ]
-    if args.choices_only:
+    if args.large_only:
+        variants = [('actual-large', actual, None),
+            ('negative-eight-photo-cap', actual.replace('static let maximumPhotos = 100', 'static let maximumPhotos = 8'), '100-photo recipe reloads without an eight-photo cap'),
+            ('negative-eight-request-position', actual.replace('(1...VideoSelectionCapacity.maximumPhotos).contains(request.photoNumber)', '(1...8).contains(request.photoNumber)'), 'photo 100 accepted receipt remains recoverable'),
+            ('negative-large-order-skip', actual.replace('let index = batch.completedPaths.count, photo = batch.photos[index]', 'let index = batch.completedPaths.count + 1, photo = batch.photos[index]'), 'large batch continuation retains every selected photo in order'),
+            ('negative-unbounded-recipe-read', actual.replace('fileBytes <= VideoSelectionCapacity.maximumRecipeBytes', 'fileBytes <= Int.max'), 'oversized recipe is rejected before reading the file')]
+    elif args.choices_only:
         variants = [('actual-choices', actual, None)] + choice_variants
     elif args.quality_only:
         variants = [('actual-quality', actual, None)] + quality_variants
@@ -227,7 +235,8 @@ try:
         Handler.calls = 0
         mode = ['--dispatch-only'] if name in ['actual-lab-dispatch', 'negative-dispatch-consent', 'negative-dispatch-workspace', 'negative-401-retry-fence'] else []
         if name.startswith('negative-manifest-'): mode = ['--manifest-only']
-        if args.choices_only or name.startswith('negative-choice-') or name.startswith('negative-batch-'): mode = ['--choices-only']
+        if args.large_only: mode = ['--large-only']
+        elif args.choices_only or name.startswith('negative-choice-') or name.startswith('negative-batch-'): mode = ['--choices-only']
         elif args.quality_only or name.startswith('negative-quality-') and name != 'negative-quality-gate-accepts-changed-property': mode = ['--quality-only']
         result = subprocess.run([str(binary), f'http://127.0.0.1:{server.server_port}', *mode], capture_output=True, text=True, timeout=300)
         log = result.stdout + result.stderr

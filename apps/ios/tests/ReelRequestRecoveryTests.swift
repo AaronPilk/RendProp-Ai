@@ -58,7 +58,7 @@ final class ClipAPI:APIClient {
    precondition(marker?.framing==framing && marker?.outputAspect==aspect,"new whole-source framing survives provider admission")
   }
   lastKey=idempotencyKey;posts+=1
-  precondition(seconds==5&&mime=="image/jpeg"&&aspect=="9:16"&&presetVersion==1&&(motion=="fly_through" || (allowQualityRetry&&motion=="push_in"))&&prompt==nil)
+  precondition(seconds==5&&mime=="image/jpeg"&&["9:16","16:9"].contains(aspect ?? "")&&presetVersion==1&&(motion=="fly_through" || (allowQualityRetry&&motion=="push_in"))&&prompt==nil)
   if allowQualityRetry {job=AIVideoJob(requestId:UUID().uuidString,statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel",provenanceID:"synthetic-provenance-\(posts-1)")}
   submissions.append(.init(image:imageBase64,motion:motion,key:idempotencyKey,attempt:marker?.qualityAttempt,source:marker?.sourceJPEGBase64,jobID:job.requestId,index:shotIndex,count:shotCount,framing:framing,outputAspect:marker?.outputAspect))
   if throwSubmit{throw URLError(.networkConnectionLost)}
@@ -117,6 +117,7 @@ final class ClosedVideoProtocol:URLProtocol {
   defer{try? FileManager.default.removeItem(at:FileStore.documents)}
   let input=root.appendingPathComponent("synthetic.jpg");try Data([0xff,0xd8,0xff,0xd9]).write(to:input)
   let ctx=PendingReelRequest.Context(listingID:UUID(),serverListingID:UUID(),owner:"synthetic-owner",workspace:UUID())
+  if CommandLine.arguments.contains("--large-only") {let n=try await largeBatch(root:root);print("PASSED: \(n) actual large video recipe/recovery/order assertions; no provider");return}
   if CommandLine.arguments.contains("--choices-only") {let n=try await recoveryChoices(root:root,input:input);print("PASSED: \(n) actual explicit recovery choices and batch continuation assertions; no provider");return}
   if CommandLine.arguments.contains("--quality-only") {let n=try await qualityRouting(root:root,input:input);print("PASSED: \(n) actual quality retry/original-motion assertions; renderer boundary doubled, no provider");return}
   defer{UserDefaults.standard.removeObject(forKey:PendingReelRequest.key(ctx))}
@@ -656,4 +657,46 @@ final class ClosedVideoProtocol:URLProtocol {
   OriginalPhotoMotion.reset();ReelPollClock.reset();return checks
  }
 
+ @MainActor static func largeBatch(root:URL) async throws -> Int {
+  var checks=0
+  func check(_ condition:@autoclosure()->Bool,_ message:String){precondition(condition(),message);checks+=1}
+  func context()->PendingReelRequest.Context {.init(listingID:UUID(),serverListingID:UUID(),owner:"large-synthetic-owner",workspace:UUID())}
+  let hundred=context()
+  let photos=(0..<100).map{PendingReelBatch.Photo(id:"large-\($0)",jpegBase64:Data("exact photo \($0)".utf8).base64EncodedString(),shot:nil)}
+  let full=PendingReelBatch(context:hundred,id:UUID(),photos:photos,motion:"fly_through",aspect:"16:9",spaceType:"real_estate",completedPaths:[],framing:"preserve_photo")
+  try full.save()
+  let loaded:PendingReelBatch
+  do{guard let value=try PendingReelBatch.load(hundred) else{preconditionFailure("100-photo recipe reloads without an eight-photo cap")};loaded=value}
+  catch{preconditionFailure("100-photo recipe reloads without an eight-photo cap")}
+  check(loaded.photos.map(\.id)==photos.map(\.id) && loaded.photos.map(\.jpegBase64)==photos.map(\.jpegBase64),"100-photo recipe retains exact selected order and source bytes")
+  let hundredRequest=PendingReelRequest(context:hundred,photoNumber:100,job:.init(requestId:"large-last",statusUrl:"synthetic-status",responseUrl:"synthetic-response",kind:"reel"),sourceJPEGBase64:photos[99].jpegBase64,framing:"preserve_photo",outputAspect:"16:9")
+  try hundredRequest.save()
+  check(PendingReelRequest.load(hundred)?.photoNumber==100,"photo 100 accepted receipt remains recoverable")
+  PendingReelRequest.forget(hundred);full.clear()
+  for aspect in ["9:16","16:9"] {
+   OriginalPhotoMotion.reset();ReelPollClock.reset();ClipFrames.answerNoFrames=false
+   let ctx=context(),selected=Array(photos.prefix(12))
+   let api=ClipAPI(URL(string:CommandLine.arguments[1]+"/quality")!);api.expectedContext=ctx;api.allowQualityRetry=true
+   let batch=PendingReelBatch(context:ctx,id:UUID(),photos:selected,motion:"fly_through",aspect:aspect,spaceType:"real_estate",completedPaths:[],framing:"preserve_photo")
+   try batch.save()
+   let dir=root.appendingPathComponent("large-"+UUID().uuidString);try FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
+   let finished:PendingReelBatch
+   do{finished=try await ReelReceiptHarness.completeSavedBatch(batch,api:api,into:dir,requireCurrent:{try Task.checkCancellation()},progress:{_ in})}
+   catch{preconditionFailure("large batch continuation retains every selected photo in order")}
+   check(api.posts==12 && api.submissions.map(\.index)==Array(0..<12).map{Optional($0)} && api.submissions.map(\.image)==selected.map(\.jpegBase64),"large batch continuation retains every selected photo in order")
+   check(api.submissions.allSatisfy{$0.count==12 && $0.outputAspect==aspect && $0.framing=="preserve_photo"},"large batch sends selected canvas and full-source framing on every clip")
+   check(finished.completedPaths.count==12 && finished.photos.map(\.id)==selected.map(\.id),"large saved recipe preserves all finished positions")
+   let again=try await ReelReceiptHarness.completeSavedBatch(batch,api:api,into:dir,requireCurrent:{try Task.checkCancellation()},progress:{_ in})
+   check(again.completedPaths==finished.completedPaths && api.posts==12,"reopening a completed large recipe submits no extra clips")
+   finished.clear()
+  }
+  let oversized=context(),target=PendingReelBatch.file(oversized)
+  try FileManager.default.createDirectory(at:target.deletingLastPathComponent(),withIntermediateDirectories:true)
+  FileManager.default.createFile(atPath:target.path,contents:nil)
+  let handle=try FileHandle(forWritingTo:target);try handle.truncate(atOffset:UInt64(VideoSelectionCapacity.maximumRecipeBytes+1));try handle.close()
+  do{_ = try PendingReelBatch.load(oversized);preconditionFailure("oversized recipe is rejected before reading the file")}
+  catch{check(error.localizedDescription.contains("too large to open safely"),"oversized recipe is rejected before reading the file")}
+  try FileManager.default.removeItem(at:target)
+  return checks
+ }
 }

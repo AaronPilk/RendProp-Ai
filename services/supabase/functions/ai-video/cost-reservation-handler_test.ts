@@ -614,22 +614,33 @@ Deno.test("actual reel handler rejects invalid presets before admission and disp
     assertEquals(f.state.posts.length, 0);
   }
 });
-Deno.test("actual reel handler sends a server prompt and portrait format through the funded dispatch", async () => {
-  const f = await fixture(); f.reset();
-  const response = await f.handler(req("reel-clip", "portrait-preset", {preset_version:1,motion:"fly_through",aspect:"9:16"}));
-  assertEquals(response.status, 202); assertEquals(f.state.events, ["reserve", "POST", "settle"]);
-  assertEquals(f.state.posts[0].input.aspect, "9:16");
-  assert(f.state.posts[0].input.prompt.includes("garage door and trim colors"));
-  // The reservation's accounting metadata must stay inside the SQL allow-list
-  // (app_video_cost_reserve, migration 20261009192550): an unknown key such as
-  // `preset_version` is RP400 "Unsupported video accounting metadata" and the
-  // reel fails before any provider POST — TestFlight 59, 2026-10-11.
-  const reserve = f.state.rpcs.find((r: {name: string}) => r.name === "app_video_cost_reserve_v2");
-  assert(reserve, "reel admission must go through app_video_cost_reserve_v2");
-  const meta = (reserve as {args: {p_meta: Record<string, unknown>}}).args.p_meta;
-  for (const key of Object.keys(meta)) assert(SQL_ACCOUNTING_META_KEYS.has(key), `accounting metadata key ${key} is not allow-listed in SQL`);
-  assertEquals(meta.aspect, "9:16"); assertEquals(meta.motion, "fly_through"); assertEquals(meta.seconds, 5);
-  assert(!("preset_version" in meta));
+Deno.test("actual reel handler carries both delivery formats through the same funded five-second dispatch", async () => {
+  const f = await fixture();
+  let holdCents: number | undefined;
+  for (const framing of [undefined, "preserve_photo"] as const) {
+    for (const aspect of ["9:16", "16:9"] as const) {
+      f.reset();
+      const response = await f.handler(req("reel-clip", `preset-${aspect}-${framing ?? "legacy"}`,
+        {preset_version:1,motion:"fly_through",aspect,...(framing ? {framing} : {})}));
+      assertEquals(response.status, 202); assertEquals(f.state.events, ["reserve", "POST", "settle"]);
+      assertEquals(f.state.posts.length, 1);
+      const sent = f.state.posts[0].input;
+      assertEquals(sent.aspect, aspect);assertEquals(sent.framing, framing);
+      assertEquals(sent.seconds, 5);assertEquals(sent.resolution,"1080p");
+      assert(sent.prompt.includes(framing ? "delivery canvas will be added separately" : "garage door and trim colors"));
+      // Both output choices use one five-second generation. The output canvas
+      // must not change the reservation, bypass it, or add accounting fields.
+      const reserve = f.state.rpcs.find((r: {name: string}) => r.name === "app_video_cost_reserve_v2");
+      assert(reserve, "reel admission must go through app_video_cost_reserve_v2");
+      const args = reserve.args as {p_meta: Record<string, unknown>;p_hold_cents:number};
+      if (holdCents === undefined) holdCents = args.p_hold_cents;
+      assertEquals(args.p_hold_cents, holdCents);
+      assert(Number.isFinite(holdCents) && holdCents! > 0);
+      for (const key of Object.keys(args.p_meta)) assert(SQL_ACCOUNTING_META_KEYS.has(key), `accounting metadata key ${key} is not allow-listed in SQL`);
+      assertEquals(args.p_meta.aspect, aspect);assertEquals(args.p_meta.motion,"fly_through");assertEquals(args.p_meta.seconds,5);
+      assert(!("preset_version" in args.p_meta));
+    }
+  }
 });
 // Mirror of the allow-list in public.app_video_cost_reserve (SQL). Keep in sync.
 const SQL_ACCOUNTING_META_KEYS = new Set(["tier","upscale_factor","target_fps","interpolated","estimate_cents","output_fps",

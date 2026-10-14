@@ -1523,12 +1523,28 @@ struct LeadsView: View {
     @State private var hasLoaded = false
     @State private var errorMessage: String?
     @State private var showSignIn = false
+    @State private var selectedListing: LeadInboxFilter = .all
+    @State private var loadedContext: DeletionContext?
+    @State private var loadRequest = UUID()
     @State private var pendingDeletion: Lead?
     @State private var deletionContext: DeletionContext?
     @State private var deletingIDs = Set<UUID>()
     private struct DeletionContext: Equatable { let owner: String?; let revision: UInt64; let org: UUID? }
     private var currentDeletionContext: DeletionContext {
         .init(owner: auth.userID, revision: auth.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+    }
+
+    private var visibleLeads: [Lead] {
+        LeadInboxGrouping.current(leads, responseContext: loadedContext, currentContext: currentDeletionContext)
+    }
+    private var visibleListings: [Listing] {
+        LeadInboxGrouping.visibleListings(model.listings, canView: model.isInSelectedWorkspace)
+    }
+    private var listingOptions: [LeadInboxSection] {
+        LeadInboxGrouping.sections(visibleLeads, listings: visibleListings, includeEmpty: true)
+    }
+    private var listingSections: [LeadInboxSection] {
+        LeadInboxGrouping.sections(visibleLeads.filter { selectedListing.includes($0) }, listings: visibleListings)
     }
 
     private var needsSignIn: Bool { Config.enableAuth && !auth.isSignedIn }
@@ -1552,7 +1568,7 @@ struct LeadsView: View {
 
     private var sections: [DaySection] {
         let cal = Calendar.current
-        let groups = Dictionary(grouping: leads) { cal.startOfDay(for: $0.createdAt) }
+        let groups = Dictionary(grouping: visibleLeads) { cal.startOfDay(for: $0.createdAt) }
         return groups.keys.sorted(by: >).map { day in
             DaySection(id: day,
                        title: Self.dayTitle(day),
@@ -1567,11 +1583,12 @@ struct LeadsView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Leads")
         .navigationBarTitleDisplayMode(.inline)
+        .accessibilityIdentifier("leads.inbox")
         .task { await load() }
         .onChange(of: scenePhase) { phase in if phase == .active { Task { await load() } } }
         .refreshable { await load() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
-            leads = []; pendingDeletion = nil; deletionContext = nil; Task { await load() }
+            resetContext(); Task { await load() }
         }
         .confirmationDialog("Delete this saved lead?", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } }), titleVisibility: .visible) {
             Button("Delete lead", role: .destructive) {
@@ -1584,8 +1601,12 @@ struct LeadsView: View {
         } message: {
             Text("This removes the saved inquiry from this workspace.")
         }
-        .onChange(of: auth.isSignedIn) { _ in leads = []; Task { await load() } }
-        .onChange(of: auth.userID) { _ in leads = []; errorMessage = nil; Task { await load() } }
+        .onChange(of: auth.isSignedIn) { _ in resetContext(); Task { await load() } }
+        .onChange(of: auth.userID) { _ in resetContext(); Task { await load() } }
+        .onChange(of: auth.syncSessionRevision) { _ in resetContext(); Task { await load() } }
+        .onChange(of: listingOptions.map(\.filter)) { filters in
+            if selectedListing != .all && !filters.contains(selectedListing) { selectedListing = .all }
+        }
         .sheet(isPresented: $showSignIn) {
             SignInView {
                 Task { await load() }
@@ -1595,6 +1616,18 @@ struct LeadsView: View {
 
     @ViewBuilder
     private var content: some View {
+        if listing == nil, !needsSignIn {
+            Section {
+                Picker("Listing", selection: $selectedListing) {
+                    Text("All listings").tag(LeadInboxFilter.all)
+                    ForEach(listingOptions) { group in
+                        Text(group.title).tag(group.filter)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityIdentifier("leads.listingFilter")
+            }
+        }
         if let listing {
             Section {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1638,7 +1671,7 @@ struct LeadsView: View {
             infoRow(icon: "link.badge.plus",
                     title: "Publish this \(noun) to start collecting leads",
                     detail: "The form at the end of your shared tour sends leads here. This \(noun) hasn't been published yet.")
-        } else if let errorMessage, leads.isEmpty {
+        } else if let errorMessage, visibleLeads.isEmpty {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Couldn't load leads", systemImage: "exclamationmark.triangle")
@@ -1660,9 +1693,9 @@ struct LeadsView: View {
                     ProgressView()
                 }
             }
-        } else if leads.isEmpty {
+        } else if visibleLeads.isEmpty || (listing == nil && listingSections.isEmpty) {
             infoRow(icon: "tray",
-                    title: "No leads yet",
+                    title: selectedListing == .all ? "No leads yet" : "No leads for this listing yet",
                     detail: "Leads from your tours appear here. Share your tour link to get the first one.")
         } else {
             if let errorMessage {
@@ -1671,19 +1704,38 @@ struct LeadsView: View {
                     Text(errorMessage).font(.rpCaption).foregroundStyle(Theme.warn)
                 }
             }
-            ForEach(sections) { day in
-                Section(day.title) {
-                    ForEach(day.leads) { lead in
-                        LeadRow(lead: lead, showListing: listing == nil)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    pendingDeletion = lead; deletionContext = currentDeletionContext
-                                } label: { Label("Delete", systemImage: "trash") }
-                            }.disabled(deletingIDs.contains(lead.id))
+            if listing == nil {
+                ForEach(listingSections) { group in
+                    Section {
+                        ForEach(group.leads) { lead in inquiryRow(lead, showDate: true) }
+                    } header: {
+                        Text("\(group.title) · \(group.leads.count)")
+                    }
+                }
+            } else {
+                ForEach(sections) { day in
+                    Section(day.title) {
+                        ForEach(day.leads) { lead in inquiryRow(lead, showDate: false) }
                     }
                 }
             }
         }
+    }
+
+    private func inquiryRow(_ lead: Lead, showDate: Bool) -> some View {
+        LeadRow(lead: lead, showListing: false, showDate: showDate)
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    pendingDeletion = lead; deletionContext = currentDeletionContext
+                } label: { Label("Delete", systemImage: "trash") }
+            }.disabled(deletingIDs.contains(lead.id))
+    }
+
+    private func resetContext() {
+        loadRequest = UUID()
+        leads = []; loadedContext = nil; selectedListing = .all
+        pendingDeletion = nil; deletionContext = nil; errorMessage = nil
+        hasLoaded = false; isLoading = false
     }
 
     private func infoRow(icon: String, title: String, detail: String) -> some View {
@@ -1730,19 +1782,24 @@ struct LeadsView: View {
             leads = []; errorMessage = "Choose a workspace before opening its leads."; hasLoaded = true; return
         }
         if let listing, listing.isSample || listing.serverID == nil { hasLoaded = true; return }
+        let request = UUID()
+        loadRequest = request
         isLoading = true
-        defer { isLoading = false }
+        defer { if loadRequest == request { isLoading = false } }
         _ = await AuthStore.validAccessToken()
+        guard loadRequest == request, !Task.isCancelled else { return }
         let actor = auth.userID, revision = auth.syncSessionRevision, org = WorkspaceContext.selectedOrgID
+        let responseContext = currentDeletionContext
         do {
             let fetched = try await model.api.leads(listingServerID: listing?.serverID)
-            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == org else { return }
+            guard loadRequest == request, !Task.isCancelled, auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == org else { return }
             leads = fetched.sorted { $0.createdAt > $1.createdAt }
+            loadedContext = responseContext
             errorMessage = nil
             hasLoaded = true
         } catch {
             if error is CancellationError { return }
-            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            guard loadRequest == request, auth.userID == actor, auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == org else { return }
             errorMessage = UserFacingError.message(error, fallback: "Couldn't load leads. Pull down to try again.")
             hasLoaded = true
         }
@@ -1753,6 +1810,7 @@ struct LeadsView: View {
 struct LeadRow: View {
     let lead: Lead
     var showListing = true
+    var showDate = false
     @EnvironmentObject private var model: AppModel
     @State private var latestDelivery: ClientLeadDelivery?
     @State private var showSendConfirmation = false
@@ -1773,7 +1831,13 @@ struct LeadRow: View {
                     .font(.rpHeadline)
                     .foregroundStyle(Theme.ink)
                 Spacer()
-                Text(lead.createdAt, style: .time)
+                Group {
+                    if showDate {
+                        Text(lead.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
+                    } else {
+                        Text(lead.createdAt, style: .time)
+                    }
+                }
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             }

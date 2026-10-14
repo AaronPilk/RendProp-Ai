@@ -460,24 +460,40 @@ final class UploadManager: NSObject, ObservableObject {
                                      keyPrefix: "poster")
     }
 
-    /// Upload the UNTOUCHED ORIGINAL behind an AI photo edit (contract §2.7 /
+    /// Upload a browser-readable copy of the original behind an AI photo edit (contract §2.7 /
     /// W2-B4): `POST /uploads {kind:"photo", role:"original", content_type,
     /// listing_id}` → one foreground PUT → `/complete`. Returns the SERVER asset
     /// id, which goes to `POST /ai-photo {original_asset_id}` so the tour's
     /// public "View original" link is a real file — California AB 723 requires
     /// access to the unaltered version, not just a disclosure sentence.
     ///
-    /// The server allows jpeg/png/webp ONLY here (a HEIC "View original" link
-    /// would not open in a browser) with the full 50 MB photo ceiling. We refuse
-    /// anything else up front rather than burning a round trip on a 400.
+    /// The exact original file remains in local history and Originals exports.
+    /// The server allows jpeg/png/webp ONLY here (HEIC would not open in a
+    /// browser), with its existing full 50 MB photo ceiling. Other source formats
+    /// get a full-resolution JPEG compatibility copy, with no crop or resize.
+    /// JPEG is re-encoded at quality1.0; it is not byte-identical to a HEIC source.
     /// `listingID` is the SERVER listing id.
     func uploadOriginal(fileURL: URL, listingID: UUID) async throws -> String {
-        let contentType = DirectUploader.uploadContentType(for: fileURL, kind: "photo")
+        try Task.checkCancellation()
+        let context = await MainActor.run {
+            PhotoImportContext(owner: AuthStore.shared.userID,
+                revision: AuthStore.shared.syncSessionRevision, workspace: WorkspaceContext.selectedOrgID)
+        }
+        let prepared = try await Task.detached(priority: .userInitiated) {
+            try PhotoBrowserOriginal.prepare(fileURL)
+        }.value
+        defer { prepared.removeTemporaryFiles() }
+        guard await MainActor.run(body: {
+            context.matches(owner: AuthStore.shared.userID,
+                revision: AuthStore.shared.syncSessionRevision, workspace: WorkspaceContext.selectedOrgID)
+        }) else { throw CancellationError() }
+        try Task.checkCancellation()
+        let contentType = DirectUploader.uploadContentType(for: prepared.url, kind: "photo")
         guard ["image/jpeg", "image/png", "image/webp"].contains(contentType) else {
             throw UploadError.server(
                 "The original has to be a JPEG, PNG or WebP so the public \"View original\" link opens.")
         }
-        return try await uploadBrowserPhoto(fileURL: fileURL, listingID: listingID,
+        return try await uploadBrowserPhoto(fileURL: prepared.url, listingID: listingID,
                                             role: "original", contentType: contentType,
                                             keyPrefix: "original")
     }

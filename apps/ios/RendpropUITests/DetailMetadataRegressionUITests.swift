@@ -100,9 +100,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         back(from: "Review & Submit") // Never submit or change render source.
         XCTAssertFalse(app.buttons["detail.aerialIntro"].exists, "Aerial generation is unavailable at launch")
 
-        let reel = app.buttons["detail.reelStudio"]
-        scrollTo(reel); reel.tap()
-        XCTAssertTrue(app.navigationBars["Reel Studio"].waitForExistence(timeout: 15), app.debugDescription)
+        openVideo(purpose: "social_media")
         let firstPhoto = app.buttons["reel.photo.fixture-0"]
         scrollTo(firstPhoto)
         XCTAssertTrue(firstPhoto.exists, "Reel must receive the detail listing's local photos")
@@ -116,10 +114,20 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         scrollTo(reelAerial)
         XCTAssertTrue(reelAerial.exists, "Reel must receive the detail listing's aerial clip")
         attach("detail-rich-reel")
-        app.navigationBars["Reel Studio"].buttons["Close"].tap()
+        app.navigationBars["Make a video"].buttons["Close"].tap()
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10))
         scrollTo(app.buttons["detail.photos"])
         XCTAssertTrue(app.buttons["detail.photos"].isEnabled)
+    }
+
+    private func openVideo(purpose: String) {
+        let video = app.buttons["detail.reelStudio"]
+        scrollTo(video); video.tap()
+        XCTAssertTrue(app.navigationBars["Make a video"].waitForExistence(timeout: 15), app.debugDescription)
+        let choice = app.buttons["video.purpose.\(purpose)"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 10), app.debugDescription)
+        scrollTo(choice); XCTAssertTrue(choice.isHittable); choice.tap()
+        XCTAssertFalse(element("video.purposeChooser").exists)
     }
 
     func testMissingSourceIsAPlainUnavailableCardEvenWithLocalTour() {
@@ -158,7 +166,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
 
     func testReelCameraPresetsAndPhotoZIPDeliveryChoice() {
         launch("rich")
-        let reel = app.buttons["detail.reelStudio"]; scrollTo(reel); reel.tap()
+        openVideo(purpose: "social_media")
         for move in ["fly_through", "push_in", "side_glide", "pull_back"] {
             let button = app.buttons["reel.motion.\(move)"]; scrollTo(button)
             XCTAssertTrue(button.exists && button.isEnabled, app.debugDescription)
@@ -166,7 +174,7 @@ final class DetailMetadataRegressionUITests: XCTestCase {
         }
         XCTAssertFalse(app.textFields["e.g. 'slow push-in, golden-hour feel'"].exists)
         attach("build58-four-camera-presets")
-        app.navigationBars["Reel Studio"].buttons["Close"].tap()
+        app.navigationBars["Make a video"].buttons["Close"].tap()
         openLink("detail.photos", title: "Photos")
         let all = app.buttons["photos.shareAll"]; revealActive(all); all.tap()
         let delivery = app.segmentedControls["export.deliverAs"]

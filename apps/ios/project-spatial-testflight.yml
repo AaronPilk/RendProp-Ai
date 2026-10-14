@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Experimental unified tour tests and floor plans. Normal App Store project remains74.
+    # Listing/video update and experimental spatial tools. Normal project remains74.
     # Recheck Apple inventory; never automatically renumber an upload retry.
-    CURRENT_PROJECT_VERSION: "76"
+    CURRENT_PROJECT_VERSION: "77"
 targets:
   Rendprop:
     sources:

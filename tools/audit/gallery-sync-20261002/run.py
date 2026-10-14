@@ -57,12 +57,12 @@ def main():
     source=TEMPLATE.read_text()
     for key,value in replacements.items():assert source.count(key)==1;source=source.replace(key,value)
     checks=out/'ActualGallerySync.swift'; checks.write_text(source)
-    production_sources=[APP,DETAIL,ROOT/'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift']
+    production_sources=[APP,DETAIL,ROOT/'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoImportSequence.swift']
     receipt={'productionMutations':0,'networkCalls':0,'userPhotosAccessed':0,'injectedFault':args.inject_fault,
         'sourceHashes':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in production_sources},
         'actualSyncBodySha256':hashlib.sha256(actual_sync.encode()).hexdigest(),
         'compiledSyncBodySha256':hashlib.sha256(sync.encode()).hexdigest(),'commands':[]}
-    compile=['xcrun','swiftc','-swift-version','5','-parse-as-library',str(production_sources[2]),str(production_sources[3]),str(checks),'-o',str(out/'checks')]
+    compile=['xcrun','swiftc','-swift-version','5','-parse-as-library',*map(str,production_sources[2:]),str(checks),'-o',str(out/'checks')]
     for label,command in [('compile',compile),('run',[str(out/'checks'),str(fixtures)])]:
         result=subprocess.run(command,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=90)
         log=out/(label+'.log');log.write_text(result.stdout)
