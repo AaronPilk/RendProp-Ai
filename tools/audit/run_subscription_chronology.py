@@ -57,6 +57,7 @@ try:
  query('chronology-migration',TARGET.read_text())
  query('chronology-historical-replay',TARGET.read_text())
  assert query('legacy-writer-after-expand',legacy_identity)==before_legacy
+ assert query('allowance-matrix-after-chronology-expand',matrix)==before_matrix
  for race in range(4):
   staged_org=str(uuid.uuid4());staged_original='staged-first-'+str(uuid.uuid4())
   query('staged-first-org-'+str(race),f"insert into orgs(id,name,plan,plan_source)values('{staged_org}','Staged first receipt','free',null);")
@@ -100,18 +101,28 @@ try:
  query('legacy-cutover-migration',CUTOVER.read_text())
  query('legacy-cutover-historical-replay',CUTOVER.read_text())
  assert query('legacy-writer-after-cutover',legacy_identity)!=before_legacy
+ assert query('allowance-matrix-after-chronology-cutover',matrix)==before_matrix
  receipt['stagedRolloutAssertions']=['old eleven-argument body/config/ACL unchanged after expand','old handler refund still enforced before cutover','v2 rejects signed refund replay before cutover','token/metadata-only writes preserve all chronology','unordered overlap invalidates chronology and refuses old reversal','newer purchase succeeds after unordered overlap','legacy fence installed only by contract migration']
  for p,s in migrations:
   if p.name>CUTOVER.name:query('migration-'+p.stem,s)
  receipt['replayMode']='chronology and cutover replayed at their historical schema points; final fixtures include every later migration'
- assert query('allowance-matrix-after',matrix)==before_matrix
- receipt['allowanceAndPriceRowsPreserved']=True
+ # The chronology expansion/cutover must not change product allowances. The
+ # later owner-authorized79 migration deliberately changes exactly these
+ # cells; every other original field/row must remain byte-equivalent JSON.
+ expected_matrix=json.loads(before_matrix)
+ paid={'starter':(30,2032),'solo':(30,2032),'pro':(60,4157),'team':(150,10532)}
+ for row in expected_matrix:
+  if row['plan']in paid:row['reels_per_month'],row['cogs_ceiling_cents']=paid[row['plan']]
+  elif row['plan']=='trial':row.update(reels_per_month=20,photo_edits_per_month=20,cogs_ceiling_cents=1500)
+ assert json.loads(query('allowance-matrix-after',matrix))==expected_matrix
+ receipt['historicalChronologyAllowancesPreserved']=True
+ receipt['laterReviewedPolicyDelta']={'migration':'20261014200302_property_video_recipe_allowances.sql','paid':paid,'trial':{'reels':20,'photos':20,'ceiling_cents':1500},'everyOtherOriginalCellPreserved':True}
  for phase in ['fresh','replayed']:
   checks=query('chronology-'+phase,(SQL/'tests/subscription_chronology.sql').read_text())
   count=checks.count('|t');assert count>=25,count
   receipt['chronologyAssertions']=count
   trial=query('confirmed-trial-'+phase,(SQL/'tests/subscription_confirmed_trial.sql').read_text());assert trial.count('|t')==26
-  assert query('allowance-matrix-'+phase,matrix)==before_matrix
+  assert json.loads(query('allowance-matrix-'+phase,matrix))==expected_matrix
  facts_checks=query('facts-integration',(SQL/'tests/listing_facts_cas.sql').read_text())
  receipt['factsSQLAssertions']=json.loads(facts_checks.strip())['assertions']
  # Use the formatted complete inventory for the shared independent parser.

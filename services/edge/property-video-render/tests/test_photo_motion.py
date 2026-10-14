@@ -53,7 +53,7 @@ class ActualPhotoMotion(unittest.TestCase):
   value=task();value['presentation']={'transition':'cut','shot_caption_style':'lowerThird','shot_labels':['ACCURATE SCENE LABEL'],'spoken_captions':True,'title_card':None};validate_task(value)
   branded={**value,'presentation':{**value['presentation'],'title_card':{'title':'Agent logo','subtitle':'','watermark':'Rendprop'}}}
   with self.assertRaises(ValueError):validate_task(branded)
-  fonts=[Path('/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'),Path('/System/Library/Fonts/Supplemental/Arial Bold.ttf')];font=next((p for p in fonts if p.is_file()),None);self.assertIsNotNone(font)
+  fonts=[Path('/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'),Path('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'),Path('/System/Library/Fonts/Supplemental/Arial Bold.ttf')];font=next((p for p in fonts if p.is_file()),None);self.assertIsNotNone(font)
   clip=self.root/'listing-label-source.mp4';encode_photo_motion(self.root/'source.jpg',clip,'16:9','push_in')
   run([shutil.which('ffmpeg'),'-v','error','-f','lavfi','-i','sine=frequency=1000:duration=2:sample_rate=48000',str(self.root/'voice.wav')])
   with patch.dict(os.environ,{'RENDER_FONT':str(font)}):

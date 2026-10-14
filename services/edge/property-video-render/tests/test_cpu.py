@@ -104,7 +104,7 @@ class ActualFFmpeg(unittest.TestCase):
         for name,freq,duration in [("music",200,3),("voice",1000,2)]:
             run([shutil.which("ffmpeg"),"-hide_banner","-loglevel","error","-nostdin","-y","-f","lavfi","-i",f"sine=frequency={freq}:duration={duration}:sample_rate=48000","-c:a","pcm_s16le",str(cls.root/f"{name}.wav")])
         cls.music=MusicSource("synthetic-proof",cls.root/"music.wav",hashlib.sha256((cls.root/"music.wav").read_bytes()).hexdigest(),"test-only","Self-generated200Hz")
-        fonts=[Path('/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'),Path('/System/Library/Fonts/Supplemental/Arial Bold.ttf')]
+        fonts=[Path('/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf'),Path('/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'),Path('/System/Library/Fonts/Supplemental/Arial Bold.ttf')]
         cls.font=next((p for p in fonts if p.is_file()),None)
 
     @classmethod

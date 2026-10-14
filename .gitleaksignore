@@ -117,3 +117,11 @@ a3b3f4968ac055b524dc6e60e0c52268d290f65b:services/supabase/functions/property-vi
 # adjacent deliveryHeaders identifier is a local Cache-Control response map.
 # The line contains no credential, literal secret or environment value.
 b89a293bbb7f81d521325b202adf6985f2eb9a31:services/supabase/functions/tours/index.ts:generic-api-key:506
+
+# Build79 reviewed false positives: tours512 is a public storage-key argument
+# adjacent to the Cache-Control response map; no secret or literal credential.
+# SQL180/181 use one synthetic offline clip storage key, not an API credential.
+# Exact historical fingerprints only; no path-wide or rule-wide exclusions.
+f8f30f58f7a4ad42109c02e62f689c9379931d55:services/supabase/functions/tours/index.ts:generic-api-key:512
+f8f30f58f7a4ad42109c02e62f689c9379931d55:services/supabase/tests/property_video_jobs.sql:generic-api-key:180
+f8f30f58f7a4ad42109c02e62f689c9379931d55:services/supabase/tests/property_video_jobs.sql:generic-api-key:181

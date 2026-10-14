@@ -15,7 +15,7 @@ try {
   browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:"block"});
   await context.route("**/*",route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==="blob:")return route.continue();receipt.externalRequests.push(url.href);return route.abort();});
   const page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(12000);
-  const openPro=async()=>{await page.getByRole("button",{name:"Pro view",exact:true}).click();await expect(page.getByLabel("Title overlay",{exact:true})).toBeVisible();};
+  const openPro=async()=>{await page.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();await page.getByRole("button",{name:"Pro view",exact:true}).click();await expect(page.getByLabel("Title overlay",{exact:true})).toBeVisible();};
   await page.goto(`${origin}/tests/cloud-editor-fixture.html?listing=20000000-0000-4000-8000-000000000003`);await openPro();
   await page.evaluate(async()=>{
     const org="10000000-0000-4000-8000-000000000001",a="20000000-0000-4000-8000-000000000002",b="20000000-0000-4000-8000-000000000003";

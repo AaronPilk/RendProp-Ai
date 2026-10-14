@@ -67,7 +67,7 @@ async function captureMediaTiming() {
 async function closeDevice(tab){await captureMediaTiming();await tab.close();}
 async function saveExportDiagnostics(label,path,probe){await captureMediaTiming();receipt.exportProbes.push({label,path,ffprobe:probe});await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));}
 
-const pro=async tab=>{await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
+const pro=async tab=>{await tab.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
 const advancedTools=async tab=>{const details=tab.locator("details.creation-advanced").filter({has:tab.locator("summary",{hasText:"Capture plan & extra editing tools"})});if(!await details.evaluate(node=>node.open))await details.locator("summary").click();};
 // Retain the actual guard's cause on a refused export. No clock arguments,
 // scheduling, thresholds or thrown errors change; successful reads are untouched.
@@ -148,6 +148,7 @@ try {
   receipt.checks.push("A second browser restores both the complete conversation and its actual edited draft, including later manual refinements, while reusing the same original media");
 
   await second.getByRole("combobox", { name: "Property reel", exact: true }).selectOption("20000000-0000-4000-8000-000000000003");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByLabel("Title overlay", {exact:true})).toHaveValue("");
   await expect(second.getByRole("button", {name:/Select clip /})).toHaveCount(0);
@@ -234,9 +235,11 @@ try {
   receipt.checks.push("Real MP4 export saves to workspace and a lost completion/repeated Save reconciles without duplicate ticket or bytes");
   const beforeImport = await second.evaluate(() => window.cloudFixture.snapshot());
   await second.getByLabel("Property reel",{exact:true}).selectOption("20000000-0000-4000-8000-000000000002");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByLabel("Title overlay",{exact:true})).toHaveValue("Office to phone edit");
   await second.getByLabel("Property reel",{exact:true}).selectOption("20000000-0000-4000-8000-000000000003");
+  await second.getByRole("button",{name:"Advanced desktop editor",exact:true}).click();
   await expect(second.getByRole("button",{name:"Pro view",exact:true})).toHaveAttribute("aria-pressed","false");await pro(second);
   await expect(second.getByRole("button",{name:/Select clip /})).toHaveCount(3);
   assert.equal((await second.evaluate(() => window.cloudFixture.snapshot())).tickets,beforeImport.tickets);

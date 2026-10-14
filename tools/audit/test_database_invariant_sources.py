@@ -23,8 +23,8 @@ def require_registered(sql):
                          + re.escape(label) + r"'", sql, re.I), label
 
 
-# The independent literal expectation matrix of the "plan_entitlements match
-# paid plans and 0032 trial/free" assertion. The per-plan contracts below are
+# The independent literal expectation matrix of the current catalog assertion.
+# The per-plan contracts below are
 # checked INSIDE this block only: the 0044 fixture repeats some of the same
 # tuples further down the file, and a matrix edit must be caught even when a
 # fixture literal still carries the old value.
@@ -42,22 +42,24 @@ def require_contract(sql):
     assert 'ceiling > visible and ceiling <= 8000' in sql, 'reasoning headroom rule weakened'
     assert "when 'copy.agent_reel' then 500" in sql, 'agent-reel visible contract drifted'
     matrix = plan_matrix(sql)
-    assert re.search(r"\('trial',\s*3,\s*60,\s*4,\s*2,\s*1,\s*1,\s*1200,\s*0\)", matrix)
+    assert re.search(r"\('trial',\s*3,\s*20,\s*20,\s*2,\s*1,\s*1,\s*1500,\s*0\)", matrix)
     assert re.search(r"\('free',\s*1,\s*5,\s*0,\s*0,\s*0,\s*1,\s*300,\s*0\)", matrix)
     assert 'for v_n in 1..3 loop' in sql
     assert "'_inv-wrk-000004'" in sql
     assert "worker job #4 exceeds the trial cap (RP402)" in sql
-    # 0044 (2026-09-12): the paid rework, prices unchanged, and the one-tour
-    # single-location trial override. The expectation matrix must keep stating
+    # 0044 retained tour/edit sizes and prices; the reviewed 20261014200302
+    # migration changes shot allowances and ceilings for multi-photo videos.
+    # The one-tour single-location trial override still applies. The matrix must keep stating
     # these literally — deriving them from the table would test nothing.
-    assert re.search(r"\('starter',\s*4,\s*100,\s*6,\s*2,\s*0,\s*1,\s*1200,\s*4900\)", matrix), 'starter rework'
-    assert re.search(r"\('solo',\s*4,\s*100,\s*6,\s*2,\s*0,\s*1,\s*1200,\s*4900\)", matrix), 'solo alias'
-    assert re.search(r"\('pro',\s*10,\s*200,\s*12,\s*4,\s*0,\s*1,\s*2400,\s*9900\)", matrix), 'pro rework'
-    assert re.search(r"\('team',\s*25,\s*400,\s*25,\s*8,\s*2,\s*2,\s*6000,\s*24900\)", matrix), 'team rework'
-    assert re.search(r"\('trial',\s*1,\s*60,\s*4,\s*1,\s*1,\s*null::integer,\s*1000\)", sql), 'single-location trial override'
+    assert re.search(r"\('starter',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)", matrix), 'starter rework'
+    assert re.search(r"\('solo',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)", matrix), 'solo alias'
+    assert re.search(r"\('pro',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9900\)", matrix), 'pro rework'
+    assert re.search(r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*2,\s*10532,\s*24900\)", matrix), 'team rework'
+    assert re.search(r"\('trial',\s*1,\s*20,\s*20,\s*1,\s*1,\s*null::integer,\s*1500\)", sql), 'single-location trial override'
     assert "'_inv-fit-000002'" in sql
     assert "worker job #2 exceeds the single-location trial cap (RP402, 1 of 1)" in sql
-    assert "log_job_cost enforces the single-location trial ceiling (1000¢, not the base 1200¢)" in sql
+    assert "log_job_cost enforces the current single-location trial ceiling (1500¢)" in sql
+    assert "monthly AI spend ceiling reached for the trial plan (0¢ of 1500¢)" in sql
 
 
 class DatabaseInvariantSourceTests(unittest.TestCase):
@@ -109,7 +111,7 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
             require_contract(mutant)
 
     def test_old_trial_expectation_negative_control_is_rejected(self):
-        mutant = re.sub(r"\('trial',\s*3,\s*60", "('trial', 1, 10", self.invariants, count=1)
+        mutant = re.sub(r"\('trial',\s*3,\s*20", "('trial', 1, 10", self.invariants, count=1)
         self.assertNotEqual(mutant, self.invariants)
         with self.assertRaises(AssertionError):
             require_contract(mutant)
@@ -117,9 +119,9 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
     def test_pre_0044_paid_expectation_negative_control_is_rejected(self):
         # The 2026-09-01 sizes (8/150/8, 25/300/20, 80/600/40, 3 seats) must not
         # be able to come back into the expectation matrix unnoticed.
-        for old, new in ((r"\('starter',\s*4,\s*100,\s*6", "('starter', 8, 150, 8"),
-                         (r"\('pro',\s*10,\s*200,\s*12", "('pro', 25, 300, 20"),
-                         (r"\('team',\s*25,\s*400,\s*25,\s*8,\s*2,\s*2", "('team', 80, 600, 40, 15, 2, 3")):
+        for old, new in ((r"\('starter',\s*4,\s*100,\s*30", "('starter', 8, 150, 8"),
+                         (r"\('pro',\s*10,\s*200,\s*60", "('pro', 25, 300, 20"),
+                         (r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*2", "('team', 80, 600, 40, 15, 2, 3")):
             with self.subTest(plan=new):
                 mutant = re.sub(old, new, self.invariants, count=1)
                 self.assertNotEqual(mutant, self.invariants)
@@ -127,11 +129,32 @@ class DatabaseInvariantSourceTests(unittest.TestCase):
                     require_contract(mutant)
 
     def test_single_location_trial_override_negative_control_is_rejected(self):
-        mutant = re.sub(r"\('trial',\s*1,\s*60,\s*4,\s*1,\s*1,\s*null::integer,\s*1000\)",
+        mutant = re.sub(r"\('trial',\s*1,\s*20,\s*20,\s*1,\s*1,\s*null::integer,\s*1500\)",
                         "('trial', 3, 60, 4, 2, 1, null::integer, 1200)", self.invariants, count=1)
         self.assertNotEqual(mutant, self.invariants)
         with self.assertRaises(AssertionError):
             require_contract(mutant)
+
+    def test_pre_recipe_allowances_are_rejected(self):
+        # A second historical boundary: the previous 0044-era matrix must not
+        # replace current shot/ceiling contracts while retaining tour/edit sizes.
+        for current, previous in (
+            (r"\('trial',\s*3,\s*20,\s*20,\s*2,\s*1,\s*1,\s*1500,\s*0\)",
+             "('trial', 3, 60, 4, 2, 1, 1, 1200, 0)"),
+            (r"\('starter',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)",
+             "('starter', 4, 100, 6, 2, 0, 1, 1200, 4900)"),
+            (r"\('solo',\s*4,\s*100,\s*30,\s*2,\s*0,\s*1,\s*2032,\s*4900\)",
+             "('solo', 4, 100, 6, 2, 0, 1, 1200, 4900)"),
+            (r"\('pro',\s*10,\s*200,\s*60,\s*4,\s*0,\s*1,\s*4157,\s*9900\)",
+             "('pro', 10, 200, 12, 4, 0, 1, 2400, 9900)"),
+            (r"\('team',\s*25,\s*400,\s*150,\s*8,\s*2,\s*2,\s*10532,\s*24900\)",
+             "('team', 25, 400, 25, 8, 2, 2, 6000, 24900)"),
+        ):
+            with self.subTest(previous=previous):
+                mutant, count = re.subn(current, previous, self.invariants, count=1)
+                self.assertEqual(count, 1, 'the actual matrix row must be mutated')
+                with self.assertRaises(AssertionError):
+                    require_contract(mutant)
 
     def test_positive_and_negative_sql_use_the_same_gate_source(self):
         include = '\\ir invariant_astra_paid_gates.sql'
