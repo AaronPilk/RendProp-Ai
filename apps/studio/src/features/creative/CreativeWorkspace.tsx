@@ -1,3 +1,4 @@
+import { STAGING_STYLE_CHOICES } from "./staging-styles";
 import CustomPhotoPromptHelp, { analyzeCustomPhotoPrompt } from "./CustomPhotoPromptHelp";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
@@ -1305,7 +1306,7 @@ function ListingCreative(
               <div className="creative-style-picker" role="group" aria-label="Staging style">
                 <p>Choose a style</p>
                 <div className="creative-preset-grid">
-                  {["modern", "rustic", "minimalist", "scandinavian"].map((value) => (
+                  {STAGING_STYLE_CHOICES.map((value) => (
                     <button key={value} aria-pressed={style === value}
                       className={style === value ? "selected" : ""}
                       onClick={() => setStyle(value)}>

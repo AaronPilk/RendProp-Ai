@@ -21,7 +21,7 @@ Deno.test("every actual real-estate stage style retains its useful description a
   const a = source.indexOf("{", start), b = source.indexOf("\n};", a);
   assert(a > start && b > a);
   const styles = new Function(`return (${source.slice(a, b + 2)});`)() as Record<string, string>;
-  assertEquals(Object.keys(styles).sort(), ["minimalist", "modern", "rustic", "scandinavian"]);
+  assertEquals(Object.keys(styles).sort(), ["contemporary", "minimalist", "modern", "rustic", "scandinavian"]);
   for (const [style, details] of Object.entries(styles)) {
     const prompt = buildRealEstateStagePrompt(details);
     assertStringIncludes(prompt, JSON.stringify(details));

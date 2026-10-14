@@ -1,3 +1,4 @@
+import { STAGING_STYLE_CHOICES, ACCEPTED_STAGING_STYLES } from "./staging-styles";
 import { useEffect, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
 import { uuid, canEditListing } from "../../data/contracts";
@@ -49,7 +50,7 @@ export class PhotoBatch {
   private started = false;
   constructor(photos: readonly StudioPhoto[], listingId: string, choice: BatchEdit, private deps: BatchDependencies, private changed: () => void = () => {}) {
     if (!photos.length || photos.length > MAX_BATCH_PHOTOS || new Set(photos.map(p => p.id)).size !== photos.length || photos.some(p => !batchEligible(p, listingId))) throw new Error(`Choose 1–${MAX_BATCH_PHOTOS} photos with their originals from this property.`);
-    if (!PRESETS.some(p => p.id === choice.edit) || choice.edit === "custom" && (!choice.prompt.trim() || choice.prompt.trim().length > 600) || choice.edit === "stage" && !["modern", "rustic", "minimalist", "scandinavian"].includes(choice.style)) throw new Error("Choose an edit and review its settings first.");
+    if (!PRESETS.some(p => p.id === choice.edit) || choice.edit === "custom" && (!choice.prompt.trim() || choice.prompt.trim().length > 600) || choice.edit === "stage" && !ACCEPTED_STAGING_STYLES.includes(choice.style)) throw new Error("Choose an edit and review its settings first.");
     if (choice.edit === "custom") {
       const decision = analyzeCustomPhotoPrompt(choice.prompt, "real_estate");
       if (decision.status !== "ready") throw new Error(decision.message);
@@ -216,7 +217,7 @@ function BatchPhotoStudioContent({ services, workspace, listing, photos, canCrea
     {error && <p role="alert" className="creative-alert">{error}</p>}
     {!batch ? <>
       <fieldset disabled={!!disabled || !canCreate}><legend>1. Choose one change for these photos</legend><div className="creative-preset-grid">{PRESETS.filter(p => listing.spaceType === "real_estate" || p.id !== "lawn").map(p => <button type="button" key={p.id} aria-pressed={edit === p.id} className={edit === p.id ? "selected" : ""} onClick={() => setEdit(p.id)}>{p.name}</button>)}</div>
-        {edit === "stage" && <div className="creative-actions" aria-label="Staging style">{["modern", "rustic", "minimalist", "scandinavian"].map(value => <button type="button" key={value} aria-pressed={style === value} onClick={() => setStyle(value)}>{value[0]!.toUpperCase() + value.slice(1)}</button>)}</div>}
+        {edit === "stage" && <div className="creative-actions" aria-label="Staging style">{STAGING_STYLE_CHOICES.map(value => <button type="button" key={value} aria-pressed={style === value} onClick={() => setStyle(value)}>{value[0]!.toUpperCase() + value.slice(1)}</button>)}</div>}
         {edit === "custom" && <label>Describe the change<textarea value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={600} placeholder="Remove the moving boxes and preserve the room." /></label>}
         {edit === "custom" && <CustomPhotoPromptHelp prompt={prompt} onPrompt={setPrompt} space={listing.spaceType} disabled={!!disabled || !canCreate} />}
       </fieldset>

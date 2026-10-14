@@ -156,6 +156,7 @@ export interface MessagesArgs {
   /** An explicit params blob, when the caller has one but no step. Wins over
    *  whatever a passed step carries; omit it in every ordinary call. */
   params?: Record<string, unknown> | null;
+  onUsage?: (usage: {inputTokens:number;outputTokens:number;cacheReadInputTokens?:number;cacheCreationInputTokens?:number}) => void;
 }
 
 /** One bounded /v1/messages call → the concatenated text of the reply. */
@@ -191,6 +192,13 @@ export async function anthropicMessages(args: MessagesArgs): Promise<string> {
     { method: "POST", headers: anthropicHeaders(), body: JSON.stringify(body) },
     BUDGETS.submitMs,
   );
+  const usage = data.usage as Record<string, unknown> | undefined;
+  if (args.onUsage && usage && Number.isSafeInteger(usage.input_tokens) && Number(usage.input_tokens) >= 0 &&
+      Number.isSafeInteger(usage.output_tokens) && Number(usage.output_tokens) >= 0) {
+    args.onUsage({inputTokens:Number(usage.input_tokens),outputTokens:Number(usage.output_tokens),
+      ...(Number.isSafeInteger(usage.cache_read_input_tokens)&&Number(usage.cache_read_input_tokens)>=0?{cacheReadInputTokens:Number(usage.cache_read_input_tokens)}:{}),
+      ...(Number.isSafeInteger(usage.cache_creation_input_tokens)&&Number(usage.cache_creation_input_tokens)>=0?{cacheCreationInputTokens:Number(usage.cache_creation_input_tokens)}:{})});
+  }
   const content = Array.isArray(data.content) ? data.content : [];
   const text = (content as Array<Record<string, unknown>>)
     .filter((b) => b?.type === "text" && typeof b.text === "string")

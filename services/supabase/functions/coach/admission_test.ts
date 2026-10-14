@@ -52,10 +52,11 @@ async function fixture(bypassMembership = false, dropPreference = false) {
     import {handleOptions} from ${
     JSON.stringify(new URL("../_shared/cors.ts", import.meta.url).href)
   };
-    import {buildUserTurn,screenOf,reelStateOf,spaceTypeOf,systemInstruction} from ${
+    import {buildUserTurn,screenOf,reelStateOf,photoStateOf,spaceTypeOf,systemInstruction} from ${
     JSON.stringify(new URL("./prompt.ts", import.meta.url).href)
   };
     import {boundedCoachChain,boundedCoachTurn,coachAttemptQuote,coachPromptBytes,COACH_MAX_OUTPUT_TOKENS,COACH_MAX_ATTEMPTS} from ${JSON.stringify(new URL("./budget.ts", import.meta.url).href)};
+    import {CoachUsageEvidence} from ${JSON.stringify(new URL("./usage.ts",import.meta.url).href)};
     import {workspaceDirectory} from ${JSON.stringify(new URL("../_shared/workspaces.ts",import.meta.url).href)};
     import {coachContext} from ${JSON.stringify(new URL("./context.ts", import.meta.url).href)};
     import {fundingContext,fundedAttempt,textAttemptQuote,completeFundingOperation} from ${JSON.stringify(new URL("../_shared/funded-serving.ts",import.meta.url).href)};
@@ -115,8 +116,8 @@ async function fixture(bypassMembership = false, dropPreference = false) {
     const durableRateLimit=async(key:string,max:number,seconds:number)=>{state.meters.push({key,max,seconds});const n=state.counts.get(key)??0;if(n>=max)return false;state.counts.set(key,n+1);return true;};
     const resolveRoute=async(_task:any,context:any)=>{state.plans.push(context.plan);return state.options.routeSteps??[];};
     const runChain=async(_task:any,steps:any[],callback:any)=>{state.chainSteps=steps;return {value:await callback(steps[0]),step:steps[0]};};
-    const anthropicMessages=async(args:any)=>{state.events.push("provider");state.providers++;if(state.options.providerError)throw new HttpError(502,"synthetic provider credential/private prompt");state.maxTokens=args.maxTokens;state.providerStep=args.model;state.system=args.system;state.userTurn=args.content[0].text;return JSON.stringify({reply:"Start with a clear photo of each room.",actions:[],suggested_replies:[]});};
-    const openaiChat=async(step:any,input:any,opts:any)=>{state.events.push("provider");state.providers++;state.maxTokens=opts.maxOutputTokens;state.providerStep=step;state.combinedPrompt=input[0].content[0].text;return JSON.stringify({reply:"Synthetic online help",actions:[],suggested_replies:[]});};
+    const anthropicMessages=async(args:any)=>{state.events.push("provider");state.providers++;if(state.options.providerError)throw new HttpError(502,"synthetic provider credential/private prompt");if(state.options.usage)args.onUsage?.(state.options.usage);state.maxTokens=args.maxTokens;state.providerStep=args.model;state.system=args.system;state.userTurn=args.content[0].text;return JSON.stringify({reply:"Start with a clear photo of each room.",actions:[],suggested_replies:[]});};
+    const openaiChat=async(step:any,input:any,opts:any)=>{state.events.push("provider");state.providers++;if(state.options.usage)opts.onUsage?.(state.options.usage);state.maxTokens=opts.maxOutputTokens;state.providerStep=step;state.combinedPrompt=input[0].content[0].text;return JSON.stringify({reply:"Synthetic online help",actions:[],suggested_replies:[]});};
     class ProviderError extends Error{}
     const recordRoutedAiCost=async(...args:any[])=>{state.events.push("ledger");state.ledgers++;state.ledgerRows.push(args[1]);return {recorded:true};};
     ${source}
@@ -438,4 +439,23 @@ Deno.test("actual coach OpenAI reservation includes cold-cache premium before di
  assertEquals(f.state.providerStep.params.max_output_tokens,600);
  assertEquals(f.state.maxTokens,600);
  assert(f.state.events.indexOf("provider")>=0);
+});
+
+Deno.test("actual Coach attaches measured provider tokens beside unchanged routed estimate",async()=>{
+ const f=await fixture();f.reset({usage:{inputTokens:140,outputTokens:20,cacheReadInputTokens:30,prompt:"PRIVATE"}});
+ assertEquals((await f.handler(req())).status,200);
+ const row=f.state.ledgerRows[0];assertEquals(row.meta.cost_basis,"route_catalog_estimate_not_supplier_invoice");
+ assertEquals(row.meta.provider_usage[0].input_tokens,140);assertEquals(row.meta.provider_usage[0].output_tokens,20);
+ assertEquals(row.meta.provider_usage[0].catalog_estimate_cents,2.1);assertEquals(row.meta.provider_usage[0].supplier_invoice_verified,false);
+ assert(!JSON.stringify(row.meta).includes("PRIVATE"));assert(f.state.holds[0].p_hold_cents<=8);
+ f.reset({budgetDenied:true,usage:{inputTokens:140,outputTokens:20}});assertEquals((await f.handler(req())).status,402);
+ assertEquals(f.state.providers,0);assertEquals(f.state.ledgers,0);
+});
+Deno.test("actual Coach validates photo state after private selected-listing scope",async()=>{
+ const f=await fixture(),id="d0300501-0000-4000-8000-000000000001";
+ const context={screen:"photo_studio",selected_listing_id:id,listings:[{id,title:"Synthetic"}],photo_state:{tab:"decluttered",selected_count:2,preview_url:"PRIVATE_PHOTO_URL",style:"PRIVATE_STYLE"}};
+ f.reset({listingRows:[{id,org_id:SELECTED_ORG,status:"draft"}]});assertEquals((await f.handler(req(undefined,undefined,undefined,{context}))).status,200);
+ assert(f.state.userTurn.includes('"tab":"decluttered"'));assert(!f.state.userTurn.includes("PRIVATE_"));
+ f.reset({listingRows:[{id,org_id:ACTIVE_ORG,status:"draft"}]});assertEquals((await f.handler(req(undefined,undefined,undefined,{context}))).status,200);
+ assert(!f.state.userTurn.includes('"tab":"decluttered"')&&!f.state.userTurn.includes("PRIVATE_"));
 });

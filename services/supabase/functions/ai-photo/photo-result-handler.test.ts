@@ -174,12 +174,14 @@ Deno.test("actual staging handler accepts furniture noun briefs and retains all 
 });
 Deno.test("actual staging handler delivers furniture-only scope and exact source on all styles and routing modes",async()=>{
  const {prepareOwnerQaPhotoInput}=await import("./owner-photo-qa.ts");
- for(const style of ["modern","rustic","minimalist","scandinavian"]){
+ for(const style of ["modern","rustic","minimalist","contemporary","scandinavian"]){
   for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
    const request=f.request({edit:"stage",style}),input=await request.clone().json();
    const response=await f.run(request);assertEquals(response.status,200,await response.text());
    assertEquals(f.state.charges,1);assertEquals(f.state.holds,1);assertEquals(f.state.submits,1);assertEquals(f.state.helperDispatch,0);
    const sent=f.state.inputs[0],prompt=sent.prompt;
+   if(style==="contemporary") {assert(prompt.includes("softly curved seating"));assert(!prompt.includes("Scandinavian furniture"));}
+   if(style==="scandinavian") {assert(prompt.includes("Scandinavian furniture"));assert(!prompt.includes("contemporary furniture:"));}
    assertEquals(sent.image_b64,input.image_b64);assertEquals(sent.image_url,`data:image/jpeg;base64,${input.image_b64}`);
    for(const lock of ["edit movable furnishings only","overhead slab","existing open pergolas open","garage-door color and finish","trim color and finish","outdoor furniture on a balcony","No repainting","never copy its architecture or viewpoint","do not repair or hide them"])assert(prompt.includes(lock),lock);
    assert(new TextEncoder().encode(prompt).length<4096,"Default staging prompt retains the2K source/text bound");

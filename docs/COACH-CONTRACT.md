@@ -1,4 +1,4 @@
-# Coach — contract v2 (2026-10-13)
+# Coach — contract v3 (2026-10-14)
 
 Rendprop's in-app chat assistant. Two jobs:
 
@@ -38,7 +38,9 @@ Request:
     "plan": "free" | "trial" | "starter" | "solo" | "pro" | "team",
     "screen": "reel_studio", // optional closed AskAIScreen vocabulary, not arbitrary text
     "selected_listing_id": "…",
-    "reel_state": {"phase":"paused", "completed":2, "total":8, "still_photo_shots":1} // optional
+    "reel_state": {"phase":"generating", "completed":2, "total":8, "still_photo_shots":1,
+      "execution":"server_accepted", "server_phase":"generating", "resume_available":false}, // optional
+    "photo_state": {"tab":"original", "selected_count":3} // optional Photo Studio hint
   }
 }
 ```
@@ -66,15 +68,32 @@ loaded for this context.
 
 The current screen and selected project take precedence over generic tour
 onboarding. Photos and reels do not require a walkthrough. `open_photos`
-opens the Photos library. `start_project` opens the Video tours picker; a new
-photo/reel project uses Home's corresponding tool card instead.
+opens the Photos library. `start_project` opens Home's existing address/details
+form. The normal sequence is address/details, photos, optional Original-based
+edits, review/select saved versions, optional landscape property video, then
+explicit Publish. A recorded walkthrough is optional. `share_tour` opens the
+scoped listing's details/Share controls even when it has no recorded video.
 
 `reel_state` is accepted only for Reel Studio with an authorized selected
 project. Its closed phases are generating, stitching, paused, ready,
 saved_request and needs_review. Counts are integers 0–100 with completed ≤ total
 and still-photo shots ≤ completed. It is a device hint, not server receipt or
 spending authority. No raw status text, error, URL or physical location enters
-this hint. Old clients may omit it.
+this hint. Old clients may omit it; absent execution means `legacy_local`.
+`execution` is `legacy_local`, `awaiting_acceptance` or `server_accepted`.
+The native accepted hint is derived only from the actor/library/listing/operation-
+bound saved reply, never from a local generating phase. `server_phase` is a
+closed job state; `resume_available` is permitted only for an acknowledged
+failed job. The hint is cached and may be stale: it never authorizes a retry,
+publish or spend. Unaccepted operations get Check status guidance without a
+background completion promise. Legacy phone batches/exports may pause.
+
+`photo_state` is accepted only for Photos/Photo Studio with an authorized
+selected listing. Its tab is original, decluttered, staged or latest; the bounded
+selected count is the listing selection, not proof that the model saw those
+images. No style text, image/version IDs, preview URLs or comparison contents
+are sent. Original is the editing source; saved tabs are finished results for
+review, select and share. Earlier saved styles remain available.
 
 ## 2. The closed action enum
 
@@ -84,13 +103,13 @@ enforced server-side (dropped, not coerced) and re-checked client-side
 
 | `type`             | Needs `listing_id` | Maps to (iOS)                                          |
 |---------------------|:---:|----------------------------------------------------------|
-| `start_project`      | no  | `StartProjectSheet` (`gate = .start(.tour)`)             |
+| `start_project`      | no  | Home `startNewHome()` address/details form             |
 | `open_tour`          | yes | `ProjectRoute(listing:, feature: .tour)`                 |
 | `open_photos`        | yes | `ProjectRoute(listing:, feature: .photos)`               |
 | `open_reel`          | yes | `ProjectRoute(listing:, feature: .reel)`                 |
 | `open_floor_plan`    | yes | RETIRED in build 57 — Measurements is Coming soon. The server drops it (`RETIRED_ACTIONS`, never a chip); an older client that still receives one, or a stale push, lands on the listing itself (`routeDestination` maps `.floorPlan` to `FlythroughDetailView`). |
 | `open_aerial`        | yes | `AerialIntroSheet` via `gate = .aerial(listing)` (a sheet, not a push) |
-| `share_tour`         | yes | same as `open_tour` — the finished tour's own Share sheet |
+| `share_tour`         | yes | authorized published listing details/Share controls; no recorded-video requirement |
 | `open_plan_usage`    | no  | Settings tab (Plan & usage section)                      |
 | `open_support`       | no  | mailto: `SettingsView.supportMailURL(subject:)`          |
 | `open_home`          | no  | Home tab                                                 |
@@ -275,3 +294,23 @@ sanitation, reservation calls and provider HTTP serializers with closed transpor
 It makes no paid provider calls and does not prove live reply quality or a supplier
 invoice. Current `deno check coach/index.ts` passes; the earlier v1 sandbox's
 TypeScript-library error is historical.
+
+## 9. Usage evidence and current support facts
+
+The existing ledger still records the router's catalog cost estimate and uses the
+same bounded liability reservation. An answered attempt additionally records
+provider-reported input/output token counts (and Anthropic cache counts when
+reported) in `provider_usage`. Missing or invalid counts remain `unavailable`;
+the metadata explicitly says it is not a verified supplier invoice. It contains
+no prompt/reply/media. Fallback attempt counts are retained with the final
+answered ledger row. A chain that fails before that existing ledger path does
+not gain a new count-only ledger; uncertain holds retain their current behavior.
+
+Current catalog examples are 30/60/150 generated five-second shots for
+Starter/Pro/Team, not whole finished videos. The verified effective account
+snapshot wins; older grants retain their own caps and shared serving capacity
+can limit meter use. Prices come from StoreKit. Classic website design is
+included; one verified per-property unlock allows both premium designs and
+switching between them. Preview uses already-public content, noindex/watermark
+and no enquiry form; it never changes or publishes the live site. Publishing
+is an explicit action. Nearby data and MLS/Zillow syndication are never invented.

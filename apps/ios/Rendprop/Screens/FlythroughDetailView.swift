@@ -4456,13 +4456,13 @@ private struct StagingStyle: Identifiable, Hashable {
     let id: String
     let label: String
 
-    /// Modern / Rustic / Minimalist / Scandinavian. `let` on a file-scope
+    /// Modern / Rustic / Minimalist / Contemporary. `let` on a file-scope
     /// `private` type: no actor, no isolation question, readable from anywhere.
     static let all: [StagingStyle] = [
         StagingStyle(id: "modern", label: "Modern"),
         StagingStyle(id: "rustic", label: "Rustic"),
         StagingStyle(id: "minimalist", label: "Minimalist"),
-        StagingStyle(id: "scandinavian", label: "Scandinavian"),
+        StagingStyle(id: "contemporary", label: "Contemporary"),
     ]
 }
 
@@ -4900,7 +4900,9 @@ struct PhotoStudioView: View {
         .background(Theme.bg)
         .navigationTitle(entry == .photos ? "Photos" : "AI Photo Studio")
         .navigationBarTitleDisplayMode(.inline)
-        .askAI(entry == .photos ? .photos : .photoStudio, listingID: listing.id)
+        .askAI(entry == .photos ? .photos : .photoStudio, listingID: listing.id,
+               photoState: .init(tab: entry == .photos ? (CoachRequest.PhotoState.Tab(rawValue: libraryKind.rawValue.lowercased()) ?? .original) : .original,
+                                 selectedCount: selectedPhotoIDs.count))
         .toolbar {
             ToolbarItem(placement: .principal) { studioTitleBar }
         }
@@ -5354,7 +5356,7 @@ struct PhotoStudioView: View {
             Button("Modern") { aiEdit(p, "stage", style: "modern") }
             Button("Rustic") { aiEdit(p, "stage", style: "rustic") }
             Button("Minimalist") { aiEdit(p, "stage", style: "minimalist") }
-            Button("Scandinavian") { aiEdit(p, "stage", style: "scandinavian") }
+            Button("Contemporary") { aiEdit(p, "stage", style: "contemporary") }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             // `stagingLabel` is the INDUSTRY term ("Virtual staging" /
@@ -5563,7 +5565,7 @@ struct PhotoStudioView: View {
                 Button { aiEdit(p, "stage", style: "modern") } label: { Text("Modern") }
                 Button { aiEdit(p, "stage", style: "rustic") } label: { Text("Rustic") }
                 Button { aiEdit(p, "stage", style: "minimalist") } label: { Text("Minimalist") }
-                Button { aiEdit(p, "stage", style: "scandinavian") } label: { Text("Scandinavian") }
+                Button { aiEdit(p, "stage", style: "contemporary") } label: { Text("Contemporary") }
             } label: {
                 Label(EditWords.stage(space), systemImage: "sofa")
             }
@@ -6175,7 +6177,7 @@ struct PhotoStudioView: View {
     ///
     /// Before this the word "staging" appeared nowhere an agent could see:
     /// `EditWords.stage(.realEstate)` returns "Add furniture", and Modern /
-    /// Rustic / Minimalist / Scandinavian lived one confirmation dialog behind
+    /// Rustic / Minimalist / Contemporary live one confirmation dialog behind
     /// another one. Two nested dialogs is not discoverable — the owner reported
     /// virtual staging missing right beside Declutter. The heading is the
     /// industry word, the line under it is the plain-words gloss (never instead

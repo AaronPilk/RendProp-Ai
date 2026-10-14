@@ -3568,7 +3568,7 @@ enum NativeRootTab: Int {
 
     static func destination(for route: CoachRoute) -> NativeRootTab? {
         switch route {
-        case .project, .startProject, .home: return .home
+        case .project, .listingDetails, .startProject, .home: return .home
         case .planUsage: return .settings
         case .support: return nil
         }
@@ -3884,8 +3884,14 @@ struct HomeDashboardView: View {
         case .project(let listingID, let feature):
             guard let listing = model.listings.first(where: { $0.id == listingID }) else { return }
             go(listing, feature)
+        case .listingDetails(let listingID):
+            guard let listing = CoachModel.contextProjects(from: model, orgID: WorkspaceContext.selectedOrgID,
+                                                           liveBackend: Config.useLiveBackend).first(where: { $0.id == listingID }),
+                  listing.cloudUnavailable != true, !(listing.shareURL ?? "").isEmpty else { return }
+            self.route = ProjectRoute(listing: listing, feature: .tour, listingDetails: true)
+            showRoute = true
         case .startProject:
-            open(.tour)
+            startNewHome()
         case .planUsage, .support, .home:
             break   // RootTabView owns these
         }
@@ -4045,6 +4051,9 @@ struct HomeDashboardView: View {
     /// output under that home's id.
     @ViewBuilder private var routeDestination: some View {
         if let route {
+            if route.listingDetails {
+                FlythroughDetailView(listing: route.listing)
+            } else {
             switch route.feature {
             case .photos:
                 PhotoStudioView(listing: route.listing, entry: .photos)
@@ -4080,6 +4089,7 @@ struct HomeDashboardView: View {
                 // The aerial is presented as a sheet and never reaches here;
                 // the home itself is a safe destination if it ever does.
                 FlythroughDetailView(listing: route.listing)
+            }
             }
         }
     }
@@ -5142,7 +5152,8 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
 struct ProjectRoute: Identifiable, Hashable {
     let listing: Listing
     let feature: ProjectFeature
-    var id: String { "\(listing.id.uuidString)-\(feature.rawValue)" }
+    var listingDetails = false
+    var id: String { "\(listing.id.uuidString)-\(feature.rawValue)" + (listingDetails ? "-details" : "") }
 }
 
 /// What the Home gate is asking right now. ONE sheet modifier drives all three

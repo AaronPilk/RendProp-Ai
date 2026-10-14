@@ -39,7 +39,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "How Rendprop works",
     source: "description.txt",
     fact:
-      "Create a home or business project, then choose what you need: add photos, edit copies, make a photo reel, or capture/import a walkthrough for a shareable tour. These are separate tools; one walkthrough does not automatically produce every asset. Photo reels use simulated AI camera motion or disclosed still-photo motion, not real drone footage or a measured 3D reconstruction. Publishing creates branded and unbranded property links; available branded contact forms send enquiries to the app.",
+      "Start a home with its address and details. Add landscape property photos, edit from Original if needed, review and select the versions, make and review a landscape property video, then Publish and share the website. Recording/importing a slow, steady walkthrough is optional. These are separate tools; one walkthrough does not automatically produce every asset. Photo reels use simulated AI camera motion or disclosed still-photo motion, not real drone footage or a measured 3D reconstruction. Publishing creates branded and unbranded property links; available branded contact forms send enquiries to the app.",
   },
   {
     topic: "Signing in — what needs an account",
@@ -68,13 +68,13 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "AI Photo Studio — what it does",
     source: "description.txt + features.html",
     fact:
-      "Choose Sky, Twilight, Lawn, Declutter or virtual staging, or type Ask anything instructions. Custom requests may ask one clarification before generation. Changes are saved as separate copies/versions; basic Enhanced is a local brightness/color/sharpness copy, not virtual staging. Original, saved edits and the listing-selected version can differ. Use the comparison/review flow for staged/custom outputs; inspect structure, doors, finishes and property condition before sharing. Ask AI is text-only and cannot visually approve an edit.",
+      "Start each new edit or staging style from the Original tab. Choose Sky, Twilight, Lawn, Declutter or virtual staging, or type Ask anything instructions. Updated staging choices are Modern, Rustic, Minimalist and Contemporary; retained Scandinavian versions keep their historical style. Use the choices actually shown on the installed app. Decluttered and Staged are finished-result tabs for review, listing selection and sharing; earlier styles remain saved when another style is created. Custom requests may ask one clarification before generation. Changes are saved as separate copies/versions; basic Enhanced is a local brightness/color/sharpness copy, not virtual staging. Original, saved edits and the listing-selected version can differ. Use the comparison/review flow for staged/custom outputs; inspect structure, doors, finishes and property condition before sharing. Ask AI is text-only and cannot visually approve an edit.",
   },
   {
     topic: "Reels — what they do",
     source: "description.txt + features.html",
     fact:
-      "Reel Studio makes five-second shots from at least two reviewed photos and stitches them into Tall (9:16) or Wide (16:9) video. Four built-in movement presets include default Fly-through; AI motion is simulated and does not prove room-to-room geometry. Options include transitions, text and optional recorded voiceover. The final format uses one centered crop; check the finished framing. If property-quality retries are exhausted, eligible shots can use disclosed still-photo motion instead of an unsafe AI clip. Saved requests must be recovered before another generation; saved batches can continue and saved clips can be finished. Closing the editor can leave app-owned work running, but iOS can pause it; locked/background/terminated completion is not guaranteed. Keep the app open or reopen Reel Studio to resume its available saved action. Posting/export presets are sizes, not certification of a platform policy.",
+      "Make a video uses reviewed photos for Listing landscape 16:9 or Social media portrait 9:16. Automatic arranges scenes and chooses gentle movement; four optional motion presets include Fly-through. Each generated shot is five seconds and consumes one applicable generated-shot allowance, not one whole finished-video allowance. AI motion does not prove room-to-room geometry. Review the actual crop and finished output; no platform acceptance is certified. Optional voice, music, text and transitions start as choices, not requirements. A saved operation is not an accepted server job: Check status before generating again. Only an acknowledged saved server job can continue after closing the app or locking the phone; reopen Make a video to refresh it without regeneration. Resume saved video is available only when the returned job explicitly permits it, retaining completed shots. Older device-owned batches and exports may pause in the background and must use their displayed recovery action; never promise durable background completion for those. Eligible disclosed saved-photo motion is different from an AI clip.",
   },
   {
     topic: "Aerial intro — what it does",
@@ -168,7 +168,7 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
     topic: "A render or upload failed",
     source: "support.html",
     fact:
-      "Open the affected project/tool and use its displayed saved recovery action. For a reel with a saved request, Recover request checks that accepted request; it does not dispatch another generation. A quality refusal may offer one explicit safer retry or still-photo motion. Finish saved clips and Continue saved reel preserve saved sources/options. For an upload, reconnect and keep the saved file until it completes. Review access/facts conflicts before trying again. Plan & usage shows allowances and shared AI limits; do not promise every failure is refunded, every retry is free or a completion time. Contact support if the available recovery action still fails.",
+      "Open the affected project/tool and use its displayed saved recovery action. For a saved video operation, Check status checks the same operation before any new request; a saved operation alone is not proof of server acceptance. Resume saved video requires the acknowledged returned job to permit it. Older local jobs may show Recover request, Finish saved clips or Continue saved reel; follow the displayed action to preserve their sources/options. A quality refusal may offer one explicit safer retry or saved-photo motion. For an upload, reconnect and keep the saved file until it completes. Review access/facts conflicts before trying again. Plan & usage shows allowances and shared AI limits; do not promise every failure is refunded, every retry is free or a completion time. Contact support if the available recovery action still fails.",
   },
   {
     topic: "Your content and privacy",
@@ -205,13 +205,13 @@ export const PLAN_ALLOWANCES: Array<{
   aerials: number;
   seats?: number;
 }> = [
-  { plan: "Starter", renders: 4, photoEdits: 100, reels: 6, aerials: 2 },
-  { plan: "Pro", renders: 10, photoEdits: 200, reels: 12, aerials: 4 },
+  { plan: "Starter", renders: 4, photoEdits: 100, reels: 30, aerials: 2 },
+  { plan: "Pro", renders: 10, photoEdits: 200, reels: 60, aerials: 4 },
   {
     plan: "Team",
     renders: 25,
     photoEdits: 400,
-    reels: 25,
+    reels: 150,
     aerials: 8,
     seats: 2,
   },
@@ -220,7 +220,7 @@ export const PLAN_ALLOWANCES: Array<{
 /** Aerial counters remain internal compatibility data, not a launch allowance. */
 function allowanceLine(a: (typeof PLAN_ALLOWANCES)[number]): string {
   const seats = a.seats ? `, ${a.seats} seats` : "";
-  return `${a.plan} — ${a.renders} tour renders, ${a.photoEdits} AI photo edits, ${a.reels} reels${seats} a month. ` +
+  return `${a.plan} — ${a.renders} tour renders, ${a.photoEdits} AI photo edits, ${a.reels} generated five-second shots${seats} a month. ` +
     "Aerial intro is Coming soon.";
 }
 
@@ -234,10 +234,11 @@ export function knowledgeBlock(): string {
   const allowances = PLAN_ALLOWANCES.map(allowanceLine).join(" ");
   return [
     facts,
+    "• Property websites: Classic is included. One verified per-property website purchase unlocks Signature Estate and Coastal Luxe for that property; switching between the two does not require another purchase. The app shows current StoreKit price and availability. Purchases can be unavailable while the product or server setting is off. Preview uses already-published content, is marked Preview/noindex and has no enquiry form; it neither publishes nor changes the live design. Explicit Publish/Republish is separate. Sites provide Home, Gallery, Location and Contact, the chosen landscape property video, and an optional recorded walkthrough. Never invent nearby businesses, promise automatic MLS/Zillow syndication or guarantee MLS acceptance.",
     "",
     "• Plan allowances (NEVER state a price — every price comes from the App Store, never from " +
     "you): " + allowances +
-    " An eligible 7-day introductory trial starts only after the " +
+    " These are current catalog examples, not a replacement for the verified account snapshot. Existing funded/grant windows retain their own caps. Use Plan & usage for actual remaining generated-shot/edit allowance and shared AI capacity; never promise all meter maxima can be used together. An eligible trial can have 20 photo edits, 20 generated shots and a shared usage ceiling, but only its effective snapshot grants access. An eligible 7-day introductory trial starts only after the " +
     "user selects a subscription and confirms Apple's purchase sheet, never on signup. For " +
     "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
   ].join("\n");

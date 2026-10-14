@@ -56,7 +56,7 @@ enum AskAIScreen: String {
     var starters: [String] {
         switch self {
         case .home:
-            return ["Start my first tour",
+            return ["Start my first home",
                     "What should I do first?",
                     "How do I share to the MLS?",
                     "What does this cost me?"]
@@ -81,7 +81,7 @@ enum AskAIScreen: String {
                     "Which change should I use on a dark room?",
                     "Can I do all my photos at once?"]
         case .reelStudio:
-            return ["How do I finish this reel?",
+            return ["How do I finish this video?",
                     "What does Fly-through do?",
                     "Why is this paused?",
                     "How do I save or export?"]
@@ -130,14 +130,15 @@ extension View {
     /// Use it on the screen's own root content, INSIDE whatever
     /// `NavigationStack` / `NavigationLink` destination it lives in — a
     /// toolbar item only renders when there is a nav bar above it.
-    func askAI(_ screen: AskAIScreen, listingID: UUID? = nil) -> some View {
-        modifier(AskAIModifier(screen: screen, listingID: listingID))
+    func askAI(_ screen: AskAIScreen, listingID: UUID? = nil, photoState: CoachRequest.PhotoState? = nil) -> some View {
+        modifier(AskAIModifier(screen: screen, listingID: listingID, photoState: photoState))
     }
 }
 
 private struct AskAIModifier: ViewModifier {
     let screen: AskAIScreen
     let listingID: UUID?
+    let photoState: CoachRequest.PhotoState?
     @EnvironmentObject private var model: AppModel
     @State private var showCoach = false
 
@@ -150,7 +151,7 @@ private struct AskAIModifier: ViewModifier {
             }
             .sheet(isPresented: $showCoach) {
                 CoachView(model: model, originScreen: screen.rawValue,
-                          starters: screen.starters, listingID: listingID)
+                          starters: screen.starters, listingID: listingID, photoState: photoState)
             }
     }
 }

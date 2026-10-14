@@ -69,6 +69,7 @@ generated += 'struct RootTabFixture { @State var tab = NativeRootTab.home.rawVal
 generated += block(root_tabs, 'private var tabs:').replace('private ', '', 1) + '\n}\n'
 generated += grouping.replace('import Foundation', '') + '\n'
 controls = [
+    ('misroute-photo-only-share', 'case .project, .listingDetails, .startProject, .home: return .home', 'case .listingDetails: return .settings\n        case .project, .startProject, .home: return .home', 'photo-only Share route uses Home listing resolver'),
     ('settings-renumbered', 'settings = 3, leads = 4', 'settings = 4, leads = 3', 'stable tags preserve existing profile and settings routes'),
     ('drop-listing-filter', 'return lead.listingID == id', 'return true', 'listing filter cannot mix another property inquiry'),
     ('foreign-listing-label', '!$0.isSample && canView($0)', '!$0.isSample', 'sample and foreign context labels stay unavailable'),

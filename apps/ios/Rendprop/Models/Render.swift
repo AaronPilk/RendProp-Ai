@@ -5,7 +5,7 @@ import Foundation
 /// it — no video restage pipeline exists yet (2026-09-03 audit, decision A5).
 enum DesignStyle: String, Codable, CaseIterable, Identifiable {
     case asIs = "as_is"
-    case modern, rustic, minimalist, scandinavian
+    case modern, rustic, minimalist, contemporary, scandinavian
 
     var id: String { rawValue }
 
@@ -15,6 +15,7 @@ enum DesignStyle: String, Codable, CaseIterable, Identifiable {
         case .modern:       return "Modern"
         case .rustic:       return "Rustic"
         case .minimalist:   return "Minimalist"
+        case .contemporary: return "Contemporary"
         case .scandinavian: return "Scandinavian"
         }
     }
@@ -25,6 +26,7 @@ enum DesignStyle: String, Codable, CaseIterable, Identifiable {
         case .modern:       return "Clean lines, bold contemporary furniture and art."
         case .rustic:       return "Warm woods, cozy textures, farmhouse character."
         case .minimalist:   return "Airy, decluttered, quiet neutral styling."
+        case .contemporary: return "Softly curved seating, layered textures and refined movable decor."
         case .scandinavian: return "Light woods, soft whites, hygge warmth."
         }
     }
@@ -35,6 +37,7 @@ enum DesignStyle: String, Codable, CaseIterable, Identifiable {
         case .modern:       return "square.on.square"
         case .rustic:       return "leaf"
         case .minimalist:   return "circle.dashed"
+        case .contemporary: return "sofa"
         case .scandinavian: return "snowflake"
         }
     }

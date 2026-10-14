@@ -63,12 +63,28 @@ enum Analytics {
 struct EnhancedPhoto {
     struct Version { let effects: [String] }
     var savedVersion: Version?
-    static func loadAll(listingID: UUID) -> [EnhancedPhoto] { fatalError("No real photo reads") }
+    static var samples: [EnhancedPhoto] = []
+    static func loadAll(listingID: UUID) -> [EnhancedPhoto] { samples }
 }
 // Closed queue/media boundary only; actual Coach mapping/wire bodies are compiled.
+struct SavedServerJob {
+    struct Context { var actorID: UUID; var orgID: UUID; var localListingID: UUID; var listingID: UUID }
+    struct Request { var operationID: UUID; var sources: [Int] }
+    struct Result { var originalPhotoCount: Int }
+    struct Reply {
+        var operationID: UUID; var listingID: UUID; var selectedLibraryOrgID: UUID
+        var sourceCount: Int; var state: String; var completedSources: Int? = nil
+        var result: Result? = nil; var resumeAvailable = false
+        var isTerminal: Bool { ["ready", "failed", "cancelled", "needs_reconciliation"].contains(state) }
+        var mayResume: Bool { state == "failed" && resumeAvailable }
+    }
+    var context: Context; var request: Request; var reply: Reply? = nil
+    var wasRefusedBeforeAdmission = false
+}
 @MainActor final class ReelWorkJob {
     enum Phase { case setup, generating, stitching, done, failed, paused }
     var listingID: UUID
+    var serverJob: SavedServerJob? = nil
     var paused = false
     var pendingRequest: Int? = nil
     var phase: Phase = .generating
@@ -121,7 +137,7 @@ struct CoachOfflineTests {
                 try check(!response.text.contains("fully signed out"), "do not confuse anonymous session with no session")
             }
             let listing = Listing(id: UUID(uuidString: "aaaaaaaa-1111-2222-3333-bbbbbbbbbbbb")!,
-                                  address: "SYNTHETIC TEST HOME")
+                                  address: "SYNTHETIC TEST HOME", shareURL: "https://example.invalid/property/synthetic")
             model.listings = [listing]
             model.assets[listing.id] = Asset()
             model.tours[listing.id] = "synthetic"

@@ -38,10 +38,20 @@ struct CoachRequest: Sendable {
 
     struct ReelState: Sendable, Equatable {
         enum Phase: String, Sendable { case generating, stitching, paused, ready, savedRequest = "saved_request", needsReview = "needs_review" }
+        enum Execution: String, Sendable { case legacyLocal = "legacy_local", awaitingAcceptance = "awaiting_acceptance", serverAccepted = "server_accepted" }
         var phase: Phase
         var completed: Int
         var total: Int
         var stillPhotoShots: Int
+        var execution: Execution = .legacyLocal
+        var serverPhase: String? = nil
+        var resumeAvailable: Bool = false
+    }
+
+    struct PhotoState: Sendable, Equatable {
+        enum Tab: String, Sendable { case original, decluttered, staged, latest }
+        var tab: Tab
+        var selectedCount: Int
     }
 
     struct Context: Sendable {
@@ -51,6 +61,7 @@ struct CoachRequest: Sendable {
         var screen: String?
         var selectedListingID: String? = nil
         var reelState: ReelState? = nil
+        var photoState: PhotoState? = nil
     }
 
     /// Oldest first; the LAST entry must be the user's newest message.
@@ -77,7 +88,12 @@ struct CoachRequest: Sendable {
         if let selected = context.selectedListingID { contextBody["selected_listing_id"] = selected }
         if context.screen == "reel_studio", context.selectedListingID != nil, let state = context.reelState {
             contextBody["reel_state"] = ["phase": state.phase.rawValue, "completed": state.completed,
-                                         "total": state.total, "still_photo_shots": state.stillPhotoShots]
+                                         "total": state.total, "still_photo_shots": state.stillPhotoShots,
+                                         "execution": state.execution.rawValue, "server_phase": state.serverPhase.map { $0 as Any } ?? NSNull(),
+                                         "resume_available": state.resumeAvailable]
+        }
+        if ["photos", "photo_studio"].contains(context.screen ?? ""), context.selectedListingID != nil, let state = context.photoState {
+            contextBody["photo_state"] = ["tab": state.tab.rawValue, "selected_count": max(0, min(1000, state.selectedCount))]
         }
         return ["messages": messages.map { ["role": $0.role, "content": $0.content] },
                 "space_type": spaceType, "context": contextBody]
@@ -106,10 +122,10 @@ enum CoachActionType: String, Sendable {
         case .startProject:  return "Start my first project"
         case .openTour:      return "Open the tour"
         case .openPhotos:    return "Open Photos"
-        case .openReel:      return "Make a reel"
+        case .openReel:      return "Make a video"
         case .openFloorPlan: return "Open Measurements"
         case .openAerial:    return "Make an aerial shot"
-        case .shareTour:     return "Share the tour"
+        case .shareTour:     return "Open listing & share"
         case .openPlanUsage: return "Open Plan & usage"
         case .openSupport:   return "Contact support"
         case .openHome:      return "Go to Home"

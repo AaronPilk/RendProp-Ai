@@ -209,3 +209,19 @@ test("batch sends the edited current pixels while uploading and retaining the ac
   assert.equal(batch.entries[0]!.result!.original, source.original!.file);
   assert.deepEqual(batch.entries[0]!.result!.edits, ["Digitally decluttered", "Virtually staged"]);
 });
+
+// New choices are semantically distinct; legacy request/result values stay accepted.
+test("Contemporary is offered without relabelling historic Scandinavian", async () => {
+ const {STAGING_STYLE_CHOICES,ACCEPTED_STAGING_STYLES}=await import("../src/features/creative/staging-styles");
+ assert.deepEqual(STAGING_STYLE_CHOICES,["modern","rustic","minimalist","contemporary"]);
+ assert(ACCEPTED_STAGING_STYLES.includes("scandinavian"));
+});
+
+test("staging batch forwards Contemporary or an unchanged legacy style exactly",async()=>{
+ for(const style of ["contemporary","scandinavian"]){
+  const f=fixture(),generate=f.deps.generate;
+  f.deps.generate=async(...args)=>{assert.equal((args[2] as {style:string}).style,style);return generate(...args);};
+  const batch=new PhotoBatch(photos(1),listingId,{...choice,edit:"stage",style},f.deps);
+  await batch.run();assert.equal(batch.choice.style,style);assert.equal(batch.entries[0]?.state,"ready");
+ }
+});

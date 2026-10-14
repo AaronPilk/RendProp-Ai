@@ -31,6 +31,7 @@ else
     if ! "$TEST_DIR/coach-tests"; then FAIL=1; fi
 fi
 if ! bash "$SCRIPT_DIR/run-coach-privacy.sh"; then FAIL=1; fi
+if ! python3 "$SCRIPT_DIR/run-staging-styles.py"; then FAIL=1; fi
 # Retain the test binary for inspection; no recursive cleanup/destructive command.
 echo "Phase 1 unit artifacts: $TEST_DIR"
 echo "Phase 1 unit verification status: $FAIL"

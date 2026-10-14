@@ -9,7 +9,7 @@ import { libraryBillingOrg } from "../_shared/library-access.ts";
 //                     disclosure, provenance: { id, recorded, reason? } }
 //
 //   edit       = twilight | sky | lawn | declutter | stage | custom
-//   style      = modern | rustic | minimalist | scandinavian   (stage only; default modern)
+//   style      = modern | rustic | minimalist | contemporary (legacy scandinavian accepted)   (stage only; default modern)
 //   space_type = real_estate | venue | restaurant | retail | fitness | other (default real_estate)
 //                Selects the industry prompt set: a restaurant is dressed for
 //                service, a gym gets equipment, a store gets merchandised — not
@@ -448,6 +448,11 @@ const RE_STAGE_STYLES: Record<string, string> = {
   minimalist:
     "minimalist furniture: a few essential low-profile pieces, uncluttered surfaces, a " +
     "restrained monochrome palette, and plenty of intentional negative space",
+  contemporary:
+    "contemporary furniture: softly curved seating, sculptural movable coffee and side tables, " +
+    "layered linen and textured upholstery, a warm neutral palette with restrained deep accents, " +
+    "and a few refined freestanding decorative pieces; style only movable furnishings, not " +
+    "the photographed building or its fixed finishes",
   scandinavian:
     "Scandinavian furniture: light woods, soft whites with muted pastel accents, simple " +
     "functional pieces, hygge textiles like wool throws and sheepskin, and airy styling",
@@ -492,6 +497,10 @@ const STAGE_STYLES: Record<string, string> = {
   minimalist:
     "a minimalist style: a few essential low-profile pieces, uncluttered surfaces, a restrained " +
     "monochrome palette, and plenty of intentional negative space",
+  contemporary:
+    "a contemporary style: softly curved seating, sculptural movable tables, layered linen " +
+    "and textured upholstery, warm neutrals with restrained deep accents, and refined " +
+    "freestanding decor; apply this aesthetic only to movable furnishings, not fixed finishes",
   scandinavian:
     "a Scandinavian style: light woods, soft whites with muted pastel accents, simple functional " +
     "pieces, hygge textiles like wool throws and sheepskin, and airy styling",

@@ -18,6 +18,7 @@ import Foundation
         expect(NativeRootTab.destination(for: .home)?.rawValue == 0, "coach home route remains home")
         expect(NativeRootTab.destination(for: .startProject)?.rawValue == 0, "coach start route remains home")
         expect(NativeRootTab.destination(for: .project(listingID: UUID(), feature: .spatial))?.rawValue == 0, "coach project route stays on Home resolver")
+        expect(NativeRootTab.destination(for: .listingDetails(listingID: UUID()))?.rawValue == 0, "photo-only Share route uses Home listing resolver")
         expect(NativeRootTab.destination(for: .support) == nil, "support does not select a different tab")
         UserDefaults.standard.set(SpaceType.venue.rawValue, forKey: "space.type")
         expect((RootTabFixture().tabs as! TabView).entries[1].label == "Venues", "listing tab retains industry noun")

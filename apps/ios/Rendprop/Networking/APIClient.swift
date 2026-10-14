@@ -268,7 +268,7 @@ struct AIPhotoEditRequest: Sendable, Hashable {
     var mime: String = "image/jpeg"
     /// "twilight" | "sky" | "lawn" | "declutter" | "stage" | "custom".
     var edit: String
-    /// Stage only ("modern" | "rustic" | "minimalist" | "scandinavian").
+    /// Stage only ("modern" | "rustic" | "minimalist" | "contemporary"). Legacy "scandinavian" stays accepted for saved requests.
     var style: String? = nil
     /// Custom instruction or staging furnishing brief (≤ 600 chars).
     var prompt: String? = nil

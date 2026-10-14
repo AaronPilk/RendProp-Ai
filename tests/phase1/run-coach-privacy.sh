@@ -20,6 +20,9 @@ mutations = {
     'wrong-reel-project': ('first(where: { $0.listingID == selectedListingID })', 'first(where: { _ in true })'),
     'drop-reel-pause-state': ('if job.paused { phase = .paused }', 'if false { phase = .paused }'),
     'inflate-ai-edit-count': ('photos.filter { $0.savedVersion?.effects.isEmpty == false }.count', 'photos.count'),
+    'misroute-photo-only-share': ('return .listingDetails(listingID: listingID)', 'return .project(listingID: listingID, feature: .tour)'),
+    'trust-unaccepted-server-job': ('stillPhotoShots: 0, execution: .awaitingAcceptance)', 'stillPhotoShots: 0, execution: .serverAccepted)'),
+    'drop-saved-server-actor-fence': ('saved.context.actorID == actor, saved.context.orgID == orgID,', 'saved.context.orgID == orgID,'),
     'drop-aerial-launch-fence': ('guard kind != .openAerial || LaunchFeatureAvailability.canGenerateAerial else { return nil }', ''),
 }
 for name, (before, after) in mutations.items():
@@ -29,7 +32,7 @@ for name, (before, after) in mutations.items():
         assert count == 1, f'{name}: ambiguous anchor'
     (out / f'{name}.swift').write_text(source.replace(before, after))
 PY
-for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count drop-aerial-launch-fence; do
+for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count drop-aerial-launch-fence misroute-photo-only-share trust-unaccepted-server-job drop-saved-server-actor-fence; do
     xcrun swiftc -parse-as-library "$REPO_DIR/apps/ios/Rendprop/Support/LaunchFeatureAvailability.swift" "$COACH_API" "$ARTIFACT_DIR/$control.swift" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/$control"
     status=0
     "$ARTIFACT_DIR/$control" > "$ARTIFACT_DIR/$control.log" 2>&1 || status=$?
@@ -42,6 +45,9 @@ for control in drop-history-redaction upload-local-bubbles include-foreign-cache
         wrong-reel-project) reason="wrong listing job cannot become selected context" ;;
         drop-reel-pause-state) reason='reel state is refreshed at send rather than frozen at sheet open' ;;
         inflate-ai-edit-count) reason='ordinary enhancement and unknown history are not counted as AI edits' ;;
+        misroute-photo-only-share) reason='photo-only published website opens listing details instead of capture' ;;
+        trust-unaccepted-server-job) reason='saved request without reply cannot prove server acceptance' ;;
+        drop-saved-server-actor-fence) reason='other actor saved job is private' ;;
         drop-aerial-launch-fence) reason='stale online aerial action is rejected by shipping availability' ;;
     esac
     rg -q "$reason" "$ARTIFACT_DIR/$control.log"

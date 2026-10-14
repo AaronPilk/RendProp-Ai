@@ -73,12 +73,14 @@ import { fundingContext, fundedAttempt, completeFundingOperation } from "../_sha
 import { ProviderError } from "../_shared/providers/common.ts";
 import { anthropicMessages } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
+import { CoachUsageEvidence } from "./usage.ts";
 
 import {
   type CoachContext,
   type CoachListingCtx,
   screenOf,
   reelStateOf,
+  photoStateOf,
   spaceTypeOf,
   systemInstruction,
 } from "./prompt.ts";
@@ -226,6 +228,7 @@ interface CoachBody {
     screen?: unknown;
     selected_listing_id?: unknown;
     reel_state?: unknown;
+    photo_state?: unknown;
   };
 }
 
@@ -344,6 +347,7 @@ Deno.serve(async (req) => {
       screen: cleanScreen(body.context?.screen),
     };
     context.reelState = reelStateOf(body.context?.reel_state, context.screen, context.selectedListingId ?? null);
+    context.photoState = photoStateOf(body.context?.photo_state, context.screen, context.selectedListingId ?? null);
     const validListingIds = new Set(context.listings.map((l) => l.id));
 
     // Rate limits, PER USER, charged before the provider call (same order as
@@ -394,7 +398,9 @@ Deno.serve(async (req) => {
     const chain = boundedCoachChain(await chooseChain(context.plan), system, userTurn);
 
     const funding = await fundingContext(user.id, orgId, req, body, (name, args) => adminClient().rpc(name, args));
+    const usageEvidence = new CoachUsageEvidence();
     const attempt = await runChain("coach.chat", chain, (step) => fundedAttempt(funding, `coach.chat:${chain.indexOf(step)}`, step, {system, userTurn}, coachAttemptQuote(step, system, userTurn), async () => {
+      const onUsage = usageEvidence.begin(`coach.chat:${chain.indexOf(step)}`, step);
       if (step.provider === "anthropic") {
         // The STEP, not step.model: that is what carries the row's `params`
         // (migration 0030) into the request. No coach.chat row seeds any, so
@@ -404,6 +410,7 @@ Deno.serve(async (req) => {
           system,
           content: [{ type: "text", text: userTurn }],
           maxTokens: MAX_TOKENS,
+          onUsage,
         });
       }
       if (step.provider === "openai") {
@@ -421,7 +428,7 @@ Deno.serve(async (req) => {
               text: `${system}\n\n---\n\n${userTurn}`,
             }],
           }],
-          { maxOutputTokens: MAX_TOKENS, json: true },
+          { maxOutputTokens: MAX_TOKENS, json: true, onUsage },
         );
       }
       // A future admin-added row this deploy doesn't know how to speak. "other"
@@ -459,6 +466,8 @@ Deno.serve(async (req) => {
           prompt_bytes: coachPromptBytes(system, userTurn),
           max_output_tokens: MAX_TOKENS,
           attempt_limit: COACH_MAX_ATTEMPTS,
+          provider_usage: usageEvidence.metadata(),
+          cost_basis: "route_catalog_estimate_not_supplier_invoice",
         },
       });
     } catch (e) {

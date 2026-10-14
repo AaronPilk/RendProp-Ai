@@ -87,9 +87,24 @@ struct EnhancedPhoto {
     static func loadAll(listingID: UUID) -> [EnhancedPhoto] { samples }
 }
 // Closed queue/media boundary only; actual Coach mapping/wire bodies are compiled.
+struct SavedServerJob {
+    struct Context { var actorID: UUID; var orgID: UUID; var localListingID: UUID; var listingID: UUID }
+    struct Request { var operationID: UUID; var sources: [Int] }
+    struct Result { var originalPhotoCount: Int }
+    struct Reply {
+        var operationID: UUID; var listingID: UUID; var selectedLibraryOrgID: UUID
+        var sourceCount: Int; var state: String; var completedSources: Int? = nil
+        var result: Result? = nil; var resumeAvailable = false
+        var isTerminal: Bool { ["ready", "failed", "cancelled", "needs_reconciliation"].contains(state) }
+        var mayResume: Bool { state == "failed" && resumeAvailable }
+    }
+    var context: Context; var request: Request; var reply: Reply? = nil
+    var wasRefusedBeforeAdmission = false
+}
 @MainActor final class ReelWorkJob {
     enum Phase { case setup, generating, stitching, done, failed, paused }
     var listingID: UUID
+    var serverJob: SavedServerJob? = nil
     var paused = false
     var pendingRequest: Int? = nil
     var phase: Phase = .generating
@@ -286,7 +301,7 @@ enum FileStore {
             let wire = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
             let context = wire["context"] as! [String: Any]
             let state = context["reel_state"] as! [String: Any]
-            try check(Set(state.keys) == Set(["phase", "completed", "total", "still_photo_shots"]), "actual wire state contains only allowlisted fields")
+            try check(Set(state.keys) == Set(["phase", "completed", "total", "still_photo_shots", "execution", "server_phase", "resume_available"]), "actual wire state contains only allowlisted fields")
             try check(state["phase"] as? String == "saved_request" && state["still_photo_shots"] as? Int == 1, "actual JSON carries exact closed state vocabulary")
             try check(wire["org_id"] == nil && context["org_id"] == nil, "workspace routing identity never enters prompt body")
             try check(CoachModel.reelState(from: reelApp, screen: "photos", selectedListingID: listingA, orgID: orgA, liveBackend: true) == nil, "other screen cannot transmit reel progress")
@@ -301,7 +316,7 @@ enum FileStore {
             let reelStep = CoachOffline.nextStep(model: reelApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, screen: "reel_studio")
             try check(reelStep.action?.kind == .openReel, "current Reel Studio wins over walkthrough onboarding offline")
             let emptyPhotos = CoachOffline.nextStep(model: AppModel(), space: .realEstate, intent: "Edit my photos")
-            try check(emptyPhotos.action?.kind == .openHome && emptyPhotos.text.contains("Edit photos"), "new photo project uses its Home picker rather than tour-only start action")
+            try check(emptyPhotos.action?.kind == .startProject && emptyPhotos.text.contains("address and details"), "new photo project starts address/details rather than capture")
             let allowance = CoachOffline.answer(to: "My AI allowance is exhausted", model: reelApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA)
             try check(allowance.action?.kind == .openPlanUsage && allowance.text.contains("can't verify"), "budget refusal has local account help without any paid request")
 
@@ -313,6 +328,58 @@ enum FileStore {
             reelApp.coachRoute = nil
             reelCoach.perform(.init(type: "open_aerial", label: "Legacy aerial action", listingID: listingA.uuidString))
             try check(reelApp.coachRoute == nil, "stale online aerial action is rejected by shipping availability")
+            // An acknowledged actor/listing-bound server row permits different
+            // support guidance; a local phase or missing reply never proves it.
+            reset()
+            let serverApp = model(), serverJob = ReelWorkJob(listingID: listingA)
+            let op = UUID(), actor = UUID(uuidString: AuthStore.shared.userID!)!
+            serverJob.serverJob = SavedServerJob(context: .init(actorID: actor, orgID: orgA, localListingID: listingA, listingID: listingA), request: .init(operationID: op, sources: [0,1,2]))
+            ReelWorkQueue.shared.visibleJobs = [serverJob]
+            let pending = CoachModel.reelState(from: serverApp, screen: "reel_studio", selectedListingID: listingA, orgID: orgA, liveBackend: true)
+            try check(pending?.execution == .awaitingAcceptance && pending?.serverPhase == nil, "saved request without reply cannot prove server acceptance")
+            let pendingHelp = CoachOffline.answer(to: "Can I lock my phone while waiting?", model: serverApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, screen: "reel_studio")
+            try check(pendingHelp.text.contains("no accepted server-job receipt") && !pendingHelp.text.contains("It can continue"), "pending operation gets no background completion promise")
+            serverJob.serverJob?.reply = .init(operationID: op, listingID: listingA, selectedLibraryOrgID: orgA, sourceCount: 3, state: "generating", completedSources: 1, result: .init(originalPhotoCount: 1))
+            let acknowledged = CoachModel.reelState(from: serverApp, screen: "reel_studio", selectedListingID: listingA, orgID: orgA, liveBackend: true)
+            try check(acknowledged?.execution == .serverAccepted && acknowledged?.completed == 1 && acknowledged?.stillPhotoShots == 1, "acknowledged scoped server state preserves exact counts")
+            let backgroundHelp = CoachOffline.answer(to: "Can I lock my phone while waiting?", model: serverApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, screen: "reel_studio")
+            try check(backgroundHelp.text.contains("can continue after you close the app") && backgroundHelp.text.contains("does not regenerate"), "accepted job receives truthful background recovery help")
+            serverJob.serverJob?.reply?.state = "failed"; serverJob.serverJob?.reply?.resumeAvailable = true
+            let resumable = CoachOffline.answer(to: "Why is this waiting?", model: serverApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, screen: "reel_studio")
+            try check(resumable.text.contains("Resume saved video") && resumable.text.contains("completed shots are retained"), "resume support requires exact failed server flag")
+            serverJob.serverJob?.reply?.resumeAvailable = false
+            let failed = CoachOffline.answer(to: "Why is this waiting?", model: serverApp, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA, screen: "reel_studio")
+            try check(failed.text.contains("needs review") && !failed.text.contains("can continue after"), "terminal job is not described as working")
+            serverJob.serverJob?.reply?.operationID = UUID()
+            try check(CoachModel.reelState(from: serverApp, screen: "reel_studio", selectedListingID: listingA, orgID: orgA, liveBackend: true) == nil, "mismatched operation cannot supply accepted state")
+            serverJob.serverJob?.reply?.operationID = op; serverJob.serverJob?.context.actorID = UUID()
+            try check(CoachModel.reelState(from: serverApp, screen: "reel_studio", selectedListingID: listingA, orgID: orgA, liveBackend: true) == nil, "other actor saved job is private")
+            // Photo-only publication routes to listing Share controls, without
+            // needing a recorded walkthrough and without executing publication.
+            let sharing = CoachModel(model: serverApp, originScreen: "listing", listingID: listingA)
+            serverApp.listings[0].shareURL = "https://example.invalid/property/synthetic"
+            sharing.perform(.init(type: "share_tour", label: "Share", listingID: listingA.uuidString))
+            try check(serverApp.coachRoute == .listingDetails(listingID: listingA) && serverApp.assets.isEmpty && serverApp.tours.isEmpty, "photo-only published website opens listing details instead of capture")
+            serverApp.coachRoute = nil; serverApp.listings[0].shareURL = nil
+            sharing.perform(.init(type: "share_tour", label: "Share", listingID: listingA.uuidString))
+            try check(serverApp.coachRoute == nil, "unpublished listing cannot offer Share")
+            serverApp.listings[0].shareURL = "https://example.invalid/property/synthetic"; serverApp.listings[0].cloudUnavailable = true
+            sharing.perform(.init(type: "share_tour", label: "Share", listingID: listingA.uuidString))
+            try check(serverApp.coachRoute == nil, "revoked listing cannot open Share controls")
+            serverApp.listings[0].cloudUnavailable = false
+            let photoCoach = CoachModel(model: serverApp, originScreen: "photo_studio", listingID: listingA, photoState: .init(tab: .staged, selectedCount: 2))
+            try await send("Which photos am I reviewing?", through: photoCoach)
+            try check(serverApp.api.requests.last?.context.photoState == .init(tab: .staged, selectedCount: 2), "current saved-results tab supplies closed hints")
+            photoCoach.updatePhotoState(.init(tab: .original, selectedCount: 4))
+            try await send("What is selected now?", through: photoCoach)
+            let photoRequest = serverApp.api.requests.last!
+            try check(photoRequest.context.photoState == .init(tab: .original, selectedCount: 4), "photo tab and count refresh at next send")
+            let photoWire = (photoRequest.wireBody["context"] as! [String: Any])["photo_state"] as! [String: Any]
+            try check(Set(photoWire.keys) == Set(["tab", "selected_count"]) && photoWire["tab"] as? String == "original", "photo hints never include version/style/media contents")
+            var unrelatedScreen = photoRequest; unrelatedScreen.context.screen = "home"
+            try check((unrelatedScreen.wireBody["context"] as! [String: Any])["photo_state"] == nil, "other screen cannot transmit Photo Studio selection")
+            let photoFirst = CoachOffline.nextStep(model: model(), space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA)
+            try check(photoFirst.action?.kind == .openPhotos && photoFirst.text.contains("landscape"), "new listing starts photos without forcing capture")
             print("PASS: \(assertions) production Coach privacy/scope assertions; actual offline-to-online sends, no network/providers/customer files")
         } catch {
             fputs("FAIL: \(error)\n", stderr)

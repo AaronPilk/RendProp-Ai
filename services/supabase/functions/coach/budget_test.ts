@@ -22,8 +22,8 @@ Deno.test("coach actual prompt uses screen/intent, correct feature facts and no 
  assert(system.includes("simulated") && system.includes("not real drone footage"));
  assert(!system.includes("word-by-word captions that land on the beat"));
  const turn=buildUserTurn({space:"real_estate",context,history:[{role:"user",content:"How do I make this reel?"}]});
- assert(turn.includes("CURRENT SCREEN HELP: Reel Studio"));
- assert(turn.includes("Recover request") && turn.includes("not physical whereabouts"));
+ assert(turn.includes("CURRENT SCREEN HELP: Make a video"));
+ assert(turn.includes("Check status") && turn.includes("not physical whereabouts"));
  assert(turn.includes('title="A title \\"quoted\\""'));
  for(const screen of ["photos","photo_studio","files","plan","settings"]){
   const scoped=buildUserTurn({space:"real_estate",context:{...context,screen},history:[{role:"user",content:"What do I do here?"}]});
@@ -33,7 +33,7 @@ Deno.test("coach actual prompt uses screen/intent, correct feature facts and no 
 
 Deno.test("coach state sanitation drops free text, unauthorized/other-screen and invalid counts", () => {
  const state={phase:"paused",completed:3,total:8,still_photo_shots:1,status:"secret raw text",lat:1};
- assertEquals(reelStateOf(state,"reel_studio",id),{phase:"paused",completed:3,total:8,stillPhotoShots:1});
+ assertEquals(reelStateOf(state,"reel_studio",id),{phase:"paused",completed:3,total:8,stillPhotoShots:1,execution:"legacy_local",serverPhase:null,resumeAvailable:false});
  for(const value of [{...state,phase:"PRIVATE"},{...state,completed:9},{...state,total:101},{...state,completed:"3"},{...state,still_photo_shots:4},[],null]) assertEquals(reelStateOf(value,"reel_studio",id),null);
  assertEquals(reelStateOf(state,"photos",id),null);
  assertEquals(reelStateOf(state,"reel_studio",null),null);
