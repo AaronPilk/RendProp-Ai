@@ -113,3 +113,7 @@ d46f3dfedb6e5f86b9234e275a50395fddf967ab:docs/releases/TESTFLIGHT-55-FINAL-AUDIT
 # planner33 is a literal synthetic idempotency identifier; current fixture uses low entropy.
 a3b3f4968ac055b524dc6e60e0c52268d290f65b:services/supabase/functions/tours/index.ts:generic-api-key:505
 a3b3f4968ac055b524dc6e60e0c52268d290f65b:services/supabase/functions/property-video-plan/handler.test.ts:generic-api-key:33
+# Exact follow-up false positive: logo.key is a storage reference and the
+# adjacent deliveryHeaders identifier is a local Cache-Control response map.
+# The line contains no credential, literal secret or environment value.
+b89a293bbb7f81d521325b202adf6985f2eb9a31:services/supabase/functions/tours/index.ts:generic-api-key:506

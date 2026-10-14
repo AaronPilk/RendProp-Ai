@@ -57,6 +57,9 @@ jobs:
         with:
           name: native-account-deletion-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/native-presentation-privacy/receipt.json
+            ${{ runner.temp }}/native-presentation-privacy/*.log
+            ${{ runner.temp }}/native-presentation-privacy/*.swift
             ${{ runner.temp }}/native-account-deletion/receipt.json
             ${{ runner.temp }}/native-account-deletion/*.log
             ${{ runner.temp }}/native-account-deletion/*.swift

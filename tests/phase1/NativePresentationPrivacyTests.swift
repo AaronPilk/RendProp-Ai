@@ -74,6 +74,7 @@ import Foundation
 
         let switchedAccount = host(); switchedAccount.mediaItems = [99]; switchedAccount.loadFiles()
         switchedAccount.filePackageExtras = [101]; switchedAccount.packageError = "Old account package error"
+        let oldPlayer = FixturePlayer(); switchedAccount.websiteVideoPlayer = oldPlayer
         let accountScan = switchedAccount.filesTask
         await waitFor { ScanFixture.pending.count == 1 }
         switchedAccount.auth.userID = "actor-b"
@@ -83,6 +84,8 @@ import Foundation
               "Late file scan cannot publish after account switch")
         check(!switchedAccount.hasCurrentPresentationContext, "Old detail content is hidden immediately after account switch")
         switchedAccount.invalidatePresentation()
+        check(oldPlayer.pauses == 1, "Account invalidation pauses the old property video")
+        check(switchedAccount.websiteVideoPlayer == nil, "Account invalidation drops the old property video reference")
         check(switchedAccount.filePackageExtras.isEmpty, "Account invalidation clears old listing package extras")
         check(switchedAccount.packageError == nil, "Account invalidation clears old listing package error")
 
