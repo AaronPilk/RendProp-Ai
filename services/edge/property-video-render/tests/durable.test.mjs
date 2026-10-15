@@ -105,7 +105,16 @@ try {
         }),[['property_video_dispatch_refused',{category:'bridge_http',status}]]);
       }
       assert.equal(calls,3,'one request per scheduled refusal, no retry');
-      assert.deepEqual(await scheduled(env,noFetch),[['property_video_dispatch_refused',{category:'bridge_transport'}]]);
+      assert.deepEqual(await scheduled(env,noFetch),[['property_video_dispatch_refused',{category:'bridge_transport',error_name:'Other',reason:'other'}]]);
+      for(const [error,expected] of [
+        [new TypeError('Redirect PRIVATE-URL-TOKEN'),{error_name:'TypeError',reason:'redirect'}],
+        [new TypeError('Invalid header PRIVATE-KEY-TOKEN'),{error_name:'TypeError',reason:'invalid_header'}],
+        [new TypeError('DNS ENOTFOUND PRIVATE-HOST'),{error_name:'TypeError',reason:'dns'}],
+        [new DOMException('PRIVATE-URL timed out','TimeoutError'),{error_name:'TimeoutError',reason:'timeout'}],
+        [new DOMException('PRIVATE-URL','AbortError'),{error_name:'AbortError',reason:'other'}],
+        [new TypeError('AbortSignal.timeout is not a function PRIVATE-DATA'),{error_name:'TypeError',reason:'unsupported_api'}],
+      ]) assert.deepEqual(await scheduled(env,async()=>{throw error;}),[['property_video_dispatch_refused',{category:'bridge_transport',...expected}]]);
+
       assert.deepEqual(await scheduled(env,async()=>new Response('PRIVATE-BODY-TOKEN')),[['property_video_dispatch_refused',{category:'bridge_response'}]]);
       assert.deepEqual(await scheduled({...env,CPU:{getByName(){throw Error('PRIVATE-CONTROLLER-TOKEN');}}},async()=>Response.json({enabled:true,jobs:[{job_id:job}]})),[['property_video_dispatch_refused',{category:'controller'}]]);
       assert.ok(!JSON.stringify(diagnostics).includes('PRIVATE-'),'raw thrown data is not logged');

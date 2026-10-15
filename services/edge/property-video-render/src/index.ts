@@ -17,10 +17,23 @@ const CPU_TIMEOUT_MS=20*60_000;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
 
 class AuthorityRefusal extends Error {constructor(readonly status:number){super("authority_refused");}}
-class BridgeFailure extends Error {constructor(readonly category:'bridge_configuration'|'bridge_transport'|'bridge_response'){super(category);}}
+type TransportName='TypeError'|'TimeoutError'|'AbortError'|'Other';
+type TransportReason='redirect'|'invalid_header'|'dns'|'timeout'|'unsupported_api'|'other';
+class BridgeFailure extends Error {constructor(readonly category:'bridge_configuration'|'bridge_transport'|'bridge_response',readonly transport?:{name:TransportName;reason:TransportReason}){super(category);}}
+function transportFailure(error:unknown):BridgeFailure {
+  const value=error as {name?:unknown;message?:unknown}|null;
+  const name:TransportName=value?.name==='TypeError'||value?.name==='TimeoutError'||value?.name==='AbortError'?value.name:'Other';
+  const message=typeof value?.message==='string'?value.message:'';
+  // Only closed categories leave the process. Raw error text can contain a
+  // private signed URL or header value and is never logged or retained.
+  const reason:TransportReason=/redirect/i.test(message)?'redirect':/header|HTTP token|invalid character/i.test(message)?'invalid_header'
+    :/DNS|ENOTFOUND|EAI_AGAIN|resolve host/i.test(message)?'dns'
+    :/not (?:a function|implemented)|unsupported (?:API|option)/i.test(message)?'unsupported_api':/timeout|timed out/i.test(message)?'timeout':'other';
+  return new BridgeFailure('bridge_transport',{name,reason});
+}
 function dispatchDiagnostic(error:unknown):Record<string,string|number> {
   return error instanceof AuthorityRefusal ? {category:'bridge_http',status:error.status}
-    : error instanceof BridgeFailure ? {category:error.category} : {category:'controller'};
+    : error instanceof BridgeFailure ? {category:error.category,...(error.transport?{error_name:error.transport.name,reason:error.transport.reason}:{})} : {category:'controller'};
 }
 
 async function bridge(env:Env,path:string,body?:unknown):Promise<Record<string,unknown>> {
@@ -28,7 +41,7 @@ async function bridge(env:Env,path:string,body?:unknown):Promise<Record<string,u
   if (base.protocol!=='https:'||!base.hostname.endsWith('.supabase.co')||!env.EDGE_SERVICE_ROLE_KEY) throw new BridgeFailure('bridge_configuration');
   let response:Response;try {response=await fetch(`${base.toString().replace(/\/$/,'')}/${path}`,{
     method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${env.EDGE_SERVICE_ROLE_KEY}`,apikey:env.EDGE_SERVICE_ROLE_KEY,'Content-Type':'application/json'},
-    body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(50_000)});}catch {throw new BridgeFailure('bridge_transport');}
+    body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(50_000)});}catch(error) {throw transportFailure(error);}
   if (!response.ok) throw new AuthorityRefusal(response.status);
   try {return await response.json() as Record<string,unknown>;}catch {throw new BridgeFailure('bridge_response');}
 }
