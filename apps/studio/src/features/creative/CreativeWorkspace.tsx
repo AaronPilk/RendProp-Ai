@@ -42,6 +42,7 @@ import PhotoExportPanel from "./PhotoExportPanel";
 import CoordinatorPhotoExportPanel from "./CoordinatorPhotoExportPanel";
 import {retainedPhotoRequest,resumePhotoRequest} from "./creative-request";
 import {savedPhotoRequests,matchingPhotoRequest,finishPhotoRequest,type SavedPhotoRequest} from "./photo-request-journal";
+import { creativeCoachContext } from "./coach-context";
 import { importedPhoto, inputForEdit, photoDelivery, propertyPhoto, propertyOriginalPhoto, photosInTab, type PhotoLibraryTab, type PhotoDelivery, type PhotoSource } from "./photo-lineage";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
 const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
@@ -973,6 +974,7 @@ function ListingCreative(
   async function askCoach(input = question) {
     const content = input.trim();
     if (!content) return;
+    assertPhotoScope(false);
     const messages = [...conversation, { role: "user" as const, content }]
       .slice(-15);
     setConversation(messages);
@@ -981,27 +983,11 @@ function ListingCreative(
       await api("coach", {
         messages,
         space_type: listing.spaceType,
-        context: {
-          plan: workspace.plan,
-          screen: "studio",
-          listings: listings.slice(0, 30).map((item) => ({
-            id: item.id,
-            title: item.tagline || item.address || "Property",
-            has_video: item.id === listingId ? videos.length > 0 : false,
-            room_tags: item.id === listingId ? draft.chapters.length : 0,
-            has_tour: item.status === "ready",
-            published: item.status === "ready",
-            photos: item.id === listingId ? photos.length : 0,
-            edits: item.id === listingId
-              ? photos.filter((p) => p.isStaged).length
-              : 0,
-            reels: item.id === listingId
-              ? results.filter((r) => r.kind === "video").length
-              : 0,
-          })),
-        },
+        context: creativeCoachContext(workspace, listing, { photos, assets, renders,
+          chapters: draft.chapters.length, reels: results.filter(row => row.kind === "video").length }),
       }, { idempotencyKey: crypto.randomUUID(), timeoutMs: 120_000 }),
     );
+    assertPhotoScope(false);
     setConversation([...messages, {
       role: "assistant",
       content: requiredText(response.reply, "a reply", 4000),
