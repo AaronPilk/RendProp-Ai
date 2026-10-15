@@ -328,5 +328,53 @@ select pg_temp.refuse($q$select property_video_job_failure((select(c#>>'{job,id}
 select pg_temp.refuse($q$select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from historical),0)$q$,'RP409:','cancelledjob cannot resume');
 select pg_temp.ok(not has_function_privilege('authenticated','public.property_video_structural_rejection(uuid,uuid)','execute')and not has_function_privilege('anon','public.property_video_job_resume(uuid,uuid,numeric)','execute'),'fallback and CPU recovery authority remains serviceonly');
 
+-- Existing terminal paid retry must not be confused with an infrastructure
+-- refusal. Synthetic receipts retain actual database authority relationships.
+reset role;
+create function pg_temp.retry_grant(c jsonb)returns void language plpgsql security definer as $$declare j public.property_video_jobs;s public.property_video_job_sources;r public.app_video_cost_reservations;v jsonb;begin
+ select *into j from property_video_jobs where id=(c#>>'{job,id}')::uuid;select *into s from property_video_job_sources where job_id=j.id and attempt_id=(c#>>'{source,attempt_id}')::uuid;
+ select *into r from app_video_cost_reservations where actor_id=j.actor_id and org_id=j.org_id and idempotency_key=s.request_key;
+ v:=jsonb_build_object('task','judge.qc_drift','request_id',s.receipt->>'request_id','source_sha256',repeat('d',32),'verdict','fail','action','retry','publishable',false,'failed',jsonb_build_array('contents','additions'),'attempt',0);
+ update media_provenance set qc=v where id=s.generation_provenance_id;
+ insert into cost_ledger(org_id,feature,provider,model,total_cents,meta)values(j.org_id,'qc','anthropic','fixture-judge',.0001,v||jsonb_build_object('kind','video_drift','provenance_id',s.generation_provenance_id,'source_asset_id',s.asset_id));
+ insert into app_video_drift_checks(reservation_id,actor_id,org_id,listing_id,source_sha256,state,result)values(r.id,j.actor_id,j.org_id,j.listing_id,repeat('d',32),'retry',jsonb_build_object('drift',v));end$$;
+set local role service_role;
+create temporary table retry_case as select pg_temp.cpu_job(10)c;grant select on retry_case to service_role;
+select pg_temp.refuse($q$select property_video_job_quality_retry((select(c#>>'{job,id}')::uuid from retry_case),(select(c#>>'{source,lease_token}')::uuid from retry_case),(select(c#>>'{source,attempt_id}')::uuid from retry_case))$q$,'RP409:','unknownQC cannot authorize paid retry');
+select pg_temp.refuse($q$update property_video_job_sources s set quality_retries=1,quality_retry_history=quality_retry_history||jsonb_build_array(jsonb_build_object('prior_source',to_jsonb(s)-'quality_retry_history','quality_grant',null))where job_id=(select(c#>>'{job,id}')::uuid from retry_case)and position=0$q$,'RP409:','directtable forgednull grant cannot append paidretryhistory');
+select pg_temp.refuse($q$update property_video_job_sources s set quality_retries=1,quality_retry_history=quality_retry_history||jsonb_build_array(jsonb_build_object('prior_source',to_jsonb(s)-'quality_retry_history'))where job_id=(select(c#>>'{job,id}')::uuid from retry_case)and position=0$q$,'RP409:','directtable absentgrant cannot append paidretryhistory');
+select pg_temp.retry_grant((select c from retry_case));
+-- An output stamp and paid judge row are insufficient without the durable,
+-- terminal exact-source decision journal; an uncertain verdict cannot spend.
+reset role;
+create temporary table retry_journal as select *from app_video_drift_checks where reservation_id=(select id from app_video_cost_reservations where idempotency_key=(select c#>>'{source,request_key}'from retry_case));
+delete from app_video_drift_checks where reservation_id=(select reservation_id from retry_journal);
+set local role service_role;
+select pg_temp.ok(property_video_quality_retry_evidence((select(c#>>'{job,id}')::uuid from retry_case),(select(c#>>'{source,attempt_id}')::uuid from retry_case))is null,'missingterminaljournal cannot authorize paid retry');
+reset role;insert into app_video_drift_checks select *from retry_journal;set local role service_role;
+select pg_temp.ok(property_video_quality_retry_evidence((select(c#>>'{job,id}')::uuid from retry_case),(select(c#>>'{source,attempt_id}')::uuid from retry_case))is not null,'exact paid terminal retry grant is recognized');
+select pg_temp.refuse($q$select property_video_job_quality_retry((select(c#>>'{job,id}')::uuid from retry_case),gen_random_uuid(),(select(c#>>'{source,attempt_id}')::uuid from retry_case))$q$,'RP409:','wronglease cannot consume paid retry grant');
+create temporary table retry_preserved as select to_jsonb(s)prior,(select deadline from property_video_jobs where id=s.job_id)deadline from property_video_job_sources s where job_id=(select(c#>>'{job,id}')::uuid from retry_case)and position=0;grant select on retry_preserved to service_role;
+-- Reproduce the old engine's failed quality_check_refused state and recover
+-- only through the normal fresh-owner resume action.
+select property_video_job_failure((select(c#>>'{job,id}')::uuid from retry_case),(select(c#>>'{source,lease_token}')::uuid from retry_case),(select(c#>>'{source,attempt_id}')::uuid from retry_case),'quality_check_refused',false);
+select pg_temp.ok((property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from retry_case),0)).state='generating','normal ownerresume schedules existing paid terminal retry grant');
+select pg_temp.ok((select state='pending'and motion='push_in'and quality_retries=1 and attempt_id is null and request_key is null and clip is null and receipt is null and generation_provenance_id is null from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from retry_case)and position=0),'one safe retry awaits new normal paidadmission');
+select pg_temp.ok((select quality_retry_history#>>'{0,prior_source,attempt_id}'=(select prior->>'attempt_id'from retry_preserved)and quality_retry_history#>'{0,prior_source,clip}'=(select prior->'clip'from retry_preserved)and quality_retry_history#>'{0,prior_source,receipt}'=(select prior->'receipt'from retry_preserved)and quality_retry_history#>>'{0,prior_source,generation_provenance_id}'=(select prior->>'generation_provenance_id'from retry_preserved)and jsonb_array_length(quality_retry_history#>'{0,quality_grant,qc_ledger_ids}')=1 from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from retry_case)and position=0),'prior paidclip source receipt provenance andQCledger retained');
+select pg_temp.ok((select deadline=(select deadline from retry_preserved)and manifest_sha256=(select c#>>'{job,manifest_sha256}'from retry_case)and operation_id=(select(c#>>'{job,operation_id}')::uuid from retry_case)from property_video_jobs where id=(select(c#>>'{job,id}')::uuid from retry_case)),'quality retry never changes originaldeadline operation ormanifest');
+select pg_temp.ok((property_video_job_quality_retry((select(c#>>'{job,id}')::uuid from retry_case),(select(c#>>'{source,lease_token}')::uuid from retry_case),(select(c#>>'{source,attempt_id}')::uuid from retry_case))->>'replay')='true','lostretryack replays exact archived attempt once');
+select pg_temp.refuse($q$update property_video_job_sources set quality_retries=0 where job_id=(select(c#>>'{job,id}')::uuid from retry_case)and position=0$q$,'RP409:','qualityretry counter cannot be reset');
+select pg_temp.refuse($q$update property_video_job_sources set quality_retry_history='[]'where job_id=(select(c#>>'{job,id}')::uuid from retry_case)and position=0$q$,'RP409:','paidqualityhistory cannot be deleted');
+create temporary table next_quality as select property_video_job_claim((select(c#>>'{job,id}')::uuid from retry_case),'slot-0')c;grant select on next_quality to service_role;
+select pg_temp.ok((select c->>'action'='dispatch'and c#>>'{source,motion}'='push_in'and c#>>'{source,attempt_id}'<>(select prior->>'attempt_id'from retry_preserved)and c#>>'{source,request_key}'<>(select prior->>'request_key'from retry_preserved)from next_quality),'retryclaim gets newUUID andnormalnewfundingkey');
+create temporary table second_quality as select pg_temp.paid_clip((select c from next_quality))c;grant select on second_quality to service_role;
+select pg_temp.retry_grant((select c from second_quality));
+select pg_temp.refuse($q$select property_video_job_quality_retry((select(c#>>'{job,id}')::uuid from second_quality),(select(c#>>'{source,lease_token}')::uuid from second_quality),(select(c#>>'{source,attempt_id}')::uuid from second_quality))$q$,'RP409:','evenanotherterminalgrant cannot create thirdgeneration');
+select pg_temp.ok((select count(*)=2 from app_video_cost_reservations where actor_id=(select actor from bf)and org_id=(select org from bf)and idempotency_key in((select prior->>'request_key'from retry_preserved),(select c#>>'{source,request_key}'from second_quality))),'both realgenerationliabilities remain recorded');
+select property_video_job_cancel((select actor from bf),(select(c#>>'{job,id}')::uuid from second_quality));
+create temporary table stopped_retry as select pg_temp.cpu_job(11)c;grant select on stopped_retry to service_role;select pg_temp.retry_grant((select c from stopped_retry));select property_video_job_cancel((select actor from bf),(select(c#>>'{job,id}')::uuid from stopped_retry));
+select pg_temp.refuse($q$select property_video_job_quality_retry((select(c#>>'{job,id}')::uuid from stopped_retry),(select(c#>>'{source,lease_token}')::uuid from stopped_retry),(select(c#>>'{source,attempt_id}')::uuid from stopped_retry))$q$,'RP409:','cancelledjob cannot consume newpaidretry');
+select pg_temp.ok(not has_function_privilege('authenticated','public.property_video_job_quality_retry(uuid,uuid,uuid)','execute')and not has_function_privilege('anon','public.property_video_quality_retry_evidence(uuid,uuid)','execute'),'paidretry authority serviceonly');
+
 reset role;select jsonb_build_object('passed',true,'assertions',n)from checks;
 rollback;

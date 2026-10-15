@@ -35,12 +35,14 @@ try:
  PSQL=[TOOLS['psql'],'-X','--no-password',*conn,'-d','property_sites','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  for migration in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
- for newest in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))):run('replay-'+newest.stem,[*PSQL,'-q','-1','-f',newest])
+ for newest in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))|set((SQL/'migrations').glob('20261015*property_video_one_quality_retry.sql'))):run('replay-'+newest.stem,[*PSQL,'-q','-1','-f',newest])
  unit=run('actual-jobs-rpc-roles',[*PSQL,'-Atq','-f',SQL/'tests/property_video_jobs.sql']);rows=[json.loads(s)for s in unit.splitlines()if s.startswith('{')and 'assertions'in s];assert len(rows)==1 and rows[0]['passed'];receipt['unit']=rows[0]
  # Compiled actual SQL mutations retain independent failure/category oracles.
  for control,signature,needle,replacement,expected in [
   ('terminal-qc-action','public.property_video_structural_rejection(uuid,uuid)',"or p.qc->>'action'is distinct from'refuse'",'', 'unknown or hold verdict never certifies fallback'),
   ('paid-qc-receipt','public.property_video_structural_rejection(uuid,uuid)',"if q.id is null then return null;end if;",'', 'unpaid or mismatched QC verdict cannot certify fallback'),
+  ('retry-null-history-grant','public.property_video_quality_history_guard()',"public.property_video_quality_retry_evidence(old.job_id,old.attempt_id)is null or",'', 'directtable absentgrant cannot append paidretryhistory'),
+  ('retry-terminal-journal','public.property_video_quality_retry_evidence(uuid,uuid)',"if c.reservation_id is null then return null;end if;",'', 'missingterminaljournal cannot authorize paid retry'),
   ('no-paid-regeneration','public.property_video_job_resume(uuid,uuid,numeric)',"set state='processing',cpu_recoveries=cpu_recoveries+1","set state='pending',cpu_recoveries=cpu_recoveries+1", 'recovery nextaction is extraction of same paidclip, not provider dispatch')]:
   original=run('read-'+control,[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);assert original.count(needle)==1,(control,'source anchor')
   run('compile-'+control,[*PSQL,'-Atq'],original.replace(needle,replacement,1))
@@ -89,6 +91,26 @@ try:
  assert run('cancelled-after-race',[*PSQL,'-Atq','-c',"select count(*)from property_video_jobs where state='cancelled'"]).strip()=='10'
  result=race('post-cancel-claim',[claim(jobs[-1])]);assert result[0]['exit']!=0 and'RP409:'in result[0]['output'],result
  receipt['races'].append({'name':'cancel-all-versus-claim','allActorJobsStopped':True,'futureDispatchRefused':True})
+ # Two workers observing the SAME paid terminal decision may both retry the
+ # RPC after a lost reply; only one transition archives it and creates pending
+ # work. Neither call generates/funds a supplier request itself.
+ fixture=(SQL/'tests/property_video_jobs.sql').read_text()
+ def helper(start,end):return fixture[fixture.index(start):fixture.index(end)]
+ retry_seed="create temporary table bf as select '%s'::uuid actor,org_id org,listing_id listing from property_video_jobs order by operation_id limit 1;grant select on bf to service_role;create temporary table bm as select manifest m from property_video_jobs order by operation_id limit 1;grant select on bm to service_role;"%actor
+ retry_seed+=helper('create function pg_temp.paid_clip','create function pg_temp.reject_claim')
+ retry_seed+=helper('create function pg_temp.cpu_job','create function pg_temp.exhaust_cpu')
+ retry_seed+=helper('create function pg_temp.retry_grant','set local role service_role;\ncreate temporary table retry_case')
+ retry_seed+="set role service_role;create temporary table race_quality as select pg_temp.cpu_job(99)c;select pg_temp.retry_grant((select c from race_quality));select c from race_quality;"
+ seeded=run('quality-retry-race-seed',[*PSQL,'-Atq'],retry_seed)
+ c=json.loads(next(line for line in seeded.splitlines()if line.startswith('{')))
+ job=c['job']['id'];source=c['source'];attempt=source['attempt_id'];lease=source['lease_token']
+ statement="select property_video_job_quality_retry('%s','%s','%s');"%(job,lease,attempt)
+ result=race('same-paid-grant-two-quality-retries',[statement,statement]);assert all(r['exit']==0 for r in result),result
+ replies=[json.loads(next(line for line in r['output'].splitlines()if line.startswith('{')))for r in result]
+ assert sorted(r['replay']for r in replies)==[False,True]and all(r['retry_scheduled']for r in replies),replies
+ snapshot=run('quality-retry-race-snapshot',[*PSQL,'-Atq','-c',"select jsonb_build_object('state',state,'quality_retries',quality_retries,'history_count',jsonb_array_length(quality_retry_history),'prior_attempt',quality_retry_history#>>'{0,prior_source,attempt_id}','prior_receipt',quality_retry_history#>'{0,prior_source,receipt}','new_attempt',attempt_id,'new_receipt',receipt)from property_video_job_sources where job_id='%s'and position=0"%job])
+ v=json.loads(snapshot.strip());assert v['state']=='pending'and v['quality_retries']==v['history_count']==1 and v['prior_attempt']==attempt and v['prior_receipt']==source['receipt']and v['new_attempt']is None and v['new_receipt']is None,v
+ receipt['races'].append({'name':'same-paid-grant-two-quality-retries','actualConcurrentRequests':2,'exactlyOneTransition':True,'lostReplyAcknowledged':True,'priorPaidReceiptRetained':True,'providerCalls':0})
  assert hashes()==receipt['sourceHashes'],'Source changed during verification';receipt['passed']=True
  print(json.dumps({'passed':True,'assertions':receipt['unit']['assertions'],'races':len(receipt['races']),'receipt':str(OUT/'receipt.json')}))
 finally:
