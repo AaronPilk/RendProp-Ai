@@ -10311,6 +10311,8 @@ struct ReelStudioView: View {
     @State private var voiceover: Voiceover?
     @State private var wordCaptionsOn = true          // maps to CaptionStyle.enabled
     @State private var voPlayer: AVPlayer?            // playback of the take, not the reel
+    @State private var requestingVoicePermission = false
+    @State private var voicePermissionID: UUID?
     @State private var isTranscribing = false
     @State private var voiceError: String?            // fatal step error (mic denied, etc.)
     @State private var voiceNote: String?             // soft note (e.g. captions unavailable)
@@ -10347,7 +10349,17 @@ struct ReelStudioView: View {
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
-    private var canGenerate: Bool { (work.serverJob == nil || work.serverJob?.reply?.isTerminal == true) && VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
+    /// A pending narration operation must settle before its audio is frozen into
+    /// a video. A settled error is not a requirement to buy or record another take.
+    private var narrationPreparationMessage: String? {
+        if requestingVoicePermission { return "Waiting for microphone permission…" }
+        if recorder.isRecording { return "Stop recording before creating" }
+        if isTranscribing { return "Finishing your narration…" }
+        if scriptInFlight { return "Writing your script…" }
+        if ttsInFlight { return "Making your voice…" }
+        return nil
+    }
+    private var canGenerate: Bool { narrationPreparationMessage == nil && (work.serverJob == nil || work.serverJob?.reply?.isTerminal == true) && VideoSelectionCapacity.canCreate(photoCount: selected.count, totalCount: totalSelected) && pendingRequest == nil && unreadablePendingContext == nil && pendingBatch == nil && !unreadableBatch }
     /// The app-owned job continues when this sheet is dismissed. Only the
     /// explicit Cancel action or a captured permission change stops it.
     private var isWorking: Bool { work.running || work.isServerRendering || phase == .generating || phase == .stitching }
@@ -10441,6 +10453,7 @@ struct ReelStudioView: View {
             // Leaving My voice mid-take drops the mic/session; a finished
             // voiceover is kept. Entering AI voice seeds the script from any
             // recording transcript and loads the voice catalogue once.
+            if mode != .myVoice { voicePermissionID = nil; requestingVoicePermission = false }
             if mode != .myVoice, recorder.isRecording { recorder.cancel() }
             if mode == .aiVoice {
                 if aiScript.isEmpty, let t = voiceover?.transcript, !t.isEmpty { aiScript = t }
@@ -10450,6 +10463,7 @@ struct ReelStudioView: View {
         .onDisappear {
             // Execution belongs to the app queue. Leaving a sheet stops only
             // its playback, microphone and unsent reconnect waiter.
+            voicePermissionID = nil; requestingVoicePermission = false
             connection.cancel()
             work.isPresented = false
             player?.pause(); player = nil; voPlayer?.pause(); musicPreviewPlayer?.pause()
@@ -11135,6 +11149,7 @@ struct ReelStudioView: View {
     }
 
     private var generateTitle: String {
+        if let narrationPreparationMessage { return narrationPreparationMessage }
         if canGenerate { return "Make my video" }
         // A retained request is the reason, not the photo count — say so.
         if pendingRequest != nil || unreadablePendingContext != nil { return "Review the saved request first" }
@@ -11509,7 +11524,7 @@ struct ReelStudioView: View {
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(ScalePressStyle())
-        .disabled(isTranscribing)
+        .disabled(isTranscribing || requestingVoicePermission)
         .accessibilityLabel(Text(recorder.isRecording ? "Stop recording" : "Record your voice"))
     }
 
@@ -11627,12 +11642,10 @@ struct ReelStudioView: View {
     /// Live length, in BOTH units that matter: characters against the server's
     /// hard 1,000-char cap, and seconds against the reel this script has to fit.
     ///
-    /// Neither was visible before. The cap announced itself as a 400 only after
-    /// somebody had written a paragraph, and the overrun announced itself as a
-    /// finished video that freezes on its last picture — because `stitch()`
-    /// HOLDS the final frame rather than cutting the speaker off. Both are now
-    /// on screen before a cent is spent. Same shape as the 600-char counter in
-    /// `CustomEditSheet`.
+    /// Show the estimate before voice generation. Background video jobs verify
+    /// the actual narration duration before starting clips and refuse a take
+    /// that doesn't fit; this estimate does not change that authority. Same
+    /// shape as the 600-char counter in `CustomEditSheet`.
     private var scriptLengthRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(Self.scriptLengthLabel(count: aiScript.count,
@@ -11658,7 +11671,7 @@ struct ReelStudioView: View {
                 .font(.rpCaption).foregroundStyle(Theme.warn)
                 .fixedSize(horizontal: false, vertical: true)
         } else if scriptOverrunsReel {
-            Text("This takes about \(Self.wholeSeconds(scriptReadSeconds)) seconds to read and your video is \(reelSeconds) seconds long. The video will freeze on its last picture while the voice finishes — add photos, or cut a sentence.")
+            Text("This takes about \(Self.wholeSeconds(scriptReadSeconds)) seconds to read and your video is \(reelSeconds) seconds long. Shorten the narration or add photos so the voice fits before creating your video.")
                 .font(.rpCaption).foregroundStyle(Theme.warn)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -11918,25 +11931,34 @@ struct ReelStudioView: View {
     /// nobody had a reason to lose.
     private func recordTapped() {
         if recorder.isRecording { stopAndTranscribe(); return }
+        guard narrationPreparationMessage == nil else { return }
         voiceError = nil
         voiceNote = nil
         speechDenied = false
-        Task {
+        let permissionID = UUID()
+        voicePermissionID = permissionID
+        requestingVoicePermission = true
+        Task { @MainActor in
+            defer {
+                if voicePermissionID == permissionID {
+                    voicePermissionID = nil; requestingVoicePermission = false
+                }
+            }
             // `requestPermissions()` is mic AND speech; it prompts for both.
             let both = await recorder.requestPermissions()
-            await MainActor.run {
-                let micOK = both || recorder.hasMicrophonePermission
-                guard micOK else {
-                    voiceError = "Rendprop needs the microphone to record your voice. Turn it on in Settings → Rendprop → Microphone."
-                    return
-                }
-                // Mic yes, speech no: record anyway, captions off, say so once.
-                if !both {
-                    speechDenied = true
-                    voiceNote = Self.captionsOffNote
-                }
-                beginTake()
+            guard voicePermissionID == permissionID, work.isPresented, phase == .setup, voiceMode == .myVoice,
+                  work.isContextCurrent else { return }
+            let micOK = both || recorder.hasMicrophonePermission
+            guard micOK else {
+                voiceError = "Rendprop needs the microphone to record your voice. Turn it on in Settings → Rendprop → Microphone."
+                return
             }
+            // Mic yes, speech no: record anyway, captions off, say so once.
+            if !both {
+                speechDenied = true
+                voiceNote = Self.captionsOffNote
+            }
+            beginTake()
         }
     }
 
@@ -12946,7 +12968,6 @@ struct ReelStudioView: View {
         let model = self.model, auth = self.auth
         guard phase == .setup, canGenerate else { return }
         musicPreviewPlayer?.pause(); voPlayer?.pause()
-        if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
         let chosen = selected.compactMap { id in reelPhotos.first { $0.id == id } }
         do {
             for photo in chosen { try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL) }
