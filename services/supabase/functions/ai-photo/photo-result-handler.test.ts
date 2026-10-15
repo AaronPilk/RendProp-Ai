@@ -5,7 +5,7 @@ const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
 // Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
 const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
 const OUTPUT=outputJPEG(4096,4096);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|"protocol"|null=null,actualEvidence=false){
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|"protocol"|"declutter_prompt"|null=null,actualEvidence=false){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
  if(removeAdmission==="protocol"){
   const anchor="try { assertPhotoRecoveryProtocol(req); }";assertEquals(source.split(anchor).length-1,1);source=source.replace(anchor,"try { /* compiled protocol bypass */ }");
@@ -38,6 +38,9 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  if(removeAdmission==="quality"){
   const anchor="else if(normalPhoto4K)assertPhoto4KGeometry(decoded);";assert(source.includes(anchor));source=source.replace(anchor,"");
  }
+ if(removeAdmission==="declutter_prompt"){
+  const anchor="buildRealEstateDeclutterPrompt(LOCK,REFLECTION_CLAUSE)";assertEquals(source.split(anchor).length-1,1);source=source.replace(anchor,'"Remove all clutter and personal items. Keep decor identical. " + LOCK');
+ }
  if(removeAdmission==="stage_prompt"){
   const anchor="return buildRealEstateStagePrompt(styleDesc);";
   assert(source.includes(anchor));source=source.replace(anchor,'return "Virtually stage this real-estate photo with " + styleDesc + ". " + STAGE_LOCK;');
@@ -58,6 +61,8 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   const mutant=original.replace(anchor," const bytes=await boundedPhotoResultBytes(response,saved.bytes);").replace(/from "(\.\.\/[^\"]+)"/g,(_all,path)=>`from ${url(path)}`);
   helper=JSON.stringify(encode(mutant));
  }
+ const reStart=source.indexOf("const RE_PROMPTS: Record<string, string> = "),reEnd=source.indexOf("\n};",reStart)+3,reflectionStart=source.indexOf("const REFLECTION_CLAUSE =");
+ assert(reStart>reflectionStart&&reflectionStart>0&&reEnd>reStart);
  const imported=await import(encode(`// @ts-nocheck
  // Fresh synthetic boundary state ${crypto.randomUUID()}
  import {assert,HttpError,json,readJson,readJsonLimited,respondError} from ${url("../_shared/http.ts")};
@@ -85,6 +90,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {assertCustomPhotoPrompt,assertCustomPhotoOutput} from ${url("../ai-copy/guard.ts")};
  import {CUSTOM_PHOTO_FIXED_FEATURES} from ${url("../_shared/custom-photo-prompt.ts")};
  import {buildRealEstateStagePrompt} from ${url("../_shared/photo-stage-prompt.ts")};
+ import {buildRealEstateDeclutterPrompt} from ${url("../_shared/photo-declutter-prompt.ts")};
  import {MAX_PROMPT_INPUT,MAX_PROMPT_OUTPUT,editPromptInstruction} from ${url("../ai-copy/prompt.ts")};
  import {validatePhotoInputs,validatePhotoPrompt,decodePhotoOutput} from ${url("./input-policy.ts")};
  import {persistOwnedPhotoResult,restorePhotoResult,photoResultKeys} from ${helper};
@@ -94,8 +100,9 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {runChain} from ${url("../_shared/providers/chain.ts")};
  const actualEvidence=${actualEvidence};
  export const state={objects:new Map(),actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,quality:null,qualityEnabled:true,qualityPending:false,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
- const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}},RE_PROMPTS={twilight:"Synthetic",declutter:"Synthetic declutter"};
+ const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}};
  ${source.slice(locksStart,locksEnd)}
+ ${source.slice(reflectionStart,reEnd)}
  ${source.slice(customStart,customEnd)}
  ${source.slice(stageStart,stageEnd)}
  const STAGE_STYLES=RE_STAGE_STYLES;
@@ -724,3 +731,15 @@ Deno.test("ordinary Stage-only policy does not activate Declutter Pro",async()=>
   await f.run(f.request({edit,...(edit==="stage"?{style:"modern"}:{})}));assertEquals(f.state.submits,1);assertEquals(f.state.costs[0].step.model,edit==="stage"?"gemini-3-pro-image":"gemini-3.1-flash-image");
  }finally{f.close();}}
 });
+async function removalPromptHandlerOracle(remove=false){
+ const f=await fixture(false,remove?"declutter_prompt":null,true);try{
+  f.state.proGrant=proGrantForHandler("photo.declutter");f.state.output=outputJPEG(3584,4800);
+  const req=f.request({edit:"declutter"}),body=await req.clone().json();assertEquals((await f.run(req)).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);
+  const actual=f.state.inputs[0],prompt=actual.prompt;assertEquals(actual.task,"photo.declutter");assertEquals(actual.image_b64,body.image_b64);
+  for(const text of["REMOVE-ONLY cleanup","DO NOT ADD ANY OBJECT","Never replace, restyle or relocate existing furniture","If an object's purpose or whether it is clutter is uncertain, leave it unchanged","Fill only the small image areas directly occupied","including the photographer","CRITICAL — MATERIAL FACTS","No crop, zoom, wider view"]){assert(prompt.includes(text),text);}
+  assertEquals(f.state.quality.evidence.edit,"declutter");assertEquals(f.state.costs[0].meta.edit,"declutter");assert(f.state.holdArguments[0].p_input_sha256===await f.inputHash(actual));
+  assertEquals((await f.run(f.request({edit:"declutter"}))).status,409);assertEquals(f.state.submits,1,"A pending result does not rerun under the new instructions");
+ }finally{f.close();}
+}
+Deno.test("actual real-estate Declutter dispatches the new remove-only prompt with exact source/funding and no replay generation",()=>removalPromptHandlerOracle());
+Deno.test("compiled old broad Declutter prompt cannot pass actual new request/source oracle",async()=>{await assertRejects(()=>removalPromptHandlerOracle(true),AssertionError);});

@@ -85,6 +85,7 @@ import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
 import { CUSTOM_PHOTO_FIXED_FEATURES } from "../_shared/custom-photo-prompt.ts";
 import { buildRealEstateStagePrompt } from "../_shared/photo-stage-prompt.ts";
+import { buildRealEstateDeclutterPrompt } from "../_shared/photo-declutter-prompt.ts";
 import { assertCustomPhotoPrompt, assertCustomPhotoOutput } from "../ai-copy/guard.ts";
 import { type ProvenanceKind, disclosureFallback } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
@@ -416,8 +417,8 @@ const REFLECTION_CLAUSE =
   "or any other glossy surface — rebuild the reflection as the empty surface would " +
   "look, reflecting only the room itself. ";
 
-// The proven real-estate prompt set — VERBATIM from the shipped version (the
-// industry templates below are for the other space types only).
+// Real-estate-only prompt set. Declutter uses a removal-only retouch contract;
+// the industry templates below retain their existing space-specific behavior.
 const RE_PROMPTS: Record<string, string> = {
   twilight:
     "Convert this daytime exterior real-estate photo into a stunning twilight/dusk shot: " +
@@ -433,12 +434,7 @@ const RE_PROMPTS: Record<string, string> = {
     "remove brown/dead patches, dirt, and weeds. Keep the house, hardscape, driveway, plants, " +
     "and everything else identical. " + LOCK,
   declutter:
-    "Remove all clutter, mess, and personal items from this real-estate photo: shoes, bags, " +
-    "boxes, cords, laundry, dishes, papers, toys, toiletries, fridge magnets, and stray items " +
-    "on floors, counters, and surfaces. " + REFLECTION_CLAUSE +
-    "Keep the room, furniture, decor, and architecture " +
-    "IDENTICAL — same walls, windows, doors, flooring, fixtures, camera angle, and lighting. " +
-    "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
+    buildRealEstateDeclutterPrompt(LOCK,REFLECTION_CLAUSE),
 };
 
 // Real-estate staging furniture sets (verbatim from the shipped version).
