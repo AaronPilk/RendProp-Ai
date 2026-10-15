@@ -563,7 +563,7 @@ enum CoachOffline {
             let reply: String
             if state.execution == .serverAccepted {
                 if state.serverPhase == "ready" { reply = "Your saved server video is ready. Open Make a video to review and save it; publication is your choice." }
-                else if state.resumeAvailable { reply = "The saved server video stopped at a capacity limit. Open Make a video and use Resume saved video if you want to continue the same job; completed shots are retained." }
+                else if state.resumeAvailable { reply = "The saved video paused. Open Make a video and use Resume saved video to continue the same job; completed shots are retained." }
                 else if ["failed", "cancelled", "needs_reconciliation"].contains(state.serverPhase ?? "") { reply = "The accepted saved video needs review. Open Make a video and Check status; do not start a duplicate paid recipe or assume a failed job is still rendering." }
                 else { reply = "Rendprop accepted this saved server job: \(state.completed) of \(state.total) shots are complete. It can continue after you close the app or lock the phone. Reopen Make a video to Check status; that refresh does not regenerate it. I can't promise a completion time." }
             } else if state.execution == .awaitingAcceptance {
