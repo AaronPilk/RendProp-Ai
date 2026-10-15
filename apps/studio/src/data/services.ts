@@ -3,6 +3,7 @@ import {
   type Session,
 } from "@supabase/auth-js";
 import { createStudioAuth } from "./auth-client";
+import { PHOTO_OUTPUT_WIRE_BYTES } from "./photo-output";
 import { StudioError, validateStudioConfig, type StudioConfig } from "./config";
 import {
   decodeListings,
@@ -537,7 +538,7 @@ export function createStudioServices(
         throw new StudioError("membership-required", "Load this workspace before making changes.");
       if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600_000))
         throw new StudioError("configuration", "The request timeout is invalid.");
-      if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > 32 * 1024 * 1024))
+      if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > (path === "/functions/v1/ai-photo-v2" && options.method === "POST" && options.photoQualityProtocol === "retained-operation-v1" ? PHOTO_OUTPUT_WIRE_BYTES : 32 * 1024 * 1024)))
         throw new StudioError("configuration", "The response limit is invalid.");
       if (options.idempotencyKey && !/^[a-zA-Z0-9:_-]{1,128}$/.test(options.idempotencyKey))
         throw new StudioError("request-key", "The action identifier is invalid.");

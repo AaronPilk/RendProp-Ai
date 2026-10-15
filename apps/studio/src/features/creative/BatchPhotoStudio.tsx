@@ -1,3 +1,4 @@
+import {PHOTO_OUTPUT_BASE64_CHARS} from "../../data/photo-output";
 import { STAGING_STYLE_CHOICES, ACCEPTED_STAGING_STYLES } from "./staging-styles";
 import { useEffect, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
@@ -97,7 +98,7 @@ export class PhotoBatch {
           if(recovered){source=recovered.source;originalId=recovered.originalId;entry.requestKey=recovered.key;choice=recovered.choice;raw=record(recovered.raw);}
           entry.choice={...choice};
           this.check();
-          const base64 = requiredText(raw.image_b64, "an edited photo", 32 * 1024 * 1024), mime = text(raw.mime, 50) || "image/png";
+          const base64 = requiredText(raw.image_b64, "an edited photo",PHOTO_OUTPUT_BASE64_CHARS), mime = text(raw.mime, 50) || "image/png";
           const file = editedImage(base64, mime);
           let provenanceId: string | null = null;
           try { const proof = raw.provenance ? record(raw.provenance) : {}; if (proof.recorded === true) provenanceId = uuid(proof.id, "photo disclosure"); }

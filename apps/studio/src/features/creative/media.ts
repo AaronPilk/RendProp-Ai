@@ -1,3 +1,5 @@
+import {photoOutputSize} from "../../data/photo-output";
+
 export type SourceImage = {
   file: File;
   base64: string;
@@ -64,7 +66,7 @@ export async function prepareImage(
 export function editedImage(value: string, mime: string): File {
   if (
     !["image/jpeg", "image/png", "image/webp"].includes(mime) || !value ||
-    value.length > 32 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)
+    photoOutputSize(value) === null
   ) throw new Error("The photo service returned an unreadable image.");
   const raw = atob(value), bytes = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);

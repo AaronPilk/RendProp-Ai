@@ -1,6 +1,7 @@
 /** Durable private paid-operation identity. No credential, URL target or account
  * token is retained. A pending row can only be replayed, never replaced. */
 import type {PhotoSource} from "./photo-lineage";
+import {PHOTO_OUTPUT_WIRE_BYTES} from "../../data/photo-output";
 import type {Edit} from "./model";
 export type PhotoRequestScope={actor:string;library:string;listing:string};
 export type PhotoRequestContext={channel:"single"|"batch";source:PhotoSource;edit:Edit;style:string;prompt:string;originalAssetId:string;photoId?:string;batchId?:string};
@@ -25,7 +26,7 @@ export async function validateSavedPhotoRequest(row:SavedPhotoRequest,identity:P
  const body=JSON.parse(row.requestJSON),original=row.context?.source?.original?.file;
  const prepared=body.edit==="stage"&&row.context?.source?.stageBase?row.context.source.stageBase:row.context?.source;
  if(prepared?.base64!==body.image_b64||prepared?.mime!==body.mime||body.edit==="stage"&&body.style!==row.context.style||body.edit==="custom"&&body.prompt!==row.context.prompt)throw unavailable();
- if(body.listing_id?.toLowerCase()!==identity.listing.toLowerCase()||body.original_asset_id!==row.context.originalAssetId||body.edit!==row.context.edit||typeof body.image_b64!=="string"||await photoRequestHash(body.image_b64)!==row.versionId||!(original instanceof Blob)||await hash(await original.arrayBuffer())!==row.sourceId||row.state==="ready"&&(typeof row.resultJSON!=="string"||row.resultJSON.length>32*1024*1024||!SHA.test(row.resultSHA??"")||await photoRequestHash(row.resultJSON)!==row.resultSHA))throw unavailable();
+ if(body.listing_id?.toLowerCase()!==identity.listing.toLowerCase()||body.original_asset_id!==row.context.originalAssetId||body.edit!==row.context.edit||typeof body.image_b64!=="string"||await photoRequestHash(body.image_b64)!==row.versionId||!(original instanceof Blob)||await hash(await original.arrayBuffer())!==row.sourceId||row.state==="ready"&&(typeof row.resultJSON!=="string"||row.resultJSON.length>PHOTO_OUTPUT_WIRE_BYTES||!SHA.test(row.resultSHA??"")||await photoRequestHash(row.resultJSON)!==row.resultSHA))throw unavailable();
  return row;
 }
 export async function beginPhotoRequest(identity:PhotoRequestScope,body:Record<string,unknown>,context:PhotoRequestContext,signal?:AbortSignal):Promise<SavedPhotoRequest>{
@@ -45,7 +46,7 @@ export async function savedPhotoRequests(identity:PhotoRequestScope):Promise<Sav
  const checked:SavedPhotoRequest[]=[];for(const row of rows.sort((a,b)=>a.createdAt-b.createdAt))checked.push(await validateSavedPhotoRequest(row,identity));return checked;
 }
 export async function readyPhotoRequest(row:SavedPhotoRequest,result:unknown):Promise<SavedPhotoRequest>{
- const resultJSON=JSON.stringify(result);if(!resultJSON||resultJSON.length>32*1024*1024)throw unavailable();const resultSHA=await photoRequestHash(resultJSON);const db=await database();let saved:SavedPhotoRequest;
+ const resultJSON=JSON.stringify(result);if(!resultJSON||resultJSON.length>PHOTO_OUTPUT_WIRE_BYTES)throw unavailable();const resultSHA=await photoRequestHash(resultJSON);const db=await database();let saved:SavedPhotoRequest;
  try{const tx=db.transaction(STORE,"readwrite"),done=complete(tx);void done.catch(()=>{});const store=tx.objectStore(STORE),current=await request(store.get(row.slot))as SavedPhotoRequest|undefined;
   if(!current||current.requestKey!==row.requestKey||current.requestSHA!==row.requestSHA){tx.abort();await done.catch(()=>{});throw unavailable();}
   saved=current.state==="ready"?current:{...current,state:"ready",resultJSON,resultSHA};store.put(saved);await done;

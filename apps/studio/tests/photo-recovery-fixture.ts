@@ -1,7 +1,7 @@
 import {beginPhotoRequest,savedPhotoRequests,finishPhotoRequest,type SavedPhotoRequest} from "../src/features/creative/photo-request-journal";
 import {retainedPhotoRequest,resumePhotoRequest} from "../src/features/creative/creative-request";
 import {importedPhoto} from "../src/features/creative/photo-lineage";
-import {prepareImage} from "../src/features/creative/media";
+import {prepareImage,editedImage} from "../src/features/creative/media";
 import {StudioError} from "../src/data/config";
 import type {StudioServices} from "../src/data/services";
 const id=(n:number)=>`f8600000-0000-4000-8000-${String(n).padStart(12,"0")}`,identity={actor:id(1),library:id(2),listing:id(3)};
@@ -15,6 +15,7 @@ async function source(){const c=document.createElement("canvas");c.width=1600;c.
 const original=await source(),context={channel:"single"as const,source:original,edit:"declutter"as const,style:"modern",prompt:"",originalAssetId:id(4)},body={listing_id:identity.listing,original_asset_id:id(4),image_b64:original.base64,mime:original.mime,edit:"declutter"};
 Object.assign(window,{photoRecovery:{
  identity,masterBytes:original.file.size,preparedBytes:original.base64.length,
+ readyFileFacts:async()=>{const row=(await savedPhotoRequests(identity))[0]!;if(row?.state!=="ready")throw Error("No saved result");const result=JSON.parse(row.resultJSON!),file=editedImage(result.image_b64,result.mime),bitmap=await createImageBitmap(file);try{return{bytes:file.size,width:bitmap.width,height:bitmap.height,sha256:Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",await file.arrayBuffer())),x=>x.toString(16).padStart(2,"0")).join(""),resultJSONBytes:row.resultJSON!.length};}finally{bitmap.close();}},
  begin:()=>beginPhotoRequest(identity,body,context),
  rows:()=>savedPhotoRequests(identity),
  send:()=>retainedPhotoRequest(services,identity,body,context,assertScope,control.signal),

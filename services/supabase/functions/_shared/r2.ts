@@ -1,3 +1,4 @@
+import { PHOTO_OUTPUT_MAX_BYTES } from "./photo-output-policy.ts";
 // Cloudflare R2 (S3-compatible) helpers.
 //
 // We presign PUT URLs so the iOS DirectUploader streams video straight to R2 —
@@ -114,7 +115,7 @@ const PHOTO_EVIDENCE_KEY = /^ai-router\/[a-f0-9-]{36}\/photo-evidence\/[a-f0-9-]
  * Immutable PUT plus hash metadata distinguishes an existing equal-size object
  * from this operation's exact bytes, without allocating another9MB download. */
 export async function writePhotoEvidence(key:string,bytes:Uint8Array<ArrayBuffer>,mime:string,sha256:string):Promise<void>{
-  const max=9_000_000;
+  const max=/\/candidate\.(?:jpg|png|webp)$/.test(key)?PHOTO_OUTPUT_MAX_BYTES:9_000_000;
   if(!PHOTO_EVIDENCE_KEY.test(key)||!Number.isSafeInteger(bytes.byteLength)||bytes.byteLength<1||bytes.byteLength>max||!["image/jpeg","image/png","image/webp"].includes(mime)||!/^[a-f0-9]{64}$/.test(sha256))throw new HttpError(400,"Invalid private photo evidence.");
   const response=await uploadDispatch(`${endpoint()}/${R2_BUCKET_RENDERS}/${encodeKey(key)}`,{method:"PUT",headers:{"content-type":mime,"content-length":String(bytes.byteLength),"if-none-match":"*","x-amz-meta-sha256":sha256},body:bytes,aws:{allHeaders:true}},30_000);
   void response.body?.cancel().catch(()=>{});

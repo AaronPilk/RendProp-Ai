@@ -2,6 +2,7 @@
 // Originals remain untouched. Oversized photos must be resized by the caller;
 // the server never silently crops, truncates or changes the source image.
 import { HttpError } from "../_shared/http.ts";
+import { PHOTO_OUTPUT_MAX_BASE64_CHARS, PHOTO_OUTPUT_MAX_BYTES } from "../_shared/photo-output-policy.ts";
 import { decodeBase64Bytes } from "../_shared/base64-bytes.ts";
 
 export const PHOTO_INPUT_POLICY = Object.freeze({
@@ -19,8 +20,8 @@ export const PHOTO_INPUT_POLICY = Object.freeze({
 // Photo JSON responses have a tighter measured envelope than generic media.
 // Retain actual4K geometry; compressed byte size is a separate memory bound.
 export const PHOTO_OUTPUT_POLICY = Object.freeze({
-  maxBase64Chars: 4 * Math.ceil(9_000_000 / 3),
-  maxDecodedBytes: 9_000_000,
+  maxBase64Chars: PHOTO_OUTPUT_MAX_BASE64_CHARS,
+  maxDecodedBytes: PHOTO_OUTPUT_MAX_BYTES,
   maxPixels: 24_000_000,
   maxEdge: 16384,
 });
@@ -137,7 +138,7 @@ export function validatePhotoOutput(value:unknown,mime:string):StillImage {
 export function decodePhotoOutput(value:unknown,mime:string):DecodedStillImage {
   const padding=typeof value==="string"?(value.endsWith("==")?2:value.endsWith("=")?1:0):0;
   if(typeof value==="string"&&(value.length>PHOTO_OUTPUT_POLICY.maxBase64Chars||value.length/4*3-padding>PHOTO_OUTPUT_POLICY.maxDecodedBytes))
-    throw new HttpError(502,"The generated photo exceeds the 9 MB delivery limit. It could not be saved safely. This generation was already processed; no additional edit was started.","upstream",{failure_phase:"photo_output_size",provider_cost_incurred:true});
+    throw new HttpError(502,"The generated photo exceeds the 25 MiB delivery limit. It could not be saved safely. This generation was already processed; no additional edit was started.","upstream",{failure_phase:"photo_output_size",provider_cost_incurred:true});
   const tooLarge=():never=>{throw new HttpError(502,"The provider image exceeds the bounded output size.","upstream");};
   try { return validateStillImage(value,mime,{...PHOTO_OUTPUT_POLICY,tooLarge}); }
   catch { throw new HttpError(502,"The provider returned an incomplete, unsupported or oversized image. It was not saved.","upstream"); }

@@ -23,11 +23,11 @@ Deno.test("normal4K editing copies retain the combined9MB contract and saved2K c
  assertEquals(preparePhoto4KInput(input(half,half)).extra?.staging_reference_b64,half);
  assertThrows(()=>preparePhoto4KInput(input(half,halfAbove)),HttpError,"9 MB combined");
 });
-Deno.test("4K output exact9MB succeeds while one byte above is rejected before binary decode with incurred-cost detail",()=>{
- assertEquals(PHOTO_OUTPUT_POLICY.maxDecodedBytes,9_000_000);
- const at=jpeg(9_000_000,3584,4780),above=jpeg(9_000_001,3584,4780);
- assertEquals(above.length,at.length+4,"The first over-bound byte needs one more base64 quartet");
- assertEquals(validatePhotoOutput(at,"image/jpeg").bytes,9_000_000);
+Deno.test("4K output exact25MiB succeeds while one byte above is rejected before binary decode with incurred-cost detail",()=>{
+ assertEquals(PHOTO_OUTPUT_POLICY.maxDecodedBytes,25*1024*1024);
+ const at=jpeg(25*1024*1024,3584,4780),above=jpeg(25*1024*1024+1,3584,4780);
+ assertEquals(above.length,at.length,"The byte limit must still refuse when the base64 quartet count is unchanged");
+ assertEquals(validatePhotoOutput(at,"image/jpeg").bytes,25*1024*1024);
  const saved=globalThis.atob;let decoded=0;globalThis.atob=(s)=>{decoded++;return saved(s);};
  try{const error=assertThrows(()=>validatePhotoOutput(above,"image/jpeg"),HttpError,"already processed");
   assertEquals(decoded,0);assertEquals(error.details?.failure_phase,"photo_output_size");assertEquals(error.details?.provider_cost_incurred,true);

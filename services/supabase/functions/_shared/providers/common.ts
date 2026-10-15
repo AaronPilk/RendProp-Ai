@@ -8,6 +8,7 @@
 
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { HttpError } from "../http.ts";
+import { PHOTO_OUTPUT_MAX_BYTES, PHOTO_OUTPUT_MAX_WIRE_BYTES } from "../photo-output-policy.ts";
 import { decodeBase64Bytes } from "../base64-bytes.ts";
 import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS, headObject, presignPut } from "../r2.ts";
 import type { DoneState, ErrorClass, JobRef, JobState, ProviderAdapter } from "./types.ts";
@@ -194,7 +195,7 @@ export async function fetchBounded(
 }
 
 export async function boundedProviderText(response:Response,provider:string,maximum:number):Promise<string>{
-  if(!Number.isSafeInteger(maximum)||maximum<1||maximum>32_000_000)throw new ProviderError(provider,"validation","Invalid provider response bound",0,true);
+  if(!Number.isSafeInteger(maximum)||maximum<1||maximum>PHOTO_OUTPUT_MAX_WIRE_BYTES)throw new ProviderError(provider,"validation","Invalid provider response bound",0,true);
   const declared=response.headers.get("content-length");
   if(declared!==null&&(!/^[0-9]+$/.test(declared)||Number(declared)>maximum)){void response.body?.cancel().catch(()=>{});throw new ProviderResponseLimitError(provider,response.status,maximum);}
   if(!response.body)return"";
@@ -542,7 +543,7 @@ export async function publicImageUrlFor(
 }
 
 /** Images are returned to the app inline; refuse anything absurd. */
-export const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
+export const MAX_INLINE_IMAGE_BYTES = PHOTO_OUTPUT_MAX_BYTES;
 
 /**
  * Make a done-state's bytes local ONCE.

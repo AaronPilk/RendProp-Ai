@@ -1,3 +1,4 @@
+import {PHOTO_OUTPUT_BASE64_CHARS} from "../../data/photo-output";
 import { STAGING_STYLE_CHOICES } from "./staging-styles";
 import CustomPhotoPromptHelp, { analyzeCustomPhotoPrompt } from "./CustomPhotoPromptHelp";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -629,7 +630,7 @@ function ListingCreative(
   }
   function applySavedPhoto(saved:{row:SavedPhotoRequest;result:unknown}){
     assertPhotoScope();const {row}=saved,originalAssetId=row.context.originalAssetId,source=row.context.source,edit=row.context.edit,response=record(saved.result);
-    const file=editedImage(requiredText(response.image_b64,"an edited photo",32*1024*1024),text(response.mime,50)||"image/png"),preview=`data:${file.type};base64,${String(response.image_b64)}`;
+    const file=editedImage(requiredText(response.image_b64,"an edited photo",PHOTO_OUTPUT_BASE64_CHARS),text(response.mime,50)||"image/png"),preview=`data:${file.type};base64,${String(response.image_b64)}`;
     const provenance=response.provenance?record(response.provenance):{},disclosure=requiredText(response.disclosure,"the photo disclosure",1000),delivery=photoDelivery(source,file,edit,disclosure,provenance.recorded===true?text(provenance.id,80)||null:null);
     photoRequestRow.current=row;setSource(source);setEdit(edit);setStyle(row.context.style);setPrompt(row.context.prompt);setPhotoTab("original");
     setPhotoResult({...delivery,preview,originalAssetId,disclosure:delivery.disclosures.join("\n"),saved:false,reviewed:edit!=="custom",edit,source});

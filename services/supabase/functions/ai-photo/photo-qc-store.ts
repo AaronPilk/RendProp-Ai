@@ -12,6 +12,7 @@ import {boundedPhotoResultBytes,photoResultKeys,type PhotoResultIdentity} from "
 import {validatePhotoInput,type DecodedStillImage} from "./input-policy.ts";
 import {photoJsonResponse} from "./photo-response.ts";
 import {PHOTO_QC_POLICY} from "./photo-qc-verdict.ts";
+import {PHOTO_OUTPUT_MAX_BYTES} from "../_shared/photo-output-policy.ts";
 
 export type PhotoAdmin = any;
 export interface PhotoEvidenceFile {bucket:"renders";key:string;sha256:string;bytes:number;mime:string;width:number;height:number}
@@ -71,7 +72,7 @@ export const photoEvidenceIO:PhotoEvidenceIO={write:writePhotoEvidence,inspect:i
 }};
 export function assertPhotoEvidenceFile(e:PhotoEvidence,file:PhotoEvidenceFile,kind:"input"|"output"):void{
  const ext:{[mime:string]:string}={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"};
- assert(file&&file.bucket==="renders"&&photoSHA(file.sha256)&&Number.isSafeInteger(file.bytes)&&file.bytes>0&&file.bytes<=9_000_000
+ assert(file&&file.bucket==="renders"&&photoSHA(file.sha256)&&Number.isSafeInteger(file.bytes)&&file.bytes>0&&file.bytes<=(kind==="input"?9_000_000:PHOTO_OUTPUT_MAX_BYTES)
   &&ext[file.mime]&&file.key===`ai-router/${e.org_id}/photo-evidence/${e.actor_id}/${e.id}/${kind==="input"?"input":"candidate"}.${ext[file.mime]}`,503,"The retained photo identity is inconsistent.","upstream");
 }
 async function persistEvidence(admin:PhotoAdmin,row:PhotoQualityEnvelope,kind:"input"|"output",bytes:Uint8Array<ArrayBuffer>,io:PhotoEvidenceIO):Promise<PhotoQualityEnvelope>{
@@ -116,7 +117,7 @@ export function throwPhotoQualityState(row:PhotoQualityEnvelope,selected:string)
  if(state==="hold"&&row.evidence.state==="hold"&&typeof finished==="string"&&Number.isFinite(Date.parse(finished)))
   throw new HttpError(422,"This edit could not be confirmed and remains private. Your original is unchanged. You can start a new edit; it may use another edit from your allowance.","photo_quality_closed",{...details,operation_closed:true,retry_existing_job:false});
  if(state==="refuse")throw new HttpError(422,"This edit changed fixed property features or failed the photo quality review. The original is unchanged; the generated edit remains private.","photo_quality_refused",details);
- if(state==="hold"||state==="checking"&&row.check.judge_started_at!==null)throw new HttpError(409,failure?.phase==="photo_output_size"?"The generated photo exceeded the safe 9 MB output limit and could not be saved. This generation was already processed. The original is unchanged; no additional edit was started.":failure?.phase==="photo_provider_wire_size"?"The supplier response exceeded the safe transfer limit and could not be confirmed. This operation remains under review; no additional edit was started.":"The saved photo operation needs review before its edit can be used. No new edit or repeat quality check was started.","photo_quality_hold",details);
+ if(state==="hold"||state==="checking"&&row.check.judge_started_at!==null)throw new HttpError(409,failure?.phase==="photo_output_size"?"The generated photo exceeded the safe output limit and could not be saved. This generation was already processed. The original is unchanged; no additional edit was started.":failure?.phase==="photo_provider_wire_size"?"The supplier response exceeded the safe transfer limit and could not be confirmed. This operation remains under review; no additional edit was started.":"The saved photo operation needs review before its edit can be used. No new edit or repeat quality check was started.","photo_quality_hold",details);
  throw new HttpError(409,"The edit is saved privately while its photo quality review is pending. Check this saved edit again; no new generation is needed.","photo_quality_pending",details);
 }
 /** Called only after fresh SQL/current-library authority and atomic acceptance.

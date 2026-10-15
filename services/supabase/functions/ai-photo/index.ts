@@ -999,7 +999,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     });
 
     // Ledger liability above survives every later quality/storage refusal.
-    // Decode once within the measured9MB envelope, retain exact quarantine
+    // Decode once within the measured output envelope, retain exact quarantine
     // bytes, then evaluate requested geometry. Even a wrong-size valid photo
     // remains private evidence rather than being silently discarded.
     let phase="photo_output_validation";
@@ -1012,12 +1012,12 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       else if(normalPhoto4K)assertPhoto4KGeometry(decoded);
     }catch(error){
       const over=error instanceof HttpError&&error.details?.failure_phase==="photo_output_size";
-      quality=await failPhotoQuality(adminClient(),quality,over?"photo_output_size":phase,{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:over?"The paid image exceeded the safe9MB output bound and could not be retained.":"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
+      quality=await failPhotoQuality(adminClient(),quality,over?"photo_output_size":phase,{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:over?"The paid image exceeded the safe25MiB output bound and could not be retained.":"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
       return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
     }
     // The heavy judge runs in its separate service function. Retain this exact
     // already-validated base64 for the eventual accepted reply, avoiding another
-    //9MB download/decode/encode in the generation isolate.
+    //whole-photo download/decode/encode in the generation isolate.
     const inlineCandidate={imageB64:outB64,key:quality.evidence.output!.key,mime:outMime,sha256:quality.evidence.output!.sha256,bytes:quality.evidence.output!.bytes};
     attempt.value.b64="";attempt.value.local={status:"done",mime:outMime,result_url:""};
     quality=await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt,deadline:qualityDeadline});

@@ -7,11 +7,11 @@ Deno.test("opted-in provider stream accepts exact byte bound and refuses one add
  const text=JSON.stringify({text:"é".repeat(40)}),bytes=new TextEncoder().encode(text);
  assertEquals(await boundedProviderText(new Response(bytes),"gemini",bytes.length),text);
  const error=await assertRejects(()=>boundedProviderText(new Response(bytes),"gemini",bytes.length-1),ProviderResponseLimitError);assertEquals(error.dispatch_rejected,false);assertEquals(error.terminal_after_dispatch,true);
- assertEquals(GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES,12_100_000);
+ assertEquals(GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES,35_052_536);
 });
-Deno.test("unknown-length oversized response is cancelled at bound, without consuming a25MiB supplier body",async()=>{
- let sent=0,cancelled=false;const chunk=new Uint8Array(65536),response=new Response(new ReadableStream({pull(controller){sent+=chunk.length;controller.enqueue(chunk);if(sent>=25*1024*1024)controller.close();},cancel(){cancelled=true;}}));
- await assertRejects(()=>boundedProviderText(response,"gemini",GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES),ProviderResponseLimitError);assert(cancelled);assert(sent<13_000_000);
+Deno.test("unknown-length oversized response is cancelled at bound, without consuming an unbounded supplier body",async()=>{
+ let sent=0,cancelled=false;const chunk=new Uint8Array(65536),response=new Response(new ReadableStream({pull(controller){sent+=chunk.length;controller.enqueue(chunk);if(sent>=40*1024*1024)controller.close();},cancel(){cancelled=true;}}));
+ await assertRejects(()=>boundedProviderText(response,"gemini",GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES),ProviderResponseLimitError);assert(cancelled);assert(sent<=GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES+2*chunk.length);
 });
 Deno.test("response-limit uncertainty stops an authorized multi-step chain and preserves liability facts",async()=>{
  const step={route_id:"fixture",task:"photo.stage",provider:"gemini",model:"gemini-3.1-flash-image",unit:"image",unit_cents:16.7584,capabilities:[],max_latency_s:60,min_plan:"free",same_model_as:null,privacy_tier:"retained_30d" as const,enabled:true};let calls=0;

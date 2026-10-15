@@ -531,7 +531,7 @@ Deno.test("actual4K handler validates9MB once and reuses those exact bytes for i
 });
 Deno.test("actual4K handler keeps paid supplier liability for one-byte output overflow and never persists or regenerates",async()=>{
  const f=await fixture();try{
-  f.state.output=sizedOutputJPEG(9_000_001);const response=await f.run(f.request());assertEquals(response.status,409);
+  f.state.output=sizedOutputJPEG(25*1024*1024+1);const response=await f.run(f.request());assertEquals(response.status,409);
   const error=await response.json();assertEquals(error.failure_phase,"photo_output_size");assertEquals(error.provider_cost_incurred,true);
   assertEquals(f.state.costs.length,1);assertEquals(f.state.submits,1);assertEquals(f.state.refunds,0);assertEquals(f.state.puts,0);assertEquals(f.state.completes,1);
   const same=await f.run(f.request());assertEquals(same.status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);
@@ -563,13 +563,13 @@ Deno.test("actual handler plus real quarantine pipeline retains9MB/9MB exact evi
  }finally{f.close();}
 });
 Deno.test("actual handler plus quarantine records paid output overflow without fake full-output retention",async()=>{
- const f=await fixture(false,null,true);try{f.state.output=sizedOutputJPEG(9_000_001);const response=await f.run(f.request());assertEquals(response.status,409);const body=await response.json();assertEquals(body.code,"photo_quality_hold");assertEquals(body.failure_phase,"photo_output_size");assertEquals(body.provider_cost_incurred,true);assertEquals(body.retained_output,false);assertEquals(f.state.puts,1,"Only the prepared source is retained");assertEquals(f.state.quality.evidence.output,null);assertEquals(f.state.costs.length,1);assertEquals(f.state.refunds,0);assertEquals((await f.run(f.request())).status,409);assertEquals(f.state.submits,1);}finally{f.close();}
+ const f=await fixture(false,null,true);try{f.state.output=sizedOutputJPEG(25*1024*1024+1);const response=await f.run(f.request());assertEquals(response.status,409);const body=await response.json();assertEquals(body.code,"photo_quality_hold");assertEquals(body.failure_phase,"photo_output_size");assertEquals(body.provider_cost_incurred,true);assertEquals(body.retained_output,false);assertEquals(f.state.puts,1,"Only the prepared source is retained");assertEquals(f.state.quality.evidence.output,null);assertEquals(f.state.costs.length,1);assertEquals(f.state.refunds,0);assertEquals((await f.run(f.request())).status,409);assertEquals(f.state.submits,1);}finally{f.close();}
 });
 Deno.test("actual handler wire overflow holds uncertain supplier liability and feature charge without paid fallback",async()=>{
  const f=await fixture(false,null,true);try{
   f.state.qa=true;f.state.router=true;f.state.finishStates=[];
   f.state.routes=[0,1].map(i=>({route_id:"authorized-"+i,provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.twilight",unit:"image",unit_cents:16.7584}));
-  Object.defineProperty(f.state,"primaryFail",{get:()=>{throw new ProviderResponseLimitError("gemini",200,12_100_000);}});
+  Object.defineProperty(f.state,"primaryFail",{get:()=>{throw new ProviderResponseLimitError("gemini",200,35_052_536);}});
   const response=await f.run(f.request());assertEquals(response.status,409);const body=await response.json();assertEquals(body.code,"photo_quality_hold");assertEquals(body.failure_phase,"photo_provider_wire_size");assertEquals(body.provider_cost_incurred,"possible");assertEquals(body.retained_output,false);
   assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.finishStates,["uncertain"]);assertEquals(f.state.refunds,0);assertEquals(f.state.puts,1,"Only the prepared source was retained");assertEquals((await f.run(f.request())).status,409);assertEquals(f.state.submits,1);
  }finally{f.close();}
@@ -637,4 +637,13 @@ Deno.test("actual handler budgets slow4K generation and returns durable pending 
   assertEquals(f.state.quality.evidence.state,"evidence_ready");assertEquals(f.state.quality.check.state,"pending");assert(f.state.quality.evidence.output_etag);
   const restored=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(restored.status,409);assertEquals(f.state.submits,1);assertEquals(f.state.charges,1);assertEquals(f.state.puts,2);
  }finally{Date.now=clock;f.close();}
+});
+
+Deno.test("actual quarantine retains exact25MiB candidate with9MB source and replays pending without supplier or ordinarydelivery",async()=>{
+ const f=await fixture(false,null,true);try{
+  const source=sizedOutputJPEG(9_000_000,1536,2048);f.state.output=sizedOutputJPEG(25*1024*1024);
+  const request=()=>f.request({image_b64:source}),response=await f.run(request());assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");
+  assertEquals(f.state.puts,2);assertEquals(f.state.object.byteLength,25*1024*1024);assertEquals(f.state.quality.evidence.output.bytes,25*1024*1024);assertEquals(f.state.quality.evidence.input.bytes,9_000_000);assertEquals(f.state.journal,null);
+  assertEquals((await f.run(request())).status,409);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.gets,0);assertEquals(f.state.puts,2);
+ }finally{f.close();}
 });

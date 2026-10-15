@@ -17,6 +17,7 @@
 //    rates for a 1K product.
 
 import type { RouteStep } from "../router.ts";
+import { PHOTO_OUTPUT_MAX_WIRE_BYTES } from "../photo-output-policy.ts";
 import { paramsOf } from "../router.ts";
 import { photo2KInputAllowance, photo4KInputAllowance } from "../photo-image-quality.ts";
 import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter } from "./types.ts";
@@ -37,9 +38,10 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // The legacy GenerateContent hard cutoff includes thoughts and output. The
 // serving quote reads the same generation config that is sent to the provider.
 export const GEMINI_IMAGE_MAX_OUTPUT_TOKENS = 4096;
-//9MB decoded photo =12MB base64, plus bounded JSON/usage/text metadata.
-// Applied only to prospective normal4K requests; old provider paths unchanged.
-export const GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES=12_100_000;
+// The native Developer API cannot request JPEG compression. A real4K PNG
+// retains its exact pixels/format within the separately tested output envelope.
+// Only prospective normal4K submits opt in; old provider paths are unchanged.
+export const GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES=PHOTO_OUTPUT_MAX_WIRE_BYTES;
 // Only the server-verified, prospectively priced4K route receives this longer
 // header+body deadline. Other image/provider submits keep the shared30s budget.
 export const GEMINI_PHOTO_4K_SUBMIT_MS=90_000;

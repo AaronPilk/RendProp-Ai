@@ -1266,3 +1266,16 @@ test("typed closed photo review preserves authoritative closure marker and possi
  const auth=mockAuth();const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url)=>url.pathname==="/functions/v1/ai-photo-v2"?json({error:"This edit is closed. A new edit may use another allowance.",code:"photo_quality_closed",check_id:PHOTO,evidence_id:LISTING,operation_closed:true,retry_existing_job:false,provider_cost_incurred:"possible",untrusted_url:"https://must-not-retain.invalid"},422):fixtureResponse(url))});await services.loadWorkspace();
  await assert.rejects(services.api("/functions/v1/ai-photo-v2",{orgId:ORG,method:"POST",body:{image_b64:"exact-source",listing_id:LISTING},idempotencyKey:"studio-photo:11111111-1111-4111-8111-111111111111",photoQualityProtocol:"retained-operation-v1"}),(error:unknown)=>{const e=error as StudioError;assert.equal(e.status,422);assert.equal(e.code,"photo_quality_closed");assert.equal(e.details?.operation_closed,true);assert.equal(e.details?.retry_existing_job,false);assert.equal(e.details?.provider_cost_incurred,"possible");assert.equal(e.details?.untrusted_url,undefined);return true;});services.dispose();
 });
+
+test("only recovery-aware photo v2 POST can receive the bounded35MB lossless4K envelope",async()=>{
+ const {PHOTO_OUTPUT_WIRE_BYTES,PHOTO_OUTPUT_BASE64_CHARS}=await import("../src/data/photo-output");
+ const image="A".repeat(PHOTO_OUTPUT_BASE64_CHARS-2)+"==",auth=mockAuth();let calls=0,oversize=false,cancelled=false;
+ const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url)=>{
+  if(url.pathname==="/functions/v1/ai-photo-v2"){calls++;if(oversize)return new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{"content-length":String(PHOTO_OUTPUT_WIRE_BYTES+1)}});return json({image_b64:image,mime:"image/png",disclosure:"Closed output-transport fixture"});}return fixtureResponse(url);
+ })});await services.loadWorkspace();
+ const options={orgId:ORG,method:"POST"as const,body:{image_b64:"source",listing_id:LISTING},photoQualityProtocol:"retained-operation-v1"as const,maxResponseBytes:PHOTO_OUTPUT_WIRE_BYTES};
+ const result=await services.api("/functions/v1/ai-photo-v2",options)as {image_b64:string};assert.equal(result.image_b64,image);assert.equal(calls,1);
+ oversize=true;await assert.rejects(services.api("/functions/v1/ai-photo-v2",options),(e:unknown)=>(e as StudioError).code==="response-too-large");assert(cancelled);assert.equal(calls,2);
+ for(const [path,extra]of[["/functions/v1/ai-copy",{photoQualityProtocol:undefined}],["/functions/v1/ai-photo",{photoQualityProtocol:undefined}],["/functions/v1/ai-photo-v2",{photoQualityProtocol:undefined}],["/functions/v1/ai-photo-v2",{method:"GET",body:undefined,photoQualityProtocol:undefined}]])await assert.rejects(services.api(path as string,{...options,...extra}as any));
+ await assert.rejects(services.api("/functions/v1/ai-photo-v2",{...options,maxResponseBytes:PHOTO_OUTPUT_WIRE_BYTES+1}));assert.equal(calls,2);services.dispose();
+});

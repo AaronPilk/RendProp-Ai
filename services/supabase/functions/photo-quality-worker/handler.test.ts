@@ -8,8 +8,8 @@ const sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',jpeg)),
 const root=`ai-router/${org}/photo-evidence/${actor}/${evidence}/`,file=(kind:string)=>({bucket:'renders',key:root+kind+'.jpg',bytes:jpeg.length,mime:'image/jpeg',width:2,height:2,sha256:sha});
 const e={id:evidence,org_id:org,actor_id:actor,input:file('input'),output:file('candidate'),input_etag:'"retained-etag"',output_etag:'"retained-etag"'};
 const images=['source','candidate'].flatMap(role=>['whole','tl','tr','bl','br'].map(region=>({...file('unused'),role,region,key:root+`checks/${check}/${role}-${region}.jpg`,crop:{left:0,top:0,width:2,height:2}})));
-async function invoke(path:string,body:any={},options:{auth?:string|null;stale?:boolean;changed?:boolean;rawChanged?:boolean;state?:string;sourceBytes?:number;queueUnavailable?:boolean;method?:string}={}){
- const scoped=structuredClone(e);if(options.sourceBytes!==undefined)scoped.input.bytes=options.sourceBytes;
+async function invoke(path:string,body:any={},options:{auth?:string|null;stale?:boolean;changed?:boolean;rawChanged?:boolean;state?:string;sourceBytes?:number;outputBytes?:number;queueUnavailable?:boolean;method?:string}={}){
+ const scoped=structuredClone(e);if(options.sourceBytes!==undefined)scoped.input.bytes=options.sourceBytes;if(options.outputBytes!==undefined)scoped.output.bytes=options.outputBytes;
  const old=fetch,calls:string[]=[],rpcs:string[]=[],puts:any[]=[];globalThis.fetch=async(raw,init)=>{
   const req=new Request(raw,init),url=new URL(req.url);calls.push(req.method+' '+url.hostname+url.pathname);const response=(value:unknown,status=200)=>Response.json(value,{status});
   if(url.hostname==='qc-db.fixture.invalid'){
@@ -34,7 +34,7 @@ async function invoke(path:string,body:any={},options:{auth?:string|null;stale?:
    }
   }
   if(url.hostname==='a'.repeat(32)+'.r2.cloudflarestorage.com'){
-   assertEquals(req.method==='HEAD'||req.method==='GET',true);const headers={'content-type':'image/jpeg','content-length':String(url.pathname.endsWith('/input.jpg')?scoped.input.bytes:jpeg.length),etag:'"retained-etag"','x-amz-meta-sha256':options.changed?'f'.repeat(64):sha};
+   assertEquals(req.method==='HEAD'||req.method==='GET',true);const headers={'content-type':'image/jpeg','content-length':String(url.pathname.endsWith('/input.jpg')?scoped.input.bytes:url.pathname.endsWith('/candidate.jpg')?scoped.output.bytes:jpeg.length),etag:'"retained-etag"','x-amz-meta-sha256':options.changed?'f'.repeat(64):sha};
    return new Response(req.method==='HEAD'?null:options.rawChanged?new Uint8Array([...jpeg.slice(0,-1),0]):jpeg,{headers});
   }
   puts.push(req);throw Error('External transport forbidden '+url.hostname);
@@ -57,4 +57,10 @@ Deno.test('CPU bridge permits exact9MB prepared receipt and refuses the next byt
 Deno.test('ready judge queue remains service-only and never hides a failed metadata read',async()=>{
  for(const auth of[null,'public-fixture','sb_secret_wrong']){const r=await invoke('queue',null,{method:'GET',auth});assertEquals(r.status,403);assertEquals(r.calls,[]);}
  const failed=await invoke('queue',null,{method:'GET',queueUnavailable:true});assertEquals(failed.status,503);assertEquals(failed.rpcs,[]);assert(failed.calls.every(c=>c.startsWith('GET')&&c.includes('qc-db.fixture.invalid')));assertEquals(failed.body.checks,undefined);assertEquals(failed.body.judges,undefined);
+});
+
+Deno.test('CPU bridge admits exact25MiB retained candidate without changing9MB source or exact hash authority',async()=>{
+ const at=await invoke('tick',{check_id:check,worker_id:'slot-0'},{outputBytes:25*1024*1024});assertEquals(at.status,200);assertEquals(at.body.candidate.bytes,25*1024*1024);assertEquals(at.body.candidate.sha256,sha);
+ const above=await invoke('tick',{check_id:check,worker_id:'slot-0'},{outputBytes:25*1024*1024+1});assertEquals(above.status,409);assertEquals(above.body.candidate,undefined);assert(!above.calls.some(c=>c.endsWith('/candidate.jpg')));
+ const changed=await invoke('tick',{check_id:check,worker_id:'slot-0'},{outputBytes:25*1024*1024,changed:true});assertEquals(changed.status,409);assertEquals(changed.body.candidate,undefined);
 });
