@@ -726,9 +726,13 @@ final class BetaPolishUITests: XCTestCase {
         app.navigationBars["AI Photo Studio"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10), app.debugDescription)
         openDetail("detail.photos", title: "Photos")
-        let library = app.segmentedControls["photos.savedVersions"]
+        let library = app.scrollViews["photos.savedVersions"]
         scrollTo(library)
         XCTAssertTrue(library.exists, app.debugDescription)
+        for label in ["Original", "Latest", "Decluttered", "Staged"] {
+            XCTAssertTrue(library.buttons[label].exists, "The full saved-version name stays available")
+        }
+        XCTAssertTrue(library.buttons["Original"].isSelected, "Photos still starts with retained originals")
         library.buttons["Decluttered"].tap()
         let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
         XCTAssertEqual(cards.count, 3, "There is one saved clean photo per family after staging")
@@ -742,7 +746,9 @@ final class BetaPolishUITests: XCTestCase {
         app.buttons["Close"].tap()
         XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
 
-        scrollTo(library); library.buttons["Staged"].tap()
+        scrollTo(library)
+        if !library.buttons["Staged"].isHittable { library.swipeLeft() }
+        library.buttons["Staged"].tap()
         XCTAssertEqual(cards.count, 3, "The staged library keeps one newest preview per family")
         XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0,
                        "Unselected staged previews must not acquire a listing badge")

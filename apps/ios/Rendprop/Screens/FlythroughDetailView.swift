@@ -4968,9 +4968,7 @@ struct PhotoStudioView: View {
             }
 
             if !photos.isEmpty {
-                Picker("Saved photo versions", selection: $libraryKind) {
-                    ForEach(PhotoVersionHistory.LibraryKind.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented).accessibilityIdentifier("photos.savedVersions")
+                PhotoSavedVersionTabs(selection: $libraryKind)
                 Text(libraryKind == .original
                      ? "Your originals stay unchanged. Start an AI edit here, then review the saved result."
                      : libraryKind == .latest ? "The latest saved version of each photo. Originals and earlier edits stay available."
@@ -6883,6 +6881,49 @@ enum PhotoEnhancer {
         case .leftMirrored: return .leftMirrored
         case .rightMirrored: return .rightMirrored
         @unknown default: return .up
+        }
+    }
+}
+
+/// Intrinsic-width glass tabs keep every saved-version name readable. Compact
+/// screens and larger text scroll instead of shrinking labels or clipping them.
+private struct PhotoSavedVersionTabs: View {
+    @Binding var selection: PhotoVersionHistory.LibraryKind
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(PhotoVersionHistory.LibraryKind.allCases) { kind in
+                        Button { selection = kind } label: {
+                            Text(kind.rawValue)
+                                .font(.subheadline.weight(.semibold))
+                                .fixedSize(horizontal: true, vertical: false)
+                                .foregroundStyle(selection == kind ? Theme.accent : Theme.ink)
+                                .padding(.horizontal, 12).padding(.vertical, 10)
+                                .frame(minHeight: 44)
+                                .background(selection == kind ? Theme.accentSoft : Color.clear, in: Capsule())
+                                .background(.thinMaterial, in: Capsule())
+                                .overlay(Capsule().strokeBorder(selection == kind ? Theme.accent.opacity(0.3) : Theme.border))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(kind.rawValue)
+                        .accessibilityAddTraits(selection == kind ? .isSelected : [])
+                        .accessibilityIdentifier("photos.savedVersion.\(kind.rawValue.lowercased())")
+                        .id(kind.id)
+                    }
+                }
+                .padding(2)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Saved photo versions")
+            .accessibilityIdentifier("photos.savedVersions")
+            .onChange(of: selection) { kind in
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(kind.id, anchor: .center)
+                }
+            }
         }
     }
 }
