@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parents[3];SQL=ROOT/'services/supabase'
 p=argparse.ArgumentParser();p.add_argument('--evidence-dir',type=Path);args=p.parse_args()
 OUT=args.evidence_dir or Path(tempfile.mkdtemp(prefix='missing-result-proof-'));OUT.mkdir(parents=True,exist_ok=True)
 assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
-DATA=Path(tempfile.mkdtemp(prefix='missing-result-owned-pg-'));SOCK=Path(tempfile.mkdtemp(prefix='missing-result-socket-',dir='/tmp'))
+DATA=Path(tempfile.mkdtemp(prefix='missing-result-owned-pg-',dir='/Volumes/Rendprop Files/Builds/Active' if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='missing-result-socket-',dir='/tmp'))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)
 MIG=SQL/'migrations/20261015172920_property_video_missing_paid_result_replacement.sql';FIX=SQL/'tests/property_video_missing_result.sql'
@@ -35,9 +35,21 @@ try:
  conn=['-h',SOCK,'-p','55586','-U','postgres'];run('createdb',[tool('createdb'),*conn,'missing_result_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','missing_result_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGRATIONS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in MIGRATIONS:
+  run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+  if m==MIG:
+   run('replay-at-own-boundary',[*PSQL,'-q','-1','-f',MIG])
+   out=run('own-boundary-fixture',[*PSQL,'-Atq','-f',FIX]);receipt['ownBoundary']=next(json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x)
+
  for stage in ['fresh','replay']:
-  if stage=='replay':run('replay-own-migration',[*PSQL,'-q','-1','-f',MIG])
+  if stage=='replay':
+   # A later guarded resume wrapper must not be overwritten by replaying its
+   # ancestor. Prove historical idempotency above, then current-head refusal.
+   catalog="select md5(string_agg(oid::text||':'||prosrc||':'||coalesce(proacl::text,''),E'\\n'order by oid))from pg_proc where pronamespace='public'::regnamespace"
+   before=run('catalog-before-ancestor-replay',[*PSQL,'-Atq','-c',catalog])
+   run('refuse-ancestor-replay',[*PSQL,'-q','-1','-f',MIG],refuses='Review changed paid-result replacement authority')
+   after=run('catalog-after-ancestor-replay',[*PSQL,'-Atq','-c',catalog]);assert before==after,'Ancestor refusal must preserve all functions and grants';receipt['ancestorReplay']={'refused':True,'catalogUnchanged':True}
+
   out=run(stage+'-actual-missing-result',[*PSQL,'-Atq','-f',FIX]);rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x];assert len(rows)==1 and rows[0]['passed'];receipt[stage]=rows[0]
  baseline=run('existing-submit-recovery',[*PSQL,'-Atq','-f',SQL/'tests/property_video_submit_recovery.sql']);receipt['existingSubmitRecoveryRegression']=next(json.loads(x)for x in baseline.splitlines()if x.startswith('{')and'assertions'in x)
  for label,signature,anchor,replacement,oracle in [
@@ -45,6 +57,7 @@ try:
   ('dual-result-status','public.property_video_missing_result_resume_available(uuid)',"or s.missing_result_evidence->>'result_status'is distinct from'404'",'', 'temporary result failure cannot recover'),
   ('source-authority','public.property_video_delivery_receipt(uuid,uuid)',"if public.property_photo_reference(j.actor_id,j.listing_id,s.asset_id,s.photo_provenance_id)is distinct from s.source then return null;end if;",'', 'withdrawn original source cannot recover'),
   ('missing-budget','public.property_video_job_resume(uuid,uuid,numeric)',"perform public.property_video_recipe_capacity(p_actor,j.listing_id,n,p_quote);",'', 'normal funding capacity still enforced')]:
+  if label=='missing-budget':signature=run('retained-resume-delegate',[*PSQL,'-Atq','-c',"select case when to_regprocedure('public.property_video_job_resume_before_compose_20261015(uuid,uuid,numeric)')is not null then'public.property_video_job_resume_before_compose_20261015(uuid,uuid,numeric)'else'public.property_video_job_resume(uuid,uuid,numeric)'end"]).strip()
   original=run('read-'+label,[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%signature]);assert original.count(anchor)==1,(label,'exact production anchor')
   mutated=original.replace(anchor,replacement,1)
   if label=='dual-result-status':mutated=mutated.replace("and s.missing_result_evidence->>'result_status'='404'",'')
