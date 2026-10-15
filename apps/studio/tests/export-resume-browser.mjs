@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { assertBaselineStall } from "./export-baseline-refusal.mjs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, extname } from "node:path";
@@ -16,7 +17,7 @@ const variants=onlyFixed?["fixed"]:["baseline", "sequential", "clock-baseline", 
 // 400 ms export tolerance, even when a cold encoder compresses its startup.
 // The fixed exporter never registers this listener, so it receives no delay.
 const resumeNotificationDelayMs = 1000;
-const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", ...["export", "recording-clock", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
+const sourceHashes = Object.fromEntries(await Promise.all(["tests/export-resume-browser.mjs", "tests/export-baseline-refusal.mjs", ...["export", "recording-clock", "media", "model", "music", "finishing", "overlay-renderer"].map(name => `src/editor/${name}.ts`)].map(async path => [path, createHash("sha256").update(await readFile(join(root, path))).digest("hex")])));
 const receipt = { sourceHashes, variants, cadenceFault: "Hold only nextExportFrame animation callbacks until cancellation in both cadence-baseline and late-frames; native timers and media playback are unchanged", proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Resume notifications are delayed ${resumeNotificationDelayMs} ms, and export decoder readiness is delayed 600 ms. Independent negative controls restore the former resume await and per-boundary loading; fixed build uses the production exporter. Actual frame PTS, audio timing and preparation cleanup are verified. No external requests or provider use.`, checks: [], attempts: [], runs: [], preparationFailures: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
@@ -58,6 +59,11 @@ fixture.requestExportFrame=callback=>{
 };
 const NativeRecorder=MediaRecorder;
 function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...extra});}
+fixture.originalAudioLoss=(audio,audioStart,media,mediaStart,rate,info)=>{
+  const loss=audio-audioStart-Math.max(0,media-mediaStart)/rate;
+  log("original.audio.loss",{...info,audio,audioStart,media,mediaStart,rate,loss});
+  return loss;
+};
 const NativeAudioContext=AudioContext;
 window.AudioContext=class extends NativeAudioContext {constructor(...args){super(...args);fixture.audio=this;}};
 // The exporter uses detached video elements, so observe them directly without
@@ -94,13 +100,13 @@ HTMLMediaElement.prototype.play=function(...args){observeVideo(this);fixture.pla
 document.querySelector("#sources").onchange=async event=>{fixture.ready=false;try{sources=[];for(const file of event.target.files)sources.push(await inspectFile(file,new AbortController().signal));fixture.ready=true;}catch(error){fixture.error=error.message;}};
 document.querySelector("#voice").onchange=event=>{voice=event.target.files[0];};
 document.querySelector("#run").onclick=async()=>{
-  fixture.error=null;fixture.errorCause=null;fixture.result=null;fixture.trace=[];fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
+  fixture.error=null;fixture.errorName=null;fixture.errorCause=null;fixture.result=null;fixture.trace=[];fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
   if(url)URL.revokeObjectURL(url);
   try{
     const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?4:.5,speed:index===1?2:1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
     const result=await exportLocalVideo({draft,media:new Map(sources.map((local,index)=>["clip-"+index,local])),narrationBlob:narrated?voice:undefined,format:exportFormats().find(format=>format.extension==="mp4"),signal:exportController.signal,currentDraft:()=>({...draft,revision:fixture.revision}),onProgress:()=>{}});
     url=URL.createObjectURL(result.blob);const download=document.querySelector("#download");download.href=url;download.hidden=false;fixture.result={duration:result.duration,bytes:result.blob.size};
-  }catch(error){fixture.error=error.message;fixture.errorCause=error.cause;}finally{fixture.exporting=false;}
+  }catch(error){fixture.error=error.message;fixture.errorName=error.name;fixture.errorCause=error.cause;}finally{fixture.exporting=false;}
 };
 `);
   const oldAwaitPlugin = { name: "negative-control-original-resume-await", enforce: "pre", transform(code, id) {
@@ -135,6 +141,12 @@ document.querySelector("#run").onclick=async()=>{
     assert(code.includes(seam));
     const schedule = "const frame = requestAnimationFrame(done);";
     assert(code.includes(schedule), "Cadence fault must intercept only the actual export-frame animation branch");
+    const audioLoss = "audio.currentTime - mediaClockStart - Math.max(0, video.currentTime - mediaTimeStart) / (clip.speed ?? 1)";
+    const refusal = "            refuseStall();";
+    assert.equal(code.split(audioLoss).length - 1, 1, "Observe the exact existing original-audio loss calculation once");
+    assert.equal(code.split(refusal).length - 1, 1, "Identify only the original-audio refusal call site");
+    code = code.replace(audioLoss, "(window as any).fixture.originalAudioLoss(audio.currentTime, mediaClockStart, video.currentTime, mediaTimeStart, (clip.speed ?? 1), {index, elapsed, duration, ended:video.ended, limit:MAX_ORIGINAL_AUDIO_LOSS_SECONDS})")
+      .replace(refusal, '            (window as any).fixture.trace.push({event:"original.audio.refusal",kind:"original_audio_stall",at:performance.now()});\n' + refusal);
     return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index}); if(index===1 && (window as any).fixture.interruptAudio) setTimeout(()=>{const sound=(window as any).fixture.audio; sound.suspend().then(()=>setTimeout(()=>{if(sound.state!=="closed")sound.resume();},180));},250);')
       .replace('recordingClock.read((now - start)', '(window as any).fixture.trace.push({event:"clip.clock.read",at:performance.now(),index,wall:(now-start)/1000,timeline:elapsed,audio:audio?.currentTime,media:video?.currentTime}); recordingClock.read((now - start)')
       .replace(schedule, "const frame = (window as any).fixture.requestExportFrame(done);");
@@ -218,16 +230,28 @@ document.querySelector("#run").onclick=async()=>{
     await page.locator("#voice").setInputFiles(narration); await expect.poll(() => page.evaluate(() => window.fixture.ready)).toBe(true);
     for (const narrated of [true, false]) {
       await page.evaluate(({ narrated, variant }) => { window.fixture.configure(narrated); window.fixture.delayPhotoFrames = variant === "clock-baseline"; window.fixture.holdExportFrames = ["cadence-baseline", "late-frames"].includes(variant); window.fixture.decodeDelays = variant === "baseline" ? [] : [0, 600, 600]; }, { narrated, variant }); await page.locator("#run").click();
+      let attempt;
       try {
-        await expect.poll(() => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending")), { timeout: 20000 }).toBe("done");
+        const outcome = () => page.evaluate(() => window.fixture.error ?? (window.fixture.result ? "done" : "pending"));
+        if (variant === "baseline") await expect.poll(outcome, { timeout: 20000 }).not.toBe("pending");
+        else await expect.poll(outcome, { timeout: 20000 }).toBe("done");
       } finally {
         // Retain failures before rethrowing the unchanged completion assertion.
         // In particular, a broken control must never erase the event that caused
-        // a genuine production stall refusal. No variant accepts that refusal.
-        const attempt = await page.evaluate(() => ({ error: window.fixture.error, errorCause: window.fixture.errorCause, result: window.fixture.result,
+        // a genuine production stall refusal. Only the restored old-await
+        // baseline may classify a fully evidenced refusal as a detected fault;
+        // every current-exporter variant must finish and pass its media oracles.
+        attempt = await page.evaluate(() => ({ error: window.fixture.error, errorName: window.fixture.errorName, errorCause: window.fixture.errorCause, result: window.fixture.result,
           trace: window.fixture.trace, downloadHidden: document.querySelector("#download").hidden,
           tracks: window.fixture.tracks.map(track => track.readyState) }));
-        receipt.attempts.push({ variant, narrated, ...attempt }); await persist();
+        attempt = { ...attempt, variant, narrated };
+        receipt.attempts.push(attempt); await persist();
+      }
+      if (variant === "baseline" && attempt.error) {
+        assertBaselineStall(attempt, resumeNotificationDelayMs);
+        receipt.checks.push(`Old resume-await negative control (${narrated ? "narrated" : "original"}) is detected by an evidenced original-audio stall refusal, with no download and all tracks stopped`);
+        await persist();
+        continue;
       }
       const download = page.waitForEvent("download"); await page.locator("#download").click(); const output = join(artifacts, `${variant}-${narrated ? "narrated" : "original"}.mp4`); await (await download).saveAs(output);
       const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", output], { encoding: "utf8" }));
@@ -378,7 +402,7 @@ document.querySelector("#run").onclick=async()=>{
   if(!onlyFixed){
   receipt.checks.push("Held export animation callbacks retain the same MP4 timing, held-frame transitions and opening speech; the animation-only clock misses whip timing and the deadline-only control misses progressing dissolve frames");
   receipt.checks.push("Late decoder readiness, cancellation during initial preparation, stale revision during lookahead and decoder failure reject without a blob, source handles or live tracks");
-  receipt.checks.push("Negative control reproduces >400 ms accumulated timing error by delaying only two resume notifications; source playback and decoding are unchanged");
+  receipt.checks.push("Old resume-await negative control is detected by the unchanged bad-MP4 timing/audio oracles or by its exact original-audio refusal with two distinct >2/30s loss readings, no download and stopped tracks; fixed and late-frames still require all MP4/AAC quality oracles");
   receipt.checks.push("Sequential-decoder negative control violates readiness before handoff; fixed export prepares the second source before start and third during the second segment despite identical 600 ms decoder delays");
   }
   receipt.checks.push("Fixed exports keep the existing 400 ms duration tolerance without cutting source spans or changing playback speed");
