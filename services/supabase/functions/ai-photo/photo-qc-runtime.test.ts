@@ -4,7 +4,7 @@ import {inputHash,resetServingModeCache} from "../_shared/funded-serving.ts";
 import {decodePhotoOutput} from "./input-policy.ts";
 import {PHOTO_QC_POLICY,unavailablePhotoQuality,type PhotoQualityVerdict} from "./photo-qc-verdict.ts";
 import {beginPhotoQuality,retainPhotoCandidate,statusPhotoQuality,photoQualityResponse,photoBytesHash,failPhotoQuality,throwPhotoQualityState,type PhotoQualityEnvelope,type PhotoEvidenceIO} from "./photo-qc-store.ts";
-import {continuePhotoQuality,photoJudgeQuote,photoJudgeRubric,PHOTO_QC_MAX_OUTPUT_TOKENS,PHOTO_QC_JUDGE_CONTRACT,photoDerivatives,type PhotoJudgeDependencies} from "./photo-qc-runner.ts";
+import {continuePhotoQuality,photoJudgeQuote,photoJudgeRubric,photoJudgeTimeout,PHOTO_QC_MAX_OUTPUT_TOKENS,PHOTO_QC_JUDGE_CONTRACT,photoDerivatives,type PhotoJudgeDependencies} from "./photo-qc-runner.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {photoResultKeys} from "./photo-result.ts";
 const actor="ea100606-0000-4000-8000-000000000001",org="ea100606-0000-4000-8000-000000000002",listing="ea100606-0000-4000-8000-000000000003",evidence="ea100606-0000-4000-8000-000000000004",check="ea100606-0000-4000-8000-000000000005",lease="ea100606-0000-4000-8000-000000000006",reservation="ea100606-0000-4000-8000-000000000007";
@@ -15,7 +15,7 @@ const step={route_id:"existing-approved-sonnet",task:"judge.qc_drift",provider:"
 async function fixture(){
  const input=jpeg(),output=jpeg(3584,4780),inputSHA=await photoBytesHash(input),outputSHA=await photoBytesHash(output);
  const identity={actorId:actor,orgId:org,requestKey:"photo-qc-runtime-fixture",listingId:listing};
- const state={row:null as PhotoQualityEnvelope|null,enabled:true,current:true,library:org,readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,stopReason:"end_turn" as import("../_shared/providers/anthropic.ts").AnthropicStopReason,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
+ const state={row:null as PhotoQualityEnvelope|null,enabled:true,current:true,library:org,readWithdraw:false,wrongPutHash:false,corruptGet:false,headChanged:false,beginArgs:null as any,rpcs:[] as string[],puts:0,reads:0,claims:0,binds:0,calls:0,holds:0,ledger:[] as any[],attempt:null as any,operation:false,verdict:JSON.stringify(pass),lostReply:false,missingLedger:false,calledTimeout:0,stopReason:"end_turn" as import("../_shared/providers/anthropic.ts").AnthropicStopReason,objects:new Map<string,{bytes:Uint8Array<ArrayBuffer>;mime:string;sha256:string;etag:string}>()};
  const view=()=>{const row=structuredClone(state.row!);row.can_continue=!!row.evidence.output_etag&&["pending","derivative_ready"].includes(row.check.state)&&row.check.judge_started_at===null&&(!state.attempt||state.attempt.state==="rejected");return row;};
  const unavailable=()=>({data:null,error:{message:"RP404: Current selected library is unavailable"}});
  const admin:any={from:(table:string)=>{const query:any={select:()=>query,eq:()=>query,maybeSingle:async()=>{
@@ -82,7 +82,7 @@ async function fixture(){
   for(const region of ["whole","tl","tr","bl","br"] as const)for(const role of ["source","candidate"] as const){const data=jpeg(region==="whole"?1536:768,region==="whole"?2048:1024);files.push({bucket:"renders" as const,key:`ai-router/${org}/photo-evidence/${actor}/${evidence}/checks/${check}/${role}-${region}.jpg`,role,region,bytes:data.length,sha256:await photoBytesHash(data),mime:"image/jpeg",width:region==="whole"?1536:768,height:region==="whole"?2048:1024,etag:'"derivative"'});}
   state.row!.check.derivatives=files;state.row!.check.derivative_manifest_sha256="a".repeat(64);state.row!.check.state="derivative_ready";return view();
  };
- const deps:PhotoJudgeDependencies={plan:async()=>"free",routes:async()=>[step],read:async file=>jpeg(file.width,file.height),call:async(_step,_rubric,content,onUsage,options)=>{assertEquals(state.binds,1);assertEquals(state.attempt.state,"reserved");assertEquals(state.row!.check.state,"checking");assertEquals(content.length,20);state.calls++;if(state.lostReply)throw Error("Synthetic lost supplier reply");onUsage({inputTokens:18000,outputTokens:state.stopReason==="max_tokens"?PHOTO_QC_MAX_OUTPUT_TOKENS:160});options?.onStopReason(state.stopReason);return state.verdict;},report:async()=>{},ledger:async(_admin,args)=>{if(!state.missingLedger)state.ledger.push(args);return{recorded:!state.missingLedger,total_cents:args.unitCents};}};
+ const deps:PhotoJudgeDependencies={plan:async()=>"free",routes:async()=>[step],read:async file=>jpeg(file.width,file.height),call:async(_step,_rubric,content,onUsage,options)=>{assertEquals(state.binds,1);assertEquals(state.attempt.state,"reserved");assertEquals(state.row!.check.state,"checking");assertEquals(content.length,20);assert(options!.timeoutMs>0&&options!.timeoutMs<=90_000);state.calledTimeout=options!.timeoutMs;state.calls++;if(state.lostReply)throw Error("Synthetic lost supplier reply");onUsage({inputTokens:18000,outputTokens:state.stopReason==="max_tokens"?PHOTO_QC_MAX_OUTPUT_TOKENS:160});options?.onStopReason(state.stopReason);return state.verdict;},report:async()=>{},ledger:async(_admin,args)=>{if(!state.missingLedger)state.ledger.push(args);return{recorded:!state.missingLedger,total_cents:args.unitCents};}};
  const run=(row:PhotoQualityEnvelope)=>continuePhotoQuality(admin,row,{actor,selected:org,request:new Request("https://example.invalid/ai-photo",{method:"POST",headers:{"X-Org":org}})},deps);
  return{state,admin,io,identity,input,output,inputSHA,outputSHA,view,begin,retain,prepare,deps,run};
 }
@@ -145,6 +145,15 @@ Deno.test("photo verdict contract quotes the complete4096 output budget and fits
   assertEquals(f.state.attempt.p_hold_cents,cost.unitCents);assertEquals(f.state.calls,1);
   await f.run(ready);assertEquals(f.state.calls,1,"A confirmed terminal result is never rerolled");
  }finally{globalThis.fetch=before;resetServingModeCache();}
+});
+Deno.test("one photo judge may use90seconds but leaves10seconds and obeys the actual remaining endpoint budget",async()=>{
+ assertEquals(photoJudgeTimeout(120000,0),90000);assertEquals(photoJudgeTimeout(45000,0),35000);
+ assertEquals(photoJudgeTimeout(10000,0),0);assertEquals(photoJudgeTimeout(9000,0),0);
+ const f=await fixture(),ready=await f.prepare(),before=globalThis.fetch;resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in QC fixture");})as any;
+ try{await f.run(ready);assertEquals(f.state.calls,1);assert(f.state.calledTimeout>89000&&f.state.calledTimeout<=90000);}finally{globalThis.fetch=before;resetServingModeCache();}
+ const short=await fixture(),pending=await short.prepare();
+ const result=await continuePhotoQuality(short.admin,pending,{actor,selected:org,request:new Request("https://example.invalid/ai-photo"),deadline:Date.now()+9000},short.deps);
+ assertEquals(result.check.state,"derivative_ready");assertEquals(short.state.holds,0);assertEquals(short.state.calls,0);
 });
 Deno.test("truncated or non-final photo verdict stays HOLD even when its returned text is valid pass JSON",async()=>{
  for(const reason of ["max_tokens","refusal","pause_turn","unknown"]as const)for(const truncated of reason==="max_tokens"?[false,true]:[false]){

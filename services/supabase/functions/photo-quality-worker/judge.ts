@@ -10,5 +10,5 @@ export async function judgeSavedPhoto(admin:PhotoAdmin,checkId:string,request:Re
  const {data:e,error}=await admin.from("photo_edit_evidence").select("actor_id,library_org_id").eq("id",check.evidence_id).maybeSingle();
  assert(!error&&e&&photoUUID(e.actor_id)&&photoUUID(e.library_org_id),404,"This saved photo evidence is unavailable.","not_found");
  const row=await statusPhotoQuality(admin,e.actor_id,checkId,e.library_org_id);
- return await run(admin,row,{actor:e.actor_id,selected:e.library_org_id,request,deadline:Date.now()+45_000});
+ return await run(admin,row,{actor:e.actor_id,selected:e.library_org_id,request,deadline:Date.now()+120_000});
 }

@@ -14,7 +14,7 @@ export interface PhotoWaitDependencies {
 }
 const actual:PhotoWaitDependencies={now:Date.now,start:startPhotoComparison,judge:async(admin,row,args)=>{
  await photoQualityScope(admin,row,args.actor,args.selected);args.request.signal.throwIfAborted();
- const deadline=Math.min(args.deadline??Date.now()+45_000,Date.now()+45_000);
+ const deadline=Math.min(args.deadline??Date.now()+PHOTO_CHECK_ENDPOINT_BUDGET_MS,Date.now()+PHOTO_CHECK_ENDPOINT_BUDGET_MS);
  const signal=AbortSignal.any([args.request.signal,AbortSignal.timeout(Math.max(1,deadline-Date.now()))]);
  await invokeSavedPhotoJudge(row.check.id,signal,deadline-Date.now());
  const fresh=photoEnvelope(await photoQualityRpc(admin,"photo_quality_status",{p_actor:args.actor,p_check:row.check.id}),args.actor);

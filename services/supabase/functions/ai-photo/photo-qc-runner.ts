@@ -21,6 +21,12 @@ export const PHOTO_QC_MAX_WIRE_BYTES=9_000_000; // below the provider's32MB stan
 // ceiling before dispatch; no follow-up paid call completes truncated JSON.
 export const PHOTO_QC_MAX_OUTPUT_TOKENS=4096;
 export const PHOTO_QC_JUDGE_CONTRACT="photo-qc-json4096-v2";
+export const PHOTO_QC_MAX_PROVIDER_MS=90_000;
+export const PHOTO_QC_FINISH_HEADROOM_MS=10_000;
+export function photoJudgeTimeout(deadline:number,now=Date.now()):number {
+ return Math.max(0,Math.min(PHOTO_QC_MAX_PROVIDER_MS,Math.floor(deadline-now-PHOTO_QC_FINISH_HEADROOM_MS)));
+}
+
 const MAX_OUTPUT_TOKENS=PHOTO_QC_MAX_OUTPUT_TOKENS;
 export function photoJudgeRubric(context:{edit:string;style?:string;instruction?:string}):string {
  return photoQualityRubric(context)+`
@@ -108,7 +114,7 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
   // Count its exact UTF8 bytes before reservation/dispatch; no image truncation.
   const wire={model:step.model,max_tokens:anthropicMaxTokens(paramsOf(step),MAX_OUTPUT_TOKENS),messages:[{role:"user",content}],system:rubric,output_config:{effort:paramsOf(step)?.effort??"low"}};
   assert(new TextEncoder().encode(JSON.stringify(wire)).byteLength<=PHOTO_QC_MAX_WIRE_BYTES,503,"The complete photo comparison request exceeds its memory bound.");
-  signal.throwIfAborted();const claim=await photoQualityRpc(admin,"photo_quality_claim",{p_check:row.check.id},signal);
+  signal.throwIfAborted();assert(photoJudgeTimeout(deadline)>0,409,"The saved check can continue later without another generation.");const claim=await photoQualityRpc(admin,"photo_quality_claim",{p_check:row.check.id},signal);
   if(claim?.action!=="judge")return await statusPhotoQuality(admin,args.actor,row.check.id,args.selected);
   claimed=photoEnvelope(claim,args.actor);await photoQualityScope(admin,claimed,args.actor,args.selected);
   assert(claimed.check.id===row.check.id&&claimed.evidence.id===e.id&&claimed.evidence.org_id===e.org_id&&claimed.evidence.input.sha256===e.input.sha256&&claimed.evidence.output?.sha256===e.output?.sha256&&claimed.check.state==="derivative_ready"&&claimed.check.lease_token&&claimed.check.judge_started_at===null&&claimed.check.derivative_manifest_sha256===row.check.derivative_manifest_sha256,409,"The photo comparison lease changed.","conflict");
@@ -126,8 +132,8 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
     signal.throwIfAborted();const bound=await photoQualityRpc(admin,"photo_quality_check_bind",{p_actor:args.actor,p_check:row.check.id,p_lease:claimed!.check.lease_token,p_reservation:reservation},signal);
     const verified=photoEnvelope(bound,args.actor);assert(verified.check.state==="checking"&&verified.check.judge_started_at,503,"The photo review dispatch fence was not confirmed.");
    }catch{throw new ProviderError(step.provider,"validation","The photo review could not be bound before dispatch.",0,true);}
-   signal.throwIfAborted();dispatched=true;
-   return await deps.call(step,rubric,content,value=>{usage=value;},{signal,timeoutMs:Math.min(30_000,Math.max(1,deadline-Date.now())),onStopReason:value=>{completion.reason=value;}});
+   signal.throwIfAborted();const timeoutMs=photoJudgeTimeout(deadline);assert(timeoutMs>0,409,"The saved review no longer has enough time to dispatch safely.");dispatched=true;
+   return await deps.call(step,rubric,content,value=>{usage=value;},{signal,timeoutMs,onStopReason:value=>{completion.reason=value;}});
   });
   await deps.report(step,true,Date.now()-started).catch(()=>{});
   // This is the documented complete bound, not a fabricated provider invoice.

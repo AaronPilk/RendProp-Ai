@@ -1,10 +1,24 @@
 import {assertEquals} from "https://deno.land/std@0.224.0/assert/mod.ts";
-import {anthropicMessages,anthropicStopReason,ANTHROPIC_DEFAULT_MAX_TOKENS,type AnthropicStopReason} from "./anthropic.ts";
+import {anthropicMessages,anthropicStopReason,anthropicRequestTimeout,ANTHROPIC_DEFAULT_MAX_TOKENS,type AnthropicStopReason} from "./anthropic.ts";
 
 // Closed actual adapter transport only: no provider request/key is used.
 Deno.test("Anthropic completion telemetry is a closed enum with no provider body leakage",()=>{
  for(const reason of ["end_turn","max_tokens","stop_sequence","tool_use","pause_turn","refusal","model_context_window_exceeded"]as const)assertEquals(anthropicStopReason(reason),reason);
  for(const value of [null,undefined,{},42,"https://private.invalid/capability","unexpected-private-text"])assertEquals(anthropicStopReason(value),"unknown");
+});
+Deno.test("Anthropic explicit90second server request uses its real timeout while absent still uses30seconds",async()=>{
+ assertEquals(anthropicRequestTimeout(),30000);assertEquals(anthropicRequestTimeout(90000),90000);assertEquals(anthropicRequestTimeout(300000),90000);assertEquals(anthropicRequestTimeout(15000),15000);
+ const previousFetch=globalThis.fetch,previousKey=Deno.env.get("ANTHROPIC_API_KEY"),previousTimeout=AbortSignal.timeout;
+ Deno.env.set("ANTHROPIC_API_KEY","closed-fixture-no-provider-key");
+ try{
+  for(const timeoutMs of[undefined,90000]){
+   const timers:number[]=[];
+   AbortSignal.timeout=(delay:number)=>{timers.push(delay);return previousTimeout(delay);};
+   globalThis.fetch=async()=>Response.json({content:[{type:"text",text:"ok"}],stop_reason:"end_turn"});
+   assertEquals(await anthropicMessages({model:"claude-sonnet-5",content:[{type:"text",text:"synthetic"}],timeoutMs}),"ok");
+   assertEquals(timers,[timeoutMs??30000]);
+  }
+ }finally{globalThis.fetch=previousFetch;AbortSignal.timeout=previousTimeout;if(previousKey===undefined)Deno.env.delete("ANTHROPIC_API_KEY");else Deno.env.set("ANTHROPIC_API_KEY",previousKey);}
 });
 Deno.test("photo caller may reserve4096 while shared400 default remains unchanged; real stop reason and usage are retained",async()=>{
  const previousFetch=globalThis.fetch,previousKey=Deno.env.get("ANTHROPIC_API_KEY");Deno.env.set("ANTHROPIC_API_KEY","closed-fixture-no-provider-key");

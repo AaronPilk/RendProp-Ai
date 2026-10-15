@@ -81,6 +81,12 @@ export type AnthropicEffort = typeof ANTHROPIC_EFFORTS[number];
 /** The default answer ceiling this adapter shipped with, used whenever neither
  *  a params row nor the caller says otherwise. */
 export const ANTHROPIC_DEFAULT_MAX_TOKENS = 400;
+/** Explicit server callers may allow a larger bounded answer; absent stays30s. */
+export const ANTHROPIC_MAX_REQUEST_MS=90_000;
+export function anthropicRequestTimeout(value?:number):number {
+ return Math.min(ANTHROPIC_MAX_REQUEST_MS,Math.max(1,Number.isFinite(value)?Math.floor(value!):BUDGETS.submitMs));
+}
+
 /** Closed completion metadata; never retains raw provider text or stop sequences. */
 export const ANTHROPIC_STOP_REASONS = ["end_turn","max_tokens","stop_sequence","tool_use","pause_turn","refusal","model_context_window_exceeded"] as const;
 export type AnthropicStopReason = typeof ANTHROPIC_STOP_REASONS[number] | "unknown";
@@ -200,7 +206,7 @@ export async function anthropicMessages(args: MessagesArgs): Promise<string> {
     PROVIDER,
     `${ANTHROPIC_BASE}/v1/messages`,
     { method: "POST", headers: anthropicHeaders(), body: JSON.stringify(body) },
-    Math.min(BUDGETS.submitMs,Math.max(1,args.timeoutMs??BUDGETS.submitMs)),
+    anthropicRequestTimeout(args.timeoutMs),
     undefined,
     args.signal?{signal:args.signal}:undefined,
   );
