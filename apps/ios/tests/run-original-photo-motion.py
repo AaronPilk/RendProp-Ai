@@ -13,9 +13,10 @@ out.mkdir(parents=True, exist_ok=True)
 source = root / 'apps/ios/Rendprop/Render/ReelComposer.swift'
 detail = root / 'apps/ios/Rendprop/Screens/FlythroughDetailView.swift'
 fixture = root / 'apps/ios/tests/OriginalPhotoMotionTests.swift'
+framing_policy = root / 'apps/ios/Rendprop/Capture/VideoPhotoFramingReview.swift'
 wire_runner = root / 'apps/ios/tests/run-video-drift-wire.py'
 wire_fixture = root / 'apps/ios/tests/VideoDriftWireTests.swift'
-paths = [source, detail, fixture, wire_runner, wire_fixture, Path(__file__).resolve()]
+paths = [source, detail, fixture, framing_policy, wire_runner, wire_fixture, Path(__file__).resolve()]
 def hashes(): return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 def block(text, anchor):
     assert text.count(anchor) == 1, anchor
@@ -30,6 +31,11 @@ prep += 'struct EnhancedPhoto { let enhancedURL: URL }\nenum ReelQualityPrep {\n
 prep += block(view, '    nonisolated private static func preparedReelJPEG(').replace('private static', 'static', 1) + '\n'
 prep += block(view, '    nonisolated private static func reelDisplayAspect(').replace('private static', 'static', 1) + '\n}\n'
 body = 'import AVFoundation\nimport CoreImage\nimport Foundation\nimport UIKit\n' + block(text, 'enum OriginalPhotoMotion {') + '\n' + prep
+# Source preparation now validates its actual JPEG before returning. Include
+# that production ImageIO boundary instead of an unchecked fixture replacement.
+policy = framing_policy.read_text()
+body += '\nimport ImageIO\nenum VideoFramingReviewPolicy {\n' + block(policy, '    static func displayedSize(') + '\n}\n'
+body += block(policy, 'enum VideoPreparedSourcePolicy {') + '\n'
 variants = [
     ('actual', body, None),
     ('negative-wrong-photo', body.replace('context.draw(cg, in:', 'context.setFillColor(UIColor.magenta.cgColor); context.fill(CGRect(origin: .zero, size: renderSize)); if false { context.draw(cg, in:').replace('CVPixelBufferUnlockBaseAddress(buffer, [])\n                guard adaptor.append', '}\n                CVPixelBufferUnlockBaseAddress(buffer, [])\n                guard adaptor.append'), 'fallback uses one centered cover crop of the selected photo without a backdrop'),
@@ -60,7 +66,9 @@ def command(name, argv, timeout=120, check=True):
 try:
     sdk = command('sdk', ['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-path'], 30).stdout.strip()
     inventory = json.loads(command('simulators', ['xcrun', 'simctl', 'list', 'devices', 'available', '-j'], 30).stdout)['devices']
-    devices = [d for rt, rows in inventory.items() if 'iOS' in rt for d in rows if d['isAvailable'] and 'iPhone' in d['name']]
+    # An owned iPhone simulator may have a project-specific display name.
+    devices = [d for rt, rows in inventory.items() if 'iOS' in rt for d in rows
+        if d['isAvailable'] and ('iPhone' in d.get('deviceTypeIdentifier', '') or 'iPhone' in d['name'])]
     device = next(d for d in devices if d['udid'] == args.simulator) if args.simulator else next(d for d in devices if d['state'] == 'Booted')
     receipt['simulator'] = device
     architecture = 'arm64' if platform.machine() == 'arm64' else 'x86_64'

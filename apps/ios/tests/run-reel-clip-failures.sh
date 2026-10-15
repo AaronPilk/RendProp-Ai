@@ -24,7 +24,13 @@ failure=source[source.index('struct AIFailure: Identifiable'):source.index('/// 
 issue=source[source.index('struct ReelClipIssue: Identifiable'):source.index('struct ReelStudioView: View')]
 renderer=(root/'apps/ios/Rendprop/Render/ReelComposer.swift').read_text()
 photo_motion='enum OriginalPhotoMotion {\n'+block(renderer,'    static func isClip(')+'\n}\n'
-pending=source[source.index('struct PendingReelClips: Codable'):source.index('// MARK: - Reel Studio (')].replace('private struct','struct')
+# Extract only the batch's actual recovery types. The intervening standalone
+# Animate journal has its own harness and is not a dependency of this loop.
+pending='\n'.join(block(source, marker) for marker in [
+ 'struct PendingReelClips: Codable',
+ 'struct PendingReelRequest: Codable, Sendable',
+ 'struct PendingReelBatch: Codable, Sendable',
+])
 adoption=block((root/'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift').read_text(),'enum AdoptionOwnedIdentity {')
 helpers='enum AdoptionOwnedIdentity {\n'+'\n'.join(block(adoption,anchor) for anchor in [
  'enum Failure: Error', 'struct Card: Codable, Equatable','struct PaidRequest: Codable, Equatable','struct Journal: Codable, Equatable',
@@ -39,8 +45,12 @@ park=block(source,'    nonisolated private static func parkClips(').replace('pri
 pending=(root/'apps/ios/Rendprop/Render/VideoMusicContract.swift').read_text()+'\n'+(root/'apps/ios/Rendprop/Render/VideoAspectChoice.swift').read_text()+'\n'+(root/'apps/ios/Rendprop/Models/ListingVideo.swift').read_text()+'\n'+helpers+'\n'+pending
 assert 'Self.parkClips(billedClips, for: listingID, tmpDir: tmpDir)' in source
 assert 'failure = ReelClipIssue.failure(for: error' in source
-assert 'Button("Finish video from saved clips") { finishParkedReel() }' in source
-assert 'Button("Back to video setup") { resetToSetup() }' in source
+failed_section=block(source,'    @ViewBuilder private var failedSection: some View')
+finish_button=block(failed_section,'PrimaryButton(title: "Finish video from saved clips", systemImage: "film.stack")')
+back_button=block(failed_section,'SecondaryButton(title: "Back to video setup", systemImage: "slider.horizontal.3")')
+assert finish_button[finish_button.index('{')+1:finish_button.rindex('}')].strip()=='finishParkedReel()'
+assert back_button[back_button.index('{')+1:back_button.rindex('}')].strip()=='resetToSetup()'
+assert '.accessibilityIdentifier("reel.finish-saved-clips")' in failed_section
 assert source.count('clipFailureDetails')>=3
 assert 'failure.isServiceUnavailable || failure.isTrialCapacityUnavailable' in source
 assert 'f.isServiceUnavailable || f.isTrialCapacityUnavailable' in source
