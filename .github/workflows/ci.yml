@@ -824,7 +824,9 @@ jobs:
       # branding violations are fined (RI Statewide MLS: $50 first offence,
       # escalating). scripts/check-unbranded.mjs renders the real renderer with
       # sentinel-loaded branded fields and fails on any leak.
-      - name: Unbranded (MLS-safe) page check
+      # npm test also runs check:thumbnails: unit boundaries, the actual Worker
+      # runtime and real codec/geometry checks, using the locked native tools.
+      - name: Public pages, media delivery and thumbnail checks
         run: npm test
 
       - name: Bundle (deploy --dry-run, no credentials needed)
@@ -1492,6 +1494,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_result_delivery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-result-delivery-pg"
+      - name: Studio photos and recorded publication exclude video derivatives
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/studio_recorded_source_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-recorded-source-pg"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1510,6 +1519,7 @@ jobs:
             ${{ runner.temp }}/rendprop-listing-gallery-remove-pg/**
             ${{ runner.temp }}/rendprop-property-derived-retry-pg/**
             ${{ runner.temp }}/rendprop-property-result-delivery-pg/**
+            ${{ runner.temp }}/rendprop-studio-recorded-source-pg/**
           if-no-files-found: warn
 
   python-worker:

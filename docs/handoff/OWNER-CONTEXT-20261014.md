@@ -1,72 +1,58 @@
-# Current execution update — October15,2026 11:31 a.m. Eastern
+# Current execution checkpoint — October 15, 2026, 12:55 p.m. Eastern
 
-- User confirmed Claude RUNNING separate web/Studio worktree
-  `Rendprop Workspace/Worktrees/Active/claude-launch83-web-studio`. Root owns
-  integration/native/backend/Mirroring/Apple. Do not overwrite Claude's work.
-- New AppStoreConnect feedback read11:13Eastern:3normal82 screenshot submissions,
-  zero submitted crashes sinceOct14. Two comments request individual photo AI
-  actions in review while KEEPING bulk; one requires uploadedorder1,2,3 and later
-  batchappend, through video. Latest ordering requirement supersedes automatic
-  room-reorder default; retain automatic motion, preserve admittedjobmanifest.
-  Masterchecklist now66 numbered items(P13/P14). Parent singlephotoSourcePASS47+6,
-  existingreview54+21/lifecycle106. Childnativeorderinginprogress. No83archiveyet.
-- Qualityretryrepair LIVE: migration20261015151716, SHA8a64166e…; jobsv6bundle
-  c7588a11bd9cc87aaaf2c6dfb496ec078e550396109ec940d553d30b9d491a15/JWTtrue.
-  All63runtimebyteverified(twochanged/61preserved). Functionroles/fundingunchanged.
-  Root tappedactualphone same-jobResume11:23:28Eastern; c40sameop/manifest, old
-  source1retryhistory1 and fourcachedreadybyteidentical; nojobcreation/rejudge.
-- JobadvancedfiveReady then FAILED11:27:48Eastern on source6
-  provider_generation_failed/retainedFALreceipt/no clip. Source1singlequalityretry
-  processing; sevenpending. Inventorydiagnosingexactterminalpaidstatus/cause and
-  existingsaferecoverybeforecode. No finalmaster/publication/push.
-- Diskcleared5.93GiB44oldinactiveRendprop-ownedgeneratedcachepaths, restored
-  6.02GiBfree. Nootherproject/archive/Products/source/current82/83/evidencetouched.
-  Receiptouter_bridge/build83-owned-cache-cleanup-20261015/RECEIPT.json.
-- RootCIhasnewTags/derivedretryPG/singlephotoedit steps; noCI dispatched while
-  sourceorderfixunfinished. Root3gatescapture7controls/propertyjobs16/reellifecycle
-  98+29 allpassed, parentReview50+20/selection+privacyPASSprefeedbacksingleedit.
-- Onboarding remains REJECTED/last/unlimitedduration/Realtorsonly. NoAppStoresubmit.
+The authoritative acceptance list is
+`docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`. Earlier execution snapshots
+are historical; retain their receipts without treating them as current status.
 
-# Current owner-checklist checkpoint — October 15, 2026, 11:03 a.m. Eastern
-
-This checkpoint supersedes older status paragraphs below. The authoritative
-checklist is `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`, consolidated
-into 64 individually numbered current items plus retained future requests.
-Previous ledger preserved in outer `_bridge/build83-owner-checklist/`.
-
-- Actual owner phone is normal1.0.5(82), installed today. Public1.0.4(74)
-  unchanged; draft1.0.5 unattached/AFTER_APPROVAL/NOT submitted. 83 is prepared
-  in source, not archived/uploaded. Prior source2fe6d669 CI16/16 is complete,
-  not a claim that additional83 edits have passed CI or phone acceptance.
-- The14-photo Listing16:9 job c40f4860-bb9d-4e12-93a2-406fa53bf4cd FAILED
-  at14:50:46Z after4ready shots. No master/push/publication. Strict-policy
-  derived retry was rejected because SQL required the judge raw verdict to
-  be fail/regen, although canonical failed-axis evidence requested retry.
-  Inventory agent is implementing/tests for forward evidence/retry/explicit
-  owner resume of this exact expired CPU3 state. No live retry repair applied.
-  Preserve cached paid clips and operation; no rejudge/threshold waiver.
-- Atomic cloud gallery removal IS deployed: listings56; migration
-  20261015144353_atomic_listing_gallery_remove.sql. Earlier 'not live' entries
-  below are historical. Source-native83 deselection/Original-disclosure fix is
-  built and tested but not yet on the phone.
-- Latest requests: branded buttons rather than small generic purple controls;
-  exact-job Review banner must work through modal dismissal and identify home;
-  Tag rooms muted/tappable-help until genuine raw recorded/uploaded walkthrough,
-  never unlocked by generated/sample media. Parent owns Review, child owns Tags,
-  root owns branded Make-video/framing/status hunks. All four slots active.
-- Root source status feedback uses spinner/actual validated last-checked timestamp,
-  no duplicated generation. Current largerjob is FAILED, not ready; an older
-  retained ready banner must not be confused with it.
-- Owner explicitly approved existing portrait crops for this14-photo test and
-  will capture a correct landscape home after checklist/audits. Do not impose
-  new20-photo/fresh-landscape prerequisite on current test. >15import remains
-  a separate unaccepted feature check.
-- Onboarding current118.73s is REJECTED. Remake LAST, after app and all URL/site
-  pages finish, every narration matches exact real final screen, no duration cap,
-  Willow1.2x natural/excited tone. Realtors only; hospitality video future.
-  Internal83 may temporarily carry oldintro for functional tests, NEVER claim
-  finalonboarding/submission acceptance. Production luxury purchase still OFF,
-  genuine$25Sandbox/metadata/screenshot acceptance not done.
+- Normal **1.0.5 (83)** is VALID / APP_STORE_ELIGIBLE / IN_BETA_TESTING in the
+  existing internal group. Native source **d643afee** is pushed; the 109-input
+  gate and 209 archive inputs are bound. Attempt 3 passed the signed Release SDK,
+  174 tracked plus one generated Swift file and seven exact resources, with no
+  LAB/DEBUG. One upload completed. Actual phone 82 observations do not establish
+  physical 83 acceptance. Delivery receipt:
+  `_bridge/build83-normal-testflight/attempt3/FINAL-TESTFLIGHT83-DELIVERY-RECEIPT.json`.
+- Public **1.0.4 (74)** stays unchanged. Draft 1.0.5 is unattached,
+  PREPARE_FOR_SUBMISSION and AFTER_APPROVAL. No latest App Store submission.
+  Prior source 2fe6d669 passed 16/16 CI; final integrated 83 full CI is pending.
+- Build 83 includes persistent photo deselection/cover handling and genuine
+  Original sync, exact cloud removal, branded controls, exact-job Review,
+  recorded-only Tags, selected Sold/Archived Ask AI context, single-photo
+  Original actions while preserving bulk, family swipe/count, oldest-first
+  grids and later-batch append. Manual video taps preserve chosen order such
+  as B2→A1; admitted manifests remain unchanged. Focused proofs and SDK passed;
+  changed phone behavior still needs acceptance.
+- Atomic cloud removal is deployed as listings 56/migration 20261015144353.
+  Ordinary Pro4K photo and FAL4K video policies are activated; owner-only success
+  is not ordinary paid receipt/funding proof. No retail price/quota reset.
+- The existing 14-photo Listing16:9 job c40f4860… remains FAILED with six ready
+  shots. Source 6 retains its paid processing receipt; source 7's FAL submission
+  HTTP 403 was definitively refused/released without a generation ledger.
+  Diagnosis/recovery continues on this job, without replacing paid clips or its
+  admitted recipe. No final master, publication or completed-video push exists.
+  The owner approved these portrait crops; a fresh landscape-home test is later,
+  not a newly imposed prerequisite for completing this approved job.
+- Studio frontend 72e336f2 is deployed with 35 exact files/39 GET readbacks.
+  Edge Studio 34 and migration 20261015164224 enforce photo/recorded-source
+  separation; authenticated customer UI acceptance remains open. W05 thumbnail
+  code is deployed, and config-only Worker 77cc740b has the matched media-gateway
+  secret with existing source/bindings preserved. Actual published thumbnails
+  and tours projection still await root's live verification.
+- Archive 1's concrete SDK errors were narrowly fixed; archive 2 was a storage
+  guard abort, not an SDK failure. Both records are preserved. Root moved 67
+  inactive bridge folders externally, verified every file and retained
+  compatibility symlinks; 8.54GiB was free before the successful third archive.
+  Active source, keys and evidence were preserved. A full Mac backup remains
+  UNVERIFIED; this archive move does not certify one.
+- Retain every app API-cost record, separating consumed/priced/unknown costs
+  from credit funding. At16:55:42Z the owner confirmed adding $25 FAL credit
+  after reporting the provider account out of credit. That is a funding event,
+  not a consumed-cost receipt or an independently verified supplier invoice.
+- Root owns actual Mirroring acceptance. Claude's separate web/Studio lane must
+  not be overwritten. The current 118.73s introduction is **REJECTED** and only
+  temporarily retained in 83. Remake **LAST**, after all app and URL pages pass,
+  matching every narrated page to its actual final screen; no duration cap,
+  Willow 1.2×, Realtors only. Production premium purchase remains OFF; genuine
+  $25 Sandbox purchase/recovery and release metadata acceptance remain open.
 
 # Rendprop owner context — October 14, 2026
 
@@ -85,7 +71,10 @@ Previous ledger preserved in outer `_bridge/build83-owner-checklist/`.
   testing. Do not submit that rejected video as the finished App Store onboarding.
 
 
-## Active checkpoint — 2026-10-15 10:03 UTC
+## Historical checkpoint — 2026-10-15 10:03 UTC (superseded)
+
+This retained 82 snapshot is historical evidence. The current checkpoint above
+and the owner checklist control execution; its old pending states are not current.
 
 - Normal 1.0.5 (82) is VALID / APP_STORE_ELIGIBLE / IN_BETA_TESTING, build
   45479fdb…, in the existing internal group. Its 205 native inputs, 170 tracked
@@ -322,8 +311,8 @@ decisions supersede earlier prices, limits and priorities. The acceptance ledger
 - Ask AI acts as contextual support: current screen/listing/action, correct
   feature availability and practical navigation. Measure its cost. A constantly
   running account-analysis agent was a possibility, not a requirement.
-- Branded onboarding: up to about two minutes, real relevant screens without blank scenes,
-  Willow narration at1.2×, natural/excited tone. Correct sequence is sign-in/eligible
+- Branded onboarding: remake last with no duration cap, real matching final screens
+  without blank scenes, Willow narration at 1.2× and natural/excited tone. Correct sequence is sign-in/eligible
   trial confirmation → address/details → photos/optional steady video → AI editing
   and selecting images → property video → publish/site/share; then other tools.
   Do not promise a trial simply from signing in. Interactive help can supplement
@@ -339,9 +328,10 @@ decisions supersede earlier prices, limits and priorities. The acceptance ledger
   The owner will also test at a real house with better representative pictures.
 - Test major updates before the next App Store submission. Newest tested normal
   build should distribute automatically after approval. Never submit a spatial-lab
-  internal build publicly. Public1.0.4(74) is READY_FOR_SALE and stays untouched. Internal
-  TestFlight1.0.5(81) is installed on the owner phone; it is internal-only and
-  cannot be submitted as the public App Store candidate.
+  internal build publicly. Public1.0.4(74) is READY_FOR_SALE and stays untouched.
+  Normal TestFlight 1.0.5(83) is now available; actual 82 phone observations are
+  retained, while 83 physical acceptance remains open. Historical lab 81 is
+  internal-only and cannot serve as the public App Store candidate.
 - Aerial intro stays **Coming soon**. Later, a faithful front-exterior opening
   could lead the property video/site. It is not a current release guarantee.
 - **3D tours** are the main later experimental priority: navigable walkthroughs,
@@ -372,7 +362,7 @@ controls current execution. The superseded05:52UTC snapshot is retained at
 `_bridge/build82-final-state/CHECKLIST-HISTORICAL-0552.md`; its pending/archive/
 deployment language is historical, not a current instruction.
 
-Normal1.0.5(82) has been signed, uploaded once and verified VALID,
+Historical normal 1.0.5(82) was signed, uploaded once and verified VALID,
 APP_STORE_ELIGIBLE and available in the existing internal TestFlight group.
 All205 captured native inputs,170 tracked Swift files and7 packaged resources
 still match the delivered archive; the later backend/CPU/test changes do not
@@ -381,7 +371,9 @@ change that native binding. Exact delivery evidence:
 Public1.0.4(74) remains live and unchanged. AppStoreVersion1.0.5 is the real draft
 `c15af3a3-8cf3-44ef-93ca-6d0d1777d1e3`, PREPARE_FOR_SUBMISSION, no attached build,
 AFTER_APPROVAL. The older `8aa89a41…` identity is an IAP version, not this draft.
-No new App Store submission or actual82 phone acceptance is claimed.
+No App Store submission was made. Root subsequently installed and observed 82;
+those observations do not certify the changed 83 behavior. Current 83 delivery
+and its 209-input archive binding are linked in the top checkpoint.
 
 Current strict photo/CPU, provider-comparison, Studio and CI status is in the
 active checkpoint above. The old two-shot original-photo fallback and the later
@@ -392,14 +384,18 @@ not the Supabase memory governor. Actual native256MB/2s controls, bounded output
 transport and the6MB comparison package have separate source-bound receipts.
 
 Studio organized full-library ZIP, contextual Ask AI and durable IndexedDB
-recovery are deployed in c0682c56… with35-file/39GET byte/security readback:
-`_bridge/build82-gemini-large-output/studio-deployed-readback.json`.
+recovery retain their earlier readback at
+`_bridge/build82-gemini-large-output/studio-deployed-readback.json`. The current
+frontend 72e336f2 has 35 exact files/39 GET readbacks; Edge Studio 34 and the
+recorded-source migration are separately verified at
+`_bridge/build83-studio-recorded-source/ROOT-DEPLOYED-READBACK.json`.
 Three real ordinary Ask AI calls cost6.3¢ in recorded catalog estimates with
 provider token receipts; that is not a supplier invoice claim or ordinary video
 billing acceptance. The118.733s Willow1.2× introduction remains exact in the
-signed82 archive. Its current media/source checks are retained at
-`_bridge/build82-onboarding/FINAL-SOURCE-BINDING.json`; physical playback and
-subjective listening remain pending.
+signed 82 and 83 archives. Its earlier media/source checks are retained at
+`_bridge/build82-onboarding/FINAL-SOURCE-BINDING.json`; the owner has since
+REJECTED its speech/screen matching. Those offline checks do not close final
+onboarding. Remake it last after the app and URL pages are accepted.
 
 The$25 per-property website SKU has Sandbox enabled for testing, Production
 still disabled, and USA availability configured. Its missing review screenshot
@@ -410,16 +406,18 @@ Actual phone81 accepted readable Original/Latest/Decluttered/Staged glass tabs,
 saved Contemporary/Modern history, Original-only editing, uncropped photo review,
 reachable required checks/footer, Homephoto-first/GetStartedaddress form,
 ManageDetails/toolbox ordering, Leads grouping and temporaryLight/Dark restored to
-System. No large-text, fresh ordinary billing, premium purchase, whole-listing
-export or actual 82 phone acceptance is claimed. macOS lock=true was confirmed
+System. No large-text, fresh ordinary billing, premium purchase or whole-listing
+export acceptance is inferred. Actual82 observations are recorded separately;
+83 changed-source phone acceptance remains open. macOS lock=true was confirmed
 at 08:48 UTC; Mirroring has since resumed and root is using the actual phone.
 Follow the remaining sequence in `OWNER-REQUEST-CHECKLIST-20261014.md`; do not
 repeat the unchanged Home/Leads/light-dark matrix merely for a build number.
 
-## Latest owner onboarding requirement, October14 evening
+## Historical onboarding production — superseded by October 15 rejection
 
-- [x] Remake the onboarding as a complete, precise consumer walkthrough, up to
-  about two minutes if needed. This supersedes the previous60-second target.
+- Earlier production followed a complete consumer walkthrough of up to about
+  two minutes, superseding the then-current 60-second target. This is retained
+  production history, not a completed current acceptance item.
   Explain why the app exists, the purpose and function of each available tool,
   and the full real-estate workflow in its natural order. Include best practices
   and operating procedures: address/details → level, well-lit whole-room
@@ -432,4 +430,6 @@ repeat the unchanged Home/Leads/light-dark matrix merely for a build number.
   trial eligibility, background, purchase or MLS-syndication promise.
   Rendered118.733s/327words with29real phone scenes and one genuine saved-video
   excerpt; bundled SHA2160f41c48eeffa17815190861c8805038a0de60bca35233800cf836cee2b921.
-  Encoded/audio/frame checks pass; actual 82 phone replay remains unaccepted.
+  Encoded/audio/frame checks passed. The owner later REJECTED the narrated-screen
+  matching. The current requirement is a final-screens remake LAST, with no
+  duration cap; it remains open.
