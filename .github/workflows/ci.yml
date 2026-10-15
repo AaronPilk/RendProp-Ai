@@ -1049,6 +1049,8 @@ jobs:
       # disposable Postgres job instead of this unit-suite environment.
       # --node-modules-dir=auto (a flag, not a committed deno.json) lays out
       # node_modules for the `npm:` specifiers.
+      # The recursive suite includes tours/photo-delivery.test.ts and
+      # delivery-handler.test.ts; do not duplicate their authority checks.
       - name: Run edge function tests
         working-directory: services/supabase/functions
         env:
@@ -1501,13 +1503,33 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/studio_recorded_source_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-recorded-source-pg"
-      - name: Owner media testing stays metered and ordinary budgets stay enforced
+      - name: Owner testing preserves metering and the retained financial-budget delegate
         timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/owner_testing_media_delivery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-owner-media-testing-pg"
+      - name: Authorized product media stays metered without a financial activation block
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/product_media_serving_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-product-media-serving-pg"
+      - name: Missing paid supplier results retain evidence and permit one funded replacement
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_missing_result_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-missing-result-pg"
+      - name: API cost reports separate consumption, holds, funding and unpriced usage
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/audit/test_api_cost_report.py -v 2>&1 | tee "$RUNNER_TEMP/rendprop-api-cost-report-unit.log"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1528,6 +1550,9 @@ jobs:
             ${{ runner.temp }}/rendprop-property-result-delivery-pg/**
             ${{ runner.temp }}/rendprop-studio-recorded-source-pg/**
             ${{ runner.temp }}/rendprop-owner-media-testing-pg/**
+            ${{ runner.temp }}/rendprop-product-media-serving-pg/**
+            ${{ runner.temp }}/rendprop-property-missing-result-pg/**
+            ${{ runner.temp }}/rendprop-api-cost-report-unit.log
           if-no-files-found: warn
 
   python-worker:

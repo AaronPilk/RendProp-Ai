@@ -1,68 +1,74 @@
-# Current execution checkpoint — October 15, 2026, 12:55 p.m. Eastern
+# Current execution checkpoint — October 15, 2026, after 17:37 UTC delivery
 
 The authoritative acceptance list is
 `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`. Earlier execution snapshots
 are historical; retain their receipts without treating them as current status.
 
 - Functionality and logical UX/testing take priority over provisional prices or
-  margins.75% is not an acceptance gate. Final pricing is audited after functional
+  margins. 75% is not an acceptance gate. Final pricing is audited after functional
   acceptance, before App Store submission. Preserve security, abuse/rate limits
   and actual provider-credit requirements; do not disguise those as margin caps.
-- The owner-only financial media-budget bypass is applied as migration
-  20261015170710 after root review and actual PostgreSQL controls. It uses
-  existing DB-verified product-admin owner
-  authority and records requests/bytes as unpriced infrastructure usage, without
-  creating funding/reserve/cost receipts. Ordinary budget rules stay unchanged;
-  absent supported-user media provisioning remains an explicit launch blocker.
-  Real published-preview verification is pending; no image-loading success is
-  inferred merely from this configuration/schema change.
-- Normal **1.0.5 (83)** is VALID / APP_STORE_ELIGIBLE / IN_BETA_TESTING in the
-  existing internal group. Native source **d643afee** is pushed; the 109-input
-  gate and 209 archive inputs are bound. Attempt 3 passed the signed Release SDK,
-  174 tracked plus one generated Swift file and seven exact resources, with no
-  LAB/DEBUG. One upload completed. Actual phone 82 observations do not establish
-  physical 83 acceptance. Delivery receipt:
-  `_bridge/build83-normal-testflight/attempt3/FINAL-TESTFLIGHT83-DELIVERY-RECEIPT.json`.
+- Authorized product media no longer requires a financial reserve to activate.
+  Owner-only migration 20261015170710 and general product-media migration
+  20261015171923 are LIVE. Current publication, object, hosting and visibility
+  authority remain enforced. Both paths meter actual requests/bytes as unpriced
+  infrastructure usage; neither invents a cash reserve, funding or cost receipt.
+  Hosted thumbnail and real loading acceptance remain separate from SQL success.
+- Normal **1.0.5 (84)** is VALID / APP_STORE_ELIGIBLE / IN_BETA_TESTING in the
+  existing internal group. Compact native commit **08098a9** and normal metadata
+  commit **75738bf** bind the 114-input gate and 209 archive inputs. One signed
+  Release archive compiled 174 tracked plus one generated Swift file and seven
+  exact resources, with no LAB/DEBUG; one upload completed. Automatic group
+  membership was verified by GET. Physical 84 compact-review acceptance is open.
+  Delivery receipt:
+  `_bridge/build84-normal-testflight/FINAL-TESTFLIGHT84-DELIVERY-RECEIPT.json`.
 - Public **1.0.4 (74)** stays unchanged. Draft 1.0.5 is unattached,
   PREPARE_FOR_SUBMISSION and AFTER_APPROVAL. No latest App Store submission.
-  Prior source 2fe6d669 passed 16/16 CI; final integrated 83 full CI is pending.
-- Build 83 includes persistent photo deselection/cover handling and genuine
-  Original sync, exact cloud removal, branded controls, exact-job Review,
-  recorded-only Tags, selected Sold/Archived Ask AI context, single-photo
-  Original actions while preserving bulk, family swipe/count, oldest-first
-  grids and later-batch append. Manual video taps preserve chosen order such
-  as B2→A1; admitted manifests remain unchanged. Focused proofs and SDK passed;
-  changed phone behavior still needs acceptance.
+  Prior source 2fe6d669 passed 16/16 CI; full CI on the final integrated head
+  remains pending. Earlier CI is not relabeled as current-head evidence.
+- Build 84 retains 83's deselection/cover and genuine Original sync fixes, exact
+  cloud removal, exact-job Review, recorded-only Tags, selected Sold/Archived
+  Ask AI context, single-photo Original editing, family swipe/count, oldest-first
+  grids and append order. Manual video taps preserve B2→A1 when chosen; admitted
+  manifests stay unchanged. Its narrow new review layout uses compact branded
+  controls, 44-point tap targets, a 50%-viewport preview cap and explicit Unselect.
+  Focused checks and the signed SDK passed; device acceptance is not inferred.
 - Atomic cloud removal is deployed as listings 56/migration 20261015144353.
   Ordinary Pro4K photo and FAL4K video policies are activated; owner-only success
   is not ordinary paid receipt/funding proof. No retail price/quota reset.
-- The existing 14-photo Listing16:9 job c40f4860… remains FAILED with six ready
-  shots. Source 6 retains its paid processing receipt; source 7's FAL submission
-  HTTP 403 was definitively refused/released without a generation ledger.
-  Diagnosis/recovery continues on this job, without replacing paid clips or its
-  admitted recipe. No final master, publication or completed-video push exists.
-  The owner approved these portrait crops; a fresh landscape-home test is later,
-  not a newly imposed prerequisite for completing this approved job.
-- Studio frontend 72e336f2 is deployed with 35 exact files/39 GET readbacks.
-  Edge Studio 34 and migration 20261015164224 enforce photo/recorded-source
-  separation; authenticated customer UI acceptance remains open. W05 thumbnail
-  code is deployed, and config-only Worker 77cc740b has the matched media-gateway
-  secret with existing source/bindings preserved. Actual published thumbnails
-  and tours projection still await root's live verification.
-- Archive 1's concrete SDK errors were narrowly fixed; archive 2 was a storage
-  guard abort, not an SDK failure. Both records are preserved. Root moved 67
-  inactive bridge folders externally, verified every file and retained
-  compatibility symlinks; 8.54GiB was free before the successful third archive.
-  Active source, keys and evidence were preserved. A full Mac backup remains
-  UNVERIFIED; this archive move does not certify one.
-- Retain every app API-cost record, separating consumed/priced/unknown costs
-  from credit funding. At16:55:42Z the owner confirmed adding $25 FAL credit
-  after reporting the provider account out of credit. That is a funding event,
-  not a consumed-cost receipt or an independently verified supplier invoice.
-- Root owns actual Mirroring acceptance. Claude's separate web/Studio lane must
-  not be overwritten. The current 118.73s introduction is **REJECTED** and only
-  temporarily retained in 83. Remake **LAST**, after all app and URL pages pass,
-  matching every narrated page to its actual final screen; no duration cap,
+- Normal operator Resume for the SAME 14-photo Listing 16:9 job c40f4860… was
+  accepted at 17:38:34 UTC through the existing service RPC, not a phone action.
+  The latest snapshot has nine AI shots and one original-photo fallback ready;
+  source 6's single paid replacement and source 11 are processing, with 12–13
+  pending. Source 6's old 210-cent paid receipt remains immutable. The admitted
+  recipe and other completed clips stay intact. No final master, publication or
+  completed-video push is claimed. The owner approved these portrait crops;
+  a fresh landscape-home test later is not a prerequisite for this approved job.
+- Studio frontend 72e336f2 has 35 exact files/39 GET readbacks. Edge Studio 34
+  and migration 20261015164224 enforce photo/recorded-source separation;
+  authenticated customer UI acceptance remains open. W05 thumbnail source and
+  matching gateway configuration are deployed; root's narrow photo-delivery
+  integration and actual hosted thumbnail/loading verification are in progress.
+- The owner explicitly authorized Simulator UI checks while the physical phone
+  is unavailable. The child observed compact review controls and two import
+  batches retaining six exact PNG Originals; physical 84 acceptance remains open.
+  Record Simulator, SDK/backend and actual-device evidence separately. This does
+  not prove phone hardware, Apple purchase, notification, provider output or
+  whole-home acceptance. Claude's separate web/Studio lane must not be overwritten.
+- Prior 83 SDK/storage failure records and successful attempt 3 remain preserved.
+  Root moved 67 inactive bridge folders externally with every file verified and
+  compatibility symlinks retained. Active source, keys and evidence were preserved.
+  A full Mac backup remains UNVERIFIED; the artifact move does not certify one.
+- Retain every app API-cost record and distinguish priced consumption, uncertain
+  holds, credit funding and unpriced infrastructure. The 17:20:24 UTC export has
+  266 retained ledger rows totaling 7548.9440 cents and 42.3796 cents of separate
+  unreconciled holds. The owner's $25 FAL top-up is a funding event, not consumption
+  or a verified supplier invoice. Historical missing listing/supplier/tariff links,
+  account-deletion losses, other worker spools and vendor infrastructure invoices
+  remain coverage limits; no all-time or invoice-complete total is claimed.
+- The 118.73s introduction is **REJECTED** and temporarily retained in 84 for
+  internal functional testing only. Remake **LAST**, after all app and URL pages
+  pass, matching every narrated page to its actual final screen; no duration cap,
   Willow 1.2×, Realtors only. Production premium purchase remains OFF; genuine
   $25 Sandbox purchase/recovery and release metadata acceptance remain open.
 
@@ -79,7 +85,7 @@ are historical; retain their receipts without treating them as current status.
 - Remake onboarding **last**, after all app screens and URL/website pages are
   complete and tested. There is no duration cap; explain each feature and the
   relevant best practices precisely. Keep Willow at 1.2× unless directed otherwise.
-- Internal build 83 may carry the previous video temporarily for functional
+- Internal build 84 carries the previous video temporarily for functional
   testing. Do not submit that rejected video as the finished App Store onboarding.
 
 
@@ -332,17 +338,17 @@ decisions supersede earlier prices, limits and priorities. The acceptance ledger
 
 ## Testing, release and later features
 
-- Use the owner's **actual mirrored iPhone**, never substitute Simulator UI for
-  real-account acceptance. Keep Mirroring available. Headless SDK/encoder/CI
-  verification is distinct and allowed. Test AI enhancement, declutter, staging,
-  selected-version videos, orientation, audio/music, background completion,
-  notifications, sharing, website quality, purchases and ordinary-customer flow.
-  The owner will also test at a real house with better representative pictures.
+- The owner now explicitly permits **Simulator UI acceptance** while the phone
+  is unavailable. Label its exact scope separately from actual mirrored-iPhone,
+  SDK/encoder/CI and provider evidence. Do not infer camera, notifications, sharing,
+  genuine Apple purchases or real-account completion from fixture UI. Existing
+  AI/photo/video/site/account acceptance remains open where not actually observed.
+  The owner will also test at a real house with representative pictures.
 - Test major updates before the next App Store submission. Newest tested normal
   build should distribute automatically after approval. Never submit a spatial-lab
   internal build publicly. Public1.0.4(74) is READY_FOR_SALE and stays untouched.
-  Normal TestFlight 1.0.5(83) is now available; actual 82 phone observations are
-  retained, while 83 physical acceptance remains open. Historical lab 81 is
+  Normal TestFlight 1.0.5(84) is available; prior phone observations are retained,
+  while 84 compact-review device acceptance remains open. Historical lab 81 is
   internal-only and cannot serve as the public App Store candidate.
 - Aerial intro stays **Coming soon**. Later, a faithful front-exterior opening
   could lead the property video/site. It is not a current release guarantee.
@@ -384,8 +390,8 @@ Public1.0.4(74) remains live and unchanged. AppStoreVersion1.0.5 is the real dra
 `c15af3a3-8cf3-44ef-93ca-6d0d1777d1e3`, PREPARE_FOR_SUBMISSION, no attached build,
 AFTER_APPROVAL. The older `8aa89a41…` identity is an IAP version, not this draft.
 No App Store submission was made. Root subsequently installed and observed 82;
-those observations do not certify the changed 83 behavior. Current 83 delivery
-and its 209-input archive binding are linked in the top checkpoint.
+those observations do not certify every changed 83/84 behavior. Current 84
+availability and its 209-input archive binding are linked in the top checkpoint.
 
 Current strict photo/CPU, provider-comparison, Studio and CI status is in the
 active checkpoint above. The old two-shot original-photo fallback and the later
@@ -404,7 +410,7 @@ recorded-source migration are separately verified at
 Three real ordinary Ask AI calls cost6.3¢ in recorded catalog estimates with
 provider token receipts; that is not a supplier invoice claim or ordinary video
 billing acceptance. The118.733s Willow1.2× introduction remains exact in the
-signed 82 and 83 archives. Its earlier media/source checks are retained at
+signed 82, 83 and 84 archives. Its earlier media/source checks are retained at
 `_bridge/build82-onboarding/FINAL-SOURCE-BINDING.json`; the owner has since
 REJECTED its speech/screen matching. Those offline checks do not close final
 onboarding. Remake it last after the app and URL pages are accepted.
@@ -420,8 +426,9 @@ reachable required checks/footer, Homephoto-first/GetStartedaddress form,
 ManageDetails/toolbox ordering, Leads grouping and temporaryLight/Dark restored to
 System. No large-text, fresh ordinary billing, premium purchase or whole-listing
 export acceptance is inferred. Actual82 observations are recorded separately;
-83 changed-source phone acceptance remains open. macOS lock=true was confirmed
-at 08:48 UTC; Mirroring has since resumed and root is using the actual phone.
+84 compact-review device acceptance remains open. The phone is currently
+unavailable; the owner's later Simulator permission controls bounded UI checks.
+Earlier macOS lock and Mirroring observations are historical, not current access.
 Follow the remaining sequence in `OWNER-REQUEST-CHECKLIST-20261014.md`; do not
 repeat the unchanged Home/Leads/light-dark matrix merely for a build number.
 
