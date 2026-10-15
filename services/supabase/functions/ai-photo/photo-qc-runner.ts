@@ -20,7 +20,7 @@ export const PHOTO_QC_MAX_WIRE_BYTES=9_000_000; // below the provider's32MB stan
 // the generic400-token classifier default. Reserve/quote this SAME explicit
 // ceiling before dispatch; no follow-up paid call completes truncated JSON.
 export const PHOTO_QC_MAX_OUTPUT_TOKENS=4096;
-export const PHOTO_QC_JUDGE_CONTRACT="photo-qc-json4096-v2";
+export const PHOTO_QC_JUDGE_CONTRACT="photo-qc-movable-decor-v3";
 export const PHOTO_QC_MAX_PROVIDER_MS=90_000;
 export const PHOTO_QC_FINISH_HEADROOM_MS=10_000;
 export function photoJudgeTimeout(deadline:number,now=Date.now()):number {
@@ -30,6 +30,7 @@ export function photoJudgeTimeout(deadline:number,now=Date.now()):number {
 const MAX_OUTPUT_TOKENS=PHOTO_QC_MAX_OUTPUT_TOKENS;
 export function photoJudgeRubric(context:{edit:string;style?:string;instruction?:string}):string {
  return photoQualityRubric(context)+`
+Fixed-feature boundary clarification: fixtures means permanently attached or built-in property items. Loose tabletop/freestanding decor is NOT a fixture: decorative plates, books, vases, and picture frames resting on a console, table or shelf are movable decor. For stage, replacing/removing those loose objects is permitted, just like movable furniture. A picture frame resting on furniture is different from mounted wall art or a built-in installation; the latter remains protected. A changed loose object does not prove the supporting console, shelf, counter or wall changed. Report findings ONLY for suspected fixed-feature discrepancies or other differences forbidden for the requested edit. Do not include permitted movable-decor/furniture changes as findings, mark them uncertain, or lower preservation scores because of them. If the attachment/structure itself is genuinely unclear, retain a specific uncertain finding about that fixed feature; never invent unseen attachment or an automatic pass.
 Output formatting: return one complete compact JSON object, at most${MAX_PHOTO_QC_VERDICT_BYTES}UTF-8 bytes in total. No Markdown or preamble. Up to8findings: prioritize distinct fixed-feature discrepancies, combine repeated evidence, keep each source/output observation concise (prefer80characters or fewer) and the reason concise (prefer160characters or fewer). Preserve every required schema key and close the JSON object. Never omit an axis or convert uncertainty into a pass to fit the response.`;
 }
 

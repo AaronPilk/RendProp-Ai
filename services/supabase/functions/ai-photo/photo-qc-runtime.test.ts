@@ -2,7 +2,7 @@ import {assert,assertEquals,assertRejects,assertThrows} from "https://deno.land/
 import {HttpError} from "../_shared/http.ts";
 import {inputHash,resetServingModeCache} from "../_shared/funded-serving.ts";
 import {decodePhotoOutput} from "./input-policy.ts";
-import {PHOTO_QC_POLICY,unavailablePhotoQuality,type PhotoQualityVerdict} from "./photo-qc-verdict.ts";
+import {PHOTO_QC_POLICY,unavailablePhotoQuality,parsePhotoQuality,type PhotoQualityVerdict} from "./photo-qc-verdict.ts";
 import {beginPhotoQuality,retainPhotoCandidate,statusPhotoQuality,photoQualityResponse,photoBytesHash,failPhotoQuality,throwPhotoQualityState,type PhotoQualityEnvelope,type PhotoEvidenceIO} from "./photo-qc-store.ts";
 import {continuePhotoQuality,photoJudgeQuote,photoJudgeRubric,photoJudgeTimeout,PHOTO_QC_MAX_OUTPUT_TOKENS,PHOTO_QC_JUDGE_CONTRACT,photoDerivatives,type PhotoJudgeDependencies} from "./photo-qc-runner.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
@@ -145,6 +145,16 @@ Deno.test("photo verdict contract quotes the complete4096 output budget and fits
   assertEquals(f.state.attempt.p_hold_cents,cost.unitCents);assertEquals(f.state.calls,1);
   await f.run(ready);assertEquals(f.state.calls,1,"A confirmed terminal result is never rerolled");
  }finally{globalThis.fetch=before;resetServingModeCache();}
+});
+Deno.test("next photo judge contract distinguishes loose console decor from protected mounted fixtures",()=>{
+ const rubric=photoJudgeRubric({edit:"stage",style:"modern",instruction:"Stage this room."});
+ assertEquals(PHOTO_QC_JUDGE_CONTRACT,"photo-qc-movable-decor-v3");
+ for(const required of["Loose tabletop/freestanding decor is NOT a fixture","decorative plates, books, vases","picture frames resting on a console","mounted wall art or a built-in installation","Report findings ONLY for suspected fixed-feature","Do not include permitted movable-decor/furniture changes as findings","retain a specific uncertain finding about that fixed feature"]){assert(rubric.includes(required),required);}
+ const finding={category:"fixtures",region:"br",source:"Loose picture frame resting on a console.",output:"Different loose tabletop decor.",certainty:"uncertain"};
+ // Even an incorrectly classified model answer is NOT silently cleared by
+ // this prompt clarification. The existing strict parser still requires HOLD.
+ assertEquals(parsePhotoQuality(JSON.stringify({...pass,findings:[finding]})).action,"hold");
+ assert(photoJudgeQuote(step,rubric,"SOURCE whole\nCANDIDATE whole"));
 });
 Deno.test("one photo judge may use90seconds but leaves10seconds and obeys the actual remaining endpoint budget",async()=>{
  assertEquals(photoJudgeTimeout(120000,0),90000);assertEquals(photoJudgeTimeout(45000,0),35000);
