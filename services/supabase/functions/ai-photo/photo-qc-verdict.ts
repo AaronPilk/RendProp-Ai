@@ -3,6 +3,24 @@ export const PHOTO_QC_POLICY = "photo-fixed-features-v1" as const;
 export const MAX_PHOTO_QC_VERDICT_BYTES = 3000;
 export const PHOTO_QC_AXES = ["geometry","openings","fixtures","surfaces","viewpoint"] as const;
 export const PHOTO_QC_REGIONS = ["whole","tl","tr","bl","br"] as const;
+/** Vendor structural constraints only; all range/length/decision checks below
+ * remain authoritative. No unsupported numeric/string bounds are assumed.
+ * https://platform.claude.com/docs/en/build-with-claude/structured-outputs */
+export const PHOTO_QC_JSON_SCHEMA={
+ type:"object",additionalProperties:false,
+ properties:{
+  policy:{type:"string",enum:[PHOTO_QC_POLICY]},verdict:{type:"string",enum:["pass","fail","unknown"]},
+  action:{type:"string",enum:["accept","refuse","hold"]},confidence:{type:"number"},
+  preservation:{type:"object",additionalProperties:false,properties:Object.fromEntries(PHOTO_QC_AXES.map(axis=>[axis,{type:"integer"}])),required:[...PHOTO_QC_AXES]},
+  artifacts:{type:"integer"},edit_quality:{type:"integer"},
+  findings:{type:"array",items:{type:"object",additionalProperties:false,properties:{
+   category:{type:"string",enum:[...PHOTO_QC_AXES]},region:{type:"string",enum:[...PHOTO_QC_REGIONS]},
+   source:{type:"string"},output:{type:"string"},certainty:{type:"string",enum:["confirmed","uncertain"]}
+  },required:["category","region","source","output","certainty"]}},reason:{type:"string"}
+ },required:["policy","verdict","action","confidence","preservation","artifacts","edit_quality","findings","reason"]
+} as const;
+export const PHOTO_QC_PARSE_REASONS=["verified","input_type","input_length","invalid_json","schema","findings","verdict_size"] as const;
+export type PhotoQualityParseReason=typeof PHOTO_QC_PARSE_REASONS[number];
 type Axis=typeof PHOTO_QC_AXES[number];
 export interface PhotoQualityFinding {category:Axis;region:typeof PHOTO_QC_REGIONS[number];source:string;output:string;certainty:"confirmed"|"uncertain"}
 export interface PhotoQualityVerdict {
@@ -19,29 +37,35 @@ export function unavailablePhotoQuality(reason="The photo quality check could no
 /** Parse only the dedicated photo schema. Never coerce strings, clamp scores,
  * extract arbitrary prose JSON, or let the model authorize its own release. */
 export function parsePhotoQuality(raw:string):PhotoQualityVerdict {
- if(typeof raw!=="string"||raw.length>16_384)return unavailablePhotoQuality();
+ return parsePhotoQualityWithDiagnostic(raw).verdict;
+}
+/** Closed diagnostics contain no response text, field values or observations. */
+export function parsePhotoQualityWithDiagnostic(raw:string):{verdict:PhotoQualityVerdict;reason:PhotoQualityParseReason} {
+ const invalid=(reason:PhotoQualityParseReason)=>({verdict:unavailablePhotoQuality(),reason});
+ if(typeof raw!=="string")return invalid("input_type");
+ if(raw.length>16_384)return invalid("input_length");
  const text=raw.trim().replace(/^\x60\x60\x60(?:json)?\s*([\s\S]*?)\s*\x60\x60\x60$/i,"$1");
- let data:unknown;try{data=JSON.parse(text);}catch{return unavailablePhotoQuality();}
+ let data:unknown;try{data=JSON.parse(text);}catch{return invalid("invalid_json");}
  if(!object(data)||!ownKeys(data,["policy","verdict","action","confidence","preservation","artifacts","edit_quality","findings","reason"])
   ||data.policy!==PHOTO_QC_POLICY||typeof data.verdict!=="string"||!["pass","fail","unknown"].includes(data.verdict)||typeof data.action!=="string"||!["accept","refuse","hold"].includes(data.action)
   ||typeof data.confidence!=="number"||!Number.isFinite(data.confidence)||data.confidence<0||data.confidence>1
   ||!object(data.preservation)||!ownKeys(data.preservation,PHOTO_QC_AXES)||!PHOTO_QC_AXES.every(axis=>score((data.preservation as Record<string,unknown>)[axis]))
   ||!score(data.artifacts)||!score(data.edit_quality)||!Array.isArray(data.findings)||data.findings.length>8||!boundedText(data.reason,300))
-  return unavailablePhotoQuality();
+  return invalid("schema");
  for(const f of data.findings){
   if(!object(f)||!ownKeys(f,["category","region","source","output","certainty"])
    ||!PHOTO_QC_AXES.includes(f.category as Axis)||!PHOTO_QC_REGIONS.includes(f.region as typeof PHOTO_QC_REGIONS[number])
-   ||!boundedText(f.source,200)||!boundedText(f.output,200)||typeof f.certainty!=="string"||!["confirmed","uncertain"].includes(f.certainty))return unavailablePhotoQuality();
+   ||!boundedText(f.source,200)||!boundedText(f.output,200)||typeof f.certainty!=="string"||!["confirmed","uncertain"].includes(f.certainty))return invalid("findings");
  }
- if(new TextEncoder().encode(JSON.stringify(data)).byteLength>MAX_PHOTO_QC_VERDICT_BYTES)return unavailablePhotoQuality();
+ if(new TextEncoder().encode(JSON.stringify(data)).byteLength>MAX_PHOTO_QC_VERDICT_BYTES)return invalid("verdict_size");
  const parsed=data as unknown as PhotoQualityVerdict;
  const accepted=parsed.verdict==="pass"&&parsed.action==="accept"&&parsed.confidence>=.85
   &&PHOTO_QC_AXES.every(axis=>parsed.preservation[axis]>=95)&&parsed.artifacts>=90&&parsed.edit_quality>=80&&parsed.findings.length===0;
- if(accepted)return parsed;
+ if(accepted)return{verdict:parsed,reason:"verified"};
  const uncertain=parsed.verdict==="unknown"||parsed.confidence<.85||parsed.findings.some(f=>f.certainty==="uncertain");
  const confirmedFailure=parsed.verdict==="fail"&&parsed.action==="refuse"
   &&(parsed.findings.some(f=>f.certainty==="confirmed")||parsed.artifacts<90||parsed.edit_quality<80);
- return{...parsed,action:!uncertain&&confirmedFailure?"refuse":"hold"};
+ return{verdict:{...parsed,action:!uncertain&&confirmedFailure?"refuse":"hold"},reason:"verified"};
 }
 /** Photographic preservation, intentionally separate from video motion rules. */
 export function photoQualityRubric(args:{edit:string;style?:string;instruction?:string}):string {

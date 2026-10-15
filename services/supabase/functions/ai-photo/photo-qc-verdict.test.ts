@@ -1,7 +1,24 @@
 import {assert,assertEquals,assertThrows,assertRejects,AssertionError} from "https://deno.land/std@0.224.0/assert/mod.ts";
-import {parsePhotoQuality,photoQualityRubric,PHOTO_QC_AXES,PHOTO_QC_POLICY,MAX_PHOTO_QC_VERDICT_BYTES} from "./photo-qc-verdict.ts";
+import {parsePhotoQuality,parsePhotoQualityWithDiagnostic,PHOTO_QC_JSON_SCHEMA,PHOTO_QC_PARSE_REASONS,photoQualityRubric,PHOTO_QC_AXES,PHOTO_QC_POLICY,MAX_PHOTO_QC_VERDICT_BYTES} from "./photo-qc-verdict.ts";
 const good=()=>({policy:PHOTO_QC_POLICY,verdict:"pass",action:"accept",confidence:.85,preservation:{geometry:95,openings:95,fixtures:95,surfaces:95,viewpoint:95},artifacts:90,edit_quality:80,findings:[],reason:"Visible fixed features are preserved."});
 const parsed=(value:unknown)=>parsePhotoQuality(JSON.stringify(value));
+Deno.test("photo structured schema closes all objects while parser retains stricter numerical and evidence limits",()=>{
+ const schema=PHOTO_QC_JSON_SCHEMA;
+ assertEquals([...schema.required],Object.keys(good()));assertEquals(schema.additionalProperties,false);
+ assertEquals(schema.properties.preservation.required,PHOTO_QC_AXES);assertEquals(schema.properties.preservation.additionalProperties,false);
+ assertEquals(schema.properties.findings.items.additionalProperties,false);assertEquals(schema.properties.findings.items.required,["category","region","source","output","certainty"]);
+ for(const axis of PHOTO_QC_AXES)assertEquals(schema.properties.preservation.properties[axis],{type:"integer"});
+ assertEquals(schema.properties.artifacts,{type:"integer"});assertEquals(schema.properties.edit_quality,{type:"integer"});
+ for(const unsupported of["minimum","maximum","minLength","maxLength","minItems","maxItems"])assert(!JSON.stringify(schema).includes('"'+unsupported+'"'));
+ // A provider structural guarantee never authorizes out-of-range scores or
+ // oversized evidence; those remain independently refused by our parser.
+ for(const v of[{...good(),confidence:2},{...good(),artifacts:101},{...good(),reason:"x".repeat(301)}])assertEquals(parsed(v).action,"hold");
+});
+Deno.test("photo parse reasons are closed and never contain private provider text",()=>{
+ const finding={category:"fixtures",region:"whole",source:"s",output:"o",certainty:"confirmed"};
+ const cases:[any,string][]=[[null,"input_type"],["x".repeat(16385),"input_length"],["PRIVATE malformed answer","invalid_json"],["{}","schema"],[JSON.stringify({...good(),findings:[{...finding,source:""}]}),"findings"],[JSON.stringify({...good(),findings:Array(4).fill({...finding,source:"é".repeat(200),output:"é".repeat(200)})}),"verdict_size"],[JSON.stringify(good()),"verified"]];
+ for(const[raw,reason]of cases){const diagnostic=parsePhotoQualityWithDiagnostic(raw);assertEquals(diagnostic.reason,reason);assert((PHOTO_QC_PARSE_REASONS as readonly string[]).includes(diagnostic.reason));assertEquals(diagnostic.verdict,parsePhotoQuality(raw));if(reason!=="verified")assertEquals(diagnostic.verdict.action,"hold");assert(!JSON.stringify(diagnostic).includes("PRIVATE"));}
+});
 Deno.test("photo QC accepts only the complete exact-schema threshold decision",()=>{
  assertEquals(parsed(good()).action,"accept");assertEquals(parsePhotoQuality("\x60\x60\x60json\n"+JSON.stringify(good())+"\n\x60\x60\x60").action,"accept");
  for(const axis of PHOTO_QC_AXES){const data=good();data.preservation[axis]=94;assertEquals(parsed(data).action,"hold");}

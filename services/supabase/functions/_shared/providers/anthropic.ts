@@ -119,6 +119,19 @@ export function outputConfigFor(
   return /sonnet-5/i.test(model) ? { effort: "low" } : null;
 }
 
+/** Explicit server-owned structured output, never read from customer input or
+ * route params. Other classifiers retain their exact existing request body. */
+export type AnthropicJSONSchema = Readonly<{type:"object";properties:Readonly<Record<string,unknown>>;required:readonly string[];additionalProperties:false}>;
+export function anthropicOutputConfig(model:string,params?:Record<string,unknown>|null,jsonSchema?:AnthropicJSONSchema):Record<string,unknown>|null {
+  const config=outputConfigFor(model,params);
+  if(jsonSchema===undefined)return config;
+  if(model!=="claude-sonnet-5"||jsonSchema.type!=="object"||jsonSchema.additionalProperties!==false
+    ||!jsonSchema.properties||!Array.isArray(jsonSchema.required)
+    ||new TextEncoder().encode(JSON.stringify(jsonSchema)).byteLength>8192)
+    throw new ProviderError(PROVIDER,"validation","Unsupported server structured-output contract");
+  return {...config,format:{type:"json_schema",schema:jsonSchema}};
+}
+
 /**
  * The answer ceiling for one call: the row, then the caller, then 400.
  *
@@ -173,6 +186,8 @@ export interface MessagesArgs {
   onStopReason?: (reason:AnthropicStopReason) => void;
   signal?:AbortSignal;
   timeoutMs?:number;
+  /** Dedicated server caller only. Never forward route/customer schema fields. */
+  jsonSchema?:AnthropicJSONSchema;
 }
 
 /** One bounded /v1/messages call → the concatenated text of the reply. */
@@ -199,7 +214,7 @@ export async function anthropicMessages(args: MessagesArgs): Promise<string> {
     messages: [{ role: "user", content: args.content }],
   };
   if (args.system) body.system = args.system;
-  const outputConfig = outputConfigFor(model, params);
+  const outputConfig = anthropicOutputConfig(model, params, args.jsonSchema);
   if (outputConfig) body.output_config = outputConfig;
 
   const data = await fetchJson<Record<string, unknown>>(
