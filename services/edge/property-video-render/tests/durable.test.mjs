@@ -18,7 +18,7 @@ try {
   let receipt={job_id:job,lease_token:lease,manifest_sha256:task.manifest_sha256,asset_id:job,poster_asset_id:lease,width:1920,height:1080,duration_s:5,bytes:12,sha256:'b'.repeat(64),poster_bytes:4,poster_sha256:'c'.repeat(64)};
   let observation=null,cpuTouches=0;
   let data=null,alarm=null,status='prepared',finishCount=0,failCount=0,tickCount=0,outputs=0,uploadCount=0,heartbeatStatus=200,failureStatus=200,terminalAfterFailure=false;
-  const events=[];let apiFault=null,cpuHTTPFault=null;
+  const events=[];let apiFault=null,cpuHTTPFault=null,monitorFault=null,coldDelayMs=0;
   const sql={exec(query,...args){
     if(query.startsWith('SELECT observation'))return{toArray:()=>observation?[{observation}]:[]};
     if(query.startsWith('INSERT INTO diagnostic')){observation=args[0];return{toArray:()=>[]};}
@@ -28,7 +28,8 @@ try {
     return{toArray:()=>[]};
   }};
   const container={running:false,images:{cpu:'verified-image@sha256:test'},async setInactivityTimeout(ms){cpuTouches++;assert.ok(ms>0);if(apiFault==='inactivity')throw new TypeError('PRIVATE-inactivity-url');},
-    start(options){cpuTouches++;if(apiFault==='start')throw new TypeError('PRIVATE-start-token');assert.equal(options.enableInternet,false);assert.equal(options.instance,'standard-3');assert.ok(!('EDGE_SERVICE_ROLE_KEY' in options.env));this.running=true;events.push('boot');},
+    start(options){cpuTouches++;if(apiFault==='start')throw new TypeError('PRIVATE-start-token');assert.equal(options.enableInternet,false);assert.equal(options.instance,'standard-3');assert.ok(!('EDGE_SERVICE_ROLE_KEY' in options.env));this.running=!monitorFault&&!coldDelayMs;events.push('boot');},
+    monitor(){cpuTouches++;return monitorFault?Promise.reject(monitorFault):new Promise(()=>{});},
     async destroy(){cpuTouches++;this.running=false;events.push('sleep');},async interceptOutboundHttps(host,binding){cpuTouches++;if(apiFault==='egress')throw new TypeError('PRIVATE-egress-url');assert.equal(host,'*');this.bound=binding;},
     getTcpPort(port){cpuTouches++;assert.equal(port,8080);return{fetch:async(url,init)=>{
       const route=new URL(url).pathname;if(cpuHTTPFault===route)return new Response('PRIVATE-CPU-body',{status:403});
@@ -166,11 +167,38 @@ try {
       assert.ok(!JSON.stringify(diagnostics).includes('PRIVATE-'),'CPU details never log raw body, URL or token');
       const httpObservation=await cpu.diagnostic();
       assert.deepEqual({...httpObservation,timestamp:0},{phase:'execute',error_name:'Other',reason:'http_refusal',http_status:403,timestamp:0});
-      for(const invalid of ['invalid-json',JSON.stringify({...httpObservation,token:'PRIVATE-TOKEN'}),JSON.stringify({...httpObservation,phase:'PRIVATE-URL'}),JSON.stringify({...httpObservation,error_name:'PRIVATE-ERROR'}),JSON.stringify({...httpObservation,reason:'PRIVATE-BODY'}),JSON.stringify({...httpObservation,http_status:999}),JSON.stringify({...httpObservation,timestamp:-1})]){
+      for(const invalid of ['invalid-json',JSON.stringify({...httpObservation,token:'PRIVATE-TOKEN'}),JSON.stringify({...httpObservation,phase:'PRIVATE-URL'}),JSON.stringify({...httpObservation,error_name:'PRIVATE-ERROR'}),JSON.stringify({...httpObservation,reason:'PRIVATE-BODY'}),JSON.stringify({...httpObservation,http_status:999}),JSON.stringify({...httpObservation,timestamp:-1}),JSON.stringify({...httpObservation,exit_code:'PRIVATE'}),JSON.stringify({...httpObservation,exit_code:256})]){
         observation=invalid;assert.equal(await cpu.diagnostic(),null,'corrupt/non-closed metadata is never exposed');
       }
 
       cpuHTTPFault=null;
+      // The real platform validates start() synchronously and can reject its
+      // image/process later. Observe that promise without leaking raw errors.
+      for(const [fault,reason,exit]of [[Object.assign(new Error('PRIVATE-process'),{exitCode:1}),'process_exit',1],[new Error('PRIVATE-image registry reference'),'startup_image',undefined],[new Error('PRIVATE-resource capacity'),'startup_capacity',undefined]]){
+        monitorFault=fault;container.running=false;data=null;diagnostics.length=0;
+        const beforeFail=failCount,beforeTicks=tickCount,beforeBoots=events.filter(x=>x==='boot').length;
+        cpu=new PropertyVideoCPU(ctx,env);await cpu.wake(job,'slot-0');await cpu.alarm();
+        const snap=await cpu.diagnostic();assert.equal(snap.phase,'start');assert.equal(snap.reason,reason);assert.equal(snap.exit_code,exit);
+        assert.equal(failCount,beforeFail+1);assert.equal(tickCount,beforeTicks+1);assert.equal(events.filter(x=>x==='boot').length,beforeBoots+1);
+        assert.equal(data,null);assert.ok(!JSON.stringify(snap).includes('PRIVATE-'));
+      }
+      monitorFault=null;
+      // A cold instance may take longer than30s. One start waits for readiness
+      // up to120s, without additional claims, tasks, or supplier activity.
+      const realNow=Date.now,realTimer=globalThis.setTimeout;
+      for(const delay of [75_000,150_000]){
+        let fakeNow=realNow(),elapsed=0;Date.now=()=>fakeNow;coldDelayMs=delay;container.running=false;data=null;status='working';
+        const beforeFail=failCount,beforeTicks=tickCount,beforeBoots=events.filter(x=>x==='boot').length;
+        globalThis.setTimeout=(callback,ms)=>{assert.equal(ms,300);elapsed+=ms;fakeNow+=ms;if(elapsed>=delay)container.running=true;queueMicrotask(callback);return 0;};
+        try{
+          cpu=new PropertyVideoCPU(ctx,env);await cpu.wake(job,'slot-0');await cpu.alarm();
+          assert.equal(events.filter(x=>x==='boot').length,beforeBoots+1,'only one container start');assert.equal(tickCount,beforeTicks+1,'only one authority claim');
+          if(delay<120_000){assert.ok(JSON.parse(data).taskID);assert.equal(failCount,beforeFail);assert.equal(elapsed,delay);}
+          else{assert.equal(data,null);assert.equal(failCount,beforeFail+1);assert.equal(elapsed,120_000);assert.equal((await cpu.diagnostic()).phase,'ready_timeout');}
+        }finally{Date.now=realNow;globalThis.setTimeout=realTimer;coldDelayMs=0;}
+        if(data){container.running=false;await cpu.alarm();}
+      }
+
     } finally {console.warn=warn;}
 
   } finally {globalThis.fetch=originalFetch;}

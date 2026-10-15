@@ -14,6 +14,7 @@ interface Env {
 
 const POLL_MS=15_000;
 const CPU_TIMEOUT_MS=20*60_000;
+const COLD_READY_MS=120_000;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
 
 class AuthorityRefusal extends Error {constructor(readonly status:number){super("authority_refused");}}
@@ -36,24 +37,32 @@ function dispatchDiagnostic(error:unknown):Record<string,string|number> {
     : error instanceof BridgeFailure ? {category:error.category,...(error.transport?{error_name:error.transport.name,reason:error.transport.reason}:{})} : {category:'controller'};
 }
 type CPUPhase='start'|'inactivity'|'egress'|'ready'|'ready_timeout'|'execute'|'status'|'upload';
-class CPUFailure extends Error {constructor(readonly phase:CPUPhase,readonly category:'cpu_api'|'cpu_transport'|'cpu_http'|'cpu_response'|'cpu_not_running'|'cpu_task_failed'|'cpu_task_missing',readonly status?:number,readonly transport?:{name:TransportName;reason:TransportReason}){super(category);}}
+type StartupReason='process_exit'|'startup_image'|'startup_capacity'|'startup_configuration'|'startup_unknown';
+class CPUFailure extends Error {constructor(readonly phase:CPUPhase,readonly category:'cpu_api'|'cpu_transport'|'cpu_http'|'cpu_response'|'cpu_not_running'|'cpu_task_failed'|'cpu_task_missing'|'cpu_start_failed',readonly status?:number,readonly transport?:{name:TransportName;reason:TransportReason},readonly startup?:{reason:StartupReason;exitCode?:number}){super(category);}}
+function startupFailure(error:unknown):CPUFailure {
+  const value=error as {exitCode?:unknown;message?:unknown}|null;
+  const exitCode=Number.isInteger(value?.exitCode)&&Number(value?.exitCode)>=0&&Number(value?.exitCode)<=255?Number(value?.exitCode):undefined;
+  const message=typeof value?.message==='string'?value.message:'';
+  const reason:StartupReason=exitCode!==undefined?'process_exit':/image|registry|manifest|pull/i.test(message)?'startup_image':/capacity|resource|quota|limit|placement/i.test(message)?'startup_capacity':/configuration|not permitted|not enabled|permission/i.test(message)?'startup_configuration':'startup_unknown';
+  return new CPUFailure('start','cpu_start_failed',undefined,undefined,{reason,...(exitCode===undefined?{}:{exitCode})});
+}
 function cpuDiagnostic(error:unknown):Record<string,string|number> {
-  return error instanceof CPUFailure?{phase:error.phase,category:error.category,...(error.status===undefined?{}:{status:error.status}),...(error.transport?{error_name:error.transport.name,reason:error.transport.reason}:{})}:dispatchDiagnostic(error);
+  return error instanceof CPUFailure?{phase:error.phase,category:error.category,...(error.status===undefined?{}:{status:error.status}),...(error.transport?{error_name:error.transport.name,reason:error.transport.reason}:{}),...(error.startup?{reason:error.startup.reason,...(error.startup.exitCode===undefined?{}:{exit_code:error.startup.exitCode})}:{})}:dispatchDiagnostic(error);
 }
 function cpuAPIFailure(phase:CPUPhase,error:unknown):CPUFailure {return new CPUFailure(phase,'cpu_api',undefined,transportFailure(error).transport);}
 const DIAGNOSTIC_PHASES=new Set(['start','inactivity','egress','ready','ready_timeout','execute','status','upload','bridge','controller']);
-const DIAGNOSTIC_REASONS=new Set(['redirect','invalid_header','dns','timeout','unsupported_api','other','http_refusal','configuration','response','not_running','task_failed','task_missing']);
-type ClosedDiagnostic={phase:string;error_name:TransportName;reason:string;http_status?:number;timestamp:number};
+const DIAGNOSTIC_REASONS=new Set(['redirect','invalid_header','dns','timeout','unsupported_api','other','http_refusal','configuration','response','not_running','task_failed','task_missing','process_exit','startup_image','startup_capacity','startup_configuration','startup_unknown']);
+type ClosedDiagnostic={phase:string;error_name:TransportName;reason:string;http_status?:number;exit_code?:number;timestamp:number};
 function checkedDiagnostic(value:unknown):ClosedDiagnostic|null {
   if(!value||typeof value!=='object'||Array.isArray(value))return null;
   const v=value as Record<string,unknown>;
-  if(Object.keys(v).some(k=>!['phase','error_name','reason','http_status','timestamp'].includes(k))||!DIAGNOSTIC_PHASES.has(String(v.phase))||!['TypeError','TimeoutError','AbortError','Other'].includes(String(v.error_name))||!DIAGNOSTIC_REASONS.has(String(v.reason))||!Number.isSafeInteger(v.timestamp)||Number(v.timestamp)<0||!(v.http_status===undefined||Number.isInteger(v.http_status)&&Number(v.http_status)>=100&&Number(v.http_status)<=599))return null;
+  if(Object.keys(v).some(k=>!['phase','error_name','reason','http_status','exit_code','timestamp'].includes(k))||!DIAGNOSTIC_PHASES.has(String(v.phase))||!['TypeError','TimeoutError','AbortError','Other'].includes(String(v.error_name))||!DIAGNOSTIC_REASONS.has(String(v.reason))||!Number.isSafeInteger(v.timestamp)||Number(v.timestamp)<0||!(v.http_status===undefined||Number.isInteger(v.http_status)&&Number(v.http_status)>=100&&Number(v.http_status)<=599)||!(v.exit_code===undefined||Number.isInteger(v.exit_code)&&Number(v.exit_code)>=0&&Number(v.exit_code)<=255))return null;
   return v as ClosedDiagnostic;
 }
 function closedDiagnostic(error:unknown):ClosedDiagnostic {
   const d=cpuDiagnostic(error),category=String(d.category);
   const reason=typeof d.reason==='string'?d.reason:category.endsWith('_http')?'http_refusal':category.endsWith('_configuration')?'configuration':category.endsWith('_response')?'response':category==='cpu_not_running'?'not_running':category==='cpu_task_failed'?'task_failed':category==='cpu_task_missing'?'task_missing':'other';
-  return checkedDiagnostic({phase:typeof d.phase==='string'?d.phase:category.startsWith('bridge_')?'bridge':'controller',error_name:typeof d.error_name==='string'?d.error_name:'Other',reason,...(typeof d.status==='number'?{http_status:d.status}:{}),timestamp:Date.now()})!;
+  return checkedDiagnostic({phase:typeof d.phase==='string'?d.phase:category.startsWith('bridge_')?'bridge':'controller',error_name:typeof d.error_name==='string'?d.error_name:'Other',reason,...(typeof d.status==='number'?{http_status:d.status}:{}),...(typeof d.exit_code==='number'?{exit_code:d.exit_code}:{}),timestamp:Date.now()})!;
 }
 
 async function bridge(env:Env,path:string,body?:unknown):Promise<Record<string,unknown>> {
@@ -119,15 +128,23 @@ export class PropertyVideoCPU extends DurableObject<Env> {
   private async boot(state:SlotState):Promise<void> {
     const container=this.ctx.container;
     if (!container||!state.capabilities) throw Error('cpu_configuration_missing');
+    let startup:CPUFailure|undefined;
     if (!container.running) {
       try {container.start({image:container.images.cpu,instance:'standard-3',enableInternet:false,
         env:{CONTAINER_TOKEN:state.token,MEDIA_HOSTS:this.env.MEDIA_HOSTS},labels:{workload:'property-video'}});}catch(error){throw cpuAPIFailure('start',error);}
+      // start() only validates options. Its later image/process failures are
+      // observable through monitor(), not through the synchronous return.
+      try {this.ctx.waitUntil(container.monitor().then(
+        ()=>{startup=new CPUFailure('start','cpu_start_failed',undefined,undefined,{reason:'process_exit',exitCode:0});},
+        error=>{startup=startupFailure(error);},
+      ));}catch(error){throw startupFailure(error);}
       try {await container.setInactivityTimeout(60_000);}catch(error){throw cpuAPIFailure('inactivity',error);}
     }
     await this.bindEgress(state.capabilities);
-    const deadline=Date.now()+30_000;
+    const deadline=Date.now()+COLD_READY_MS;
     let last:unknown;
     while (Date.now()<deadline) {
+      if(startup)throw startup;
       try {await this.cpu('ready');return;} catch(error) {last=error;await new Promise(resolve=>setTimeout(resolve,300));}
     }
     throw new CPUFailure('ready_timeout',last instanceof CPUFailure?last.category:'cpu_not_running',last instanceof CPUFailure?last.status:undefined,last instanceof CPUFailure?last.transport:undefined);
