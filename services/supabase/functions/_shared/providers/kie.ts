@@ -211,7 +211,7 @@ export const kieAdapter: ProviderAdapter = {
         // Official single-shot I2V schema. Omit aspect_ratio for source-auto.
         // https://docs.kie.ai/market/kling/kling-3-0#aspect-ratio-auto-adaptation
         if (!imageUrl || duration !== "5" || resolution !== "1080p" ||
-            input.extra?.kie_mode !== "pro" || input.extra?.sound !== false ||
+            !["pro", "4K"].includes(String(input.extra?.kie_mode)) || input.extra?.sound !== false ||
             input.framing !== "preserve_photo") {
           throw new ProviderError(PROVIDER, "validation", "Kling comparison requires a five-second Pro silent photo-preserving shot.", 400, true);
         }
@@ -219,6 +219,7 @@ export const kieAdapter: ProviderAdapter = {
         jobInput.sound = false;
         jobInput.duration = duration;
         jobInput.mode = "pro";
+        if (input.extra?.kie_mode === "4K") jobInput.mode = "4K";
         jobInput.multi_shots = false;
         if(input.extra?.property_video_target_aspect!==undefined){
           if(!['16:9','9:16'].includes(String(input.extra.property_video_target_aspect))||input.extra.property_video_target_aspect!==input.aspect)throw new ProviderError(PROVIDER,'validation','The server property-video target canvas changed.',400,true);

@@ -84,6 +84,19 @@ Deno.test("actual Kling admission reserves45 cents in both authorities before ex
   }
   const no=funded();await assertRejects(()=>submitReservedVideo({...options,steps:[{...step,unit_cents:3.6}]},no.deps));assertEquals(no.posts(),0);
 });
+Deno.test("actual4K Kling wire and both funded authorities bind67credits per second before one submit",async()=>{
+ const selected={...step,unit_cents:33.5,params:{kie_mode:"4K",sound:false}};
+ const value={...input,extra:{kie_mode:"4K",sound:false}};
+ const wire=await capturedSubmit(kieAdapter,selected,value);
+ assertEquals(wire.calls[0].body.input.mode,"4K");assertEquals(wire.calls[0].body.input.sound,false);
+ const f=funded();await submitReservedVideo({...options,steps:[selected],input:value},f.deps);
+ assertEquals(f.posts(),1);assertEquals(f.calls.filter(x=>x.name.endsWith("reserve")||x.name.endsWith("reserve_v2")).map(x=>x.args.p_hold_cents),[167.5,167.5]);
+ for(const [route,request]of [[{...selected,unit_cents:9},value],[selected,input],[selected,{...value,extra:{kie_mode:"4K",sound:true}}]]as const){const no=funded();await assertRejects(()=>submitReservedVideo({...options,steps:[route],input:request},no.deps));assertEquals(no.posts(),0);assert(!no.calls.some(x=>x.name==="serving_cost_reserve"));}
+ const source=await Deno.readTextFile(new URL("./cost-reservation.ts",import.meta.url));
+ const needle='quote = {cents: Math.max(hold, 167.5),version:TARIFF_VERSION};';assertEquals(source.split(needle).length,2);
+ const mutant=await import(encode(imports(source.replace(needle,'quote = {cents: 45,version:TARIFF_VERSION};'),"./cost-reservation.ts")));
+ const wrong=funded();await mutant.submitReservedVideo({...options,steps:[selected],input:value},wrong.deps);assertEquals(wrong.calls.find(x=>x.name==="serving_cost_reserve")?.args.p_hold_cents,45,"Independent money oracle detects an underfunded4K quote");
+});
 Deno.test("compiled framing, payload and money controls expose lost crop, sound and hold contracts",async()=>{
   const framingSource=await Deno.readTextFile(new URL("./reel-framing.ts",import.meta.url));
   const filter='const eligible = steps.filter(reelStepPreservesPhoto);';assertEquals(framingSource.split(filter).length,2);

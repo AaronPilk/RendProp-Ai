@@ -36,7 +36,8 @@ export async function ownerQaReelStep(
       (grant.model !== KIE_REEL_QA_MODEL && grant.model !== KIE_KLING_REEL_QA_MODEL) ||
       grant.consent !== OWNER_REEL_QA_CONSENT || canonicalUuid(grant.changed_by) !== actorId) return null;
   const kling = grant.model === KIE_KLING_REEL_QA_MODEL;
-  if (kling && (args.framing !== "preserve_photo" || grant.mode !== "pro" || grant.sound !== false)) return null;
+  if (kling && (args.framing !== "preserve_photo" || !["pro", "4K"].includes(String(grant.mode)) || grant.sound !== false)) return null;
+  const fourK = kling && grant.mode === "4K";
   const start = typeof grant.created_at === "string" ? Date.parse(grant.created_at) : NaN;
   const end = typeof grant.expires_at === "string" ? Date.parse(grant.expires_at) : NaN;
   const clock = now.getTime();
@@ -51,11 +52,11 @@ export async function ownerQaReelStep(
   // installed clients without preserve_photo keep their ordinary route.
   // https://kie.ai/kling-3-0
   return {
-    route_id: kling ? "owner-qa-kie-kling3-pro-20261012" : "owner-qa-kie-seedance-fast-20261012", task: "video.reel_clip",
-    provider: "kie", model: String(grant.model), unit: "second", unit_cents: kling ? 9 : 3.6,
+    route_id: fourK ? "owner-qa-kie-kling3-4k-20261015" : kling ? "owner-qa-kie-kling3-pro-20261012" : "owner-qa-kie-seedance-fast-20261012", task: "video.reel_clip",
+    provider: "kie", model: String(grant.model), unit: "second", unit_cents: fourK ? 33.5 : kling ? 9 : 3.6,
     capabilities: ["i2v", "1080p", "5s"], max_latency_s: 900, min_plan: "free",
     same_model_as: kling ? "kling_3_pro" : "seedance_v1_pro_fast", privacy_tier: "trains_by_default", enabled: true,
-    ...(kling ? { params: { kie_mode: "pro", sound: false } } : {}),
+    ...(kling ? { params: { kie_mode: fourK ? "4K" : "pro", sound: false } } : {}),
   };
 }
 

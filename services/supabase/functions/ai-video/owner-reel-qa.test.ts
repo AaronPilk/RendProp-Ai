@@ -391,7 +391,7 @@ Deno.test("owner Kling grant requires current exact Pro silent consent and prese
   const native = {actorId:HEX_ACTOR.toUpperCase(),orgId:HEX_ORG.toUpperCase(),listingId:HEX_LISTING.toUpperCase(),seconds:5,framing:"preserve_photo" as const};
   assert(await ownerQaReelStep(native,db({value:{...klingGrant,actor_id:HEX_ACTOR,org_id:HEX_ORG,listing_id:HEX_LISTING,changed_by:HEX_ACTOR}}).client,NOW));
   const original=await Deno.readTextFile(new URL("./owner-reel-qa.ts",import.meta.url));
-  for (const [needle,change] of [['grant.mode !== "pro"',{mode:"standard"}],['grant.sound !== false',{sound:true}]] as const) {
+  for (const [needle,change] of [['!["pro", "4K"].includes(String(grant.mode))',{mode:"standard"}],['grant.sound !== false',{sound:true}]] as const) {
     assertEquals(original.split(needle).length,2);
     const mutant=await import(encode(absoluteImports(original.replace(needle,"false"))));
     assert(await mutant.ownerQaReelStep(framedArgs,db({value:{...klingGrant,...change}}).client,NOW),"Compiled control must expose the removed Kling fence");
@@ -400,6 +400,16 @@ Deno.test("owner Kling grant requires current exact Pro silent consent and prese
   const noMarker=await import(encode(absoluteImports(original.replace(marker,"false"))));
   assert(await noMarker.ownerQaReelStep(args,db({value:klingGrant}).client,NOW),"Compiled marker control must expose old-client routing leak");
   console.log("KLING_OWNER_COMPILED_CONTROLS=3");
+});
+
+Deno.test("4K owner comparison needs its own exact priced server grant; ordinary and expired requests stay unchanged",async()=>{
+ const value={...grant,model:KIE_KLING_REEL_QA_MODEL,mode:"4K",sound:false};
+ const framed={...args,framing:"preserve_photo" as const};
+ const route=await ownerQaReelStep(framed,db({value}).client,NOW);assert(route);
+ assertEquals([route.unit_cents,paramsOf(route),route.route_id],[33.5,{kie_mode:"4K",sound:false},"owner-qa-kie-kling3-4k-20261015"]);
+ for(const changed of [{...value,actor_id:OTHER},{...value,expires_at:NOW.toISOString()},{...value,mode:"4k"},{...value,sound:true}])assertEquals(await ownerQaReelStep(framed,db({value:changed}).client,NOW),null);
+ assertEquals(await ownerQaReelStep(args,db({value}).client,NOW),null);
+ assertEquals(await ownerQaReelStep(framed,db({value,admin:false}).client,NOW),null);
 });
 
 Deno.test("actual routing rejects incompatible photo-preservation before supplier admission and keeps legacy routing", async () => {

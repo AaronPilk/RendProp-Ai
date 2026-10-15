@@ -119,6 +119,14 @@ export async function submitReservedVideo<T extends { id: string }>(
     // Official KIE Pro silent rate: 18 credits/s = $0.09/s, five seconds $0.45.
     // https://kie.ai/kling-3-0 (2026-10-12); no top-up discount assumed.
     quote = {cents: Math.max(hold, 45),version:TARIFF_VERSION};
+  } else if (step.provider === "kie" && model === "kling-3.0/video" &&
+      input.seconds === 5 && input.resolution === "1080p" && input.framing === "preserve_photo" &&
+      input.extra?.kie_mode === "4K" && input.extra?.sound === false && unitCents === 33.5 && step.unit === "second") {
+    // Official Kie catalog 2026-10-15: 4K costs67credits/$0.335 per
+    // second, with or without native sound. Delivery remains1080p; native
+    // pixels must independently pass its destination crop without upscaling.
+    // https://kie.ai/kling-3-0
+    quote = {cents: Math.max(hold, 167.5),version:TARIFF_VERSION};
   }
   try {
     // The same request must never reach a second provider after a timeout or
