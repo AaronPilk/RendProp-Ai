@@ -237,6 +237,7 @@ import { privateMediaUrl } from "../_shared/private-media.ts";
 import { createRoutedOutput } from "./routed-output.ts";
 import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
+import { recoverVideoOperation, retainVideoSubmission } from "./operation-recovery.ts";
 import { ownerQaReelStep, prepareOwnerQaReelInput } from "./owner-reel-qa.ts";
 import {PROPERTY_VIDEO_QUALITY_PROFILE,currentPropertyVideoQualityProfile,propertyVideoQualityProfile,propertyVideoQualitySteps,type PropertyVideoQualityProfile} from "./property-video-quality.ts";
 import { buildPhotoPreservingReelPrompt, buildPropertyCanvasReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
@@ -1122,6 +1123,14 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
     const rpc=async(name:string,args:Record<string,unknown>)=>{if(worker&&['app_video_cost_reserve_v2','serving_cost_reserve'].includes(name))await worker.authorize();return await adminClient().rpc(name,args);};
     const provenance=(args:ProvenanceArgs)=>worker?worker.provenance(args):recordProvenance(req,args);
 
+    if (req.method === "GET" && seg.length === 1 && seg[0] === "operation") {
+      return await recoverVideoOperation(req, user.id, {
+        preferredOrg, contentOrg: contentOrgForUser, rpc,
+        paidReceiptMatches: job => paidRoutedReceiptMatches(job, false),
+        sign: (request, ref, owner) => routerStatusUrl(request, "ai-video", "video.reel_clip", ref, owner),
+      });
+    }
+
     // Reflection removal has durable, caller-scoped jobs. Other video routes
     // keep their existing status transport and allowance behavior.
     const eraseAction = seg[0] === "declutter"
@@ -1659,6 +1668,16 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         throw e;
       }
       const step = attempt.step;
+      const savedListing = body.listing_id ?? reelListingId;
+      if (!worker && step.provider === "fal" && savedListing) {
+        try {
+          await retainVideoSubmission({ actor: user.id, org: orgId, key: requiredIdempotencyKey(req), listing: savedListing, ref: attempt.value }, rpc);
+        } catch {
+          // Preserve the accepted receipt even if its recovery journal is down.
+          // A lost HTTP reply remains unknown; it never authorizes another POST.
+          console.error("ai-video accepted receipt recovery journal unavailable");
+        }
+      }
       const sub = await submitEnvelope(req, routerOn || !!worker, task, attempt.value, { orgId, userId: user.id, listingId: body.listing_id ?? reelListingId });
       if(worker?.accepted)await worker.accepted({...sub,model_id:step.model,seconds:secs});
 
