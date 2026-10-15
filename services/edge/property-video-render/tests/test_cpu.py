@@ -17,7 +17,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "container"))
 from capabilities import checked_url, download
 from compose import compose, MusicSource, probe, QualityError, run
-from http_adapter import Runtime,make_handler
+from http_adapter import Runtime,make_handler,PrivateHTTPServer
 from http.server import ThreadingHTTPServer
 from music_catalog import validate_music, CATALOG
 from renderer import validate_task,extract
@@ -72,10 +72,24 @@ class Boundaries(unittest.TestCase):
             self.assertEqual(fresh.status(one),{"state":"missing"})
             fresh.close();runtime.close();self.assertEqual(len(calls),1)
 
+    def test_private_server_does_not_resolve_container_display_hostname(self):
+        runtime=Runtime('x'*40,{'media.test'})
+        error=UnicodeEncodeError('idna','a'*64,0,64,'label too long')
+        with patch('socket.getfqdn',side_effect=error) as dns:
+            with self.assertRaises(UnicodeEncodeError):
+                ThreadingHTTPServer(('127.0.0.1',0),make_handler(runtime))
+            dns.reset_mock()
+            server=PrivateHTTPServer(('127.0.0.1',0),make_handler(runtime))
+            try:
+                self.assertEqual(server.server_name,'private-renderer')
+                self.assertGreater(server.server_port,0)
+                dns.assert_not_called()
+            finally:server.server_close();runtime.close()
+
     def test_real_http_private_auth_and_closed_body(self):
         import threading
         runtime=Runtime('x'*40,{'media.test'})
-        server=ThreadingHTTPServer(('127.0.0.1',0),make_handler(runtime))
+        server=PrivateHTTPServer(('127.0.0.1',0),make_handler(runtime))
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
             conn=http.client.HTTPConnection(*server.server_address)
@@ -147,6 +161,39 @@ class ActualFFmpeg(unittest.TestCase):
         self.assertEqual((result['width'],result['height']),(1920,1080))
         self.assertEqual(result['clip_sha256'],hashlib.sha256((self.root/'red.mp4').read_bytes()).hexdigest())
         self.assertTrue(all(frame['mime']=='image/jpeg' for frame in result['frames']))
+
+    def test_private_http_to_actual1080_master_when_hostname_dns_would_fail(self):
+        import threading
+        root=self.root/'http-master';root.mkdir()
+        runtime=Runtime('x'*40,{'media.test'},root)
+        error=UnicodeEncodeError('idna','a'*64,0,64,'label too long')
+        with patch('socket.getfqdn',side_effect=error):
+            server=PrivateHTTPServer(('127.0.0.1',0),make_handler(runtime))
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        clip=self.root/'red.mp4';value=task();value['sources'][0].update(url='https://media.test/owned',bytes=clip.stat().st_size,sha256=hashlib.sha256(clip.read_bytes()).hexdigest())
+        def owned_download(item,target,hosts,**options):
+            self.assertEqual(item['url'],'https://media.test/owned');shutil.copyfile(clip,target);return item['sha256']
+        def post(path,body):
+            conn=http.client.HTTPConnection(*server.server_address,timeout=10)
+            try:
+                conn.request('POST',path,body=json.dumps(body),headers={'Authorization':'Bearer '+'x'*40,'Content-Type':'application/json'})
+                response=conn.getresponse();return response.status,json.loads(response.read())
+            finally:conn.close()
+        try:
+            with patch('renderer.download',side_effect=owned_download):
+                status,reply=post('/execute',value);self.assertEqual(status,202)
+                deadline=time.monotonic()+60
+                while time.monotonic()<deadline:
+                    status,result=post('/status',{'task_id':reply['task_id']});self.assertEqual(status,200)
+                    if result['state']!='working':break
+                    time.sleep(.05)
+                self.assertEqual(result['state'],'prepared')
+                self.assertEqual((result['result']['width'],result['result']['height']),(1920,1080))
+                self.assertAlmostEqual(result['result']['duration_s'],5,delta=.05)
+                self.assertGreater(result['result']['bytes'],1000)
+                self.assertEqual(result['result']['job_id'],JOB)
+                self.assertEqual(result['result']['lease_token'],LEASE)
+        finally:server.shutdown();server.server_close();runtime.close();thread.join(3)
 
     def test_dissolve_whip_and_every_caption_style_actual_frames(self):
         if not self.font:self.fail('caption font required for actual presentation acceptance')

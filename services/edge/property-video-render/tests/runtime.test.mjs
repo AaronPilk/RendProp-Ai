@@ -22,13 +22,12 @@ try {
   assert.equal(response.status,200);assert.deepEqual(await response.json(),{service:'property-video-render',enabled:false,provider_dispatch:false});
   response=await runtime.dispatchFetch('https://private-renderer.test/wake',{method:'POST'});assert.equal(response.status,403);
   response=await runtime.dispatchFetch('https://private-renderer.test/diagnostic');assert.equal(response.status,403);
-  response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,503,'disabled synthetic control cannot boot');
   response=await runtime.dispatchFetch('https://private-renderer.test/diagnostic?slot=untrusted',{headers:{Authorization:'Bearer isolated-test'}});
   assert.equal(response.status,200);assert.equal(response.headers.get('Cache-Control'),'no-store');
   assert.deepEqual(await response.json(),{slots:[{slot:'slot-0',observation:null},{slot:'slot-1',observation:null}]},'actual SQLite diagnostic works while disabled, without a CPU');
 
   response=await runtime.dispatchFetch('https://private-renderer.test/wake',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,503);
-  for(const route of ['/execute','/status','/upload','/queue','/finish']){
+  for(const route of ['/execute','/status','/upload','/queue','/finish','/startup-probe','/startup-probe-v2']){
     response=await runtime.dispatchFetch('https://private-renderer.test'+route,{method:'POST'});assert.equal(response.status,404);
   }
   // Exercise the actual enabled bridge in workerd with a closed outbound
@@ -51,11 +50,6 @@ try {
   response=await runtime.dispatchFetch('https://private-renderer.test/diagnostic',{headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,200);
   assert.deepEqual(await response.json(),{slots:[{slot:'slot-0',observation:null},{slot:'slot-1',observation:null}]});
   assert.equal(hits.length,0,'enabled authenticated diagnostic makes no authority queue/tick/media requests');
-  response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe',{method:'POST'});assert.equal(response.status,403);
-  response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe',{method:'POST',headers:{Authorization:'Bearer isolated-test'},body:'{}'});assert.equal(response.status,400);
-  response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,503,'workerd fixture has no physical Container');assert.equal(hits.length,0);
-  response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe-v2',{method:'POST'});assert.equal(response.status,403);
-  response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe-v2',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,503);assert.equal(hits.length,0);
   let reached=new Promise(resolve=>{resolveHit=resolve;});
   response=await runtime.dispatchFetch('https://private-renderer.test/wake',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,202);
   await bounded(reached,'actual enabled bridge failed before its one authority request');assert.equal(hits.length,1);

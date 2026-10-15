@@ -16,16 +16,10 @@ try {
     sources:[{url:'https://media.example.test/owned?sign=one',bytes:12,sha256:'a'.repeat(64),position:0,motion_kind:'ai'}],
     output:{asset_id:job,poster_asset_id:lease},presentation:{transition:'cut',shot_caption_style:'off',spoken_captions:false,shot_labels:[null]},expires_at:new Date(Date.now()+3600000).toISOString()};
   let receipt={job_id:job,lease_token:lease,manifest_sha256:task.manifest_sha256,asset_id:job,poster_asset_id:lease,width:1920,height:1080,duration_s:5,bytes:12,sha256:'b'.repeat(64),poster_bytes:4,poster_sha256:'c'.repeat(64)};
-  let observation=null,probe=null,probe2=null,cpuTouches=0;
+  let observation=null,cpuTouches=0;
   let data=null,alarm=null,status='prepared',finishCount=0,failCount=0,tickCount=0,outputs=0,uploadCount=0,heartbeatStatus=200,failureStatus=200,terminalAfterFailure=false;
   const events=[];let apiFault=null,cpuHTTPFault=null,monitorFault=null,coldDelayMs=0;
   const sql={exec(query,...args){
-    if(query.startsWith('SELECT state,receipt FROM startup_probe_v2'))return{toArray:()=>probe2?[probe2]:[]};
-    if(query.startsWith('INSERT INTO startup_probe_v2')){probe2={state:'running',receipt:null};return{toArray:()=>[]};}
-    if(query.startsWith('UPDATE startup_probe_v2')){probe2={state:'done',receipt:args[0]};return{toArray:()=>[]};}
-    if(query.startsWith('SELECT state,receipt FROM startup_probe'))return{toArray:()=>probe?[probe]:[]};
-    if(query.startsWith('INSERT INTO startup_probe')){probe={state:'running',receipt:null};return{toArray:()=>[]};}
-    if(query.startsWith('UPDATE startup_probe')){probe={state:'done',receipt:args[0]};return{toArray:()=>[]};}
     if(query.startsWith('SELECT observation'))return{toArray:()=>observation?[{observation}]:[]};
     if(query.startsWith('INSERT INTO diagnostic')){observation=args[0];return{toArray:()=>[]};}
     if(query.startsWith('SELECT'))return{toArray:()=>data?[{state:data}]:[]};
@@ -114,14 +108,7 @@ try {
     for(const [method,route] of [['POST','/diagnostic'],['GET','/diagnostic/slot-0'],['GET','/wake']])assert.equal((await worker.fetch(new Request('https://controller.test'+route,{method,headers:{Authorization:'Bearer trigger-test'}}),inspectEnv,noActions)).status,404);
 
 
-    const probeSlots=[];let probeCalls=0;
-    const probeEnv={...env,CPU:{getByName(slot){probeSlots.push(slot);return{async startupProbe(){probeCalls++;return{status:200,value:{probe:{reason:'ready'}}};},async startupProbeV2(){probeCalls++;return{status:200,value:{probe:{reason:'unknown',traceback:[]}}};}};}}};
-    assert.equal((await worker.fetch(new Request('https://controller.test/startup-probe',{method:'POST'}),probeEnv,noActions)).status,403);assert.equal(probeCalls,0);
-    assert.equal((await worker.fetch(new Request('https://controller.test/startup-probe',{method:'POST',headers:{Authorization:'Bearer trigger-test'},body:'{}'}),probeEnv,noActions)).status,400);assert.equal(probeCalls,0);
-    assert.equal((await worker.fetch(new Request('https://controller.test/startup-probe?slot=slot-0',{method:'POST',headers:{Authorization:'Bearer trigger-test'}}),probeEnv,noActions)).status,200);
-    assert.deepEqual(probeSlots,['slot-1']);assert.equal(probeCalls,1);
-    assert.equal((await worker.fetch(new Request('https://controller.test/startup-probe-v2',{method:'POST',headers:{Authorization:'Bearer trigger-test'}}),probeEnv,noActions)).status,200);assert.deepEqual(probeSlots,['slot-1','slot-1']);assert.equal(probeCalls,2);
-    assert.equal((await worker.fetch(new Request('https://controller.test/startup-probe',{method:'POST',headers:{Authorization:'Bearer trigger-test'}}),{...probeEnv,ENABLED:'false'},noActions)).status,503);assert.equal(probeCalls,2);
+    for(const route of ['/startup-probe','/startup-probe-v2'])assert.equal((await worker.fetch(new Request('https://controller.test'+route,{method:'POST',headers:{Authorization:'Bearer trigger-test'}}),env,noActions)).status,404,'retired startup controls have no route');
     // Exercise the actual scheduled entry and its caught bridge, not merely a
     // formatter. Hostile exception/body strings must never enter a log.
     const originalAuthority=globalThis.fetch;
@@ -198,19 +185,6 @@ try {
         assert.equal(data,null);assert.ok(!JSON.stringify(snap).includes('PRIVATE-'));
       }
 
-      // Actual class persists the one-attempt control marker before execution,
-      // refuses a real occupied slot and never starts again on receipt replay.
-      monitorFault=null;container.running=false;data=null;probe=null;
-      cpu=new PropertyVideoCPU(ctx,env);await cpu.wake(job,'slot-1');const touches=cpuTouches;
-      assert.equal((await cpu.startupProbe()).status,409);assert.equal(cpuTouches,touches);data=null;alarm=null;
-      probe={state:'running',receipt:null};assert.equal(await cpu.wake(job,'slot-1'),false);assert.equal((await cpu.startupProbe()).status,409);
-      probe={state:'done',receipt:JSON.stringify({cleanup_complete:false})};assert.equal(await cpu.wake(job,'slot-1'),false);
-      probe=null;(container).exec=async()=>{throw Error('PRIVATE-SYNTHETIC-ONLY');};
-      const beforeProbe={tickCount,finishCount,failCount},control=await cpu.startupProbe();assert.equal(control.status,200);assert.equal(control.value.probe.cleanup_complete,true);
-      assert.deepEqual({tickCount,finishCount,failCount},beforeProbe,'startup control never asks job authority or changes a job');
-      const afterTouches=cpuTouches;assert.deepEqual(await cpu.startupProbe(),control);assert.equal(cpuTouches,afterTouches,'replayed control cannot boot or exec again');
-      probe2={state:'running',receipt:null};assert.equal(await cpu.wake(job,'slot-1'),false);probe2=null;const control2=await cpu.startupProbeV2();assert.equal(control2.status,200);assert.ok(probe2.receipt);const touches2=cpuTouches;assert.deepEqual(await cpu.startupProbeV2(),control2);assert.equal(cpuTouches,touches2,'version2 also executes at most once');probe2=null;
-      probe=null;
       monitorFault=null;
       // A cold instance may take longer than30s. One start waits for readiness
       // up to120s, without additional claims, tasks, or supplier activity.

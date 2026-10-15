@@ -8,6 +8,7 @@ import shutil
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 
 from renderer import render, upload_prepared, validate_task
 
@@ -75,6 +76,17 @@ class Runtime:
             self.discard(self.task_id)
 
 
+
+class PrivateHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer's reverse-DNS display name is unused by our handler. A
+        # 64-character container hostname is not a valid single IDNA label and
+        # makes socket.getfqdn() raise before the private port can be served.
+        TCPServer.server_bind(self)
+        self.server_name = "private-renderer"
+        self.server_port = self.server_address[1]
+
+
 def make_handler(runtime):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -131,4 +143,4 @@ if __name__ == "__main__":
     if len(token) < 32 or not hosts:
         raise SystemExit("private_renderer_configuration_missing")
     runtime = Runtime(token, hosts)
-    ThreadingHTTPServer(("0.0.0.0", 8080), make_handler(runtime)).serve_forever()
+    PrivateHTTPServer(("0.0.0.0", 8080), make_handler(runtime)).serve_forever()
