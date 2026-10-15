@@ -1,6 +1,6 @@
 # Rendprop owner request checklist — October 14–15, 2026
 
-## Current release checkpoint — October 15, 2026, 21:10 UTC
+## Current release checkpoint — October 15, 2026, 21:29 UTC
 
 This checkpoint supersedes historical status below. The checklist is not complete.
 
@@ -14,7 +14,10 @@ This checkpoint supersedes historical status below. The checklist is not complet
 - Cost export at20:46:56UTC retains 297 rows / $91.480052 priced accounting. The later Coach query adds one known 2.1-cent entry; this is not an updated invoice-complete total. Holds, funding, unpriced serving and infrastructure remain separate.
 - Internal disk has 7.3GiB free; the external 1TB APFS container has about393GiB shared free. Encrypted Time Machine is still COPYING (reported66.93%); verified manual archives do not prove a finished full backup. All new build/media outputs stay external with the internal3GiB guard.
 
-- Final checklist reconciliation found two concrete compatibility/timing defects. Trial validators still rejected already-authorized recorded20-photo terms; bounded exact5–20 held terms and≤20 usage/offers are now implemented in native/Studio/twoEdge validators, with existing money/identity authority unchanged. Focused38Deno/13Studio/typecheck passed and independent runtime peer passed; native tests and deployment still pending. No new funding/config/SQL changes. Narration-preparation race fix in FlythroughDetailView is being tested: Create waits for script/TTS/record/transcription/permission completion rather than silently freezing an old take or deleting an active one. The overlong narration warning no longer promises a frozen final frame. Neither change is in internal84 yet.
+- Final audit repairs are committed. Trial compatibility `bfbe9d1` preserves exact recorded5–20 held terms and≤20 usage/offers, historical5 and all money/identity authority. Focused38Deno/13Studio/typecheck,240native assertions/51compiled controls and independent peer passed. Me69/Apple-subscriptions35 are LIVE with all75 runtime files exact and other30functions/SQL/configs unchanged; existing ownerGET/me200 is liveness only, not a fabricated20grant. Studio frontend build is underway, not deployed.
+- Narration readiness `65012f7` prevents creation while script/TTS/recording/transcription/permission is pending; creation no longer deletes an active take. A view-local permission UUID retires old callbacks across dismissal/reopen or mode changes. Overlong guidance now says shorten narration/add photos. Independent peer passed. Root caught the new test runner's postcommit HEAD self-comparison failure; test-only `6745141` makes its preserved oracles portable. Final actual-source64assertions/15compiled omission controls and source-only/no.git preflight pass; original diagnostic reds retained.
+- Integrated unsigned normal Release SDK PASSED all final native changes:209inputs/174trackedSwift+onegenerated/sevenresources/zeroerrors/140.105s, noLABDEBUG. OnlyFlyDetail350168… andBilling33310a35… differ from accepted Home compile; other207inputs exact. All25 prior signed/archive/SDK artifacts unchanged, minimuminternal7.203GiB. Receipt69af3eb0… outer_bridge/build85-final-native-sdk/. It remains1.0.5(84) unsigned compilation, not a new TestFlight delivery. No new build metadata/archive/upload.
+
 - Actual current coordinator component successfully prepared and downloaded a55,544,455-byte ZIP using four retained real Original/Decluttered/Staged/custom files, including the accepted3584×4780 custom master.42entries/16real browser-rendered JPEG copies fully decoded with manifest dimensions/SHA; master bytes stayed exact and systemunzip passed. This was an isolated unstyled component/closed local metadata proof, not signed-in Studio/phone Files acceptance. Source was unchanged, no provider/hosted calls. Receiptfca2140a… externalbuild85-current-real-photo-package/FINAL-RECEIPT.private.json. Initial harness-only import/root/default-wait failures are retained separately.
 
 - Public1.0.4(74), internal1.0.5(84), and the unattached AFTER_APPROVAL draft are unchanged. No85 archive/upload or App Store submission. Rejected onboarding remains temporary internal content; remake it LAST from the exact accepted final pages, Realtors only, Willow1.2×, logical complete workflow and no duration cap.
@@ -73,7 +76,7 @@ This checkpoint supersedes historical status below. The checklist is not complet
 
 This is the consolidated acceptance list for the owner's messages, not a claim that
 all work is finished. Latest explicit decisions override earlier wording/prices.
-Updated October 15 at 21:10 UTC after live and local acceptance checks. Earlier detailed ledger
+Updated October 15 at 21:29 UTC after live and local acceptance checks. Earlier detailed ledger
 is retained at
 `_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
 (relative to the outer Rendprop AI folder).
@@ -220,7 +223,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | P08 | Original can replace an edited public selection without false disclosure error | Genuine Original proof/sync fix built/tested for 83 | Actual original selection → published gallery sync |
 | P09 | AI preserves structure; staging/declutter actually look professional | Prior stage/declutter retained; current Sky4K, Suggest, normal Improve and improved-prompt custom-lighting actual acceptance passed. Unsafe TV/cat candidate remains HOLD; Original/gallery/cover unchanged | Appropriate whole-home edits and final device acceptance; one image does not prove every home |
 | P10 | Genuine high-quality exports, not screenshots or fake 4K | Real accepted photo outputs 3584×4780, retained-master bytes checked | Actual phone save/share and final coordinator ZIP |
-| P11 | Organized ZIP: Originals / Decluttered / Staged and listing/social copies | Native/Studio implementation built; masters retained | Open final full export in Files, verify folders, dimensions and completeness |
+| P11 | Organized ZIP: Originals / Decluttered / Staged and listing/social copies | Actual coordinator component exported4 retained real versions/55.5MBZIP; exact masters and16 decoded delivery JPEGs/42entries passed; earlier21-photo multipart browser proof retained | Signed-in complete account export and phone Files acceptance remain separate |
 | P12 | Landscape listing capture; portrait social capture; 0.5× when whole room needs it | Guide/crop detection built; guidance now placed before video photo grid | Actual camera/lens/orientation and final branded framing footer |
 | P13 | NEW beta: edit one photo directly from Photo versions; KEEP bulk editing | Delivered 83 single-photo Original actions; 50 focused checks +6 fault controls, review/lifecycle checks passed | Final single-photo Declutter/Stage result/progress; bulk unchanged |
 | P14 | NEW beta: preserve upload order 1,2,3 and append later batches underneath, through new videos | Delivered 83 oldest-first grids and batch append; ordering/import controls passed | Final batch/library/new-video order; admitted jobs remain unchanged |
@@ -283,7 +286,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 
 | ID | Required action | State |
 |---|---|---|
-| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | Homecc1c89e reviewed; one209-input unsigned Release SDK running. Three older-CI failures have causal repairs. Final whole-source CI still due |
+| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | Home/Trial/Voice final native source peer-reviewed; integrated209-input unsigned normal ReleaseSDK passed. Portable64+15 voice gate and240+51 trial gate passed. Three older-CI failures repaired; final whole-source CI still due |
 | R02 | Deliver internal normal TestFlight 84 from reviewed native source | Done; compact08098a9/metadata75738bf, VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING; final integrated push/CI coordinated separately |
 | R03 | Test final changed UI and recover 14-photo job; inspect final output | SAME14-photo job recovered to READY and hosted master decoded/visually sampled. Simulator checks pass for reviewed flows; actual84 compact/device/hardware acceptance remains open |
 | R04 | Finish real paid website/ordinary-account/export/site/Studio acceptance above | Open; no fake transactions or claims that previews prove purchases |
