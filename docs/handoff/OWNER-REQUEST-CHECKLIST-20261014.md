@@ -179,3 +179,31 @@ reconnected Supabase MCP delivered the three remaining exact-source functions.
 The dedicated CPU Worker and music files are deployed but disabled; no hosted
 CPU encoding or background-video acceptance is claimed. Studio/website79 rollout,
 premium Sandbox acceptance and refreshed onboarding remain open release work.
+
+### Current internal80 integration checkpoint
+
+Internal1.0.5(79) is VALID/INTERNAL_ONLY, in the existing internal group, installed
+through TestFlight on the owner's actual mirrored iPhone. Original-only editing
+and the saved Modern staging result were observed after the update. Existing
+listing selection stayed on the earlier version; root made no publication or
+selection change. Delivery/readback evidence is under
+`_bridge/build79-v105-testflight/`, including the preserved post-upload GET
+disconnect and its read-only reconciliation. The upload was not repeated.
+
+Build80 source now includes Contemporary, the adaptive photo review, aspect-fit
+preview, fixed safe-area actions and honest progress stages/counts. One combined
+Release iPhoneOS SDK build compiled the changed Swift; source/history/lifecycle,
+privacy, staging and progress controls passed. The two stale test harnesses were
+repaired without runtime changes. All218 captured native inputs match
+`_bridge/build80-integrated-native/FINAL-NATIVE-RECEIPT.json`. Signed80 archive,
+upload and actual-phone visual/progress acceptance remain pending here.
+
+Backend80 support is already live: ai-photo78 has distinct Contemporary prompts
+while preserving legacy Scandinavian; coach40 has updated context/routing and
+actual token-usage metadata alongside catalog cost estimates. Exact runtime-file
+and JWT readback passed; all27 unrelated functions stayed unchanged. Evidence:
+`_bridge/build80-photo-review-backend/combined-live-readback.json`. No schema,
+secret, funding or feature flag changed and no provider call was made by this
+deployment. Studio80 source is tested but not yet deployed. New background-video
+execution and premium purchases are still disabled pending their live acceptance;
+80 must not be described as full launch acceptance or a public Apple submission.
