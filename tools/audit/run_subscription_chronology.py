@@ -221,6 +221,9 @@ try:
  fault_source=floorplan_source.replace('context.admin.rpc("studio_attach_floorplan"','context.db.rpc("studio_attach_floorplan"',1)
  assert fault_source!=floorplan_source
  fault_source=fault_source.replace('from "../_shared/','from "'+(SQL/'functions/_shared').as_uri()+'/')
+ # Keep sibling helpers on their real source paths while only this copied
+ # handler carries the deliberate client/service-RPC defect.
+ fault_source=fault_source.replace('from "./','from "'+STUDIO.as_uri()+'/')
  (fault_dir/'listing-actions.ts').write_text(fault_source)
  (fault_dir/'listing-actions.test.ts').write_text((STUDIO/'listing-actions.test.ts').read_text().replace('from "../_shared/','from "'+(SQL/'functions/_shared').as_uri()+'/'))
  failed=run('floorplan-client-write-fault',deno+['--filter','floor-plan attachment preserves',fault_dir/'listing-actions.test.ts'],expected=1)
