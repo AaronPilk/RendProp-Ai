@@ -67,6 +67,12 @@ try:
     ]
     catalog = "select jsonb_agg(jsonb_build_object('identity',oid::regprocedure::text,'body',prosrc,'owner',proowner,'acl',proacl::text,'config',proconfig,'security',prosecdef,'volatility',provolatile) order by proname) from pg_proc where oid=any(array[" + ','.join("'" + s + "'::regprocedure" for s in signatures) + "]);"
     final_catalog = run('library-catalog-before-historical-replay', [*psql, '-Atq'], catalog)
+    # Save only this test's three current definitions. Replaying the entire
+    # older library migration would try to overwrite unrelated, newer guarded
+    # render authority and must fail rather than downgrade the current schema.
+    current_definitions = run('current-measurement-definitions', [*psql, '-Atq'],
+                              "select pg_get_functiondef(oid)||';' from pg_proc where oid=any(array[" +
+                              ','.join("'" + s + "'::regprocedure" for s in signatures) + "]) order by proname;")
     # The historical terminal patch pins the three historical prerequisites.
     # Replay that coherent chain, then restore the final private-library
     # authority before evaluating current assertions or concurrent writers.
@@ -74,7 +80,9 @@ try:
     run('facts-prerequisite-replay', [*psql, '-q', '-1', '-f', FACTS_PREREQUISITE])
     run('floorplan-prerequisite-replay', [*psql, '-q', '-1', '-f', FLOORPLAN_PREREQUISITE])
     run('terminal-replay', [*psql, '-q', '-1', '-f', TERMINAL])
-    run('restore-library-authority', [*psql, '-q', '-1', '-f', LIBRARY_AUTHORITY])
+    run('superseded-library-replay-refused', [*psql, '-q', '-1', '-f', LIBRARY_AUTHORITY],
+        refuses='Review changed function create_render_job(uuid,uuid,text,jsonb,text,text)')
+    run('restore-current-measurement-definitions', [*psql, '-q', '-1'], current_definitions)
     assert run('library-catalog-after-replay', [*psql, '-Atq'], catalog) == final_catalog
     receipt['finalLibraryBodiesAndAuthorityPreserved'] = True
     receipt['replay'] = json.loads(run('replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
@@ -168,7 +176,7 @@ values('{listing}','{org}','{actor}','Synthetic no-lock race',jsonb_build_object
     run('restore-facts-terminal-prerequisite', [*psql, '-q', '-1', '-f', FACTS_PREREQUISITE])
     run('restore-floorplan-terminal-prerequisite', [*psql, '-q', '-1', '-f', FLOORPLAN_PREREQUISITE])
     run('restore-terminal-cas', [*psql, '-q', '-1', '-f', TERMINAL])
-    run('restore-final-library-after-controls', [*psql, '-q', '-1', '-f', LIBRARY_AUTHORITY])
+    run('restore-current-measurement-definitions-after-controls', [*psql, '-q', '-1'], current_definitions)
     assert run('library-catalog-after-controls', [*psql, '-Atq'], catalog) == final_catalog
     receipt['afterControls'] = json.loads(run('final-library-fixture-after-controls', [*psql, '-Atq', '-f', FIXTURE]).strip())
     receipt['sourceBoundAtEnd'] = all(hashlib.sha256((ROOT / p).read_bytes()).hexdigest() == h
