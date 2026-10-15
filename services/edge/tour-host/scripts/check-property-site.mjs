@@ -116,6 +116,20 @@ for (const page of ["home", "gallery", "contact"]) check(!renderTourPage(fixture
 const contact = renderTourPage(fixture(), "", "", "", { page: "contact" });
 check(contact.includes('id="leadform"') && contact.includes('name="showing_date"'), "Contact retains actual enquiry/showing fields");
 check(contact.indexOf('id="endcard"') < contact.indexOf('id="disclosure"'), "Contact form comes before detailed disclosures");
+for (const theme of ["basic", "signature-estate", "coastal-luxe"]) {
+  for (const status of ["active", "sold", "archived"]) {
+    const tour = fixture(); tour.website_theme = theme; tour.status = status;
+    const rendered = renderTourPage(tour, "", "", "", { page: "contact" });
+    const expected = status === "active" ? "Arrange a visit" : "Ask about similar homes";
+    check(rendered.includes(`<h1>${expected}</h1>`), `${theme}/${status}: Contact page heading matches actual availability`);
+    check(rendered.includes('id="leadform"'), `${theme}/${status}: Existing Contact enquiry remains available`);
+    if (status !== "active") check(rendered.includes("This home has sold."), `${theme}/${status}: Sold form retains truthful similar-home context`);
+    if (theme !== "basic") {
+      const preview = renderTourPage(tour, "", "", "", { page: "contact", previewTheme: theme });
+      check(preview.includes(`<h1>${expected}</h1>`) && !preview.includes('<form'), `${theme}/${status}: Preview heading matches without enabling enquiries`);
+    }
+  }
+}
 const unbranded = renderTourPage(fixture(), "", "", "", { page: "contact", unbranded: true });
 check(unbrandedSelfCheck(unbranded, fixture()).length === 0 && !unbranded.includes('property-site'), "Unbranded stays MLS-safe and preserves its renderer");
 const embedded = renderTourPage(fixture(), "", "", "", { page: "contact", embed: true });

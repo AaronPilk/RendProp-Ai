@@ -2706,7 +2706,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
     : out;
   if (page === "gallery") visible.sort((a, b) => Number(b.includes('id="gallery"')) - Number(a.includes('id="gallery"')));
   if (page === "gallery" && !imgs.length && !tour.chapters?.length) visible.unshift(sec("gallery", "Gallery", "Photos coming soon", '<p class="lp-tag">No property photos have been published yet.</p>'));
-  const pageTitle = page === "gallery" ? "A closer look" : page === "location" ? "The location" : "Arrange a visit";
+  const pageTitle = page === "gallery" ? "A closer look" : page === "location" ? "The location" : sold && isRE ? "Ask about similar homes" : "Arrange a visit";
   const pageHead = page && page !== "home" ? `<header class="property-page-head"><div class="lp-wrap"><div class="lp-eyebrow">${escapeHtml(page === "contact" ? sold ? "Contact" : "Private showing enquiry" : page)}</div><h1>${pageTitle}</h1><p>${escapeHtml(headingRaw)}</p></div></header>` : "";
   const container = page ? "main" : "div";
   return `<${container} id="listing-page">${pageHead}${visible.join("")}</${container}>`;
