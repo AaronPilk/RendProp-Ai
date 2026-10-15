@@ -20,8 +20,14 @@ export async function handler(req:Request){try{
  assert(isServiceRole(req),403,'This route is limited to the private Rendprop photo comparison worker.');
  const seg=pathSegments(req,'photo-quality-worker');
  if(req.method==='GET'&&seg.join('/')==='queue'){
-  const rows=await adminClient().from('photo_quality_checks').select('id').in('state',['pending','preparing']).is('judge_started_at',null).gt('created_at',new Date(Date.now()-3600000).toISOString()).order('created_at').limit(20);
-  assert(!rows.error,503,'Saved photo checks could not be listed.');return json({enabled:true,checks:(rows.data??[]).map(x=>({check_id:x.id}))});
+  const admin=adminClient(),since=new Date(Date.now()-3600000).toISOString();
+  const [rows,judges]=await Promise.all([
+   admin.from('photo_quality_checks').select('id').in('state',['pending','preparing']).is('judge_started_at',null).gt('created_at',since).order('created_at').limit(20),
+   admin.from('photo_quality_checks').select('id').eq('state','derivative_ready').eq('automatic',true).is('judge_started_at',null).gt('created_at',since).order('created_at').limit(2),
+  ]);
+  // A prepared comparison can outlive its initiating phone request. Return only
+  // bounded identities; the existing judge rechecks scope and paid dispatch.
+  assert(!rows.error&&!judges.error,503,'Saved photo checks could not be listed.');return json({enabled:true,checks:(rows.data??[]).map(x=>({check_id:x.id})),judges:(judges.data??[]).map(x=>({check_id:x.id}))});
  }
  assert(req.method==='POST'&&seg.length===1,405,'Use an explicit private photo comparison action.');
  const b=await readJsonLimited<Record<string,any>>(req,65536),check=uuid(b.check_id);

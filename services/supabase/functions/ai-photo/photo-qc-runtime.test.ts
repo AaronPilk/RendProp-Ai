@@ -241,3 +241,32 @@ Deno.test("calibration terminal status is verdict-only and never advertises a re
  const f=await historicalFixture();await f.run();f.state.row!.evidence.state="accept";f.state.row!.check.state="accept";f.state.row!.check.result=pass;
  const response=await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),body=await response.json();assertEquals(body.publishable,false);assertEquals(body.purpose,"calibration");assertEquals(body.result,pass);assertEquals(body.image_b64,undefined);assertEquals(body.asset_key,undefined);assertEquals(f.state.reads,0);
 });
+
+Deno.test("concurrent cron and client continuations share one funded bind and one judge",async()=>{
+ const f=await fixture(),ready=await f.prepare(),previous=globalThis.fetch;resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in concurrent QC fixture");}) as any;
+ try{
+  const results=await Promise.all([f.run(ready),f.run(ready)]);
+  assert(results.some(row=>row.check.state==="accept"));assertEquals(f.state.holds,1);assertEquals(f.state.binds,1);assertEquals(f.state.calls,1);assertEquals(f.state.ledger.length,1);assertEquals(f.state.attempt.state,"succeeded");
+  await Promise.all([f.run(ready),f.run(ready)]);assertEquals(f.state.holds,1);assertEquals(f.state.binds,1);assertEquals(f.state.calls,1);
+ }finally{globalThis.fetch=previous;resetServingModeCache();}
+});
+Deno.test("a cron arriving during a judge or after its lost reply cannot dispatch another paid check",async()=>{
+ for(const lost of[false,true]){
+  const f=await fixture(),ready=await f.prepare(),previous=globalThis.fetch;resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in held judge fixture");}) as any;
+  let entered!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>entered=resolve),permit=new Promise<void>(resolve=>release=resolve),call=f.deps.call;f.state.lostReply=lost;
+  f.deps.call=async(...args)=>{entered();await permit;return await call(...args);};
+  try{
+   const first=f.run(ready);await started;const concurrent=await f.run(ready);assertEquals(concurrent.check.state,"checking");assertEquals(f.state.holds,1);assertEquals(f.state.binds,1);
+   release();const finished=await first;assertEquals(finished.check.state,lost?"hold":"accept");assertEquals(f.state.calls,1);await f.run(ready);assertEquals(f.state.calls,1);assertEquals(f.state.holds,1);assertEquals(f.state.binds,1);
+  }finally{release();globalThis.fetch=previous;resetServingModeCache();}
+ }
+});
+Deno.test("background judge refuses a withdrawn actor/library before funding and cannot reopen terminal states",async()=>{
+ for(const state of["checking","accept","refuse","hold"]){
+  const f=await fixture(),ready=await f.prepare();f.state.row!.check.state=state;f.state.row!.evidence.state=state;if(state==="checking")f.state.row!.check.judge_started_at=new Date().toISOString();
+  await f.run(ready);assertEquals(f.state.holds,0);assertEquals(f.state.binds,0);assertEquals(f.state.calls,0);
+ }
+ const gone=await fixture(),ready=await gone.prepare();gone.state.current=false;await assertRejects(()=>gone.run(ready),HttpError,"unavailable");assertEquals(gone.state.holds,0);assertEquals(gone.state.binds,0);assertEquals(gone.state.calls,0);
+ const withdrawn=await fixture(),before=await withdrawn.prepare(),read=withdrawn.deps.read;withdrawn.deps.read=async(...args)=>{const value=await read(...args);withdrawn.state.current=false;return value;};
+ await assertRejects(()=>withdrawn.run(before),HttpError,"unavailable");assertEquals(withdrawn.state.holds,0);assertEquals(withdrawn.state.binds,0);assertEquals(withdrawn.state.calls,0);
+});

@@ -83,7 +83,7 @@ async function bridge(env:Env,path:string,body?:unknown,domain:'video'|'photo'='
     method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${env.EDGE_SERVICE_ROLE_KEY}`,apikey:env.EDGE_SERVICE_ROLE_KEY,'Content-Type':'application/json'},
     // workerd rejects redirect:'error' before issuing this subrequest. Manual
     // mode never follows/forwards credentials; non-2xx stays a closed refusal.
-    body:body===undefined?undefined:JSON.stringify(body),redirect:'manual',signal:AbortSignal.timeout(50_000)});}catch(error) {throw transportFailure(error);}
+    body:body===undefined?undefined:JSON.stringify(body),redirect:'manual',signal:AbortSignal.timeout(domain==='photo'&&path==='judge'?120_000:50_000)});}catch(error) {throw transportFailure(error);}
   if (!response.ok) throw new AuthorityRefusal(response.status);
   try {return await response.json() as Record<string,unknown>;}catch {throw new BridgeFailure('bridge_response');}
 }
@@ -353,6 +353,19 @@ async function dispatchPhoto(env:Env):Promise<void>{
     if(await env.CPU.getByName('slot-0').wakePhoto(item.check_id,'slot-0'))continue;
     await env.CPU.getByName('slot-1').wakePhoto(item.check_id,'slot-1');
   }
+  // Judges use the existing service-only Edge route, not a CPU/container atom.
+  // A lost reply never causes a local retry: the SQL funding/bind journal owns
+  // dispatch, and the next queue excludes checks whose judge already started.
+  const judges=Array.isArray(queue.judges)?[...new Set(queue.judges.flatMap(item=>{
+    if(!item||typeof item!=='object'||!('check_id'in item)||typeof item.check_id!=='string'||!UUID.test(item.check_id))return[];
+    return[item.check_id];
+  }))].slice(0,2):[];
+  await Promise.all(judges.map(async checkID=>{
+    try{
+      const result=await bridge(env,'judge',{check_id:checkID},'photo');
+      if(result.check_id!==checkID)throw new BridgeFailure('bridge_response');
+    }catch(error){console.warn('photo_quality_judge_refused',dispatchDiagnostic(error));}
+  }));
 }
 export default {
   async fetch(request:Request,env:Env,ctx:ExecutionContext):Promise<Response> {
