@@ -35,10 +35,12 @@ try:
  PSQL=[TOOLS['psql'],'-X','--no-password',*conn,'-d','property_sites','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
  for migration in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
- for newest in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))|set((SQL/'migrations').glob('20261015*property_video_one_quality_retry.sql'))):run('replay-'+newest.stem,[*PSQL,'-q','-1','-f',newest])
+ for newest in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))|set((SQL/'migrations').glob('20261015*property_video_one_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_parallel_admission_fair_poll.sql'))):run('replay-'+newest.stem,[*PSQL,'-q','-1','-f',newest])
  unit=run('actual-jobs-rpc-roles',[*PSQL,'-Atq','-f',SQL/'tests/property_video_jobs.sql']);rows=[json.loads(s)for s in unit.splitlines()if s.startswith('{')and 'assertions'in s];assert len(rows)==1 and rows[0]['passed'];receipt['unit']=rows[0]
  # Compiled actual SQL mutations retain independent failure/category oracles.
  for control,signature,needle,replacement,expected in [
+  ('serial-source-admission','public.property_video_job_claim(uuid,text)',"if active>=4", "if exists(select 1 from public.property_video_job_sources where job_id=p_job and state='processing'and clip is null)or active>=4",'accepted first shot doesnotstarve second pending admission'),
+  ('poll-position-starvation','public.property_video_job_claim(uuid,text)','order by provider_status_checked_at nulls first,position for update','order by position for update','neverchecked secondreceipt polledbefore firstagain'),
   ('terminal-qc-action','public.property_video_structural_rejection(uuid,uuid)',"or p.qc->>'action'is distinct from'refuse'",'', 'unknown or hold verdict never certifies fallback'),
   ('paid-qc-receipt','public.property_video_structural_rejection(uuid,uuid)',"if q.id is null then return null;end if;",'', 'unpaid or mismatched QC verdict cannot certify fallback'),
   ('retry-null-history-grant','public.property_video_quality_history_guard()',"public.property_video_quality_retry_evidence(old.job_id,old.attempt_id)is null or",'', 'directtable absentgrant cannot append paidretryhistory'),
@@ -74,11 +76,30 @@ try:
  result=race('global-four-slot-admission',[claim(j)for j in jobs]);assert all(r['exit']==0 for r in result),result
  actions=[json.loads(next(s for s in r['output'].splitlines()if s.startswith('{')))['action']for r in result];assert actions.count('dispatch')==4 and actions.count('wait')==6,actions
  receipt['races'].append({'name':'global-four-slot-admission','actualConcurrentRequests':10,'exactlyFourAdmitted':True})
- run('race-reset',[*PSQL,'-Atq'],"update property_video_job_sources set state='pending',attempt_id=null,lease_token=null,lease_until=null,request_key=null;update property_video_jobs set state='queued';")
+ run('race-reset',[*PSQL,'-Atq'],"update property_video_job_sources set state='pending',attempt_id=null,lease_token=null,lease_until=null,request_key=null,receipt=null,provider_status_checked_at=null;update property_video_jobs set state='queued';")
  result=race('one-job-two-slot-admission',[claim(jobs[0])for i in range(10)]);assert all(r['exit']==0 for r in result),result
  actions=[json.loads(next(s for s in r['output'].splitlines()if s.startswith('{')))['action']for r in result];assert actions.count('dispatch')==2 and actions.count('wait')==8,actions
  receipt['races'].append({'name':'one-job-two-slot-admission','actualConcurrentRequests':10,'exactlyTwoAdmitted':True})
- run('negative-reset',[*PSQL,'-Atq'],"update property_video_job_sources set state='pending',attempt_id=null,lease_token=null,lease_until=null,request_key=null;update property_video_jobs set state='queued';")
+ # A synthetic accepted supplier transport receipt remains immutable while
+ # ten real transactions contend to fill the SECOND existing supplier slot.
+ # No network/provider is involved in this scheduler test.
+ run('accepted-pending-race-seed',[*PSQL,'-Atq'],"update property_video_job_sources set state='pending',attempt_id=null,lease_token=null,lease_until=null,request_key=null,receipt=null,provider_status_checked_at=null;update property_video_jobs set state='queued';set role service_role;"+claim(jobs[0])+"reset role;update property_video_job_sources set state='processing',receipt=jsonb_build_object('request_id','fixture-scheduling-accepted','model_id','fixture-model'),lease_until=null where job_id='%s'and position=0;"%jobs[0])
+ result=race('accepted-first-admits-second',[claim(jobs[0])for i in range(10)]);assert all(r['exit']==0 for r in result),result
+ replies=[json.loads(next(s for s in r['output'].splitlines()if s.startswith('{')))for r in result]
+ assert [r['action']for r in replies].count('dispatch')==1 and [r['action']for r in replies].count('poll')==1 and [r['action']for r in replies].count('wait')==8,replies
+ dispatched=next(r for r in replies if r['action']=='dispatch');assert dispatched['source']['position']==1
+ snapshot=run('accepted-pending-race-snapshot',[*PSQL,'-Atq','-c',"select jsonb_build_object('active',count(*)filter(where state in('dispatching','processing','quality_review','ambiguous')),'first_receipt',max(receipt::text)filter(where position=0),'new_attempts',count(*)filter(where attempt_id is not null))from property_video_job_sources where job_id='%s';"%jobs[0]])
+ v=json.loads(snapshot.strip());assert v['active']==v['new_attempts']==2 and json.loads(v['first_receipt'])['request_id']=='fixture-scheduling-accepted',v
+ receipt['races'].append({'name':'accepted-first-admits-second','actualConcurrentRequests':10,'exactlyOneSecondDispatch':True,'oneAcceptedPollLease':True,'activeSources':2,'priorAcceptedReceiptRetained':True,'providerCalls':0})
+ # Once both transports are accepted, concurrent status claims grant exactly
+ # one lease per receipt. Holding the job/global locks avoids duplicate polls.
+ run('accepted-poll-race-seed',[*PSQL,'-Atq'],"update property_video_job_sources set state='processing',receipt=jsonb_build_object('request_id','fixture-scheduling:'||position,'model_id','fixture-model'),lease_until=null,provider_status_checked_at=null where job_id='%s'and position<2;"%jobs[0])
+ result=race('two-accepted-distinct-poll-leases',[claim(jobs[0])for i in range(10)]);assert all(r['exit']==0 for r in result),result
+ replies=[json.loads(next(s for s in r['output'].splitlines()if s.startswith('{')))for r in result];polls=[r for r in replies if r['action']=='poll']
+ assert len(polls)==2 and sorted(r['source']['position']for r in polls)==[0,1]and sum(r['action']=='wait'for r in replies)==8,replies
+ assert len(set(r['source']['lease_token']for r in polls))==2
+ receipt['races'].append({'name':'two-accepted-distinct-poll-leases','actualConcurrentRequests':10,'distinctPolls':[0,1],'noDuplicateReceiptLease':True,'providerCalls':0})
+ run('negative-reset',[*PSQL,'-Atq'],"update property_video_job_sources set state='pending',attempt_id=null,lease_token=null,lease_until=null,request_key=null,receipt=null,provider_status_checked_at=null;update property_video_jobs set state='queued';")
  sig='public.property_video_job_claim(uuid,text)';original=run('read-claim-function',[*PSQL,'-Atq','-c',"select pg_get_functiondef('%s'::regprocedure)"%sig]);lock="perform pg_advisory_xact_lock(hashtextextended('property-video-global-slots',79));";assert lock in original
  mutant=original.replace(lock,'-- omitted global slot lock',1);needle="if active>=4";assert needle in mutant;mutant=mutant.replace(needle,"perform pg_sleep(0.4);\n if active>=4",1);run('install-no-slot-lock',[*PSQL,'-Atq'],mutant)
  result=race('negative-no-global-slot-lock',[claim(j)for j in jobs]);assert all(r['exit']==0 for r in result),result
