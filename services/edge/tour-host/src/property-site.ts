@@ -125,6 +125,12 @@ export const PROPERTY_SITE_JS = `
   function loadPropertyThumb(image){
     var source=image.getAttribute('data-property-src');
     if (!source) return;
+    // A thumbnail service outage must not hide the published photo. Retry only
+    // the exact master already admitted for this link; never loop on failure.
+    image.addEventListener('error',function(){
+      var link=image.closest('[data-property-photo]');
+      if(link && image.src!==link.href) image.src=link.href;
+    },{once:true});
     image.loading='eager'; image.src=source; image.removeAttribute('data-property-src');
   }
   if (typeof IntersectionObserver==='function'){

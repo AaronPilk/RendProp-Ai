@@ -67,9 +67,13 @@ check(fullGallery.includes('href="/published-12.jpg"') && fullGallery.includes('
 // browsers without IntersectionObserver still display every published image.
 function checkPhotoLoading(script, supportsObserver = true) {
   const images = ["/first-master.jpg", "/second-master.jpg"].map(source => ({
-    src: "placeholder", loading: "lazy", source,
+    src: "placeholder", loading: "lazy", source, listeners: new Map(),
+    link: { href: source.replace("-master", "-full-master") },
     getAttribute(name) { return name === "data-property-src" ? this.source : null; },
     removeAttribute(name) { if (name === "data-property-src") this.source = null; },
+    closest(selector) { assert.equal(selector, "[data-property-photo]"); return this.link; },
+    addEventListener(type, handler, options) { assert.equal(type, "error"); assert.equal(options.once, true); this.listeners.set(type, handler); },
+    error() { const handler = this.listeners.get("error"); if (handler) { this.listeners.delete("error"); handler(); } },
   }));
   const observed = [], unobserved = []; let callback, options;
   const document = { querySelectorAll(selector) { assert.equal(selector, "img[data-property-src]"); return images; }, getElementById() { return null; } };
@@ -91,8 +95,13 @@ function checkPhotoLoading(script, supportsObserver = true) {
   callback([{ target: images[0], isIntersecting: true }]);
   assert.equal(images[0].src, "/first-master.jpg"); assert.equal(images[0].source, null);
   assert.equal(images[1].src, "placeholder"); assert.equal(unobserved.length, 1);
+  images[0].error();
+  assert.equal(images[0].src, "/first-full-master.jpg", "Failed preview falls back to its exact published master");
+  images[0].link.href = "/changed-after-first-error.jpg";
+  images[0].error();
+  assert.equal(images[0].src, "/first-full-master.jpg", "A failed master cannot trigger another fallback request");
 }
-checkPhotoLoading(PROPERTY_SITE_JS); assertions += 8;
+checkPhotoLoading(PROPERTY_SITE_JS); assertions += 10;
 checkPhotoLoading(PROPERTY_SITE_JS, false); assertions++;
 assert.throws(() => checkPhotoLoading(PROPERTY_SITE_JS.replace("propertyThumbs.forEach(function(image){propertyPhotoObserver.observe(image);});", "propertyThumbs.forEach(loadPropertyThumb);")), /Offscreen sources are not eagerly assigned/); assertions++;
 assert.throws(() => checkPhotoLoading(PROPERTY_SITE_JS.replace("if(entry.isIntersecting)", "if(true)")), /Non-intersection cannot fetch a master/); assertions++;

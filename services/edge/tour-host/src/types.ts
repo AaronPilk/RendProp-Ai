@@ -7,7 +7,7 @@
 // read defensively since brand_kit-derived fields are freeform.
 
 /// <reference path="../worker-configuration.d.ts" />
-export interface Env extends Partial<Pick<TourHostBindings, "ASSETS" | "MEDIA_RENDERS" | "MEDIA_UPLOADS">> {
+export interface Env extends Partial<Pick<TourHostBindings, "ASSETS" | "MEDIA_RENDERS" | "MEDIA_UPLOADS" | "IMAGES">> {
   CLOUDFLARE_ACCOUNT_ID?: string;
   CLOUDFLARE_STREAM_TOKEN?: string;
   CLOUDFLARE_STREAM_CUSTOMER_CODE?: string;

@@ -170,11 +170,11 @@ const MAX_GALLERY = 100;
  * Never fatal: a gallery lookup must not take the tour down.
  */
 // deno-lint-ignore no-explicit-any
-async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selection: string[] | null, slug: string): Promise<Array<{ url: string }>> {
+async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selection: string[] | null, slug: string): Promise<Array<{ url: string; thumb_url?: string }>> {
   if(selection?.length===0)return [];
   let query = admin
     .from("capture_assets")
-    .select("id, storage_key, created_at")
+    .select("id, storage_key, created_at, bytes, content_type")
     .eq("listing_id", listingId)
     .eq("kind", "photo")
     .eq("bucket", "renders")
@@ -190,11 +190,18 @@ async function galleryFor(admin: any, orgId: string, listingId: string, refs: { 
     (selection===null || selection.includes(r.id as string)));
   if(selection!==null)eligible.sort((a: {id:string},b: {id:string})=>selection.indexOf(a.id)-selection.indexOf(b.id));
   const visible = await mediaVisibility(admin, listingId, { assets: eligible.map((r: { id: string }) => r.id), keys: eligible.map((r: { storage_key: string }) => r.storage_key) });
-  const out: Array<{ url: string }> = [];
+  const out: Array<{ url: string; thumb_url?: string }> = [];
   for (const r of eligible) {
     if (visible.assets[r.id] !== true || visible.keys[r.storage_key] !== true) continue;
     const url = publishedR2Url(slug,(r as Record<string, unknown>).storage_key as string | null);
-    if (url) { out.push({ url }); refs.assets.push(r.id); refs.keys.push(r.storage_key); }
+    if (url) {
+      // Fixed preview route uses this same currently admitted selected master.
+      // Full-resolution url remains the viewer, download and ZIP source.
+      const mime=typeof r.content_type==="string"?r.content_type.split(";")[0].trim().toLowerCase():"";
+      const thumb=Number.isSafeInteger(r.bytes)&&r.bytes>0&&r.bytes<=20_000_000&&["image/jpeg","image/png","image/webp","image/avif"].includes(mime)
+        ? `https://rendprop.com/media/${encodeURIComponent(slug)}/thumb/${encodeURIComponent(r.storage_key)}` : null;
+      out.push({ url, ...(thumb?{thumb_url:thumb}:{}) }); refs.assets.push(r.id); refs.keys.push(r.storage_key);
+    }
   }
   return out;
 }

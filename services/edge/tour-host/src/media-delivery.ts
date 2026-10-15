@@ -1,5 +1,6 @@
 import type { Env } from "./types";
 import { fetchUpstreamJSON } from "./upstream";
+import { thumbnailResponse } from "./media-thumbnails";
 
 const headers = {"Access-Control-Allow-Origin":"https://studio.rendprop.com","Access-Control-Expose-Headers":"Content-Length, Content-Range, ETag, Content-Type, Content-Disposition, Last-Modified","Cache-Control":"no-store, max-age=0","CDN-Cache-Control":"no-store","Cloudflare-CDN-Cache-Control":"no-store","X-Content-Type-Options":"nosniff","Referrer-Policy":"no-referrer","X-Robots-Tag":"noindex, nofollow"};
 const unavailable=(status=404)=>new Response(null,{status,headers});
@@ -30,7 +31,7 @@ function etagMatch(header:string|null,etag:string,weak=true):boolean{return Bool
 /** Authorization is deliberately before HEAD, Range, 304, 412 and object bytes.
  * No cache read/write or redirect ever bypasses the current exact DB mapping. */
 export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>{
-  const u=new URL(req.url),match=u.pathname.match(/^\/media\/([A-Za-z0-9_-]{1,64})\/(r2|stream)\/([^/]+)(?:\/([^/]+))?$/);
+  const u=new URL(req.url),match=u.pathname.match(/^\/media\/([A-Za-z0-9_-]{1,64})\/(r2|stream|thumb)\/([^/]+)(?:\/([^/]+))?$/);
   const brand=u.pathname.match(/^\/media-brand\/(renders\/([a-f0-9-]{36})\/brand\/[a-f0-9-]{36}\.(?:jpg|png))$/);
   const privateMatch=u.pathname.match(/^\/private-media\/([A-Za-z0-9_-]+\.[a-f0-9]{64})$/);
   if((!match&&!brand&&!privateMatch)||u.search||!["GET","HEAD"].includes(req.method))return unavailable();
@@ -45,7 +46,7 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
   const key=privateMatch?Object.keys(delivery.objects).length===1?Object.keys(delivery.objects)[0]:null:brand?brand[1]:decode(match![3]);
   if(!key||!safeIdentity(key)||privateMatch&&delivery.stream_uid!==null)return unavailable();
   const revalidate=async(bytes=0)=>{
-    const current=await authority(bytes,kind==="r2"&&!brand?key:undefined);
+    const current=await authority(bytes,kind!=="stream"&&!brand?key:undefined);
     if(current.kind!=="ok")return current.kind==="not-found"?404:current.status;
     if(!contract(current.value,slug))return 503;
     return kind==="stream" ? current.value.stream_uid===key?200:404 : Object.hasOwn(current.value.objects,key)&&current.value.objects[key]===delivery.objects[key]&&sameVideoLimit(current.value.object_limits?.[key],delivery.object_limits?.[key])?200:404;
@@ -65,6 +66,10 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
   const videoLimit=delivery.object_limits?.[key];
   if(!Number.isSafeInteger(head.size)||head.size<1||head.size>(videoLimit?MAX_REGISTERED_VIDEO_BYTES:MAX_OBJECT_BYTES)||videoLimit&&head.size!==videoLimit.bytes)return unavailable(503);
   const fresh=await revalidate();if(fresh!==200)return unavailable(fresh);
+  if(kind==="thumb")return thumbnailResponse(req,env,key,head,async()=>{
+    const object=await bucket.get(key,{onlyIf:{etagMatches:head.etag}});
+    return object&&"body"in object?boundedBody(object.body,head.size):null;
+  },revalidate);
   const h=new Headers(headers);head.writeHttpMetadata(h);
   for(const [name,value]of Object.entries(headers))h.set(name,value);
   h.set("ETag",head.httpEtag);h.set("Accept-Ranges","bytes");h.set("Content-Length",String(head.size));h.set("Last-Modified",head.uploaded.toUTCString());

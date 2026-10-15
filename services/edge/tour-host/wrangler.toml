@@ -100,3 +100,7 @@ bucket_name = "rendprop-renders"
 [[r2_buckets]]
 binding = "MEDIA_UPLOADS"
 bucket_name = "rendprop-uploads"
+
+# Fixed private-R2 gallery previews; originals remain in the existing buckets.
+[images]
+binding = "IMAGES"

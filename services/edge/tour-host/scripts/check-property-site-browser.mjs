@@ -27,7 +27,7 @@ const check = (condition, label) => { assert.ok(condition, label); checks.push(l
 const svg = (label, color) => `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200"><rect width="1600" height="1200" fill="${color}"/><text x="80" y="600" font-size="96" fill="white">SYNTHETIC ${label}</text></svg>`;
 const PHOTOS = [["Front exterior", "#264653"], ["Living room", "#2a9d8f"], ["Kitchen", "#8a5a44"], ["Primary bedroom", "#6d597a"], ["Terrace", "#355070"], ["Broken file", "#000000"]];
 const photoPath = (i) => i === 5 ? "/photos/missing-5.svg" : `/photos/photo-${i}.svg`;
-let theme = "basic", useThumbs = false;
+let theme = "basic", useThumbs = false, thumbFailure = false;
 function fixture() {
   const t = buildDemoTour();
   t.slug = "synthetic-site"; t.website_theme = theme;
@@ -45,6 +45,7 @@ const requests = [];
 let origin;
 const server = createServer((req, res) => {
   const url = new URL(req.url, "http://127.0.0.1"); requests.push(url.pathname);
+  if (thumbFailure && url.pathname === "/thumbs/photo-0.svg") { res.writeHead(503); res.end("synthetic thumbnail outage"); return; }
   if (url.pathname === "/posters/poster.svg") { res.writeHead(200, { "Content-Type": "image/svg+xml" }); res.end(svg("POSTER", "#333333")); return; }
   const photo = url.pathname.match(/^\/(?:photos|thumbs)\/photo-(\d)\.svg$/);
   if (photo) { res.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" }); res.end(svg(PHOTOS[Number(photo[1])][0], PHOTOS[Number(photo[1])][1])); return; }
@@ -164,11 +165,20 @@ try {
     await page.goto(origin + "/property/synthetic-site?page=gallery", { waitUntil: "networkidle" });
     for (const image of await page.locator("img.property-thumb").all()) await image.scrollIntoViewIfNeeded();
     await page.waitForTimeout(300);
-    check(requests.some((p) => p.startsWith("/thumbs/")) && !requests.some((p) => p.startsWith("/photos/")), "Gallery grid fetches the derivative, not the full masters");
+    check(requests.some((p) => p.startsWith("/thumbs/")) && !requests.some((p) => p.startsWith("/photos/") && p !== photoPath(5)), "Gallery grid fetches working derivatives, not their full masters");
     check(await page.locator("[data-property-photo]").first().getAttribute("href") === photoPath(0), "Photo link still targets the exact published master");
     await page.locator("[data-property-photo]").first().click();
     await page.waitForFunction(() => document.querySelector("#property-photo-full").naturalWidth > 0);
     check(await page.locator("#property-photo-full").evaluate((img) => new URL(img.src).pathname) === photoPath(0), "Viewer opens the exact master, not the derivative");
+    thumbFailure = true; requests.length = 0;
+    await page.goto(origin + "/property/synthetic-site?page=gallery", { waitUntil: "networkidle" });
+    const firstThumb = page.locator("img.property-thumb").first();
+    await firstThumb.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => { const image = document.querySelector('img.property-thumb'); return image.naturalWidth > 0 && new URL(image.src).pathname === '/photos/photo-0.svg'; });
+    check(await firstThumb.evaluate((img) => new URL(img.src).pathname) === photoPath(0), "Thumbnail outage falls back to the exact published master");
+    check(requests.filter((p) => p === "/thumbs/photo-0.svg").length === 1 && requests.filter((p) => p === photoPath(0)).length === 1, "Thumbnail fallback makes one bounded attempt for each exact file");
+    check(await page.locator("[data-property-photo]").first().getAttribute("href") === photoPath(0), "Thumbnail fallback leaves the full-size photo link unchanged");
+    thumbFailure = false;
     await context.close();
   }
   useThumbs = false;
