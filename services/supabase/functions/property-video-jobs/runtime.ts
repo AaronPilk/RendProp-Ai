@@ -5,7 +5,7 @@ import{presignGet}from'../_shared/providers/common.ts';
 import{privateMediaUrl}from'../_shared/private-media.ts';
 import type{JobReply}from'./contracts.ts';
 // A retry only rechecks a retained, already-paid clip; SQL verifies its authority.
-export const cpuRecoverable=(s:any)=>['failed','original_photo','quality_review'].includes(s.state)&&['cpu_extract_failed','quality_check_refused','quality_check_unconfirmed'].includes(s.last_error)&&!!s.clip&&!!s.receipt&&!!s.generation_provenance_id&&(s.cpu_recoveries??0)<2&&(s.state!=='quality_review'||!s.lease_until||Date.parse(s.lease_until)<=Date.now());
+export const cpuRecoverable=(s:any)=>['failed','original_photo','quality_review'].includes(s.state)&&(s.state!=='original_photo'||s.last_error==='cpu_extract_failed')&&['cpu_extract_failed','quality_check_refused','quality_check_unconfirmed'].includes(s.last_error)&&!!s.clip&&!!s.receipt&&!!s.generation_provenance_id&&(s.cpu_recoveries??0)<2&&(s.state!=='quality_review'||!s.lease_until||Date.parse(s.lease_until)<=Date.now());
 export const bucket=(value:string)=>value==='uploads'?R2_BUCKET_UPLOADS:R2_BUCKET_RENDERS;
 export async function rpc(name:string,args:Record<string,unknown>){const{data,error}=await adminClient().rpc(name,args);if(error)throwRpc(error.message);assert(data!==null,503,'Saved video work could not be read.');return data as any;}
 export async function ownedHead(source:any){const h=await headObject(bucket(source.bucket),source.storage_key,AbortSignal.timeout(10000));assert(h.exists&&h.etag===source.etag&&h.bytes===source.bytes&&h.contentType?.split(';')[0].trim().toLowerCase()===source.content_type,409,'Saved media changed or is unavailable.');return h;}
