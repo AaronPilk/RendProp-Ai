@@ -21,6 +21,7 @@ import {
   BUDGETS,
   ProviderError,
   classifyStatus,
+  definitiveSubmitRejection,
   fetchJson,
   persistResult,
   rememberBounded,
@@ -276,6 +277,13 @@ export function falResultReadIssue(status: number, body: unknown): ProviderDeliv
   return { phase: "result_read", provider: "fal", provider_state: "completed", provider_status: 403, reason };
 }
 
+/** Closed submission diagnostics never preserve a response body, URL or key.
+ * A403 is not itself evidence of insufficient provider credit. */
+export function falSubmitDiagnostic(status:number,body:unknown){
+  return {event:"fal_submit_refused",provider:"fal",phase:"submit",provider_status:status,
+    reason:falResultErrorReason(body),dispatch_rejected:definitiveSubmitRejection(status,body)};
+}
+
 /** fal's terminal failure is COMPLETED plus error/error_type, not a new take. */
 export function falCompletedFailure(data: Record<string, unknown>): Extract<JobState, { status: "failed" }> | null {
   const hasError = data.error != null && data.error !== false && data.error !== "";
@@ -360,7 +368,10 @@ export const falAdapter: ProviderAdapter = {
         body: JSON.stringify(body),
       },
       BUDGETS.submitMs,
-      classifyFal,
+      (status, body) => {
+        if (status === 403) console.error(JSON.stringify(falSubmitDiagnostic(status, body)));
+        return classifyFal(status, body);
+      },
     );
     const { request_id, status_url, response_url } = data;
     if (typeof request_id !== "string" || !/^[!-~]{1,256}$/.test(request_id) ||
