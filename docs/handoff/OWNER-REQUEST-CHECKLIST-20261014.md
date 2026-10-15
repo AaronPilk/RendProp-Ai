@@ -1,8 +1,47 @@
 # Rendprop owner request checklist — October 14–15, 2026
 
+## Latest checkpoint — October15,20:39UTC (supersedes older status below)
+
+- Actual SAME14-photo70s1080p video now EXPLICITLY PUBLISHED by normal owner
+  /renders/republish-app200 with original publication18541eb5…, assete201b961…,
+  SAMEslug g2afbgmv32. Prior400 retained, samekey/samebody retry after56ab142/
+  renders57 exact15files/13preserved/JWTtrue/all31othersunchanged. No newAI/QC.
+- Actual hosted mobile Chromium3designs all play1920x1080/70s in1.296–1.765s
+  afterPlay/noautoplay/nooverflow/noJSfault; root viewed actualscreens. Expanded
+  16desktop/mobile states passedGallery15master/lightbox/PrevNext/keyboard/touch,
+ 9OSMplaces/Contact/previewnoindex+noforms. CloudflareautomaticchallengePOSTs
+ wereharness-onlyclassification; appactionwrites0. PosteractualJPEG200/198ms
+ decoded1080p. SoldContactheading mismatch is narrowcopyfixunderway, notdeployed.
+- NativeAnimate24b5157 sourceSDK209/77+22PASS. ai-video85 canonicalHTTPSstatusfix
+ c34e813 exact56runtime/54preserved/JWTtrue; same5c768b1d… operationGET +direct
+ returnedURLGET200 nowworks, originalproviderref/time/outputa96621…/ledger/QC
+ byteequivalent. Actual1248x1664/24fps/5.041667sAVdecode/source+3frames/QCACCEPT;
+ 24.3cgen+1.3cQC owner-sponsored, notretailpayerproof. No85archive/upload.
+- Improveec4ed60 deployed finalai-copy43/canonicalai-photo84/v2v8 minimaloverlays
+ exact/JWTtrue; temporarytracingfullyremoved. Onefreshnormal00b536ac…HTTP200
+ 6.96s/265charprompt/ready[lighting]/scopeexact; ONEactualSonnet5initialstage2.1c,
+ nointernal/clientretry. SameOriginal/gallery/cover unchanged.
+- Studio exactstatic7d2ec537…/35publicartifacthashes+securityheaders/config/bindings
+ preserved;normalrealaccountUIstillawaitshumanApplelogin. Sourcehelperand575tests
+ passbutnotrealaccountproof. One distinctnormalcustomlightingtest nowauthorized:
+ sameOriginal/copyONLYacceptedImprovepromptchange, normalv2/QC;stopifHOLD, no pub.
+- CI38801653301atb244c5d running; known3componentfailureswebinventory6225beb,
+ closedpublicationfixture96d3acf corrected; historicalOct7financialmediabudget
+ fixturechronologicalboundaryrepair underway. Runtimefinancial/securityguards
+ unchanged; originalredretained. Newfullsourceheadrunstilldueafterfinalfreeze.
+- Fresh20:23accounting293rows9117.9360c+separate42.3796cholds/$25FALfunding;
+ subsequentAnimateQC1.3c/normalImprove2.1c/newcustomtest awaitfinalsnapshot. Supplier
+ invoices/unpricedinfra/missinghistoricalcoverage remainexplicit. Freshbeta3build82
+ submissions/0submittedcrashes unchanged. Disk7.63GiB, encryptedTimeMachineCopying
+ reported59.05%20:24Z, NOTfullbackupcomplete.
+- Public1.0.4(74)/internal1.0.5(84)/unattacheddraftAFTER_APPROVAL unchanged.
+ OnboardingREJECTED118.73s/remakeLASTexactfinalscreens/URLs, noAppStoresubmission.
+ OwnerawaySimulatorallowed/phoneunavailable/remotelaptopcontrolnotifyhere.
+
+
 This is the consolidated acceptance list for the owner's messages, not a claim that
 all work is finished. Latest explicit decisions override earlier wording/prices.
-Updated October 15 at 20:25 UTC after live and local acceptance checks. Earlier detailed ledger
+Updated October 15 at 20:39 UTC after live and local acceptance checks. Earlier detailed ledger
 is retained at
 `_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
 (relative to the outer Rendprop AI folder).
@@ -147,7 +186,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | P06 | Real progress while editing/uploading; background work and notification | Built stage/count reporting, not invented AI percentage | Physical completion/reopen/notification acceptance for exposed paths |
 | P07 | Select AND unselect a photo for listing without deleting original/edits | Selection/removal fix retained in 84; atomic server removal deployed; compact footer says Unselect | Remove/reopen/re-add; verify gallery, cover and retained originals/history |
 | P08 | Original can replace an edited public selection without false disclosure error | Genuine Original proof/sync fix built/tested for 83 | Actual original selection → published gallery sync |
-| P09 | AI preserves structure; staging/declutter actually look professional | Prior stage/declutter accepted; new current-v2 Sky4K accepted with real prospective QC and visual review. Custom lighting correctly HOLDs changed TV/cat; Suggest content passed; Improve502 traced to preservation gerund parsing and fixedec4ed60 | Deploy/retest normal Improve and obtain a safe positive custom result; further appropriate distinct edits and actual device acceptance remain open |
+| P09 | AI preserves structure; staging/declutter actually look professional | Prior stage/declutter accepted; new current-v2 Sky4K accepted with real prospective QC and visual review. Custom lighting correctly HOLDs changed TV/cat; Suggest content passed; Improve502 traced to preservation gerund parsing and fixedec4ed60 | Normal Improve live200/single2.1c attempt passed; fresh improved-prompt custom acceptance underway; further appropriate distinct edits and actual device acceptance remain open |
 | P10 | Genuine high-quality exports, not screenshots or fake 4K | Real accepted photo outputs 3584×4780, retained-master bytes checked | Actual phone save/share and final coordinator ZIP |
 | P11 | Organized ZIP: Originals / Decluttered / Staged and listing/social copies | Native/Studio implementation built; masters retained | Open final full export in Files, verify folders, dimensions and completeness |
 | P12 | Landscape listing capture; portrait social capture; 0.5× when whole room needs it | Guide/crop detection built; guidance now placed before video photo grid | Actual camera/lens/orientation and final branded framing footer |
@@ -183,7 +222,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | ID | Owner request | October 14–15 result | Remaining |
 |---|---|---|---|
 | W01 | Professional property website: Home, Gallery, Location/Nearby and Contact | Built/deployed; distinct routes return content | Actual phone navigation, image lightbox and authorized enquiry |
-| W02 | Finished photo-based Listing video is main presentation; recorded swipe tour secondary | Built/deployed renderer | Accepted Listing video explicitly published on SAME home and played |
+| W02 | Finished photo-based Listing video is main presentation; recorded swipe tour secondary | Built/deployed renderer | Normal owner publication200 on SAMEhome/link and actual70s1080p browserplay3designs passed; physicalphone acceptance open |
 | W03 | Attractive included Classic plus two distinct luxury designs with restrained glass/motion | Classic + Signature Estate + Coastal Luxe built/deployed previews | Final phone aesthetic/accessibility acceptance; preview ≠ paid entitlement |
 | W04 | Luxury design $25 one-time PER PROPERTY, switching both paid designs for that home | Backend/native product routing built; Apple draft SKU exists | Genuine Sandbox buy/recovery/property binding; real review screenshot/metadata; Production still OFF |
 | W05 | Fast loading, full-quality images; old low-detail edited files not called 4K | Point authority LIVE: tours68/SQL184120 exact. SAME saved-edit preview repeat6.5564→1.6701s; exact master/preview bytes and geometry retained | Inspect initial hero/gallery use and physical loading/detail. Full master path remains about7.8–9.5s; historical896×1195 edit is not4K |
@@ -202,7 +241,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | O03 | Quality/functionality outrank old 75% margin; avoid premature normal-user spending blocks | Paid processing allowance aligned and live today; no retail price/counter reset | Ordinary paid receipt-backed admission; trial/free unchanged and not claimed solved |
 | O04 | Choose actual AI providers by quality, Kie backup available | Real model comparisons and normal FAL4K + Pro4K routes tested/live | Finish current real workflow; provider migration not assumed universal fix |
 | O05 | Ask AI is contextual app support and cost is measured | Built/deployed; earlier three ordinary queries6.3¢ catalog estimate. Today actual Sold-home context defect fixed/tested114scope checks+17faults/offline47 | Final retest of exact selected Sold/Archived home, logical member library and navigation |
-| O06 | Rendprop Studio matches native purpose, versions, jobs, settings and exports | C2 frontend91727361…/35 artifacts, Edge Studio36/54 runtime, jobs12/64 runtime and two SQL migrations verified live;575 unit tests and focused browser flows pass | Real authenticated account/library/recovery/native parity acceptance; laptop sign-in requested |
+| O06 | Rendprop Studio matches native purpose, versions, jobs, settings and exports | C2 then policy frontend7d2ec537…/35 exact artifacts, Edge Studio36/54 runtime, jobs12/64 runtime and two SQL migrations verified live;575 unit tests and focused browser flows pass | Real authenticated account/library/recovery/native parity acceptance; laptop sign-in requested |
 | O07 | Necessary permission/privacy experience, truthful billing/trial statements | Existing implemented paths retained; no new blanket permission prompt assumed necessary | Final actual device permission/notification/account checks and disclosure consistency |
 | O08 | Clean old files; organize Mac/1TB external drive without breaking active work | Prior 6.2GB/3,469-file move and cache cleanup retained. Later 67 inactive bridge folders moved externally with all hashes verified and compatibility symlinks; 8.54GiB free before successful 83 archive | Preserve current Mac files/source/keys and release evidence. Time Machine is still copying to the encrypted Rendprop Archive volume (read-only status19:30 UTC); the verified archive move is separate, not proof of a completed full backup |
 | O09 | Retain all app API-cost records and distinguish usage from added credits | Private export preserves ledger/hold identity, priced bases and separate funding; both media meters remain unpriced | Reconcile supplied vendor records; missing historical links/deleted rows/other spools/infra invoices prevent an all-time or invoice-complete claim |
@@ -212,7 +251,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 
 | ID | Required action | State |
 |---|---|---|
-| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | Native prepaid-source fix960ef4b and accessibility changes peer-reviewed; compile-only Release iphoneos check now authorized with protected prior archive. Current CI still pending; old ff84129 run remains red |
+| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | Native prepaid-source960ef4b/accessibility and Animate24b5157 peer-reviewed, actual209-input unsigned ReleaseSDK passed. Current fullCI running with3 known harness/inventory failures being repaired; no whole-head green claim |
 | R02 | Deliver internal normal TestFlight 84 from reviewed native source | Done; compact08098a9/metadata75738bf, VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING; final integrated push/CI coordinated separately |
 | R03 | Test final changed UI and recover 14-photo job; inspect final output | SAME14-photo job recovered to READY and hosted master decoded/visually sampled. Simulator checks pass for reviewed flows; actual84 compact/device/hardware acceptance remains open |
 | R04 | Finish real paid website/ordinary-account/export/site/Studio acceptance above | Open; no fake transactions or claims that previews prove purchases |

@@ -1,5 +1,44 @@
 # Latest execution delta — October15,2026,20:05 UTC
 
+## Latest checkpoint — October15,20:39UTC (supersedes older status below)
+
+- Actual SAME14-photo70s1080p video now EXPLICITLY PUBLISHED by normal owner
+  /renders/republish-app200 with original publication18541eb5…, assete201b961…,
+  SAMEslug g2afbgmv32. Prior400 retained, samekey/samebody retry after56ab142/
+  renders57 exact15files/13preserved/JWTtrue/all31othersunchanged. No newAI/QC.
+- Actual hosted mobile Chromium3designs all play1920x1080/70s in1.296–1.765s
+  afterPlay/noautoplay/nooverflow/noJSfault; root viewed actualscreens. Expanded
+  16desktop/mobile states passedGallery15master/lightbox/PrevNext/keyboard/touch,
+ 9OSMplaces/Contact/previewnoindex+noforms. CloudflareautomaticchallengePOSTs
+ wereharness-onlyclassification; appactionwrites0. PosteractualJPEG200/198ms
+ decoded1080p. SoldContactheading mismatch is narrowcopyfixunderway, notdeployed.
+- NativeAnimate24b5157 sourceSDK209/77+22PASS. ai-video85 canonicalHTTPSstatusfix
+ c34e813 exact56runtime/54preserved/JWTtrue; same5c768b1d… operationGET +direct
+ returnedURLGET200 nowworks, originalproviderref/time/outputa96621…/ledger/QC
+ byteequivalent. Actual1248x1664/24fps/5.041667sAVdecode/source+3frames/QCACCEPT;
+ 24.3cgen+1.3cQC owner-sponsored, notretailpayerproof. No85archive/upload.
+- Improveec4ed60 deployed finalai-copy43/canonicalai-photo84/v2v8 minimaloverlays
+ exact/JWTtrue; temporarytracingfullyremoved. Onefreshnormal00b536ac…HTTP200
+ 6.96s/265charprompt/ready[lighting]/scopeexact; ONEactualSonnet5initialstage2.1c,
+ nointernal/clientretry. SameOriginal/gallery/cover unchanged.
+- Studio exactstatic7d2ec537…/35publicartifacthashes+securityheaders/config/bindings
+ preserved;normalrealaccountUIstillawaitshumanApplelogin. Sourcehelperand575tests
+ passbutnotrealaccountproof. One distinctnormalcustomlightingtest nowauthorized:
+ sameOriginal/copyONLYacceptedImprovepromptchange, normalv2/QC;stopifHOLD, no pub.
+- CI38801653301atb244c5d running; known3componentfailureswebinventory6225beb,
+ closedpublicationfixture96d3acf corrected; historicalOct7financialmediabudget
+ fixturechronologicalboundaryrepair underway. Runtimefinancial/securityguards
+ unchanged; originalredretained. Newfullsourceheadrunstilldueafterfinalfreeze.
+- Fresh20:23accounting293rows9117.9360c+separate42.3796cholds/$25FALfunding;
+ subsequentAnimateQC1.3c/normalImprove2.1c/newcustomtest awaitfinalsnapshot. Supplier
+ invoices/unpricedinfra/missinghistoricalcoverage remainexplicit. Freshbeta3build82
+ submissions/0submittedcrashes unchanged. Disk7.63GiB, encryptedTimeMachineCopying
+ reported59.05%20:24Z, NOTfullbackupcomplete.
+- Public1.0.4(74)/internal1.0.5(84)/unattacheddraftAFTER_APPROVAL unchanged.
+ OnboardingREJECTED118.73s/remakeLASTexactfinalscreens/URLs, noAppStoresubmission.
+ OwnerawaySimulatorallowed/phoneunavailable/remotelaptopcontrolnotifyhere.
+
+
 ## Latest checkpoint — October15,20:25UTC (supersedes older status below)
 
 Owner away, Simulator authorized, can remotely control laptop; notify in chat for
