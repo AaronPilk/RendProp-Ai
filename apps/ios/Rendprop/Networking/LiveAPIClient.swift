@@ -928,7 +928,24 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
 
     // MARK: - AI photo
 
-    func aiPhotoEdit(_ request: AIPhotoEditRequest) async throws -> AIPhotoEditResult {
+    @MainActor func aiPhotoEdit(_ request: AIPhotoEditRequest) async throws -> AIPhotoEditResult {
+        // This versioned route can retain a paid edit for a later status check.
+        // Its only production caller saves the exact request before calling us.
+        guard let key = request.idempotencyKey, UUID(uuidString: key) != nil,
+              let workspace = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let consent = AIConsent.shared.revocationRevision
+        func requireIdentity() throws {
+            guard owner == AuthStore.shared.userID, revision == AuthStore.shared.syncSessionRevision,
+                  WorkspaceContext.selectedOrgID == workspace else { throw CloudSyncError.identityChanged }
+        }
+        func requireUnsentPermission() throws {
+            try requireIdentity()
+            guard AIConsent.shared.isGranted, AIConsent.shared.revocationRevision == consent else {
+                throw APIError.server(status: 403, code: "consent_required", message: "AI processing permission changed. Reopen the tool to continue.")
+            }
+        }
+        try requireUnsentPermission()
         var body: [String: Any] = ["image_b64": request.imageBase64,
                                    "mime": request.mime,
                                    "edit": request.edit]
@@ -957,9 +974,13 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         if let original = request.originalAssetID?.trimmingCharacters(in: .whitespaces), !original.isEmpty {
             body["original_asset_id"] = original
         }
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
-                                                 idempotency: Self.aiIdempotency(request.idempotencyKey)),
-                                     session: aiSession)
+        var prepared = makeRequest(url: url(["ai-photo-v2"]), method: "POST", json: body, idempotency: .key(key))
+        prepared.setValue(workspace.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        prepared.setValue("retained-operation-v1", forHTTPHeaderField: "x-rendprop-photo-quality-protocol")
+        let data = try await execute(prepared, session: aiSession, beforeSend: { try requireUnsentPermission() })
+        // Work already sent may finish after consent is withdrawn; retain its
+        // result only for the exact account/library, then fence the next photo.
+        try requireIdentity()
         let r: AIPhotoEditDTO = try decode(data)
         guard let out = r.imageB64, !out.isEmpty else { throw APIError.decoding }
         let disclosure = r.disclosure?.trimmingCharacters(in: .whitespacesAndNewlines)
