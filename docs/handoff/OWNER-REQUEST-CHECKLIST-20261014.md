@@ -1,51 +1,94 @@
 # Owner request checklist — October 14, 2026
 
-## Active checkpoint — 2026-10-15 07:25 UTC
+## Active checkpoint — 2026-10-15 08:25 UTC
 
 - Normal1.0.5(82) is VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING, build45479fdb…,
-  existing internal group. One signed archive/upload;205boundinputs/170tracked
-  +1generatedSwift, noLAB/DEBUG, exact118.73s Willow intro. Public1.0.4(74)
-  unchanged; real1.0.5 draftc15af3a3… unattached/AFTER_APPROVAL, not submitted.
-- Current source70c2adf, origin pushed onlythrough04b31ca. CI38693470447 has
-  backend2340/0/1ignore/privateCPU/PG/actualUIKit export green; offline native
-  audit still progressing. Original tour negative-control red retained; test-only
-  classifier5ab17a5 and unchanged production oracles need final changed-source CI.
-- Full-resolution output25MiB/actual256MB governor and35MB Studio transport are
-  implemented/deployed; Studioc0682c56… has35-file/39GET proof. CPU3a180766…/
-  f4d26817… adaptive comparison-only JPEG fix is live; masters/geometry/6MBcap/
-  gates/2slots/controller/bindings/secrets unchanged. Hosted freshstage/declutter
-  both completed comparison preparation once, proving technical size repair.
-- ActualFlashstage b397f0de… anddeclutter35cca0e5… privateHOLD on fixed-feature
-  changes; no reroll/rejudge. Stagewood shelves/removalofmountedplates visually
-  confirmed. This is real model-fidelity work, not a billing or UI finding.
-- ExplicitPro4Kstage30fab72b…/checkcc4672bd… ACCEPT: sameexact original/body,
-  JPEG8,897,279B3584x4780 SHA8c661d0f…, oneCPU+onejudge, nofindings/conf.9,
-  allpreservation96–97/artifacts92/editquality88. Root/independentvisual agree
-  fixedracks/plates/ceilings/kitchen preserved. HTTP200exactmasterSHA returned;
-  gen30.5536¢+QC9.4668¢=40.0204¢ catalogbound, notinvoice. One room comparison.
-- ExplicitProdeclutter9f541542…/check1b11a9c4… terminalUNKNOWN/HOLD: visually
-  preservesfeatures/noaddedpendant, butend_turn358tokenjudgefailedstrictformat.
-  Not timeout/max_tokens and rawresponse wasnotretained, exactviolatedfield
-  retrospectivelyunclassifiable. StructuredJSONrequest+boundedparse diagnostics
-  are being implemented prospectively, withunchangedparser/scores/oldreceipts.
-- Procomparison deployedONLYai-photo-v2v5 c17aaa07…, all52runtimebytes match
-  prepared six-leaf patch. Canonicallegacy82/privateworker5/review4 unchanged.
-  Scopedowner_photo_pro_4k_qa taskdeclutter expires08:16:31UTC; root must remove
-  exacttemporarygrant after terminal/finalcomparison. Ordinaryphotos stillFlash.
-- FALKlingV3native4K job0d656e4b… READY07:18:04UTC. Bothfirst-passAI/native
-  2492x3324/24fps5.042s, noqualityretry/fallback; actualmaster1080x1920/30fps/
-  10s13,008,431B SHA33d14faf…. ExactownerGET/hash/fullAVdecode/rootsampledframe
-  review passed, no black/blurpanels.12m2.290stoReady, scopedpushoutboxsentonce
-  57.626slater, phonevisibilityunproved.420¢gen+2.6¢QC excludesCPU/storage.
-  TemporaryFALselectorCASrestored exactpriorexpiredKie; ordinaryroute unchanged.
-- Videoai-video79/privateworker6 exactfive-leafFALpatch islivebyteverified.
-  No new job/oldreceipt migrations, capbypass, quota reset, public publication or
-  paidrequest retries were performed. Ordinaryquality-profile design is pending.
-- Mirroring stillreportsMaclocked despiteunlockreply; onefreshrequestpending.
-  Phone81 until82installed. Remaininggates: actual82UI/import/ZIP/camera/intro/
-  audio/push; ordinaryrouting/funding; acceptedfreshdeclutter/masking; $25Sandbox
-  purchase/recovery/refund+genuinescreenshot (Sandboxtrue/Productionfalse);
-  reviewedListing16:9publication/playback; finalCI andAppStoresubmission.
+  existing internal group. Exact205native inputs/170tracked+1generatedSwift,
+  noLAB/DEBUG,118.73s Willow intro. Phone still81 because Mirroring reports
+  Maclocked despite latestunlockreply; fresh unlock request is pending.
+  Public1.0.4(74) unchanged.1.0.5 draftc15af3a3… is unattached/AFTER_APPROVAL,
+  NOT submitted. Upload is not phone acceptance or App Store submission.
+- Runtime sourcef1a9765 includes prospective structured judge d4408b3, furniture boundary
+  clarification6cb53b8, ordinary video profile e9628c2, opt-in per-task Pro photo
+  policy8cce236+d95f4e3, and REMOVEONLY Declutter generation prompt8679e4b.
+  Fundingf1a9765 and three real PG CI gates2c27895 are committed. Root is
+  preparing the final branch push and one source-pinned CI dispatch; no new
+  native source/archive changes are required for these backend-only fixes.
+- OriginalCI38693470447 on04b31ca finished naturally:15jobs success, sole preserved
+  tour-host baseline red. All native/actualUIKit/paid-recovery/dependent native
+  gates PASS; backend2340pass/0fail/1ignored. Test-only classifier5ab17a5 keeps
+  production RMS/pitch/duration/frame oracles unchanged; final changed-source CI
+  must verify it. No cancellation or unchanged-source rerun-to-green.
+- Live strict ai-photo-v2v6/25db7306… all54bytes verified independently; private
+  photo-quality-worker7/3b8b7054… all31exact. Structured JSON/parse diagnostics
+  and rubric are prospective; parser/scores/thresholds and oldHOLDs unchanged.
+  Canonicallegacy ai-photo82/review4/CPU untouched by these latest photo fixes.
+- Actual Pro4Kstage30fab72b… ACCEPT retained:8,897,279B3584x4780 SHA8c661d0f…,
+  fixed features preserved; one generation+onejudge40.0204c catalog liability.
+  Flashstage/declutter and oldProdeclutter HOLDs remain correctly private.
+- V5old-generation-promptdeclutter1eff4615… correctly HOLD: root and independent
+  review confirmed a NEW standing mirror and replaced wall rack. This triggered
+  a real REMOVEONLY generation prompt fix, not threshold weakening.
+- Fresh changed-promptProdeclutter6645067e…/checkf783ed85… ACCEPT in95.185s:
+ 8,960,731B3584x4780 SHA1c4b8e49…, exactHTTP==retainedmaster, oneCPU+onejudge,
+  nofindings/conf.9, preservation96–98/artifacts92/edit88. Root/independentvisual
+  agree: no new mirror/shelves; fixed rack/fan/lights/art/kitchen preserved;
+  cat/blanket/loosefloorcables removed. One generation30.5536c+judge9.8584c=
+ 40.412c catalog liability, not invoice. Limited single-room positive example.
+  Both temporary Pro owner selectors were exact-value-CAS removed to null.
+- Real FAL4K canary0d656e4b… READY: two first-passaccepted2492x3324/24fps
+  clips, noqualityretry/fallback; master1080x1920/30fps/10s13,008,431B
+  SHA33d14faf…. Exact ownerGET/hash/fullAVdecode/root sampledframes pass,
+  no black/blurpanels.12m2.290stoReady; scopedpushsentonce57.626slater,
+  phone visibility unproved.420cgen+2.6cQC excludesCPU/storage. TemporaryFAL
+  selector restored to exact prior expiredKie; no new paid video reroll.
+- Ordinary immutable-profile video migration is live and ACTIVATED. ai-video80/
+ 166cf51e…, worker7/c5502edf…, jobs5/a5881d6d… deployed with exact runtime
+  readbacks/JWT preserved; only verified type declarations erased. New jobs freeze
+  profile/deadline (24hnew/4hlegacy); prior jobs/receipts keep their models.
+ 81focused tests+threeentrypoints+12exact-payload quote controls+30fresh/30replay
+  PG assertions/four compiled controls/three races+183legacy/16controls PASS.
+- Ordinary Pro4K Stage/Declutter policy and its two isolated rows are ACTIVATED.
+  Existing legacy route aggregatebc5d181a… unchanged.135base+
+ 11per-task+76prompt-focused tests and peer reviews passed; actual narrowPG
+  seed/replay/RLS/compiledcontrols passed. Ordinary routes are NOT activated yet.
+- Real budget issue found:20FAL4Kshots complete conservativequote4403.9552c;
+ 20Declutter+20Stage max-tier quote1787.712c =>6191.6672c total. Existing75%-
+  shaped plan COGS and50%-Apple-net atomic envelope block this workflow.
+  Reviewed bounded subsidy policy f1a9765 is now LIVE and ACTIVATED:
+  paidStarter/Solo6500c, Pro12000c, Team30000c per verified Production Apple
+  service month. BothCOGS/atomicwallet and actual Apple-period spend agree;
+  old settled terms excluded, all unresolved holds/all AI costs still count.
+ 123fresh+123replay realPG/7compiledfaults/one mixed-writer renewal race and
+  peer PASS. No retailprice/newcharge/counterreset/quota or duplicate bypass.
+  Free/trial/grace/Sandbox grants unchanged. Larger initial-trial allowance is
+  separate work: ceiling mode lacks signed-offer/lifetime buyer attestation;
+  do not raise that generic cap or pretend an unsafe trial expansion was done.
+  OrdinaryFree QA hasphotos5/5consumed/reels0/190.95c budget; cannot prove
+  ordinary positive admission. No sponsorship/Authimpersonation/quota reset.
+- Fresh global normal-profile video admitted202 on the actual owner account,
+  no temporary supplier selector: jobbb7ea8c3-b2df-4ac6-9438-51ed63822ec5 /
+  operationecc0e3c4-0a31-4d7d-ab6e-191d8b3e4f49,2sources/Social9:16.
+  Saved profilefal-kling3-4k-v1/deadline24h verified; generating at08:24UTC.
+  This is hosted normal routing evidence, NOT ordinary paid-account billing,
+ 20-photo throughput, Listing16:9, phone acceptance or finished output yet.
+- Targeted phone plan preserves prior evidence:189of203 common native inputs
+  match phone81;205archive82inputs still exact. Home/Leads/appearance/tabs and
+  review-layout fragments carry prior physical observations with source hashes.
+  Do not repeat a full unmodified UI matrix. Remaining82 deltas are intro,
+  recovery/source-chip/progress and actual HQ workflow/purchase/import/ZIP.
+  Plan: `_bridge/build82-delta-phone-plan/PHONE-PLAN.md`.
+- Full25MiB output/35MBStudio transport live (Studioc0682c56…35files/39GET).
+  CPU3a180766…/f4d26817… adaptive comparison JPEG only; masters/geometry/6MBcap,
+  two slots/controller/bindings/secrets unchanged.118.73s branded Willow1.2x
+  intro has30scenes/29realphoneUI+private savedvideo excerpt, no blank/fullAV
+  issues in offline checks; full physical phone playback/listening remains open.
+- Remaining release gates:82actualUI/import>15/ZIP/camera/intro/audio/push;
+  normal-profile completion and ordinary purchase proof; real masking/representative
+ 20+photo Listing16:9 video and explicit review/publication/playablehero;
+  ordinary paid account/Sandbox purchases/recovery/refund/genuine $25offer
+  screenshot (SKU stillMISSING_METADATA/Sandboxtrue/Productionfalse);
+  final changed-sourceCI/GitHubpush/AppStoresubmission. Do not mark all complete.
 
 This is the working acceptance list for the owner's recent requests. Implementation,
 automated checks, hosted delivery and real consumer acceptance are separate states.
