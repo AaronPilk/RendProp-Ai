@@ -98,6 +98,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     super(ctx,env);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS slot (id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL)');
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS startup_probe (id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL, receipt TEXT)");
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS startup_probe_v2 (id INTEGER PRIMARY KEY CHECK(id=1), state TEXT NOT NULL, receipt TEXT)");
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS diagnostic (id INTEGER PRIMARY KEY CHECK(id=1), observation TEXT NOT NULL)');
   }
   /** Fixed-slot private inspection does not wake work, change leases or touch a CPU. */
@@ -105,22 +106,24 @@ export class PropertyVideoCPU extends DurableObject<Env> {
     const row=this.ctx.storage.sql.exec<{observation:string}>('SELECT observation FROM diagnostic WHERE id=1').toArray()[0];
     if(!row)return null;try{return checkedDiagnostic(JSON.parse(row.observation));}catch{return null;}
   }
-  async startupProbe():Promise<{status:number;value:{probe:StartupControlReceipt}|{error:string}}> {
-    const prior=this.ctx.storage.sql.exec<{state:string;receipt:string|null}>('SELECT state,receipt FROM startup_probe WHERE id=1').toArray()[0];
+  async startupProbe():Promise<{status:number;value:{probe:StartupControlReceipt}|{error:string}}> {return this.runStartupProbe('startup_probe');}
+  async startupProbeV2():Promise<{status:number;value:{probe:StartupControlReceipt}|{error:string}}> {return this.runStartupProbe('startup_probe_v2');}
+  private async runStartupProbe(table:'startup_probe'|'startup_probe_v2'):Promise<{status:number;value:{probe:StartupControlReceipt}|{error:string}}> {
+    const prior=this.ctx.storage.sql.exec<{state:string;receipt:string|null}>(`SELECT state,receipt FROM ${table} WHERE id=1`).toArray()[0];
     if(prior)return {status:prior.receipt?200:409,value:prior.receipt?{probe:JSON.parse(prior.receipt)}:{error:'probe_in_progress'}};
     if(this.read()||this.ctx.container?.running)return {status:409,value:{error:'slot_busy'}};
     if(!this.ctx.container)return {status:503,value:{error:'container_unavailable'}};
-    this.ctx.storage.sql.exec("INSERT INTO startup_probe(id,state) VALUES(1,'running')");
+    this.ctx.storage.sql.exec(`INSERT INTO ${table}(id,state) VALUES(1,'running')`);
     const receipt=await startupControl(this.ctx.container);
-    this.ctx.storage.sql.exec("UPDATE startup_probe SET state='done',receipt=? WHERE id=1",JSON.stringify(receipt));
+    this.ctx.storage.sql.exec(`UPDATE ${table} SET state='done',receipt=? WHERE id=1`,JSON.stringify(receipt));
     return {status:200,value:{probe:receipt}};
   }
   private read():SlotState|null {const row=this.ctx.storage.sql.exec<{state:string}>('SELECT state FROM slot WHERE id=1').toArray()[0];return row?JSON.parse(row.state):null;}
   private save(state:SlotState):void {this.ctx.storage.sql.exec('INSERT INTO slot (id,state) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state',JSON.stringify(state));}
   async wake(jobID:string,slot:'slot-0'|'slot-1'):Promise<boolean> {
     if (this.env.ENABLED!=='true'||!UUID.test(jobID)||!['slot-0','slot-1'].includes(slot)) return false;
-    const probe=this.ctx.storage.sql.exec<{state:string;receipt:string|null}>('SELECT state,receipt FROM startup_probe WHERE id=1').toArray()[0];
-    if(probe&&(probe.state!=='done'||!probe.receipt||JSON.parse(probe.receipt).cleanup_complete!==true))return false;
+    for(const table of ['startup_probe','startup_probe_v2']as const){const probe=this.ctx.storage.sql.exec<{state:string;receipt:string|null}>(`SELECT state,receipt FROM ${table} WHERE id=1`).toArray()[0];
+      if(probe&&(probe.state!=='done'||!probe.receipt||JSON.parse(probe.receipt).cleanup_complete!==true))return false;}
     const prior=this.read();
     if (prior&&prior.jobID!==jobID) return false;
     if (!prior) this.save({jobID,slot,token:crypto.randomUUID()+crypto.randomUUID()});
@@ -284,12 +287,13 @@ export default {
     const url=new URL(request.url);
     if (request.method==='GET'&&url.pathname==='/health') return json({service:'property-video-render',enabled:env.ENABLED==='true',provider_dispatch:false});
     const inspect=request.method==='GET'&&url.pathname==='/diagnostic';
-    const probe=request.method==='POST'&&url.pathname==='/startup-probe';
+    const probeV2=request.method==='POST'&&url.pathname==='/startup-probe-v2';
+    const probe=request.method==='POST'&&url.pathname==='/startup-probe'||probeV2;
     if (!inspect&&!probe&&(request.method!=='POST'||url.pathname!=='/wake')) return json({error:'not_found'},404);
     if (!env.RENDER_TRIGGER_KEY||request.headers.get('Authorization')!==`Bearer ${env.RENDER_TRIGGER_KEY}`) return json({error:'private_controller_only'},403);
     if(inspect)return json({slots:await Promise.all((['slot-0','slot-1'] as const).map(async slot=>({slot,observation:await env.CPU.getByName(slot).diagnostic()})))});
     if (env.ENABLED!=='true') return json({error:'renderer_disabled'},503);
-    if(probe){if(!await emptyControlBody(request))return json({error:'body_not_allowed'},400);const result=await env.CPU.getByName('slot-1').startupProbe();return json(result.value,result.status);}
+    if(probe){if(!await emptyControlBody(request))return json({error:'body_not_allowed'},400);const slot=env.CPU.getByName('slot-1');const result=await(probeV2?slot.startupProbeV2():slot.startupProbe());return json(result.value,result.status);}
     ctx.waitUntil(dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))));
     return json({accepted:true},202);
   },

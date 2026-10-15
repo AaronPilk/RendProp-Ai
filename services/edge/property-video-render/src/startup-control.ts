@@ -1,9 +1,15 @@
 /** Fixed synthetic startup control. No media capability, provider or real CPU secret. */
+const ERROR_NAMES=['ModuleNotFoundError','ImportError','FileNotFoundError','PermissionError','SSLError','SSLCertVerificationError','SyntaxError','IndentationError','OSError','RuntimeError','AttributeError','ValueError','TypeError','KeyError','NameError','NotImplementedError','gaierror','herror','SystemExit','ConnectionError','BrokenPipeError','BlockingIOError'] as const;
+type ErrorName=typeof ERROR_NAMES[number];
+export interface StartupFrame {file:string;line:number;function:string}
 export interface StartupControlReceipt {
   phase:'boot'|'python'|'cleanup';
   reason:'ready'|'configuration'|'import'|'path'|'permission'|'ssl'|'syntax'|'listen'|'process_exit'|'timeout'|'unknown';
   python_ready:boolean;
-  error_name?:'ModuleNotFoundError'|'ImportError'|'FileNotFoundError'|'PermissionError'|'SSLError'|'SSLCertVerificationError'|'SyntaxError'|'IndentationError'|'OSError';
+  error_name?:ErrorName;
+  traceback?:StartupFrame[];
+  errno?:number;
+  known_message?:'private_renderer_configuration_missing'|'cannot_start_thread'|'operation_not_permitted';
   module?:'PIL'|'renderer'|'compose'|'capabilities'|'prepare_image'|'photo_motion'|'music_catalog'|'unknown';
   exit_code?:number;
   stderr_bytes:number;
@@ -25,6 +31,24 @@ export function startupStderrReason(stderr:string):StartupControlReceipt['reason
   if(/SyntaxError|IndentationError/.test(stderr))return 'syntax';
   if(/Address already in use/.test(stderr))return 'listen';
   return 'unknown';
+}
+export function sanitizedStartupTrace(stderr:string):Pick<StartupControlReceipt,'error_name'|'traceback'|'errno'|'known_message'> {
+  const value:Pick<StartupControlReceipt,'error_name'|'traceback'|'errno'|'known_message'>={traceback:[]};
+  const appFiles=new Set(['http_adapter.py','renderer.py','compose.py','capabilities.py','prepare_image.py','photo_motion.py','music_catalog.py']);
+  for(const line of stderr.split('\n')){
+    const frame=line.match(/^\s*File "([^"]+)", line ([0-9]{1,7}), in ([A-Za-z_][A-Za-z0-9_]{0,79}|<module>|<lambda>)\s*$/);
+    if(frame&&value.traceback!.length<16){
+      const path=frame[1],file=path.split('/').at(-1)!;
+      if(path.startsWith('/app/')&&appFiles.has(file)||/^\/usr\/local\/lib\/python3\.13\//.test(path)&&/^[A-Za-z_][A-Za-z0-9_-]{0,79}\.py$/.test(file))value.traceback!.push({file,line:Number(frame[2]),function:frame[3]});
+    }
+    const exception=line.match(/^([A-Za-z_][A-Za-z0-9_.]{0,100}):(?: |$)/);
+    if(exception){const name=exception[1].split('.').at(-1)!;if(ERROR_NAMES.includes(name as ErrorName))value.error_name=name as ErrorName;}
+  }
+  const errno=stderr.match(/\[Errno (-?[0-9]{1,4})\]/)?.[1];if(errno!==undefined&&Math.abs(Number(errno))<=4095)value.errno=Number(errno);
+  if(stderr.includes('private_renderer_configuration_missing'))value.known_message='private_renderer_configuration_missing';
+  else if(stderr.includes("can't start new thread"))value.known_message='cannot_start_thread';
+  else if(stderr.includes('[Errno 1] Operation not permitted'))value.known_message='operation_not_permitted';
+  return value;
 }
 async function collect(stream:ReadableStream|null):Promise<{text:string;bytes:number;truncated:boolean}> {
   if(!stream)return {text:'',bytes:0,truncated:false};
@@ -64,8 +88,7 @@ export async function startupControl(container:Container):Promise<StartupControl
     receipt.stdout_bytes=stdout.bytes;receipt.stderr_bytes=stderr.bytes;receipt.output_truncated=stdout.truncated||stderr.truncated;
     if(processCode!==undefined)receipt.exit_code=processCode;
     receipt.reason=receipt.python_ready?(processCode===124||processCode===137?'ready':'process_exit'):processCode===124||processCode===137?'timeout':startupStderrReason(stderr.text);
-    const errorName=stderr.text.match(/\b(ModuleNotFoundError|ImportError|FileNotFoundError|PermissionError|SSLError|SSLCertVerificationError|SyntaxError|IndentationError|OSError)\b/)?.[1];
-    if(errorName)receipt.error_name=errorName as NonNullable<StartupControlReceipt['error_name']>;
+    Object.assign(receipt,sanitizedStartupTrace(stderr.text));
     if(receipt.reason==='import'){const module=stderr.text.match(/(?:No module named ['"]|from ['"]?)(PIL|renderer|compose|capabilities|prepare_image|photo_motion|music_catalog)(?:[.'"\s]|$)/)?.[1];receipt.module=(module??'unknown') as NonNullable<StartupControlReceipt['module']>;}
   }catch(error){receipt.reason=error instanceof Error&&error.message==='control_timeout'?'timeout':'unknown';}
   finally {

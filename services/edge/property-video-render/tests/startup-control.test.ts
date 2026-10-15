@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
-import {startupControl,startupStderrReason} from '../src/startup-control.ts';
+import {startupControl,startupStderrReason,sanitizedStartupTrace} from '../src/startup-control.ts';
 for(const [text,reason]of [['private_renderer_configuration_missing PRIVATE','configuration'],["ModuleNotFoundError: PRIVATE",'import'],["can't open file PRIVATE",'path'],['PermissionError PRIVATE','permission'],['SSLCertVerificationError PRIVATE','ssl'],['SyntaxError PRIVATE','syntax'],['Address already in use PRIVATE','listen'],['PRIVATE-TOKEN-URL','unknown']] as const)assert.equal(startupStderrReason(text),reason);
+const trace=sanitizedStartupTrace(`Traceback (most recent call last):
+  File "/app/http_adapter.py", line 142, in <module>
+    PRIVATE_CODE_WITH_TOKEN
+  File "/usr/local/lib/python3.13/http/server.py", line 136, in server_bind
+    PRIVATE_CODE_WITH_URL
+  File "/Users/private/SECRET.py", line 9, in leak
+socket.gaierror: [Errno -3] PRIVATE-URL https://private.invalid/cap
+`);
+assert.deepEqual(trace,{traceback:[{file:'http_adapter.py',line:142,function:'<module>'},{file:'server.py',line:136,function:'server_bind'}],error_name:'gaierror',errno:-3});
+assert.ok(!JSON.stringify(trace).includes('PRIVATE'));assert.ok(!JSON.stringify(trace).includes('https:'));
+assert.equal(sanitizedStartupTrace("RuntimeError: can't start new thread PRIVATE").known_message,'cannot_start_thread');
 const original=globalThis.fetch;globalThis.fetch=async()=>{throw Error('No external transport in synthetic control');};
 try{
  for(const scenario of ['ready','import','large','boot_exit','cleanup']as const){

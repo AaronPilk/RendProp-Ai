@@ -54,6 +54,8 @@ try {
   response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe',{method:'POST'});assert.equal(response.status,403);
   response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe',{method:'POST',headers:{Authorization:'Bearer isolated-test'},body:'{}'});assert.equal(response.status,400);
   response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,503,'workerd fixture has no physical Container');assert.equal(hits.length,0);
+  response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe-v2',{method:'POST'});assert.equal(response.status,403);
+  response=await runtime.dispatchFetch('https://private-renderer.test/startup-probe-v2',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,503);assert.equal(hits.length,0);
   let reached=new Promise(resolve=>{resolveHit=resolve;});
   response=await runtime.dispatchFetch('https://private-renderer.test/wake',{method:'POST',headers:{Authorization:'Bearer isolated-test'}});assert.equal(response.status,202);
   await bounded(reached,'actual enabled bridge failed before its one authority request');assert.equal(hits.length,1);
