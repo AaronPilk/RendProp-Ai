@@ -3,6 +3,28 @@ begin;
 create temporary table checks(n integer);insert into checks values(0);grant all on checks to service_role,authenticated;
 create function pg_temp.ok(v boolean,label text)returns void language plpgsql as $$begin if v is distinct from true then raise exception'BGVIDEO FAIL: %',label;end if;update checks set n=n+1;end$$;
 create function pg_temp.refuse(command text,needle text,label text)returns void language plpgsql as $$begin begin execute command;exception when others then if position(needle in sqlerrm)>0 then perform pg_temp.ok(true,label);return;end if;raise;end;raise exception'BGVIDEO FAIL: allowed %',label;end$$;
+
+-- Closed synthetic provider transport, actual paid binding/QC/fallback RPCs.
+-- These rows attest receipt authority only, never real generated pixels.
+create function pg_temp.paid_clip(c jsonb)returns jsonb language plpgsql as $$declare j public.property_video_jobs;src public.property_video_job_sources;rid uuid:=gen_random_uuid();lid uuid:=gen_random_uuid();request text;prov public.media_provenance;claim jsonb;begin
+ select * into j from public.property_video_jobs where id=(c#>>'{job,id}')::uuid;select * into src from public.property_video_job_sources where job_id=j.id and attempt_id=(c#>>'{source,attempt_id}')::uuid;
+ request:='fixture-provider:'||src.attempt_id;
+ insert into public.app_video_cost_reservations(id,actor_id,org_id,idempotency_key,feature,provider,model,input_sha256,units,unit_cost_cents,total_cents,hold_cents,meta)values(rid,j.actor_id,j.org_id,src.request_key,'reel','fal','fixture-model',src.source->>'sha256',1,.0001,.0001,.0001,'{"task":"video.reel_clip"}');
+ insert into public.cost_ledger(id,org_id,feature,provider,model,total_cents,meta)values(lid,j.org_id,'reel','fal','fixture-model',.0001,jsonb_build_object('app_video_reservation_id',rid,'request_id',request,'request_key',src.request_key,'stage','reel'));
+ update public.app_video_cost_reservations set provider_request_id=request,cost_ledger_id=lid,settled_at=now()where id=rid;
+ insert into public.app_video_allowance_receipts(reservation_id,listing_id,monthly_key,monthly_window_start,burst_key,burst_window_start)values(rid,j.listing_id,'fixture-month',now(),'fixture-burst',now());
+ perform public.property_video_job_receipt(j.id,src.attempt_id,jsonb_build_object('request_id',request,'model_id','fixture-model'));
+ prov:=public.property_video_job_provenance(j.id,src.attempt_id,request,'fixture-model');
+ perform public.bind_property_video_source(j.actor_id,j.listing_id,src.asset_id,src.photo_provenance_id,request,prov.id,src.source->>'sha256',repeat('d',32));
+ perform public.property_video_job_clip(j.id,src.attempt_id,jsonb_build_object('storage_key','private-fixture/'||src.attempt_id||'.mp4','sha256',repeat('e',64),'width',1088,'height',1920,'duration_s',5.042));
+ claim:=public.property_video_job_claim(j.id,'slot-0');if claim->>'action'<>'extract_frames'then raise exception'BGVIDEO FAIL: paid fixture did not claim quality extraction';end if;return claim;end$$;
+create function pg_temp.reject_claim(c jsonb)returns void language plpgsql as $$declare q jsonb;j public.property_video_jobs;src public.property_video_job_sources;verdict jsonb;begin
+ q:=pg_temp.paid_clip(c);select * into j from public.property_video_jobs where id=(q#>>'{job,id}')::uuid;select * into src from public.property_video_job_sources where job_id=j.id and attempt_id=(q#>>'{source,attempt_id}')::uuid;
+ verdict:=jsonb_build_object('task','judge.qc_drift','request_id',src.receipt->>'request_id','source_sha256',repeat('d',32),'verdict','fail','action','refuse','publishable',false,'failed',jsonb_build_array('architecture'));
+ update public.media_provenance set qc=verdict where id=src.generation_provenance_id;
+ insert into public.cost_ledger(org_id,feature,provider,model,total_cents,meta)values(j.org_id,'qc','openai','fixture-judge',.0001,verdict||jsonb_build_object('kind','video_drift','provenance_id',src.generation_provenance_id,'source_asset_id',src.asset_id));
+ perform public.property_video_job_failure(j.id,src.lease_token,src.attempt_id,'quality_check_refused',false);end$$;
+
 insert into auth.users(id,email,is_anonymous)values('f1100000-0000-4000-8000-000000000001','background-owner@fixture.invalid',false),('f1100000-0000-4000-8000-000000000002','background-other@fixture.invalid',false);
 create temporary table bf as select 'f1100000-0000-4000-8000-000000000001'::uuid actor,'f1100000-0000-4000-8000-000000000002'::uuid other,(select org_id from memberships where user_id='f1100000-0000-4000-8000-000000000001'and role='owner'limit 1)org,(select org_id from memberships where user_id='f1100000-0000-4000-8000-000000000002'and role='owner'limit 1)other_org,'f1300000-0000-4000-8000-000000000001'::uuid listing;
 grant select on bf to service_role,authenticated;
@@ -38,10 +60,10 @@ select pg_temp.ok((select c->>'action'='dispatch'from claim1)and(select c->>'act
 select pg_temp.ok(property_video_job_claim((select id from bj),'slot-0')->>'action'='wait','third supplier admission waits');
 select pg_temp.refuse($q$select property_video_job_receipt((select id from bj),(select(c#>>'{source,attempt_id}')::uuid from claim1),' {"request_id":"unpaid-provider"}'::jsonb)$q$,'RP409:','unsettled provider boolean is not a paid receipt');
 select pg_temp.refuse($q$select property_video_job_qc((select id from bj),(select(c#>>'{source,lease_token}')::uuid from claim1),(select(c#>>'{source,attempt_id}')::uuid from claim1))$q$,'RP409:','no provider/QC ledger cannot claim AI ready');
-select property_video_job_failure((select id from bj),(select(c#>>'{source,lease_token}')::uuid from claim1),(select(c#>>'{source,attempt_id}')::uuid from claim1),'definitive-source-fixture',false);
-select property_video_job_failure((select id from bj),(select(c#>>'{source,lease_token}')::uuid from claim2),(select(c#>>'{source,attempt_id}')::uuid from claim2),'definitive-source-fixture',false);
-do $$declare c jsonb;begin for i in 3..100 loop c:=property_video_job_claim((select id from bj),'slot-0');if c->>'action'<>'dispatch'then raise exception'100-source sequential admission dropped position%: %',i,c;end if;perform property_video_job_failure((select id from bj),(c#>>'{source,lease_token}')::uuid,(c#>>'{source,attempt_id}')::uuid,'definitive-source-fixture',false);end loop;end$$;
-select pg_temp.ok((select count(*)=100 from property_video_job_sources where job_id=(select id from bj)and state='original_photo'),'all100 explicit original-photo fallbacks preserve order');
+select pg_temp.reject_claim((select c from claim1));
+select pg_temp.reject_claim((select c from claim2));
+do $$declare c jsonb;begin for i in 3..100 loop c:=property_video_job_claim((select id from bj),'slot-0');if c->>'action'<>'dispatch'then raise exception'100-source sequential admission dropped position%: %',i,c;end if;perform pg_temp.reject_claim(c);end loop;end$$;
+select pg_temp.ok((select count(*)=100 and bool_and(fallback_evidence->>'action'='refuse')from property_video_job_sources where job_id=(select id from bj)and state='original_photo'),'all100 explicit original-photo fallbacks preserve order');
 create temporary table comp as select property_video_job_claim((select id from bj),'slot-0')c;grant select on comp to service_role,authenticated;
 select pg_temp.ok((select c->>'action'='compose'and jsonb_array_length(c->'sources')=100 from comp),'composition contains every selected photo');
 select pg_temp.refuse($q$select property_video_job_outputs_reserve((select id from bj),gen_random_uuid(),1000,repeat('b',64),100,repeat('c',64))$q$,'RP409:','stale CPU lease cannot acquire output write');
@@ -208,7 +230,7 @@ select pg_temp.ok(property_video_recipe_capacity((select other from bf),'f130000
 create temporary table paused_recipe as select jsonb_set(jsonb_set(m,'{operation_id}','"f1700000-0000-4000-8000-000000000060"'),'{sources}',jsonb_build_array(m#>'{sources,0}',m#>'{sources,1}'))m from bm;
 create temporary table paused_job as select(property_video_job_enqueue((select actor from bf),(select m from paused_recipe))).id id;
 create temporary table pause_first as select property_video_job_claim((select id from paused_job),'slot-0')c;create temporary table pause_second as select property_video_job_claim((select id from paused_job),'slot-1')c;
-select property_video_job_failure((select id from paused_job),(select(c#>>'{source,lease_token}')::uuid from pause_second),(select(c#>>'{source,attempt_id}')::uuid from pause_second),'source-quality-refused',false);
+select pg_temp.reject_claim((select c from pause_second));
 select property_video_job_failure((select id from paused_job),(select(c#>>'{source,lease_token}')::uuid from pause_first),(select(c#>>'{source,attempt_id}')::uuid from pause_first),'capacity_before_dispatch',false);
 select pg_temp.ok((select state='failed'from property_video_jobs where id=(select id from paused_job)),'pre-dispatchcapacitypauses ratherthan silentlychanging usermotion tooriginal');
 select pg_temp.ok((property_video_job_resume((select actor from bf),(select id from paused_job),40)).state='generating','explicitresume reuses same savedjob');
@@ -230,5 +252,75 @@ select pg_temp.ok(jsonb_array_length(public_property_tour_index()->'tours')=1,'o
 select pg_temp.ok(not(public_property_tour_index()#>'{tours,0}')?'actor_id'and not(public_property_tour_index()#>'{tours,0}')?'org_id','publicindex containsnoprivatefields');
 reset role;update listings set status='archived'where id=(select listing from bf);set local role service_role;select pg_temp.ok(jsonb_array_length(public_property_tour_index()->'tours')=0,'archivedproperty removedfromindex');
 select pg_temp.refuse('select public_property_tour_index(null,201)','RP400:','index is bounded');
+
+-- Actual failure/resume authority. Paid bytes are synthetic but every normal
+-- claim/receipt/binding/recovery step executes the installed SQL unchanged.
+reset role;update listings set status='draft'where id=(select listing from bf);set local role service_role;
+create function pg_temp.cpu_job(i integer)returns jsonb language plpgsql as $$declare j public.property_video_jobs;c jsonb;begin
+ j:=property_video_job_enqueue((select actor from bf),jsonb_set(jsonb_set((select m from bm),'{operation_id}',to_jsonb(('f3700000-0000-4000-8000-'||lpad(i::text,12,'0'))::text)),'{sources}',jsonb_build_array((select m#>'{sources,0}'from bm),(select m#>'{sources,1}'from bm))));
+ c:=property_video_job_claim(j.id,'slot-0');return pg_temp.paid_clip(c);end$$;
+create function pg_temp.exhaust_cpu(c jsonb)returns void language plpgsql as $$declare next_claim jsonb:=c;begin
+ loop
+  perform property_video_job_failure((next_claim#>>'{job,id}')::uuid,(next_claim#>>'{source,lease_token}')::uuid,(next_claim#>>'{source,attempt_id}')::uuid,'cpu_extract_failed',false);
+  exit when(select state='failed'from property_video_jobs where id=(next_claim#>>'{job,id}')::uuid);
+  next_claim:=property_video_job_claim((next_claim#>>'{job,id}')::uuid,'slot-0');
+  if next_claim->>'action'<>'extract_frames'then raise exception'BGVIDEO FAIL: infrastructure retry dispatched paid generation';end if;
+ end loop;end$$;
+create temporary table cpu_case as select pg_temp.cpu_job(1)c;grant select on cpu_case to service_role;
+select pg_temp.exhaust_cpu((select c from cpu_case));
+select pg_temp.ok((select s.state='failed'and s.cpu_attempts=3 and s.receipt is not null and s.clip->>'sha256'=repeat('e',64)from property_video_job_sources s where s.job_id=(select(c#>>'{job,id}')::uuid from cpu_case)and position=0),'threeCPUinfra failures pause with paidclip, never original fallback');
+select pg_temp.ok((select state='failed'from property_video_jobs where id=(select(c#>>'{job,id}')::uuid from cpu_case)),'CPU exhaustion is explicit failed quality pause');
+create temporary table preserved_cpu as select attempt_id,request_key,receipt,clip,generation_provenance_id from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from cpu_case)and position=0;grant select on preserved_cpu to service_role;
+select pg_temp.refuse($q$select property_video_job_resume((select other from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0)$q$,'RP404:','foreignactor cannot recover owned paidclip');
+select pg_temp.ok((property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0)).state='generating','normal explicit resume accepts paid CPU-only recovery without new reel quote');
+select pg_temp.ok((select row(s.attempt_id,s.request_key,s.receipt,s.clip,s.generation_provenance_id)is not distinct from row(p.attempt_id,p.request_key,p.receipt,p.clip,p.generation_provenance_id)and s.cpu_recoveries=1 and jsonb_array_length(s.cpu_recovery_history)=1 and s.cpu_recovery_history#>>'{0,cpu_attempts}'='3'from property_video_job_sources s cross join preserved_cpu p where s.job_id=(select(c#>>'{job,id}')::uuid from cpu_case)and s.position=0),'CPU recovery preserves exact paid identities and records old exhausted attempt');
+create temporary table retry_cpu as select property_video_job_claim((select(c#>>'{job,id}')::uuid from cpu_case),'slot-0')c;
+select pg_temp.ok((select c->>'action'='extract_frames'and c#>>'{source,attempt_id}'=(select attempt_id::text from preserved_cpu)from retry_cpu),'recovery nextaction is extraction of same paidclip, not provider dispatch');
+select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0);
+select pg_temp.ok((select cpu_recoveries=1 from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from cpu_case)and position=0),'lostresume response replay doesnot consume another CPU cycle');
+select pg_temp.refuse($q$select property_video_job_failure((select(c#>>'{job,id}')::uuid from cpu_case),(select(c#>>'{source,lease_token}')::uuid from cpu_case),(select(c#>>'{source,attempt_id}')::uuid from cpu_case),'cpu_extract_failed',false)$q$,'RP409:','staleCPUcallback cannot change resumedattempt');
+select pg_temp.exhaust_cpu((select c from retry_cpu));select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0);
+select pg_temp.exhaust_cpu(property_video_job_claim((select(c#>>'{job,id}')::uuid from cpu_case),'slot-0'));
+select pg_temp.refuse($q$select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from cpu_case),0)$q$,'RP409:','CPUrecovery remains finite after two explicit cycles');
+select pg_temp.ok((select count(*)=1 from app_video_cost_reservations where idempotency_key=(select request_key from preserved_cpu)),'allCPU retries retain one original paid generation reservation');
+-- Missing, unknown or nonstructural QC cannot become a source substitution.
+create temporary table unknown_case as select pg_temp.cpu_job(2)c;
+select property_video_job_failure((select(c#>>'{job,id}')::uuid from unknown_case),(select(c#>>'{source,lease_token}')::uuid from unknown_case),(select(c#>>'{source,attempt_id}')::uuid from unknown_case),'quality_check_refused',false);
+select pg_temp.ok((select state='failed'and fallback_evidence is null from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from unknown_case)and position=0),'QCrefusal code without paid terminal structural evidence never falls back');
+select pg_temp.ok(property_video_structural_rejection((select(c#>>'{job,id}')::uuid from unknown_case),(select(c#>>'{source,attempt_id}')::uuid from unknown_case))is null,'missingQC cannot certify a propertychange');
+create temporary table unknown_http as select pg_temp.cpu_job(3)c;
+select property_video_job_failure((select(c#>>'{job,id}')::uuid from unknown_http),(select(c#>>'{source,lease_token}')::uuid from unknown_http),(select(c#>>'{source,attempt_id}')::uuid from unknown_http),'quality_check_unconfirmed',true);
+select pg_temp.ok((select s.state='failed'and j.state='failed'from property_video_job_sources s join property_video_jobs j on j.id=s.job_id where s.job_id=(select(c#>>'{job,id}')::uuid from unknown_http)and position=0),'known paidclip with unknownQC pauses rather than claiming visualchange or ambiguousproviderPOST');
+select pg_temp.refuse($q$update property_video_job_sources set state='original_photo'where job_id=(select(c#>>'{job,id}')::uuid from unknown_case)and position=0$q$,'RP409:','source transition cannot bypass structural authority with fallback boolean');
+-- Replayed verdict stamps alone cannot substitute for matching paid authority.
+create temporary table structural_source as select s.* from property_video_job_sources s where job_id=(select id from bj)and position=0;
+select pg_temp.ok(property_video_structural_rejection((select job_id from structural_source),(select attempt_id from structural_source))is not null,'actual matching paid terminal structural receipt certifies fallback');
+update media_provenance set qc=jsonb_set(qc,'{action}','"hold"')where id=(select generation_provenance_id from structural_source);
+select pg_temp.ok(property_video_structural_rejection((select job_id from structural_source),(select attempt_id from structural_source))is null,'unknown or hold verdict never certifies fallback');
+update media_provenance set qc=jsonb_set(jsonb_set(qc,'{action}','"refuse"'),'{source_sha256}',to_jsonb(repeat('f',32)))where id=(select generation_provenance_id from structural_source);
+select pg_temp.ok(property_video_structural_rejection((select job_id from structural_source),(select attempt_id from structural_source))is null,'wrong source QC hash never certifies fallback');
+update media_provenance set qc=jsonb_set(jsonb_set(qc,'{source_sha256}',to_jsonb(repeat('d',32))),'{failed}','["artifacts"]')where id=(select generation_provenance_id from structural_source);
+select pg_temp.ok(property_video_structural_rejection((select job_id from structural_source),(select attempt_id from structural_source))is null,'artifacts alone do not claim a structural property change');
+update media_provenance set qc=jsonb_set(qc,'{failed}','["architecture"]')where id=(select generation_provenance_id from structural_source);
+select pg_temp.ok(property_video_structural_rejection((select job_id from structural_source),(select attempt_id from structural_source))is not null,'restored exact terminal source verdict certifies same immutable fallback');
+update media_provenance set qc=jsonb_set(qc,'{failed}','["contents"]')where id=(select generation_provenance_id from structural_source);
+select pg_temp.ok(property_video_structural_rejection((select job_id from structural_source),(select attempt_id from structural_source))is null,'unpaid or mismatched QC verdict cannot certify fallback');
+update media_provenance set qc=jsonb_set(qc,'{failed}','["architecture"]')where id=(select generation_provenance_id from structural_source);
+
+-- Simulate only the exact historical pre-migration row shape, with local
+-- replica fixture insertion. Production repair uses the normal scoped RPC.
+create temporary table historical as select pg_temp.cpu_job(4)c;
+reset role;set local session_replication_role=replica;update property_video_job_sources set state='original_photo',cpu_attempts=3,last_error='cpu_extract_failed',lease_until=null where job_id=(select(c#>>'{job,id}')::uuid from historical)and position=0;update property_video_jobs set state='failed',compose_attempts=3 where id=(select(c#>>'{job,id}')::uuid from historical);set local session_replication_role=origin;set local role service_role;
+select pg_temp.refuse($q$update property_video_jobs set state='composing'where id=(select(c#>>'{job,id}')::uuid from historical)$q$,'RP409:','historical infra fallback cannot enter composition');
+select pg_temp.refuse($q$update property_video_jobs set state='ready'where id=(select(c#>>'{job,id}')::uuid from historical)$q$,'RP409:','historical infra fallback cannot register ready output');
+select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from historical),0);
+select pg_temp.ok((select state='processing'and cpu_recoveries=1 and cpu_recovery_history#>>'{0,previous_state}'='original_photo'from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from historical)and position=0),'normal recovery corrects historical unsafe fallback without losing audit');
+select pg_temp.ok((select compose_attempts=0 from property_video_jobs where id=(select(c#>>'{job,id}')::uuid from historical))and(select cpu_recovery_history#>>'{0,compose_attempts}'='3'from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from historical)and position=0),'normal CPU recovery restores finite assembly budget and retains prior exhausted count');
+select pg_temp.ok(property_video_job_claim((select(c#>>'{job,id}')::uuid from historical),'slot-0')->>'action'='extract_frames','historical recovery rechecks retained clip, never regenerates');
+select property_video_job_cancel((select actor from bf),(select(c#>>'{job,id}')::uuid from historical));
+select pg_temp.refuse($q$select property_video_job_failure((select(c#>>'{job,id}')::uuid from historical),(select lease_token from property_video_job_sources where job_id=(select(c#>>'{job,id}')::uuid from historical)and position=0),(select(c#>>'{source,attempt_id}')::uuid from historical),'cpu_extract_failed',false)$q$,'RP409:','cancelledjob rejects lateCPUfailure');
+select pg_temp.refuse($q$select property_video_job_resume((select actor from bf),(select(c#>>'{job,id}')::uuid from historical),0)$q$,'RP409:','cancelledjob cannot resume');
+select pg_temp.ok(not has_function_privilege('authenticated','public.property_video_structural_rejection(uuid,uuid)','execute')and not has_function_privilege('anon','public.property_video_job_resume(uuid,uuid,numeric)','execute'),'fallback and CPU recovery authority remains serviceonly');
+
 reset role;select jsonb_build_object('passed',true,'assertions',n)from checks;
 rollback;
