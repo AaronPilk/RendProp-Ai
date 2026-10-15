@@ -22,16 +22,15 @@ TERMINAL_PREREQUISITES = [SQL / 'migrations' / name for name in (
     '20261005034754_studio_floorplan_attachment_cas.sql',
     '20261005150951_nearby_places_reviewed_facts.sql',
 )]
-LIBRARY_AUTHORITY = SQL / 'migrations/20261009192550_team_private_listing_libraries.sql'
 FIXTURE = SQL / 'tests/listing_facts_cas.sql'
 NEARBY_FIXTURE = SQL / 'tests/nearby_places_facts.sql'
 FLOORPLAN_FIXTURE = SQL / 'tests/studio_floorplan_cas.sql'
 TOOLS = {name: shutil.which(name) or str(Path('/opt/homebrew/opt/postgresql@17/bin') / name)
          for name in ('initdb', 'pg_ctl', 'psql', 'createdb')}
 assert all(Path(p).is_file() and os.access(p, os.X_OK) for p in TOOLS.values()), 'Use existing PostgreSQL binaries'
-OUT = Path(tempfile.mkdtemp(prefix='rendprop-listing-facts-pg-', dir='/tmp'))
-DATA, SOCK = OUT / 'data', OUT / 'socket'
-SOCK.mkdir()
+OUT = Path(tempfile.mkdtemp(prefix='rendprop-listing-facts-pg-', dir='/Volumes/Rendprop Files/Builds/Active' if Path('/Volumes/Rendprop Files/Builds/Active').is_dir() else None))
+DATA, SOCK = OUT / 'data', Path(tempfile.mkdtemp(prefix='facts-cas-socket-',dir='/tmp'))
+assert shutil.disk_usage(ROOT).free >= 3 * 1024**3, 'Preserve internal3GiB reserve'
 ENV = {'PATH': '/opt/homebrew/bin:/usr/bin:/bin', 'LC_ALL': 'C', 'PGOPTIONS': '-c statement_timeout=30000 -c lock_timeout=15000'}
 PORT = '55483'
 SOURCES = [*sorted((SQL / 'migrations').glob('*.sql')), SQL / 'tests/ci-bootstrap.sql', FIXTURE, NEARBY_FIXTURE, FLOORPLAN_FIXTURE, Path(__file__).resolve()]
@@ -51,32 +50,15 @@ def run(name, args, sql=None, refuses=None):
     print(name + ': pass', flush=True)
     return p.stdout
 
-started = False
-try:
-    receipt['postgresVersion'] = run('version', [TOOLS['psql'], '--version']).strip()
-    run('initdb', [TOOLS['initdb'], '-D', DATA, '-U', 'postgres', '-A', 'trust', '--no-locale', '--encoding=UTF8'])
-    run('start', [TOOLS['pg_ctl'], '-D', DATA, '-l', OUT / 'server.log', '-w', '-t', '30', '-o',
-                  f"-k {SOCK} -p {PORT} -c listen_addresses='' -c shared_buffers=16MB", 'start'])
-    started = True
-    conn = ['-h', SOCK, '-p', PORT, '-U', 'postgres']
-    run('createdb', [TOOLS['createdb'], *conn, 'rendprop_audit'])
-    psql = [TOOLS['psql'], '-X', '--no-password', *conn, '-d', 'rendprop_audit', '-v', 'ON_ERROR_STOP=1']
-    run('bootstrap', [*psql, '-q', '-f', SQL / 'tests/ci-bootstrap.sql'])
-    for m in sorted((SQL / 'migrations').glob('*.sql')):
-        run('apply-' + m.stem, [*psql, '-q', '-1', '-f', m])
-    receipt['fresh'] = json.loads(run('fresh', [*psql, '-Atq', '-f', FIXTURE]).strip())
-    receipt['nearbyFresh'] = json.loads(run('nearby-fresh', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
-    receipt['floorplanFresh'] = json.loads(run('floorplan-fresh', [*psql, '-Atq', '-f', FLOORPLAN_FIXTURE]).strip().splitlines()[-1])
+def historical_replay_checks(psql):
     signatures = [
         'public.save_listing_facts(uuid,uuid,uuid,jsonb,jsonb,jsonb,jsonb)',
         'public.save_listing_measurements(uuid,uuid,uuid,text,text)',
         'public.studio_attach_floorplan(uuid,uuid,uuid,uuid,jsonb,text)',
     ]
     catalog = "select jsonb_agg(jsonb_build_object('identity',oid::regprocedure::text,'body',prosrc,'owner',proowner,'acl',proacl::text,'config',proconfig,'security',prosecdef,'volatility',provolatile) order by proname) from pg_proc where oid=any(array[" + ','.join("'" + s + "'::regprocedure" for s in signatures) + "]);"
-    final_catalog = run('library-catalog-before-historical-replay', [*psql, '-Atq'], catalog)
-    # Test the exact historical transformation and its drift/ACL refusals on
-    # the bodies it reviewed. The final Team-library migration intentionally
-    # supersedes those bodies; it must be restored before current assertions.
+    # Execute ancestor replay/guards only at its real migration boundary.
+    # Later private-library wrappers must never be replaced to test an ancestor.
     for prerequisite in TERMINAL_PREREQUISITES:
         run('terminal-prerequisite-' + prerequisite.stem, [*psql, '-q', '-1', '-f', prerequisite])
     run('historical-terminal-transform', [*psql, '-q', '-1', '-f', MIGRATION])
@@ -131,12 +113,36 @@ end $drift$;
     assert run('terminal-catalog-after-control', [*psql, '-Atq'], catalog) == before
     receipt['terminalCodeNegativeControl'] = {'restoredTransientApplicationCodeCaught': True, 'exactHistoricalTerminalAuthorityRestored': True}
 
-    run('restore-library-authority', [*psql, '-q', '-1', '-f', LIBRARY_AUTHORITY])
-    assert run('library-catalog-after-replay', [*psql, '-Atq'], catalog) == final_catalog
+
+started = False
+try:
+    receipt['postgresVersion'] = run('version', [TOOLS['psql'], '--version']).strip()
+    run('initdb', [TOOLS['initdb'], '-D', DATA, '-U', 'postgres', '-A', 'trust', '--no-locale', '--encoding=UTF8'])
+    run('start', [TOOLS['pg_ctl'], '-D', DATA, '-l', OUT / 'server.log', '-w', '-t', '30', '-o',
+                  f"-k {SOCK} -p {PORT} -c listen_addresses='' -c shared_buffers=16MB", 'start'])
+    started = True
+    conn = ['-h', SOCK, '-p', PORT, '-U', 'postgres']
+    run('createdb', [TOOLS['createdb'], *conn, 'rendprop_audit'])
+    psql = [TOOLS['psql'], '-X', '--no-password', *conn, '-d', 'rendprop_audit', '-v', 'ON_ERROR_STOP=1']
+    run('bootstrap', [*psql, '-q', '-f', SQL / 'tests/ci-bootstrap.sql'])
+    for m in sorted((SQL / 'migrations').glob('*.sql')):
+        run('apply-' + m.stem, [*psql, '-q', '-1', '-f', m])
+        if m == MIGRATION:
+            historical_replay_checks(psql)
+    receipt['fresh'] = json.loads(run('fresh', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    receipt['nearbyFresh'] = json.loads(run('nearby-fresh', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
+    receipt['floorplanFresh'] = json.loads(run('floorplan-fresh', [*psql, '-Atq', '-f', FLOORPLAN_FIXTURE]).strip().splitlines()[-1])
+    catalog = "select jsonb_agg(jsonb_build_object('identity',p.oid::regprocedure::text,'definition',pg_get_functiondef(p.oid),'owner',p.proowner,'acl',p.proacl::text) order by p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.prokind in('f','p');"
+    final_catalog = run('current-full-catalog-before-ancestor-replay', [*psql, '-Atq'], catalog)
+    run('current-head-refuses-ancestor-replay', [*psql, '-q', '-1', '-f', MIGRATION], refuses='Terminal CAS reviewed body changed:')
+    assert run('current-full-catalog-after-ancestor-replay', [*psql, '-Atq'], catalog) == final_catalog
     receipt['finalLibraryBodiesAndAuthorityPreserved'] = True
-    receipt['replay'] = json.loads(run('replay-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
-    receipt['nearbyReplay'] = json.loads(run('nearby-replay', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
-    receipt['floorplanReplay'] = json.loads(run('floorplan-replay', [*psql, '-Atq', '-f', FLOORPLAN_FIXTURE]).strip().splitlines()[-1])
+    receipt['ancestorReplayRefusedAtCurrentHead'] = True
+    receipt['currentFunctionCatalogSHA256'] = hashlib.sha256(final_catalog.encode()).hexdigest()
+    receipt['replay'] = json.loads(run('current-repeat-fixture', [*psql, '-Atq', '-f', FIXTURE]).strip())
+    receipt['nearbyReplay'] = json.loads(run('nearby-current-repeat', [*psql, '-Atq', '-f', NEARBY_FIXTURE]).strip())
+    receipt['floorplanReplay'] = json.loads(run('floorplan-current-repeat', [*psql, '-Atq', '-f', FLOORPLAN_FIXTURE]).strip().splitlines()[-1])
+    assert run('current-full-catalog-after-fixtures', [*psql, '-Atq'], catalog) == final_catalog
 
     # Two real concurrent SQL clients, not a sequential RPC stub.
     actor, other, org, listing = [str(uuid.uuid4()) for _ in range(4)]
@@ -172,4 +178,6 @@ finally:
         (OUT/'stop.log').write_text(stop.stdout)
         receipt['stopped']=stop.returncode==0
     (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    if started and receipt.get('stopped') and DATA.exists(): shutil.rmtree(DATA)
+    if SOCK.exists(): shutil.rmtree(SOCK)
     print('Evidence:',OUT,flush=True)

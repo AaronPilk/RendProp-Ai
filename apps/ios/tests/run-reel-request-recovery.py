@@ -31,7 +31,8 @@ drift_path = root / 'apps/ios/Rendprop/Render/DriftCheck.swift'
 capacity_path = root / 'apps/ios/Rendprop/Render/VideoAspectChoice.swift'
 video_metadata_path = root / 'apps/ios/Rendprop/Models/ListingVideo.swift'
 music_contract_path = root / 'apps/ios/Rendprop/Render/VideoMusicContract.swift'
-consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, capacity_path, video_metadata_path, music_contract_path, Path(__file__).resolve()]
+framing_policy_path = root / 'apps/ios/Rendprop/Capture/VideoPhotoFramingReview.swift'
+consumed = [source_path, api_path, live_path, fixture_path, adoption_path, listing_path, drift_path, capacity_path, video_metadata_path, music_contract_path, framing_policy_path, Path(__file__).resolve()]
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in consumed}
 def block(s, anchor):
@@ -53,6 +54,7 @@ receipt = {'passed': False, 'start_source_sha256': hashes(), 'compiles': [], 'ru
     'Nonempty synthetic bytes test retention; video decoding or generation quality is not certified.',
     'OriginalPhotoMotion.render is a closed boundary here; the separate simulator AVFoundation renderer gate proves actual encoding. This gate executes actual refusal/retry routing, exact saved JPEG/shape inputs and acknowledgement fences.',
     'PhotoVersionHistory is a closed persisted-review boundary here; the separate history gate executes its real file rules. This gate proves preparation invokes review before a paid dispatch.',
+    'VideoPreparedSourcePolicy is a closed ImageIO boundary because this fixture uses synthetic image bytes. Its refusal hook proves the actual preparation propagates refusal before paid dispatch; run-capture-orientation.py separately executes real JPEG decoding and the pixel floor.',
     'Only retrieveClip Date()/five-second sleep boundaries use a deterministic fixture clock; the extracted retry, identity and deadline decisions execute unchanged. Production timing and OS suspension are not certified.']}
 
 def compile_variant(name, command):
@@ -157,6 +159,7 @@ try:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     variants = [
         ('actual', actual, None),
+        ('negative-prepared-jpeg-refusal-ignored', actual.replace('        try VideoPreparedSourcePolicy.requireUsableJPEG(jpeg, aspect: aspect)', '        // omitted prepared JPEG refusal'), 'prepared JPEG refusal propagates before paid dispatch'),
         ('negative-quality-gate-accepts-changed-property', actual.replace(block(actual, '        guard verdict.mayUse else {'), '// omitted property gate'), 'changed property must not be retained'),
         ('negative-refusal-keeps-marker', actual.replace('if Self.isDefinitiveRefusal(error) { submission.clear() }', '// marker kept on a definitive refusal'), 'a definitive refusal retires the unconfirmed marker'),
         ('negative-tmp-download-read-as-is', actual.replace('let tmp = Self.clipPath(forDownloaded: downloaded)', 'let tmp = downloaded'), 'frames are read from an .mp4 path, never the .tmp download'),

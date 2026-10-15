@@ -21,6 +21,15 @@ enum PhotoVersionHistory {
  static func requireReelReview(imageURL:URL)throws {if rejectReview{throw AIImagePrep.error("synthetic review required")}}
  static func requireReelReview(versionID:String,directory:URL)throws {if rejectReview{throw AIImagePrep.error("synthetic review required")}}
 }
+// Closed ImageIO boundary for this synthetic-byte recovery harness. The separate
+// capture-orientation gate compiles the real JPEG decoder/pixel floor. This hook
+// proves preparation propagates its refusal before creating any paid request.
+enum VideoPreparedSourcePolicy {
+ static var rejectsPreparedJPEG = false
+ static func requireUsableJPEG(_ jpeg: Data, aspect: String) throws {
+  if rejectsPreparedJPEG { throw AIImagePrep.error("synthetic video photo rejected") }
+ }
+}
 struct UIImage {
  static var onPreparation:(() -> Void)?;static var savedSize=CGSize(width:1280,height:720);static var rejectSavedJPEG=false
  let bytes:Data;var size:CGSize {Self.savedSize}
@@ -211,6 +220,10 @@ final class ClosedVideoProtocol:URLProtocol {
   let auth=AuthStore.shared;WorkspaceContext.selectedOrgID=ctx.workspace
   let model=GuardModel(.init(id:ctx.listingID,serverID:ctx.serverListingID))
   let dispatchGuard=ReelReceiptHarness.generationGuard(auth:auth,model:model,listingID:ctx.listingID,targetServerID:ctx.serverListingID)
+  VideoPreparedSourcePolicy.rejectsPreparedJPEG=true
+  do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:dispatchGuard);preconditionFailure("prepared JPEG refusal must reject paid dispatch")}catch{check(error.localizedDescription=="synthetic video photo rejected","prepared JPEG refusal propagates before paid dispatch")}
+  VideoPreparedSourcePolicy.rejectsPreparedJPEG=false
+  check(clip.posts==0 && !PendingReelRequest.exists(ctx),"rejected prepared JPEG permits no paid POST or pending marker")
   PhotoVersionHistory.rejectReview=true
   do{_ = try await ReelReceiptHarness.makeClip(photo:.init(enhancedURL:input),prompt:"",shot:nil,shotCount:1,motion:"fly_through",aspect:"9:16",spaceType:"real_estate",api:clip,listingServerID:ctx.serverListingID,into:root,index:0,recoveryContext:ctx,requireCurrent:dispatchGuard);preconditionFailure("unreviewed preparation must reject paid dispatch")}catch{check(error.localizedDescription=="synthetic review required","unreviewed preparation calls persisted review before paid dispatch")}
   PhotoVersionHistory.rejectReview=false
