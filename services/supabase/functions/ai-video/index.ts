@@ -249,6 +249,7 @@ import {
   type JobTokenOwner,
   type RouterJobToken,
   routerStatusUrl,
+  assertPublicSupabaseOrigin,
   assertJobTokenSigningReady,
   verifyJobTokenForRecovery,
   isExpired,
@@ -805,7 +806,7 @@ function legacyVideoStep(
  * owner-bound signed token, including submissions with the router flag off.
  */
 async function assertVideoReceiptSigningReady(): Promise<void> {
-  try { await assertJobTokenSigningReady(); }
+  try { assertPublicSupabaseOrigin(Deno.env.get("SUPABASE_URL")); await assertJobTokenSigningReady(); }
   catch { throw new HttpError(503,"Video submission receipts could not be secured. Please retry later.","upstream"); }
 }
 
@@ -818,7 +819,7 @@ async function submitEnvelope(
 ): Promise<{ request_id: string; status_url: string; response_url: string }> {
   // Every new receipt uses an owner-bound link, including router-off FAL.
   void routerOn;
-  const url = await routerStatusUrl(req, "ai-video", task, ref, { ...owner, admissionKey: requiredIdempotencyKey(req) });
+  const url = await routerStatusUrl(req, "ai-video", task, ref, { ...owner, admissionKey: requiredIdempotencyKey(req) }, Deno.env.get("SUPABASE_URL"));
   return { request_id: ref.id, status_url: url, response_url: url };
 }
 
@@ -1127,7 +1128,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       return await recoverVideoOperation(req, user.id, {
         preferredOrg, contentOrg: contentOrgForUser, rpc,
         paidReceiptMatches: job => paidRoutedReceiptMatches(job, false),
-        sign: (request, ref, owner) => routerStatusUrl(request, "ai-video", "video.reel_clip", ref, owner),
+        sign: (request, ref, owner) => routerStatusUrl(request, "ai-video", "video.reel_clip", ref, owner, Deno.env.get("SUPABASE_URL")),
       });
     }
 

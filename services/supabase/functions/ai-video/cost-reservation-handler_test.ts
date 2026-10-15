@@ -3,6 +3,7 @@ import {
   assertEquals,
   assertRejects,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
+Deno.env.set("SUPABASE_URL", "https://aaaaaaaaaaaaaaaaaaaa.supabase.co");
 
 const encode = (source: string) =>
   `data:application/typescript;base64,${
@@ -21,7 +22,7 @@ function withoutImports(source: string): string {
 
 // Production route bodies, price arithmetic, response envelope and reservation
 // helper run unchanged. Only Auth/DB, route resolution and provider boundaries
-// are isolated doubles. No environment, network, writes or provider requests.
+// are isolated doubles. Only synthetic config; no network, writes or provider requests.
 async function fixture(reserveLate = false, priceRequestedTier = false, dropRejectionEvidence = false, dropSigningReadiness = false, dropAerialLaunchGate = false) {
   const source = await Deno.readTextFile(
     new URL("./index.ts", import.meta.url),
@@ -116,6 +117,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {requiredIdempotencyKey} from ${
     JSON.stringify(new URL("../_shared/idempotency.ts", import.meta.url).href)
   };
+    import {assertPublicSupabaseOrigin} from ${JSON.stringify(new URL("../_shared/providers/jobtoken.ts", import.meta.url).href)};
     import {GUARDRAILS,FAIR_HOUSING_LOCK,assertFairHousing} from ${
     JSON.stringify(new URL("../_shared/fairhousing.ts", import.meta.url).href)
   };
@@ -543,6 +545,17 @@ async function assertSignerBeforeAdmission(f:any,route:"drone"|"aerial"|"reel-cl
 }
 Deno.test("all actual video handlers preflight receipt signing before quota and priced POST",async()=>{
   const f=await fixture();for(const route of ["drone","aerial","reel-clip"]as const)await assertSignerBeforeAdmission(f,route);
+});
+Deno.test("unsafe public origin refuses all actual video routes before quota, holds or provider POST",async()=>{
+  const prior=Deno.env.get("SUPABASE_URL"),f=await fixture();
+  try {
+    for(const value of [undefined,"http://aaaaaaaaaaaaaaaaaaaa.supabase.co","https://foreign.invalid","https://aaaaaaaaaaaaaaaaaaaa.supabase.co/functions/v1"]){
+      value===undefined?Deno.env.delete("SUPABASE_URL"):Deno.env.set("SUPABASE_URL",value);
+      for(const route of ["drone","aerial","reel-clip"]as const){
+        f.reset();assertEquals((await f.handler(req(route))).status,503);assertEquals(f.state.charges,[]);assertEquals(f.state.posts,[]);assertEquals(f.state.events,[]);
+      }
+    }
+  } finally {prior===undefined?Deno.env.delete("SUPABASE_URL"):Deno.env.set("SUPABASE_URL",prior);}
 });
 Deno.test("compiled omitted signer preflight reproduces accepted paid work with no returned receipt",async()=>{
   const mutant=await fixture(false,false,false,true);

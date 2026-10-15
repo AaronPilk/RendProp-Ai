@@ -300,18 +300,38 @@ export async function verifyJobTokenForRecovery(
   return job;
 }
 
-/** OUR status URL for a routed job, built from the request's own origin. */
+/** Validate only the server-owned Supabase project origin, never a forwarded
+ * request header. Also used before paid dispatch so bad config fails early. */
+export function assertPublicSupabaseOrigin(value: string | undefined): string {
+  if (!value || !/^https:\/\/[a-z0-9]{20}\.supabase\.co\/?$/.test(value)) {
+    throw new Error("The public function origin is not configured safely.");
+  }
+  return new URL(value).origin;
+}
+
+/** OUR status URL for a routed job. Hosted callers supply their server-owned
+ * Supabase origin: Edge's internal request may be HTTP with /functions/v1
+ * stripped. Forwarded headers and client URLs never choose that public base. */
 export async function routerStatusUrl(
   req: Request,
   functionName: string,
   task: string,
   ref: JobRef,
   owner: JobTokenOwner,
+  publicSupabaseOrigin?: string,
 ): Promise<string> {
-  const u = new URL(req.url);
+  let u = new URL(req.url);
   const parts = u.pathname.split("/").filter(Boolean);
   const idx = parts.lastIndexOf(functionName);
-  const base = idx >= 0 ? `/${parts.slice(0, idx + 1).join("/")}` : `/${functionName}`;
+  let base = idx >= 0 ? `/${parts.slice(0, idx + 1).join("/")}` : `/${functionName}`;
+  if (publicSupabaseOrigin !== undefined) {
+    const configured = new URL(assertPublicSupabaseOrigin(publicSupabaseOrigin));
+    if (!/^[a-z][a-z0-9-]*$/.test(functionName)) {
+      throw new Error("The public function origin is not configured safely.");
+    }
+    u = configured;
+    base = `/functions/v1/${functionName}`;
+  }
   const token = await encodeJobToken(
     {
       p: ref.provider,
