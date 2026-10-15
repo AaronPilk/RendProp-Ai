@@ -40,7 +40,7 @@ import Foundation
 
     static func remove(versionID: String, directory: URL, localListingID: UUID, serverListingID: UUID,
                        actorID: UUID, libraryOrgID: UUID, api: any ListingGalleryRemovalAPI,
-                       requireIdentity: () throws -> Void,
+                       requireIdentity: @MainActor () throws -> Void,
                        store: PhotoListingRemovalJournal? = nil,
                        references: CloudPhotoReferences = .shared) async throws -> Confirmed {
         try requireIdentity()

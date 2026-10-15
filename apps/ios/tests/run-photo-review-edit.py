@@ -53,7 +53,7 @@ variants = [
     ('stale-start', methods.replace('let context = editContext, context.isCurrent,', 'let context = editContext, true,'), history, 'actor change cannot dispatch from retained sheet'),
     ('revoked-regrant', methods.replace('editConsentRevision == AIConsent.shared.revocationRevision,', 'true,'), history, 'revoked and regranted consent cannot revive old action'),
     ('wrong-job', methods.replace('job.id == singleEditJobID,', 'true,'), history, 'another job cannot replace this photo review'),
-    ('drop-edit-cleanup', methods.replace('        editContext = nil', '        // retained stale edit context'), history, 'dismissal clears the deferred edit context'),
+    ('drop-edit-cleanup', methods.replace('        editContext = nil', '        // retained stale edit context'), history, 'dismissing choices releases family navigation fence'),
 ]
 results = []
 for name, body, h, expected in variants:

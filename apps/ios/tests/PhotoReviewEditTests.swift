@@ -104,8 +104,10 @@ __METHODS__
         check(PhotoEditService.calls.count == 1 && PhotoEditService.calls[0].prompt == "remove loose bags only", "custom uses existing service with exact prompt")
         reset(); let cancelled = Harness(photo, model); cancelled.openSinglePhotoEdit(); cancelled.continueSinglePhotoEdit(); await settle()
         check(PhotoEditService.calls.isEmpty, "dismissing action choices makes no paid dispatch")
+        check(cancelled.editContext == nil, "dismissing choices releases family navigation fence")
         reset(); AIConsent.shared.isGranted = false; let declined = Harness(photo, model); declined.openSinglePhotoEdit(); declined.pendingEdit = .declutter; declined.continueSinglePhotoEdit(); await settle()
         check(PhotoEditService.calls.isEmpty, "declined AI consent cannot dispatch")
+        check(declined.editContext == nil, "declined consent releases family navigation fence")
         reset(); let stale = Harness(photo, model); stale.openSinglePhotoEdit(); stale.editConsentRevision = AIConsent.shared.revocationRevision
         AuthStore.shared.userID = "different-owner"; stale.imageContext = NativeMediaExportContext(); stale.startSinglePhotoWork(.declutter, prompt: nil)
         check(PhotoEditService.calls.isEmpty, "actor change cannot dispatch from retained sheet")
@@ -133,6 +135,7 @@ __METHODS__
         let beforeFailure = PhotoEditService.calls.count
         failure.receiveSinglePhotoWork(.init(id: failure.singleEditJobID!, running: false, failures: [.init(error: PhotoVersionHistory.Failure.reviewRequired)]))
         check(failure.selectionError != nil && PhotoEditService.calls.count == beforeFailure && failure.chosen == nil, "failure is visible without retry or replacing review")
+        check(failure.editContext == nil, "finished failed edit releases family navigation fence")
         failure.clearSinglePhotoEdit()
         check(failure.editContext == nil && failure.editOriginal == nil && failure.pendingEdit == nil && failure.singleEditJobID == nil && failure.editConnection.cancelled, "dismissal clears the deferred edit context")
         let unknownDir = dir.appendingPathComponent("unknown"); try FileManager.default.createDirectory(at: unknownDir, withIntermediateDirectories: true)

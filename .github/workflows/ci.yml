@@ -194,6 +194,8 @@ jobs:
         run: python3 apps/ios/tests/run-photo-review-preview.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-preview"
       - name: Individual photo review edits one retained original without changing bulk editing
         run: python3 apps/ios/tests/run-photo-review-edit.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-edit"
+      - name: Photo family browsing preserves upload order and exact version/edit identity
+        run: python3 apps/ios/tests/run-photo-family-pager.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-family-pager"
       - name: Branded quick-start video stays within two minutes with a readable transcript
         run: |
           if ! command -v ffprobe >/dev/null; then
@@ -226,7 +228,7 @@ jobs:
         run: python3 apps/ios/tests/run-reel-framing-wire.py --evidence-dir "$RUNNER_TEMP/rendprop-reel-framing-wire"
       - name: Video destination and larger photo sequences survive saved work and recovery
         run: python3 apps/ios/tests/run-video-purpose.py --evidence-dir "$RUNNER_TEMP/rendprop-video-purpose"
-      - name: Selected photo versions retain automatic scene order and per-shot motion
+      - name: Selected photo versions retain agent-chosen order and automatic per-shot motion
         run: python3 apps/ios/tests/run-property-video-planner.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-planner"
       - name: Video sources retain reviewed staged versions instead of newer previews
         run: python3 apps/ios/tests/run-staged-video-source.py --evidence-dir "$RUNNER_TEMP/rendprop-staged-video-source"
@@ -424,6 +426,7 @@ jobs:
             ${{ runner.temp }}/rendprop-photo-review-preview/*.log
             ${{ runner.temp }}/rendprop-photo-review-preview/*.swift
             ${{ runner.temp }}/rendprop-photo-review-edit/**
+            ${{ runner.temp }}/rendprop-photo-family-pager/**
             ${{ runner.temp }}/rendprop-photo-import/receipt.json
             ${{ runner.temp }}/rendprop-photo-import/*.log
             ${{ runner.temp }}/rendprop-photo-import/*.swift
@@ -642,6 +645,10 @@ jobs:
           node tests/prompts-browser.mjs
           node tests/projects-browser.mjs
           node tests/creative-browser.mjs
+          node tests/creative-photo-pages-browser.mjs
+          node tests/make-video-browser.mjs
+          node tests/make-video-status-browser.mjs
+          node tests/photo-recovery-browser.mjs
           node tests/photo-delivery-browser.mjs
           node tests/photo-output-browser.mjs
           node tests/photographer-browser.mjs
@@ -741,6 +748,14 @@ jobs:
         with:
           name: studio-property-workflows-${{ github.run_attempt }}
           path: |
+            /tmp/rendprop-creative-pages-*/receipt.json
+            /tmp/rendprop-creative-pages-*/*.png
+            /tmp/rendprop-make-video-*/receipt.json
+            /tmp/rendprop-make-video-*/*.png
+            /tmp/rendprop-make-video-status-*/receipt.json
+            /tmp/rendprop-make-video-status-*/*.png
+            /tmp/rendprop-photo-recovery-*/receipt.json
+            /tmp/rendprop-photo-recovery-*/*.png
             /tmp/rendprop-property-reels-*/receipt.json
             /tmp/rendprop-property-reels-*/*.png
             /tmp/rendprop-guided-recipes-*/receipt.json
@@ -849,6 +864,15 @@ jobs:
           npm ci --ignore-scripts --prefix services/edge/tour-host
           node services/edge/tour-host/scripts/check-listing-browser.mjs
           node services/edge/tour-host/scripts/check-listing-browser.mjs --chapter-observation-delay-ms=350 --evidence="$RUNNER_TEMP/rendprop-listing-browser-delayed-chapter"
+      - name: Property website galleries and photo-based video delivery
+        working-directory: .
+        timeout-minutes: 10
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          node services/edge/tour-host/scripts/check-property-site-browser.mjs --evidence="$RUNNER_TEMP/rendprop-property-site-browser"
+          node services/edge/tour-host/scripts/check-property-video-browser.mjs
+          node services/edge/tour-host/scripts/check-property-video-controls.mjs
       - name: Chapter seek and Explore handoff reject missing seek, stale timing and rewind
         working-directory: .
         timeout-minutes: 5
@@ -930,6 +954,8 @@ jobs:
         with:
           name: studio-macos-media-export-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/rendprop-property-site-browser/**
+            ${{ runner.temp }}/rendprop-property-video-*/**
             ${{ runner.temp }}/rendprop-export-original-audio-*/receipt.json
             ${{ runner.temp }}/rendprop-export-original-audio-*/*.mp4
             ${{ runner.temp }}/export-original-audio-defect.log
@@ -1459,6 +1485,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_derived_retry_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-derived-retry-pg"
+      - name: Retained paid supplier results recover without replacing accepted requests
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_result_delivery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-result-delivery-pg"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1476,6 +1509,7 @@ jobs:
             ${{ runner.temp }}/rendprop-paid-quality-processing-pg/**
             ${{ runner.temp }}/rendprop-listing-gallery-remove-pg/**
             ${{ runner.temp }}/rendprop-property-derived-retry-pg/**
+            ${{ runner.temp }}/rendprop-property-result-delivery-pg/**
           if-no-files-found: warn
 
   python-worker:

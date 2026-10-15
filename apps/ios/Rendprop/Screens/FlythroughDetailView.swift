@@ -4497,6 +4497,51 @@ struct EnhancedPhoto: Identifiable, Hashable, Sendable {
     }
 }
 
+/// Family navigation is a local view over this listing's retained version index.
+/// It never selects a publication, changes a version, or accepts another directory.
+private enum PhotoFamilyPager {
+    static func family(of photo: EnhancedPhoto, index: PhotoVersionHistory.Index, directory: URL) -> String? {
+        let directory = directory.standardizedFileURL
+        guard photo.enhancedURL.standardizedFileURL.deletingLastPathComponent() == directory,
+              photo.originalURL.standardizedFileURL.deletingLastPathComponent() == directory,
+              let version = index.versions[photo.id], !index.hiddenFamilies.contains(version.familyID),
+              version.imageFile == photo.enhancedURL.lastPathComponent,
+              version.reviewSourceFile(in: index) == photo.originalURL.lastPathComponent,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: photo.enhancedURL.path),
+              attributes[.type] as? FileAttributeType == .typeRegular,
+              (attributes[.size] as? NSNumber)?.int64Value ?? 0 > 0 else { return nil }
+        return version.familyID
+    }
+
+    static func photos(_ candidates: [EnhancedPhoto], index: PhotoVersionHistory.Index, directory: URL) -> [EnhancedPhoto] {
+        var families: [String: EnhancedPhoto] = [:]
+        for candidate in candidates {
+            guard let family = family(of: candidate, index: index, directory: directory), families[family] == nil else { continue }
+            families[family] = candidate
+        }
+        return index.orderedFamilyIDs.compactMap { families[$0] }
+    }
+
+    static func destination(from viewed: EnhancedPhoto, offset: Int, candidates: [EnhancedPhoto],
+                            remembered: [String: EnhancedPhoto], index: PhotoVersionHistory.Index, directory: URL) -> EnhancedPhoto? {
+        guard offset == -1 || offset == 1,
+              let current = family(of: viewed, index: index, directory: directory) else { return nil }
+        let ordered = photos(candidates, index: index, directory: directory)
+        guard let position = ordered.firstIndex(where: { family(of: $0, index: index, directory: directory) == current }),
+              ordered.indices.contains(position + offset) else { return nil }
+        let next = ordered[position + offset]
+        guard let target = family(of: next, index: index, directory: directory) else { return nil }
+        if let saved = remembered[target], family(of: saved, index: index, directory: directory) == target { return saved }
+        return next
+    }
+
+    static func swipeOffset(horizontal: Double, vertical: Double) -> Int? {
+        guard horizontal.isFinite, vertical.isFinite, abs(horizontal) >= 60,
+              abs(horizontal) > abs(vertical) * 1.5 else { return nil }
+        return horizontal < 0 ? 1 : -1
+    }
+}
+
 /// Presentation carries the user's cover intent atomically with its photo.
 /// A separate state read inside the cover closure can retain the old value.
 private struct PhotoComparePresentation: Identifiable {
@@ -4891,6 +4936,12 @@ struct PhotoStudioView: View {
                                  enhancedURL: image)
         }
     }
+    private var galleryFamilyPhotos: [EnhancedPhoto] {
+        let directory = EnhancedPhoto.directory(for: listing.id)
+        guard let index = try? PhotoVersionHistory.load(directory: directory) else { return [] }
+        return PhotoFamilyPager.photos(libraryPhotos + photos, index: index, directory: directory)
+    }
+
     private var gallerySyncError: String? {
         guard let message = model.listings.first(where: { $0.id == listing.id })?.lastError,
               message.hasPrefix(AppModel.photoSyncErrorPrefix) else { return nil }
@@ -5371,7 +5422,8 @@ struct PhotoStudioView: View {
             .ignoresSafeArea()
         }
         .fullScreenCover(item: $compare, onDismiss: { loadExisting() }) { presentation in
-            PhotoCompareView(photo: presentation.photo, requestedCover: presentation.requestedCover)
+            PhotoCompareView(photo: presentation.photo, requestedCover: presentation.requestedCover,
+                             galleryPhotos: entry == .photos ? galleryFamilyPhotos : [])
         }
         .sheet(item: $stagingSetup) { setup in
             PhotoStagingSetupView(setup: setup) { referenceID, brief in
@@ -6059,7 +6111,8 @@ struct PhotoStudioView: View {
     /// home's studio you are standing in.
     private var studioTitleBar: some View {
         VStack(spacing: 1) {
-            Text("AI Photo Studio")
+            Text(entry == .photos ? "Photos · \(galleryFamilyPhotos.count)" : "AI Photo Studio")
+                .accessibilityIdentifier("photos.libraryCount")
                 .font(.rpBody.weight(.semibold))
                 .foregroundStyle(Theme.ink)
             Text(studioSubtitle)
@@ -7188,10 +7241,12 @@ struct PhotoCompareView: View {
     let photo: EnhancedPhoto
     var disclosure: String? = nil
     var requestedCover = false
+    var galleryPhotos: [EnhancedPhoto] = []
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var auth = AuthStore.shared
     @State private var selectedVersion: EnhancedPhoto?
+    @State private var rememberedFamilyVersions: [String: EnhancedPhoto] = [:]
     @State private var showOriginal = false
     @State private var enhanced: UIImage?
     @State private var original: UIImage?
@@ -7223,7 +7278,7 @@ struct PhotoCompareView: View {
     private var sourceTitle: String { viewed.retainedSourceIsVerified ? "Retained original" : "Earlier source" }
     private var savedDisclosure: String? { viewed.savedVersion?.reviewDisclosure ?? (viewed.id == photo.id ? disclosure : nil) }
     private var versionChoices: [EnhancedPhoto] {
-        let history = photo.history
+        let history = viewed.history
         var kinds: Set<String> = []
         return history.filter { version in
             let effects = version.savedVersion?.effects ?? []
@@ -7253,6 +7308,7 @@ struct PhotoCompareView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     reviewHeader
+                    familyNavigation
                     savedVersionStrip
                     ZStack {
                         if let image = showOriginal ? original : enhanced {
@@ -7270,6 +7326,13 @@ struct PhotoCompareView: View {
                         viewportHeight: geometry.size.height))
                     .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .accessibilityIdentifier("photoVersion.preview")
+                    .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { value in
+                        if let offset = PhotoFamilyPager.swipeOffset(horizontal: Double(value.translation.width), vertical: Double(value.translation.height)) {
+                            movePhotoFamily(offset)
+                        }
+                    })
+                    .accessibilityAction(named: Text("Previous photo")) { movePhotoFamily(-1) }
+                    .accessibilityAction(named: Text("Next photo")) { movePhotoFamily(1) }
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(showOriginal ? sourceTitle : viewed.savedVersion?.visibleLabel ?? choiceTitle(viewed))
@@ -7315,7 +7378,7 @@ struct PhotoCompareView: View {
                 }
             }
         }
-        .sheet(item: $singleStagingSetup) { setup in
+        .sheet(item: $singleStagingSetup, onDismiss: finishSinglePhotoSetup) { setup in
             PhotoStagingSetupView(setup: setup) { referenceID, brief in
                 singleStagingSetup = nil
                 guard setup.isCurrent else { return }
@@ -7323,7 +7386,7 @@ struct PhotoCompareView: View {
                                      stagingReferenceID: referenceID)
             }
         }
-        .sheet(item: $singleCustomPhoto) { source in
+        .sheet(item: $singleCustomPhoto, onDismiss: finishSinglePhotoSetup) { source in
             if let listing = reviewListing {
                 CustomEditSheet(photo: source, api: model.api,
                     space: listing.isSample ? SpaceType.current : listing.spaceType,
@@ -7371,8 +7434,74 @@ struct PhotoCompareView: View {
                 customReview.comparedSource = true
             }
         }
-        .sessionConnectionNotice(isActive: editConnection.isWaiting, onCancel: { editConnection.cancel() })
+        .sessionConnectionNotice(isActive: editConnection.isWaiting, onCancel: { clearSinglePhotoEdit() })
         .aiConsentGate()
+    }
+
+    private var familyPhotos: [EnhancedPhoto] {
+        guard !galleryPhotos.isEmpty else { return [] }
+        let directory = photo.enhancedURL.deletingLastPathComponent()
+        guard let index = try? PhotoVersionHistory.load(directory: directory) else { return [] }
+        return PhotoFamilyPager.photos([photo] + galleryPhotos, index: index, directory: directory)
+    }
+
+    private var familyPosition: Int? {
+        let directory = photo.enhancedURL.deletingLastPathComponent()
+        guard let index = try? PhotoVersionHistory.load(directory: directory),
+              let family = PhotoFamilyPager.family(of: viewed, index: index, directory: directory) else { return nil }
+        return familyPhotos.firstIndex { PhotoFamilyPager.family(of: $0, index: index, directory: directory) == family }
+    }
+
+    private var canNavigateFamilies: Bool {
+        imageContext?.isCurrent == true && reviewListing != nil && selectionWorkID == nil
+            && editContext == nil && singleEditJobID == nil && !showEditActions
+            && pendingEdit == nil && singleStagingSetup == nil && singleCustomPhoto == nil
+            && !editConnection.isWaiting && !showFullComparison && exporting == nil
+    }
+
+    private var requestedCoverForViewed: Bool {
+        let directory = photo.enhancedURL.deletingLastPathComponent()
+        guard requestedCover, let index = try? PhotoVersionHistory.load(directory: directory),
+              let initial = PhotoFamilyPager.family(of: photo, index: index, directory: directory) else { return false }
+        return PhotoFamilyPager.family(of: viewed, index: index, directory: directory) == initial
+    }
+
+    @ViewBuilder private var familyNavigation: some View {
+        if let position = familyPosition, !familyPhotos.isEmpty {
+            HStack(spacing: 12) {
+                SecondaryButton(title: "Previous", systemImage: "chevron.left",
+                                isDisabled: !canNavigateFamilies || position == 0) { movePhotoFamily(-1) }
+                .frame(minHeight: 44)
+                .accessibilityLabel("Previous photo")
+                .accessibilityIdentifier("photoVersion.previousPhoto")
+                Spacer(minLength: 0)
+                Text("\(position + 1) of \(familyPhotos.count)")
+                    .font(.subheadline.monospacedDigit()).foregroundStyle(Theme.inkDim)
+                    .accessibilityLabel("Photo \(position + 1) of \(familyPhotos.count)")
+                    .accessibilityIdentifier("photoVersion.position")
+                Spacer(minLength: 0)
+                SecondaryButton(title: "Next", systemImage: "chevron.right",
+                                isDisabled: !canNavigateFamilies || position + 1 >= familyPhotos.count) { movePhotoFamily(1) }
+                .frame(minHeight: 44)
+                .accessibilityLabel("Next photo")
+                .accessibilityIdentifier("photoVersion.nextPhoto")
+            }
+        }
+    }
+
+    private func movePhotoFamily(_ offset: Int) {
+        guard canNavigateFamilies else { return }
+        let directory = photo.enhancedURL.deletingLastPathComponent()
+        guard let index = try? PhotoVersionHistory.load(directory: directory),
+              let current = PhotoFamilyPager.family(of: viewed, index: index, directory: directory),
+              let target = PhotoFamilyPager.destination(from: viewed, offset: offset,
+                  candidates: [photo] + galleryPhotos, remembered: rememberedFamilyVersions,
+                  index: index, directory: directory) else { return }
+        rememberedFamilyVersions[current] = viewed
+        clearSinglePhotoEdit()
+        selectionError = nil
+        selectedForListing = false
+        chooseVersion(target)
     }
 
     private var reviewListing: Listing? {
@@ -7418,17 +7547,17 @@ struct PhotoCompareView: View {
     }
 
     private func continueSinglePhotoEdit() {
-        guard let action = pendingEdit else { return }
+        guard let action = pendingEdit else { clearSinglePhotoEdit(); return }
         pendingEdit = nil
-        guard let source = editOriginal, let context = editContext, context.isCurrent else { return }
+        guard let source = editOriginal, let context = editContext, context.isCurrent else { clearSinglePhotoEdit(); return }
         Task { @MainActor in
-            guard await AIConsent.shared.ensureGranted(), context.isCurrent else { return }
+            guard await AIConsent.shared.ensureGranted(), context.isCurrent else { clearSinglePhotoEdit(); return }
             let consentRevision = AIConsent.shared.revocationRevision
             editConsentRevision = consentRevision
             editConnection.run { [self] in
                 guard context.isCurrent, editContext?.isCurrent == true, AIConsent.shared.isGranted,
                       AIConsent.shared.revocationRevision == consentRevision,
-                      reviewListing != nil, photoJobs.visibleJob?.running != true else { return }
+                      reviewListing != nil, photoJobs.visibleJob?.running != true else { clearSinglePhotoEdit(); return }
                 if case .stage = action {
                     singleStagingSetup = PhotoStagingSetup(
                         pending: PendingBatchEdit(edit: action.edit, style: action.style, title: action.title, multiple: false),
@@ -7473,6 +7602,7 @@ struct PhotoCompareView: View {
                     enhancedURL: directory.appendingPathComponent(latest.imageFile)))
             }
         }
+        clearSinglePhotoEdit()
     }
 
 
@@ -7480,9 +7610,9 @@ struct PhotoCompareView: View {
         HStack {
             Text("Photo versions").font(.title2.weight(.bold)).foregroundStyle(Theme.ink)
             Spacer(minLength: 8)
-            if photo.history.count > 1 {
+            if viewed.history.count > 1 {
                 Menu {
-                    ForEach(photo.history) { version in
+                    ForEach(viewed.history) { version in
                         Button(version.savedVersion?.title ?? "Earlier version") { chooseVersion(version) }
                     }
                 } label: {
@@ -7628,7 +7758,7 @@ struct PhotoCompareView: View {
                 }
                 try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory,
                     reviewed: stagingReview.isComplete, customReviewed: customReview.isComplete)
-                if familyWasMain || requestedCover { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
+                if familyWasMain || requestedCoverForViewed { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
                 selectedForListing = true
             }
             if let listing = model.listings.first(where: { $0.id == listingID }),
@@ -7648,7 +7778,7 @@ struct PhotoCompareView: View {
         let work = UUID(); selectionWorkID = work
         Task {
             defer { if selectionWorkID == work { selectionWorkID = nil } }
-            func requireIdentity() throws {
+            @MainActor func requireIdentity() throws {
                 guard context.isCurrent, imageContext?.isCurrent == true, selectionWorkID == work,
                       viewed.id == versionID,
                       model.listings.first(where: { $0.id == listingID })?.serverID == serverID
@@ -7734,6 +7864,10 @@ struct PhotoCompareView: View {
         enhanced = nil
         original = nil
         dismiss()
+    }
+
+    private func finishSinglePhotoSetup() {
+        if singleEditJobID == nil, singleStagingSetup == nil, singleCustomPhoto == nil { clearSinglePhotoEdit() }
     }
 
     private func clearSinglePhotoEdit() {
@@ -9836,7 +9970,7 @@ struct ReelStudioView: View {
     typealias ReelCaptions = ReelTitleCard
 
     private var phase: Phase { get { work.phase } nonmutating set { work.phase = newValue } }
-    @State private var selected: [String] = []      // selected IDs follow the library's upload order
+    @State private var selected: [String] = []      // grid follows upload order; selections keep the agent's tap order
     @State private var selectedExtras: [URL] = []   // extra clips still switched on
     @State private var seededExtras = false
     @State private var videoPurpose: VideoAspectChoice?
@@ -10271,7 +10405,7 @@ struct ReelStudioView: View {
                     if let sid = photo.sourcePhotoId { return available.first(where: { $0.lowercased() == "cloud-\(sid.uuidString.lowercased())" }) }
                     return nil
                 }
-                selected = Self.selectionInUploadOrder(selected, photos: reelPhotos, index: photoIndex)
+                selected = Self.selectionPreservingOrder(selected, photos: reelPhotos, index: photoIndex)
                 var missing: [String] = []
                 if selected.count < draft.photos.count { missing.append("Save missing photos from Cloud files, then load this setup again.") }
                 selectedExtras = []
@@ -10358,7 +10492,7 @@ struct ReelStudioView: View {
             }
             Label(videoPurpose == .listing ? "Use landscape photos for your listing" : "Use portrait photos for social media",
                   systemImage: videoPurpose == .listing ? "rectangle" : "rectangle.portrait")
-                .font(.rpCallout.weight(.semibold)).foregroundStyle(Theme.accent)
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
                 .fixedSize(horizontal: false, vertical: true)
             Text(videoPurpose == .listing
                  ? "Hold your phone sideways and fit the whole room. Start with the front, then rooms and backyard."
@@ -10385,7 +10519,7 @@ struct ReelStudioView: View {
             refreshedPhotos = try EnhancedPhoto.loadForListing(listingID: listing.id)
             savedPhotoError = nil
             let index = try PhotoVersionHistory.load(directory: EnhancedPhoto.directory(for: listing.id))
-            selected = Self.selectionInUploadOrder(selected, photos: reelPhotos, index: index)
+            selected = Self.selectionPreservingOrder(selected, photos: reelPhotos, index: index)
         } catch {
             refreshedPhotos = []
             savedPhotoError = "The selected photo versions need attention. Your saved photos are kept; review them in Photos before creating a video."
@@ -11991,13 +12125,17 @@ struct ReelStudioView: View {
 
     // MARK: Selection
 
-    nonisolated private static func selectionInUploadOrder(_ selected: [String], photos: [EnhancedPhoto],
-                                                        index: PhotoVersionHistory.Index? = nil) -> [String] {
-        let chosen = Set(selected)
-        let chosenFamilies = Set(selected.compactMap { index?.versions[$0]?.familyID })
-        return photos.filter {
-            chosen.contains($0.id) || index?.versions[$0.id].map { chosenFamilies.contains($0.familyID) } == true
-        }.map(\.id)
+    nonisolated private static func selectionPreservingOrder(_ selected: [String], photos: [EnhancedPhoto],
+                                                           index: PhotoVersionHistory.Index? = nil) -> [String] {
+        var seen = Set<String>()
+        return selected.compactMap { id in
+            let exact = photos.first { $0.id == id }
+            let approved = exact ?? index?.versions[id].flatMap { previous in
+                photos.first { index?.versions[$0.id]?.familyID == previous.familyID }
+            }
+            guard let approved, seen.insert(approved.id).inserted else { return nil }
+            return approved.id
+        }
     }
 
     private func selectThumb(_ p: EnhancedPhoto) -> some View {
@@ -12046,7 +12184,6 @@ struct ReelStudioView: View {
         } else if selected.count < VideoSelectionCapacity.maximumPhotos {
             guard (try? PhotoVersionHistory.requireReelReview(imageURL: p.enhancedURL)) != nil else { return }
             selected.append(p.id)
-            selected = Self.selectionInUploadOrder(selected, photos: reelPhotos)
             Haptics.selection()
         }
     }
@@ -12544,7 +12681,7 @@ struct ReelStudioView: View {
         guard phase == .setup, canGenerate else { return }
         musicPreviewPlayer?.pause(); voPlayer?.pause()
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
-        let chosen = reelPhotos.filter { selected.contains($0.id) }
+        let chosen = selected.compactMap { id in reelPhotos.first { $0.id == id } }
         do {
             for photo in chosen { try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL) }
         } catch {

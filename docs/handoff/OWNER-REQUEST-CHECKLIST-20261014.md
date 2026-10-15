@@ -2,7 +2,7 @@
 
 This is the consolidated acceptance list for the owner's messages, not a claim that
 all work is finished. Latest explicit decisions override earlier wording/prices.
-Updated October 15 around 11:55 a.m. Eastern. Earlier detailed ledger is retained at
+Updated October 15 around 12:15 p.m. Eastern. Earlier detailed ledger is retained at
 `_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
 (relative to the outer Rendprop AI folder).
 
@@ -19,13 +19,20 @@ Updated October 15 around 11:55 a.m. Eastern. Earlier detailed ledger is retaine
   resumed the SAME job from the actual phone at 11:23 a.m. Eastern, preserving
   completed paid clips. It advanced to five ready shots, then stopped on a
   separate FAL completed-result HTTP403. This is a delivery failure, not proof
-  that generation failed. Same-receipt recovery is being implemented;
+  that generation failed. Same-receipt recovery is now deployed and independently
+  verified (ai-video81 / worker8 / jobs7); actual-phone Resume is still pending;
   no master video/publication/completed-video push exists. Do not call it passed.
 - Use only the actual mirrored iPhone for UI acceptance. Backend/SDK/CI tests are
   allowed, separately identified. All four available execution slots are active; Claude is confirmed working in a separate web/Studio worktree.
 - The owner approved existing portrait/cropped photos for this test and will
   capture a properly framed new home later. Do not invent a 20-photo or fresh
   landscape-input prerequisite for finishing this approved 14-photo test.
+- Native83's first signed archive stopped at two concrete Swift compiler errors
+  before any upload. Failed evidence is retained; narrow fixes and the newest
+  parent/agent feedback are being integrated before a reviewed new attempt.
+- Claude's three web/Studio commits and the follow-up preserving explicit input
+  order are integrated locally. Root Studio verify and tour-host typecheck pass;
+  these integrated changes have not yet been deployed.
 
 ## Latest beta feedback
 
@@ -77,6 +84,8 @@ No whole feature is closed by source existence, upload or a preview alone.
 | P12 | Landscape listing capture; portrait social capture; 0.5× when whole room needs it | Guide/crop detection built; guidance now placed before video photo grid | Actual camera/lens/orientation and branded framing footer on 83 |
 | P13 | NEW beta: edit one photo directly from Photo versions; KEEP bulk editing | 83 single-photo Original actions built; 47 focused checks +6 fault controls, prior review/lifecycle checks passed | Actual phone83 Declutter/Stage action, result/progress and bulk unchanged |
 | P14 | NEW beta: preserve upload order 1,2,3 and append later batches underneath, through new videos | 83 ordering built/tested,26 compiled controls; latest explicit upload-order choice supersedes automatic scene reordering by default | Actual phone83 batch/library/new-video order; admitted jobs remain unchanged |
+| P15 | NEW recorded feedback: Photos viewer swipes left/right between photos, shows position/count and edits the current photo directly | Active; single-photo edit exists, family browsing/count being added | Real phone first/middle/last swipe, exact current-photo edit and saved selection/history |
+| P16 | NEW clarification: video grid follows upload order, but manual taps can choose a different sequence | Active; preserve tap order rather than forcing grid order; later uploads append even when filenames restart at1 | Two-batch append and B2→A1 manual selection controls, exact recipe/preview; existing admitted jobs unchanged |
 
 ## Make a video and optional recorded walkthrough
 
@@ -93,7 +102,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | V09 | Finish accepted work away from editor; notify and review private result | Two-shot hosted completion/push proven; today's 14-shot job continued after leaving editor | Recover larger job; actual push/reopen/review, no auto-publication |
 | V10 | Check status must visibly respond | 83 code built: spinner, actual last-checked time, safe network feedback | Compile/new phone build and tap acceptance |
 | V11 | Ready banner Review must open exact video, including while modal is closing | 83 navigation/context fix built; exact job intent retained | Focused proof and actual phone opening; unavailable-home banners suppressed |
-| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | Repair live; same-job Resume observed on actual phone, paid clips preserved | Source6 FAL completed-result403 delivery recovery in progress; complete master still open |
+| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | Quality and same-receipt delivery recovery repairs live; prior same-job quality Resume observed on actual phone, paid clips preserved | Actual phone Resume of delivery issue, classify result403 if it persists; complete master still open |
 | V13 | Recorded drone-style walkthrough is separate optional toolbox tool | Built; optional route observed | Final upload/play/tag check with real recorded video |
 | V14 | Explain slow/steady drone-like capture, gimbal and actual drone options | Built capture guidance | Final phone copy/animation inspection |
 | V15 | Tag rooms muted until genuine recorded/uploaded walkthrough; tap explains requirement | 83 implementation in progress; generated/sample video must not unlock it | Predicate/entrypoint checks, then actual no-source/upload/tag phone tests |

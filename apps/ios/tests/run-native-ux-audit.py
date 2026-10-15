@@ -59,8 +59,8 @@ assert '.accessibilityIdentifier("reel.addPhotos")' in block(fly, 'private var p
 refresh_photos = block(fly, 'private func refreshVideoPhotos()')
 assert 'refreshedPhotos = try EnhancedPhoto.loadForListing(listingID: listing.id)' in refresh_photos
 assert 'refreshedPhotos = []' in refresh_photos and 'savedPhotoError = ' in refresh_photos
-assert 'selected = Self.selectionInUploadOrder(selected, photos: reelPhotos, index: index)' in refresh_photos
-assert 'let chosen = reelPhotos.filter { selected.contains($0.id) }' in fly
+assert 'selected = Self.selectionPreservingOrder(selected, photos: reelPhotos, index: index)' in refresh_photos
+assert 'let chosen = selected.compactMap { id in reelPhotos.first { $0.id == id } }' in fly
 assert 'let canPresent = mayPresentIncomingRoutes && scenePhase == .active' in block(app, 'private func drainIncomingRoutes()')
 assert 'NativeAccountLaunchAdmission.allowsRoutes(accountReady: accountReady, hasOnboarded: hasOnboarded)' in block(app, 'private var mayPresentIncomingRoutes:')
 assert 'accountReady && hasOnboarded' in block(app, 'static func allowsRoutes(')

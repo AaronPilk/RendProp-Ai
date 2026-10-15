@@ -26,9 +26,17 @@ fragments={
  'loadPublication':block(view,'nonisolated static func loadForListing('),
  'directory':block(view,'static func directory(for listingID:'),
  'dated':block(view,'nonisolated fileprivate static func dated(in entries:'),
- 'selection':block(view,'nonisolated private static func selectionInUploadOrder(').replace('private static','static'),
+ 'selection':block(view,'nonisolated private static func selectionPreservingOrder(').replace('private static','static'),
+ 'toggle':block(view,'private func toggle(_ p: EnhancedPhoto)').replace('private func','func'),
 }
 gallerySource='import Foundation\nenum FileStore { static var documents = URL(fileURLWithPath: "/closed-fixture") }\n'+fragments['datedFile']+'\n'+fragments['datedPhoto']+'\nprivate enum DiskScan {\n'+fragments['entries']+'\n'+fragments['createdAt']+'\n}\n'+fragments['photo']+'\nextension EnhancedPhoto {\n'+'\n'.join(fragments[x] for x in ['loadAll','loadPublication','directory','dated'])+'\n}\nenum NewVideoPhotoSelection {\n'+fragments['selection']+'\n}\n'
+chosen='let chosen = selected.compactMap { id in reelPhotos.first { $0.id == id } }'
+reel=view[view.index('struct ReelStudioView: View {'):]
+assert chosen in block(reel,'private func generateWithSession()')
+assert 'Self.selectionPreservingOrder(selected, photos: reelPhotos, index: index)' in block(reel,'private func refreshVideoPhotos()')
+assert 'Self.selectionPreservingOrder(selected, photos: reelPhotos, index: photoIndex)' in block(reel,'@MainActor private func syncNativeSetup(')
+fragments['chosen']=chosen
+gallerySource+='enum Haptics { static func selection() {} }\nenum VideoSelectionCapacity { static let maximumPhotos = 100 }\nfinal class NewVideoPhotoPicker { var selected: [String] = []; var reelPhotos: [EnhancedPhoto]; init(_ photos: [EnhancedPhoto]) { reelPhotos = photos }\n'+fragments['toggle']+'\nfunc chosenPhotos() -> [EnhancedPhoto] { '+chosen.replace('let chosen =','return',1)+' }\n}\n'
 gallery=out/'ActualGalleryReader.swift';gallery.write_text(gallerySource)
 assert view.count('LibraryImagePicker(onBegin:')==1 and view.count('LibraryImagePicker(selectionLimit: 1,')==1
 assert 'selectionLimit = 0; onPicked = nil' in picker and 'config.selection = .ordered' in picker and 'config.preferredAssetRepresentationMode = .current' in picker
@@ -63,12 +71,21 @@ modified=out/'local-order-lost.swift';modified.write_text(lostOrder);cmd=list(co
 c=subprocess.run(cmd,capture_output=True,text=True);(out/'local-order-lost-compile.log').write_text(c.stdout+c.stderr);assert c.returncode==0,c.stderr
 e=subprocess.run([str(out/'local-order-lost')],capture_output=True,text=True,timeout=60);(out/'local-order-lost.log').write_text(e.stdout+e.stderr);assert e.returncode==1 and 'actual local gallery displays selected order' in e.stderr,(e.stdout,e.stderr)
 controls.append({'name':'local-order-lost','compiled':True,'rejected':True,'expectedFailure':'actual local gallery displays selected order'})
-lostFamily=gallerySource.replace('let chosenFamilies = Set(selected.compactMap { index?.versions[$0]?.familyID })','let chosenFamilies = Set<String>()')
+lostFamily=gallerySource.replace('let approved = exact ?? index?.versions[id].flatMap { previous in','let approved = exact ?? Optional<PhotoVersionHistory.Version>.none.flatMap { previous in')
 assert lostFamily!=gallerySource
 modified=out/'selection-family-lost.swift';modified.write_text(lostFamily);cmd=list(compile);cmd[cmd.index(str(gallery))]=str(modified);cmd[-1]=str(out/'selection-family-lost')
 c=subprocess.run(cmd,capture_output=True,text=True);(out/'selection-family-lost-compile.log').write_text(c.stdout+c.stderr);assert c.returncode==0,c.stderr
 e=subprocess.run([str(out/'selection-family-lost')],capture_output=True,text=True,timeout=60);(out/'selection-family-lost.log').write_text(e.stdout+e.stderr);assert e.returncode==1 and 'new video selection retains the chosen source family after an approved version changes' in e.stderr,(e.stdout,e.stderr)
 controls.append({'name':'selection-family-lost','compiled':True,'rejected':True,'expectedFailure':'new video selection retains the chosen source family after an approved version changes'})
+for name,old,new,needle in [
+ ('tap-order-sorted', 'selected.append(p.id)', 'selected.append(p.id); selected.sort { a, b in reelPhotos.firstIndex(where: { $0.id == a })! < reelPhotos.firstIndex(where: { $0.id == b })! }', 'manual taps B2 then A1 keep the displayed video positions B2 then A1'),
+ ('generation-order-sorted', chosen.replace('let chosen =','return',1), 'return reelPhotos.filter { selected.contains($0.id) }', 'generation freezes the manual B2 A1 sequence rather than grid order'),
+]:
+ assert old in gallerySource
+ modified=out/(name+'.swift');modified.write_text(gallerySource.replace(old,new,1));cmd=list(compile);cmd[cmd.index(str(gallery))]=str(modified);cmd[-1]=str(out/name)
+ c=subprocess.run(cmd,capture_output=True,text=True);(out/(name+'-compile.log')).write_text(c.stdout+c.stderr);assert c.returncode==0,c.stderr
+ e=subprocess.run([str(out/name)],capture_output=True,text=True,timeout=60);(out/(name+'.log')).write_text(e.stdout+e.stderr);assert e.returncode==1 and needle in e.stderr,(name,e.stdout,e.stderr)
+ controls.append({'name':name,'compiled':True,'rejected':True,'expectedFailure':needle})
 assert before=={path:sha(ROOT/path) for path in inputs},'Consumed source changed during test'
 r={'passed':True,'checkedUTC':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sourceHashes':before,'actualLibraryIngestBodySHA256':hashlib.sha256(body.encode()).hexdigest(),'actualGalleryReaderFragmentsSHA256':{k:hashlib.sha256(v.encode()).hexdigest() for k,v in fragments.items()},'selectionTested':40,'durablePhotosAcrossRepeatedImports':63,'negativeControls':controls,'boundedProviderConcurrency':1,'boundedWriterConcurrencyAcrossBatches':1,'simultaneousBatchesTested':2,'runtime':'actual Foundation sequence + actual PhotoVersionHistory/PhotoCaptureStorage + actual EnhancedPhoto readers/DiskScan','scope':'Ordered imports, serial file admission and saving, exact bytes, partial load/save failures, repeat/simultaneous imports and cancellation. Actual local-gallery and publication readers execute against real owned files/history. Picker source settings and account fences source-checked. No real Photos/iCloud/UIImage enhancement or physical UI execution is claimed.','networkCalls':0,'AppleCalls':0,'paidProviderCalls':0,'UIExecutions':0}
 (out/'receipt.json').write_text(json.dumps(r,indent=2)+'\n');print(json.dumps({'passed':True,'receipt':str(out/'receipt.json'),'negativeControls':len(controls)}))

@@ -30,7 +30,9 @@ for required in ['SecondaryButton(title: "Save photo"', 'isDisabled: savePhotoDi
     assert required in save, required
 actual = '\n'.join(block(review, anchor).replace('private ', '', 1) for anchor in [
     'private var needsStagingReview:', 'private var needsCustomReview:',
-    'private var listingSelectionDisabled:', 'private func changeListingSelection()'])
+    'private var listingSelectionDisabled:', 'private var requestedCoverForViewed:',
+    'private func changeListingSelection()'])
+pager = block(view, 'private enum PhotoFamilyPager {').replace('private enum', 'enum', 1)
 
 fixture = r'''
 import Foundation
@@ -53,14 +55,14 @@ struct Listing { var id: UUID; var mainPhotoRelPath: String?; var serverShareURL
     func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {}
 }
 @MainActor final class Harness {
-    var viewed: EnhancedPhoto; var model: Model
+    let photo: EnhancedPhoto; var viewed: EnhancedPhoto; var model: Model
     var imageContext: Context? = Context(isCurrent: true)
     var selectedForListing = true; var requestedCover = false; var dismissed = false
     var selectionWorkID: UUID?
     var enhanced: Data?; var original: Data?; var selectionError: String?
     var stagingReview = PhotoVersionHistory.StagingReview()
     var customReview = PhotoVersionHistory.CustomReview()
-    init(_ photo: EnhancedPhoto, _ model: Model) { viewed = photo; self.model = model }
+    init(_ photo: EnhancedPhoto, _ model: Model) { self.photo = photo; viewed = photo; self.model = model }
     func clearAndDismiss() { dismissed = true }
     func beginCloudListingRemoval(listingID: UUID, serverID: UUID, directory: URL, versionID: String) { fatalError("cloud removal belongs to separate API/coordinator proof") }
 __ACTUAL__
@@ -76,6 +78,10 @@ __ACTUAL__
         let a = EnhancedPhoto(id: "a", enhancedURL: dir.appendingPathComponent("enh-a.jpg"), originalURL: dir.appendingPathComponent("orig-a.jpg"))
         let b = EnhancedPhoto(id: "b", enhancedURL: dir.appendingPathComponent("enh-b.jpg"), originalURL: dir.appendingPathComponent("orig-b.jpg"))
         let model = Model(.init(id: listing, mainPhotoRelPath: a.enhancedURL.path))
+        let coverIntent = Harness(a, model); coverIntent.requestedCover = true
+        check(coverIntent.requestedCoverForViewed, "initial family retains explicit cover intent")
+        coverIntent.viewed = b
+        check(!coverIntent.requestedCoverForViewed, "swiping never carries initial cover intent to another family")
         let stale = Harness(a, model); stale.imageContext = Context(isCurrent: false)
         check(stale.listingSelectionDisabled, "stale context disables selection")
         stale.changeListingSelection()
@@ -123,11 +129,12 @@ variants = [('actual', actual, history, None),
     ('stale-context', actual.replace('guard imageContext?.isCurrent == true else { clearAndDismiss(); return }', 'guard true else { clearAndDismiss(); return }'), history, 'stale account cannot modify a listing selection'),
     ('removal-needs-decode', actual.replace('if selectedForListing { return false }', 'if selectedForListing { return true }'), history, 'selected photo can be removed without decoded pixels or new review'),
     ('edit-reincludes', actual, history.replace('index.excludedListingFamilies?.insert(version.familyID)', '// dropped exclusion'), 'later automatic edit must not undo explicit listing removal'),
-    ('nil-gallery', actual, history.replace('index.listingSelections?.removeValue(forKey: version.familyID)', 'index.listingSelections = nil'), 'last removal keeps an explicit empty gallery selection')]
+    ('nil-gallery', actual, history.replace('index.listingSelections?.removeValue(forKey: version.familyID)', 'index.listingSelections = nil'), 'last removal keeps an explicit empty gallery selection'),
+    ('cross-family-cover', actual.replace('return PhotoFamilyPager.family(of: viewed, index: index, directory: directory) == initial', 'return true'), history, 'swiping never carries initial cover intent to another family')]
 results = []
 for name, body, local_history, reason in variants:
     folder = OUT / name; folder.mkdir(exist_ok=True)
-    swift = folder / 'Checks.swift'; swift.write_text(fixture.replace('__ACTUAL__', body))
+    swift = folder / 'Checks.swift'; swift.write_text(pager + '\n' + fixture.replace('__ACTUAL__', body))
     history_path = folder / 'History.swift'; history_path.write_text(local_history)
     binary = folder / 'checks'
     build = subprocess.run(['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', str(CAPTURE), str(history_path), str(swift), '-o', str(binary)], capture_output=True, text=True, timeout=90)

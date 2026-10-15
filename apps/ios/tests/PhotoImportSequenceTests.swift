@@ -67,8 +67,8 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
                 "actual local gallery displays selected order")
         let published = try EnhancedPhoto.loadForListing(listingID: listingID)
         require(published.map(\.id) == savedIDs, "actual publication reader keeps selected order")
-        require(NewVideoPhotoSelection.selectionInUploadOrder([savedIDs[2],savedIDs[0],savedIDs[2]], photos: published) == [savedIDs[0],savedIDs[2]],
-                "checking photos out of sequence keeps upload-relative picker positions")
+        require(NewVideoPhotoSelection.selectionPreservingOrder([savedIDs[2],savedIDs[0],savedIDs[2]], photos: published) == [savedIDs[2],savedIDs[0]],
+                "checking photos out of sequence keeps tap order and removes duplicate choices")
         for (position, id) in zip(savedPositions, savedIDs) {
             let original = saved.appendingPathComponent("orig-\(id).jpg")
             require(try! Data(contentsOf: original) == Data("EXACT-ORIGINAL-\(position)".utf8), "exact retained original survives actual durable save")
@@ -96,6 +96,19 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
                 "later uploaded batch appends below earlier selected photos")
         require(try! EnhancedPhoto.loadForListing(listingID: listingID).map(\.id) == savedIDs + repeatedIDs,
                 "new video picker receives both batches in upload order")
+        let twoBatchGrid = try EnhancedPhoto.loadForListing(listingID: listingID)
+        let a1 = savedIDs[0], a2 = savedIDs[1], b1 = repeatedIDs[0], b2 = repeatedIDs[1]
+        require(twoBatchGrid.filter { [a1,a2,b1,b2].contains($0.id) }.map(\.id) == [a1,a2,b1,b2],
+                "two batches A1 A2 then B1 B2 retain their appended grid order")
+        let picker = NewVideoPhotoPicker(twoBatchGrid)
+        picker.toggle(twoBatchGrid.first { $0.id == b2 }!)
+        picker.toggle(twoBatchGrid.first { $0.id == a1 }!)
+        require(picker.selected == [b2,a1], "manual taps B2 then A1 keep the displayed video positions B2 then A1")
+        require(picker.chosenPhotos().map(\.id) == [b2,a1], "generation freezes the manual B2 A1 sequence rather than grid order")
+        picker.toggle(twoBatchGrid.first { $0.id == b2 }!)
+        require(picker.selected == [a1], "removing a manual selection retains the remaining order")
+        picker.toggle(twoBatchGrid.first { $0.id == b2 }!)
+        require(picker.selected == [a1,b2], "reselecting a photo appends it at the new tapped position")
         let edited = try PhotoVersionHistory.saveEdit(jpeg: Data("LATER EDIT OF FIRST PHOTO".utf8), id: "edited-first",
             parentID: savedIDs[0], sourceID: savedIDs[0], edit: "declutter", style: nil,
             disclosure: "AI decluttered", provenanceID: UUID().uuidString, provenanceRecorded: true, directory: saved)
@@ -109,8 +122,8 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
                 "Latest variants keep source-family upload order")
         require(try! EnhancedPhoto.loadForListing(listingID: listingID).map(\.id) == expectedCurrent,
                 "reviewed publication choices inherit source-family order rather than edit dates")
-        require(NewVideoPhotoSelection.selectionInUploadOrder([repeatedIDs[1],savedIDs[0]],
-                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: editedIndex) == [edited.id,repeatedIDs[1]],
+        require(NewVideoPhotoSelection.selectionPreservingOrder([repeatedIDs[1],savedIDs[0]],
+                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: editedIndex) == [repeatedIDs[1],edited.id],
                 "new video selection retains the chosen source family after an approved version changes")
         try PhotoVersionHistory.selectForPublication(id: savedIDs[0] + "-original", directory: saved, reviewed: true)
         require(try! EnhancedPhoto.loadForListing(listingID: listingID).first?.id == savedIDs[0] + "-original",
@@ -131,8 +144,8 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         let stagedIndex = try PhotoVersionHistory.load(directory: saved)
         require(stagedIndex.libraryVersions(.staged).map(\.familyID) == [savedIDs[1],savedIDs[2]],
                 "Saved staged variants stay grouped in source upload order rather than edit completion order")
-        require(NewVideoPhotoSelection.selectionInUploadOrder(["stage-third","stage-second"],
-                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: stagedIndex) == [savedIDs[1],savedIDs[2]],
+        require(NewVideoPhotoSelection.selectionPreservingOrder(["stage-third","stage-second"],
+                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: stagedIndex) == [savedIDs[2],savedIDs[1]],
                 "new video binds the exact approved listing versions while newer staging previews remain unselected")
         let legacyListing = UUID(), legacyDirectory = EnhancedPhoto.directory(for: legacyListing)
         try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
