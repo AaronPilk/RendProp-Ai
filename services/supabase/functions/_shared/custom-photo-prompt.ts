@@ -50,7 +50,7 @@ function positiveClauses(text: string): string[] {
       if (safeNegativeClause(part)) continue;
       preserved = null; active.push(part); continue;
     }
-    if (/^(?:(?:please|also)\s+)*(?:keep\b|preserv\w*\b|retain\b|leave\b)/.test(part)) {
+    if (/^(?:(?:please|also)\s+)*(?:keep(?:ing)?\b|preserv\w*\b|retain\b|leave\b)/.test(part)) {
       preserved = "preserve";
       if (safePreservationClause(part, true)) continue;
       preserved = null; active.push(part); continue;

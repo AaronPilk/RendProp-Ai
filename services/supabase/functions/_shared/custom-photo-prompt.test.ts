@@ -299,3 +299,56 @@ Deno.test("compiled blanket preservation and negation exemptions fail the unchan
     assertThrows(() => assert(module.analyzeCustomPhotoPrompt(prompt).status !== "ready", "Concealed condition must not dispatch"), AssertionError);
   }
 });
+
+Deno.test("keeping preserves an existing fixed-feature list without adding an edit scope", () => {
+  const input = "Brighten this living room slightly with natural window light, preserving the actual room and all furnishings.";
+  for (const output of [
+    "Brighten exposure while keeping all furniture, wall colors and room layout identical.",
+    "Improve natural lighting while keeping existing flooring, windows, doors and paint colors unchanged.",
+  ]) {
+    const result = analyzeCustomPhotoPrompt(output, "real_estate");
+    assertEquals(result.status, "ready");
+    assertEquals(result.scopes, ["lighting"]);
+    assertStringIncludes(result.prompt!, JSON.stringify(output));
+    assert(customPhotoOutputMatchesInput(input, output, "real_estate"));
+  }
+});
+
+Deno.test("keeping cannot exempt concealed condition, repainting, fixed-feature changes or added scope", () => {
+  const input = "Improve lighting only.";
+  for (const output of [
+    "Brighten lighting while keeping the stain hidden.",
+    "Brighten lighting while keeping walls freshly painted.",
+    "Brighten lighting while keeping furniture unchanged, but replace the cabinets.",
+    "Brighten lighting while keeping the room unchanged and hide water stains.",
+    "Brighten lighting while keeping the walls spotless.",
+    "Brighten lighting; do not keep the wallpaper.",
+    "Brighten lighting; don't leave the water stain visible.",
+  ]) {
+    for (const mode of ["custom", "furnishing"] as const) {
+      const result = analyzeCustomPhotoPrompt(output, "real_estate", mode);
+      assert(result.status !== "ready", `${mode}: ${output}`);
+      assertEquals(result.prompt, undefined);
+    }
+    assertEquals(customPhotoOutputMatchesInput(input, output, "real_estate"), false);
+  }
+  const addedScope = "Brighten lighting while keeping the walls unchanged and add a sofa.";
+  assertEquals(analyzeCustomPhotoPrompt(addedScope).scopes, ["lighting", "furniture"]);
+  assertEquals(customPhotoOutputMatchesInput(input, addedScope, "real_estate"), false);
+});
+
+Deno.test("the old keep-only parser fails the gerund preservation regression", async () => {
+  const source = await Deno.readTextFile(new URL("./custom-photo-prompt.ts", import.meta.url));
+  const anchor = "keep(?:ing)?\\b|preserv";
+  assertEquals(source.split(anchor).length, 2);
+  const oldSource = source.replace(anchor, "keep\\b|preserv");
+  const old = await import(`data:application/typescript;base64,${btoa(unescape(encodeURIComponent(oldSource)))}`);
+  const input = "Improve lighting only.";
+  const output = "Brighten lighting while keeping flooring, windows and wall colors unchanged.";
+  const oracle = (policy: typeof import("./custom-photo-prompt.ts")) => {
+    assertEquals(policy.analyzeCustomPhotoPrompt(output).status, "ready");
+    assert(policy.customPhotoOutputMatchesInput(input, output, "real_estate"));
+  };
+  oracle({ analyzeCustomPhotoPrompt, customPhotoOutputMatchesInput } as typeof import("./custom-photo-prompt.ts"));
+  assertThrows(() => oracle(old), AssertionError);
+});
