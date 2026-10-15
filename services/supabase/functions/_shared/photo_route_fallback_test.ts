@@ -225,18 +225,7 @@ let photoHandler: ((req: Request) => Promise<Response>) | undefined;
 async function actualPhotoHandler() {
   if (photoHandler) return photoHandler;
   Deno.env.set("GEMINI_API_KEY", "fixture-only-not-a-provider-key");
-  const descriptor = Object.getOwnPropertyDescriptor(Deno, "serve")!;
-  Object.defineProperty(Deno, "serve", {
-    configurable: true,
-    value: (handler: typeof photoHandler) => {
-      photoHandler = handler;
-    },
-  });
-  try {
-    await import("../ai-photo/index.ts");
-  } finally {
-    Object.defineProperty(Deno, "serve", descriptor);
-  }
+  photoHandler = (await import("../ai-photo/index.ts")).handleAIPhoto;
   assert(photoHandler);
   return photoHandler;
 }
@@ -332,6 +321,7 @@ for (const flag of [false, true]) {
               "Authorization": "Bearer fixture-user-token",
               "Content-Type": "application/json",
               "Idempotency-Key": "photo-fixture-key",
+              "x-rendprop-photo-quality-protocol": "retained-operation-v1",
             },
             body: JSON.stringify({
               edit,

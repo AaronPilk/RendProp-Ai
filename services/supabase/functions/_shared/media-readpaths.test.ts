@@ -23,7 +23,7 @@ const { adminClient } = await import("./supabase.ts");
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
 type Options = { delivery?:boolean; largeBytes?:number; backgroundMaster?:boolean; backgroundUnregistered?:boolean; backgroundRevoked?:boolean; publishedAlteredVideo?: boolean; denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean; noDiscovery?:boolean; withdrawDiscovery?:boolean; clientFailure?:boolean; discovery?:unknown; emptyPortfolio?:boolean; withdrawPortfolio?:boolean; foreignPortfolioAgent?:boolean; removePortfolioMember?:boolean; deletingPortfolioActor?:boolean; legacyPortfolio?:boolean; expiredHosting?:boolean; hostingExpiresAfterAssembly?:boolean };
 async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "history" | "portfolio", opts: Options = {}) {
-  const previous = globalThis.fetch; const priorGateway=Deno.env.get("MEDIA_GATEWAY_SECRET");if(opts.delivery)Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64)); let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0,hostingReads=0; const seen: Record<string, unknown>[] = [];
+  const previous = globalThis.fetch; const priorGateway=Deno.env.get("MEDIA_GATEWAY_SECRET");if(opts.delivery)Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64)); let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0,hostingReads=0,disclosureRead=false; const seen: Record<string, unknown>[] = [];
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init), url = new URL(req.url);
     assertEquals(url.hostname, "media-privacy-fixture.invalid");
@@ -35,7 +35,7 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
       if (opts.missingVisibility) return response({ assets: {}, renders: {}, keys: {} });
       if (opts.invalidVisibility) return response({ assets: {}, renders: { [renderId]: "true" }, keys: {} });
       return response(Object.fromEntries(["assets", "renders", "keys"].map(kind => [kind, Object.fromEntries(args[`p_${kind}`].map((v: string) => [v,
-        !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.revokeCoverAtFinal && profileRead && [galleryId,galleryKey].includes(v)) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
+        !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.revokeCoverAtFinal && disclosureRead && [galleryId,galleryKey].includes(v)) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
     }
     if(url.pathname==='/rest/v1/rpc/media_delivery_admit'){const args=await req.json();seen.push(args);assertEquals(args.p_bytes,0);return response({admitted:true,legacy_unbudgeted:false});}
     if(url.pathname==='/rest/v1/rpc/background_video_delivery'){const args=await req.json();seen.push(args);assertEquals(args.p_org,org);assertEquals(args.p_listing,listing);assertEquals(args.p_actor,null);return opts.backgroundRevoked?new Response(JSON.stringify({message:'RP404: Background video was withdrawn'}),{status:400,headers:{'content-type':'application/json'}}):response(opts.backgroundUnregistered?null:{kind:'registered_background_video',asset_id:asset,bytes:350*1024*1024,sha256:'b'.repeat(64),max_object_bytes:1536*1024*1024});}
@@ -69,13 +69,18 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
       if(url.searchParams.get("storage_key")?.startsWith("eq."))return response(opts.coverPhoto===undefined?{id:galleryId,listing_id:listing,kind:"photo",bucket:"renders",uploaded:true,storage_key:galleryKey}:opts.coverPhoto);
       return response([...(opts.withHistoricalPhoto?[{id:olderGalleryId,storage_key:olderGalleryKey}]:[]),{ id: galleryId, storage_key: galleryKey }]);
     }
-    if (table === "media_provenance") return response([
+    if (table === "media_provenance") {
+      // Identity now overlaps initial gallery/cover reads. Revoke only after
+      // those admitted optional media and the later disclosure read begins.
+      if(opts.revokeCoverAtFinal)assert(seen.some(args=>(args.p_assets as string[]).includes(galleryId)),"Cover media must be admitted before the late revocation control");
+      disclosureRead=true;
+      return response([
       { kind: "video_reflection_removal", disclosure: "Edited video", original_key: key, altered_key: altered },
       ...(opts.withHistoricalPhoto?[
         {kind:"virtual_stage",disclosure:"Retired stage",original_key:`${prefix}/original-old.jpg`,altered_key:olderGalleryKey},
         {kind:"declutter",disclosure:"Current selected edit",original_key:`${prefix}/original-current.jpg`,altered_key:galleryKey},
       ]:[]),
-    ]);
+    ]);}
     if (table === "studio_creative_results") { const row = { id: resultId, listing_id: listing, org_id: org, user_id: user, kind: "video", bucket: "renders", storage_key: key,
       metadata: { state: "completed", video_kind: "edit", asset_id: asset, source_asset_ids: [asset] } }; return response(handler === "history" ? [row] : row); }
     throw new Error(`Unmodelled fixture request ${url.pathname}`);
