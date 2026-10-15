@@ -5,7 +5,7 @@ const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
 // Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
 const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
 const OUTPUT=outputJPEG(4096,4096);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|null=null){
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|null=null){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
@@ -18,6 +18,10 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  }
  if(removeAdmission==="chain"){
   const anchor="chain = await boundedPhotoChain(funding, chain, genInput);";
+  assert(source.includes(anchor));source=source.replace(anchor,"");
+ }
+ if(removeAdmission==="masked_price"){
+  const anchor="if (maskB64) chain = priceMaskedPhotoChain(chain, genInput);";
   assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="intent"){
@@ -57,6 +61,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
  import {preparePhoto4KInput,photo4KChain,assertPhoto4KOutput} from ${url("./photo-quality.ts")};
+ import {priceMaskedPhotoChain,isMaskedFillStep} from ${url("./masked-photo-pricing.ts")};
  import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput} from ${url("./owner-photo-qa.ts")};
  const ownerQaPhotoStep=(args)=>actualOwnerQaPhotoStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})});
  import {assertCustomPhotoPrompt,assertCustomPhotoOutput} from ${url("../ai-copy/guard.ts")};
@@ -68,7 +73,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {inlineImageResult,inlineBase64,ProviderError,BUDGETS} from ${url("../_shared/providers/common.ts")};
  import {runChain} from ${url("../_shared/providers/chain.ts")};
  export const state={actor:${JSON.stringify(actor)},org:${JSON.stringify(org)},role:"owner",deleted:false,router:false,qa:false,routes:null,journal:null,object:null,saved:null,operationInputHash:null,started:false,completeLost:false,putLost:false,storageFail:false,withdrawOnGet:false,primaryFail:false,output:${JSON.stringify(OUTPUT)},costs:[],holdArguments:[],refunds:0,helperText:"Improve brightness only.",helperDispatch:0,charges:0,holds:0,prompts:[],inputs:[],submits:0,polls:0,puts:0,gets:0,completes:0};
- const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}},RE_PROMPTS={twilight:"Synthetic"};
+ const GEMINI_KEY="synthetic",MODEL="gemini-3.1-flash-image",MAX_IMAGE_B64_CHARS=12000000,MAX_CUSTOM_PROMPT=600,ALLOWED_MIMES=["image/jpeg","image/png","image/webp","image/heic","image/heif"],PROFILES={real_estate:{}},RE_PROMPTS={twilight:"Synthetic",declutter:"Synthetic declutter"};
  ${source.slice(locksStart,locksEnd)}
  ${source.slice(customStart,customEnd)}
  ${source.slice(stageStart,stageEnd)}
@@ -413,4 +418,26 @@ Deno.test("compiled missing normal4K output floor fails unchanged actual-handler
   assertEquals(response.status,502,"Undersized supplier output reached delivery");assertEquals(f.state.puts,0);assertEquals(f.state.costs.length,1);
  }finally{f.close();}};
  await oracle(false);await assertRejects(()=>oracle(true),AssertionError,"Undersized supplier output reached delivery");
+});
+Deno.test("masked Fill actual handler records rounded source megapixels once and excludes4K claims",async()=>{
+ const oracle=async(remove:boolean)=>{const f=await fixture(false,remove?"masked_price":null);try{
+  // This boundary fixture explicitly uses existing private sponsorship so it
+  // can isolate ledger integration; ordinary ceiling admission is tested
+  // independently with the real fundedAttempt helper, not claimed by this mock.
+  f.state.qa=true;f.state.router=true;
+  f.state.routes=[{route_id:"existing-mask-route",provider:"fal",model:"fal-ai/flux-pro/v1/fill",task:"photo.declutter",unit:"image",unit_cents:5,capabilities:["mask"],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true}];
+  const original=outputJPEG(1536,2048);f.state.output=original;
+  const request=()=>f.request({image_b64:original,edit:"declutter",mask_b64:original,mask_mime:"image/jpeg"});
+  const response=await f.run(request());assertEquals(response.status,200,await response.text());
+  assertEquals(f.state.costs.length,1);assertEquals(f.state.costs[0].step.unit_cents,20,"A3.145728MP Fill edit must not settle as a5-cent image");
+  assertEquals(f.state.costs[0].step.route_id,"existing-mask-route");
+  assertEquals(f.state.costs[0].meta.cost_basis,"source_megapixels_rounded_up_5_cents_bound");
+  assertEquals(f.state.costs[0].meta.priced_megapixels,4);
+  assertEquals(f.state.costs[0].meta.image_size,undefined);
+  assertEquals(f.state.inputs[0].extra.photo_quality_4k,undefined);
+  assertEquals((await f.run(request())).status,200);
+  assertEquals(f.state.submits,1);assertEquals(f.state.charges,1);assertEquals(f.state.costs.length,1);assertEquals(f.state.puts,1);
+ }finally{f.close();}};
+ await oracle(false);
+ await assertRejects(()=>oracle(true),AssertionError,"must not settle as a5-cent image");
 });

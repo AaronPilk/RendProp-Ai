@@ -97,6 +97,7 @@ import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse,
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput } from "./owner-photo-qa.ts";
 import { preparePhoto4KInput, photo4KChain, assertPhoto4KOutput } from "./photo-quality.ts";
+import { priceMaskedPhotoChain, isMaskedFillStep } from "./masked-photo-pricing.ts";
 import { supportsStagingReference } from "../_shared/providers/gemini.ts";
 import {
   BUDGETS,
@@ -882,7 +883,12 @@ Deno.serve(async (req) => {
       try { genInput = preparePhoto4KInput(genInput); chain = photo4KChain(chain, genInput); }
       catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
     }
-    try { chain = await boundedPhotoChain(funding, chain, genInput); }
+    // Masked Fill keeps its legacy resolution, but its per-megapixel quote
+    // and the successful ledger entry must use the same complete source bound.
+    try {
+      if (maskB64) chain = priceMaskedPhotoChain(chain, genInput);
+      chain = await boundedPhotoChain(funding, chain, genInput);
+    }
     catch(error) {
       await refundEditCharge(charge);
       await abortFundingOperationBeforeDispatch(funding);
@@ -933,7 +939,7 @@ Deno.serve(async (req) => {
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto4K) ? {image_size:normalPhoto4K?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:normalPhoto4K?"complete_input_4096_text_2520_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
+      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto4K) ? {image_size:normalPhoto4K?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:normalPhoto4K?"complete_input_4096_text_2520_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), ...(maskB64&&isMaskedFillStep(step)?{cost_basis:"source_megapixels_rounded_up_5_cents_bound",priced_megapixels:step.unit_cents/5}:{}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
         ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
           ...(normalPhoto4K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
     });
