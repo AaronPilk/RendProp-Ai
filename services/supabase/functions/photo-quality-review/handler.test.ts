@@ -2,8 +2,9 @@
 // Only HTTP Auth/PostgREST/R2/CPU dependencies are synthetic; no provider runs.
 import {assert,assertEquals,assertRejects} from "https://deno.land/std@0.224.0/assert/mod.ts";
 const id=(n:number)=>`f8500000-0000-4000-8000-${String(n).padStart(12,"0")}`;
+const serviceKey="sb_secret_"+"r".repeat(24);
 const actor=id(1),org=id(2),listing=id(3),asset=id(4),evidence=id(5),check=id(6),other=id(7);
-for(const[k,v]of Object.entries({SUPABASE_URL:"https://review-db.fixture.invalid",SUPABASE_ANON_KEY:"public-fixture",SUPABASE_SERVICE_ROLE_KEY:"service-fixture",CLOUDFLARE_ACCOUNT_ID:"a".repeat(32),R2_ACCESS_KEY_ID:"inert-fixture",R2_SECRET_ACCESS_KEY:"inert-fixture",PHOTO_QUALITY_RENDER_URL:"https://review-cpu.fixture.invalid",PHOTO_QUALITY_RENDER_TRIGGER_KEY:"inert-cpu-trigger"}))Deno.env.set(k,v);
+for(const[k,v]of Object.entries({SUPABASE_URL:"https://review-db.fixture.invalid",SUPABASE_ANON_KEY:"public-fixture",SUPABASE_SERVICE_ROLE_KEY:"service-fixture",SUPABASE_SECRET_KEYS:JSON.stringify({review_fixture:serviceKey}),RENDPROP_SECRET_KEY_NAME:"review_fixture",CLOUDFLARE_ACCOUNT_ID:"a".repeat(32),R2_ACCESS_KEY_ID:"inert-fixture",R2_SECRET_ACCESS_KEY:"inert-fixture",PHOTO_QUALITY_RENDER_URL:"https://review-cpu.fixture.invalid",PHOTO_QUALITY_RENDER_TRIGGER_KEY:"inert-cpu-trigger"}))Deno.env.set(k,v);
 const production=await import("./index.ts");let handler=production.handler;
 const {REVIEW_CONSENT,REVIEW_REQUEST_BYTES}=production;
 const {inputHash}=await import("../_shared/funded-serving.ts"),{photoResultKeys}=await import("../ai-photo/photo-result.ts");
@@ -27,7 +28,7 @@ async function fixture(){
   }
   if(url.hostname==="review-db.fixture.invalid"){
    if(url.pathname==="/auth/v1/user")return state.auth?json({id:actor,is_anonymous:state.guest}):json({message:"Invalid token"},401);
-   assertEquals(req.headers.get("apikey"),"service-fixture");
+   assertEquals(req.headers.get("apikey"),serviceKey);
    if(url.pathname.endsWith("/deletion_requests"))return json(state.deleting?{id:other}:null);
    if(url.pathname.endsWith("/serving_operations")){assertEquals(url.searchParams.get("actor_id"),"eq."+actor);return json({state:"completed",input_sha256:state.rawHash,operation:"/ai-photo"});}
    if(url.pathname.endsWith("/serving_operation_results"))return json({result:pointer});
