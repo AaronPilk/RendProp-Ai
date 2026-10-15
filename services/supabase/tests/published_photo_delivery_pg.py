@@ -15,7 +15,7 @@ DATA=Path(tempfile.mkdtemp(prefix='photo-delivery-pg-',dir=a.data_root or os.env
 SOCK=Path(tempfile.mkdtemp(prefix='pds-',dir='/tmp'))
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in ['initdb','pg_ctl','psql','createdb']}
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
-MIG=SQL/'migrations/20261015181343_published_photo_delivery.sql';TEST=SQL/'tests/published_photo_delivery.sql'
+MIG=SQL/'migrations/20261015184120_published_photo_delivery.sql';TEST=SQL/'tests/published_photo_delivery.sql'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
 FILES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',TEST,Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in FILES}

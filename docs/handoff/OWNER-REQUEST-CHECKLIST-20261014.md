@@ -53,13 +53,16 @@ is retained at
   Claude's separate web/Studio work is preserved.
 - Studio 72e336f2 has 35 exact files/39 GET readbacks. Edge Studio 34 and migration
   20261015164224 enforce photo/recorded-source separation. Authenticated customer
-  UI acceptance remains open. W05 saved-edit previews still take the slow
-  whole-tour authority fallback. A source-only per-key candidate passed 41 tours
-  tests, 32 fresh/32 replay PG assertions, 13 fault/receipt controls and five real
-  withdrawal races, plus peer review. It preserves three fresh Worker checks,
-  legacy fallback and master bytes. It is not applied/deployed; hosted loading
-  acceptance remains open. Evidence:
-  `_bridge/build84-altered-photo-rpc/SOURCE-REVIEW-RECEIPT.json`.
+  UI acceptance remains open. W05 SQL 20261015184120/tours68 are LIVE and exact:
+  only the photo helper changed; three fresh Worker checks, legacy fallback and
+  exact masters remain. Applied-name PG passed 32 fresh/32 replay assertions,
+  13 fault/receipt controls and five withdrawal races; 41 tours tests/typecheck
+  and peer review passed. SAME saved-edit preview repeat GET measured 6.5564→
+  1.6701s, HEAD 6.3236→3.3843s and 304 6.1230→1.8681s; Original repeat measured
+  3.5797→1.5815s. Bytes, geometry, hashes and ETags remain exact. Full masters
+  still use generic authority at about 7.8–9.5s; phone loading/detail remains open.
+  These controls do not certify every image or user. Evidence:
+  `_bridge/build84-altered-photo-rpc/FINAL-DEPLOYED-RECEIPT.json`.
 - Owner media migration 20261015170710 and general product-media migration
   20261015171923 are LIVE. Authorized media no longer requires a financial reserve
   to activate; current publication/object/hosting/visibility checks remain. Actual
@@ -155,7 +158,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 | W02 | Finished photo-based Listing video is main presentation; recorded swipe tour secondary | Built/deployed renderer | Accepted Listing video explicitly published on SAME home and played |
 | W03 | Attractive included Classic plus two distinct luxury designs with restrained glass/motion | Classic + Signature Estate + Coastal Luxe built/deployed previews | Final phone aesthetic/accessibility acceptance; preview ≠ paid entitlement |
 | W04 | Luxury design $25 one-time PER PROPERTY, switching both paid designs for that home | Backend/native product routing built; Apple draft SKU exists | Genuine Sandbox buy/recovery/property binding; real review screenshot/metadata; Production still OFF |
-| W05 | Fast loading, full-quality images; old low-detail edited files not called 4K | Existing thumbnails/config deployed; saved edits still use slow whole-tour fallback. Per-key RPC candidate passed PG/Deno/race/peer checks, not deployed. Exact masters unchanged | Apply/review candidate, then repeat hosted timing and final phone loading/detail; HTML-only improvement and source tests do not prove this fixed |
+| W05 | Fast loading, full-quality images; old low-detail edited files not called 4K | Point authority LIVE: tours68/SQL184120 exact. SAME saved-edit preview repeat6.5564→1.6701s; exact master/preview bytes and geometry retained | Inspect initial hero/gallery use and physical loading/detail. Full master path remains about7.8–9.5s; historical896×1195 edit is not4K |
 | W06 | Real nearby shops/restaurants/location at low cost | Live OpenStreetMap data: nine named places with attribution | Actual coordinate/place/map/empty-error acceptance |
 | W07 | Buyer links open website rather than app; preserve old links | Direct /property route and association exclusions deployed | Real Messages/Safari share/open including older cached association |
 | W08 | Readable address URLs, canonical/share metadata, privacy-aware sitemap | Built/deployed and automated checks passed | Actual shared card; genuine opted-in publication inspection; no SEO ranking guarantee |

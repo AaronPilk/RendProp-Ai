@@ -54,13 +54,18 @@ are historical; retain their receipts without treating them as current status.
 - Studio frontend 72e336f2 has 35 exact files/39 GET readbacks. Edge Studio 34
   and migration 20261015164224 enforce photo/recorded-source separation;
   authenticated customer UI acceptance remains open. W05 thumbnail source and
-  matching gateway configuration are deployed. Saved-edit previews still use
-  the slow whole-tour authority fallback. A source-only per-key RPC candidate
-  passed 41 tours tests, 32 fresh/32 replay PG assertions, 13 PG fault/receipt
-  controls and five real withdrawal races; independent review passed. It retains
-  all three Worker authority checks, legacy fallback and exact masters. It is
-  not applied/deployed and does not establish a hosted latency improvement.
-  Evidence: `_bridge/build84-altered-photo-rpc/SOURCE-REVIEW-RECEIPT.json`.
+  matching gateway configuration are deployed. W05 point authority is now LIVE:
+  SQL 20261015184120 and tours68 read back exactly, with 28 runtime files preserved
+  and only the photo helper changed. The applied-name PG gate passed 32 fresh/32
+  replay assertions, 13 fault/receipt controls and five real withdrawal races;
+  41 tours tests/typecheck and independent review passed. The SAME saved-edit
+  preview repeat GET measured 6.5564→1.6701s, HEAD 6.3236→3.3843s and 304
+  6.1230→1.8681s; Original repeat GET measured 3.5797→1.5815s. Both preview and
+  full-master bytes, geometry and hashes remain exact. These are single-sample
+  hosted controls, not physical-phone acceptance or an all-user guarantee.
+  Full masters still take about 7.8–9.5s through the generic authority. Three
+  fresh Worker checks, legacy fallback, pixel/cache policy and secrets are unchanged.
+  Evidence: `_bridge/build84-altered-photo-rpc/FINAL-DEPLOYED-RECEIPT.json`.
 - The owner explicitly authorized Simulator UI checks while the physical phone
   is unavailable. The child observed compact review controls and two import
   batches retaining six exact PNG Originals; physical 84 acceptance remains open.
