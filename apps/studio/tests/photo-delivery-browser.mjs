@@ -112,8 +112,8 @@ try {
   assert.equal(hash(Buffer.from(previewPixels)), hash(web.get(webRecord.editedPath)), "preview is the exact JPEG generated for download");
   receipt.checks.push("Web center crop produces 480×600 pixels with visible result disclosure; preview and download match while original remains 800×600");
 
-  await review.getByRole("button", { name: "Save to property gallery", exact: true }).click();
-  await expect(review.getByRole("button", { name: "Saved to gallery", exact: true })).toBeDisabled();
+  await review.getByRole("button", { name: "Save version", exact: true }).click();
+  await expect(review.getByRole("button", { name: "Version saved", exact: true })).toBeDisabled();
   const savedPhoto = await page.evaluate(() => window.creativeFixture.calls().filter(call => call.path.endsWith("studio/photos")).at(-1));
   assert.equal(savedPhoto.body.caption, ""); assert.ok(savedPhoto.body.provenance_id, "the exact immutable provenance provides the current disclosure"); assert.ok(!savedPhoto.body.caption.includes("Twilight"));
   const org = "22222222-2222-4222-8222-222222222222", listing = "33333333-3333-4333-8333-333333333333", other = "33333333-3333-4333-8333-333333333334";

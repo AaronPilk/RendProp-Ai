@@ -62,3 +62,5 @@
 
 /* Disabled actions keep readable neutral text instead of fading the whole control. */
 .listing-workflow button:disabled { opacity: 1; color: var(--muted); background: var(--surface-subtle); border-color: var(--input-line); box-shadow: none; cursor: not-allowed; }
+
+.lw-gallery-review { display:flex;align-items:flex-start;gap:8px;font-size:.8rem;line-height:1.5; }.lw-gallery-review input[type="checkbox"] { width:18px;height:18px;min-height:18px;padding:0;flex:0 0 18px;margin-top:2px; }

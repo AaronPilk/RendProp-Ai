@@ -662,6 +662,37 @@ jobs:
           node tests/industry-details-browser.mjs
           node tests/recovery-browser.mjs
           node --test ../../tools/deploy/check-migration-ledger.test.mjs
+      - name: Explicit listing selection requires original review and a fresh snapshot
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/rendprop-gallery-selection-browser"
+          mkdir -p "$evidence_root"
+          STUDIO_PROOF_ROOT="$evidence_root/positive" node tests/listing-selection-browser.mjs > "$evidence_root/positive.log" 2>&1
+          for control in review-omitted stale-snapshot-omitted; do
+            control_root="$evidence_root/$control"
+            mkdir -p "$control_root"
+            set +e
+            STUDIO_PROOF_ROOT="$control_root" node tests/listing-selection-browser.mjs --fault="$control" > "$control_root/run.log" 2>&1
+            control_status=$?
+            set -e
+            test "$control_status" -ne 0
+            SELECTION_EVIDENCE="$control_root" SELECTION_CONTROL="$control" node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          const root=process.env.SELECTION_EVIDENCE, control=process.env.SELECTION_CONTROL;
+          const folders=readdirSync(root,{withFileTypes:true}).filter(item=>item.isDirectory());
+          assert.equal(folders.length,1);
+          const receipt=JSON.parse(readFileSync(join(root,folders[0].name,'receipt.json'),'utf8'));
+          assert.equal(receipt.status,'failed');
+          assert.equal(receipt.fault,control);
+          const expected={'review-omitted':'Expected: disabled','stale-snapshot-omitted':'changed on another device'};
+          assert.ok(receipt.failure.includes(expected[control]));
+          assert.deepEqual(receipt.errors,[]);
+          assert.deepEqual(receipt.externalRequests,[]);
+          NODE
+          done
       - name: C2 discard and upload-order compiled browser faults
         timeout-minutes: 5
         run: |
@@ -797,6 +828,10 @@ jobs:
             /tmp/rendprop-make-video-status-*/*.png
             /tmp/rendprop-listing-order-*/receipt.json
             /tmp/rendprop-listing-order-*/*.png
+            ${{ runner.temp }}/rendprop-gallery-selection-browser/**/receipt.json
+            ${{ runner.temp }}/rendprop-gallery-selection-browser/**/*.png
+            ${{ runner.temp }}/rendprop-gallery-selection-browser/**/*.log
+            ${{ runner.temp }}/rendprop-gallery-selection-browser/positive.log
             ${{ runner.temp }}/rendprop-c2-browser-control-*/**/receipt.json
             ${{ runner.temp }}/rendprop-c2-browser-control-*/**/*.png
             ${{ runner.temp }}/rendprop-c2-browser-control-*/run.log
@@ -1549,6 +1584,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/listing_gallery_append_capacity_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-gallery-append-capacity-pg"
+      - name: Studio saved versions require explicit listing selection under concurrent uploads
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/studio_explicit_listing_gallery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-explicit-gallery-pg"
       - name: Terminal quality retry retains paid evidence and same-job owner recovery
         timeout-minutes: 10
         shell: bash
@@ -1651,6 +1693,7 @@ jobs:
             ${{ runner.temp }}/rendprop-paid-quality-processing-pg/**
             ${{ runner.temp }}/rendprop-listing-gallery-remove-pg/**
             ${{ runner.temp }}/rendprop-listing-gallery-append-capacity-pg/**
+            ${{ runner.temp }}/rendprop-studio-explicit-gallery-pg/**
             ${{ runner.temp }}/rendprop-property-derived-retry-pg/**
             ${{ runner.temp }}/rendprop-property-result-delivery-pg/**
             ${{ runner.temp }}/rendprop-property-submit-recovery-pg/**

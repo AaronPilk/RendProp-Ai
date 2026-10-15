@@ -1,6 +1,7 @@
 import { requireContentWrite } from "../_shared/library-access.ts";
 import { assert, HttpError, json, pathSegments, readJsonLimited } from "../_shared/http.ts";
 import { publicR2Url } from "../_shared/r2.ts";
+import { gallerySelectionRequest } from "./gallery-selection.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Row = Record<string, unknown>;
@@ -103,13 +104,22 @@ async function editGallery(body: Row, listingId: string, context: ListingActionC
 export async function handleListingActions(req: Request, context: ListingActionContext): Promise<Response | null> {
   const segments = pathSegments(req, "studio");
   if (segments.length !== 1 || !["photos", "floorplan"].includes(segments[0])) return null;
+  if(req.method==="GET"&&segments[0]==="photos"){
+    const query=new URL(req.url).searchParams,listing=query.get("listing_id");
+    assert(query.get("selection")==="1"&&typeof listing==="string"&&UUID.test(listing),400,"Choose a property photo selection.");
+    await context.authorizeListing(listing);
+    return await gallerySelectionRequest(context,listing);
+  }
   assert(req.method === "POST" || req.method === "PATCH" && segments[0] === "photos", 405, "Use POST to attach media or PATCH to edit a gallery.");
   const body = await readJsonLimited<Row>(req, 65536);
   const listingId = body.listing_id, assetId = body.asset_id;
   assert(typeof listingId === "string" && UUID.test(listingId), 400, "Choose a property.");
   await context.authorizeListing(listingId);
   await requireContentWrite(context.admin, context.userId, context.orgId, listingId);
-  if (req.method === "PATCH") return await editGallery(body, listingId, context);
+  if (req.method === "PATCH") {
+    if(["use","use_cover","reorder_selected"].includes(String(body.action)))return await gallerySelectionRequest(context,listingId,body);
+    return await editGallery(body, listingId, context);
+  }
   assert(typeof assetId === "string" && UUID.test(assetId), 400, "Choose an uploaded photo.");
   const { data: asset, error: assetError } = await context.db.from("capture_assets")
     .select("id,listing_id,kind,bucket,uploaded,storage_key,content_type")

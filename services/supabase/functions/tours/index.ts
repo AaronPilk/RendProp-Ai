@@ -1,3 +1,4 @@
+import { legacyGalleryOrder } from "./gallery-order.ts";
 import{backgroundObjectLimits,GENERIC_MEDIA_BYTES,REGISTERED_BACKGROUND_BYTES}from'../_shared/background-media-delivery.ts';
 // tours — PUBLIC read of a published tour by slug (for the Cloudflare tour host).
 //
@@ -171,8 +172,9 @@ const MAX_GALLERY = 100;
  * Never fatal: a gallery lookup must not take the tour down.
  */
 // deno-lint-ignore no-explicit-any
-async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selection: string[] | null, slug: string): Promise<Array<{ url: string; thumb_url?: string }>> {
-  if(selection?.length===0)return [];
+async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }, selection: string[] | null, slug: string, legacySnapshot: {value:string|null}={value:null}): Promise<Array<{ url: string; thumb_url?: string }>> {
+  if(selection===null){const legacy=await legacyGalleryOrder(admin,orgId,listingId);legacySnapshot.value=legacy.snapshot;selection=legacy.ids;}
+  if(selection.length===0)return [];
   let query = admin
     .from("capture_assets")
     .select("id, storage_key, created_at, bytes, content_type")
@@ -429,6 +431,7 @@ Deno.serve(async (req) => {
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
     const selectedPhotos=listing.gallery_asset_ids??null;
+    const legacyGallerySnapshot={value:null as string|null};
     // Independent public reads overlap; every returned lineage/contact still
     // passes the unchanged final freshness fences below before release.
     // Share one actual contact read. Its dependent identity lookup can overlap
@@ -441,7 +444,7 @@ Deno.serve(async (req) => {
       return data?.enabled===true ? null : await listingAgentIdentity(admin,listing.id);
     });
     const [gallery, cover_url, { data: job }, { data: clientRow, error: clientError }, identity] = await Promise.all([
-      galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos,slug),
+      galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos,slug,legacyGallerySnapshot),
       publicMainPhoto(admin,{orgId:listing.org_id,listingId:listing.id},
         listing.main_photo_key,key=>publishedR2Url(slug,key),visibleRefs,selectedPhotos),
       admin.from("render_jobs").select("capture_asset_id").eq("id",render.job_id).maybeSingle(),
@@ -540,6 +543,8 @@ Deno.serve(async (req) => {
        (currentPhotos.main_photo_key??null)!==(listing.main_photo_key??null) ||
        JSON.stringify(currentPhotos.gallery_asset_ids??null)!==JSON.stringify(selectedPhotos))
       throw new HttpError(503,"The published photos changed. Please refresh.");
+    if(selectedPhotos===null&&(await legacyGalleryOrder(admin,listing.org_id,listing.id)).snapshot!==legacyGallerySnapshot.value)
+      throw new HttpError(503,"The published photo order changed. Please refresh.");
     if(currentClientError || (currentClient?.revision??null)!==(clientRow?.revision??null) || (currentClient?.enabled??false)!==clientMode)
       throw new HttpError(503,"The listing contact changed. Please refresh.");
     if (!clientMode && JSON.stringify(currentIdentity)!==JSON.stringify(identity))

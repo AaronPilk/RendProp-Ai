@@ -21,13 +21,19 @@ finally { Object.defineProperty(Deno, "serve", descriptor); }
 const { handleCreative } = await import("../studio/creative.ts");
 const { adminClient } = await import("./supabase.ts");
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
-type Options = { delivery?:boolean; largeBytes?:number; backgroundMaster?:boolean; backgroundUnregistered?:boolean; backgroundRevoked?:boolean; publishedAlteredVideo?: boolean; denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean; noDiscovery?:boolean; withdrawDiscovery?:boolean; clientFailure?:boolean; discovery?:unknown; emptyPortfolio?:boolean; withdrawPortfolio?:boolean; foreignPortfolioAgent?:boolean; removePortfolioMember?:boolean; deletingPortfolioActor?:boolean; legacyPortfolio?:boolean; expiredHosting?:boolean; hostingExpiresAfterAssembly?:boolean };
+type Options = { legacyOrderChanged?:boolean;legacyOrderReverse?:boolean;legacyOrderMalformed?:boolean; delivery?:boolean; largeBytes?:number; backgroundMaster?:boolean; backgroundUnregistered?:boolean; backgroundRevoked?:boolean; publishedAlteredVideo?: boolean; denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean; mainPhotoKey?: string | null; coverPhoto?: Record<string,unknown> | null; revokeCoverAtFinal?: boolean; selection?:string[]|null; withHistoricalPhoto?:boolean; changeSelection?:boolean; identity?:Record<string,unknown>; changeIdentity?:boolean; identityFailure?:boolean; noDiscovery?:boolean; withdrawDiscovery?:boolean; clientFailure?:boolean; discovery?:unknown; emptyPortfolio?:boolean; withdrawPortfolio?:boolean; foreignPortfolioAgent?:boolean; removePortfolioMember?:boolean; deletingPortfolioActor?:boolean; legacyPortfolio?:boolean; expiredHosting?:boolean; hostingExpiresAfterAssembly?:boolean };
 async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "history" | "portfolio", opts: Options = {}) {
-  const previous = globalThis.fetch; const priorGateway=Deno.env.get("MEDIA_GATEWAY_SECRET");if(opts.delivery)Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64)); let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0,hostingReads=0,disclosureRead=false; const seen: Record<string, unknown>[] = [];
+  const previous = globalThis.fetch; const priorGateway=Deno.env.get("MEDIA_GATEWAY_SECRET");if(opts.delivery)Deno.env.set("MEDIA_GATEWAY_SECRET","a".repeat(64)); let legacyOrderReads=0; let checks = 0, profileRead = false, contactReads=0,listingReads=0,identityReads=0,hostingReads=0,disclosureRead=false; const seen: Record<string, unknown>[] = [];
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init), url = new URL(req.url);
     assertEquals(url.hostname, "media-privacy-fixture.invalid");
     if (url.pathname === "/auth/v1/user") return response({ id: user, email: "fixture@example.invalid", is_anonymous: false });
+    if(url.pathname==="/rest/v1/rpc/listing_gallery_projection"){
+      assertEquals(await req.json(),{p_listing:listing});legacyOrderReads++;
+      const ids=opts.denyOptional?[]:opts.withHistoricalPhoto?[olderGalleryId,galleryId]:[galleryId];
+      if(opts.legacyOrderReverse)ids.reverse();
+      return response({org_id:opts.legacyOrderMalformed?asset:org,listing_id:listing,gallery_asset_ids:null,main_photo_key:opts.mainPhotoKey??null,effective_asset_ids:opts.legacyOrderChanged&&legacyOrderReads>1?[]:ids});
+    }
     if (url.pathname === "/rest/v1/rpc/studio_presenter_media_visibility") {
       const args = await req.json(); seen.push(args); checks++;
       assertEquals(args.p_listing, listing);
@@ -91,7 +97,13 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
     });
     const result = ["creative", "history"].includes(handler) ? await handleCreative(req, { userId: user, orgId: org, db: adminClient(), admin: adminClient(), authorizeListing: () => Promise.resolve() }) : await (handler === "tour" ? tour : handler === "portfolio" ? portfolio : renders)(req);
     assert(result); return { status: result.status, body: await result.json(), checks, seen };
-  } finally { globalThis.fetch = previous;if(opts.delivery)priorGateway===undefined?Deno.env.delete("MEDIA_GATEWAY_SECRET"):Deno.env.set("MEDIA_GATEWAY_SECRET",priorGateway); }
+  } finally {
+    // A fail-fast parallel read can leave sibling immediate fixture responses
+    // finishing in this turn. Drain only those closed mock microtasks before
+    // restoring fetch; resource sanitization stays enabled and no live HTTP is
+    // permitted by this transport fixture.
+    await new Promise<void>(resolve=>setTimeout(resolve,0));
+    globalThis.fetch = previous;if(opts.delivery)priorGateway===undefined?Deno.env.delete("MEDIA_GATEWAY_SECRET"):Deno.env.set("MEDIA_GATEWAY_SECRET",priorGateway); }
 }
 Deno.test("actual public tour service handler denies revoked published render lineage", async () => {
   const r = await invoke("tour", { denyRender: true }); assertEquals(r.status, 404); assert(!JSON.stringify(r.body).includes("media-fixture.invalid"));
@@ -269,4 +281,9 @@ Deno.test("actual public large-master delivery emits exact authority and charges
   const denied=await invoke('tour',{delivery:true,backgroundMaster:true,largeBytes:350*1024*1024,...opts});assertEquals(denied.status,opts.backgroundRevoked?404:403);assert(!JSON.stringify(denied.body).includes(bg));
  }
  const ordinary=await invoke('tour',{delivery:true,largeBytes:350*1024*1024});assertEquals(ordinary.status,403);
+});
+
+Deno.test("actual NULL gallery uses saved selected-slot order and refuses an order change during assembly",async()=>{
+ const ordered=await invoke("tour",{withHistoricalPhoto:true,legacyOrderReverse:true});assertEquals(ordered.status,200);assertEquals(ordered.body.gallery.map((p:{url:string})=>p.url),[`https://media-fixture.invalid/${galleryKey}`,`https://media-fixture.invalid/${olderGalleryKey}`]);
+ for(const opts of[{legacyOrderChanged:true},{legacyOrderMalformed:true}]){const r=await invoke("tour",opts);assertEquals(r.status,503);assert(!JSON.stringify(r.body).includes("media-fixture.invalid"));}
 });

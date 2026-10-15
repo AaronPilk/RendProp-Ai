@@ -703,7 +703,7 @@ function ListingCreative(
     if(photoRequestRow.current){await finishPhotoRequest(photoRequestRow.current);photoRequestRow.current=null;}
     setPhotoResult({ ...photoResult, saved: true });
     setNotice(
-      "Photo saved to this property's cloud gallery with the original and AI disclosure attached.",
+      "Version saved to this property's history with its original and AI disclosure. Use on listing in Media selects it for the website.",
     );
     onChanged();
     await loadPhotos();
@@ -1436,8 +1436,8 @@ function ListingCreative(
                   onClick={() => run("Saving photo and original", savePhoto)}
                 >
                   {photoResult.saved
-                    ? "Saved to gallery"
-                    : "Save to property gallery"}
+                    ? "Version saved"
+                    : "Save version"}
                 </button>
                 <button disabled={isBusy || photoResult.edit === "custom" && !photoResult.reviewed} onClick={() => void run("Opening original", async () => {
                   if (photoResult.edit === "custom" && !photoResult.reviewed) throw new Error("Compare and confirm this custom edit before continuing.");

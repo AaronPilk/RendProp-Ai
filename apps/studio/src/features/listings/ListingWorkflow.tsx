@@ -9,6 +9,7 @@ import { canPublishAsset, decodeListingState, EMPTY_STATE, formatChapters, listi
 import type { ListingFactsBody, ListingState, Published } from "./model";
 import SpatialWorkflow from "./SpatialWorkflow";
 import GalleryPhotoCard from "./GalleryPhotoCard";
+import { changeListingSelection, readGallerySelection, sameSelection, selectionExpected, type GallerySelection } from "./gallery-selection";
 import { downloadTourQR } from "./qr";
 import "./listings.css";
 import { FeatureCards } from "../home/Dashboard";
@@ -187,6 +188,8 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   useEffect(()=>{if(entryRequest?.listingId===listing.id&&appliedEntry.current!==entryRequest.id){appliedEntry.current=entryRequest.id;setTab(entryRequest.tab);}},[entryRequest,listing.id]);
   const [media, setMedia] = useState<ListingMedia | null>(null), [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [selection,setSelection]=useState<GallerySelection|null>(null);
+  const galleryScope={actor:workspace.user.id,org:workspace.org.id,library:workspace.libraryOrgId??workspace.org.id,listing:listing.id};
   const [contactBlocked, setContactBlocked] = useState(true);
   const [error, setError] = useState(""), [notice, setNotice] = useState(""), [busy, setBusy] = useState("");
   const [progress, setProgress] = useState(0), [uploadingName, setUploadingName] = useState("");
@@ -227,11 +230,11 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
         }
         all.nextOffset = null; return all;
       })();
-      const [activity, previews] = await Promise.all([statePromise, mediaPromise]);
-      if (!current.signal.aborted && alive.current) { setState(activity); setMedia(previews); setError(""); setLoadFailed(false); }
+      const [activity, previews,selectedPhotos] = await Promise.all([statePromise, mediaPromise,readGallerySelection(services,galleryScope,current.signal).catch(()=>null)]);
+      if (!current.signal.aborted && alive.current) { setState(activity); setMedia(previews);setSelection(selectedPhotos); setError(""); setLoadFailed(false); }
     } catch (reason) { if (!current.signal.aborted && alive.current) { setError(message(reason)); setLoadFailed(true); } }
     finally { if (!current.signal.aborted && alive.current) setLoading(false); }
-  }, [services, workspace.org.id, listing.id]);
+  }, [services, workspace.org.id, workspace.libraryOrgId, workspace.user.id, listing.id]);
   useEffect(() => {
     alive.current = true; void refresh(true);
     const focus = () => { if (document.visibilityState === "visible") void refresh(); };
@@ -275,6 +278,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   });
   const photos = media?.photos ?? [], videos = media?.videos ?? [];
   const gallery = orderedGallery(state.photos);
+  const galleryChoices=new Map(selection?.photos.map(item=>[item.photo_id,item])??[]);
   const galleryKey = (photo: typeof gallery[number]) => photo.enhanced_key || photo.original_key;
   const galleryPreviews = new Map(gallery.map(photo => {
     const key = galleryKey(photo);
@@ -306,11 +310,31 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     });
     return saved;
   };
+  const selectPhoto=async(body:{action:"use"|"use_cover";photo_id:string;reviewed:boolean}|{action:"reorder_selected";expected_order:string[];photo_ids:string[]},success:string)=>{
+    await run("gallery",async signal=>{if(!selection)throw new Error("Refresh this property before choosing listing photos.");const saved=await changeListingSelection(services,galleryScope,selection,body,signal);if(!signal.aborted){setSelection(saved);onChanged();await refresh();if(!signal.aborted)setNotice(success);}});
+  };
+  const useSourcePhoto=(photo: typeof photos[number])=>void run("gallery",async signal=>{
+    const version=services.getSnapshot().identityVersion;
+    const assertSourceCurrent=()=>{if(signal.aborted)throw new DOMException("Selection check cancelled","AbortError");const now=services.getSnapshot();if(now.identityVersion!==version||now.status!=="signed-in"||now.identity?.userId!==workspace.user.id)throw new Error("Your account changed. Reopen this property before choosing photos.");};
+    assertSourceCurrent();
+    if(!selection)throw new Error("Refresh this property before choosing listing photos.");
+    const before=await readGallerySelection(services,galleryScope,signal);assertSourceCurrent();
+    if(!sameSelection(selection,before))throw new Error("The listing photo selection changed on another device. Refresh before choosing again.");
+    const saved=await api("studio/photos",{listing_id:listing.id,asset_id:photo.id,caption:photo.caption??""},signal)as {ok?:boolean;photo?:{id?:string;listing_id?:string}};
+    assertSourceCurrent();
+    if(saved?.ok!==true||saved.photo?.id!==photo.id||saved.photo.listing_id!==listing.id)throw new Error("The saved version could not be confirmed. Refresh before trying again.");
+    const latest=await readGallerySelection(services,galleryScope,signal);assertSourceCurrent();
+    if(JSON.stringify(selectionExpected(latest))!==JSON.stringify(selectionExpected(before)))throw new Error("The listing photo selection changed on another device. Your saved version is kept; refresh before choosing it.");
+    const choice=latest.photos.find(item=>item.photo_id===photo.id);
+    if(choice?.review_required){if(!signal.aborted){onChanged();await refresh();setNotice("Version saved to property history. Compare it with its retained original, then choose Use on listing.");}return;}
+    await changeListingSelection(services,galleryScope,latest,{action:"use",photo_id:photo.id,reviewed:false},signal);
+    if(!signal.aborted){onChanged();await refresh();setNotice("Photo selected for the listing. Other selected photos are retained.");}
+  });
   const movePhoto = (photoId: string, direction: -1 | 1) => {
     const order = gallery.map(photo => photo.id), index = order.indexOf(photoId), target = index + direction;
     if (index < 0 || target < 0 || target >= order.length) return;
     const next = [...order]; [next[index], next[target]] = [next[target], next[index]];
-    void changeGallery({ action: "reorder", expected_order: order, photo_ids: next }, "Gallery order saved in Studio. Your property website and new videos keep their own photo order.");
+    void selectPhoto({ action: "reorder_selected", expected_order: order, photo_ids: next }, "Photo order saved. Selected photos follow this order on the website and in new default video selections; other selected photos are retained.");
   };
   const finish = listingFinish({ listing, state, media, loading, loadFailed, pendingUploads: journals.length, canWrite, hasCreativeTools: Boolean(onOpenFeature) });
   const navigateFinish = (destination: ListingDestination) => {
@@ -336,8 +360,8 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
     <section id={`lw-${tab}`} role="tabpanel" aria-labelledby={`lw-tab-${tab}`}>
       <div hidden={tab !== "tour" && tab !== "details"}><ClientContactEditor services={services} userId={workspace.user.id} orgId={workspace.org.id} listingId={listing.id} canWrite={canWrite} onBlocked={setContactBlocked} onChanged={onChanged} onNavigationGuard={contactNavigationChanged} /></div>
       {tab === "media" && <><div className="lw-next-step"><div><h3>Bring the property into focus</h3><p>Import from your computer, or finish an upload on your phone. This page refreshes when you return.</p></div><button className="primary" disabled={!!busy || !canWrite} onClick={() => input.current?.click()}>Import photos & video</button></div><div className="lw-stat-strip"><span><strong>{photos.length}</strong> Photos</span><span><strong>{videos.length}</strong> Videos</span><span><strong>{published.length}</strong> Live tours</span></div>
-        {loading && !media ? <p role="status">Loading property media…</p> : photos.length + videos.length + gallery.length === 0 ? <div className="lw-empty"><h3>Your next walkthrough starts here</h3><p>Open Rendprop on your iPhone, choose <strong>{listing.address || "this property"}</strong>, and capture a walkthrough or photos. Complete the upload, then continue here.</p><button disabled={!!busy || !canWrite} onClick={() => input.current?.click()}>Choose files from this computer</button></div> : <div className="lw-media-grid">{gallery.map((photo, index) => <GalleryPhotoCard key={photo.id} photo={photo} preview={galleryPreviews.get(photo.id)} index={index} count={gallery.length} busy={!!busy} canWrite={canWrite} isCover={gallery.some(item => item.is_main) ? photo.is_main : galleryKey(photo) === listing.mainPhotoKey} onSaveCaption={(caption, expected) => changeGallery({ action: "caption", photo_id: photo.id, caption, expected_caption: expected }, "Photo caption saved for every device.")} onCover={() => void changeGallery({ action: "cover", photo_id: photo.id, expected_main_photo_key: listing.mainPhotoKey }, "Cover photo saved for every device.")} onMove={direction => movePhoto(photo.id, direction)} />)}{sourcePhotos.map((photo) => <article className="lw-media-card" key={`p-${photo.id}`}><img src={photo.url} alt={photo.caption || "Property photo"} loading="lazy" referrerPolicy="no-referrer" /><div><strong>{photo.caption || "Property photo"}</strong><span>Source photo</span>{(photo.isStaged || photo.isAltered) && <span className="lw-disclosure">AI altered · original retained</span>}<a href={photo.url} target="_blank" rel="noreferrer">Open photo ↗</a>{state.assets.some(asset => asset.id === photo.id && asset.bucket === "renders" && asset.uploaded) && <button disabled={!!busy || !canWrite} onClick={() => void run("gallery", async signal => { await api("studio/photos", { listing_id: listing.id, asset_id: photo.id, caption: photo.caption ?? "" }, signal); if (!signal.aborted) { onChanged(); await refresh(); setNotice("Photo added to the tour gallery."); } })}>Add to tour gallery</button>}</div></article>)}{videos.map((video) => <article className="lw-media-card" key={`v-${video.id}`}><video src={video.url} controls preload="metadata" playsInline /><div><strong>Property video</strong><span>{video.durationSeconds ? `${Math.round(video.durationSeconds)} seconds` : "Uploaded walkthrough"}</span><a href={video.url} target="_blank" rel="noreferrer">Open video ↗</a>{videoAssets.some((asset) => asset.id === video.id) && <button onClick={() => { setAssetId(video.id); setDuration(String(video.durationSeconds ?? "")); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === video.id))); setPosterAssetId(""); setEditTour(null); setTab("tour"); }}>Create a tour</button>}</div></article>)}</div>}{!!media?.unavailableCount && <p className="lw-muted">{media.unavailableCount} older media item(s) need a fresh upload from the original device.</p>}
-        <p className="lw-help">Gallery captions, cover selection, and photo order are saved to this property. Original captures remain available as source photos. {gallery.length > 500 && "This gallery exceeds 500 photos; contact support to reorder it."}</p><p className="lw-help">Videos up to 2 GB. Photos up to 50 MB; JPG, PNG, and WebP images up to 10 MB also join the published gallery. HEIC stays available as an original download.</p>
+        {loading && !media ? <p role="status">Loading property media…</p> : photos.length + videos.length + gallery.length === 0 ? <div className="lw-empty"><h3>Your property story starts with photos</h3><p>Open Rendprop on your iPhone, choose <strong>{listing.address || "this property"}</strong>, and add its photos. Review any AI edits, choose the photos to use, then Make a video. A recorded walkthrough is optional and separate. Complete the upload, then continue here.</p><button disabled={!!busy || !canWrite} onClick={() => input.current?.click()}>Choose files from this computer</button></div> : <div className="lw-media-grid">{gallery.map((photo, index) => {const choice=galleryChoices.get(photo.id);return <GalleryPhotoCard key={`${photo.id}:${choice?.asset_id??"unknown"}`} photo={photo} preview={galleryPreviews.get(photo.id)} index={index} count={gallery.length} busy={!!busy} canWrite={canWrite} selectionReady={!!selection&&!!choice} selected={choice?.selected??false} usable={choice?.can_use??false} reviewRequired={choice?.review_required??photo.is_staged} isCover={choice?.selected===true&&galleryKey(photo)===selection?.main_photo_key} onUse={reviewed=>void selectPhoto({action:"use",photo_id:photo.id,reviewed},"Photo selected for the listing. Other selected photos are retained.")} onSaveCaption={(caption, expected) => changeGallery({ action: "caption", photo_id: photo.id, caption, expected_caption: expected }, "Photo caption saved for every device.")} onCover={reviewed=>void selectPhoto({action:"use_cover",photo_id:photo.id,reviewed},"Photo selected as the listing cover. Other selected photos are retained.")} onMove={direction => movePhoto(photo.id, direction)} />;})}{sourcePhotos.map((photo) => <article className="lw-media-card" key={`p-${photo.id}`}><img src={photo.url} alt={photo.caption || "Property photo"} loading="lazy" referrerPolicy="no-referrer" /><div><strong>{photo.caption || "Property photo"}</strong><span>Source photo</span>{(photo.isStaged || photo.isAltered) && <span className="lw-disclosure">AI altered · original retained</span>}<a href={photo.url} target="_blank" rel="noreferrer">Open photo ↗</a>{state.assets.some(asset => asset.id === photo.id && asset.bucket === "renders" && asset.uploaded) && <button disabled={!!busy || !canWrite} onClick={()=>useSourcePhoto(photo)}>{photo.isAltered||photo.isStaged?"Save version to review":"Use on listing"}</button>}</div></article>)}{videos.map((video) => <article className="lw-media-card" key={`v-${video.id}`}><video src={video.url} controls preload="metadata" playsInline /><div><strong>Property video</strong><span>{video.durationSeconds ? `${Math.round(video.durationSeconds)} seconds` : "Uploaded walkthrough"}</span><a href={video.url} target="_blank" rel="noreferrer">Open video ↗</a>{videoAssets.some((asset) => asset.id === video.id) && <button onClick={() => { setAssetId(video.id); setDuration(String(video.durationSeconds ?? "")); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === video.id))); setPosterAssetId(""); setEditTour(null); setTab("tour"); }}>Create a tour</button>}</div></article>)}</div>}{!!media?.unavailableCount && <p className="lw-muted">{media.unavailableCount} older media item(s) need a fresh upload from the original device.</p>}
+        <p className="lw-help">Saved versions stay in property history. Use on listing selects a reviewed version for the website; Use as cover selects it and sets the cover. Reordering moves selected photos without adding unselected versions. Original captures remain available as source photos. {gallery.length > 500 && "This gallery exceeds 500 photos; contact support to reorder it."}</p><p className="lw-help">Videos up to 2 GB. Photos up to 50 MB; JPG, PNG, and WebP images up to 10 MB can be selected with Use on listing after upload. HEIC stays available as an original download.</p>
       </>}
       {tab === "tour" && <><div className="lw-two-column"><div className="lw-card"><p className="eyebrow">Make it shareable</p><h3>Create your property tour</h3><p>Choose a walkthrough to process, or upload an edited tour to publish with no render charge.</p><label>Source video<select aria-label="Source video" value={assetId} onChange={(e) => { setAssetId(e.target.value); const asset = videoAssets.find((a) => a.id === e.target.value); setDuration(String(asset?.duration_s ?? "")); setChapters(formatChapters(state.chapters.filter(c => c.asset_id === asset?.id))); setPosterAssetId(""); setEditTour(null); }}><option value="">Choose an uploaded video</option>{videoAssets.map((asset, index) => <option key={asset.id} value={asset.id} disabled={!canPublishAsset(asset)}>{asset.bucket === "renders" ? "Edited tour" : "Walkthrough"}{!canPublishAsset(asset) ? " · accuracy review needed" : ""} {index + 1} · {new Date(asset.created_at).toLocaleDateString()}{asset.duration_s ? ` · ${Math.round(asset.duration_s)}s` : ""}</option>)}</select></label><button disabled={!!busy || !canWrite} onClick={() => masterInput.current?.click()}>Upload an edited tour</button>
           {chosenAsset && <>

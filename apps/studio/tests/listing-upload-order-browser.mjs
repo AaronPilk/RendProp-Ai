@@ -54,7 +54,7 @@ try {
 
   // 3. An explicit move survives a fresh mount.
   await page.getByRole("button", { name: "Move photo 7 earlier" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Gallery order saved in Studio" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Photo order saved." })).toBeVisible();
   const moved = ["Front door", "Kitchen", "Garden", "IMG_0001", "IMG_0002", "IMG_0001", "IMG_0003", "IMG_0002"];
   assert.deepEqual(await titles(), moved);
   await page.evaluate(() => window.listingFixture.reopen()); await page.getByRole("tab", { name: /Media/ }).click();

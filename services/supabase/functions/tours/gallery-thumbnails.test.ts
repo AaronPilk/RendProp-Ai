@@ -5,6 +5,7 @@ let rows:any[]=[],visibility:any={},queryFields='',selected:string[]|null=null;
 const module=await import('data:application/typescript,'+encodeURIComponent(`
 import{propertyGalleryKey}from ${JSON.stringify(new URL('../_shared/property-cover.ts',import.meta.url).href)};
 const MAX_GALLERY=100,mediaVisibility=async()=>globalThis.__thumbnailGallery().visibility;
+const legacyGalleryOrder=async()=>({ids:globalThis.__thumbnailGallery().rows.map(r=>r.id),snapshot:"closed-metadata-fixture"});
 const publishedR2Url=(slug,key)=>'https://rendprop.com/media/'+slug+'/r2/'+encodeURIComponent(key);
 export ${source.slice(start,end+3)}
 `));
