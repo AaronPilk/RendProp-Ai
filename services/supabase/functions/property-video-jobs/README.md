@@ -39,6 +39,11 @@ requires `x-rendprop-ai-consent: property-video-jobs-v1`.
 - `GET ?listing_id=&expected_org_id=&offset=`: bounded20-job history.
 - `GET /sources?listing_id=&expected_org_id=&offset=`: actual selected gallery
   masters (100/page), exact version/provenance and ready prepared aliases.
+  Explicit gallery IDs keep their saved order. Legacy Studio photo rows use
+  their saved gallery order and chosen edited key; a missing or withdrawn edit
+  stays unavailable rather than silently becoming the Original. Only libraries
+  without photo rows use the chronological capture fallback. This projection
+  does not change a saved video's frozen recipe or the user's manual tap order.
 - `POST /sources/prepare`, key `property-video-source:<operation_id>`: owned
   selected JPEG/PNG/WebP master→video JPEG alias. Original/export/gallery master
   stays unchanged. GET `/sources/prepare/:preparation_id` refreshes its receipt.
