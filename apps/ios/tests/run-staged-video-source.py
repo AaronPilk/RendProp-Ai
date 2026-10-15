@@ -20,13 +20,17 @@ assert '.sheet(isPresented: $showReelPhotos, onDismiss: { refreshVideoPhotos() }
 assert 'photos: (try? EnhancedPhoto.loadForListing(listingID: listing.id)) ?? []' in app
 assert 'photos: (try? EnhancedPhoto.loadForListing(listingID: currentListing.id)) ?? []' in view
 generate=block(reel,'private func generateWithSession()')
-assert 'let jpeg = try Self.preparedReelJPEG(photo: photo' in generate
-assert 'try jpeg.write(to: input' in generate and 'DirectUploader.uploadPhoto(fileURL: input' in generate
+assert 'prepare: { try Self.preparedReelJPEG(photo: $0' in generate
+assert generate.index('VideoPreparedSourcePolicy.stage(chosen,') < generate.index('DirectUploader.uploadPhoto(fileURL: input') < generate.index('PropertyVideoPlanner.plan(')
+assert 'let input = stagedInputs[index]' in generate and 'let jpeg = try Data(contentsOf: input)' in generate
 assert 'photoProvenanceID: photo.savedVersion?.provenanceID' in generate
 assert 'sourceAssetID: photo.sourceAssetID, photoProvenanceID: photo.photoProvenanceID' in block(reel,'nonisolated private static func completeSavedBatch(')
 source='import Foundation\nimport CryptoKit\n'
 source+='''enum FileStore { static var documents = URL(fileURLWithPath:"/closed-fixture"); static func url(fromRelativePath p:String)->URL { documents.appendingPathComponent(p) } }
 enum AIImagePrep { static func error(_ s:String)->Error { NSError(domain:"closed",code:1,userInfo:[NSLocalizedDescriptionKey:s]) }; static func reelSource(_ image:UIImage,aspect:String)->UIImage { image }; static func downscaled(_ image:UIImage,maxDimension:Int)->UIImage { image } }
+// Real ImageIO pixel-floor execution is in run-capture-orientation.py. This
+// catalog/provenance fixture intentionally preserves opaque UIImage bytes.
+enum VideoPreparedSourcePolicy { static func requireUsableJPEG(_ bytes:Data,aspect:String)throws {} }
 struct UIImage { let bytes:Data; init?(contentsOfFile p:String) { guard let d=try? Data(contentsOf:URL(fileURLWithPath:p)) else{return nil};bytes=d }; func jpegData(compressionQuality:Double)->Data?{bytes} }
 enum AdoptionOwnedIdentity { static func pathIsOccupied(_ u:URL)->Bool { FileManager.default.fileExists(atPath:u.path) } }
 enum PendingReelRequest { struct Context:Codable,Sendable,Equatable {let listingID:UUID;let serverListingID:UUID?;let owner:String;let workspace:UUID?};static func file(_ c:Context)->URL {FileStore.documents.appendingPathComponent("reels/\\(c.listingID)-request.json")} }

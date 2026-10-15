@@ -28,6 +28,10 @@ generation=reelview[reelview.index('    private func generate() {'):reelview.ind
 assert generation.index('VideoPhotoFramingReader.read(') < generation.index('connection.run { generateWithSession() }')
 assert 'framingSelectionKey == key' in generation and 'work.isPresented' in generation and 'AIConsent.shared.revocationRevision == consent' in generation
 assert 'assessments.count == inputs.count' in generation and 'VideoFramingReviewPolicy.needsAcknowledgment(' in generation
+session=reelview[reelview.index('    private func generateWithSession()'):reelview.index('    nonisolated private static func preparedReelJPEG(')]
+assert session.index('let stagedInputs = try await VideoPreparedSourcePolicy.stage(chosen,') < session.index('DirectUploader.uploadPhoto(') < session.index('PropertyVideoPlanner.plan(')
+assert 'for (index, photo) in chosen.enumerated()' in session and 'let input = stagedInputs[index]' in session and 'let jpeg = try Data(contentsOf: input)' in session
+assert 'try VideoPreparedSourcePolicy.requireUsableJPEG(jpeg, aspect: aspect)' in reelview
 make=view[view.index('    private var stepMakeCard:'):view.index('    private var videoHelpControls:')]
 assert make.index('makeButton') < make.index('videoAdvancedControls') and '1080p' not in make and 'unconnected' not in make
 assert 'your reel' not in view[view.index('    private var stepPhotosCard:'):view.index('    private func restoreServerVideoJob()')]
@@ -39,7 +43,9 @@ variants = [('actual',source,None),
     ('ignored-exif-rotation',source.replace('(5...8).contains(exifOrientation) ? (height, width) : (width, height)', '(width, height)'), 'EXIF rotation determines imported displayed orientation'),
     ('lost-major-crop-admission',source.replace(r'assessments.contains(where: \.isMajorCrop) && selectionKey != acknowledgedKey','false'), 'large crops require aggregate review before generation'),
     ('stale-framing-acknowledgment',source.replace('selectionKey != acknowledgedKey','acknowledgedKey == nil'), 'changing the target format cannot reuse a crop acknowledgment'),
-    ('lost-narration-ducking',source.replace('time < narrationDurationS ? selection.narrationDuckGain : selection.gain','selection.gain'),'music stays quiet under narration and recovers after speech')]
+    ('lost-narration-ducking',source.replace('time < narrationDurationS ? selection.narrationDuckGain : selection.gain','selection.gain'),'music stays quiet under narration and recovers after speech'),
+    ('lost-prepared-pixel-floor',source.replace('guard cropMeetsFloor(width: size.0, height: size.1, aspect: aspect) else', 'if false'),'actual thumbnail JPEG refuses before upload with conditional framing guidance'),
+    ('skip-later-source-preflight',source.replace('photos.enumerated()', 'photos.prefix(1).enumerated()'),'all exact staged JPEGs preserve manualB2A1 order and master bytes')]
 receipt={'passed':False,'sourceHashes':before,'runs':[],'limitations':['Foundation production purpose/orientation, ReduceMotion policy, exactsourcecrop and immutablemusicreceipt controls execute. SwiftUI/camera/audio playback/mix and realphone not executed here; final server audio mix has independent media tests. Artist-posted CC0 evidence is not a guarantee against third-party ownership or ContentID claims.']}
 for name, production, expected in variants:
     directory=out/name;directory.mkdir(exist_ok=True); actual=directory/'Production.swift';actual.write_text(production)

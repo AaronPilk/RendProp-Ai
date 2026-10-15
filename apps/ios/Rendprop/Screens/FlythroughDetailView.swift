@@ -12801,31 +12801,29 @@ struct ReelStudioView: View {
                     try requireCurrent()
                     guard !PendingReelBatch.exists(recoveryContext) else { throw AIImagePrep.error("Continue or discard the saved reel before starting another batch.") }
                     var prepared: [PendingReelBatch.Photo] = []
-                    var preparedBase64Bytes = 0
-                    for photo in chosen {
+                    let stagedInputs = try await VideoPreparedSourcePolicy.stage(chosen,
+                        aspect: isPortrait ? "9:16" : "16:9", directory: tmpDir,
+                        maximumJPEGBytes: VideoSelectionCapacity.maximumPreparedJPEGBytes,
+                        maximumBase64Bytes: VideoSelectionCapacity.maximumPreparedBase64Bytes,
+                        progress: { number, total in statusText = "Preparing photo \(number) of \(total)…" },
+                        requireCurrent: requireCurrent,
+                        prepare: { try Self.preparedReelJPEG(photo: $0, aspect: isPortrait ? "9:16" : "16:9") })
+                    for (index, photo) in chosen.enumerated() {
                         try requireCurrent()
-                        let jpeg = try Self.preparedReelJPEG(photo: photo, aspect: isPortrait ? "9:16" : "16:9")
-                        guard jpeg.count <= VideoSelectionCapacity.maximumPreparedJPEGBytes else {
-                            throw AIImagePrep.error("A photo is too large for this video recipe. Choose a smaller copy; your original is unchanged.")
-                        }
+                        let input = stagedInputs[index]
+                        let jpeg = try Data(contentsOf: input)
                         let encoded = jpeg.base64EncodedString()
-                        preparedBase64Bytes += encoded.utf8.count
-                        guard preparedBase64Bytes <= VideoSelectionCapacity.maximumPreparedBase64Bytes else {
-                            throw AIImagePrep.error("These photos are too large to prepare together. Choose fewer photos or smaller copies. No video clips have been submitted.")
-                        }
                         // Private input upload leaves the public gallery untouched.
                         // Its exact JPEG binds generation/QC source authority.
                         var sourceAssetID: String? = nil
                         if let targetServerID {
-                            let input = tmpDir.appendingPathComponent("source-\(prepared.count).jpg")
-                            try jpeg.write(to: input, options: .atomic)
                             let photoNumber = prepared.count + 1
                             await MainActor.run { statusText = "Uploading photo \(photoNumber) of \(chosen.count)…" }
                             sourceAssetID = try await DirectUploader.uploadPhoto(fileURL: input, listingID: targetServerID,
                                 role: "capture", contentType: "image/jpeg", keyPrefix: "video-source", api: api)
                             try requireCurrent()
-                            try? FileManager.default.removeItem(at: input)
                         }
+                        try? FileManager.default.removeItem(at: input)
                         prepared.append(PendingReelBatch.Photo(id: photo.id, jpegBase64: encoded,
                             shot: nil,
                             sourceAssetID: sourceAssetID, photoProvenanceID: photo.savedVersion?.provenanceID))
@@ -13336,6 +13334,7 @@ struct ReelStudioView: View {
         guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else { throw AIImagePrep.error("Couldn't read that photo.") }
         let scaled = AIImagePrep.downscaled(AIImagePrep.reelSource(ui, aspect: aspect), maxDimension: 2048)
         guard let jpeg = scaled.jpegData(compressionQuality: 0.95), !jpeg.isEmpty else { throw AIImagePrep.error("Couldn't prepare that photo.") }
+        try VideoPreparedSourcePolicy.requireUsableJPEG(jpeg, aspect: aspect)
         return jpeg
     }
 
