@@ -86,6 +86,8 @@ INDEXING
     var filePackageExtras: [Int] = []; var packageError: String?
     var provenance: [Int] = []; var provenanceCanExport: (() -> Bool)?; var auditExport: Int?
     var showPhotosScreen = false, showRoomTagger = false, showReelStudio = false, showAerialIntro = false, showEdit = false, showListingFactsReview = false
+    var showRoomTagsWalkthroughHelp = false, showWalkthroughForRoomTags = false
+    var availableRoomTagAsset: Int?
     var showComplianceDetails = false
     var qrTarget: Int?; let connection = FixtureConnection(); var dismissals = 0; var sharedAdmittedJobs = 7
     init(scope: NativePresentationScope, auth: FixtureAuth) { presentationScope = scope; self.auth = auth }
@@ -112,6 +114,9 @@ CONTACT
         ("keeps-package-extras", "filePackageExtras = []; packageError = nil", "packageError = nil", "Account invalidation clears old listing package extras"),
         ("keeps-package-error", "filePackageExtras = []; packageError = nil", "filePackageExtras = []", "Account invalidation clears old listing package error"),
         ("keeps-compliance-panel", "        showComplianceDetails = false", "        // omitted disclosure presentation reset", "Invalidation collapses old listing disclosure presentation"),
+        ("keeps-room-tag-help", "showRoomTagsWalkthroughHelp = false; showWalkthroughForRoomTags = false", "showWalkthroughForRoomTags = false", "Invalidation closes old room-tag help"),
+        ("keeps-walkthrough-routing", "showWalkthroughForRoomTags = false; availableRoomTagAsset = nil", "availableRoomTagAsset = nil", "Invalidation closes old walkthrough destination"),
+        ("keeps-room-tag-source", "; availableRoomTagAsset = nil", "", "Invalidation drops old room-tag source"),
         ("keeps-video-playing", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer = nil", "Account invalidation pauses the old property video"),
         ("keeps-video-reference", "websiteVideoPlayer?.pause(); websiteVideoPlayer = nil", "websiteVideoPlayer?.pause()", "Account invalidation drops the old property video reference"),
         ("ignores-scan-cancellation", "!Task.isCancelled, expectedScope", "true, expectedScope", "Cancelled scan cannot restore files after invalidation"),
