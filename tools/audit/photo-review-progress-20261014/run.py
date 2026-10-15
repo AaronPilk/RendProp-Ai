@@ -31,6 +31,7 @@ def boundary(s):
  assert '.safeAreaInset(edge: .bottom'in r and 'actionFooter(stacked:'in r,'Save/Use actions must have an independent safe-area footer'
  assert r.count('Label("Compare",')==1 and 'Picker("Photo version"'not in r,'Main review must have one comparison action and no duplicated segmented control'
  assert '.resizable().scaledToFit()'in r,'Review cannot crop the source image'
+ assert 'imageSize: (showOriginal ? original : enhanced)?.size' in r and 'availableWidth: max(0, min(760, geometry.size.width) - 32)' in r,'Review height must use the actual displayed image and padded content width'
  assert '.frame(height: 48)'not in r,'Saved choices must not clip larger text'
  for needle in ['try PhotoVersionHistory.selectForPublication','try PhotoVersionHistory.confirmCustomReview']:
   assert compact(review_action(s,needle))==compact(review_action(base,needle)),'Review/hash/privacy gate changed'
@@ -52,12 +53,31 @@ LAYOUT
  static func main() {
   var n=0
   for (width,height) in [(320.0,568.0),(375,667),(390,844),(430,932),(768,1024),(1024,768)] {
-   let image=PhotoReviewLayout.previewHeight(viewportHeight:height)
-   precondition(image>=200 && image<=560 && image<=height,"Large image has bounded display-only height")
+   let available=max(0,min(760,width)-32)
+   for size in [CGSize(width:4032,height:3024),CGSize(width:3840,height:2160),
+                CGSize(width:2000,height:2000),CGSize(width:3024,height:4032),
+                CGSize(width:1080,height:1920)] {
+    let image=PhotoReviewLayout.previewHeight(imageSize:size,availableWidth:available,viewportHeight:height)
+    let expected=min(560,height,available*size.height/size.width)
+    precondition(abs(image-expected)<0.001,"Loaded landscape/square/portrait image uses actual fit geometry")
+    precondition(image>0 && image<=560 && image<=height,"Preview is bounded by viewport and max height")
+    n+=2
+   }
+   let placeholder=PhotoReviewLayout.previewHeight(imageSize:nil,availableWidth:available,viewportHeight:height)
+   precondition(placeholder==200,"Unavailable image has a safe compact placeholder")
    precondition(PhotoReviewLayout.stacksActions(width:width,accessibilityType:false)==(width<360),"Compact footer remains readable")
    precondition(PhotoReviewLayout.stacksActions(width:width,accessibilityType:true),"Accessibility text uses stacked actions")
    n+=3
   }
+  for size in [CGSize(width:0,height:0),CGSize(width:-1,height:100),CGSize(width:100,height:-1),
+               CGSize(width:CGFloat.infinity,height:100),CGSize(width:100,height:CGFloat.nan)] {
+   precondition(PhotoReviewLayout.previewHeight(imageSize:size,availableWidth:288,viewportHeight:568)==200,"Invalid image dimensions cannot create a nonfinite layout")
+   n+=1
+  }
+  precondition(PhotoReviewLayout.previewHeight(imageSize:nil,availableWidth:288,viewportHeight:100)==100,"Placeholder respects a short viewport")
+  precondition(PhotoReviewLayout.previewHeight(imageSize:CGSize(width:4000,height:3000),availableWidth:0,viewportHeight:568)==200,"Unmeasured width uses a safe placeholder")
+  precondition(PhotoReviewLayout.previewHeight(imageSize:CGSize(width:4000,height:3000),availableWidth:288,viewportHeight:0)==0,"Preview never exceeds an empty viewport")
+  n+=3
   print("PASS \\(n) actual photo layout policy assertions; source geometry unchanged")
  }
 }'''.replace('LAYOUT',layout)
@@ -68,5 +88,5 @@ def run(label,args):
 run('layout-compile',['xcrun','swiftc','-parse-as-library',lf,'-o',OUT/'layout']);run('layout-runtime',[OUT/'layout'])
 run('progress-compile',['xcrun','swiftc','-swift-version','5','-parse-as-library',paths['queue'],paths['test'],'-o',OUT/'progress']);run('progress-runtime',[OUT/'progress'])
 assert all(q.read_text()==sources[k]for k,q in paths.items()),'Source changed during proof'
-receipt={'passed':True,'sourceHashes':{str(q.relative_to(ROOT)):hashlib.sha256(q.read_bytes()).hexdigest()for q in paths.values()},'reviewActionBodiesUnchangedFrom':'1955b70','sourceNegativeControls':controls,'layoutRuntimeAssertions':18,'commands':commands,'liveCalls':0,'uiExecution':False,'physicalPhoneAcceptance':'Parent checks the integrated build; no simulator UI was used.'}
+receipt={'passed':True,'sourceHashes':{str(q.relative_to(ROOT)):hashlib.sha256(q.read_bytes()).hexdigest()for q in paths.values()},'reviewActionBodiesUnchangedFrom':'1955b70','sourceNegativeControls':controls,'layoutRuntimeAssertions':86,'commands':commands,'liveCalls':0,'uiExecution':False,'physicalPhoneAcceptance':'Parent checks the integrated build; no simulator UI was used.'}
 (OUT/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n');print(json.dumps(receipt))

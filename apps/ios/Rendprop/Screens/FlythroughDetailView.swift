@@ -6927,8 +6927,16 @@ private struct PhotoPublicationBadge: View {
 /// Keeps the photo large and footer readable across compact phones and larger text.
 /// No source/export geometry is changed by this display-only calculation.
 private enum PhotoReviewLayout {
-    static func previewHeight(viewportHeight: CGFloat) -> CGFloat {
-        max(200, min(560, viewportHeight * 0.52))
+    static func previewHeight(imageSize: CGSize?, availableWidth: CGFloat, viewportHeight: CGFloat) -> CGFloat {
+        let heightLimit = viewportHeight.isFinite ? max(0, min(560, viewportHeight)) : 560
+        guard let imageSize, imageSize.width.isFinite, imageSize.height.isFinite,
+              imageSize.width > 0, imageSize.height > 0,
+              availableWidth.isFinite, availableWidth > 0 else {
+            return min(200, heightLimit)
+        }
+        // Decoding already applies source orientation. Use the displayed image's
+        // proportions rather than reserving an empty portrait-shaped container.
+        return min(heightLimit, availableWidth * (imageSize.height / imageSize.width))
     }
     static func stacksActions(width: CGFloat, accessibilityType: Bool) -> Bool {
         accessibilityType || width < 360
@@ -6998,7 +7006,10 @@ struct PhotoCompareView: View {
                         } else { ProgressView().tint(Theme.accent) }
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(height: PhotoReviewLayout.previewHeight(viewportHeight: geometry.size.height))
+                    .frame(height: PhotoReviewLayout.previewHeight(
+                        imageSize: (showOriginal ? original : enhanced)?.size,
+                        availableWidth: max(0, min(760, geometry.size.width) - 32),
+                        viewportHeight: geometry.size.height))
                     .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .accessibilityIdentifier("photoVersion.preview")
                     HStack(alignment: .top) {

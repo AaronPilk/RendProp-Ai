@@ -573,7 +573,10 @@ final class BetaPolishUITests: XCTestCase {
             XCTAssertTrue(save.isHittable && save.frame.maxY <= app.frame.maxY, "Save stays inside the bottom safe area")
             XCTAssertTrue(app.scrollViews["photoVersion.savedChoices"].exists)
             XCTAssertTrue(app.buttons["photoVersion.fullSize"].exists)
-            if preview.exists { XCTAssertGreaterThanOrEqual(preview.frame.height, 200) }
+            if preview.exists {
+                XCTAssertGreaterThan(preview.frame.height, 0)
+                XCTAssertLessThanOrEqual(preview.frame.height, min(560, app.frame.height))
+            }
             app.scrollViews.firstMatch.swipeUp()
             XCTAssertTrue(save.isHittable, "Scrolling review content cannot hide Save")
             attach("photo-review-fixed-actions-\(appearance)-large-text")
