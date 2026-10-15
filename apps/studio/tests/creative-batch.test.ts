@@ -98,6 +98,38 @@ test("quota or authorization failure stops all remaining paid dispatches", async
   }
 });
 
+test("pending or held quality review stops the batch without a second photo or automatic retry", async () => {
+  for (const code of ["photo_quality_pending", "photo_quality_hold"]) {
+    const f = fixture(); let calls = 0;
+    f.deps.generate = async () => { calls++; throw new StudioError(code, "Saved privately while checking.", 409); };
+    const batch = new PhotoBatch(photos(), listingId, choice, f.deps);
+    await batch.run(); await batch.run();
+    assert.equal(calls, 1);
+    assert.equal(batch.stopRequested, true);
+    assert.deepEqual(batch.entries.map(entry => entry.state), ["failed", "stopped", "stopped"]);
+    assert.equal(f.events.filter(event => event.startsWith("prepare:")).length, 1);
+    assert.equal(f.events.filter(event => event.startsWith("upload:original:")).length, 1);
+    assert.match(batch.entries[0]!.error!, /saved edit is retained/);
+    assert.doesNotMatch(batch.entries[0]!.error!, /No AI edit was started/);
+  }
+});
+
+test("a retained pending or held operation stops recovery before any source upload or new generation", async () => {
+  for (const code of ["photo_quality_pending", "photo_quality_hold"]) {
+    const f = fixture(); let recoveries = 0;
+    const batch = new PhotoBatch(photos(), listingId, choice, { ...f.deps,
+      recover: async () => { recoveries++; throw new StudioError(code, "Review remains unresolved.", 409); },
+    });
+    await batch.run(); await batch.run();
+    assert.equal(recoveries, 1);
+    assert.deepEqual(f.events, []);
+    assert.deepEqual(f.keys, []);
+    assert.deepEqual(batch.entries.map(entry => entry.state), ["failed", "stopped", "stopped"]);
+    assert.match(batch.entries[0]!.error!, /saved edit is retained/);
+    assert.doesNotMatch(batch.entries[0]!.error!, /No AI edit was started/);
+  }
+});
+
 test("a typed server clarification stops a custom batch without repeating source uploads", async () => {
   for (const [code, status] of [["photo_clarification_required", 409], ["unsupported_edit", 400]] as const) {
     const f = fixture(); let calls = 0;
