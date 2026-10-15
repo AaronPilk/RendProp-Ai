@@ -229,6 +229,11 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       if (action.job_id!==state.jobID) throw Error('job_identity_conflict');
       if (isTerminal(action)) {await this.stop();return;}
       if (action.action==='wait') {
+        // SQL owns the admitted supplier receipt and its polling lease. An
+        // acknowledged idle tick must not reserve a scarce CPU slot while a
+        // supplier renders. Cron will rediscover the same durable job. Keep
+        // incomplete local CPU/callback evidence until it is reconciled.
+        if (!state.task&&!state.taskID&&!state.pendingCallback) {await this.stop();return;}
         if (this.ctx.container?.running) await this.ctx.container.destroy();
         await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;
       }
@@ -301,6 +306,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       if(action.check_id!==state.checkID||'job_id'in action)throw Error('photo_quality_identity_conflict');
       if(action.action==='done'){await this.stop();return;}
       if(action.action==='wait'){
+        if(!state.task&&!state.taskID&&!state.pendingCallback){await this.stop();return;}
         if(this.ctx.container?.running)await this.ctx.container.destroy();
         await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;
       }
@@ -368,6 +374,11 @@ export default {
     return json({accepted:true},202);
   },
   async scheduled(_event:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void> {
-    ctx.waitUntil(Promise.all([dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error))),dispatchPhoto(env).catch(error=>console.warn('photo_quality_dispatch_refused',dispatchDiagnostic(error)))]).then(()=>undefined));
+    // Both queues share exactly two CPU atoms. Alternate admission priority by
+    // cron minute instead of racing the queues for whichever RPC wins first.
+    const video=()=>dispatch(env).catch(error=>console.warn('property_video_dispatch_refused',dispatchDiagnostic(error)));
+    const photo=()=>dispatchPhoto(env).catch(error=>console.warn('photo_quality_dispatch_refused',dispatchDiagnostic(error)));
+    const photoFirst=Number.isFinite(_event.scheduledTime)&&Math.floor(_event.scheduledTime/60_000)%2===1;
+    ctx.waitUntil((async()=>{for(const run of photoFirst?[photo,video]:[video,photo])await run();})());
   }
 } satisfies ExportedHandler<Env>;
