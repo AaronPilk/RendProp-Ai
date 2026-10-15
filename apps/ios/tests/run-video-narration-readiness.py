@@ -61,15 +61,24 @@ parts += ['func changeVoiceMode(_ mode: VoiceMode) { voiceMode = mode\n' + mode_
 program_parts = '\n\n'.join(parts).replace('private ', '')
 program_parts = program_parts.replace('@ViewBuilder', '@ClosedViewBuilder')
 
-# Bind unchanged recording/disappearance cleanup and the exact consumer wiring.
-head = subprocess.check_output(['git', 'show', 'HEAD:' + str(source.relative_to(ROOT))], cwd=ROOT, text=True)
-head_view = head[head.index('struct ReelStudioView:'):]
+# Reviewed fragments from cc1c89e, excluding only the new permission
+# retirement. Fixed hashes work from a shallow checkout or a source-only export;
+# HEAD is never a baseline. The actual cleanup methods also execute below.
+reviewed_baseline_sha256 = {
+    'mode_switch_cleanup': 'c70168103238486881f6f8b5c66b0d5c927e808bd310e2a7d36c79ef99303c15',
+    'disappear_cleanup': '5192d39fe7306d38b83337ef7dbfb4f7d91a8b87a982ce05b389bf60f050d458',
+    'voice_off_ready_row': '2039b097f8be76e962f0a60c7806b690f7902fa00095119f059e5816034000c9',
+    'audio_snapshot': '1641727a466bcddc5b41d75a3919faa9a132172e7cd9be67a5035e2d8cd25607',
+}
+reviewed_fragments = {
+    'mode_switch_cleanup': mode_change.replace('            if mode != .myVoice { voicePermissionID = nil; requestingVoicePermission = false }\n', ''),
+    'disappear_cleanup': disappear.replace('            voicePermissionID = nil; requestingVoicePermission = false\n', ''),
+    'voice_off_ready_row': block(view, '@ViewBuilder private var voiceoverReadyRow:'),
+    'audio_snapshot': json.dumps(snapshot_lines, separators=(',', ':')),
+}
 unchanged = {
-    'mode_switch_cleanup': mode_change.replace('            if mode != .myVoice { voicePermissionID = nil; requestingVoicePermission = false }\n', '') == block(head_view, '.onChange(of: voiceMode)'),
-    'disappear_cleanup': disappear.replace('            voicePermissionID = nil; requestingVoicePermission = false\n', '') == block(head_view, '.onDisappear'),
-    'voice_off_ready_row': block(view, '@ViewBuilder private var voiceoverReadyRow:') == block(head_view, '@ViewBuilder private var voiceoverReadyRow:'),
-    'audio_snapshot': snapshot_lines == [line.strip() for line in block(head_view, 'private func generateWithSession()').splitlines()
-                                      if line.strip().startswith('let voiceover: Voiceover?') or line.strip().startswith('let captionStyle: CaptionStyle')],
+    name: hashlib.sha256(fragment.encode()).hexdigest() == reviewed_baseline_sha256[name]
+    for name, fragment in reviewed_fragments.items()
 }
 assert all(unchanged.values()), unchanged
 assert '.disabled(isTranscribing || requestingVoicePermission)' in block(view, 'private func recordButton(')
@@ -137,10 +146,10 @@ struct ClosedReply { var isTerminal = false }
 struct ClosedServerJob { var reply: ClosedReply? }
 @MainActor final class ClosedWork { var serverJob: ClosedServerJob?; var isPresented = true; var isContextCurrent = true }
 @MainActor final class ClosedConnection {
- var calls = 0; var deferred = false; var action: (() -> Void)?
+ var calls = 0; var cancellations = 0; var deferred = false; var action: (() -> Void)?
  func run(_ action: @escaping @MainActor () -> Void) { calls += 1; if deferred { self.action = action } else { action() } }
  func deliver() { let saved = action; action = nil; saved?() }
- func cancel() { action = nil }
+ func cancel() { cancellations += 1; action = nil }
 }
 @MainActor final class SnapshotSpy {
  var count = 0; var voice: Voiceover?; var captions = CaptionStyle.off
@@ -191,6 +200,7 @@ enum VideoPhotoFramingReader {
  @FixtureState var scriptOverrunsReel = false
  @FixtureState var scriptReadSeconds = 0.0
  @FixtureState var reelSeconds = 10
+ @FixtureState var catalogueLoads = 0
  let model = "closed-model"; let auth = ClosedAuth(); let work = ClosedWork(); let recorder = ClosedRecorder()
  let connection = ClosedConnection(); let snapshotSpy = SnapshotSpy()
  let musicPreviewPlayer: ClosedPlayer? = ClosedPlayer()
@@ -200,7 +210,7 @@ enum VideoPhotoFramingReader {
  static let captionsOffNote = "Captions are off — Speech Recognition is turned off in Settings."
  static let scriptCharacterCap = 1000
  func stopAndTranscribe() { recorder.isRecording = false; isTranscribing = true }
- func loadVoices() {}
+ func loadVoices() { catalogueLoads += 1 }
 '''
 tail = r'''
  var button: Button<Text> { makeButton as! Button<Text> }
@@ -208,7 +218,6 @@ tail = r'''
 }
 '''
 helper = capacity.read_text() + '\n' + block(framing.read_text(), 'enum VideoFramingReviewPolicy {')
-program = interfaces + program_parts + tail + helper + fixture.read_text()
 variants = [
     ('actual', None, None, None),
     ('missing-shared-readiness', 'narrationPreparationMessage == nil && (work.serverJob', '(work.serverJob', 'busy state blocks readiness'),
@@ -227,7 +236,8 @@ variants = [
     ('stale-permission-clears-current', 'if voicePermissionID == permissionID {', 'if true {', 'old callback cannot retire newer permission intent'),
     ('mode-reentry-revives-permission', 'if mode != .myVoice { voicePermissionID = nil; requestingVoicePermission = false }', '// lost mode permission retirement', 'leaving My voice explicitly retires permission intent'),
 ]
-receipt = {'passed': False, 'start_source_sha256': before, 'unchanged_behavior': unchanged, 'runs': [],
+receipt = {'passed': False, 'start_source_sha256': before, 'unchanged_behavior': unchanged,
+           'reviewed_baseline_sha256': reviewed_baseline_sha256, 'git_history_required': False, 'runs': [],
            'limitations': ['Actual source-derived readiness, Create button wiring, complete generate framing flow, permission callback and pre-paid generateWithSession guard/snapshot execute.',
                            'The paid generation remainder is replaced at the first selected-photo read by a counter; no upload, plan, enqueue, microphone, TTS, auth, UIKit or provider runs.',
                            'Foundation/UI-value boundaries are closed; this is not physical UI or media quality acceptance.']}

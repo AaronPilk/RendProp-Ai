@@ -138,6 +138,27 @@
         await until { modeReentry.recorder.returns == 1 }
         check(modeReentry.recorder.starts == 0, "mode reentry cannot revive abandoned permission intent")
 
+        let cleanup = NarrationFixture()
+        let videoPlayer = ClosedPlayer(), takePlayer = ClosedPlayer()
+        cleanup.player = videoPlayer; cleanup.voPlayer = takePlayer
+        cleanup.voiceover = .init(id: "retained-finished-take")
+        cleanup.voicePermissionID = UUID(); cleanup.requestingVoicePermission = true
+        cleanup.recorder.isRecording = true
+        cleanup.connection.deferred = true; cleanup.connection.run {}
+        cleanup.disappear()
+        check(!cleanup.work.isPresented && cleanup.voicePermissionID == nil && !cleanup.requestingVoicePermission, "disappearance retires presentation and permission intent")
+        check(cleanup.connection.cancellations == 1 && cleanup.connection.action == nil, "disappearance cancels only its unsent reconnect waiter")
+        check(cleanup.player == nil && videoPlayer.pauses == 1 && takePlayer.pauses == 1 && cleanup.musicPreviewPlayer?.pauses == 1, "disappearance releases video playback and pauses narration and music")
+        check(cleanup.recorder.cancels == 1 && !cleanup.recorder.isRecording && cleanup.voiceover?.id == "retained-finished-take", "disappearance cancels unfinished microphone take but retains finished audio")
+
+        let modeCleanup = NarrationFixture()
+        modeCleanup.voiceMode = .myVoice; modeCleanup.recorder.isRecording = true
+        modeCleanup.voiceover = .init(id: "finished-take", transcript: "Saved narration words")
+        modeCleanup.changeVoiceMode(.off)
+        check(modeCleanup.recorder.cancels == 1 && !modeCleanup.recorder.isRecording && modeCleanup.voiceover?.id == "finished-take", "leaving My voice preserves existing microphone cleanup and finished audio")
+        modeCleanup.changeVoiceMode(.aiVoice)
+        check(modeCleanup.catalogueLoads == 1 && modeCleanup.aiScript == "Saved narration words", "AI voice mode retains transcript seeding and catalogue loading")
+
         let copy = NarrationFixture()
         copy.scriptOverrunsReel = true; copy.scriptReadSeconds = 15
         check(copy.scriptNote.contains("Shorten the narration or add photos") && !copy.scriptNote.contains("freeze"), "overlong narration copy makes no last-frame promise")
