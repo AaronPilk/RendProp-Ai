@@ -1,8 +1,10 @@
+import retainedSource0 from "./fixtures/retained-kie-cfr24-source0.json" with {type:"json"};
+import retainedSource1 from "./fixtures/retained-kie-cfr24-source1.json" with {type:"json"};
 import roundingMetadata from "./fixtures/composed-cfr30-transition-rounding.json" with {
   type: "json",
 };
 import { HttpError } from "../_shared/http.ts";
-import { probeComposedMP4Video, probeMP4Video } from "./mp4video.ts";
+import { probeComposedMP4Video, probeMP4Video,probeRetainedProviderMP4Video } from "./mp4video.ts";
 import composedMetadata from "./fixtures/composed-x264-bframes.json" with {
   type: "json",
 };
@@ -118,6 +120,8 @@ type Options = {
   tailMoov?: boolean;
   extendedMdat?: boolean;
   ctts?: boolean;
+  compositionOffsets?: [number,number][];
+  editMediaTime?:number;
   timings?: [number, number][];
   fragment?: boolean;
   duplicateVideo?: boolean;
@@ -188,6 +192,7 @@ function fixture(o: Options = {}): Fixture {
     const track = box(
       "trak",
       box("tkhd", tkhd),
+      ...(o.editMediaTime===undefined?[]:[box("edts",box("elst",u32(0,1,seconds*1000,o.editMediaTime,65536)))]),
       box(
         "mdia",
         box("mdhd", mdhd),
@@ -202,7 +207,7 @@ function fixture(o: Options = {}): Fixture {
             box("stsz", u32(0, 1, samples)),
             box("stsc", u32(0, 1, 1, samples, 1)),
             box("stco", u32(0, 1, offset)),
-            ...(o.ctts ? [box("ctts", u32(0, 1, samples, delta * 2))] : []),
+            ...(o.compositionOffsets?[box("ctts",u32(0,o.compositionOffsets.length,...o.compositionOffsets.flat()))]:o.ctts ? [box("ctts", u32(0, 1, samples, delta * 2))] : []),
           ),
         ),
       ),
@@ -717,4 +722,33 @@ Deno.test("composed CFR30 transition duration accepts separate movie/media tick 
   const altered = composedFixture(roundingMetadata);
   mutate(altered, "mvhd", 16, 9736);
   await rejects(() => probeComposedMP4Video(URL, altered.fetch), 400);
+});
+
+Deno.test("real retained KIE CFR24 edit window is valid metadata but still exposes its actual sub1080portrait height",async()=>{
+ for(const metadata of[retainedSource0,retainedSource1]){
+  const f=composedFixture(metadata);const facts=await probeRetainedProviderMP4Video(URL,f.fetch);
+  equal(facts.width,1244);equal(facts.height,1660);equal(facts.fps,24);ok(Math.abs(facts.duration_s-5.041667)<.001);ok(facts.height<1920,"Valid metadata is not a native1080portrait quality pass");
+  await rejects(()=>probeMP4Video(URL,composedFixture(metadata).fetch),400);await rejects(()=>probeComposedMP4Video(URL,composedFixture(metadata).fetch),400);
+ }
+ for(const fps of[24,30]){const f=fixture({fps,seconds:5,width:3840,height:2160});const facts=await probeRetainedProviderMP4Video(URL,f.fetch);equal(facts.fps,fps);equal(facts.width,3840);equal(facts.height,2160);}
+});
+Deno.test("retained provider profile rejects gaps duplicates hidden tails off-grid edits and excess reorder",async()=>{
+ for(const[box,offset,value]of[
+  ["ctts",12,2560], // all frames moved: missingfirst frame/hiddenlast frame
+  ["ctts",12,2049], // fractional frame
+  ["ctts",12,4096], // morethan6frames
+  ["elst",12,1536], // shifted edit window
+  ["elst",8,6000], // hidden movie seconds
+  ["mvhd",16,6000], // beyond5.1s
+  ["stts",12,513], // non24/30sample timing
+ ]as const){const f=composedFixture(retainedSource0);mutate(f,box,offset,value);await rejects(()=>probeRetainedProviderMP4Video(URL,f.fetch),400);}
+ const reordered=fixture({fps:24,seconds:5,editMediaTime:2000,compositionOffsets:[[1,3000],[1,1000],[118,2000]]});
+ equal((await probeRetainedProviderMP4Video(URL,reordered.fetch)).fps,24);
+ const duplicate=fixture({fps:24,seconds:5,editMediaTime:2000,compositionOffsets:[[1,2000],[1,1000],[118,2000]]});
+ await rejects(()=>probeRetainedProviderMP4Video(URL,duplicate.fetch),400);
+ const gapAndHiddenTail=fixture({fps:24,seconds:5,editMediaTime:2000,compositionOffsets:[[120,3000]]});
+ await rejects(()=>probeRetainedProviderMP4Video(URL,gapAndHiddenTail.fetch),400);
+ const variable=fixture({fps:24,seconds:120060/24000,timings:[[60,1000],[60,1001]]});
+ await rejects(()=>probeRetainedProviderMP4Video(URL,variable.fetch),400);
+ for(const options of[{fps:25,seconds:5},{fps:60,seconds:5},{fps:24,seconds:6},{timings:[[60,512],[61,513]]as[number,number][]},{fps:24,seconds:5,fragment:true},{fps:24,seconds:5,duplicateVideo:true}])await rejects(()=>probeRetainedProviderMP4Video(URL,fixture(options).fetch),400);
 });

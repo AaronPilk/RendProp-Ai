@@ -3,7 +3,7 @@ import{validatePhotoInput}from'../ai-photo/input-policy.ts';
 import{driftLineageKey}from'../_shared/drift.ts';
 import{adminClient}from'../_shared/supabase.ts';
 import{handleAiVideo,type AiVideoWorkerScope}from'../ai-video/index.ts';
-import{probeMP4Video}from'../ai-video/mp4video.ts';
+import{probeRetainedProviderMP4Video}from'../ai-video/mp4video.ts';
 import{presignGet}from'../_shared/providers/common.ts';
 import{headObject,R2_BUCKET_RENDERS}from'../_shared/r2.ts';
 import{rpc,bucket,bytesFrom,base64}from'../property-video-jobs/runtime.ts';
@@ -16,12 +16,51 @@ async function fail(ctx:any,code:string,ambiguous=false){await rpc('property_vid
 export async function dispatch(ctx:any){const j=ctx.job,s=ctx.source;let entered=false;try{const{bytes}=await bytesFrom(s.source);const info=validatePhotoInput(base64(bytes),s.source.content_type);assert(Math.max(info.width,info.height)<=2048,409,'Prepare this exact photo within the video input geometry before generating.');await scope(j.id,s.lease_token,s.attempt_id);entered=true;const out=await callAI(ctx,'POST','reel-clip',{image_b64:base64(bytes),mime:s.source.content_type,listing_id:j.listing_id,source_asset_id:s.asset_id,source_provenance_id:s.photo_provenance_id,seconds:5,preset_version:1,framing:'preserve_photo',aspect:j.manifest.aspect,motion:s.motion});
  if(out.status===202&&out.value.request_id)return;const accepted=await adminClient().from('property_video_job_sources').select('receipt').eq('job_id',j.id).eq('attempt_id',s.attempt_id).maybeSingle();if(!accepted.error&&accepted.data?.receipt)return;const paid=await adminClient().from('app_video_cost_reservations').select('released_at').eq('actor_id',j.actor_id).eq('org_id',j.org_id).eq('idempotency_key',s.request_key).maybeSingle();const ambiguous=!!paid.error||!!paid.data&&!paid.data.released_at;await fail(ctx,!ambiguous&&[402,429].includes(out.status)?'capacity_before_dispatch':'provider_submit_refused',ambiguous);
  }catch(error){const accepted=await adminClient().from('property_video_job_sources').select('receipt').eq('job_id',j.id).eq('attempt_id',s.attempt_id).maybeSingle();if(!accepted.error&&accepted.data?.receipt)return;await fail(ctx,entered?'provider_acceptance_unconfirmed':'source_unavailable',entered);}}
-export async function poll(ctx:any){const j=ctx.job,s=ctx.source;try{assert(s.receipt?.status_url,503,'Saved video receipt is unavailable.');const link=new URL(s.receipt.status_url);assert(link.searchParams.has('job'),403,'Use the server-owned signed provider receipt.');const out=await callAI(ctx,'GET','status?'+link.searchParams.toString());
- if(out.status!==200||out.value.status==='processing'){await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;}
- if(out.value.status==='failed'){await fail(ctx,'provider_generation_failed');return;}
- assert(out.value.status==='completed'&&out.value.persisted===true&&typeof out.value.asset_key==='string',503,'Completed private media could not be retained.');const saved=await adminClient().from('private_ai_outputs').select('storage_key,bytes').eq('org_id',j.org_id).eq('user_id',j.actor_id).eq('listing_id',j.listing_id).eq('bucket','renders').eq('storage_key',out.value.asset_key).maybeSingle();assert(!saved.error&&saved.data,503,'The generated clip is not owned by this property.');const h=await headObject(R2_BUCKET_RENDERS,saved.data.storage_key,AbortSignal.timeout(10000));assert(h.exists&&h.bytes===saved.data.bytes&&h.etag&&h.contentType==='video/mp4',503,'The generated clip bytes could not be verified.');const clip={bucket:'renders',storage_key:saved.data.storage_key,bytes:saved.data.bytes,etag:h.etag,content_type:'video/mp4'};const signed=await presignGet(R2_BUCKET_RENDERS,clip.storage_key,300);const facts=await probeMP4Video(signed,fetch);const[w,ht]=j.manifest.aspect==='16:9'?[1920,1080]:[1080,1920];if(facts.width<w||facts.height<ht||Math.abs(facts.duration_s-5)>.1){await fail(ctx,'source_quality_below_1080');return;}
- const observed=await bytesFrom(clip,64*1024*1024);{const paid=await adminClient().from('app_video_cost_reservations').select('provider_request_id,model').eq('actor_id',j.actor_id).eq('org_id',j.org_id).eq('idempotency_key',s.request_key).maybeSingle();assert(!paid.error&&paid.data&&paid.data.provider_request_id===s.receipt.request_id,503,'Accepted video payment recovery is pending.');const prov=await rpc('property_video_job_provenance',{p_job:j.id,p_attempt:s.attempt_id,p_request:s.receipt.request_id,p_model:paid.data.model});const input=await bytesFrom(s.source);await rpc('bind_property_video_source',{p_actor:j.actor_id,p_listing:j.listing_id,p_asset:s.asset_id,p_photo_provenance:s.photo_provenance_id,p_request:s.receipt.request_id,p_generation_provenance:prov.id,p_sha256:input.sha256,p_qc_hash:await driftLineageKey(base64(input.bytes))});}await scope(j.id,s.lease_token,s.attempt_id);await rpc('property_video_job_clip',{p_job:j.id,p_attempt:s.attempt_id,p_clip:{...clip,sha256:observed.sha256,width:facts.width,height:facts.height,duration_s:facts.duration_s}});await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});
- }catch(error){await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id}).catch(()=>{});}}
+export type PropertyVideoPollPhase='receipt'|'provider_status'|'status_response'|'private_output'|'clip_head'|'clip_url'|'mp4_probe'|'clip_bytes'|'paid_receipt'|'provenance'|'source_bytes'|'source_lineage'|'fresh_scope'|'clip_commit'|'poll_release';
+/** Closed operational facts only: never a provider body, URL, token or ID. */
+export function propertyVideoPollDiagnostic(phase:PropertyVideoPollPhase,error:unknown){
+ const name=error instanceof Error?error.name:'';
+ return{event:'property_video_poll_failure',phase,error_name:['HttpError','TypeError','RangeError','SyntaxError','TimeoutError','AbortError','Error'].includes(name)?name:'Other',http_status:error instanceof HttpError&&Number.isInteger(error.status)&&error.status>=400&&error.status<=599?error.status:null};
+}
+export async function poll(ctx:any){
+ const j=ctx.job,s=ctx.source;let phase:PropertyVideoPollPhase='receipt';
+ try{
+  assert(s.receipt?.status_url,503,'Saved video receipt is unavailable.');
+  const link=new URL(s.receipt.status_url);assert(link.searchParams.has('job'),403,'Use the server-owned signed provider receipt.');
+  phase='provider_status';const out=await callAI(ctx,'GET','status?'+link.searchParams.toString());
+  if(out.status!==200||out.value.status==='processing'){
+   if(out.status!==200)console.warn(JSON.stringify(propertyVideoPollDiagnostic('status_response',new HttpError(out.status,'Provider status is unavailable.'))));
+   await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;
+  }
+  if(out.value.status==='failed'){await fail(ctx,'provider_generation_failed');return;}
+  phase='status_response';assert(out.value.status==='completed'&&out.value.persisted===true&&typeof out.value.asset_key==='string',503,'Completed private media could not be retained.');
+  phase='private_output';const saved=await adminClient().from('private_ai_outputs').select('storage_key,bytes').eq('org_id',j.org_id).eq('user_id',j.actor_id).eq('listing_id',j.listing_id).eq('bucket','renders').eq('storage_key',out.value.asset_key).maybeSingle();
+  assert(!saved.error&&saved.data,503,'The generated clip is not owned by this property.');
+  phase='clip_head';const h=await headObject(R2_BUCKET_RENDERS,saved.data.storage_key,AbortSignal.timeout(10000));
+  assert(h.exists&&h.bytes===saved.data.bytes&&h.etag&&h.contentType==='video/mp4',503,'The generated clip bytes could not be verified.');
+  const clip={bucket:'renders',storage_key:saved.data.storage_key,bytes:saved.data.bytes,etag:h.etag,content_type:'video/mp4'};
+  phase='paid_receipt';const paid=await adminClient().from('app_video_cost_reservations').select('provider_request_id,model').eq('actor_id',j.actor_id).eq('org_id',j.org_id).eq('idempotency_key',s.request_key).maybeSingle();
+  assert(!paid.error&&paid.data&&paid.data.provider_request_id===s.receipt.request_id,503,'Accepted video payment recovery is pending.');
+  phase='clip_url';const signed=await presignGet(R2_BUCKET_RENDERS,clip.storage_key,300);
+  phase='mp4_probe';const facts=await probeRetainedProviderMP4Video(signed,fetch);
+  const[w,ht]=j.manifest.aspect==='16:9'?[1920,1080]:[1080,1920];
+  if(facts.width<w||facts.height<ht||Math.abs(facts.duration_s-5)>.1){await fail(ctx,'source_quality_below_1080');return;}
+  phase='clip_bytes';const observed=await bytesFrom(clip,64*1024*1024);
+  phase='provenance';const prov=await rpc('property_video_job_provenance',{p_job:j.id,p_attempt:s.attempt_id,p_request:s.receipt.request_id,p_model:paid.data.model});
+  phase='source_bytes';const input=await bytesFrom(s.source);
+  phase='source_lineage';await rpc('bind_property_video_source',{p_actor:j.actor_id,p_listing:j.listing_id,p_asset:s.asset_id,p_photo_provenance:s.photo_provenance_id,p_request:s.receipt.request_id,p_generation_provenance:prov.id,p_sha256:input.sha256,p_qc_hash:await driftLineageKey(base64(input.bytes))});
+  phase='fresh_scope';await scope(j.id,s.lease_token,s.attempt_id);
+  phase='clip_commit';await rpc('property_video_job_clip',{p_job:j.id,p_attempt:s.attempt_id,p_clip:{...clip,sha256:observed.sha256,width:facts.width,height:facts.height,duration_s:facts.duration_s}});
+  phase='poll_release';await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});
+ }catch(error){
+  console.warn(JSON.stringify(propertyVideoPollDiagnostic(phase,error)));
+  // A400 is deterministic unsupported/malformed owned MP4 metadata. Do not
+  // relabel it as an hour of provider processing or buy another generation.
+  // Timeouts/changed ranges409 and transport failures keep the accepted receipt.
+  if(phase==='mp4_probe'&&error instanceof HttpError&&error.status===400){await fail(ctx,'source_video_unverifiable');return;}
+  await rpc('property_video_job_poll_release',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id}).catch(()=>{});
+ }
+}
 export async function quality(ctx:any,raw:any){const j=ctx.job,s=ctx.source;assert(raw.clip_sha256===s.clip?.sha256&&Array.isArray(raw.frames)&&raw.frames.length===3,409,'Use the retained generated clip and all three review frames.');const{bytes}=await bytesFrom(s.source);const frames=raw.frames.map((frame:any,i:number)=>{assert(frame&&typeof frame.image_b64==='string'&&frame.image_b64.length<=524288&&frame.mime==='image/jpeg',400,'Use bounded actual JPEG review frames.');return{at:['first','middle','last'][i],b64:frame.image_b64,mime:frame.mime};});const out=await callAI(ctx,'POST','drift',{request_id:s.receipt.request_id,kind:'reel',source_b64:base64(bytes),source_mime:s.source.content_type,frames,seconds:5,motion:s.motion,listing_id:j.listing_id,asset_id:s.asset_id,provenance_id:s.generation_provenance_id,attempt:(s.quality_retries??0)>0?1:0});
  if(out.status===200&&out.value.drift?.action==='accept'&&out.value.drift.publishable===true){await rpc('property_video_job_qc',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;}
  // The drift gate's single paid retry grant is not a pass or a still fallback.

@@ -461,6 +461,7 @@ function sampleTimes(
   scale: number,
   mediaTicks: number,
   composedStart?: number,
+  retainedProvider = false,
 ): { count: number; fps: number } {
   const b = one(samples, "stts"), entries = table(v, b, 8);
   let count = 0, ticks = 0, fps = 0;
@@ -475,15 +476,16 @@ function sampleTimes(
     need(Number.isSafeInteger(ticks) && count <= 720_000);
   }
   need(ticks === mediaTicks && fps > 0 && fps <= 240);
-  // Only our server-rendered CFR30 master may use the wider normal x264
-  // reordering window. Its presentation timestamps must be an exact permutation
-  // of every frame in the edit window: no gaps, duplicates or hidden seconds.
-  // Uploaded paid-provider admission keeps its existing conservative contract.
+  // Private composed CFR30 masters and retained paid-provider CFR24/30 clips
+  // use exact presentation-window admission. Timestamps must be a permutation
+  // of every frame: no gaps, duplicates or hidden seconds. Uploaded paid-input
+  // admission keeps its separate conservative0.15s contract.
   const composed = composedStart !== undefined;
   const frameTicks = v.getUint32(b.start + 12);
   if (composed) {
     need(
-      count <= 15000 && fps === 30 && composedStart >= 0 &&
+      count <= (retainedProvider ? Math.floor(5.1 * fps) : 15000) &&
+        (retainedProvider ? [24,30].includes(fps) : fps === 30) && composedStart >= 0 &&
         composedStart % frameTicks === 0,
     );
     for (let i = 0; i < entries; i++) {
@@ -584,7 +586,7 @@ function sampleExtents(
     need(spans[i].start >= spans[i - 1].end);
   }
 }
-function movie(bytes: Uint8Array, mdats: Span[], composed: boolean): MP4Video {
+function movie(bytes: Uint8Array, mdats: Span[], composed: boolean, retainedProvider = false): MP4Video {
   const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
     root = header(v, 0);
   need(root.type === "moov" && root.size === bytes.length);
@@ -593,6 +595,7 @@ function movie(bytes: Uint8Array, mdats: Span[], composed: boolean): MP4Video {
   const timeline = clock(v, one(boxes, "mvhd")),
     tracks = boxes.filter((b) => b.type === "trak");
   need(tracks.length > 0 && tracks.length <= 8);
+  if(retainedProvider)need(timeline.ticks*10<=timeline.scale*51);
   let result: MP4Video | null = null;
   for (const track of tracks) {
     const trackBoxes = children(v, track.start, track.end);
@@ -616,7 +619,7 @@ function movie(bytes: Uint8Array, mdats: Span[], composed: boolean): MP4Video {
       need(!samples.some((b) => ["sgpd", "sbgp"].includes(b.type)));
     }
     let composedStart: number | undefined;
-    if (composed && type === "vide") {
+    if ((composed || retainedProvider) && type === "vide") {
       const tkhd = trackHeader(v, one(trackBoxes, "tkhd"), timeline.scale);
       // Movie/edit clocks round to their own ticks (normally milliseconds),
       // while CFR video uses a finer clock. Allow one tick from each clock;
@@ -641,6 +644,7 @@ function movie(bytes: Uint8Array, mdats: Span[], composed: boolean): MP4Video {
       mediaClock.scale,
       mediaClock.ticks,
       composedStart,
+      retainedProvider && type === "vide",
     );
     sampleExtents(v, samples, times.count, mdats);
     // Data references must name this file, never an external video URL.
@@ -663,6 +667,7 @@ function movie(bytes: Uint8Array, mdats: Span[], composed: boolean): MP4Video {
         Math.abs(tkhd.seconds - timeline.seconds) <= 0.15,
     );
     editList(v, trackBoxes, timeline.scale, tkhd.seconds, mediaClock.ticks);
+    if(retainedProvider)need(info.fps===null||info.fps===times.fps);
     result = {
       duration_s: timeline.seconds,
       billable_s: Math.max(timeline.seconds, mediaClock.seconds, tkhd.seconds),
@@ -691,10 +696,19 @@ export function probeComposedMP4Video(
   return probe(url, fetcher, true);
 }
 
+/** Only after a generated clip has its exact paid receipt, owned private output
+ * and immutable HEAD verified. A5s CFR24/30 edit window must contain every
+ * presentation frame exactly once, with at most six frames of reordering.
+ * This does not authorize output quality, enlargement or paid uploaded inputs. */
+export function probeRetainedProviderMP4Video(url:string,fetcher:Fetch):Promise<MP4Video>{
+ return probe(url,fetcher,false,true);
+}
+
 async function probe(
   url: string,
   fetcher: Fetch,
   composed: boolean,
+  retainedProvider = false,
 ): Promise<MP4Video> {
   try {
     const parsed = new URL(url);
@@ -821,7 +835,7 @@ async function probe(
       offset += h.size;
     }
     need(offset === total && moov !== null && mdats.length > 0);
-    return movie(moov, mdats, composed);
+    return movie(moov, mdats, composed, retainedProvider);
   } catch (error) {
     if (error instanceof HttpError) throw error;
     unavailable();
