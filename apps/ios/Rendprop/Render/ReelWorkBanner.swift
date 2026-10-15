@@ -6,19 +6,20 @@ enum ReelWorkBannerCopy {
                       completed: Int, total: Int) -> String {
         if paused { return "Video paused" }
         if ready { return "Your video is ready" }
-        guard running else { return "Video needs review" }
+        guard running else { return "Video needs attention" }
         let count = "\(min(max(0, completed), max(0, total))) of \(max(0, total)) photos ready"
         return stitching ? "Finishing video · \(count)" : "Making video · \(count)"
     }
 
-    static func explanation(paused: Bool, running: Bool) -> String {
+    static func explanation(paused: Bool, running: Bool, ready: Bool = false) -> String {
         if paused {
             return "iOS paused local processing. Your saved requests and clips are kept. Reopen the video to resume."
         }
         if running {
             return "You can use other screens. Locking or leaving the app may pause local processing; saved requests remain recoverable."
         }
-        return "Open the video to watch it or review the saved progress."
+        if ready { return "Open the video to watch it." }
+        return "Your saved work is kept. Open this video to see what happened and continue."
     }
 }
 
@@ -141,7 +142,7 @@ private struct ReelWorkStatusRow: View {
                 Text(job.statusText).font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Text(job.isServerRendering ? "Rendering continues on our servers. You can leave the app; open this listing to check status or review the finished video." : ReelWorkBannerCopy.explanation(paused: job.paused, running: job.running))
+            Text(job.isServerRendering ? "Rendering continues on our servers. You can leave the app; open this listing to check status or review the finished video." : ReelWorkBannerCopy.explanation(paused: job.paused, running: job.running, ready: job.phase == .done))
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
             if (job.running || job.isServerRendering) || job.paused {

@@ -47,6 +47,9 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
   check(ReelWorkBannerCopy.title(running:false,paused:true,ready:false,stitching:false,completed:3,total:8)=="Video paused","expired OS execution is not advertised as completed")
   check(ReelWorkBannerCopy.explanation(paused:true,running:false).contains("iOS paused local processing") && ReelWorkBannerCopy.explanation(paused:true,running:false).contains("saved requests"),"paused copy explains retained recoverable work")
   check(ReelWorkBannerCopy.explanation(paused:false,running:true).contains("may pause local processing"),"running copy does not promise killed-process completion")
+  check(ReelWorkBannerCopy.title(running:false,paused:false,ready:false,stitching:false,completed:2,total:2)=="Video needs attention","interrupted server work is not a finished review")
+  check(!ReelWorkBannerCopy.explanation(paused:false,running:false,ready:false).contains("watch"),"failed work cannot advertise a playable result")
+  check(ReelWorkBannerCopy.explanation(paused:false,running:false,ready:true).contains("watch"),"only ready video offers playback")
   let owner=PushAccountIdentity(owner:UUID(),revision:1), other=PushAccountIdentity(owner:UUID(),revision:1)
   let push=PushManager(),center=UNUserNotificationCenter.current(),app=UIApplication.shared
   func reset(){center.reset();PushManager.currentIdentity=owner;app.applicationState = .background;push.pendingReelJobID=nil;push.pendingRoute=nil}
