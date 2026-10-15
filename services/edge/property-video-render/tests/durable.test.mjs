@@ -98,13 +98,13 @@ try {
         assert.deepEqual(await scheduled(config,noFetch),[['property_video_dispatch_refused',{category:'bridge_configuration'}]]);
       }
       assert.equal(calls,0,'bad bridge config performs no request');
-      for(const status of [401,403,500]){
+      for(const status of [302,307,401,403,500]){
         assert.deepEqual(await scheduled(env,async(_url,init)=>{
-          calls++;assert.equal(init.method,'GET');assert.equal(init.headers.apikey,env.EDGE_SERVICE_ROLE_KEY);assert.equal(init.headers.Authorization,'Bearer '+env.EDGE_SERVICE_ROLE_KEY);
+          calls++;assert.equal(init.method,'GET');assert.equal(init.redirect,'manual');assert.equal(init.headers.apikey,env.EDGE_SERVICE_ROLE_KEY);assert.equal(init.headers.Authorization,'Bearer '+env.EDGE_SERVICE_ROLE_KEY);
           return new Response('PRIVATE-RESPONSE-TOKEN',{status});
         }),[['property_video_dispatch_refused',{category:'bridge_http',status}]]);
       }
-      assert.equal(calls,3,'one request per scheduled refusal, no retry');
+      assert.equal(calls,5,'one request per scheduled refusal, no retry');
       assert.deepEqual(await scheduled(env,noFetch),[['property_video_dispatch_refused',{category:'bridge_transport',error_name:'Other',reason:'other'}]]);
       for(const [error,expected] of [
         [new TypeError('Redirect PRIVATE-URL-TOKEN'),{error_name:'TypeError',reason:'redirect'}],

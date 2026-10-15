@@ -41,7 +41,9 @@ async function bridge(env:Env,path:string,body?:unknown):Promise<Record<string,u
   if (base.protocol!=='https:'||!base.hostname.endsWith('.supabase.co')||!env.EDGE_SERVICE_ROLE_KEY) throw new BridgeFailure('bridge_configuration');
   let response:Response;try {response=await fetch(`${base.toString().replace(/\/$/,'')}/${path}`,{
     method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${env.EDGE_SERVICE_ROLE_KEY}`,apikey:env.EDGE_SERVICE_ROLE_KEY,'Content-Type':'application/json'},
-    body:body===undefined?undefined:JSON.stringify(body),redirect:'error',signal:AbortSignal.timeout(50_000)});}catch(error) {throw transportFailure(error);}
+    // workerd rejects redirect:'error' before issuing this subrequest. Manual
+    // mode never follows/forwards credentials; non-2xx stays a closed refusal.
+    body:body===undefined?undefined:JSON.stringify(body),redirect:'manual',signal:AbortSignal.timeout(50_000)});}catch(error) {throw transportFailure(error);}
   if (!response.ok) throw new AuthorityRefusal(response.status);
   try {return await response.json() as Record<string,unknown>;}catch {throw new BridgeFailure('bridge_response');}
 }
