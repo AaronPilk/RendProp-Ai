@@ -144,9 +144,9 @@ class FoundationTests(unittest.TestCase):
         # photographer/client, photo selection, distinct personal-card/logo methods
         # and the account-owned JSON inventory export.
         # Inventory coverage does not establish browser, phone or live parity.
-        self.assertEqual(result["apiMethods"], 77)
-        self.assertEqual(result["apiDeclarations"], 79)
-        self.assertEqual(result["capabilityGroups"], 25)
+        self.assertEqual(result["apiMethods"], 78)
+        self.assertEqual(result["apiDeclarations"], 80)
+        self.assertEqual(result["capabilityGroups"], 26)
         self.assertEqual(result["outsideProtocol"], 24)
         self.assertEqual(result["browserVerified"], 0)
 
@@ -197,6 +197,19 @@ class FoundationTests(unittest.TestCase):
             next(item for item in incomplete["api"] if item["id"] == row["id"])["methods"].remove(method)
             with self.subTest(method=method), self.assertRaises(ContractError):
                 validate_capabilities(incomplete, SWIFT)
+
+    def test_standalone_video_recovery_mapping_and_missing_failure(self):
+        row = next(row for row in self.cap["api"] if row["id"] == "standalone-video-recovery")
+        self.assertEqual(row["methods"], ["aiVideoOperation"])
+        self.assertEqual(row["status"], "native-handoff")
+        for contract in ["authenticated GET /ai-video/operation", "operation_id", "listing_id",
+                         "actor", "X-Org-Id", "UUID case", "retained paid provider receipt",
+                         "pending", "no new generation POST", "aiVideoStatus", "parity are not verified"]:
+            self.assertIn(contract, row["web"])
+        incomplete = copy.deepcopy(self.cap)
+        incomplete["api"].remove(next(item for item in incomplete["api"] if item["id"] == row["id"]))
+        with self.assertRaisesRegex(ContractError, r"API mismatch: missing=\['aiVideoOperation'\] extra=\[\]"):
+            validate_capabilities(incomplete, SWIFT)
 
     def test_contrast_reference_values(self):
         self.assertAlmostEqual(contrast("#000000", "#FFFFFF"), 21)
@@ -280,7 +293,7 @@ def main():
         # Prove the rejection tests detect an implementation that stops validating.
         globals()["validate_capabilities"] = lambda *_args, **_kwargs: inventory
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(FoundationTests))
-    require(result.testsRun == 18 and not result.skipped, "missing/skipped tests")
+    require(result.testsRun == 19 and not result.skipped, "missing/skipped tests")
     require(result.wasSuccessful(), "foundation tests failed")
     print(json.dumps({"inventory": inventory, "contrast": ratios, "tests": result.testsRun,
                       "skips": len(result.skipped), "browserTests": 0, "liveTests": 0}, indent=2))

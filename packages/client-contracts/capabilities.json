@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "baseline": "27f5412162c5ad97ee5146543c19ffef1a408b56",
+  "baseline": "24b51577fccd3ddcd8d4d167b15226319b399b96",
   "claim": "inventory-only; no browser parity is verified",
   "api": [
     {"id":"listings","methods":["listings","createListing","updateListing","deleteListing"],"web":"Bulk listing workspace; same routes, no production deletion tests","status":"planned"},
@@ -21,6 +21,7 @@
     {"id":"provenance","methods":["provenance","complianceCSV","attachProvenanceMedia"],"web":"Evidence panel and export; immutable originals and server verified disclosure","status":"planned"},
     {"id":"copy","methods":["aiCopyScript","aiCopyShotlist"],"web":"Script and shotlist from existing planner; no duplicated agentreel implementation","status":"planned"},
     {"id":"video","methods":["aiVideoDrone","aiVideoAerial","aiVideoReelClip","aiVideoStatus","aiVideoDrift"],"web":"Per-clip generation and jobs from approved existing routes","status":"planned"},
+    {"id":"standalone-video-recovery","methods":["aiVideoOperation"],"web":"Native standalone photo animation uses authenticated GET /ai-video/operation with the exact saved operation_id and listing_id. Recovery remains scoped to the current actor and selected library through X-Org-Id; operation UUID case is preserved. Accepted requires the exact retained paid provider receipt, while pending keeps the saved operation with no new generation POST. Known receipts continue through aiVideoStatus. Studio/browser recovery and live parity are not verified by this inventory","status":"native-handoff"},
     {"id":"video-reflection-removal","methods":["reflectionQuote","removeReflections","cancelReflectionBatch","applyReflectionBatch"],"web":"Planned opt-in interval editor using the shared quote, durable clip jobs, whole-batch cancellation and full-video disclosure receipt; retain originals and require explicit comparison and acceptance; browser editing and cross-device recovery are not verified","status":"planned"},
     {"id":"audio","methods":["aiVoices","aiVoiceTTS"],"web":"Same licensed voice list and metered voiceover route","status":"planned"},
     {"id":"assistance","methods":["aiChapters","coach"],"web":"Chapter suggestions and coach with exact wire keys","status":"planned"},
