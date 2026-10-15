@@ -7147,7 +7147,7 @@ private struct PhotoPublicationBadge: View {
 /// No source/export geometry is changed by this display-only calculation.
 private enum PhotoReviewLayout {
     static func previewHeight(imageSize: CGSize?, availableWidth: CGFloat, viewportHeight: CGFloat) -> CGFloat {
-        let heightLimit = viewportHeight.isFinite ? max(0, min(560, viewportHeight)) : 560
+        let heightLimit = viewportHeight.isFinite ? max(0, min(420, viewportHeight * 0.50)) : 420
         guard let imageSize, imageSize.width.isFinite, imageSize.height.isFinite,
               imageSize.width > 0, imageSize.height > 0,
               availableWidth.isFinite, availableWidth > 0 else {
@@ -7158,7 +7158,7 @@ private enum PhotoReviewLayout {
         return min(heightLimit, availableWidth * (imageSize.height / imageSize.width))
     }
     static func stacksActions(width: CGFloat, accessibilityType: Bool) -> Bool {
-        accessibilityType || width < 360
+        accessibilityType || width < 320
     }
 }
 
@@ -7310,6 +7310,8 @@ struct PhotoCompareView: View {
                     reviewHeader
                     familyNavigation
                     savedVersionStrip
+                    reviewTools(stacked: PhotoReviewLayout.stacksActions(width: geometry.size.width,
+                        accessibilityType: dynamicTypeSize.isAccessibilitySize))
                     ZStack {
                         if let image = showOriginal ? original : enhanced {
                             Image(uiImage: image).resizable().scaledToFit()
@@ -7333,28 +7335,14 @@ struct PhotoCompareView: View {
                     })
                     .accessibilityAction(named: Text("Previous photo")) { movePhotoFamily(-1) }
                     .accessibilityAction(named: Text("Next photo")) { movePhotoFamily(1) }
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(showOriginal ? sourceTitle : viewed.savedVersion?.visibleLabel ?? choiceTitle(viewed))
-                                .font(.headline).foregroundStyle(Theme.ink)
-                            if selectedForListing, !showOriginal {
-                                Label("Selected for listing", systemImage: "checkmark.circle.fill")
-                                    .font(.caption).foregroundStyle(Theme.good)
-                            }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(showOriginal ? sourceTitle : viewed.savedVersion?.visibleLabel ?? choiceTitle(viewed))
+                            .font(.headline).foregroundStyle(Theme.ink)
+                        if selectedForListing, !showOriginal {
+                            Label("Selected for listing", systemImage: "checkmark.circle.fill")
+                                .font(.caption).foregroundStyle(Theme.good)
                         }
-                        Spacer(minLength: 8)
-                        Button {
-                            guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
-                            showFullComparison = true
-                        } label: {
-                            Label("Compare", systemImage: "square.split.2x1")
-                                .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
-                        }
-                        .disabled(enhanced == nil || imageContext?.isCurrent != true)
-                        .accessibilityIdentifier("photoVersion.fullSize")
-                        .accessibilityHint("Inspect this version beside its retained source at full size.")
                     }
-                    singlePhotoEditing
                     reviewDetails
                 }
                 .padding(16)
@@ -7469,9 +7457,15 @@ struct PhotoCompareView: View {
     @ViewBuilder private var familyNavigation: some View {
         if let position = familyPosition, !familyPhotos.isEmpty {
             HStack(spacing: 12) {
-                SecondaryButton(title: "Previous", systemImage: "chevron.left",
-                                isDisabled: !canNavigateFamilies || position == 0) { movePhotoFamily(-1) }
-                .frame(minHeight: 44)
+                Button { Haptics.selection(); movePhotoFamily(-1) } label: {
+                    Image(systemName: "chevron.left").font(.subheadline.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(Theme.accentSoft, in: Circle())
+                        .foregroundStyle(!canNavigateFamilies || position == 0 ? Theme.disabledInk : Theme.accent)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canNavigateFamilies || position == 0)
                 .accessibilityLabel("Previous photo")
                 .accessibilityIdentifier("photoVersion.previousPhoto")
                 Spacer(minLength: 0)
@@ -7480,9 +7474,15 @@ struct PhotoCompareView: View {
                     .accessibilityLabel("Photo \(position + 1) of \(familyPhotos.count)")
                     .accessibilityIdentifier("photoVersion.position")
                 Spacer(minLength: 0)
-                SecondaryButton(title: "Next", systemImage: "chevron.right",
-                                isDisabled: !canNavigateFamilies || position + 1 >= familyPhotos.count) { movePhotoFamily(1) }
-                .frame(minHeight: 44)
+                Button { Haptics.selection(); movePhotoFamily(1) } label: {
+                    Image(systemName: "chevron.right").font(.subheadline.weight(.semibold))
+                        .frame(width: 32, height: 32)
+                        .background(Theme.accentSoft, in: Circle())
+                        .foregroundStyle(!canNavigateFamilies || position + 1 >= familyPhotos.count ? Theme.disabledInk : Theme.accent)
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canNavigateFamilies || position + 1 >= familyPhotos.count)
                 .accessibilityLabel("Next photo")
                 .accessibilityIdentifier("photoVersion.nextPhoto")
             }
@@ -7520,16 +7520,38 @@ struct PhotoCompareView: View {
                     }
                 }
                 .accessibilityIdentifier("photoVersion.edit.progress")
-                SecondaryButton(title: "Stop photo edit", systemImage: "stop.circle") { photoJobs.cancel() }
+                SecondaryButton(title: "Stop photo edit", systemImage: "stop.circle", isCompact: true) { photoJobs.cancel() }
             } else {
                 SecondaryButton(title: "Edit original photo", systemImage: "wand.and.stars",
                     isDisabled: imageContext?.isCurrent != true || selectionWorkID != nil
                         || photoJobs.visibleJob?.running == true || editConnection.isWaiting || reviewListing == nil,
+                    isCompact: true,
                     action: openSinglePhotoEdit)
                     .accessibilityIdentifier("photoVersion.editOriginal")
                     .accessibilityHint("Declutter, stage or edit only this photo’s retained Original. Saved versions stay unchanged.")
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func reviewTools(stacked: Bool) -> some View {
+        Group {
+            if stacked {
+                VStack(spacing: 8) { singlePhotoEditing; comparisonButton }
+            } else {
+                HStack(alignment: .top, spacing: 10) { singlePhotoEditing; comparisonButton.fixedSize(horizontal: true, vertical: false) }
+            }
+        }
+    }
+
+    private var comparisonButton: some View {
+        SecondaryButton(title: "Compare", systemImage: "square.split.2x1",
+            isDisabled: enhanced == nil || imageContext?.isCurrent != true, isCompact: true) {
+                guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+                showFullComparison = true
+            }
+            .disabled(enhanced == nil || imageContext?.isCurrent != true)
+            .accessibilityIdentifier("photoVersion.fullSize")
+            .accessibilityHint("Inspect this version beside its retained source at full size.")
     }
 
     private func openSinglePhotoEdit() {
@@ -7684,12 +7706,12 @@ struct PhotoCompareView: View {
     private func actionFooter(stacked: Bool) -> some View {
         Group {
             if stacked {
-                VStack(spacing: 10) { savePhotoButton; useOnListingButton }
+                VStack(spacing: 8) { savePhotoButton; useOnListingButton }
             } else {
-                HStack(spacing: 12) { savePhotoButton; useOnListingButton }
+                HStack(spacing: 10) { savePhotoButton; useOnListingButton }
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.horizontal, 16).padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .background(.regularMaterial)
         .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 0.5) }
@@ -7698,9 +7720,9 @@ struct PhotoCompareView: View {
 
     @ViewBuilder private var useOnListingButton: some View {
         if !showOriginal, viewed.savedVersion != nil {
-            PrimaryButton(title: selectionWorkID != nil ? "Removing…" : selectedForListing ? "Remove from listing" : "Use on listing",
+            PrimaryButton(title: selectionWorkID != nil ? "Removing…" : selectedForListing ? "Unselect" : "Use on listing",
                           systemImage: selectedForListing ? "minus.circle" : "checkmark.circle",
-                          isDisabled: listingSelectionDisabled, action: changeListingSelection)
+                          isDisabled: listingSelectionDisabled, isCompact: true, action: changeListingSelection)
             .frame(minHeight: 44)
             .accessibilityIdentifier("photoVersion.useOnListing")
             .accessibilityLabel(selectedForListing ? "Remove this photo from listing" : "Use this version on listing")
@@ -7813,7 +7835,7 @@ struct PhotoCompareView: View {
     }
 
     private var savePhotoButton: some View {
-        SecondaryButton(title: "Save photo", systemImage: "square.and.arrow.down", isDisabled: savePhotoDisabled) {
+        SecondaryButton(title: "Save photo", systemImage: "square.and.arrow.down", isDisabled: savePhotoDisabled, isCompact: true) {
             guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
             do {
                 if !showOriginal, needsCustomReview {
