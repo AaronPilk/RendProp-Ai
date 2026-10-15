@@ -286,6 +286,8 @@ jobs:
         run: bash apps/ios/tests/run-photo-work-queue.sh
       - name: Photo edit lifecycle and background resource cleanup
         run: bash apps/ios/tests/run-photo-edit-lifecycle.sh
+      - name: Exact saved photo requests survive lost answers and quality pauses
+        run: python3 apps/ios/tests/run-photo-pending-edit.py
       - name: Custom photo prompt delivery and native review controls
         run: python3 apps/ios/tests/run-custom-photo-prompt.py
       - name: Owner-bound Apple sign-in code and export admission
@@ -1398,6 +1400,7 @@ jobs:
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_jobs_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-pg"
           python3 services/supabase/tests/studio_photo_history_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-studio-photo-pg"
+          python3 services/supabase/tests/photo_quality_evidence_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-quality-pg"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1406,6 +1409,7 @@ jobs:
           path: |
             ${{ runner.temp }}/rendprop-property-video-pg/**
             ${{ runner.temp }}/rendprop-studio-photo-pg/**
+            ${{ runner.temp }}/rendprop-photo-quality-pg/**
           if-no-files-found: warn
 
   python-worker:
