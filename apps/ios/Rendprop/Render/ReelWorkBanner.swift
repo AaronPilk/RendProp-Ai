@@ -4,21 +4,21 @@ import SwiftUI
 enum ReelWorkBannerCopy {
     static func title(running: Bool, paused: Bool, ready: Bool, stitching: Bool,
                       completed: Int, total: Int) -> String {
-        if paused { return "Reel paused" }
-        if ready { return "Your reel is ready" }
-        guard running else { return "Reel needs review" }
+        if paused { return "Video paused" }
+        if ready { return "Your video is ready" }
+        guard running else { return "Video needs review" }
         let count = "\(min(max(0, completed), max(0, total))) of \(max(0, total)) photos ready"
-        return stitching ? "Finishing reel · \(count)" : "Making reel · \(count)"
+        return stitching ? "Finishing video · \(count)" : "Making video · \(count)"
     }
 
     static func explanation(paused: Bool, running: Bool) -> String {
         if paused {
-            return "iOS paused local processing. Your saved requests and clips are kept. Reopen the reel to resume."
+            return "iOS paused local processing. Your saved requests and clips are kept. Reopen the video to resume."
         }
         if running {
             return "You can use other screens. Locking or leaving the app may pause local processing; saved requests remain recoverable."
         }
-        return "Open the reel to watch it or review the saved progress."
+        return "Open the video to watch it or review the saved progress."
     }
 }
 
@@ -130,13 +130,13 @@ private struct ReelWorkStatusRow: View {
                     .frame(minWidth: 44, minHeight: 44).accessibilityIdentifier("reelWork.review")
                 if !(job.running || job.isServerRendering), !job.paused {
                     Button(action: dismiss) { Image(systemName: "xmark") }
-                        .frame(width: 44, height: 44).accessibilityLabel("Dismiss reel status")
+                        .frame(width: 44, height: 44).accessibilityLabel("Dismiss video status")
                         .accessibilityIdentifier("reelWork.dismiss")
                 }
             }
             if (job.running || job.isServerRendering) {
                 ProgressView(value: job.fraction).tint(Theme.accent)
-                    .accessibilityLabel("Reel photo progress")
+                    .accessibilityLabel("Video photo progress")
                     .accessibilityValue("\(job.completedClips) of \(job.totalClips) photos ready; \(job.percent) percent")
                 Text(job.statusText).font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)

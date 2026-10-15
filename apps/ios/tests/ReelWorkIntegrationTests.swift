@@ -42,9 +42,9 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
   check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[job],listings:[.init(id:wrongID)])==nil,"server alias cannot substitute another existing listing")
   job.serverJob=nil
   check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[job],listings:[listing])==nil,"cleared server job receipt cannot reopen its former result")
-  check(ReelWorkBannerCopy.title(running:true,paused:false,ready:false,stitching:false,completed:3,total:8)=="Making reel · 3 of 8 photos ready","banner counts actual selected photos")
-  check(ReelWorkBannerCopy.title(running:true,paused:false,ready:false,stitching:true,completed:8,total:8).hasPrefix("Finishing reel"),"stitching is not advertised as completed")
-  check(ReelWorkBannerCopy.title(running:false,paused:true,ready:false,stitching:false,completed:3,total:8)=="Reel paused","expired OS execution is not advertised as completed")
+  check(ReelWorkBannerCopy.title(running:true,paused:false,ready:false,stitching:false,completed:3,total:8)=="Making video · 3 of 8 photos ready","banner counts actual selected photos")
+  check(ReelWorkBannerCopy.title(running:true,paused:false,ready:false,stitching:true,completed:8,total:8).hasPrefix("Finishing video"),"stitching is not advertised as completed")
+  check(ReelWorkBannerCopy.title(running:false,paused:true,ready:false,stitching:false,completed:3,total:8)=="Video paused","expired OS execution is not advertised as completed")
   check(ReelWorkBannerCopy.explanation(paused:true,running:false).contains("iOS paused local processing") && ReelWorkBannerCopy.explanation(paused:true,running:false).contains("saved requests"),"paused copy explains retained recoverable work")
   check(ReelWorkBannerCopy.explanation(paused:false,running:true).contains("may pause local processing"),"running copy does not promise killed-process completion")
   let owner=PushAccountIdentity(owner:UUID(),revision:1), other=PushAccountIdentity(owner:UUID(),revision:1)

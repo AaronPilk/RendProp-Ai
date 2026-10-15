@@ -58,7 +58,7 @@ controls=[
  ('wrong-listing', '$0.id == job.listingID', '$0.id == $0.id', 'job cannot route to a different listing'),
  ('sample-review', '!listing.isSample, listing.cloudUnavailable != true', 'true, listing.cloudUnavailable != true', 'sample listing cannot receive real job result'),
  ('unavailable-review', 'listing.cloudUnavailable != true', 'true', 'unavailable listing cannot be reopened by notification'),
- ('false-paused-title', 'if paused { return "Reel paused" }', 'if paused { return "Your reel is ready" }', 'expired OS execution is not advertised as completed'),
+ ('false-paused-title', 'if paused { return "Video paused" }', 'if paused { return "Your video is ready" }', 'expired OS execution is not advertised as completed'),
  ('lost-job-payload', 'content.userInfo["reel_job_id"] = jobID.uuidString', 'content.userInfo["reel_job_id"] = "invalid"', 'completion payload preserves exact job and listing identity'),
  ('foreign-recipient', 'guard !Self.isSuppressed, Self.accepts(payload: payload, identity: Self.currentIdentity) else { return }', 'guard !Self.isSuppressed else { return }', 'foreign recipient cannot route a reel'),
  ('late-owner-switch', 'guard PushManager.currentIdentity == identity,', 'guard true,', 'account replacement during OS settings cannot enqueue old result'),
