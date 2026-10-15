@@ -13,6 +13,16 @@ export const PHOTO_INPUT_POLICY = Object.freeze({
   maxUserPromptBytes: 2400,
   maxProviderPromptBytes: 8192,
 });
+// Provider output has a separate cap. Google documents4K panoramas with a
+// 12288px edge; accepting those must not loosen submitted-source admission.
+// The25MiB ceiling matches the existing inline/persisted result byte guard.
+export const PHOTO_OUTPUT_POLICY = Object.freeze({
+  maxBase64Chars: 4 * Math.ceil(25 * 1024 * 1024 / 3),
+  maxDecodedBytes: 25 * 1024 * 1024,
+  maxPixels: 24_000_000,
+  maxEdge: 16384,
+});
+type ImageBounds = { maxBase64Chars:number; maxDecodedBytes:number; maxPixels:number; maxEdge:number; tooLarge:()=>never };
 export interface StillImage { mime: string; bytes: number; width: number; height: number }
 const invalid = (): never => { throw new HttpError(400, "Use a complete still JPEG, PNG or WebP photo. Animated images and HEIC/HEIF must be exported as a still JPEG first.", "validation"); };
 const large = (): never => { throw new HttpError(413, "Resize the photo before editing: at most 9 MB, 24 megapixels and 8192 pixels on either edge.", "payload_too_large"); };
@@ -20,12 +30,12 @@ const be16 = (b: Uint8Array, i: number) => b[i] * 256 + b[i + 1];
 const be32 = (b: Uint8Array, i: number) => (b[i] * 0x1000000 + (b[i + 1] << 16) + (b[i + 2] << 8) + b[i + 3]) >>> 0;
 const le32 = (b: Uint8Array, i: number) => (b[i] + (b[i + 1] << 8) + (b[i + 2] << 16) + b[i + 3] * 0x1000000) >>> 0;
 const four = (b: Uint8Array, i: number) => String.fromCharCode(...b.subarray(i, i + 4));
-function geometry(width: number, height: number) {
+function geometry(width: number, height: number, bounds:ImageBounds) {
   if (!width || !height) invalid();
-  if (width > PHOTO_INPUT_POLICY.maxEdge || height > PHOTO_INPUT_POLICY.maxEdge || width * height > PHOTO_INPUT_POLICY.maxPixels) large();
+  if (width > bounds.maxEdge || height > bounds.maxEdge || width * height > bounds.maxPixels) bounds.tooLarge();
   return { width, height };
 }
-function jpeg(b: Uint8Array) {
+function jpeg(b: Uint8Array, bounds:ImageBounds) {
   if (b.length < 4 || b[0] !== 255 || b[1] !== 216) invalid();
   let i = 2, dimensions: { width: number; height: number } | undefined, scan = false;
   while (i < b.length) {
@@ -41,7 +51,7 @@ function jpeg(b: Uint8Array) {
     // are unsupported; there must be exactly one frame and fixed dimensions.
     if ([192, 193, 194].includes(marker)) {
       if (dimensions || length < 8 || b[i + 2] !== 8 || ![1, 3, 4].includes(b[i + 7]) || length !== 8 + 3 * b[i + 7]) invalid();
-      dimensions = geometry(be16(b, i + 5), be16(b, i + 3));
+      dimensions = geometry(be16(b, i + 5), be16(b, i + 3), bounds);
     } else if (marker >= 192 && marker <= 207 && ![196, 200, 204].includes(marker)) invalid();
     i = end;
     if (marker === 218) {
@@ -68,7 +78,7 @@ function crc32(b: Uint8Array, start: number, end: number) {
   }
   return (crc ^ 0xffffffff) >>> 0;
 }
-function png(b: Uint8Array) {
+function png(b: Uint8Array, bounds:ImageBounds) {
   if (![137, 80, 78, 71, 13, 10, 26, 10].every((v, i) => b[i] === v)) invalid();
   let i = 8, dimensions: { width: number; height: number } | undefined, image = false;
   while (i + 12 <= b.length) {
@@ -76,7 +86,7 @@ function png(b: Uint8Array) {
     if (end > b.length || !/^[A-Za-z]{4}$/.test(kind) || crc32(b, i + 4, end - 4) !== be32(b, end - 4)) invalid();
     if (!dimensions) {
       if (kind !== "IHDR" || length !== 13) invalid();
-      dimensions = geometry(be32(b, i + 8), be32(b, i + 12));
+      dimensions = geometry(be32(b, i + 8), be32(b, i + 12), bounds);
       const allowedDepth: Record<number, number[]> = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
       if (!allowedDepth[b[i + 17]]?.includes(b[i + 16]) || b[i + 18] !== 0 || b[i + 19] !== 0 || b[i + 20] > 1) invalid();
     } else if (kind === "IHDR" || ["acTL", "fcTL", "fdAT"].includes(kind)) invalid();
@@ -87,7 +97,7 @@ function png(b: Uint8Array) {
   }
   return invalid();
 }
-function webp(b: Uint8Array) {
+function webp(b: Uint8Array, bounds:ImageBounds) {
   if (b.length < 20 || four(b, 0) !== "RIFF" || four(b, 8) !== "WEBP" || le32(b, 4) + 8 !== b.length) invalid();
   let i = 12, canvas: { width: number; height: number } | undefined, image: { width: number; height: number } | undefined;
   while (i + 8 <= b.length) {
@@ -96,14 +106,14 @@ function webp(b: Uint8Array) {
     if (["ANIM", "ANMF"].includes(kind)) invalid();
     if (kind === "VP8X") {
       if (i !== 12 || length !== 10 || canvas || b[start] & 0xc3 || b[start + 1] || b[start + 2] || b[start + 3]) invalid();
-      canvas = geometry(1 + b[start + 4] + (b[start + 5] << 8) + (b[start + 6] << 16), 1 + b[start + 7] + (b[start + 8] << 8) + (b[start + 9] << 16));
+      canvas = geometry(1 + b[start + 4] + (b[start + 5] << 8) + (b[start + 6] << 16), 1 + b[start + 7] + (b[start + 8] << 8) + (b[start + 9] << 16), bounds);
     } else if (kind === "VP8 ") {
       if (image || length < 10 || b[start] & 1 || b[start + 3] !== 157 || b[start + 4] !== 1 || b[start + 5] !== 42) invalid();
-      image = geometry((b[start + 6] + (b[start + 7] << 8)) & 0x3fff, (b[start + 8] + (b[start + 9] << 8)) & 0x3fff);
+      image = geometry((b[start + 6] + (b[start + 7] << 8)) & 0x3fff, (b[start + 8] + (b[start + 9] << 8)) & 0x3fff, bounds);
     } else if (kind === "VP8L") {
       if (image || length < 5 || b[start] !== 47 || b[start + 4] & 0xe0) invalid();
       const bits = le32(b, start + 1);
-      image = geometry(1 + (bits & 0x3fff), 1 + ((bits >>> 14) & 0x3fff));
+      image = geometry(1 + (bits & 0x3fff), 1 + ((bits >>> 14) & 0x3fff), bounds);
     } else if (!["ALPH", "ICCP", "EXIF", "XMP "].includes(kind)) invalid();
     i = next;
   }
@@ -111,16 +121,24 @@ function webp(b: Uint8Array) {
   return image!;
 }
 export function validatePhotoInput(value: unknown, mime: string): StillImage {
+  return validateStillImage(value,mime,{...PHOTO_INPUT_POLICY,tooLarge:large});
+}
+export function validatePhotoOutput(value:unknown,mime:string):StillImage {
+  const tooLarge=():never=>{throw new HttpError(502,"The provider image exceeds the bounded output size.","upstream");};
+  try { return validateStillImage(value,mime,{...PHOTO_OUTPUT_POLICY,tooLarge}); }
+  catch { throw new HttpError(502,"The provider returned an incomplete, unsupported or oversized image. It was not saved.","upstream"); }
+}
+function validateStillImage(value:unknown,mime:string,bounds:ImageBounds):StillImage {
   if (typeof value !== "string" || !value.length) return invalid();
-  if (value.length > PHOTO_INPUT_POLICY.maxBase64Chars) large();
+  if (value.length > bounds.maxBase64Chars) bounds.tooLarge();
   // Canonical padded base64 only: no data-URL, whitespace or decoder salvage.
   const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
   if (value.length % 4 || /[^A-Za-z0-9+/=]/.test(value) || value.slice(0, value.length - padding).includes("=")) invalid();
   let decoded: string; try { decoded = atob(value); } catch { return invalid(); }
-  if (decoded.length > PHOTO_INPUT_POLICY.maxDecodedBytes) large();
+  if (decoded.length > bounds.maxDecodedBytes) bounds.tooLarge();
   if (btoa(decoded) !== value) invalid();
   const bytes = Uint8Array.from(decoded, (char) => char.charCodeAt(0));
-  const dimensions = mime === "image/jpeg" ? jpeg(bytes) : mime === "image/png" ? png(bytes) : mime === "image/webp" ? webp(bytes) : invalid();
+  const dimensions = mime === "image/jpeg" ? jpeg(bytes,bounds) : mime === "image/png" ? png(bytes,bounds) : mime === "image/webp" ? webp(bytes,bounds) : invalid();
   return { mime, bytes: bytes.length, ...dimensions };
 }
 export function validatePhotoInputs(image: unknown, mime: string, mask?: unknown, maskMime = "image/png") {

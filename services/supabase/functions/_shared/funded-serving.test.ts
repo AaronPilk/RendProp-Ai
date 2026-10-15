@@ -203,8 +203,9 @@ Deno.test("Gemini quote increases with the actual combined cap and rejects missi
  for(const changed of [
   {maxOutputTokens:undefined},{maxOutputTokens:0},{maxOutputTokens:4096.5},{maxOutputTokens:32769},
   {maxOutputTokens:Infinity},{candidateCount:2},{candidateCount:undefined},
-  {responseModalities:["TEXT","IMAGE"]},{imageConfig:{imageSize:"4K"}},
+  {responseModalities:["TEXT","IMAGE"]},{imageConfig:{imageSize:"8K"}},
  ])assertEquals(geminiImageGenerationQuote({...config,...changed}),null);
+ assertEquals(geminiImageGenerationQuote({...config,imageConfig:{imageSize:"4K"}})?.cents,16.7584);
 });
 
 Deno.test("actual Gemini HTTP payload and funded reservation share one combined token cap",async()=>{

@@ -4,17 +4,17 @@ const encode=(source:string)=>`data:application/typescript;base64,${btoa(unescap
 const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
 // Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
 const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
-const OUTPUT=outputJPEG();
+const OUTPUT=outputJPEG(4096,4096);
 async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|null=null){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
   assert(source.includes(anchor));source=source.replace(anchor,"");
-  // The2K preparation independently validates the same bytes. The compiled
+  // The4K preparation independently validates the same bytes. The compiled
   // unsafe-admission control must bypass both real input guards, not mistake
   // a still-protected redundant guard removal for an observable vulnerability.
-  const second="genInput = preparePhoto2KInput(genInput);";assert(source.includes(second));
-  source=source.replace(second,'genInput = {...genInput,extra:{...genInput.extra,photo_quality_2k:true,photo_input_token_bound:4096,photo_input_allowance:8192}};');
+  const second="genInput = preparePhoto4KInput(genInput);";assert(source.includes(second));
+  source=source.replace(second,'genInput = {...genInput,extra:{...genInput.extra,photo_quality_4k:true,photo_input_token_bound:4096,photo_input_allowance:8192}};');
  }
  if(removeAdmission==="chain"){
   const anchor="chain = await boundedPhotoChain(funding, chain, genInput);";
@@ -29,7 +29,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="quality"){
-  const anchor="else if (normalPhoto2K) assertPhoto2KOutput(outB64, outMime);";assert(source.includes(anchor));source=source.replace(anchor,"");
+  const anchor="else if (normalPhoto4K) assertPhoto4KOutput(outB64, outMime);";assert(source.includes(anchor));source=source.replace(anchor,"");
  }
  if(removeAdmission==="stage_prompt"){
   const anchor="return buildRealEstateStagePrompt(styleDesc);";
@@ -56,7 +56,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {requiredIdempotencyKey} from ${url("../_shared/idempotency.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
- import {preparePhoto2KInput,photo2KChain,assertPhoto2KOutput} from ${url("./photo-quality.ts")};
+ import {preparePhoto4KInput,photo4KChain,assertPhoto4KOutput} from ${url("./photo-quality.ts")};
  import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput} from ${url("./owner-photo-qa.ts")};
  const ownerQaPhotoStep=(args)=>actualOwnerQaPhotoStep(args,{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{value:{enabled:false}},error:null})})})})});
  import {assertCustomPhotoPrompt,assertCustomPhotoOutput} from ${url("../ai-copy/guard.ts")};
@@ -183,7 +183,7 @@ Deno.test("actual staging handler delivers furniture-only scope and exact source
    if(style==="contemporary") {assert(prompt.includes("softly curved seating"));assert(!prompt.includes("Scandinavian furniture"));}
    if(style==="scandinavian") {assert(prompt.includes("Scandinavian furniture"));assert(!prompt.includes("contemporary furniture:"));}
    assertEquals(sent.image_b64,input.image_b64);assertEquals(sent.image_url,`data:image/jpeg;base64,${input.image_b64}`);
-   for(const lock of ["edit movable furnishings only","overhead slab","existing open pergolas open","garage-door color and finish","trim color and finish","outdoor furniture on a balcony","No repainting","never copy its architecture or viewpoint","do not repair or hide them"])assert(prompt.includes(lock),lock);
+   for(const lock of ["edit movable furnishings only","overhead slab","existing open pergolas open","garage-door color and finish","trim color and finish","outdoor furniture on a balcony","No repainting","never copy its architecture or viewpoint","do not repair or hide them","wall-mounted, ceiling-mounted and built-in items","Do not add shelves"])assert(prompt.includes(lock),lock);
    assert(new TextEncoder().encode(prompt).length<4096,"Default staging prompt retains the2K source/text bound");
    const inputBound=prepareOwnerQaPhotoInput(sent).extra?.owner_photo_input_bound;
    assert(typeof inputBound==="number"&&inputBound<=8192);
@@ -198,7 +198,7 @@ Deno.test("actual staging refuses1K fallback while preserving the surgical promp
   const request=f.request({edit:"stage",style:"rustic",prompt:brief}),body=await request.clone().json();
   const response=await f.run(request);assertEquals(response.status,502,await response.text());
   assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.helperDispatch,0);
-  assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
+  assertEquals(f.state.inputs[0].extra.photo_quality_4k,true);assert(f.state.prompts[0].includes(JSON.stringify(brief)));
   assert(f.state.prompts[0].includes("solid slabs solid"));assert(f.state.prompts[0].includes("existing open pergolas open"));
   for(const input of f.state.inputs){assertEquals(input.image_b64,body.image_b64);assertEquals(input.image_url,`data:image/jpeg;base64,${body.image_b64}`);}
  }finally{f.close();}
@@ -240,12 +240,12 @@ Deno.test("actual custom handler accepts all 600 accented characters without tru
  const f=await fixture();try{const response=await f.run(f.request({edit:"custom",prompt}));assertEquals(response.status,200,await response.text());assertEquals(f.state.submits,1);assert(f.state.prompts[0].includes(JSON.stringify(prompt)));}
  finally{f.close();}
 });
-Deno.test("actual custom handler cannot quietly fallback to1K after its prepared2K attempt fails",async()=>{
+Deno.test("actual custom handler cannot quietly fallback to1K after its prepared4K attempt fails",async()=>{
  const f=await fixture();try{f.state.router=true;f.state.primaryFail=true;f.state.routes=[
   {route_id:"primary",provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.custom",unit:"output_image",unit_cents:6.7},
   {route_id:"fallback",provider:"fal",model:"flux-pro/kontext",task:"photo.custom",unit:"output_image",unit_cents:4}];
   const response=await f.run(f.request({edit:"custom",prompt:"Remove bags from the garage. Do not repaint or change the trim color."}));assertEquals(response.status,502,await response.text());
-  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.inputs[0].extra.photo_quality_2k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.inputs[0].extra.photo_quality_4k,true);assert(f.state.prompts[0].includes("garage-door color and finish"));assert(f.state.prompts[0].includes("trim color and finish"));
  }finally{f.close();}
 });
 Deno.test("legacy photo polisher clarifies before a paid helper and refuses invented same-category work",async()=>{
@@ -309,14 +309,17 @@ Deno.test("compiled missing input/finite-chain guards fail unchanged actual-hand
  for(const mode of ["input","chain"] as const){await oracle(null,mode);await assertRejects(()=>oracle(mode,mode),AssertionError,"Prospective admission must refuse before paid dispatch");}
 });
 
-Deno.test("actual saved photo recovery preserves a historical input now refused for new dispatch",async()=>{
+Deno.test("actual saved2K photo recovery preserves historical size and input now refused for new dispatch",async()=>{
  const f=await fixture();try{
   assertEquals((await f.run(f.request())).status,200);
+  const historical2K=outputJPEG(1792,2390);
+  f.state.object=Uint8Array.from(atob(historical2K),c=>c.charCodeAt(0)).buffer;
+  f.state.saved.metadata.image_size="2K";
   const request=f.request({image_b64:"QUFB",mime:"image/heic"});
   // Represent an exact immutable old financial input journal, whose saved
   // owned output predates this new dispatch policy. No old provider is called.
   f.state.operationInputHash=await f.inputHash(await request.clone().json());
-  const response=await f.run(request);assertEquals(response.status,200);assertEquals((await response.json()).image_b64,OUTPUT);
+  const response=await f.run(request);assertEquals(response.status,200);const restored=await response.json();assertEquals(restored.image_b64,historical2K);assertEquals(restored.image_size,"2K");
   assertEquals(f.state.submits,1);assertEquals(f.state.charges,1);assertEquals(f.state.puts,1);assertEquals(f.state.gets,1);
   const changed=await f.run(f.request({image_b64:"QUFB",mime:"image/heic",label:"different"}));assertEquals(changed.status,409);assertEquals(f.state.gets,1);
  }finally{f.close();}
@@ -393,20 +396,20 @@ Deno.test("actual handler still admits safe glass, wood, painted furniture and f
  }finally{f.close();}}
 });
 
-Deno.test("actual normal2K handler records its exact quoted size then withholds1K before persistence without refunding incurred cost",async()=>{
- for(const valid of [true,false]){const f=await fixture();try{
-  f.state.output=outputJPEG(valid?2048:896,valid?2048:1195);
+Deno.test("actual normal4K handler records its exact quoted size then withholds1K/2K before persistence without refunding incurred cost",async()=>{
+ for(const [width,height,valid]of [[4096,4096,true],[3584,4800,true],[1792,2390,false],[896,1195,false]]as const){const f=await fixture();try{
+  f.state.output=outputJPEG(width,height);
   const response=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(response.status,valid?200:502,await response.text());
   assertEquals(f.state.holds,1);assertEquals(f.state.submits,1);assertEquals(f.state.costs.length,1);
-  assertEquals(f.state.costs[0].step.params.image_size,"2K");assertEquals(f.state.costs[0].step.unit_cents,11.7184);
-  assertEquals(f.state.refunds,0,"A received supplier image cannot erase incurred liability");assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.image_size,"2K");
-  assertEquals(f.state.holdArguments[0].p_hold_cents,11.7185);
+  assertEquals(f.state.costs[0].step.params.image_size,"4K");assertEquals(f.state.costs[0].step.unit_cents,16.7584);
+  assertEquals(f.state.refunds,0,"A received supplier image cannot erase incurred liability");assertEquals(f.state.costs[0].meta.owner_quality_comparison,false);assertEquals(f.state.costs[0].meta.image_size,"4K");assertEquals(f.state.costs[0].meta.cost_basis,"complete_input_4096_text_2520_image_bound");
+  const hold=f.state.holdArguments[0].p_hold_cents;assert(hold>=16.7584&&hold-16.7584<0.00021,"Complete4K liability with conservative four-decimal rounding");
   assertEquals(f.state.puts,valid?1:0);assertEquals(f.state.completes,valid?1:0);
  }finally{f.close();}}
 });
-Deno.test("compiled missing normal2K output floor fails unchanged actual-handler no-persistence oracle",async()=>{
+Deno.test("compiled missing normal4K output floor fails unchanged actual-handler no-persistence oracle",async()=>{
  const oracle=async(remove:boolean)=>{const f=await fixture(false,remove?"quality":null);try{
-  f.state.output=outputJPEG(896,1195);const response=await f.run(f.request({edit:"stage",style:"modern"}));
+  f.state.output=outputJPEG(1792,2390);const response=await f.run(f.request({edit:"stage",style:"modern"}));
   assertEquals(response.status,502,"Undersized supplier output reached delivery");assertEquals(f.state.puts,0);assertEquals(f.state.costs.length,1);
  }finally{f.close();}};
  await oracle(false);await assertRejects(()=>oracle(true),AssertionError,"Undersized supplier output reached delivery");

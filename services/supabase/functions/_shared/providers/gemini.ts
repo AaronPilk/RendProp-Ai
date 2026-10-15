@@ -10,14 +10,15 @@
 //    2026-10-02; the 3.1 migration has to be a row edit in ai_routes, not a
 //    deploy. Nothing in this file names a default model.
 //  • Normal 3.x routes explicitly request imageConfig.imageSize = "1K".
-//    Server-prepared, prospectively priced ai-photo edits explicitly request2K.
+//    Server-prepared, prospectively priced ai-photo edits explicitly request4K;
+//    the existing owner comparison retains its separate2K contract.
 //    The 3.x image models bill by output resolution and their default is not 1K
 //    on every surface — an implicit default is how you silently start paying 4K
 //    rates for a 1K product.
 
 import type { RouteStep } from "../router.ts";
 import { paramsOf } from "../router.ts";
-import { photo2KInputAllowance } from "../photo-image-quality.ts";
+import { photo2KInputAllowance, photo4KInputAllowance } from "../photo-image-quality.ts";
 import type { DoneState, ErrorClass, GenerateInput, JobRef, JobState, ProviderAdapter } from "./types.ts";
 import {
   BUDGETS,
@@ -53,18 +54,18 @@ export function supportsStagingReference(model: string): boolean {
   return ["gemini-2.5-flash-image", "gemini-3.1-flash-image", "gemini-3-pro-image-preview"].includes(model.trim());
 }
 
-export function geminiImageGenerationConfig(model: string, imageSize: "1K" | "2K" = "1K"): Record<string, unknown> {
-  if (imageSize !== "1K" && (imageSize !== "2K" || model !== "gemini-3.1-flash-image"))
+export function geminiImageGenerationConfig(model: string, imageSize: "1K" | "2K" | "4K" = "1K"): Record<string, unknown> {
+  if (imageSize !== "1K" && (!["2K","4K"].includes(imageSize) || model !== "gemini-3.1-flash-image"))
     throw new ProviderError(PROVIDER, "validation", "This image model does not support the requested comparison resolution.");
   const generationConfig: Record<string, unknown> = { responseModalities: ["IMAGE"], candidateCount: 1, maxOutputTokens: GEMINI_IMAGE_MAX_OUTPUT_TOKENS };
-  // Normal output remains 1K; the bounded owner comparison explicitly requests 2K.
+  // Resolution is explicit; only the verified server route admits higher sizes.
   if (needsImageSizePin(model)) generationConfig.imageConfig = { imageSize };
   return generationConfig;
 }
 
 /** The exact generateContent body for an image edit. */
 export function geminiImagePayload(model: string, prompt: string, mime: string, imageB64: string,
-  reference?: { mime: string; b64: string }, imageSize: "1K" | "2K" = "1K"): Record<string, unknown> {
+  reference?: { mime: string; b64: string }, imageSize: "1K" | "2K" | "4K" = "1K"): Record<string, unknown> {
   return {
     contents: [{
       role: "user",
@@ -134,11 +135,15 @@ export const geminiAdapter: ProviderAdapter = {
     }
 
     const requestedSize = paramsOf(step)?.image_size;
-    if (requestedSize !== undefined && requestedSize !== "1K" && requestedSize !== "2K")
+    if (input.extra?.photo_quality_4k === true && requestedSize !== "4K")
+      throw new ProviderError(PROVIDER, "validation", "The verified 4K photo requires its priced 4K route.");
+    if (requestedSize !== undefined && requestedSize !== "1K" && requestedSize !== "2K" && requestedSize !== "4K")
       throw new ProviderError(PROVIDER, "validation", "Unknown image comparison resolution.");
-    const imageSize = requestedSize === "2K" ? "2K" : "1K";
+    const imageSize = requestedSize === "4K" ? "4K" : requestedSize === "2K" ? "2K" : "1K";
     if (imageSize === "2K" && photo2KInputAllowance(input) === null)
       throw new ProviderError(PROVIDER, "validation", "The 2K comparison input bound was not verified.");
+    if (imageSize === "4K" && photo4KInputAllowance(input) === null)
+      throw new ProviderError(PROVIDER, "validation", "The 4K photo input bound was not verified.");
     const data = await fetchJson<Record<string, unknown>>(
       PROVIDER,
       `${GEMINI_BASE}/${step.model}:generateContent`,

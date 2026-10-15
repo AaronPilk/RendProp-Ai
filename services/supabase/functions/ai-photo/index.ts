@@ -96,7 +96,7 @@ import { adapterFor } from "../_shared/providers/index.ts";
 import { fundingContext, fundedAttempt, mediaAttemptQuote, SavedFundingResponse, completeFundingOperation, abortFundingOperationBeforeDispatch, boundedPhotoChain, assertPhotoHelperSponsorship, type FundingContext } from "../_shared/funded-serving.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput } from "./owner-photo-qa.ts";
-import { preparePhoto2KInput, photo2KChain, assertPhoto2KOutput } from "./photo-quality.ts";
+import { preparePhoto4KInput, photo4KChain, assertPhoto4KOutput } from "./photo-quality.ts";
 import { supportsStagingReference } from "../_shared/providers/gemini.ts";
 import {
   BUDGETS,
@@ -877,9 +877,9 @@ Deno.serve(async (req) => {
       // Explicit comparison is one full Flash2K step, never a quiet 1K fallback.
       chain = [ownerPhotoStep];
     }
-    const normalPhoto2K = !ownerPhotoStep && !maskB64;
-    if (normalPhoto2K) {
-      try { genInput = preparePhoto2KInput(genInput); chain = photo2KChain(chain, genInput); }
+    const normalPhoto4K = !ownerPhotoStep && !maskB64;
+    if (normalPhoto4K) {
+      try { genInput = preparePhoto4KInput(genInput); chain = photo4KChain(chain, genInput); }
       catch(error) { await refundEditCharge(charge); await abortFundingOperationBeforeDispatch(funding); throw error; }
     }
     try { chain = await boundedPhotoChain(funding, chain, genInput); }
@@ -924,7 +924,7 @@ Deno.serve(async (req) => {
     // ONE org-scoped cost_ledger row with job_id = NULL. This is what the owner
     // spend console and the per-org monthly COGS view read for app AI. The
     // provider/model/price come from the step that ACTUALLY ran (contract §4);
-    // Normal unmasked edits price the complete requested2K bound on that route.
+    // Normal unmasked edits price the complete requested4K bound on that route.
     // Best effort — a failed insert must never fail an edit the caller has paid
     // for (see recordAppAiCost). Only reached on success, so a failure above
     // (which F-E-16 refunds) writes no row: no double-count.
@@ -933,14 +933,14 @@ Deno.serve(async (req) => {
       feature: "photo_edit",
       step,
       images: 1,
-      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto2K) ? {image_size:"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
+      meta: { edit, space_type: space, ...((ownerPhotoStep || normalPhoto4K) ? {image_size:normalPhoto4K?"4K":"2K",owner_quality_comparison:!!ownerPhotoStep,cost_basis:normalPhoto4K?"complete_input_4096_text_2520_image_bound":"complete_input_4096_text_1680_image_bound",input_token_allowance:genInput.extra?.photo_input_allowance ?? 8192} : {}), request_key: funding.requestKey, stage: `${task}:${chain.indexOf(step)}`, ...(style ? { style } : {}),
         ...(referenceB64 ? { input_images: 2, staging_furniture_reference: true,
-          ...(normalPhoto2K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
+          ...(normalPhoto4K ? {} : {cost_basis: "route_output_image_estimate_input_tokens_unmodeled"}) } : {}) },
     });
 
-    // The supplier was paid even when it ignored 2K; bind that real cost first.
+    // The supplier was paid even when it ignored the size; bind that cost first.
     if (ownerPhotoStep) assertOwnerQaPhotoOutput(outB64, outMime);
-    else if (normalPhoto2K) assertPhoto2KOutput(outB64, outMime);
+    else if (normalPhoto4K) assertPhoto4KOutput(outB64, outMime);
 
     // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
     // exact sentence the public tour will print. Best effort — never fatal (the
