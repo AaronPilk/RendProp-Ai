@@ -35,6 +35,12 @@ function dispatchDiagnostic(error:unknown):Record<string,string|number> {
   return error instanceof AuthorityRefusal ? {category:'bridge_http',status:error.status}
     : error instanceof BridgeFailure ? {category:error.category,...(error.transport?{error_name:error.transport.name,reason:error.transport.reason}:{})} : {category:'controller'};
 }
+type CPUPhase='start'|'inactivity'|'egress'|'ready'|'ready_timeout'|'execute'|'status'|'upload';
+class CPUFailure extends Error {constructor(readonly phase:CPUPhase,readonly category:'cpu_api'|'cpu_transport'|'cpu_http'|'cpu_response'|'cpu_not_running'|'cpu_task_failed'|'cpu_task_missing',readonly status?:number,readonly transport?:{name:TransportName;reason:TransportReason}){super(category);}}
+function cpuDiagnostic(error:unknown):Record<string,string|number> {
+  return error instanceof CPUFailure?{phase:error.phase,category:error.category,...(error.status===undefined?{}:{status:error.status}),...(error.transport?{error_name:error.transport.name,reason:error.transport.reason}:{})}:dispatchDiagnostic(error);
+}
+function cpuAPIFailure(phase:CPUPhase,error:unknown):CPUFailure {return new CPUFailure(phase,'cpu_api',undefined,transportFailure(error).transport);}
 
 async function bridge(env:Env,path:string,body?:unknown):Promise<Record<string,unknown>> {
   let base:URL;try {base=new URL(env.EDGE_WORKER_URL);}catch {throw new BridgeFailure('bridge_configuration');}
@@ -77,33 +83,35 @@ export class PropertyVideoCPU extends DurableObject<Env> {
   }
   private async cpu(path:string,body?:unknown):Promise<Record<string,unknown>> {
     const state=this.read();
-    if (!state||!this.ctx.container?.running) throw Error('cpu_not_running');
-    const response=await this.ctx.container.getTcpPort(8080).fetch(`http://container/${path}`,{method:body===undefined?'GET':'POST',
-      headers:{Authorization:`Bearer ${state.token}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(10_000)});
-    if (!response.ok) throw Error('cpu_refused');
-    return await response.json() as Record<string,unknown>;
+    const phase:CPUPhase=path==='ready'?'ready':path==='execute'?'execute':path==='upload'?'upload':'status';
+    if (!state||!this.ctx.container?.running) throw new CPUFailure(phase,'cpu_not_running');
+    let response:Response;try {response=await this.ctx.container.getTcpPort(8080).fetch(`http://container/${path}`,{method:body===undefined?'GET':'POST',
+      headers:{Authorization:`Bearer ${state.token}`,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(10_000)});}catch(error){throw new CPUFailure(phase,'cpu_transport',undefined,transportFailure(error).transport);}
+    if (!response.ok) throw new CPUFailure(phase,'cpu_http',response.status);
+    try {return await response.json() as Record<string,unknown>;}catch {throw new CPUFailure(phase,'cpu_response');}
   }
   private async bindEgress(props:EgressProps):Promise<void> {
     if (!this.ctx.container) throw Error('container_binding_missing');
     const exports=this.ctx.exports as unknown as {MediaEgress(options:{props:EgressProps}):Fetcher};
     const binding=exports.MediaEgress({props});
-    await this.ctx.container.interceptOutboundHttps('*',binding);
+    try {await this.ctx.container.interceptOutboundHttps('*',binding);}catch(error){throw cpuAPIFailure('egress',error);}
     // HTTP remains un-intercepted, therefore blocked by enableInternet:false.
   }
   private async boot(state:SlotState):Promise<void> {
     const container=this.ctx.container;
     if (!container||!state.capabilities) throw Error('cpu_configuration_missing');
     if (!container.running) {
-      container.start({image:container.images.cpu,instance:'standard-3',enableInternet:false,
-        env:{CONTAINER_TOKEN:state.token,MEDIA_HOSTS:this.env.MEDIA_HOSTS},labels:{workload:'property-video'}});
-      await container.setInactivityTimeout(60_000);
+      try {container.start({image:container.images.cpu,instance:'standard-3',enableInternet:false,
+        env:{CONTAINER_TOKEN:state.token,MEDIA_HOSTS:this.env.MEDIA_HOSTS},labels:{workload:'property-video'}});}catch(error){throw cpuAPIFailure('start',error);}
+      try {await container.setInactivityTimeout(60_000);}catch(error){throw cpuAPIFailure('inactivity',error);}
     }
     await this.bindEgress(state.capabilities);
     const deadline=Date.now()+30_000;
+    let last:unknown;
     while (Date.now()<deadline) {
-      try {await this.cpu('ready');return;} catch {await new Promise(resolve=>setTimeout(resolve,300));}
+      try {await this.cpu('ready');return;} catch(error) {last=error;await new Promise(resolve=>setTimeout(resolve,300));}
     }
-    throw Error('cpu_start_failed');
+    throw new CPUFailure('ready_timeout',last instanceof CPUFailure?last.category:'cpu_not_running',last instanceof CPUFailure?last.status:undefined,last instanceof CPUFailure?last.transport:undefined);
   }
   async alarm():Promise<void> {
     if (this.advancing) {await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;}
@@ -135,7 +143,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
         await this.bindEgress(state.capabilities!);
         const status=await this.cpu('status',{task_id:state.taskID});
         if (status.state==='working') {await this.ctx.storage.setAlarm(Date.now()+POLL_MS);return;}
-        if (status.state==='failed'||status.state==='missing') throw Error('cpu_attempt_failed');
+        if (status.state==='failed'||status.state==='missing') throw new CPUFailure('status',status.state==='failed'?'cpu_task_failed':'cpu_task_missing');
         const result=status.result as Record<string,unknown>;
         if (!result||result.job_id!==state.jobID||result.lease_token!==state.task.lease_token) throw Error('cpu_receipt_identity_conflict');
         if (status.state==='prepared') {
@@ -176,6 +184,7 @@ export class PropertyVideoCPU extends DurableObject<Env> {
       state.taskID=accepted.task_id;this.save(state);
       await this.ctx.storage.setAlarm(Date.now()+POLL_MS);
     } catch (error) {
+      console.warn('property_video_cpu_refused',cpuDiagnostic(error));
       if (error instanceof AuthorityRefusal&&[403,404,409].includes(error.status)) {await this.stop();return;}
       // Only CPU phases can be retried. Never invent a paid supplier retry here.
       state=this.read();

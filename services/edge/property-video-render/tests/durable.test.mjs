@@ -17,18 +17,18 @@ try {
     output:{asset_id:job,poster_asset_id:lease},presentation:{transition:'cut',shot_caption_style:'off',spoken_captions:false,shot_labels:[null]},expires_at:new Date(Date.now()+3600000).toISOString()};
   let receipt={job_id:job,lease_token:lease,manifest_sha256:task.manifest_sha256,asset_id:job,poster_asset_id:lease,width:1920,height:1080,duration_s:5,bytes:12,sha256:'b'.repeat(64),poster_bytes:4,poster_sha256:'c'.repeat(64)};
   let data=null,alarm=null,status='prepared',finishCount=0,failCount=0,tickCount=0,outputs=0,uploadCount=0,heartbeatStatus=200,failureStatus=200,terminalAfterFailure=false;
-  const events=[];
+  const events=[];let apiFault=null,cpuHTTPFault=null;
   const sql={exec(query,...args){
     if(query.startsWith('SELECT'))return{toArray:()=>data?[{state:data}]:[]};
     if(query.startsWith('INSERT')){data=args[0];events.push('persist');}
     if(query.startsWith('DELETE')){data=null;events.push('clear');}
     return{toArray:()=>[]};
   }};
-  const container={running:false,images:{cpu:'verified-image@sha256:test'},async setInactivityTimeout(ms){assert.ok(ms>0);},
-    start(options){assert.equal(options.enableInternet,false);assert.equal(options.instance,'standard-3');assert.ok(!('EDGE_SERVICE_ROLE_KEY' in options.env));this.running=true;events.push('boot');},
-    async destroy(){this.running=false;events.push('sleep');},async interceptOutboundHttps(host,binding){assert.equal(host,'*');this.bound=binding;},
+  const container={running:false,images:{cpu:'verified-image@sha256:test'},async setInactivityTimeout(ms){assert.ok(ms>0);if(apiFault==='inactivity')throw new TypeError('PRIVATE-inactivity-url');},
+    start(options){if(apiFault==='start')throw new TypeError('PRIVATE-start-token');assert.equal(options.enableInternet,false);assert.equal(options.instance,'standard-3');assert.ok(!('EDGE_SERVICE_ROLE_KEY' in options.env));this.running=true;events.push('boot');},
+    async destroy(){this.running=false;events.push('sleep');},async interceptOutboundHttps(host,binding){if(apiFault==='egress')throw new TypeError('PRIVATE-egress-url');assert.equal(host,'*');this.bound=binding;},
     getTcpPort(port){assert.equal(port,8080);return{fetch:async(url,init)=>{
-      const route=new URL(url).pathname;
+      const route=new URL(url).pathname;if(cpuHTTPFault===route)return new Response('PRIVATE-CPU-body',{status:403});
       if(route==='/ready')return Response.json({ready:true});
       if(route==='/execute')return Response.json({task_id:'e'.repeat(64)},{status:202});
       if(route==='/status')return Response.json({state:status,result:receipt});
@@ -85,6 +85,7 @@ try {
     assert.equal((await worker.fetch(new Request('https://controller.test/anything'),env,{})).status,404);
     // Exercise the actual scheduled entry and its caught bridge, not merely a
     // formatter. Hostile exception/body strings must never enter a log.
+    const originalAuthority=globalThis.fetch;
     const warn=console.warn,diagnostics=[];console.warn=(...args)=>diagnostics.push(args);
     const scheduled=async(config,transport)=>{
       diagnostics.length=0;globalThis.fetch=transport;let pending;
@@ -119,6 +120,20 @@ try {
       assert.deepEqual(await scheduled({...env,CPU:{getByName(){throw Error('PRIVATE-CONTROLLER-TOKEN');}}},async()=>Response.json({enabled:true,jobs:[{job_id:job}]})),[['property_video_dispatch_refused',{category:'controller'}]]);
       assert.ok(!JSON.stringify(diagnostics).includes('PRIVATE-'),'raw thrown data is not logged');
       assert.deepEqual(await scheduled(env,async()=>Response.json({enabled:false,jobs:[]})),[],'disabled DB queue remains quiet');
+
+      globalThis.fetch=originalAuthority;
+      terminalAfterFailure=false;failureStatus=200;finishCount=0;
+      for(const phase of ['start','inactivity','egress']){
+        diagnostics.length=0;apiFault=phase;cpuHTTPFault=null;container.running=false;data=null;
+        cpu=new PropertyVideoCPU(ctx,env);await cpu.wake(job,'slot-0');await cpu.alarm();
+        assert.deepEqual(diagnostics,[['property_video_cpu_refused',{phase,category:'cpu_api',error_name:'TypeError',reason:'other'}]]);
+        assert.equal(data,null,'finite failure callback retains authority rather than faking ready');
+      }
+      apiFault=null;diagnostics.length=0;data=null;container.running=false;cpuHTTPFault='/execute';
+      cpu=new PropertyVideoCPU(ctx,env);await cpu.wake(job,'slot-0');await cpu.alarm();
+      assert.deepEqual(diagnostics,[['property_video_cpu_refused',{phase:'execute',category:'cpu_http',status:403}]]);
+      assert.ok(!JSON.stringify(diagnostics).includes('PRIVATE-'),'CPU details never log raw body, URL or token');
+      cpuHTTPFault=null;
     } finally {console.warn=warn;}
 
   } finally {globalThis.fetch=originalFetch;}
