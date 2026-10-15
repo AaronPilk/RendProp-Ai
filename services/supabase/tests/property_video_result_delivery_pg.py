@@ -35,9 +35,17 @@ try:
  conn=['-h',SOCK,'-p','55583','-U','postgres'];run('createdb',[tool('createdb'),*conn,'result_delivery_proof'])
  PSQL=[tool('psql'),'-X','--no-password',*conn,'-d','result_delivery_proof','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for m in MIGRATIONS:run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+ for m in MIGRATIONS:
+  run('apply-'+m.stem,[*PSQL,'-q','-1','-f',m])
+  if m==MIG:
+   run('replay-at-own-boundary',[*PSQL,'-q','-1','-f',MIG]);receipt['ownBoundaryReplay']=True
+ catalog="select jsonb_agg(jsonb_build_object('identity',oid::regprocedure::text,'body',prosrc,'owner',proowner,'acl',proacl::text,'config',proconfig,'security',prosecdef,'volatility',provolatile)order by oid)from pg_proc where pronamespace='public'::regnamespace;"
  for stage in ['fresh','replay']:
-  if stage=='replay':run('replay-own-migration',[*PSQL,'-q','-1','-f',MIG])
+  if stage=='replay':
+   before=run('current-authority-before-ancestor-replay',[*PSQL,'-Atq','-c',catalog])
+   run('ancestor-replay-refused',[*PSQL,'-q','-1','-f',MIG],refuses='Review changed delivery-aware resume authority')
+   assert run('current-authority-after-ancestor-replay',[*PSQL,'-Atq','-c',catalog])==before,'Ancestor replay must not replace current recovery'
+   receipt['supersededReplayRefusedWithCurrentAuthorityIntact']=True
   out=run(stage+'-actual-result-delivery',[*PSQL,'-Atq','-f',FIX]);rows=[json.loads(x)for x in out.splitlines()if x.startswith('{')and'assertions'in x];assert len(rows)==1 and rows[0]['passed'];receipt[stage]=rows[0]
  baseline=run('existing-jobs',[*PSQL,'-Atq','-f',SQL/'tests/property_video_jobs.sql']);receipt['existingJobRegression']=next(json.loads(x)for x in baseline.splitlines()if x.startswith('{')and'assertions'in x)
  for label,signature,anchor,replacement,oracle in [

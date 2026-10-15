@@ -34,8 +34,16 @@ try:
  conn=['-h',SOCK,'-p','55537','-U','postgres'];run('createdb',[TOOLS['createdb'],*conn,'property_sites'])
  PSQL=[TOOLS['psql'],'-X','--no-password',*conn,'-d','property_sites','-v','ON_ERROR_STOP=1']
  run('bootstrap',[*PSQL,'-q','-f',SQL/'tests/ci-bootstrap.sql'])
- for migration in sorted((SQL/'migrations').glob('*.sql')):run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
- for newest in sorted(set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))|set((SQL/'migrations').glob('20261015*property_video_one_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_parallel_admission_fair_poll.sql'))|set((SQL/'migrations').glob('20261015*property_video_derived_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_retained_result_delivery_recovery.sql'))):run('replay-'+newest.stem,[*PSQL,'-q','-1','-f',newest])
+ replay_migrations=set((SQL/'migrations').glob('20261014*property_video*.sql'))|set((SQL/'migrations').glob('20261014*registered_background_video_delivery.sql'))|set((SQL/'migrations').glob('20261015*property_video_structural_fallback_cpu_recovery.sql'))|set((SQL/'migrations').glob('20261015*property_video_cpu_retained_recovery_capacity.sql'))|set((SQL/'migrations').glob('20261015*property_video_one_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_parallel_admission_fair_poll.sql'))|set((SQL/'migrations').glob('20261015*property_video_derived_quality_retry.sql'))|set((SQL/'migrations').glob('20261015*property_video_retained_result_delivery_recovery.sql'))
+ for migration in sorted((SQL/'migrations').glob('*.sql')):
+  run('apply-'+migration.stem,[*PSQL,'-q','-1','-f',migration])
+  # Replay the same coherent historical chain at its final boundary, then
+  # apply later migrations. Never replace current recovery wrappers at HEAD.
+  if migration==max(replay_migrations):
+   for historical in sorted(replay_migrations):run('replay-at-boundary-'+historical.stem,[*PSQL,'-q','-1','-f',historical])
+ receipt['historicalReplayAtCoherentBoundary']={'count':len(replay_migrations),'last':max(replay_migrations).name}
+ catalog="select jsonb_agg(jsonb_build_object('identity',oid::regprocedure::text,'body',prosrc,'owner',proowner,'acl',proacl::text,'config',proconfig,'security',prosecdef,'volatility',provolatile)order by oid)from pg_proc where pronamespace='public'::regnamespace;"
+ current_authority=run('current-authority-before-fixture',[*PSQL,'-Atq','-c',catalog])
  unit=run('actual-jobs-rpc-roles',[*PSQL,'-Atq','-f',SQL/'tests/property_video_jobs.sql']);rows=[json.loads(s)for s in unit.splitlines()if s.startswith('{')and 'assertions'in s];assert len(rows)==1 and rows[0]['passed'];receipt['unit']=rows[0]
  # Compiled actual SQL mutations retain independent failure/category oracles.
  for control,signature,needle,replacement,expected in [
@@ -133,6 +141,8 @@ try:
  snapshot=run('quality-retry-race-snapshot',[*PSQL,'-Atq','-c',"select jsonb_build_object('state',state,'quality_retries',quality_retries,'history_count',jsonb_array_length(quality_retry_history),'prior_attempt',quality_retry_history#>>'{0,prior_source,attempt_id}','prior_receipt',quality_retry_history#>'{0,prior_source,receipt}','new_attempt',attempt_id,'new_receipt',receipt)from property_video_job_sources where job_id='%s'and position=0"%job])
  v=json.loads(snapshot.strip());assert v['state']=='pending'and v['quality_retries']==v['history_count']==1 and v['prior_attempt']==attempt and v['prior_receipt']==source['receipt']and v['new_attempt']is None and v['new_receipt']is None,v
  receipt['races'].append({'name':'same-paid-grant-two-quality-retries','actualConcurrentRequests':2,'exactlyOneTransition':True,'lostReplyAcknowledged':True,'priorPaidReceiptRetained':True,'providerCalls':0})
+ assert run('current-authority-after-controls',[*PSQL,'-Atq','-c',catalog])==current_authority,'Current function authority changed during proof'
+ receipt['currentRuntimeAndAuthorityPreserved']=True
  assert hashes()==receipt['sourceHashes'],'Source changed during verification';receipt['passed']=True
  print(json.dumps({'passed':True,'assertions':receipt['unit']['assertions'],'races':len(receipt['races']),'receipt':str(OUT/'receipt.json')}))
 finally:

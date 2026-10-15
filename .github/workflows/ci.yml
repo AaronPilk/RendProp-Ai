@@ -1496,6 +1496,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_result_delivery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-result-delivery-pg"
+      - name: Definitively unaccepted supplier requests recover exactly once
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_submit_recovery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-submit-recovery-pg"
       - name: Studio photos and recorded publication exclude video derivatives
         timeout-minutes: 10
         shell: bash
@@ -1517,6 +1524,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/product_media_serving_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-product-media-serving-pg"
+      - name: Published photo previews retain exact source and hosting authority
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/published_photo_delivery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-published-photo-delivery-pg"
       - name: Missing paid supplier results retain evidence and permit one funded replacement
         timeout-minutes: 10
         shell: bash
@@ -1524,6 +1538,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_missing_result_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-missing-result-pg"
+      - name: Pre-output assembly recovery retains all paid clips and rejects stale leases
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_compose_recovery_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-compose-recovery-pg"
       - name: API cost reports separate consumption, holds, funding and unpriced usage
         timeout-minutes: 2
         shell: bash
@@ -1548,10 +1569,13 @@ jobs:
             ${{ runner.temp }}/rendprop-listing-gallery-remove-pg/**
             ${{ runner.temp }}/rendprop-property-derived-retry-pg/**
             ${{ runner.temp }}/rendprop-property-result-delivery-pg/**
+            ${{ runner.temp }}/rendprop-property-submit-recovery-pg/**
             ${{ runner.temp }}/rendprop-studio-recorded-source-pg/**
             ${{ runner.temp }}/rendprop-owner-media-testing-pg/**
             ${{ runner.temp }}/rendprop-product-media-serving-pg/**
+            ${{ runner.temp }}/rendprop-published-photo-delivery-pg/**
             ${{ runner.temp }}/rendprop-property-missing-result-pg/**
+            ${{ runner.temp }}/rendprop-property-compose-recovery-pg/**
             ${{ runner.temp }}/rendprop-api-cost-report-unit.log
           if-no-files-found: warn
 
