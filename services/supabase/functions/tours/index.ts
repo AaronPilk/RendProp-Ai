@@ -432,44 +432,51 @@ Deno.serve(async (req) => {
     mark("gallery_contact");
     const presentation=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,visibleRefs,publishedR2Url);
     mark("presentation");
-    const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
-      new Set([...visibleRefs.keys,...(render.presentation_kind!=="photo_video"&&typeof render.video_key==="string"?[render.video_key]:[])]),slug);
-    mark("disclosures");
-
-    // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
-    let chapters: SpatialChapter[] = [];
-    if (job?.capture_asset_id && render.presentation_kind!=='photo_video') {
-      const { data: chapterRows } = await admin
-        .from("capture_chapters")
-        .select("label, t_ms, sort")
-        .eq("asset_id", job.capture_asset_id)
-        .order("sort", { ascending: true })
-        .order("t_ms", { ascending: true });
-      chapters = (chapterRows ?? []).map((c) => ({
-        label: c.label as string,
-        t_ms: c.t_ms as number,
-        sort: c.sort as number,
-      }));
-    }
-
-    // A scan added after a video was published lights up its existing chapter.
-    // This is a private-table read with an explicit approved subset; it never
-    // returns original keys, pending reviews, or ambiguous room-label guesses.
-    if (chapters.length) {
-      const { data: scenes, error: spatialError } = await admin.from("spatial_jobs")
-        .select("id,status,approved,excluded,published_at,artifact_revision,review_revision,output_state,redactions,scene_manifest")
-        .eq("listing_id", listing.id).eq("org_id", listing.org_id).eq("status", "ready")
-        .eq("approved", true).eq("excluded", false).not("published_at", "is", null).limit(100);
-      // Before 0040 is rolled out, the existing flythrough must remain usable.
-      // Any read error suppresses only optional 3D anchors, never opens access.
-      if (!spatialError && scenes) chapters = bindSpatialChapters(chapters, scenes);
-    }
-
-    // 4. Explicit client delivery stays first. Otherwise resolve only the
-    // listing's current member's reviewed personal identity under DB locks.
     if(clientError)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
     const clientMode=clientRow?.enabled===true;
-    const client=clientMode?await resolveContactPhoto(admin,clientRow,visibleRefs,key=>publishedR2Url(slug,key)):null;
+    const clientRefs={assets:[] as string[],keys:[] as string[]};
+    // Chapters and the optional contact portrait do not determine gallery
+    // selection/disclosures. Read them concurrently, then retain every final
+    // lineage, contact revision and publication fence before returning bytes.
+    const [altered_media,chapters,client] = await Promise.all([
+      alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
+        new Set([...visibleRefs.keys,...(render.presentation_kind!=="photo_video"&&typeof render.video_key==="string"?[render.video_key]:[])]),slug),
+      (async()=>{
+        // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
+        let chapters: SpatialChapter[] = [];
+        if (job?.capture_asset_id && render.presentation_kind!=='photo_video') {
+          const { data: chapterRows } = await admin
+            .from("capture_chapters")
+            .select("label, t_ms, sort")
+            .eq("asset_id", job.capture_asset_id)
+            .order("sort", { ascending: true })
+            .order("t_ms", { ascending: true });
+          chapters = (chapterRows ?? []).map((c) => ({
+            label: c.label as string,
+            t_ms: c.t_ms as number,
+            sort: c.sort as number,
+          }));
+        }
+
+        // A scan added after a video was published lights up its existing chapter.
+        // This is a private-table read with an explicit approved subset; it never
+        // returns original keys, pending reviews, or ambiguous room-label guesses.
+        if (chapters.length) {
+          const { data: scenes, error: spatialError } = await admin.from("spatial_jobs")
+            .select("id,status,approved,excluded,published_at,artifact_revision,review_revision,output_state,redactions,scene_manifest")
+            .eq("listing_id", listing.id).eq("org_id", listing.org_id).eq("status", "ready")
+            .eq("approved", true).eq("excluded", false).not("published_at", "is", null).limit(100);
+          // Before 0040 is rolled out, the existing flythrough must remain usable.
+          // Any read error suppresses only optional 3D anchors, never opens access.
+          if (!spatialError && scenes) chapters = bindSpatialChapters(chapters, scenes);
+        }
+      return chapters;
+      })(),
+      clientMode?resolveContactPhoto(admin,clientRow,clientRefs,key=>publishedR2Url(slug,key)):Promise.resolve(null),
+    ]);
+    visibleRefs.assets.push(...clientRefs.assets);visibleRefs.keys.push(...clientRefs.keys);
+    mark("disclosures_chapters_contact");
+
     const portrait=identity?.legacy_portrait as {asset_id?:unknown;storage_key?:unknown;url?:unknown}|null;
     const portraitURL=portrait && typeof portrait.asset_id==="string" && typeof portrait.storage_key==="string" && typeof portrait.url==="string" &&
       portrait.url===publicR2Url(portrait.storage_key) ? publishedR2Url(slug,portrait.storage_key) ?? undefined : undefined;
