@@ -12,7 +12,7 @@ OUT=(args.evidence_dir or Path(tempfile.mkdtemp(prefix='gallery-append-capacity-
 assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
 assert shutil.disk_usage(OUT).free>=8*1024**3,'Preserve external8GiB reserve'
 DATA=Path(tempfile.mkdtemp(prefix='owned-append-pg-',dir=OUT));SOCK=Path(tempfile.mkdtemp(prefix='append-pg-socket-',dir='/tmp'))
-ENV={'PATH':'/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
+ENV={'PATH':os.pathsep.join([os.environ.get('PATH','/usr/bin:/bin'),'/opt/homebrew/opt/postgresql@17/bin','/opt/homebrew/bin','/usr/bin','/bin']),'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n,path=ENV['PATH'])
 assert all(tool(n)for n in ['initdb','pg_ctl','createdb','psql'])
 MIG=SQL/'migrations/20261015215817_listing_gallery_append_capacity.sql';FIX=SQL/'tests/listing_gallery_append_capacity.sql'
