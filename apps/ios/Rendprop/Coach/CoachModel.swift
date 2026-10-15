@@ -156,9 +156,9 @@ final class CoachModel: ObservableObject {
                     listings: Self.contextListings(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend, selectedListingID: selectedListingID),
                     plan: PurchaseManager.shared.activePlan ?? "free",
                     screen: originScreen,
-                    selectedListingID: Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend).contains(where: { $0.id == selectedListingID }) ? selectedListingID?.uuidString.lowercased() : nil,
+                    selectedListingID: Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend, selectedListingID: selectedListingID).contains(where: { $0.id == selectedListingID }) ? selectedListingID?.uuidString.lowercased() : nil,
                     reelState: Self.reelState(from: model, screen: originScreen, selectedListingID: selectedListingID, orgID: workspaceAtOpen, liveBackend: liveBackend),
-                    photoState: Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend).contains(where: { $0.id == selectedListingID }) ? photoState : nil
+                    photoState: Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend, selectedListingID: selectedListingID).contains(where: { $0.id == selectedListingID }) ? photoState : nil
                 ),
                 orgID: workspaceAtOpen
             )
@@ -212,7 +212,7 @@ final class CoachModel: ObservableObject {
     }
 
     private func rememberAddresses() {
-        for listing in model.realProjects {
+        for listing in Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend, selectedListingID: selectedListingID) {
             let address = listing.address.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !address.isEmpty else { continue }
             let label = Self.redactedStreet(address) ?? "this \(space.spaceNoun)"
@@ -267,12 +267,12 @@ final class CoachModel: ObservableObject {
         if kind.needsListing {
             guard let idString = action.listingID,
                   let listingID = UUID(uuidString: idString),
-                  Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend)
+                  Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend, selectedListingID: selectedListingID)
                     .contains(where: { $0.id == listingID }) else { return nil }
             switch kind {
             case .openTour:             return .project(listingID: listingID, feature: .tour)
             case .shareTour:
-                guard let listing = Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend).first(where: { $0.id == listingID }),
+                guard let listing = Self.contextProjects(from: model, orgID: workspaceAtOpen, liveBackend: liveBackend, selectedListingID: selectedListingID).first(where: { $0.id == listingID }),
                       !(listing.shareURL ?? "").isEmpty, listing.cloudUnavailable != true else { return nil }
                 return .listingDetails(listingID: listingID)
             case .openPhotos:           return .project(listingID: listingID, feature: .photos)
@@ -293,23 +293,35 @@ final class CoachModel: ObservableObject {
 
     // MARK: - Context (counts and booleans ONLY — see file header)
 
-    static func contextProjects(from model: AppModel, orgID: UUID?, liveBackend: Bool) -> [Listing] {
-        guard liveBackend else { return model.realProjects }
-        guard let orgID else { return [] }
-        return model.realProjects.filter { ($0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }
+    static func contextProjects(from model: AppModel, orgID: UUID?, liveBackend: Bool, selectedListingID: UUID? = nil) -> [Listing] {
+        let projects: [Listing]
+        if liveBackend {
+            guard let orgID else { return [] }
+            projects = model.realProjects.filter { ($0.serverLibraryOrgID ?? $0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }
+        } else { projects = model.realProjects }
+        // Support the home the user actually opened, including Sold/Archived.
+        // This does not add unrelated inactive homes to general feature pickers.
+        guard let selectedListingID, !projects.contains(where: { $0.id == selectedListingID }),
+              let selected = model.listings.first(where: { $0.id == selectedListingID }),
+              selected.isInactive, !selected.isSample, selected.belongsToCurrentType,
+              selected.cloudUnavailable != true, model.isInSelectedWorkspace(selected) else { return projects }
+        if liveBackend {
+            guard let orgID, (selected.serverLibraryOrgID ?? selected.serverOrgID ?? selected.cloudDraftOrgID) == orgID else { return projects }
+        }
+        return [selected] + projects
     }
 
     /// A fresh, closed snapshot of this account's selected reel only. No job
     /// title, URL, error/provider text or physical location enters chat context.
     static func reelState(from model: AppModel, screen: String?, selectedListingID: UUID?, orgID: UUID?, liveBackend: Bool) -> CoachRequest.ReelState? {
         guard screen == "reel_studio", let selectedListingID,
-              contextProjects(from: model, orgID: orgID, liveBackend: liveBackend).contains(where: { $0.id == selectedListingID }),
+              contextProjects(from: model, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID).contains(where: { $0.id == selectedListingID }),
               let job = ReelWorkQueue.shared.visibleJobs.first(where: { $0.listingID == selectedListingID }) else { return nil }
         if let saved = job.serverJob {
             guard let actor = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
                   saved.context.actorID == actor, saved.context.orgID == orgID,
                   saved.context.localListingID == selectedListingID,
-                  let listing = contextProjects(from: model, orgID: orgID, liveBackend: liveBackend).first(where: { $0.id == selectedListingID }),
+                  let listing = contextProjects(from: model, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID).first(where: { $0.id == selectedListingID }),
                   saved.context.listingID == (listing.serverID ?? listing.id) else { return nil }
             let total = saved.request.sources.count
             guard (1...100).contains(total) else { return nil }
@@ -350,7 +362,7 @@ final class CoachModel: ObservableObject {
     }
 
     static func contextListings(from model: AppModel, orgID: UUID?, liveBackend: Bool, selectedListingID: UUID? = nil) -> [CoachRequest.ListingContext] {
-        let projects = contextProjects(from: model, orgID: orgID, liveBackend: liveBackend)
+        let projects = contextProjects(from: model, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID)
         let selected = projects.filter { $0.id == selectedListingID }
         let listings = Array((selected + projects.filter { $0.id != selectedListingID }).prefix(25))
         let labels = Self.redactedLabels(for: listings)
@@ -600,7 +612,7 @@ enum CoachOffline {
         let query = text.lowercased()
         guard ["needs attention", "stuck", "failed", "error", "what next", "continue", "retry", "wrong", "can't publish", "cannot publish"].contains(where: query.contains),
               let selectedListingID,
-              let listing = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend).first(where: { $0.id == selectedListingID }),
+              let listing = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID).first(where: { $0.id == selectedListingID }),
               let reason = CoachModel.attention(for: listing, model: model) else { return nil }
         // A tour's older render error is not the failure of the photo/reel
         // editor the user is asking about. Access/facts review remains global.
@@ -644,7 +656,7 @@ enum CoachOffline {
                     CoachResponse.Action(type: CoachActionType.openHome.rawValue,
                                          label: CoachActionType.openHome.defaultLabel, listingID: nil))
         }
-        let scoped = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend)
+        let scoped = CoachModel.contextProjects(from: model, orgID: orgID, liveBackend: liveBackend, selectedListingID: selectedListingID)
         let projects = selectedListingID.map { selected in scoped.filter { $0.id == selected } } ?? scoped
         if selectedListingID != nil && projects.isEmpty {
             return ("This project is unavailable in the selected workspace. Open Home to check its access.",

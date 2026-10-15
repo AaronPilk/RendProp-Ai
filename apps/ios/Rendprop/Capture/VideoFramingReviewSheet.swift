@@ -11,6 +11,9 @@ struct VideoFramingReviewSheet: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     Text("Check the framing").font(.title2.bold())
+                    Label(aspect > 1 ? "Landscape photos for your listing" : "Portrait photos for social media",
+                          systemImage: aspect > 1 ? "rectangle" : "rectangle.portrait")
+                        .font(.headline).foregroundStyle(Theme.accent)
                     Text("\(assessments.count) selected photo\(assessments.count == 1 ? "" : "s") will lose a large part of the frame in this video shape. Your saved photos stay unchanged.")
                         .foregroundStyle(.secondary)
                     ForEach(assessments) { row in
@@ -18,14 +21,26 @@ struct VideoFramingReviewSheet: View {
                     }
                     Text("This is an estimated center crop. AI motion can change the final framing; review the finished video before publishing.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("Use this framing") { dismiss(); proceed() }
-                        .buttonStyle(.borderedProminent).accessibilityIdentifier("video.framing.use")
-                    Button("Back to photos or format") { dismiss() }.buttonStyle(.bordered)
                 }.padding()
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) { framingActions }
             .navigationTitle("Framing review").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Back") { dismiss() } } }
         }
+    }
+
+    private var framingActions: some View {
+        VStack(spacing: 10) {
+            PrimaryButton(title: "Create with this crop", systemImage: "checkmark") {
+                dismiss(); proceed()
+            }
+            .accessibilityIdentifier("video.framing.use")
+            SecondaryButton(title: "Back to photos", systemImage: "photo.on.rectangle") {
+                dismiss()
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 10)
+        .background(.ultraThinMaterial)
     }
 }
 

@@ -52,9 +52,12 @@ actual+='''@MainActor final class PhotoReviewHarness {
 let photo=EnhancedPhoto(id:"photo",enhancedURL:URL(fileURLWithPath:"/local/edited.jpg"),originalURL:URL(fileURLWithPath:"/local/original.jpg"))
 var selectedVersion: EnhancedPhoto?; var viewed: EnhancedPhoto { selectedVersion ?? photo }
 var enhanced:UIImage?;var original:UIImage?;var imageLoadComplete=false;var selectedForListing=false
+var selectionWorkID:UUID?
 var stagingReview=PhotoVersionHistory.StagingReview();var customReview=PhotoVersionHistory.CustomReview()
 var showOriginal=false;var showFullComparison=false;var exporting:Bool?;var imageContext:NativeMediaExportContext?;var dismissCount=0
 func dismiss(){dismissCount+=1}
+// Single-photo edit cleanup has its own actual-source executable controls.
+func clearSinglePhotoEdit() {}
 func loadImages() async '''+task+'\nfunc sourceChanged(_ showing:Bool) '+change+'\n'+methods+'\n}\n'
 fixture=paths[3].read_text()
 variants=[('actual',actual,None),

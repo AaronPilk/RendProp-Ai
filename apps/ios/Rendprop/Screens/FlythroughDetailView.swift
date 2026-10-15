@@ -172,6 +172,47 @@ private struct ListingToolUnavailableTile: View {
     }
 }
 
+/// Only app-owned raw recording/import paths can supply a room-tag timeline.
+/// A rendered tour, photo video, cloud render or bundled sample is not a take.
+enum RoomTagWalkthroughPolicy {
+    static func sourceURL(asset: CaptureAsset?, documents: URL, isSample: Bool,
+                          isCurrent: Bool, generatedURLs: [URL] = []) -> URL? {
+        guard isCurrent, !isSample, let asset, asset.localURL.isFileURL,
+              asset.durationS.isFinite, asset.durationS >= 0.2, asset.durationS <= 600,
+              asset.fps.isFinite, asset.fps > 0, asset.width > 0, asset.height > 0,
+              asset.bytes > 0 else { return nil }
+        let url = asset.localURL.standardizedFileURL
+        let base = documents.standardizedFileURL
+        guard !generatedURLs.contains(where: {
+            $0.standardizedFileURL.resolvingSymlinksInPath() == url.resolvingSymlinksInPath()
+        }) else { return nil }
+        let parent = url.deletingLastPathComponent()
+        let name = url.lastPathComponent
+        let isRecording = parent == base.appendingPathComponent("Recordings", isDirectory: true)
+            && name.hasPrefix("walkthrough-") && url.pathExtension.lowercased() == "mov"
+        let importPrefix = "import-"
+        let importParts = String(name.dropFirst(importPrefix.count)).split(separator: "-", maxSplits: 1)
+        let isImport = parent == base.appendingPathComponent("Imports", isDirectory: true)
+            && name.hasPrefix(importPrefix) && importParts.count == 2
+            && importParts[0].utf8.count == 8 && importParts[0].utf8.allSatisfy({
+                (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0)
+            })
+            && !importParts[1].isEmpty
+        guard isRecording || isImport else { return nil }
+        let rawDirectory = isRecording ? "Recordings" : "Imports"
+        guard parent.resolvingSymlinksInPath() == base.resolvingSymlinksInPath()
+            .appendingPathComponent(rawDirectory, isDirectory: true) else { return nil }
+        // Older demo imports had real CaptureAsset rows. Their source name
+        // still identifies the bundled demo rather than the owner's footage.
+        let originalName = isImport ? String(importParts[1]).lowercased() : name.lowercased()
+        guard !["demo.mp4", "sample.mp4", "sample-tour.mp4", "demo-tour.mp4"].contains(originalName),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, Int64(size) == asset.bytes else { return nil }
+        return url
+    }
+}
+
 private struct ListingToolboxGrid: View {
     let listing: Listing
     // Preserve the detail screen's live read when a destination is built.
@@ -179,6 +220,7 @@ private struct ListingToolboxGrid: View {
     let space: SpaceType
     let asset: CaptureAsset?
     let canRerender: Bool
+    let canTagRooms: Bool
     let hasPublishedTour: Bool
     let photoCount: Int
     let openReel: () -> Void
@@ -225,9 +267,9 @@ private struct ListingToolboxGrid: View {
             )
             ListingToolButtonTile(
                 card: ListingToolCard(title: space == .realEstate ? "Tag rooms" : "Tag areas",
-                                      sub: sample ? createFirst : (asset == nil ? "Needs your own video" : "Tap-to-jump chapters"),
-                                      icon: "mappin.and.ellipse", gradient: RPGradient.rooms, dimmed: asset == nil || sample),
-                disabled: asset == nil || sample, accessibilityID: "detail.roomTags", action: openRoomTagger
+                                      sub: sample ? createFirst : (canTagRooms ? "Tap-to-jump chapters" : "Add walkthrough first"),
+                                      icon: "mappin.and.ellipse", gradient: RPGradient.rooms, dimmed: !canTagRooms || sample),
+                disabled: sample, accessibilityID: "detail.roomTags", action: openRoomTagger
             )
             if !sample, hasPublishedTour {
                 if let asset, canRerender {
@@ -566,6 +608,9 @@ struct FlythroughDetailView: View {
     @State private var zillowSeeded = false
     @State private var zillowError: String?
     @State private var showRoomTagger = false
+    @State private var showRoomTagsWalkthroughHelp = false
+    @State private var showWalkthroughForRoomTags = false
+    @State private var availableRoomTagAsset: CaptureAsset?
     /// Drives the photos screen when this view was opened photos-first.
     @State private var showPhotosScreen = false
     @State private var didAutoOpenPhotos = false
@@ -680,6 +725,7 @@ struct FlythroughDetailView: View {
         provenance = []; provenanceCanExport = nil; auditExport = nil
         showComplianceDetails = false
         showPhotosScreen = false; showRoomTagger = false; showReelStudio = false
+        showRoomTagsWalkthroughHelp = false; showWalkthroughForRoomTags = false; availableRoomTagAsset = nil
         showAerialIntro = false; showEdit = false; showListingFactsReview = false
         qrTarget = nil
         connection.cancel()
@@ -696,11 +742,11 @@ struct FlythroughDetailView: View {
     /// and the player refreshes.
     private var roomTagsBinding: Binding<[RoomTag]> {
         Binding(
-            get: { model.assets[listing.id]?.roomTags ?? [] },
+            get: { self.roomTagAsset?.roomTags ?? [] },
             set: { newTags in
-                if var a = model.assets[listing.id] {
+                if var a = self.roomTagAsset {
                     a.roomTags = newTags
-                    model.assets[listing.id] = a
+                    self.model.assets[self.listing.id] = a
                 }
             }
         )
@@ -742,6 +788,47 @@ struct FlythroughDetailView: View {
 
     private var asset: CaptureAsset? { model.assets[listing.id] }
     private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
+
+    private var hasCurrentRoomTagContext: Bool {
+        hasCurrentPresentationContext && model.listings.contains {
+            $0.id == listing.id && !$0.isSample && $0.cloudUnavailable != true && model.isInSelectedWorkspace($0)
+        }
+    }
+
+    private var roomTagGeneratedURLs: [URL] {
+        [tour?.url, selectedWebsiteVideoURL, currentListing.aerialURL].compactMap { $0 }
+    }
+
+    /// Recheck on entry and tag writes; a cached tile cannot authorize a file
+    /// that was deleted, replaced or moved to another account while open.
+    private var roomTagAsset: CaptureAsset? {
+        guard let asset, RoomTagWalkthroughPolicy.sourceURL(asset: asset, documents: FileStore.documents,
+            isSample: currentListing.isSample, isCurrent: hasCurrentRoomTagContext,
+            generatedURLs: roomTagGeneratedURLs) != nil else { return nil }
+        return asset
+    }
+
+    private var canTagRooms: Bool {
+        guard hasCurrentRoomTagContext, let asset, let checked = availableRoomTagAsset else { return false }
+        return checked.id == asset.id && checked.localURL == asset.localURL
+    }
+
+    private func openRoomTags() {
+        guard hasCurrentRoomTagContext else { return }
+        guard let source = roomTagAsset else {
+            availableRoomTagAsset = nil
+            showRoomTagsWalkthroughHelp = true
+            return
+        }
+        tagsBeforeEdit = source.roomTags
+        showRoomTagger = true
+    }
+
+    private func openWalkthroughForRoomTags() {
+        guard hasCurrentRoomTagContext else { return }
+        showRoomTagsWalkthroughHelp = false
+        showWalkthroughForRoomTags = true
+    }
 
     private var mapCoordinate: CLLocationCoordinate2D? {
         let l = currentListing
@@ -910,6 +997,15 @@ struct FlythroughDetailView: View {
         .navigationDestination(isPresented: $showPhotosScreen) {
             PhotoStudioView(listing: currentListing, entry: .photos)
         }
+        .navigationDestination(isPresented: $showWalkthroughForRoomTags) {
+            if hasCurrentRoomTagContext { RecordedWalkthroughView(listing: currentListing) }
+        }
+        .alert("Add a walkthrough first", isPresented: $showRoomTagsWalkthroughHelp) {
+            Button("Open walkthrough") { openWalkthroughForRoomTags() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Record or upload a drone-style walkthrough before tagging rooms or areas. Tags follow that video's timeline. A photo-based listing video or sample tour doesn't add walkthrough footage.")
+        }
         .fullScreenCover(item: $openedFile, onDismiss: { loadFiles(force: true) }) { item in
             ListingFileViewer(item: item, listingID: listing.id)
         }
@@ -967,13 +1063,26 @@ struct FlythroughDetailView: View {
                   hasCurrentPresentationContext, asset?.localURL == source else { return }
             availableRerenderSource = source
         }
+        .task(id: asset) {
+            availableRoomTagAsset = nil
+            let expectedScope = presentationScope
+            guard hasCurrentRoomTagContext, let source = asset else { return }
+            let documents = FileStore.documents, generated = roomTagGeneratedURLs
+            let url = await Task.detached(priority: .utility) {
+                RoomTagWalkthroughPolicy.sourceURL(asset: source, documents: documents,
+                    isSample: false, isCurrent: true, generatedURLs: generated)
+            }.value
+            guard !Task.isCancelled, url != nil, expectedScope == presentationScope,
+                  hasCurrentRoomTagContext, asset == source else { return }
+            availableRoomTagAsset = source
+        }
         .onChange(of: spaceTypeRaw) { _ in
             // The list this screen was opened from no longer contains this
             // listing — go back rather than showing another industry's detail.
             if !currentListing.belongsToCurrentType { dismiss() }
         }
         .sheet(isPresented: $showRoomTagger, onDismiss: roomTaggerDismissed) {
-            if let a = asset {
+            if let a = roomTagAsset {
                 RoomTaggerView(videoURL: a.localURL, tags: roomTagsBinding,
                                suggest: roomTagSuggestSource, listingID: listing.id)
             }
@@ -1056,8 +1165,10 @@ struct FlythroughDetailView: View {
                             .font(.rpHeadline).foregroundStyle(Theme.ink)
                         Text("Add and polish property photos, then choose Listing in Make a video. Your landscape video becomes this listing's presentation; a recorded walkthrough is an optional separate tool.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
-                        Button("Make a listing video") { showReelStudio = true }
-                            .buttonStyle(.borderedProminent).accessibilityIdentifier("listing.primaryVideoStart")
+                        PrimaryButton(title: "Make a listing video", systemImage: "film.stack") {
+                            showReelStudio = true
+                        }
+                        .accessibilityIdentifier("listing.primaryVideoStart")
                     }.padding()
                 } else if currentListing.isSample, space != .realEstate, !PlayerWebView.bundledDemoAvailable,
                    let demo = PlayerWebView.hostedDemoEmbedURL(for: space) {
@@ -1523,14 +1634,12 @@ struct FlythroughDetailView: View {
         ListingToolboxSection(grid: ListingToolboxGrid(
             listing: currentListing, destinationListing: { currentListing }, space: space, asset: asset,
             canRerender: asset != nil && availableRerenderSource == asset?.localURL,
+            canTagRooms: canTagRooms,
             hasPublishedTour: tour != nil || shareURL != nil,
             // Reuse the background FILES scan. No disk reads in body.
             photoCount: mediaItems.filter { $0.kind == .photo }.count,
             openReel: { showReelStudio = true },
-            openRoomTagger: {
-                tagsBeforeEdit = asset?.roomTags ?? []
-                showRoomTagger = true
-            },
+            openRoomTagger: { openRoomTags() },
             sharePackage: { shareListingPackage() },
             hasAnythingToShare: !mediaItems.isEmpty
         ), resumeAerial: !currentListing.isSample && PendingAerialJob.load(for: currentListing.id) != nil
@@ -2790,10 +2899,11 @@ struct FlythroughDetailView: View {
     /// from the human-confirmed tags only: an auto-filled tagger opened and
     /// closed without a glance is then not a change, and writes nothing at all.
     private func roomTaggerDismissed() {
+        guard hasCurrentRoomTagContext, let source = roomTagAsset else { return }
         playerRefresh = UUID()
         let l = currentListing
         guard !l.isSample, let renderID = l.publishedRenderID, tour != nil else { return }
-        let tags = (model.assets[listing.id]?.roomTags ?? []).filter { !$0.isFromAI }
+        let tags = source.roomTags.filter { !$0.isFromAI }
         guard tags != tagsBeforeEdit.filter({ !$0.isFromAI }) else { return }
         let sf = safeSpeedFactor
         let chapters: [ChapterInput] = tags
@@ -2804,15 +2914,20 @@ struct FlythroughDetailView: View {
             }
         chapterSyncNote = "Updating chapters on your share link…"
         let api = model.api
+        let expectedScope = presentationScope
         Task {
+            guard expectedScope == presentationScope, hasCurrentRoomTagContext,
+                  roomTagAsset?.id == source.id else { return }
             do {
                 try await api.updateChapters(renderID: renderID, chapters: chapters)
-                await MainActor.run { chapterSyncNote = "Chapters updated on your share link." }
+                guard expectedScope == presentationScope, hasCurrentRoomTagContext,
+                      roomTagAsset?.id == source.id else { return }
+                chapterSyncNote = "Chapters updated on your share link."
             } catch {
+                guard expectedScope == presentationScope, hasCurrentRoomTagContext,
+                      roomTagAsset?.id == source.id else { return }
                 let why = AIFailure(error).message
-                await MainActor.run {
-                    chapterSyncNote = "Couldn't update the chapters on your share link — \(why)"
-                }
+                chapterSyncNote = "Couldn't update the chapters on your share link — \(why)"
             }
         }
     }
@@ -4397,11 +4512,7 @@ extension EnhancedPhoto {
             return loadAll(listingID: listingID)
         }
         let index = try PhotoVersionHistory.load(directory: directory)
-        return choices.sorted { a, b in
-            let aOrder = PhotoImportOrder.galleryStamp(createdAt: a.createdAt, importOrderID: index.importOrder?[a.familyID])
-            let bOrder = PhotoImportOrder.galleryStamp(createdAt: b.createdAt, importOrderID: index.importOrder?[b.familyID])
-            return aOrder != bOrder ? aOrder > bOrder : a.id > b.id
-        }.map { version in
+        return index.orderedForLibrary(choices).map { version in
             let output = directory.appendingPathComponent(version.imageFile)
             return EnhancedPhoto(id: version.id, originalURL: directory.appendingPathComponent(version.reviewSourceFile(in: index)),
                                  enhancedURL: output)
@@ -4412,8 +4523,8 @@ extension EnhancedPhoto {
         FileStore.documents.appendingPathComponent("Photos/\(listingID.uuidString)", isDirectory: true)
     }
 
-    /// Current photo versions, newest first. Older files remain addressable for
-    /// history and existing reels, but superseded versions are not gallery tiles.
+    /// Current photo versions in source import order. Older files remain
+    /// addressable without moving a family when its editing version changes.
     nonisolated static func loadAll(listingID: UUID) -> [EnhancedPhoto] {
         let dir = directory(for: listingID)
         return dated(in: DiskScan.entries(of: dir), directory: dir).map(\.photo)
@@ -4427,6 +4538,7 @@ extension EnhancedPhoto {
         let history = try? PhotoVersionHistory.load(directory: dir)
         let knownFiles = Dictionary((history?.versions.values.map { ($0.imageFile, $0) } ?? []),
                                     uniquingKeysWith: { first, _ in first })
+        let positions = Dictionary(uniqueKeysWithValues: (history?.orderedFamilyIDs ?? []).enumerated().map { ($0.element, $0.offset) })
         return entries.compactMap { file -> DatedPhoto? in
             if let version = knownFiles[file.name] {
                 guard history?.isVisible(version.id) == true else { return nil }
@@ -4447,9 +4559,9 @@ extension EnhancedPhoto {
         }.sorted { a, b in
             let aFamily = history?.versions[a.photo.id]?.familyID ?? a.photo.id
             let bFamily = history?.versions[b.photo.id]?.familyID ?? b.photo.id
-            let aOrder = PhotoImportOrder.galleryStamp(createdAt: a.createdAt, importOrderID: history?.importOrder?[aFamily])
-            let bOrder = PhotoImportOrder.galleryStamp(createdAt: b.createdAt, importOrderID: history?.importOrder?[bFamily])
-            return aOrder != bOrder ? aOrder > bOrder : a.photo.id > b.photo.id
+            let aOrder = positions[aFamily] ?? Int.max, bOrder = positions[bFamily] ?? Int.max
+            if aOrder != bOrder { return aOrder < bOrder }
+            return a.createdAt != b.createdAt ? a.createdAt < b.createdAt : a.photo.id > b.photo.id
         }
     }
 }
@@ -6997,6 +7109,81 @@ private enum PhotoReviewLayout {
     }
 }
 
+/// Closed choices share the existing photo service; none enters bulk selection.
+private enum PhotoReviewEdit: Equatable {
+    case declutter, stage(String), twilight, sky, lawn, custom
+    var edit: String {
+        switch self {
+        case .declutter: return "declutter"
+        case .stage: return "stage"
+        case .twilight: return "twilight"
+        case .sky: return "sky"
+        case .lawn: return "lawn"
+        case .custom: return "custom"
+        }
+    }
+    var style: String? { if case .stage(let style) = self { return style }; return nil }
+    var title: String {
+        switch self {
+        case .declutter: return "Declutter"
+        case .stage: return "Staging"
+        case .twilight: return "Twilight"
+        case .sky: return "Blue sky"
+        case .lawn: return "Green lawn"
+        case .custom: return "Custom edit"
+        }
+    }
+}
+
+private struct PhotoReviewEditSheet: View {
+    let original: EnhancedPhoto
+    let space: SpaceType
+    let choose: (PhotoReviewEdit) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var pickingStyle = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    DetailPhotoThumb(url: original.enhancedURL, height: 180)
+                    Text("Change just this photo").font(.title2.bold()).foregroundStyle(Theme.ink)
+                    Text("Each action starts from this photo’s Original. Your saved edits stay in history. Review the new version before using it on your listing.")
+                        .font(.subheadline).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if pickingStyle {
+                        Text(space == .realEstate ? "Choose a staging style" : "Choose a furnishing style")
+                            .font(.headline).foregroundStyle(Theme.ink)
+                        ForEach(StagingStyle.all) { style in
+                            SecondaryButton(title: style.label, systemImage: "sofa") { select(.stage(style.id)) }
+                                .accessibilityIdentifier("photoVersion.edit.stage.\(style.id)")
+                        }
+                        SecondaryButton(title: "Back to photo actions", systemImage: "arrow.left") { pickingStyle = false }
+                    } else {
+                        PrimaryButton(title: "Declutter this photo", systemImage: "sparkles") { select(.declutter) }
+                            .accessibilityIdentifier("photoVersion.edit.declutter")
+                        SecondaryButton(title: space == .realEstate ? "Stage this photo" : "Furnish this photo", systemImage: "sofa") { pickingStyle = true }
+                            .accessibilityIdentifier("photoVersion.edit.stage")
+                        SecondaryButton(title: "Make it twilight", systemImage: "sun.horizon") { select(.twilight) }
+                        SecondaryButton(title: "Make the sky blue", systemImage: "cloud.sun") { select(.sky) }
+                        if space == .realEstate {
+                            SecondaryButton(title: "Make the lawn green", systemImage: "leaf") { select(.lawn) }
+                        }
+                        SecondaryButton(title: "Ask for a custom edit", systemImage: "text.bubble") { select(.custom) }
+                            .accessibilityIdentifier("photoVersion.edit.custom")
+                    }
+                    Text("One photo edit counts against your plan. No other photos are selected or changed.")
+                        .font(.caption).foregroundStyle(Theme.inkDim).fixedSize(horizontal: false, vertical: true)
+                }.padding(16).frame(maxWidth: 760).frame(maxWidth: .infinity)
+            }
+            .background(Theme.bg.ignoresSafeArea())
+            .navigationTitle("Edit original photo").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+    private func select(_ action: PhotoReviewEdit) { choose(action); dismiss() }
+}
+
 struct PhotoCompareView: View {
     let photo: EnhancedPhoto
     var disclosure: String? = nil
@@ -7013,9 +7200,20 @@ struct PhotoCompareView: View {
     @State private var imageContext: NativeMediaExportContext?
     @State private var selectionError: String?
     @State private var selectedForListing = false
+    @State private var selectionWorkID: UUID?
     @State private var imageLoadComplete = false
     @State private var stagingReview = PhotoVersionHistory.StagingReview()
     @State private var customReview = PhotoVersionHistory.CustomReview()
+    @ObservedObject private var photoJobs = PhotoWorkQueue.shared
+    @StateObject private var editConnection = FeatureSessionAction()
+    @State private var editOriginal: EnhancedPhoto?
+    @State private var editContext: NativeMediaExportContext?
+    @State private var editConsentRevision: UInt64?
+    @State private var showEditActions = false
+    @State private var pendingEdit: PhotoReviewEdit?
+    @State private var singleStagingSetup: PhotoStagingSetup?
+    @State private var singleCustomPhoto: EnhancedPhoto?
+    @State private var singleEditJobID: UUID?
 
     private var viewed: EnhancedPhoto { selectedVersion ?? photo }
     private var needsStagingReview: Bool {
@@ -7093,6 +7291,7 @@ struct PhotoCompareView: View {
                         .accessibilityIdentifier("photoVersion.fullSize")
                         .accessibilityHint("Inspect this version beside its retained source at full size.")
                     }
+                    singlePhotoEditing
                     reviewDetails
                 }
                 .padding(16)
@@ -7108,6 +7307,32 @@ struct PhotoCompareView: View {
         .onChange(of: auth.userID) { _ in clearAndDismiss() }
         .onChange(of: auth.syncSessionRevision) { _ in clearAndDismiss() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in clearAndDismiss() }
+        .onReceive(photoJobs.$job) { receiveSinglePhotoWork($0) }
+        .sheet(isPresented: $showEditActions, onDismiss: continueSinglePhotoEdit) {
+            if let editOriginal, let listing = reviewListing {
+                PhotoReviewEditSheet(original: editOriginal, space: listing.isSample ? SpaceType.current : listing.spaceType) {
+                    pendingEdit = $0
+                }
+            }
+        }
+        .sheet(item: $singleStagingSetup) { setup in
+            PhotoStagingSetupView(setup: setup) { referenceID, brief in
+                singleStagingSetup = nil
+                guard setup.isCurrent else { return }
+                startSinglePhotoWork(.stage(setup.pending.style ?? "modern"), prompt: brief,
+                                     stagingReferenceID: referenceID)
+            }
+        }
+        .sheet(item: $singleCustomPhoto) { source in
+            if let listing = reviewListing {
+                CustomEditSheet(photo: source, api: model.api,
+                    space: listing.isSample ? SpaceType.current : listing.spaceType,
+                    listingServerID: listing.serverID) { prompt in
+                        singleCustomPhoto = nil
+                        startSinglePhotoWork(.custom, prompt: prompt)
+                    }
+            }
+        }
         .fullScreenCover(isPresented: $showFullComparison) {
             if let enhanced, imageContext?.isCurrent == true {
                 PhotoFullSizeComparison(edited: enhanced, source: viewed.originalURL == viewed.enhancedURL ? nil : original, sourceTitle: sourceTitle,
@@ -7115,7 +7340,7 @@ struct PhotoCompareView: View {
             }
         }
         .sheet(item: $exporting) { selection in PhotoExportSheet(photos: selection.photos, original: selection.original) }
-        .alert("Couldn't use that version", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
+        .alert("Photo action needs attention", isPresented: Binding(get: { selectionError != nil }, set: { if !$0 { selectionError = nil } })) {
             Button("OK") { selectionError = nil }
         } message: { Text(selectionError ?? "") }
         .task(id: viewed.id) {
@@ -7144,6 +7369,108 @@ struct PhotoCompareView: View {
             if showing, imageContext?.isCurrent == true, original != nil, viewed.originalURL != viewed.enhancedURL {
                 stagingReview.comparedSource = true
                 customReview.comparedSource = true
+            }
+        }
+        .sessionConnectionNotice(isActive: editConnection.isWaiting, onCancel: { editConnection.cancel() })
+        .aiConsentGate()
+    }
+
+    private var reviewListing: Listing? {
+        guard let id = UUID(uuidString: photo.enhancedURL.deletingLastPathComponent().lastPathComponent) else { return nil }
+        return model.listings.first { $0.id == id && $0.cloudUnavailable != true }
+    }
+
+    private var singlePhotoEditing: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let job = photoJobs.visibleJob, job.id == singleEditJobID, job.running {
+                HStack(alignment: .top, spacing: 10) {
+                    ProgressView().tint(Theme.accent)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(job.phase?.title ?? "Preparing photo").font(.subheadline.weight(.semibold))
+                        Text(job.phase?.detail ?? "Your saved versions stay unchanged.").font(.caption).foregroundStyle(Theme.inkDim)
+                    }
+                }
+                .accessibilityIdentifier("photoVersion.edit.progress")
+                SecondaryButton(title: "Stop photo edit", systemImage: "stop.circle") { photoJobs.cancel() }
+            } else {
+                SecondaryButton(title: "Edit original photo", systemImage: "wand.and.stars",
+                    isDisabled: imageContext?.isCurrent != true || selectionWorkID != nil
+                        || photoJobs.visibleJob?.running == true || editConnection.isWaiting || reviewListing == nil,
+                    action: openSinglePhotoEdit)
+                    .accessibilityIdentifier("photoVersion.editOriginal")
+                    .accessibilityHint("Declutter, stage or edit only this photo’s retained Original. Saved versions stay unchanged.")
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func openSinglePhotoEdit() {
+        guard imageContext?.isCurrent == true, reviewListing != nil,
+              selectionWorkID == nil, photoJobs.visibleJob?.running != true else { return }
+        do {
+            let directory = viewed.enhancedURL.deletingLastPathComponent()
+            let source = try PhotoVersionHistory.originalForEditing(id: viewed.id, directory: directory)
+            let url = directory.appendingPathComponent(source.imageFile)
+            editOriginal = EnhancedPhoto(id: source.id, originalURL: url, enhancedURL: url)
+            editContext = NativeMediaExportContext()
+            pendingEdit = nil
+            showEditActions = true
+        } catch { selectionError = error.localizedDescription }
+    }
+
+    private func continueSinglePhotoEdit() {
+        guard let action = pendingEdit else { return }
+        pendingEdit = nil
+        guard let source = editOriginal, let context = editContext, context.isCurrent else { return }
+        Task { @MainActor in
+            guard await AIConsent.shared.ensureGranted(), context.isCurrent else { return }
+            let consentRevision = AIConsent.shared.revocationRevision
+            editConsentRevision = consentRevision
+            editConnection.run { [self] in
+                guard context.isCurrent, editContext?.isCurrent == true, AIConsent.shared.isGranted,
+                      AIConsent.shared.revocationRevision == consentRevision,
+                      reviewListing != nil, photoJobs.visibleJob?.running != true else { return }
+                if case .stage = action {
+                    singleStagingSetup = PhotoStagingSetup(
+                        pending: PendingBatchEdit(edit: action.edit, style: action.style, title: action.title, multiple: false),
+                        targets: [source], references: [])
+                } else if action == .custom {
+                    singleCustomPhoto = source
+                } else {
+                    startSinglePhotoWork(action, prompt: nil)
+                }
+            }
+        }
+    }
+
+    private func startSinglePhotoWork(_ action: PhotoReviewEdit, prompt: String?, stagingReferenceID: String? = nil) {
+        guard let source = editOriginal, let context = editContext, context.isCurrent,
+              imageContext?.isCurrent == true, AIConsent.shared.isGranted,
+              editConsentRevision == AIConsent.shared.revocationRevision,
+              let listing = reviewListing, photoJobs.visibleJob?.running != true else { return }
+        let service = PhotoEditService(model: model, listing: listing,
+            space: listing.isSample ? SpaceType.current : listing.spaceType)
+        if service.start(title: action.title, photos: [source], edit: action.edit,
+                         style: action.style, prompt: prompt, stagingReferenceID: stagingReferenceID) {
+            singleEditJobID = photoJobs.visibleJob?.id
+            Haptics.selection()
+        }
+    }
+
+    private func receiveSinglePhotoWork(_ job: PhotoWorkQueue.Job?) {
+        guard let job, job.id == singleEditJobID, !job.running,
+              editContext?.isCurrent == true, imageContext?.isCurrent == true,
+              let source = editOriginal else { return }
+        singleEditJobID = nil
+        if let failure = job.failures.first {
+            selectionError = AIFailure(failure.error).fullMessage
+        } else if job.done == 1 {
+            let directory = source.enhancedURL.deletingLastPathComponent()
+            if let index = try? PhotoVersionHistory.load(directory: directory),
+               let family = index.versions[source.id]?.familyID, let latestID = index.current[family],
+               let latest = index.versions[latestID] {
+                chooseVersion(EnhancedPhoto(id: latest.id,
+                    originalURL: directory.appendingPathComponent(latest.reviewSourceFile(in: index)),
+                    enhancedURL: directory.appendingPathComponent(latest.imageFile)))
             }
         }
     }
@@ -7241,48 +7568,122 @@ struct PhotoCompareView: View {
 
     @ViewBuilder private var useOnListingButton: some View {
         if !showOriginal, viewed.savedVersion != nil {
-            Button {
-            guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
-            do {
+            PrimaryButton(title: selectionWorkID != nil ? "Removing…" : selectedForListing ? "Remove from listing" : "Use on listing",
+                          systemImage: selectedForListing ? "minus.circle" : "checkmark.circle",
+                          isDisabled: listingSelectionDisabled, action: changeListingSelection)
+            .frame(minHeight: 44)
+            .accessibilityIdentifier("photoVersion.useOnListing")
+            .accessibilityLabel(selectedForListing ? "Remove this photo from listing" : "Use this version on listing")
+            .accessibilityHint(selectedForListing ? "Keeps every original and saved edit in Photos." : "Selects this reviewed version for the listing gallery.")
+            .disabled(listingSelectionDisabled)
+        }
+    }
+
+    private var listingSelectionDisabled: Bool {
+        guard imageContext?.isCurrent == true, selectionWorkID == nil else { return true }
+        // Removing exposure does not require decoded pixels or a new approval.
+        if selectedForListing { return false }
+        return enhanced == nil
+            || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
+                && (original == nil || viewed.originalURL == viewed.enhancedURL
+                    || (needsStagingReview && !stagingReview.isComplete)
+                    || (needsCustomReview && !customReview.isComplete)))
+    }
+
+    private func changeListingSelection() {
+        guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
+        guard selectionWorkID == nil else { return }
+        do {
+            let directory = viewed.enhancedURL.deletingLastPathComponent()
+            guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
+            try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
+                priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
+            let currentSelection = try PhotoVersionHistory.load(directory: directory).isSelectedForListing(viewed.id)
+            guard currentSelection == selectedForListing else {
+                selectedForListing = currentSelection
+                throw PhotoVersionHistory.Failure.changedVersion
+            }
+            let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
+            let familyWasMain = try PhotoVersionHistory.familyContains(id: viewed.id,
+                imageFile: priorMain.map { FileStore.url(fromRelativePath: $0).lastPathComponent }, directory: directory)
+            if currentSelection {
+                if let listing = model.listings.first(where: { $0.id == listingID }),
+                   listing.cloudImported == true, let serverID = listing.serverID {
+                    beginCloudListingRemoval(listingID: listingID, serverID: serverID,
+                        directory: directory, versionID: viewed.id)
+                    return
+                }
+                try PhotoVersionHistory.removeFromPublication(id: viewed.id, directory: directory)
+                if familyWasMain {
+                    let replacement = try PhotoVersionHistory.availableCoverVersion(directory: directory)
+                    model.setMainPhoto(replacement.map { FileStore.relativePath(for: directory.appendingPathComponent($0.imageFile)) }, for: listingID)
+                }
+                selectedForListing = false
+            } else {
                 guard !needsStagingReview || stagingReview.isComplete else {
                     throw PhotoVersionHistory.Failure.reviewRequired
                 }
                 guard !needsCustomReview || customReview.isComplete else {
                     throw PhotoVersionHistory.Failure.customReviewRequired
                 }
-                let directory = viewed.enhancedURL.deletingLastPathComponent()
-                guard let listingID = UUID(uuidString: directory.lastPathComponent) else { return }
-                let priorMain = model.listings.first { $0.id == listingID }?.mainPhotoRelPath
-                let familyWasMain = photo.history.contains { FileStore.relativePath(for: $0.enhancedURL) == priorMain }
-                try PhotoVersionHistory.trackExisting(id: viewed.id, imageFile: viewed.enhancedURL.lastPathComponent,
-                    priorFile: viewed.originalURL == viewed.enhancedURL ? nil : viewed.originalURL.lastPathComponent, directory: directory)
                 try PhotoVersionHistory.selectForPublication(id: viewed.id, directory: directory,
                     reviewed: stagingReview.isComplete, customReviewed: customReview.isComplete)
                 if familyWasMain || requestedCover { model.setMainPhoto(FileStore.relativePath(for: viewed.enhancedURL), for: listingID) }
                 selectedForListing = true
-                if let listing = model.listings.first(where: { $0.id == listingID }),
-                   listing.serverShareURL != nil, let serverID = listing.serverID {
-                    Task { await model.syncGalleryPhotos(listingLocalID: listingID, listingServerID: serverID) }
-                }
-            } catch { selectionError = error.localizedDescription }
-
-            } label: {
-                Label(selectedForListing ? "Selected" : "Use on listing", systemImage: "checkmark.circle")
-                    .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
             }
-            .buttonStyle(.borderedProminent).tint(Theme.accent)
-            .accessibilityIdentifier("photoVersion.useOnListing")
-            .accessibilityLabel(selectedForListing ? "Selected for listing" : "Use this version on listing")
-            .disabled(imageContext?.isCurrent != true || enhanced == nil
-                || ((viewed.savedVersion?.effects.contains("stage") == true || needsCustomReview)
-                    && (original == nil || viewed.originalURL == viewed.enhancedURL
-                        || (needsStagingReview && !stagingReview.isComplete)
-                        || (needsCustomReview && !customReview.isComplete))))
+            if let listing = model.listings.first(where: { $0.id == listingID }),
+               listing.serverShareURL != nil, let serverID = listing.serverID {
+                Task { await model.syncGalleryPhotos(listingLocalID: listingID, listingServerID: serverID) }
+            }
+        } catch { selectionError = error.localizedDescription }
+    }
+
+    private func beginCloudListingRemoval(listingID: UUID, serverID: UUID, directory: URL, versionID: String) {
+        guard let api = model.api as? any ListingGalleryRemovalAPI,
+              let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+              let library = WorkspaceContext.selectedOrgID, let context = imageContext, context.isCurrent else {
+            selectionError = "Sign in and refresh this home's cloud photos before removing a selection."
+            return
+        }
+        let work = UUID(); selectionWorkID = work
+        Task {
+            defer { if selectionWorkID == work { selectionWorkID = nil } }
+            func requireIdentity() throws {
+                guard context.isCurrent, imageContext?.isCurrent == true, selectionWorkID == work,
+                      viewed.id == versionID,
+                      model.listings.first(where: { $0.id == listingID })?.serverID == serverID
+                else { throw CloudSyncError.identityChanged }
+            }
+            do {
+                try await model.beginPhotoGalleryRemoval(listingID: listingID)
+                defer { model.endPhotoGalleryRemoval(listingID: listingID, serverID: serverID) }
+                try requireIdentity()
+                let confirmed = try await PhotoListingRemovalCoordinator.remove(versionID: versionID,
+                    directory: directory, localListingID: listingID, serverListingID: serverID,
+                    actorID: owner, libraryOrgID: library, api: api, requireIdentity: requireIdentity)
+                try requireIdentity()
+                guard try PhotoVersionHistory.load(directory: directory).isSelectedForListing(versionID) else {
+                    try PhotoListingRemovalCoordinator.finish(confirmed)
+                    throw PhotoVersionHistory.Failure.changedVersion
+                }
+                let cover = model.listings.first(where: { $0.id == listingID })?.mainPhotoRelPath
+                let wasCover = try PhotoVersionHistory.familyContains(id: versionID,
+                    imageFile: cover.map { FileStore.url(fromRelativePath: $0).lastPathComponent }, directory: directory)
+                try PhotoVersionHistory.removeFromPublication(id: versionID, directory: directory)
+                if wasCover {
+                    let replacement = try PhotoVersionHistory.availableCoverVersion(directory: directory)
+                    model.setMainPhoto(replacement.map { FileStore.relativePath(for: directory.appendingPathComponent($0.imageFile)) }, for: listingID)
+                }
+                selectedForListing = false
+                try PhotoListingRemovalCoordinator.finish(confirmed)
+            } catch {
+                if context.isCurrent, selectionWorkID == work { selectionError = error.localizedDescription }
+            }
         }
     }
 
     private var savePhotoButton: some View {
-        Button {
+        SecondaryButton(title: "Save photo", systemImage: "square.and.arrow.down", isDisabled: savePhotoDisabled) {
             guard imageContext?.isCurrent == true else { clearAndDismiss(); return }
             do {
                 if !showOriginal, needsCustomReview {
@@ -7297,16 +7698,17 @@ struct PhotoCompareView: View {
                 exporting = PhotoExportSelection(photos: [viewed], original: showOriginal)
             } catch { selectionError = error.localizedDescription }
 
-        } label: {
-            Label("Save photo", systemImage: "square.and.arrow.down")
-                .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 44)
         }
-        .buttonStyle(.bordered).tint(Theme.accent)
+        .frame(minHeight: 44)
         .accessibilityIdentifier("photoVersion.download")
         .accessibilityLabel(showOriginal ? (viewed.retainedSourceIsVerified ? "Download original" : "Download earlier source")
             : "Download " + choiceTitle(viewed).lowercased() + " photo")
-        .disabled(imageContext?.isCurrent != true || (showOriginal ? original == nil : enhanced == nil || (needsCustomReview
-            && (original == nil || viewed.originalURL == viewed.enhancedURL || !customReview.isComplete))))
+        .disabled(savePhotoDisabled)
+    }
+
+    private var savePhotoDisabled: Bool {
+        imageContext?.isCurrent != true || (showOriginal ? original == nil : enhanced == nil || (needsCustomReview
+            && (original == nil || viewed.originalURL == viewed.enhancedURL || !customReview.isComplete)))
     }
 
     private func chooseVersion(_ version: EnhancedPhoto) {
@@ -7326,10 +7728,24 @@ struct PhotoCompareView: View {
     private func clearAndDismiss() {
         showFullComparison = false
         exporting = nil
+        clearSinglePhotoEdit()
         imageContext = nil
+        selectionWorkID = nil
         enhanced = nil
         original = nil
         dismiss()
+    }
+
+    private func clearSinglePhotoEdit() {
+        showEditActions = false
+        pendingEdit = nil
+        singleStagingSetup = nil
+        singleCustomPhoto = nil
+        editContext = nil
+        editConsentRevision = nil
+        editOriginal = nil
+        singleEditJobID = nil
+        editConnection.cancel()
     }
 
     private var stagingReviewChecklist: some View {
@@ -9372,6 +9788,7 @@ struct ReelClipIssue: Identifiable {
 
 struct ReelStudioView: View {
     @ObservedObject private var work: ReelWorkJob
+    private let reviewingExistingJob: Bool
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -9419,7 +9836,7 @@ struct ReelStudioView: View {
     typealias ReelCaptions = ReelTitleCard
 
     private var phase: Phase { get { work.phase } nonmutating set { work.phase = newValue } }
-    @State private var selected: [String] = []      // photo ids in tap order = clip order
+    @State private var selected: [String] = []      // selected IDs follow the library's upload order
     @State private var selectedExtras: [URL] = []   // extra clips still switched on
     @State private var seededExtras = false
     @State private var videoPurpose: VideoAspectChoice?
@@ -9438,7 +9855,7 @@ struct ReelStudioView: View {
     @State private var reelTransition: ReelComposer.Transition = .cut
     @State private var motionPrompt = "" // Legacy draft field; never dispatched by preset UI.
     @State private var cameraMove: ReelCameraMove? = nil // Automatic per-photo motion by default.
-    @State private var automaticOrder = true
+    @State private var automaticOrder = false
     @State private var showVideoAdvanced = false
     @State private var scenePlanningNotice: String?
     @State private var musicSelection: VideoMusicSelection? = nil
@@ -9520,9 +9937,10 @@ struct ReelStudioView: View {
     @State private var nativeSetupNotice: String?
     @State private var nativeSetupError: String?
 
-    init(listing: Listing, photos: [EnhancedPhoto], extraClipURLs: [URL] = []) {
+    init(listing: Listing, photos: [EnhancedPhoto], extraClipURLs: [URL] = [], reviewingJob: ReelWorkJob? = nil) {
         self.listing = listing; self.photos = photos; self.extraClipURLs = extraClipURLs
-        self.work = ReelWorkQueue.shared.job(for: listing)
+        self.work = reviewingJob ?? ReelWorkQueue.shared.job(for: listing)
+        self.reviewingExistingJob = reviewingJob != nil
     }
 
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
@@ -9601,7 +10019,7 @@ struct ReelStudioView: View {
                 tone = Self.defaultTone(for: space)
                 seededTone = true
             }
-            lastReel = Self.newestReel(for: listing.id)
+            if !reviewingExistingJob { lastReel = Self.newestReel(for: listing.id) }
             if aiScript.isEmpty, let script = CloudVoiceStore.script(listing.id) { aiScript = script }
             if voiceover == nil, let saved = CloudVoiceStore.voice(listing.id) {
                 voiceover = saved
@@ -9609,10 +10027,14 @@ struct ReelStudioView: View {
             }
             // Pick up clips a previous run generated and was charged for but
             // never stitched — the reel equivalent of resuming a pending aerial.
-            if !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
-            reloadPendingRequest()
-            restoreVideoPurposeForSavedWork()
-            restoreServerVideoJob()
+            if !reviewingExistingJob, !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
+            if !reviewingExistingJob {
+                reloadPendingRequest()
+                restoreVideoPurposeForSavedWork()
+                restoreServerVideoJob()
+            } else if let saved = work.serverJob {
+                videoPurpose = saved.request.purpose == "listing" ? .listing : .socialMedia
+            }
             if let reelURL, player == nil { player = AVPlayer(url: reelURL) }
         }
         .onChange(of: voiceMode) { mode in
@@ -9843,11 +10265,13 @@ struct ReelStudioView: View {
                 motionPrompt = ""; cameraMove = planning.motionPreset.flatMap(ReelCameraMove.init(rawValue:)); automaticOrder = planning.automaticOrder; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
                 wordCaptionsOn = draft.wordCaptions
                 let available = Set(reelPhotos.map(\.id))
+                let photoIndex = try? PhotoVersionHistory.load(directory: EnhancedPhoto.directory(for: listing.id))
                 selected = draft.photos.compactMap { photo in
-                    if available.contains(photo.localId) { return photo.localId }
+                    if available.contains(photo.localId) || photoIndex?.versions[photo.localId] != nil { return photo.localId }
                     if let sid = photo.sourcePhotoId { return available.first(where: { $0.lowercased() == "cloud-\(sid.uuidString.lowercased())" }) }
                     return nil
                 }
+                selected = Self.selectionInUploadOrder(selected, photos: reelPhotos, index: photoIndex)
                 var missing: [String] = []
                 if selected.count < draft.photos.count { missing.append("Save missing photos from Cloud files, then load this setup again.") }
                 selectedExtras = []
@@ -9932,9 +10356,16 @@ struct ReelStudioView: View {
                     .font(.rpCaption)
                     .foregroundStyle(selected.count >= 1 ? Theme.accent : Theme.inkDim)
             }
-            photoPickerGrid
-            Text(videoPurpose == .listing ? "Wide photos work best. Start with the front, then rooms and backyard." : "Upright photos work best for social video.")
+            Label(videoPurpose == .listing ? "Use landscape photos for your listing" : "Use portrait photos for social media",
+                  systemImage: videoPurpose == .listing ? "rectangle" : "rectangle.portrait")
+                .font(.rpCallout.weight(.semibold)).foregroundStyle(Theme.accent)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(videoPurpose == .listing
+                 ? "Hold your phone sideways and fit the whole room. Start with the front, then rooms and backyard."
+                 : "Hold your phone upright. Landscape photos can lose the sides in a vertical video.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            photoPickerGrid
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
@@ -9953,8 +10384,8 @@ struct ReelStudioView: View {
         do {
             refreshedPhotos = try EnhancedPhoto.loadForListing(listingID: listing.id)
             savedPhotoError = nil
-            let available = Set(reelPhotos.map(\.id))
-            selected.removeAll { !available.contains($0) }
+            let index = try PhotoVersionHistory.load(directory: EnhancedPhoto.directory(for: listing.id))
+            selected = Self.selectionInUploadOrder(selected, photos: reelPhotos, index: index)
         } catch {
             refreshedPhotos = []
             savedPhotoError = "The selected photo versions need attention. Your saved photos are kept; review them in Photos before creating a video."
@@ -9965,7 +10396,9 @@ struct ReelStudioView: View {
         if let savedPhotoError {
             VStack(alignment: .leading, spacing: 10) {
                 Text(savedPhotoError).font(.rpCaption).foregroundStyle(Theme.inkDim)
-                Button("Review saved photos") { showReelPhotos = true }.buttonStyle(.borderedProminent)
+                PrimaryButton(title: "Review saved photos", systemImage: "photo.on.rectangle") {
+                    showReelPhotos = true
+                }
             }
         } else if reelPhotos.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
@@ -9973,8 +10406,7 @@ struct ReelStudioView: View {
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("Add photos") { showReelPhotos = true }
-                .buttonStyle(.borderedProminent)
+            PrimaryButton(title: "Add photos", systemImage: "photo.stack") { showReelPhotos = true }
                 .accessibilityIdentifier("reel.addPhotos")
             }
         } else {
@@ -10004,7 +10436,7 @@ struct ReelStudioView: View {
         DisclosureGroup("Help · photos and video", isExpanded: $showVideoHelp) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Hold sideways for property photos. Use 0.5× to fit the whole room, or 1× when it already fits. Keep the phone level. Social video works best with upright photos.")
-                Text("Each photo becomes about five seconds. Automatic planning organizes confident scenes and varies the camera motion; unclear photos keep their position. Separate photos do not map a physically connected route through the home.")
+                Text("Each photo becomes about five seconds. Your selected photo order is kept while camera motion is chosen for each photo. Separate photos do not map a physically connected route through the home.")
                 Text("Videos export at 1080p. Small sources cannot recover missing detail. Photos may be cropped to fill the format; we ask you to review large crops before creating. Saved photos stay unchanged.")
                 Text("If AI changes the property, an opted-in shot can use the reviewed photo with restrained 2D movement. Connection, billing and uncertain quality errors stop the job.")
                 Text("Review the finished video before publishing. Listing videos omit app-added branding; check your own narration and text before MLS use.")
@@ -10018,8 +10450,7 @@ struct ReelStudioView: View {
     private var videoAdvancedControls: some View {
         DisclosureGroup("Optional · voice, music and style", isExpanded: $showVideoAdvanced) {
             VStack(alignment: .leading, spacing: 16) {
-                Toggle("Automatically arrange the scenes", isOn: $automaticOrder).tint(Theme.accent)
-                Text("Turn this off to keep your selected photo order. Camera motion can still be automatic.")
+                Text("Your selected photo order is kept. Camera motion can still be automatic.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 motionRow
                 titleCardToggle
@@ -10338,7 +10769,7 @@ struct ReelStudioView: View {
                 clipFailureDetails
             }
             if work.serverJob != nil {
-                Button("Check status") { PropertyVideoJobRunner.shared.checkNow(work) }
+                serverStatusControls
             }
             Button("Cancel", role: .destructive) { cancelWork() }
                 .font(.rpBody)
@@ -10354,6 +10785,25 @@ struct ReelStudioView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
+    }
+
+    private var serverStatusControls: some View {
+        VStack(spacing: 8) {
+            SecondaryButton(title: work.isCheckingServerStatus ? "Refreshing…" : "Refresh status",
+                            systemImage: "arrow.clockwise",
+                            isDisabled: work.isCheckingServerStatus,
+                            isLoading: work.isCheckingServerStatus) {
+                PropertyVideoJobRunner.shared.checkNow(work)
+            }
+            .accessibilityIdentifier("video.status.refresh")
+            if let checked = work.lastServerStatusCheck {
+                Text("Last checked \(checked.formatted(date: .omitted, time: .standard))")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            Text(work.serverStatusCheckNote ?? "Updates automatically while Rendprop is open.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+        }
     }
 
     private var stitchingSection: some View {
@@ -10490,14 +10940,14 @@ struct ReelStudioView: View {
                 Text("\(parkedClips.clipURLs.count) finished clip\(parkedClips.clipURLs.count == 1 ? " is" : "s are") saved. You can finish a shorter video from those clips without generating again.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Finish video from saved clips") { finishParkedReel() }
-                    .font(.rpBody.weight(.semibold))
-                    .foregroundStyle(Theme.accent)
+                PrimaryButton(title: "Finish video from saved clips", systemImage: "film.stack") {
+                    finishParkedReel()
+                }
                     .accessibilityIdentifier("reel.finish-saved-clips")
             }
-            Button("Back to video setup") { resetToSetup() }
-                .font(.rpBody.weight(.semibold))
-                .foregroundStyle(Theme.accent)
+            SecondaryButton(title: "Back to video setup", systemImage: "slider.horizontal.3") {
+                resetToSetup()
+            }
                 .padding(.top, 4)
         }
         .frame(maxWidth: .infinity)
@@ -10511,20 +10961,31 @@ struct ReelStudioView: View {
             if let failure { Text(failure.message).font(.rpCaption).foregroundStyle(Theme.inkDim) }
             Text(work.serverJob?.wasRefusedBeforeAdmission == true ? "This video was not admitted. Choose fewer photos or check your plan; your saved photos and rejected recipe are kept." : "Check this same request before starting again. Leaving Rendprop does not cancel an accepted server job.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if work.serverJob?.reply != nil {
+                serverStatusControls
+            }
             if work.serverJob?.wasRefusedBeforeAdmission == true {
-                Button("Edit photos and setup") { resetToSetup() }
-                    .buttonStyle(.borderedProminent).accessibilityIdentifier("video.server.editRefused")
+                PrimaryButton(title: "Edit photos and setup", systemImage: "photo.on.rectangle") {
+                    resetToSetup()
+                }
+                .accessibilityIdentifier("video.server.editRefused")
             } else if work.serverJob?.reply?.isTerminal == true {
                 if work.serverJob?.reply?.mayResume == true {
-                    Button("Resume saved video") { Task { await PropertyVideoJobRunner.shared.resume(work) } }
-                        .buttonStyle(.borderedProminent).accessibilityIdentifier("video.server.resume")
+                    PrimaryButton(title: "Resume saved video", systemImage: "play.fill") {
+                        Task { await PropertyVideoJobRunner.shared.resume(work) }
+                    }
+                    .accessibilityIdentifier("video.server.resume")
                     Text("Uses the same photos and finished clips. Your current plan is checked before more clips start.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 }
-                Button("Back to video setup") { resetToSetup() }.buttonStyle(.bordered)
+                SecondaryButton(title: "Back to video setup", systemImage: "slider.horizontal.3") {
+                    resetToSetup()
+                }
             } else {
-                Button("Check saved job") { phase = .generating; PropertyVideoJobRunner.shared.checkNow(work) }
-                    .buttonStyle(.borderedProminent).accessibilityIdentifier("video.server.check")
+                PrimaryButton(title: "Check saved job", systemImage: "arrow.clockwise") {
+                    phase = .generating; PropertyVideoJobRunner.shared.checkNow(work)
+                }
+                .accessibilityIdentifier("video.server.check")
                 Button("Cancel saved job", role: .destructive) { Task { await PropertyVideoJobRunner.shared.cancel(work) } }
             }
         }.padding(.vertical, 24)
@@ -11530,6 +11991,15 @@ struct ReelStudioView: View {
 
     // MARK: Selection
 
+    nonisolated private static func selectionInUploadOrder(_ selected: [String], photos: [EnhancedPhoto],
+                                                        index: PhotoVersionHistory.Index? = nil) -> [String] {
+        let chosen = Set(selected)
+        let chosenFamilies = Set(selected.compactMap { index?.versions[$0]?.familyID })
+        return photos.filter {
+            chosen.contains($0.id) || index?.versions[$0.id].map { chosenFamilies.contains($0.familyID) } == true
+        }.map(\.id)
+    }
+
     private func selectThumb(_ p: EnhancedPhoto) -> some View {
         let order = selected.firstIndex(of: p.id)
         let reviewed = (try? PhotoVersionHistory.requireReelReview(imageURL: p.enhancedURL)) != nil
@@ -11576,6 +12046,7 @@ struct ReelStudioView: View {
         } else if selected.count < VideoSelectionCapacity.maximumPhotos {
             guard (try? PhotoVersionHistory.requireReelReview(imageURL: p.enhancedURL)) != nil else { return }
             selected.append(p.id)
+            selected = Self.selectionInUploadOrder(selected, photos: reelPhotos)
             Haptics.selection()
         }
     }
@@ -12073,7 +12544,7 @@ struct ReelStudioView: View {
         guard phase == .setup, canGenerate else { return }
         musicPreviewPlayer?.pause(); voPlayer?.pause()
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
-        let chosen = selected.compactMap { id in reelPhotos.first(where: { $0.id == id }) }
+        let chosen = reelPhotos.filter { selected.contains($0.id) }
         do {
             for photo in chosen { try PhotoVersionHistory.requireReelReview(imageURL: photo.enhancedURL) }
         } catch {
@@ -12087,7 +12558,7 @@ struct ReelStudioView: View {
         let isPortrait = portrait
         let prompt = "" // Closed presets keep free text from replacing property-preservation rules.
         let selectedMove = cameraMove?.rawValue ?? "push_in"
-        let motionOverride = cameraMove?.rawValue, arrangeScenes = automaticOrder
+        let motionOverride = cameraMove?.rawValue, arrangeScenes = false
         let listingID = listing.id
         let reelActor = auth.userID, reelRevision = auth.syncSessionRevision
         let reelWorkspace = WorkspaceContext.selectedOrgID
@@ -12182,6 +12653,8 @@ struct ReelStudioView: View {
                         if let targetServerID {
                             let input = tmpDir.appendingPathComponent("source-\(prepared.count).jpg")
                             try jpeg.write(to: input, options: .atomic)
+                            let photoNumber = prepared.count + 1
+                            await MainActor.run { statusText = "Uploading photo \(photoNumber) of \(chosen.count)…" }
                             sourceAssetID = try await DirectUploader.uploadPhoto(fileURL: input, listingID: targetServerID,
                                 role: "capture", contentType: "image/jpeg", keyPrefix: "video-source", api: api)
                             try requireCurrent()
@@ -12204,11 +12677,12 @@ struct ReelStudioView: View {
                             }
                             return PropertyVideoPlanner.Input(photoID: photo.id, assetID: asset, jpegDigest: PropertyVideoPlanner.digest(jpeg))
                         }
-                        await MainActor.run { statusText = "Organizing scenes and choosing camera motion…" }
+                        await MainActor.run { statusText = "Choosing camera motion for your photos…" }
                         let result = try await PropertyVideoPlanner.plan(inputs: inputs,
                             context: .init(ownerID: owner, orgID: org, listingID: sid), api: api as? PropertyVideoPlanningAPI,
                             automaticOrder: arrangeScenes, documents: FileStore.documents, requireCurrent: requireCurrent)
-                        plannedPhotos = result.photos; planningFallback = result.usedFallback; planningNotice = result.notice
+                        plannedPhotos = try PropertyVideoPlanner.preservingInputOrder(result.photos, inputs: inputs)
+                        planningFallback = result.usedFallback; planningNotice = result.notice
                     }
                     try requireCurrent()
                     let byID = Dictionary(uniqueKeysWithValues: prepared.map { ($0.id, $0) })

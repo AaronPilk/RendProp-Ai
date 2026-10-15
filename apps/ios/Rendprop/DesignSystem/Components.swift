@@ -125,6 +125,7 @@ struct SecondaryButton: View {
     let title: String
     var systemImage: String? = nil
     var isDisabled = false
+    var isLoading = false
     let action: () -> Void
 
     var body: some View {
@@ -133,7 +134,10 @@ struct SecondaryButton: View {
             action()
         } label: {
             HStack(spacing: 8) {
-                if let systemImage {
+                if isLoading {
+                    ProgressView()
+                        .tint(isDisabled ? Theme.disabledInk : Theme.accent)
+                } else if let systemImage {
                     Image(systemName: systemImage)
                 }
                 Text(title).fontWeight(.semibold)
@@ -150,7 +154,7 @@ struct SecondaryButton: View {
             )
         }
         .buttonStyle(ScalePressStyle())
-        .disabled(isDisabled)
+        .disabled(isDisabled || isLoading)
         .accessibilityLabel(Text(title))
     }
 }

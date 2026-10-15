@@ -22,9 +22,13 @@ def line(source, marker):
     assert len(lines)==1, marker
     return lines[0]
 
+def removal_fence(source):
+    return '\n'.join([line(source,'private let galleryMutationFence ='),
+        block(source,'    func beginPhotoGalleryRemoval('), block(source,'    func endPhotoGalleryRemoval(')])
+
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('--inject-fault',choices=['clear-unrelated','stale-selection','ignore-provenance'])
+    parser.add_argument('--inject-fault',choices=['clear-unrelated','stale-selection','ignore-provenance','removal-overtaken'])
     args=parser.parse_args()
     out=Path(tempfile.mkdtemp(prefix='rendprop-gallery-sync-fixture-',dir='/tmp'))
     fixtures=out/'isolated-documents';fixtures.mkdir()
@@ -51,18 +55,24 @@ def main():
         '__GALLERY_MEMO__':line(app,'private var publishedGalleryAssets:'),
         '__IN_FLIGHT__':line(app,'private var gallerySyncInFlight:'),
         '__PENDING__':line(app,'private var gallerySyncPending:'),
+        '__REMOVAL_FENCE__':removal_fence(app),
         '__ERROR_PREFIX__':line(app,'static let photoSyncErrorPrefix'),
         '__SYNC__':sync,
     }
     source=TEMPLATE.read_text()
     for key,value in replacements.items():assert source.count(key)==1;source=source.replace(key,value)
     checks=out/'ActualGallerySync.swift'; checks.write_text(source)
-    production_sources=[APP,DETAIL,ROOT/'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoImportSequence.swift']
+    production_sources=[APP,DETAIL,ROOT/'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoVersionHistory.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoImportSequence.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoGalleryDisclosure.swift',ROOT/'apps/ios/Rendprop/Photos/PhotoGalleryMutationFence.swift']
+    if args.inject_fault=='removal-overtaken':
+        fence=production_sources[-1].read_text()
+        old='if syncing.contains(listingID) {';assert fence.count(old)==1
+        mutated=out/'PhotoGalleryMutationFence.swift';mutated.write_text(fence.replace(old,'if false {'))
     receipt={'productionMutations':0,'networkCalls':0,'userPhotosAccessed':0,'injectedFault':args.inject_fault,
         'sourceHashes':{str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in production_sources},
         'actualSyncBodySha256':hashlib.sha256(actual_sync.encode()).hexdigest(),
         'compiledSyncBodySha256':hashlib.sha256(sync.encode()).hexdigest(),'commands':[]}
-    compile=['xcrun','swiftc','-swift-version','5','-parse-as-library',*map(str,production_sources[2:]),str(checks),'-o',str(out/'checks')]
+    compiled_sources=production_sources[2:] if args.inject_fault!='removal-overtaken' else [*production_sources[2:-1],mutated]
+    compile=['xcrun','swiftc','-swift-version','5','-parse-as-library',*map(str,compiled_sources),str(checks),'-o',str(out/'checks')]
     for label,command in [('compile',compile),('run',[str(out/'checks'),str(fixtures)])]:
         result=subprocess.run(command,cwd=ROOT,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=90)
         log=out/(label+'.log');log.write_text(result.stdout)
@@ -72,6 +82,7 @@ def main():
                 'clear-unrelated':'Successful gallery retry clears only its own error prefix',
                 'stale-selection':'Queued pass publishes only the newer selected version and main photo',
                 'ignore-provenance':'Missing/failed provenance publishes no photo selection',
+                'removal-overtaken':'Removal waits for an already-dispatched append before taking its CAS snapshot',
             }.get(args.inject_fault)
             receipt['passed']=result.returncode==0 if not args.inject_fault else result.returncode!=0 and expected_assertion in result.stdout
             if args.inject_fault:receipt['expectedRejection']=expected_assertion

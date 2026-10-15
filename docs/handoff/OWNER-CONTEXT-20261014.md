@@ -1,13 +1,98 @@
+# Current execution update — October15,2026 11:31 a.m. Eastern
+
+- User confirmed Claude RUNNING separate web/Studio worktree
+  `Rendprop Workspace/Worktrees/Active/claude-launch83-web-studio`. Root owns
+  integration/native/backend/Mirroring/Apple. Do not overwrite Claude's work.
+- New AppStoreConnect feedback read11:13Eastern:3normal82 screenshot submissions,
+  zero submitted crashes sinceOct14. Two comments request individual photo AI
+  actions in review while KEEPING bulk; one requires uploadedorder1,2,3 and later
+  batchappend, through video. Latest ordering requirement supersedes automatic
+  room-reorder default; retain automatic motion, preserve admittedjobmanifest.
+  Masterchecklist now66 numbered items(P13/P14). Parent singlephotoSourcePASS47+6,
+  existingreview54+21/lifecycle106. Childnativeorderinginprogress. No83archiveyet.
+- Qualityretryrepair LIVE: migration20261015151716, SHA8a64166e…; jobsv6bundle
+  c7588a11bd9cc87aaaf2c6dfb496ec078e550396109ec940d553d30b9d491a15/JWTtrue.
+  All63runtimebyteverified(twochanged/61preserved). Functionroles/fundingunchanged.
+  Root tappedactualphone same-jobResume11:23:28Eastern; c40sameop/manifest, old
+  source1retryhistory1 and fourcachedreadybyteidentical; nojobcreation/rejudge.
+- JobadvancedfiveReady then FAILED11:27:48Eastern on source6
+  provider_generation_failed/retainedFALreceipt/no clip. Source1singlequalityretry
+  processing; sevenpending. Inventorydiagnosingexactterminalpaidstatus/cause and
+  existingsaferecoverybeforecode. No finalmaster/publication/push.
+- Diskcleared5.93GiB44oldinactiveRendprop-ownedgeneratedcachepaths, restored
+  6.02GiBfree. Nootherproject/archive/Products/source/current82/83/evidencetouched.
+  Receiptouter_bridge/build83-owned-cache-cleanup-20261015/RECEIPT.json.
+- RootCIhasnewTags/derivedretryPG/singlephotoedit steps; noCI dispatched while
+  sourceorderfixunfinished. Root3gatescapture7controls/propertyjobs16/reellifecycle
+  98+29 allpassed, parentReview50+20/selection+privacyPASSprefeedbacksingleedit.
+- Onboarding remains REJECTED/last/unlimitedduration/Realtorsonly. NoAppStoresubmit.
+
+# Current owner-checklist checkpoint — October 15, 2026, 11:03 a.m. Eastern
+
+This checkpoint supersedes older status paragraphs below. The authoritative
+checklist is `docs/handoff/OWNER-REQUEST-CHECKLIST-20261014.md`, consolidated
+into 64 individually numbered current items plus retained future requests.
+Previous ledger preserved in outer `_bridge/build83-owner-checklist/`.
+
+- Actual owner phone is normal1.0.5(82), installed today. Public1.0.4(74)
+  unchanged; draft1.0.5 unattached/AFTER_APPROVAL/NOT submitted. 83 is prepared
+  in source, not archived/uploaded. Prior source2fe6d669 CI16/16 is complete,
+  not a claim that additional83 edits have passed CI or phone acceptance.
+- The14-photo Listing16:9 job c40f4860-bb9d-4e12-93a2-406fa53bf4cd FAILED
+  at14:50:46Z after4ready shots. No master/push/publication. Strict-policy
+  derived retry was rejected because SQL required the judge raw verdict to
+  be fail/regen, although canonical failed-axis evidence requested retry.
+  Inventory agent is implementing/tests for forward evidence/retry/explicit
+  owner resume of this exact expired CPU3 state. No live retry repair applied.
+  Preserve cached paid clips and operation; no rejudge/threshold waiver.
+- Atomic cloud gallery removal IS deployed: listings56; migration
+  20261015144353_atomic_listing_gallery_remove.sql. Earlier 'not live' entries
+  below are historical. Source-native83 deselection/Original-disclosure fix is
+  built and tested but not yet on the phone.
+- Latest requests: branded buttons rather than small generic purple controls;
+  exact-job Review banner must work through modal dismissal and identify home;
+  Tag rooms muted/tappable-help until genuine raw recorded/uploaded walkthrough,
+  never unlocked by generated/sample media. Parent owns Review, child owns Tags,
+  root owns branded Make-video/framing/status hunks. All four slots active.
+- Root source status feedback uses spinner/actual validated last-checked timestamp,
+  no duplicated generation. Current largerjob is FAILED, not ready; an older
+  retained ready banner must not be confused with it.
+- Owner explicitly approved existing portrait crops for this14-photo test and
+  will capture a correct landscape home after checklist/audits. Do not impose
+  new20-photo/fresh-landscape prerequisite on current test. >15import remains
+  a separate unaccepted feature check.
+- Onboarding current118.73s is REJECTED. Remake LAST, after app and all URL/site
+  pages finish, every narration matches exact real final screen, no duration cap,
+  Willow1.2x natural/excited tone. Realtors only; hospitality video future.
+  Internal83 may temporarily carry oldintro for functional tests, NEVER claim
+  finalonboarding/submission acceptance. Production luxury purchase still OFF,
+  genuine$25Sandbox/metadata/screenshot acceptance not done.
+
 # Rendprop owner context — October 14, 2026
 
-## Active checkpoint — 2026-10-15 08:54 UTC
+## Latest owner onboarding decisions — October 15, 2026
+
+- The current video is **Rendprop for Realtors**. Bars/Restaurants will have a
+  separate onboarding video later, when that side of the product is developed.
+  Do not mix its workflow into the realtor video or produce that future video now.
+- The current 118.73-second video is not accepted for release: every narrated
+  page must show its actual current screen, including Apple sign-in and plan
+  selection, in the natural order an agent uses the app.
+- Remake onboarding **last**, after all app screens and URL/website pages are
+  complete and tested. There is no duration cap; explain each feature and the
+  relevant best practices precisely. Keep Willow at 1.2× unless directed otherwise.
+- Internal build 83 may carry the previous video temporarily for functional
+  testing. Do not submit that rejected video as the finished App Store onboarding.
+
+
+## Active checkpoint — 2026-10-15 10:03 UTC
 
 - Normal 1.0.5 (82) is VALID / APP_STORE_ELIGIBLE / IN_BETA_TESTING, build
   45479fdb…, in the existing internal group. Its 205 native inputs, 170 tracked
   plus one generated Swift file, no-LAB/DEBUG build and 118.73s Willow intro
   remain bound to the delivered archive. The phone was last verified on 81;
-  normal 82 has not been physically accepted. At 08:48 UTC, macOS still reported
-  lock=true, so the manual unlock request remains pending.
+  normal 82 has not been physically accepted. The 08:48 UTC macOS lock was a
+  real earlier blocker; Mirroring has now resumed and root owns the phone checks.
   Public 1.0.4 (74) is unchanged. The 1.0.5 draft c15af3a3… is unattached,
   AFTER_APPROVAL and not submitted. Upload is not phone acceptance or submission.
 - Runtime sourcef1a9765 includes prospective structured judge d4408b3, furniture boundary
@@ -17,15 +102,18 @@
   private CPU and tour-host runtime gates green; three stale test fixtures failed.
   Test-only corrections d1a3df2 / dcd5a3f / 3e3c632 preserve the safety oracles:
   fresh/replay 270 invariants plus nine faults, exact legacy fallback controls,
-  and five drift tests/eight mutants passed. Corrected CI 38707737574 is running
-  on 2fe6d669; migration, Studio and Edge jobs are green. Edge reports 2,386
-  tests passed, zero failures and one ignored test. No terminal CI result yet.
-  No native source/archive changes or App Store submission were made.
+  and five drift tests/eight mutants passed. Corrected CI 38707737574 completed
+  SUCCESS on 2fe6d669: all 16 jobs passed, including Edge (2,386 passed, zero
+  failures, one ignored), fresh/replay database, native, private CPU and Studio
+  gates. Later HEAD 3483a36 differs only in these two handoff documents;
+  runtime, tests and native/archive inputs are identical to the tested source.
+  Receipt: `_bridge/build82-ci-2fe6d669/FINAL-CI-RECEIPT.json`.
+  No App Store attachment/submission or physical 82 acceptance is inferred.
 - OriginalCI38693470447 on04b31ca finished naturally:15jobs success, sole preserved
   tour-host baseline red. All native/actualUIKit/paid-recovery/dependent native
   gates PASS; backend2340pass/0fail/1ignored. Test-only classifier5ab17a5 keeps
   production RMS/pitch/duration/frame oracles unchanged. That historical result
-  remains retained; corrected CI 38707737574 is not yet terminal.
+  remains retained alongside the corrected 16-job SUCCESS; it was not erased.
 - Live strict ai-photo-v2v6/25db7306… all54bytes verified independently; private
   photo-quality-worker7/3b8b7054… all31exact. Structured JSON/parse diagnostics
   and rubric are prospective; parser/scores/thresholds and oldHOLDs unchanged.
@@ -113,9 +201,10 @@
   job with audio/push/private review, explicit publication/playable hero and ZIP,
   plus ordinary paid admission and Sandbox purchase/recovery/refund. The genuine
   $25 offer screenshot is still missing; the SKU remains MISSING_METADATA,
-  Sandbox enabled / Production disabled. Await the corrected CI's terminal result,
-  then the owner's accepted normal candidate can be attached/submitted with
-  automatic distribution after approval. No submission has occurred.
+  Sandbox enabled / Production disabled. CI is green; the existing physical and
+  purchase acceptance limits remain open. After acceptance, the normal candidate
+  can be attached/submitted with automatic distribution after approval.
+  No submission has occurred.
 
 This consolidates the owner's recent messages and retained decisions. New messages
 steer the same work; they do not erase earlier open requests. Later explicit
@@ -323,8 +412,8 @@ reachable required checks/footer, Homephoto-first/GetStartedaddress form,
 ManageDetails/toolbox ordering, Leads grouping and temporaryLight/Dark restored to
 System. No large-text, fresh ordinary billing, premium purchase, whole-listing
 export or actual 82 phone acceptance is claimed. macOS lock=true was confirmed
-at 08:48 UTC; Mirroring's manual unlock request remains pending. Use the actual
-phone for the remaining sequence in `OWNER-REQUEST-CHECKLIST-20261014.md`; do not
+at 08:48 UTC; Mirroring has since resumed and root is using the actual phone.
+Follow the remaining sequence in `OWNER-REQUEST-CHECKLIST-20261014.md`; do not
 repeat the unchanged Home/Leads/light-dark matrix merely for a build number.
 
 ## Latest owner onboarding requirement, October14 evening
@@ -343,4 +432,4 @@ repeat the unchanged Home/Leads/light-dark matrix merely for a build number.
   trial eligibility, background, purchase or MLS-syndication promise.
   Rendered118.733s/327words with29real phone scenes and one genuine saved-video
   excerpt; bundled SHA2160f41c48eeffa17815190861c8805038a0de60bca35233800cf836cee2b921.
-  Encoded/audio/frame checks pass; actual phone replay remains pending unlock.
+  Encoded/audio/frame checks pass; actual 82 phone replay remains unaccepted.

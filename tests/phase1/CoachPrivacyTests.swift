@@ -21,6 +21,13 @@ struct Listing {
     var shareURL: String? = nil
     var serverOrgID: UUID? = nil
     var cloudDraftOrgID: UUID? = nil
+    var serverLibraryOrgID: UUID? = nil
+    var cloudSyncOwnerID: UUID? = nil
+    var isSample = false
+    var belongsToCurrentType = true
+    var isSold = false
+    var isArchived = false
+    var isInactive: Bool { isSold || isArchived }
 }
 struct Asset { var roomTags: [String] = [] }
 enum SpaceType: String {
@@ -47,7 +54,15 @@ enum CloudSyncError: Error { case identityChanged }
 }
 @MainActor final class AppModel {
     var listings: [Listing] = []
-    var realProjects: [Listing] { listings }
+    var realProjects: [Listing] { listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isInactive && isInSelectedWorkspace($0) } }
+    var libraryVisible = true
+    func isInSelectedWorkspace(_ listing: Listing) -> Bool {
+        if let owner = listing.cloudSyncOwnerID, owner != AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) { return false }
+        guard libraryVisible, let selected = WorkspaceContext.selectedOrgID else { return false }
+        guard let org = listing.serverOrgID ?? listing.cloudDraftOrgID else { return true }
+        if listing.cloudUnavailable == true { return org == selected && listing.serverLibraryOrgID == nil }
+        return (listing.serverLibraryOrgID ?? org) == selected
+    }
     var assets: [UUID: Asset] = [:]
     var tours: [UUID: String] = [:]
     var coachRoute: CoachRoute?
@@ -251,6 +266,7 @@ enum FileStore {
             try check(request.context.listings.first?.id == selected.uuidString, "selected project is retained before the context cap")
             try check(request.context.selectedListingID == selected.uuidString.lowercased(), "actual send carries the selected device route id")
             try check(request.context.listings.first?.serverID == many.listings.last!.serverID?.uuidString.lowercased(), "cloud row id stays distinct from the local action id")
+
             many.listings[many.listings.count - 1].lastError = "PRIVATE_PROVIDER_ERROR synthetic-secret/private prompt"
             many.assets[selected] = Asset()
             try await send("Why does this say Needs attention?", through: focused)
@@ -380,6 +396,68 @@ enum FileStore {
             try check((unrelatedScreen.wireBody["context"] as! [String: Any])["photo_state"] == nil, "other screen cannot transmit Photo Studio selection")
             let photoFirst = CoachOffline.nextStep(model: model(), space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: listingA)
             try check(photoFirst.action?.kind == .openPhotos && photoFirst.text.contains("landscape"), "new listing starts photos without forcing capture")
+            reset()
+            // The actual Home picker excludes Sold/Archived. A context opened
+            // from one of those homes must retain only that explicit home.
+            let inactive = model(), soldID = UUID(), archivedID = UUID()
+            var sold = Listing(id: soldID, address: "985 Closed Home Avenue, Synthetic City", shareURL: "https://fixture.invalid/sold", serverOrgID: orgA)
+            sold.isSold = true; sold.serverID = UUID()
+            var archived = Listing(id: archivedID, address: "987 Archived Home Avenue, Synthetic City", serverOrgID: orgA)
+            archived.isArchived = true
+            inactive.listings += [sold, archived]
+            try check(!inactive.realProjects.contains { $0.id == soldID || $0.id == archivedID }, "fixture models real active-only feature picker")
+            let soldCoach = CoachModel(model: inactive, originScreen: "listing", listingID: soldID)
+            try await send("How do I change this home's website design?", through: soldCoach)
+            let soldRequest = inactive.api.requests.last!
+            try check(soldRequest.context.selectedListingID == soldID.uuidString.lowercased() && soldRequest.context.listings.first?.id == soldID.uuidString, "selected Sold home remains the current website support context")
+            try check(!soldRequest.context.listings.contains { $0.id == archivedID.uuidString }, "unselected inactive homes stay out of support context")
+            try check(soldRequest.context.listings.first?.title == "Closed Home Avenue", "selected Sold home title remains redacted")
+            try await send("Help with 985 Closed Home Avenue, Synthetic City", through: soldCoach)
+            try check(inactive.api.requests.last?.messages.last?.content == "Help with Closed Home Avenue", "selected inactive home address is redacted at history boundary")
+            soldCoach.perform(.init(type: "share_tour", label: "Open website", listingID: soldID.uuidString))
+            try check(inactive.coachRoute == .listingDetails(listingID: soldID), "selected Sold website action retains its exact listing route")
+            inactive.coachRoute = nil
+            soldCoach.perform(.init(type: "open_photos", label: "Other archived home", listingID: archivedID.uuidString))
+            try check(inactive.coachRoute == nil, "unselected inactive action cannot borrow selected exception")
+            let soldOffline = CoachOffline.nextStep(model: inactive, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: soldID)
+            try check(soldOffline.action?.kind == .shareTour && soldOffline.action?.listingID == soldID.uuidString, "offline help keeps the exact selected Sold website")
+            inactive.listings[1].lastError = "Synthetic private failure"
+            inactive.assets[soldID] = Asset()
+            let soldRecovery = CoachOffline.recovery(to: "Why is this failed?", model: inactive, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: soldID)
+            try check(soldRecovery?.action?.listingID == soldID.uuidString, "recovery retains selected Sold home without paid retry")
+            let archivedCoach = CoachModel(model: inactive, originScreen: "photos", listingID: archivedID, photoState: .init(tab: .original, selectedCount: 1))
+            try await send("What can I do with this photo?", through: archivedCoach)
+            try check(inactive.api.requests.last?.context.selectedListingID == archivedID.uuidString.lowercased() && inactive.api.requests.last?.context.photoState?.selectedCount == 1, "explicit selected Archived home retains photo screen context")
+            for reason in ["sample", "type", "unavailable", "owner", "library", "visibility"] {
+                let forbidden = model(); var candidate = sold
+                switch reason {
+                case "sample": candidate.isSample = true
+                case "type": candidate.belongsToCurrentType = false
+                case "unavailable": candidate.cloudUnavailable = true
+                case "owner": candidate.cloudSyncOwnerID = UUID()
+                case "library": candidate.serverLibraryOrgID = orgB
+                default: forbidden.libraryVisible = false
+                }
+                forbidden.listings = [candidate]
+                let scoped = CoachModel.contextListings(from: forbidden, orgID: orgA, liveBackend: true, selectedListingID: soldID)
+                try check(!scoped.contains { $0.id == soldID.uuidString }, "inactive selected exception refuses \(reason)")
+                let guardCoach = CoachModel(model: forbidden, originScreen: "listing", listingID: soldID)
+                guardCoach.perform(.init(type: "share_tour", label: "Forbidden", listingID: soldID.uuidString))
+                try check(forbidden.coachRoute == nil, "inactive selected action refuses \(reason)")
+                let safe = CoachOffline.nextStep(model: forbidden, space: .realEstate, orgID: orgA, liveBackend: true, selectedListingID: soldID)
+                try check(safe.action?.kind == .openHome && safe.action?.listingID == nil, "inactive selected fallback refuses \(reason)")
+            }
+            let delegated = model(); var delegatedSold = sold
+            delegatedSold.serverOrgID = orgB; delegatedSold.serverLibraryOrgID = orgA
+            delegated.listings = [delegatedSold]
+            try check(CoachModel.contextListings(from: delegated, orgID: orgA, liveBackend: true, selectedListingID: soldID).first?.id == soldID.uuidString, "authorized selected inactive library grouping does not rewrite physical org")
+            var delegatedActive = delegatedSold; delegatedActive.isSold = false
+            delegated.listings = [delegatedActive]
+            try check(CoachModel.contextListings(from: delegated, orgID: orgA, liveBackend: true, selectedListingID: soldID).first?.id == soldID.uuidString && delegated.listings[0].serverOrgID == orgB, "authorized active logical library is retained without changing physical org")
+            delegatedActive.serverOrgID = orgA; delegatedActive.serverLibraryOrgID = orgB
+            delegated.listings = [delegatedActive]
+            try check(CoachModel.contextListings(from: delegated, orgID: orgA, liveBackend: true, selectedListingID: soldID).isEmpty, "foreign active logical library stays excluded")
+
             print("PASS: \(assertions) production Coach privacy/scope assertions; actual offline-to-online sends, no network/providers/customer files")
         } catch {
             fputs("FAIL: \(error)\n", stderr)

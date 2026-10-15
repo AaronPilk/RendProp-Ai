@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -114,6 +115,7 @@ if not args.inject_fault:
         '__GALLERY_MEMO__': module.line(app, 'private var publishedGalleryAssets:'),
         '__IN_FLIGHT__': module.line(app, 'private var gallerySyncInFlight:'),
         '__PENDING__': module.line(app, 'private var gallerySyncPending:'),
+        '__REMOVAL_FENCE__': module.removal_fence(app),
         '__ERROR_PREFIX__': module.line(app, 'static let photoSyncErrorPrefix'),
         '__SYNC__': module.block(app, '    func syncGalleryPhotos(listingLocalID:'),
     }
@@ -130,7 +132,9 @@ if not args.inject_fault:
     gallery_binary = output / 'actual-gallery'
     gallery_root = output / 'isolated-gallery-files'; gallery_root.mkdir(exist_ok=True)
     import_order_source = ROOT / 'apps/ios/Rendprop/Photos/PhotoImportSequence.swift'
-    command = ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', str(ROOT / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(source), str(import_order_source), str(gallery_file), '-o', str(gallery_binary)]
+    disclosure_source = ROOT / 'apps/ios/Rendprop/Photos/PhotoGalleryDisclosure.swift'
+    fence_source = ROOT / 'apps/ios/Rendprop/Photos/PhotoGalleryMutationFence.swift'
+    command = ['xcrun', 'swiftc', '-swift-version', '5', '-parse-as-library', str(ROOT / 'apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift'), str(source), str(import_order_source), str(disclosure_source), str(fence_source), str(gallery_file), '-o', str(gallery_binary)]
     compile_result = subprocess.run(command, text=True, capture_output=True)
     (output / 'gallery-compile.log').write_text(compile_result.stdout + compile_result.stderr)
     if compile_result.returncode:
@@ -143,6 +147,8 @@ if not args.inject_fault:
                        'detail_source_sha256': hashlib.sha256(detail_path.read_bytes()).hexdigest(),
                        'history_source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
                        'import_order_source_sha256': hashlib.sha256(import_order_source.read_bytes()).hexdigest(),
+                       'gallery_disclosure_source_sha256': hashlib.sha256(disclosure_source.read_bytes()).hexdigest(),
+                       'gallery_mutation_fence_source_sha256': hashlib.sha256(fence_source.read_bytes()).hexdigest(),
                        'actual_sync_body_sha256': hashlib.sha256(replacements['__SYNC__'].encode()).hexdigest(),
                        'compiled_fixture_sha256': hashlib.sha256(gallery_source.encode()).hexdigest(),
                        'baseline_fixture_sha256': hashlib.sha256(module.TEMPLATE.read_bytes()).hexdigest(),
@@ -153,3 +159,12 @@ if not args.inject_fault:
     print(json.dumps(gallery_receipt))
     if not gallery_receipt['passed']:
         raise SystemExit('Actual legacy gallery publication failed. See ' + str(output / 'gallery-runtime.log'))
+    # Exercise the actual footer action as well as the persisted family model.
+    # Its closed model/decode boundaries do not claim a rendered SwiftUI pass.
+    subprocess.run([sys.executable, str(ROOT / 'apps/ios/tests/run-photo-listing-selection.py'),
+                    '--evidence-dir', str(output / 'listing-selection')], cwd=ROOT, check=True)
+    subprocess.run([sys.executable, str(ROOT / 'apps/ios/tests/run-photo-listing-removal.py'),
+                    '--output-dir', str(output / 'removal-journal')], cwd=ROOT, check=True)
+    subprocess.run([sys.executable, str(ROOT / 'apps/ios/tests/run-photo-listing-removal-coordinator.py'),
+                    '--output-dir', str(output / 'removal-coordinator')], cwd=ROOT, check=True)
+    subprocess.run([sys.executable, str(module_path), '--inject-fault', 'removal-overtaken'], cwd=ROOT, check=True)

@@ -18,6 +18,7 @@ export type ErrorCode =
   | "not_found"
   | "conflict"
   | "publication_superseded"
+  | "gallery_selection_changed"
   | "consent_required"
   | "plan_required"
   | "sandbox_testing_required"

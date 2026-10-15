@@ -9,6 +9,15 @@ enum Config { static var useLiveBackend = true; static var enableAuth = true }
 }
 enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
 enum CloudSyncError: Error { case identityChanged }
+enum PhotoListingRemovalJournal { enum Failure: LocalizedError {
+    case pendingOperation
+    var errorDescription: String? { "An earlier removal still needs its saved result checked." }
+} }
+@MainActor enum PhotoListingRemovalCoordinator {
+    static var pending: Set<UUID> = []
+    static func hasPending(directory: URL, localListingID: UUID, serverListingID: UUID,
+                           actorID: UUID, libraryOrgID: UUID) throws -> Bool { pending.contains(localListingID) }
+}
 enum FixtureError: LocalizedError {
     case upload, selection, provenance
     var errorDescription: String? { "Synthetic \(self) failure" }
@@ -30,7 +39,7 @@ enum FileStore {
 }
 struct Listing {
     var id: UUID; var serverID: UUID?; var isSample = false
-    var mainPhotoRelPath: String?; var cloudImported: Bool? = nil; var lastError: String?
+    var mainPhotoRelPath: String?; var cloudImported: Bool? = nil; var lastError: String?; var serverOrgID: UUID? = nil
 }
 __ENHANCED_PHOTO__
 extension EnhancedPhoto {
@@ -62,6 +71,17 @@ __PHOTO_DIRECTORY__
         return "asset:" + fileURL.lastPathComponent
     }
     func reset() { calls = []; boundary = nil }
+}
+actor CloudPhotoReferences {
+    struct GalleryReceipt: Sendable {
+        let assetID: UUID; let fileURL: URL; let ownerID: UUID; let orgID: UUID; let listingID: UUID
+    }
+    static let shared = CloudPhotoReferences()
+    private var saved: [GalleryReceipt] = []
+    func saveGalleryAssetID(assetID: UUID, fileURL: URL, ownerID: UUID, orgID: UUID, listingID: UUID, physicalOrgID: UUID? = nil) throws {
+        saved.append(.init(assetID: assetID, fileURL: fileURL, ownerID: ownerID, orgID: orgID, listingID: listingID))
+    }
+    func galleryReceipts() -> [GalleryReceipt] { saved }
 }
 @MainActor final class API {
     struct Selection: Equatable { var serverID: UUID; var assetIDs: [String]; var main: String? }
@@ -99,6 +119,7 @@ __MAX_BYTES__
 __GALLERY_MEMO__
 __IN_FLIGHT__
 __PENDING__
+__REMOVAL_FENCE__
 __ERROR_PREFIX__
 __SYNC__
     var isBusy: Bool { !gallerySyncInFlight.isEmpty || !gallerySyncPending.isEmpty }
@@ -119,7 +140,7 @@ __SYNC__
         }
         func fixture(_ label: String, edited: Bool = false, recorded: Bool = true, imported: Bool = false) throws -> (AppModel, UUID, UUID, URL) {
             AuthStore.shared.isSignedIn = true; AuthStore.shared.userID = "synthetic-owner"; AuthStore.shared.syncSessionRevision = 1
-            WorkspaceContext.selectedOrgID = UUID(); UploadManager.shared.reset()
+            WorkspaceContext.selectedOrgID = UUID(); UploadManager.shared.reset(); PhotoListingRemovalCoordinator.pending = []
             let id = UUID(), server = UUID(), dir = EnhancedPhoto.directory(for: id)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try PhotoVersionHistory.saveCapture(original: Data("\(label)-original".utf8), enhanced: Data("\(label)-capture".utf8), id: "capture", directory: dir)
@@ -244,6 +265,44 @@ __SYNC__
             await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
             check(model.api.selectionAttempts.isEmpty && model.api.appendAttempts.count == 1, "Imported project uses append rather than replacing remote gallery")
             check(model.listings[0].lastError == nil, "Successful append clears only its own prior warning")
+        }
+        // An already-dispatched append must finish BEFORE a removal snapshot,
+        // while newer sync attempts wait until local exclusion is persisted.
+        do {
+            let (model, id, server, dir) = try fixture("held-append-removal", imported: true)
+            AuthStore.shared.userID = UUID().uuidString
+            let held = Hold<Void>(); model.api.selectBoundary = { try await held.suspend() }
+            let first = Task { await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server) }
+            await eventually("Old append must reach suspended transport", { held.reached })
+            var removalEntered = false
+            let removal = Task { try await model.beginPhotoGalleryRemoval(listingID: id); removalEntered = true }
+            for _ in 0..<20 { await Task.yield() }
+            check(!removalEntered, "Removal waits for an already-dispatched append before taking its CAS snapshot")
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.appendAttempts.count == 1, "Removal reservation fences a newer append pass")
+            held.resume(()); await first.value; try await removal.value
+            check(removalEntered && model.api.publications.count == 1, "Old append completes before removal gains the listing lane")
+            try PhotoVersionHistory.removeFromPublication(id: "capture", directory: dir)
+            model.listings[0].mainPhotoRelPath = nil
+            model.endPhotoGalleryRemoval(listingID: id, serverID: server)
+            await finish(model)
+            check(model.api.appendAttempts.count == 1, "Queued old append cannot re-add a family removed from publication")
+            check((try PhotoVersionHistory.publicationVersions(directory: dir))?.isEmpty == true, "Removal lane preserves explicit empty selection after drain")
+        }
+        // A lost PATCH reply remains a durable journal fence across a fresh
+        // sync/model. Reconciliation, not a blind append, resolves exposure.
+        do {
+            let (model, id, server, dir) = try fixture("unknown-removal", imported: true)
+            AuthStore.shared.userID = UUID().uuidString
+            PhotoListingRemovalCoordinator.pending.insert(id)
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.appendAttempts.isEmpty && UploadManager.shared.calls.isEmpty, "Pending durable removal blocks relaunch append before upload")
+            check(model.listings[0].lastError?.contains("earlier removal") == true, "Unknown removal gives a saved-result recovery message")
+            PhotoListingRemovalCoordinator.pending.remove(id)
+            try PhotoVersionHistory.removeFromPublication(id: "capture", directory: dir)
+            model.listings[0].mainPhotoRelPath = nil
+            await model.syncGalleryPhotos(listingLocalID: id, listingServerID: server)
+            check(model.api.appendAttempts.isEmpty && model.listings[0].lastError == nil, "Confirmed removal resumes sync without reintroducing excluded bytes")
         }
         print("PASS actual syncGalleryPhotos: \(count) assertions; held uploads/API, selection races, cancellation, identity fences and immutable files")
     }

@@ -117,9 +117,8 @@ final class PhotoImportSerialLoader: @unchecked Sendable {
     }
 }
 
-/// Existing galleries sort descending by capture ID. Allocate a batch in that
-/// order so the first selected photo stays first; repeat imports stay ahead of
-/// earlier batches even if a large batch previously advanced the timestamp.
+/// Keep capture IDs compatible with existing files. Display order is persisted
+/// independently by source family, so later batches append after earlier ones.
 enum PhotoImportOrder {
     static func galleryStamp(createdAt: Date, importOrderID: String?) -> Int64 {
         importOrderID.flatMap { Int64($0.prefix(15)) } ?? Int64(createdAt.timeIntervalSince1970 * 1000)

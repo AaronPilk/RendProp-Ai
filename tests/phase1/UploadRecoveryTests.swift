@@ -280,6 +280,85 @@ import Foundation
         await expectFailure("Empty photos cannot be matched to cloud identities") {
             _ = try await store.sourceID(fileURL: empty, ownerID: owner, orgID: org, listingID: owner, journalStore: journals)
         }
+
+        // Gallery subtraction must use capture_assets gallery identity, never
+        // an imported photos-table ID or a generic source receipt.
+        let gallery = UUID(uuidString: "cccccccc-cccc-4ccc-8ccc-cccccccccccc")!
+        let galleryStore = CloudPhotoReferences(directory: root.appendingPathComponent("gallery-references"))
+        let galleryJournals = DirectUploadJournal(directory: root.appendingPathComponent("gallery-upload-proof"))
+        let noGalleryJournals = DirectUploadJournal(directory: root.appendingPathComponent("no-gallery-upload-proof"))
+        try await galleryStore.save(sourceID: imported, fileURL: file, ownerID: owner, orgID: org, listingID: owner)
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: journals) == nil,
+              "Generic source identity and completed capture receipt are not gallery proof")
+        try await galleryStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals)
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == nil,
+              "Missing gallery upload journal stores no invented mapping")
+        let galleryKey = DirectUploader.photoJournalKey(owner: owner.uuidString.lowercased(), listingID: owner,
+            role: "gallery", keyPrefix: "gallery", digest: DirectUploader.sha256(of: file)!, bytes: FileStore.fileSize(file))
+        var galleryProof = UploadRecovery.Journal()
+        galleryProof.ticket = UploadTicket(assetID: gallery.uuidString, mode: .single,
+            storageKey: "renders/\(org.uuidString.lowercased())/\(owner.uuidString.lowercased())/gallery-\(gallery.uuidString.lowercased()).jpg")
+        galleryProof.dispatched = true
+        try await galleryJournals.save(galleryProof, for: galleryKey)
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals) == nil,
+              "Incomplete dispatched gallery journal never becomes removable identity")
+        await expectFailure("Incomplete gallery proof cannot be cached") {
+            try await galleryStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals)
+        }
+        galleryProof.completed = true
+        try await galleryJournals.save(galleryProof, for: galleryKey)
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals) == gallery,
+              "Completed gallery upload resolves its exact genuine asset")
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner, journalStore: galleryJournals) == nil,
+              "Completed gallery journal cannot cross library orgs")
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: other, orgID: org, listingID: owner, journalStore: galleryJournals) == nil,
+              "Completed gallery journal cannot cross actors")
+        check(try await galleryStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: other, journalStore: galleryJournals) == nil,
+              "Completed gallery journal cannot cross listings")
+        let logicalStore = CloudPhotoReferences(directory: root.appendingPathComponent("logical-library-gallery-references"))
+        check(try await logicalStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+            physicalOrgID: org, journalStore: galleryJournals) == gallery,
+              "Logical library may resolve a completed gallery ticket under its verified physical org")
+        check(try await logicalStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+            physicalOrgID: owner, journalStore: galleryJournals) == nil,
+              "Wrong physical org cannot adopt completed gallery ticket")
+        await expectFailure("Wrong physical org cannot be cached as a gallery receipt") {
+            try await logicalStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+                physicalOrgID: owner, journalStore: galleryJournals)
+        }
+        try await logicalStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+            physicalOrgID: org, journalStore: galleryJournals)
+        check(try await logicalStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner,
+            physicalOrgID: org, journalStore: noGalleryJournals) == gallery,
+              "Scoped logical-library cache preserves the proved physical gallery identity")
+        await expectFailure("A different gallery asset cannot reuse completed proof") {
+            try await galleryStore.saveGalleryAssetID(assetID: imported, fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals)
+        }
+        try await galleryStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: galleryJournals)
+        let galleryReopened = CloudPhotoReferences(directory: root.appendingPathComponent("gallery-references"))
+        check(try await galleryReopened.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == gallery,
+              "Confirmed gallery identity survives reopen without changing generic source ID")
+        check(try await galleryReopened.sourceID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == imported,
+              "Separate gallery receipt never overwrites imported source identity")
+        let matchedStore = CloudPhotoReferences(directory: root.appendingPathComponent("server-matched-gallery-references"))
+        let digest = DirectUploader.sha256(of: file)!, size = FileStore.fileSize(file)
+        for wrongSHA in [true, false] {
+            await expectFailure("Fresh server SHA or byte mismatch cannot be cached") {
+                try await matchedStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner,
+                    expectedSHA256: wrongSHA ? String(repeating: "0", count: 64) : digest,
+                    expectedBytes: wrongSHA ? size : size + 1, journalStore: noGalleryJournals)
+            }
+            check(try await matchedStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == nil,
+                  "Mismatched server receipt leaves no gallery mapping")
+        }
+        try await matchedStore.saveGalleryAssetID(assetID: gallery, fileURL: file, ownerID: owner, orgID: org, listingID: owner,
+            expectedSHA256: digest, expectedBytes: size, journalStore: noGalleryJournals)
+        check(try await matchedStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == gallery,
+              "Exact scoped server SHA and bytes can save a gallery identity")
+        check(try await matchedStore.galleryAssetID(fileURL: file, ownerID: owner, orgID: other, listingID: owner, journalStore: noGalleryJournals) == nil,
+              "Server-matched gallery cache cannot cross orgs")
+        check(try await matchedStore.galleryAssetID(fileURL: renamed, ownerID: owner, orgID: org, listingID: owner, journalStore: noGalleryJournals) == nil,
+              "Same-size altered bytes cannot reuse gallery identity")
     }
 
     @MainActor static func until(_ message: String, _ predicate: () -> Bool) async {

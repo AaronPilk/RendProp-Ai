@@ -192,6 +192,8 @@ jobs:
         run: python3 apps/ios/tests/run-photo-browser-original.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-browser-original"
       - name: Photo review previews and pre-sign-in playback preserve local privacy
         run: python3 apps/ios/tests/run-photo-review-preview.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-preview"
+      - name: Individual photo review edits one retained original without changing bulk editing
+        run: python3 apps/ios/tests/run-photo-review-edit.py --evidence-dir "$RUNNER_TEMP/rendprop-photo-review-edit"
       - name: Branded quick-start video stays within two minutes with a readable transcript
         run: |
           if ! command -v ffprobe >/dev/null; then
@@ -234,6 +236,8 @@ jobs:
         run: python3 apps/ios/tests/run-property-video-jobs.py --evidence-dir "$RUNNER_TEMP/rendprop-property-video-jobs"
       - name: Photo orientation, crop confirmation and optional music preserve exact sources
         run: python3 apps/ios/tests/run-capture-orientation.py --evidence-dir "$RUNNER_TEMP/rendprop-capture-orientation"
+      - name: Room tags require a real recorded or uploaded walkthrough
+        run: python3 apps/ios/tests/run-room-tag-walkthrough.py --evidence-dir "$RUNNER_TEMP/rendprop-room-tag-walkthrough"
       - name: Large video batches retain every selected photo and recover both output formats
         run: python3 apps/ios/tests/run-reel-request-recovery.py --large-only --evidence-dir "$RUNNER_TEMP/rendprop-video-large"
       - name: Retain video purpose and buyer navigation regression evidence
@@ -244,6 +248,7 @@ jobs:
           path: |
             ${{ runner.temp }}/rendprop-property-video-jobs/**
             ${{ runner.temp }}/rendprop-capture-orientation/**
+            ${{ runner.temp }}/rendprop-room-tag-walkthrough/**
             ${{ runner.temp }}/rendprop-lead-inbox/receipt.json
             ${{ runner.temp }}/rendprop-lead-inbox/*.log
             ${{ runner.temp }}/rendprop-public-links/receipt.json
@@ -418,6 +423,7 @@ jobs:
             ${{ runner.temp }}/rendprop-photo-review-preview/receipt.json
             ${{ runner.temp }}/rendprop-photo-review-preview/*.log
             ${{ runner.temp }}/rendprop-photo-review-preview/*.swift
+            ${{ runner.temp }}/rendprop-photo-review-edit/**
             ${{ runner.temp }}/rendprop-photo-import/receipt.json
             ${{ runner.temp }}/rendprop-photo-import/*.log
             ${{ runner.temp }}/rendprop-photo-import/*.swift
@@ -1439,6 +1445,20 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/paid_quality_processing_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-paid-quality-processing-pg"
+      - name: Cloud gallery removal preserves partial selections and immutable retries
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/listing_gallery_remove_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-gallery-remove-pg"
+      - name: Terminal quality retry retains paid evidence and same-job owner recovery
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_derived_retry_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-derived-retry-pg"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1454,6 +1474,8 @@ jobs:
             ${{ runner.temp }}/rendprop-video-quality-profile-pg/**
             ${{ runner.temp }}/rendprop-normal-photo-quality-pg/**
             ${{ runner.temp }}/rendprop-paid-quality-processing-pg/**
+            ${{ runner.temp }}/rendprop-listing-gallery-remove-pg/**
+            ${{ runner.temp }}/rendprop-property-derived-retry-pg/**
           if-no-files-found: warn
 
   python-worker:

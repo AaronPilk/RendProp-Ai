@@ -91,7 +91,14 @@ import AVFoundation
     func suspendForeground() {
         for task in tasks.values { task.cancel() }
     }
-    func checkNow(_ work: ReelWorkJob) { if let watch = watches[work.id] { schedule(watch) } }
+    func checkNow(_ work: ReelWorkJob) {
+        guard let watch = watches[work.id], watch.context.isCurrent else { return }
+        work.isCheckingServerStatus = true
+        work.serverStatusCheckNote = nil
+        // An active watcher performs the next status read. Reuse it instead
+        // of racing another poll or interrupting a ready-video download.
+        schedule(watch)
+    }
     func resume(_ work: ReelWorkJob) async {
         guard let watch = watches[work.id], let saved = work.serverJob,
               saved.reply?.mayResume == true, resuming.insert(work.id).inserted else { return }
@@ -149,7 +156,10 @@ import AVFoundation
         }
         tasks[watch.work.id] = Task { [weak self] in
             guard let self else { return }
-            defer { self.tasks[watch.work.id] = nil }
+            defer {
+                self.tasks[watch.work.id] = nil
+                watch.work.isCheckingServerStatus = false
+            }
             do {
                 try requireCurrent(watch)
                 guard var saved = try PropertyVideoJobStore.load(context: watch.context, documents: FileStore.documents) else { return }
@@ -165,6 +175,9 @@ import AVFoundation
                     saved.reply = try reply.checked(request: saved.request, previous: saved.reply)
                     try PropertyVideoJobStore.save(saved, documents: FileStore.documents)
                     watch.work.serverJob = saved
+                    watch.work.lastServerStatusCheck = Date()
+                    watch.work.isCheckingServerStatus = false
+                    watch.work.serverStatusCheckNote = nil
                     watch.work.totalClips = reply.sourceCount
                     watch.work.completedClips = reply.completedSources ?? 0
                     watch.work.statusText = Self.status(reply)
@@ -195,6 +208,7 @@ import AVFoundation
                 // Network loss only pauses local status checks. The server job
                 // continues; Check status/reopen reads the same operation.
                 watch.work.statusText = "Your request is saved. Reopen or check status to reconnect; rendering continues after server acceptance."
+                watch.work.serverStatusCheckNote = "Couldn't refresh just now. Your saved request is kept; try again."
                 watch.work.failure = AIFailure(error, title: "Couldn't refresh video status")
             }
         }
@@ -244,7 +258,7 @@ import AVFoundation
     static func status(_ reply: PropertyVideoJobReply) -> String {
         switch reply.state {
         case "queued": return "Your video is queued. You can leave the app."
-        case "generating": return "Creating photo \(min(reply.sourceCount, (reply.completedSources ?? 0) + 1)) of \(reply.sourceCount)…"
+        case "generating": return "Animating your photos · \(min(reply.sourceCount, max(0, reply.completedSources ?? 0))) of \(reply.sourceCount) finished"
         case "quality_review": return "Checking the property stays true to your photos…"
         case "composing": return "Putting your video together…"
         case "ready": return "Ready to download and review."

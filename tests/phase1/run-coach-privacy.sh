@@ -3,7 +3,8 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "$SCRIPT_DIR/../.." && pwd)"
-ARTIFACT_DIR="$(mktemp -d /tmp/rendprop-coach-privacy.XXXXXX)"
+ARTIFACT_DIR="${COACH_PRIVACY_ARTIFACT_DIR:-$(mktemp -d /tmp/rendprop-coach-privacy.XXXXXX)}"
+mkdir -p "$ARTIFACT_DIR"
 COACH_SOURCE="$REPO_DIR/apps/ios/Rendprop/Coach/CoachModel.swift"
 COACH_API="$REPO_DIR/apps/ios/Rendprop/Coach/CoachAPI.swift"
 xcrun swiftc -parse-as-library "$REPO_DIR/apps/ios/Rendprop/Support/LaunchFeatureAvailability.swift" "$COACH_API" "$COACH_SOURCE" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/positive"
@@ -15,7 +16,13 @@ out = pathlib.Path(sys.argv[2])
 mutations = {
     'drop-history-redaction': ('Self.redactedTranscript($0.text, addresses: addressRedactions)', '$0.text'),
     'upload-local-bubbles': ('messages.filter { !$0.localOnly }.suffix(20)', 'messages.suffix(20)'),
-    'include-foreign-cache': ('return model.realProjects.filter { ($0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }', 'return model.realProjects'),
+    'include-foreign-cache': ('projects = model.realProjects.filter { ($0.serverLibraryOrgID ?? $0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }', 'projects = model.listings'),
+    'drop-selected-inactive': ('return [selected] + projects', 'return projects'),
+    'include-unselected-inactive': ('projects = model.realProjects.filter { ($0.serverLibraryOrgID ?? $0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }', 'projects = model.listings.filter { ($0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }'),
+    'drop-active-logical-library': ('projects = model.realProjects.filter { ($0.serverLibraryOrgID ?? $0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }', 'projects = model.realProjects.filter { ($0.serverOrgID ?? $0.cloudDraftOrgID) == orgID }'),
+    'drop-selected-visibility': ('selected.cloudUnavailable != true, model.isInSelectedWorkspace(selected)', 'true, true'),
+    'include-selected-sample': ('selected.isInactive, !selected.isSample, selected.belongsToCurrentType,', 'selected.isInactive, true, selected.belongsToCurrentType,'),
+    'include-selected-type': ('selected.isInactive, !selected.isSample, selected.belongsToCurrentType,', 'selected.isInactive, !selected.isSample, true,'),
     'drop-context-fences': ('guard currentContext else { invalidateContext(); return }', ''),
     'wrong-reel-project': ('first(where: { $0.listingID == selectedListingID })', 'first(where: { _ in true })'),
     'drop-reel-pause-state': ('if job.paused { phase = .paused }', 'if false { phase = .paused }'),
@@ -32,7 +39,7 @@ for name, (before, after) in mutations.items():
         assert count == 1, f'{name}: ambiguous anchor'
     (out / f'{name}.swift').write_text(source.replace(before, after))
 PY
-for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count drop-aerial-launch-fence misroute-photo-only-share trust-unaccepted-server-job drop-saved-server-actor-fence; do
+for control in drop-history-redaction upload-local-bubbles include-foreign-cache drop-context-fences wrong-reel-project drop-reel-pause-state inflate-ai-edit-count drop-aerial-launch-fence misroute-photo-only-share trust-unaccepted-server-job drop-saved-server-actor-fence drop-selected-inactive include-unselected-inactive drop-selected-visibility include-selected-sample include-selected-type drop-active-logical-library; do
     xcrun swiftc -parse-as-library "$REPO_DIR/apps/ios/Rendprop/Support/LaunchFeatureAvailability.swift" "$COACH_API" "$ARTIFACT_DIR/$control.swift" "$SCRIPT_DIR/CoachPrivacyTests.swift" -o "$ARTIFACT_DIR/$control"
     status=0
     "$ARTIFACT_DIR/$control" > "$ARTIFACT_DIR/$control.log" 2>&1 || status=$?
@@ -41,6 +48,12 @@ for control in drop-history-redaction upload-local-bubbles include-foreign-cache
         drop-history-redaction) reason='legacy assistant reply is redacted at the actual history boundary' ;;
         upload-local-bubbles) reason='offline-to-online transcript excludes local assistant bubbles' ;;
         include-foreign-cache) reason='live context excludes foreign and unbound cached projects' ;;
+        drop-selected-inactive) reason='selected Sold home remains the current website support context' ;;
+        include-unselected-inactive) reason='unselected inactive homes stay out of support context' ;;
+        drop-selected-visibility) reason='inactive selected exception refuses unavailable' ;;
+        include-selected-sample) reason='inactive selected exception refuses sample' ;;
+        include-selected-type) reason='inactive selected exception refuses type' ;;
+        drop-active-logical-library) reason='authorized active logical library is retained without changing physical org' ;;
         drop-context-fences) reason='context-change-during-consent cannot dispatch a paid request' ;;
         wrong-reel-project) reason="wrong listing job cannot become selected context" ;;
         drop-reel-pause-state) reason='reel state is refreshed at send rather than frozen at sheet open' ;;

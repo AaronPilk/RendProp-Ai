@@ -1,7 +1,7 @@
 import Foundation
 
 struct ClosedServerJob { struct Reply { let jobID:UUID };var reply:Reply? }
-@MainActor final class ReelWorkJob { var serverJob:ClosedServerJob?; let id:UUID; let listingID:UUID; init(_ id:UUID,_ listingID:UUID){self.id=id;self.listingID=listingID} }
+@MainActor final class ReelWorkJob { var serverJob:ClosedServerJob?;var running=false;var isServerRendering=false;var paused=false; let id:UUID; let listingID:UUID; init(_ id:UUID,_ listingID:UUID){self.id=id;self.listingID=listingID} }
 struct Listing { let id:UUID; var isSample=false; var cloudUnavailable:Bool? }
 struct PushAccountIdentity:Equatable {let owner:UUID;let revision:UInt64}
 @MainActor final class UIApplication {enum State {case active,inactive,background};static let shared=UIApplication();var applicationState=State.background}
@@ -29,6 +29,7 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
   let id=UUID(), listingID=UUID(), wrongID=UUID()
   let job=ReelWorkJob(id,listingID), listing=Listing(id:listingID)
   check(ReelWorkReviewAdmission.listing(jobID:id,visibleJobs:[job],listings:[listing])?.id==listingID,"existing current job opens its exact listing")
+  check(ReelWorkReviewAdmission.job(jobID:id,visibleJobs:[job],listings:[listing]) === job,"review admission returns the existing work object")
   check(ReelWorkReviewAdmission.listing(jobID:wrongID,visibleJobs:[job],listings:[listing])==nil,"unknown job cannot open another existing listing")
   check(ReelWorkReviewAdmission.listing(jobID:id,visibleJobs:[],listings:[listing])==nil,"hidden old-context job cannot be reviewed")
   check(ReelWorkReviewAdmission.listing(jobID:id,visibleJobs:[job],listings:[])==nil,"deleted listing cannot be reviewed")
@@ -38,9 +39,39 @@ enum PushRoute:Equatable {case leads,tour(DeepLink)}
   let serverID=UUID()
   job.serverJob = .init(reply:.init(jobID:serverID))
   check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[job],listings:[listing])?.id==listingID,"accepted server job alias opens only its exact owned listing")
+  check(ReelWorkReviewAdmission.job(jobID:serverID,visibleJobs:[job],listings:[listing]) === job,"server notification alias resolves its exact retained work")
   check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[],listings:[listing])==nil,"hidden server job alias cannot reopen an old account listing")
   check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[job],listings:[.init(id:wrongID)])==nil,"server alias cannot substitute another existing listing")
   job.serverJob=nil
+  // A global Review tap can race the dismissal of a feature sheet. It must
+  // wait with its original job intent, never pick whatever finishes next.
+  let banner=BannerReviewHarness(), otherJob=ReelWorkJob(UUID(),wrongID)
+  otherJob.isServerRendering=true
+  check(ReelWorkReviewAdmission.bannerJob(visibleJobs:[job,otherJob],listings:[listing]) === job,"a removed or unavailable home's job cannot expose a dead Review banner")
+  check(ReelWorkReviewAdmission.bannerJob(visibleJobs:[job,otherJob],listings:[listing,.init(id:wrongID)]) === otherJob,"a current available server job retains priority over older ready work")
+  check(ReelWorkReviewAdmission.bannerJob(visibleJobs:[job],listings:[])==nil,"a deleted home cannot leave an unusable ready banner")
+  banner.jobs.visibleJobs=[job,otherJob];banner.model.listings=[listing,.init(id:wrongID)]
+  NativePresentationAvailability.hasPresentedController=true
+  banner.open(id)
+  check(banner.pendingReviewJobID==id && banner.reviewJobID==nil,"a modal retains the exact manual Review job instead of dropping the tap")
+  let deferred=Task {await banner.reviewPendingBanner()};await tick()
+  check(banner.reviewJobID==nil,"Review does not interrupt the current modal")
+  NativePresentationAvailability.hasPresentedController=false;await deferred.value
+  check(banner.reviewJobID==id && banner.reviewListing?.id==listingID && banner.pendingReviewJobID==nil,"deferred Review opens its originally requested job, not another ready job")
+  let hidden=BannerReviewHarness();hidden.jobs.visibleJobs=[job];hidden.model.listings=[listing]
+  NativePresentationAvailability.hasPresentedController=true;hidden.open(id)
+  hidden.jobs.visibleJobs=[];await hidden.reviewPendingBanner()
+  check(hidden.reviewJobID==nil && hidden.pendingReviewJobID==nil,"account or listing removal retires a deferred Review without substitution")
+  NativePresentationAvailability.hasPresentedController=false
+  let queue=ReelWorkQueue.shared,prior=queue.requested
+  let review=ReviewStudioHarness(listing:listing,photos:[],reviewingJob:job)
+  check(review.work === job && queue.requested==prior,"explicit Review binds the exact retained work object")
+  let retained=URL(fileURLWithPath:"/the-reviewed-job.mp4");review.lastReel=retained;review.parkedClips="exact-reviewed-run";review.appeared()
+  check(review.lastReel==retained,"explicit Review cannot replace its retained result with the newest file")
+  check(review.reloads==0 && review.purposeRestores==0 && review.serverRestores==0,"explicit Review cannot rebind a different saved request on appearance")
+  check(review.parkedClips=="exact-reviewed-run","explicit Review cannot substitute listing-wide clips from another run")
+  let ordinary=ReviewStudioHarness(listing:listing,photos:[]);ordinary.appeared()
+  check(queue.requested==prior+1 && ordinary.reloads==1 && ordinary.purposeRestores==1 && ordinary.serverRestores==1,"ordinary Make video keeps its existing saved-work restoration")
   check(ReelWorkReviewAdmission.listing(jobID:serverID,visibleJobs:[job],listings:[listing])==nil,"cleared server job receipt cannot reopen its former result")
   check(ReelWorkBannerCopy.title(running:true,paused:false,ready:false,stitching:false,completed:3,total:8)=="Making video · 3 of 8 photos ready","banner counts actual selected photos")
   check(ReelWorkBannerCopy.title(running:true,paused:false,ready:false,stitching:true,completed:8,total:8).hasPrefix("Finishing video"),"stitching is not advertised as completed")

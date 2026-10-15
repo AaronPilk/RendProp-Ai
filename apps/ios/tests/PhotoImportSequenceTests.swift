@@ -61,15 +61,14 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
         require(report?.message?.contains("38 of 40 photos saved") == true && report?.message?.contains("18, 26") == true, "partial failure message names missing selections without silent drops")
         let history = try PhotoVersionHistory.load(directory: saved)
         require(history.versions.count == 38, "all38 successful photos persist in actual history without15count ceiling")
-        let displayed = history.versions.values.sorted {
-            PhotoImportOrder.galleryStamp(createdAt: $0.createdAt, importOrderID: history.importOrder?[$0.familyID])
-                > PhotoImportOrder.galleryStamp(createdAt: $1.createdAt, importOrderID: history.importOrder?[$1.familyID])
-        }.map(\.id)
+        let displayed = history.orderedForLibrary(Array(history.versions.values)).map(\.id)
         require(displayed == savedIDs, "actual persisted gallery ordering keeps selected order independently of write timestamps")
         require(EnhancedPhoto.loadAll(listingID: listingID).map(\.id) == savedIDs,
                 "actual local gallery displays selected order")
         let published = try EnhancedPhoto.loadForListing(listingID: listingID)
         require(published.map(\.id) == savedIDs, "actual publication reader keeps selected order")
+        require(NewVideoPhotoSelection.selectionInUploadOrder([savedIDs[2],savedIDs[0],savedIDs[2]], photos: published) == [savedIDs[0],savedIDs[2]],
+                "checking photos out of sequence keeps upload-relative picker positions")
         for (position, id) in zip(savedPositions, savedIDs) {
             let original = saved.appendingPathComponent("orig-\(id).jpg")
             require(try! Data(contentsOf: original) == Data("EXACT-ORIGINAL-\(position)".utf8), "exact retained original survives actual durable save")
@@ -90,11 +89,64 @@ func require(_ condition: @autoclosure () -> Bool, _ message: String) {
             repeatedIDs.append(id)
         }, completion: { next in require(next.savedPositions.count == 25 && next.failures.isEmpty, "repeat25 import accepted");repeatComplete.signal() })
         require(repeatComplete.wait(timeout: .now() + 10) == .success, "repeat batch finishes")
-        require(repeatedIDs == repeatedIDs.sorted(by: >) && repeatedIDs.last! > savedIDs.first!, "repeat selections stay ordered ahead of prior batch")
+        require(repeatedIDs == repeatedIDs.sorted(by: >) && repeatedIDs.last! > savedIDs.first!, "legacy capture IDs remain unique and monotonic across batches")
         let afterRepeated = try PhotoVersionHistory.load(directory: saved)
         require(afterRepeated.versions.count == 63, "63 durablephotos across repeated imports, no total15 ceiling")
-        require(EnhancedPhoto.loadAll(listingID: listingID).map(\.id) == repeatedIDs + savedIDs,
-                "actual gallery retains both ordered batches")
+        require(EnhancedPhoto.loadAll(listingID: listingID).map(\.id) == savedIDs + repeatedIDs,
+                "later uploaded batch appends below earlier selected photos")
+        require(try! EnhancedPhoto.loadForListing(listingID: listingID).map(\.id) == savedIDs + repeatedIDs,
+                "new video picker receives both batches in upload order")
+        let edited = try PhotoVersionHistory.saveEdit(jpeg: Data("LATER EDIT OF FIRST PHOTO".utf8), id: "edited-first",
+            parentID: savedIDs[0], sourceID: savedIDs[0], edit: "declutter", style: nil,
+            disclosure: "AI decluttered", provenanceID: UUID().uuidString, provenanceRecorded: true, directory: saved)
+        let expectedCurrent = [edited.id] + Array(savedIDs.dropFirst()) + repeatedIDs
+        require(EnhancedPhoto.loadAll(listingID: listingID).map(\.id) == expectedCurrent,
+                "later saved edit retains its original family's position")
+        let editedIndex = try PhotoVersionHistory.ensureOriginalSources(directory: saved)
+        require(editedIndex.libraryVersions(.original).map(\.familyID) == savedIDs + repeatedIDs,
+                "Originals keep source-family upload order across batches")
+        require(editedIndex.libraryVersions(.latest).map(\.id) == expectedCurrent,
+                "Latest variants keep source-family upload order")
+        require(try! EnhancedPhoto.loadForListing(listingID: listingID).map(\.id) == expectedCurrent,
+                "reviewed publication choices inherit source-family order rather than edit dates")
+        require(NewVideoPhotoSelection.selectionInUploadOrder([repeatedIDs[1],savedIDs[0]],
+                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: editedIndex) == [edited.id,repeatedIDs[1]],
+                "new video selection retains the chosen source family after an approved version changes")
+        try PhotoVersionHistory.selectForPublication(id: savedIDs[0] + "-original", directory: saved, reviewed: true)
+        require(try! EnhancedPhoto.loadForListing(listingID: listingID).first?.id == savedIDs[0] + "-original",
+                "selecting an Original changes only the exact version in its family slot")
+        require(try! Data(contentsOf: saved.appendingPathComponent("orig-\(savedIDs[0]).jpg")) == Data("EXACT-ORIGINAL-0".utf8),
+                "ordering and version selection never rewrite original master bytes")
+        var legacyIndex = afterRepeated
+        legacyIndex.familyOrder = nil
+        let decodedLegacy = try JSONDecoder().decode(PhotoVersionHistory.Index.self, from: JSONEncoder().encode(legacyIndex))
+        require(decodedLegacy.orderedForLibrary(Array(decodedLegacy.versions.values)).map(\.id) == savedIDs + repeatedIDs,
+                "older histories without family order recover original capture chronology without edit timestamps")
+        _ = try PhotoVersionHistory.saveEdit(jpeg: Data("STAGED THIRD FAMILY".utf8), id: "stage-third",
+            parentID: savedIDs[2], sourceID: savedIDs[2], edit: "stage", style: "modern", disclosure: "Virtually staged",
+            provenanceID: UUID().uuidString, provenanceRecorded: true, directory: saved)
+        _ = try PhotoVersionHistory.saveEdit(jpeg: Data("STAGED SECOND FAMILY".utf8), id: "stage-second",
+            parentID: savedIDs[1], sourceID: savedIDs[1], edit: "stage", style: "modern", disclosure: "Virtually staged",
+            provenanceID: UUID().uuidString, provenanceRecorded: true, directory: saved)
+        let stagedIndex = try PhotoVersionHistory.load(directory: saved)
+        require(stagedIndex.libraryVersions(.staged).map(\.familyID) == [savedIDs[1],savedIDs[2]],
+                "Saved staged variants stay grouped in source upload order rather than edit completion order")
+        require(NewVideoPhotoSelection.selectionInUploadOrder(["stage-third","stage-second"],
+                photos: try! EnhancedPhoto.loadForListing(listingID: listingID), index: stagedIndex) == [savedIDs[1],savedIDs[2]],
+                "new video binds the exact approved listing versions while newer staging previews remain unselected")
+        let legacyListing = UUID(), legacyDirectory = EnhancedPhoto.directory(for: legacyListing)
+        try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+        for (offset, id) in ["older-first", "older-second"].enumerated() {
+            let image = legacyDirectory.appendingPathComponent("enh-\(id).jpg")
+            try Data(id.utf8).write(to: image)
+            try FileManager.default.setAttributes([.creationDate: Date(timeIntervalSince1970: 1_000 + Double(offset))], ofItemAtPath: image.path)
+        }
+        try Data("CLOUD IMPORT".utf8).write(to: legacyDirectory.appendingPathComponent("enh-cloud-order.jpg"))
+        try Data("CLOUD SOURCE".utf8).write(to: legacyDirectory.appendingPathComponent("orig-cloud-order.jpg"))
+        try PhotoVersionHistory.registerImport(id: "cloud-order", imageFile: "enh-cloud-order.jpg",
+            originalFile: "orig-cloud-order.jpg", staged: false, altered: false, directory: legacyDirectory)
+        require(EnhancedPhoto.loadAll(listingID: legacyListing).map(\.id) == ["older-first", "older-second", "cloud-order"],
+                "new cloud import appends after older files awaiting legacy history adoption")
 
         let cancel = PhotoImportCancellation(), cancelDone = DispatchSemaphore(value: 0)
         var cancelPositions: [Int] = [], cancelledFailures: [PhotoImportFailure] = []

@@ -71,9 +71,9 @@ struct VideoFixture {
 @main struct PurposeTests {
  static func main() {
   let migrated=NativeReelPlanningSetup(automaticOrder:nil,motionPreset:"fly_through",pictureLabels:true)
-  check(migrated.automaticOrder && migrated.motionPreset==nil && !migrated.pictureLabels && migrated.notice != nil,"legacy setup loads automatic per-photo motion with labels off and a visible notice")
+  check(!migrated.automaticOrder && migrated.motionPreset==nil && !migrated.pictureLabels && migrated.notice != nil,"legacy setup keeps upload order and automatic per-photo motion with labels off")
   let explicit=NativeReelPlanningSetup(automaticOrder:true,motionPreset:"fly_through",pictureLabels:true)
-  check(explicit.automaticOrder && explicit.motionPreset=="fly_through" && explicit.pictureLabels && explicit.notice==nil,"new setup retains explicit global motion and picture label choices")
+  check(!explicit.automaticOrder && explicit.motionPreset=="fly_through" && explicit.pictureLabels && explicit.notice==nil,"new setup keeps upload order without removing explicit motion and picture label choices")
   let manual=NativeReelPlanningSetup(automaticOrder:false,motionPreset:nil,pictureLabels:false)
   check(!manual.automaticOrder && manual.motionPreset==nil && !manual.pictureLabels,"new setup retains deliberate original photo order")
   let fresh=VideoFixture();check(fresh.videoPurpose==nil,"fresh video creation asks for a purpose");check(fresh.isPortrait,"legacy default is portrait")
@@ -110,17 +110,18 @@ variants=[('actual',actual,None),
  ('lost-purpose-recovery',actual.replace('let savedAspect = pendingBatch?.aspect ?? pendingRequest?.outputAspect ?? work.configuration?.aspect','let savedAspect = pendingRequest?.outputAspect ?? work.configuration?.aspect'),'saved batch purpose outranks request and current work'),
  ('restored-eight-photo-cap',actual.replace('static let maximumPhotos = 100','static let maximumPhotos = 8'),'larger listings are admitted without an eight-photo cap'),
  ('listing-brand-leak',actual.replace('aspect == "9:16" ? requested : nil','requested'),'frozen listing master omits the social title and Rendprop mark'),
- ('lost-legacy-setup-migration',actual.replace('self.motionPreset = nil\n            self.pictureLabels = false','self.motionPreset = motionPreset\n            self.pictureLabels = pictureLabels'),'legacy setup loads automatic per-photo motion with labels off and a visible notice')]
+ ('lost-legacy-setup-migration',actual.replace('self.motionPreset = nil\n            self.pictureLabels = false','self.motionPreset = motionPreset\n            self.pictureLabels = pictureLabels'),'legacy setup keeps upload order and automatic per-photo motion with labels off'),
+ ('restored-auto-order-default',actual.replace('self.automaticOrder = false','self.automaticOrder = true'),'legacy setup keeps upload order and automatic per-photo motion with labels off')]
 runs=[]
 for label,code,expected in variants:
  swift=out/(label+'.swift');binary=out/label;swift.write_text(code)
- c=subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library',str(swift),'-o',str(binary)],capture_output=True,text=True)
+ c=subprocess.run(['xcrun','swiftc','-swift-version','5','-module-cache-path',str(out/'module-cache'),'-parse-as-library',str(swift),'-o',str(binary)],capture_output=True,text=True)
  (out/(label+'-compile.log')).write_text(c.stdout+c.stderr);assert c.returncode==0,(label,c.stderr)
  r=subprocess.run([str(binary)],capture_output=True,text=True);(out/(label+'.log')).write_text(r.stdout+r.stderr)
  assert r.returncode==(1 if expected else 0),(label,r.stdout,r.stderr)
  if expected:assert 'FAIL: '+expected in r.stderr,(label,r.stderr)
  runs.append({'name':label,'exit':r.returncode,'expectedRejection':expected,'sourceSHA256':hashlib.sha256(swift.read_bytes()).hexdigest()})
 after=hashes();assert before==after,'Source changed during purpose proof'
-receipt={'passed':True,'sourceHashes':before,'sourceHashesAtEnd':after,'runs':runs,'compiledNegativeControls':7,'actualBodySHA256':hashlib.sha256(parts.encode()).hexdigest(),'limitations':['Actual studio orientation getter, frozen configuration and parked settings/restore bodies execute with closed voice/queue interfaces. Generation batch/wire/render consumers are source-bound here and have separate actual recovery/encoding gates. No UI, customer, provider or Apple call.']}
+receipt={'passed':True,'sourceHashes':before,'sourceHashesAtEnd':after,'runs':runs,'compiledNegativeControls':len(variants)-1,'actualBodySHA256':hashlib.sha256(parts.encode()).hexdigest(),'limitations':['Actual studio orientation getter, frozen configuration and parked settings/restore bodies execute with closed voice/queue interfaces. Generation batch/wire/render consumers are source-bound here and have separate actual recovery/encoding gates. No UI, customer, provider or Apple call.']}
 (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
-print(json.dumps({'passed':True,'compiledNegativeControls':7,'receipt':str(out/'receipt.json')}))
+print(json.dumps({'passed':True,'compiledNegativeControls':len(variants)-1,'receipt':str(out/'receipt.json')}))

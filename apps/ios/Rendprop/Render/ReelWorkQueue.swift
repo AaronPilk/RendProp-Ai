@@ -134,6 +134,9 @@ final class ReelWorkJob: ObservableObject, Identifiable {
     @Published var pendingRequest: PendingReelRequest?
     @Published var pendingBatch: PendingReelBatch?
     @Published var serverJob: PropertyVideoSavedJob?
+    @Published var isCheckingServerStatus = false
+    @Published var lastServerStatusCheck: Date?
+    @Published var serverStatusCheckNote: String?
     var isServerRendering: Bool { serverJob != nil && phase == .generating }
     func adoptServerJob(_ saved: PropertyVideoSavedJob) {
         serverJob = saved; totalClips = saved.request.sources.count; phase = .generating; paused = false
@@ -217,6 +220,7 @@ final class ReelWorkJob: ObservableObject, Identifiable {
     func clearErasedState() {
         player?.pause(); player = nil; configuration = nil
         reelURL = nil; lastReel = nil; parkedClips = nil; pendingRequest = nil; pendingBatch = nil; serverJob = nil
+        isCheckingServerStatus = false; lastServerStatusCheck = nil; serverStatusCheckNote = nil
         unreadablePendingContext = nil; recoveredRetryRequestID = nil; unreadableBatch = false
         resumeAction = nil; followUp = nil; identityCheck = nil; noticeIdentity = nil
         phase = .setup; statusText = ""; failure = nil; clipIssues = []

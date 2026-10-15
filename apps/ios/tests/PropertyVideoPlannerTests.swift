@@ -67,6 +67,20 @@ __ACTUAL_PLAN_WIRE__
         check(result.photos.count == 100 && Set(result.photos.map { $0.input.photoID }) == Set(inputs.map(\.photoID)), "automatic planning retains every source exactly once")
         check(result.photos.prefix(50).allSatisfy { $0.scene == .frontExterior } && result.photos.suffix(50).allSatisfy { $0.scene == .rearExterior }, "global front-to-back order spans all classifier batches")
         check(result.photos.prefix(50).map { $0.input.photoID } == inputs.enumerated().filter { $0.offset % 2 == 1 }.map { $0.element.photoID }, "equal-scene original order remains stable across batches")
+        let preserved = try PropertyVideoPlanner.preservingInputOrder(result.photos, inputs: inputs)
+        check(preserved.map(\.input) == inputs, "new video plan retains exact upload order across every classified batch")
+        check(preserved.enumerated().allSatisfy { index, photo in
+            photo.motion == "pull_back" && photo.scene == (index % 2 == 0 ? .rearExterior : .frontExterior)
+        }, "upload order retains each photo's own scene and automatic camera motion")
+        for invalid in [Array(result.photos.dropLast()), [result.photos[0]] + Array(result.photos.dropLast())] {
+            do { _ = try PropertyVideoPlanner.preservingInputOrder(invalid, inputs: inputs)
+                check(false, "partial or duplicate classification cannot replace the selected photo set")
+            } catch {}
+        }
+        let foreign = inputs.map { PropertyVideoPlanner.Input(photoID: $0.photoID, assetID: UUID(), jpegDigest: $0.jpegDigest) }
+        do { _ = try PropertyVideoPlanner.preservingInputOrder(result.photos, inputs: foreign)
+            check(false, "same photo labels cannot substitute different owned input assets")
+        } catch {}
         let rebound = inputs.map { PropertyVideoPlanner.Input(photoID: $0.photoID, assetID: UUID(), jpegDigest: $0.jpegDigest) }
         let cached = try await PropertyVideoPlanner.plan(inputs: rebound, context: context, api: api, automaticOrder: false,
             documents: root, requireCurrent: { try scope.requireCurrent() })

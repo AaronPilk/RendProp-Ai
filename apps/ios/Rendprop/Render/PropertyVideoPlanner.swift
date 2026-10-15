@@ -143,6 +143,17 @@ enum PropertyVideoPlanner {
         // Confident scenes are globally ranked; equal scenes remain stable.
         return photos.map { $0.confident ? iterator.next()! : $0 }
     }
+    /// New video creation keeps the user's input positions while retaining the
+    /// exact per-photo classification, motion and privately owned source bytes.
+    static func preservingInputOrder(_ photos: [Planned], inputs: [Input]) throws -> [Planned] {
+        guard photos.count == inputs.count, Set(inputs.map(\.photoID)).count == inputs.count,
+              Set(photos.map { $0.input.photoID }).count == photos.count else { throw Failure.invalidReply }
+        let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.input.photoID, $0) })
+        return try inputs.map { input in
+            guard let photo = byID[input.photoID], photo.input == input else { throw Failure.invalidReply }
+            return photo
+        }
+    }
     static func plan(inputs: [Input], context: Context, api: PropertyVideoPlanningAPI?, automaticOrder: Bool,
                      documents: URL, requireCurrent: @MainActor @Sendable () throws -> Void) async throws -> Result {
         try await requireCurrent()

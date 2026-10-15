@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI {
+final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, PropertyVideoPlanningAPI, ListingGalleryRemovalAPI {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -688,6 +688,66 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI, Prope
         var body: [String: Any] = ["gallery_add_asset_ids": assetIDs]
         if let mainAssetID { body["main_photo_asset_id"] = mainAssetID }
         _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]), method: "PATCH", json: body))
+    }
+
+    private struct GallerySelectionWire: Decodable {
+        struct Asset: Decodable { let asset_id: UUID; let sha256: String; let bytes: Int64 }
+        struct Removal: Decodable {
+            let operation_id: UUID; let actor_id: UUID; let replayed: Bool
+            let requested_asset_ids: [UUID]; let removed_asset_ids: [UUID]
+        }
+        let id: UUID; let org_id: UUID; let library_org_id: UUID?
+        let gallery_asset_ids: [UUID]?; let main_photo_key: String?
+        let gallery_assets: [Asset]?; let gallery_remove: Removal?
+
+        func selection(serverID: UUID, libraryOrgID: UUID, requiresAssets: Bool) throws -> PhotoGallerySelection {
+            guard id == serverID, (library_org_id ?? org_id) == libraryOrgID,
+                  gallery_asset_ids.map({ $0.count <= 100 && Set($0).count == $0.count }) ?? true,
+                  !requiresAssets || gallery_assets != nil,
+                  (gallery_assets?.count ?? 0) <= 100 else { throw APIError.decoding }
+            let assets = gallery_assets ?? []
+            guard Set(assets.map(\.asset_id)).count == assets.count,
+                  assets.allSatisfy({ $0.bytes > 0 && $0.bytes <= 128 * 1024 * 1024
+                      && $0.sha256.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
+                      && (gallery_asset_ids?.contains($0.asset_id) ?? true) }) else { throw APIError.decoding }
+            return .init(listingID: id, orgID: org_id, libraryOrgID: libraryOrgID,
+                galleryAssetIDs: gallery_asset_ids, mainPhotoKey: main_photo_key,
+                galleryAssets: assets.map { .init(assetID: $0.asset_id, sha256: $0.sha256, bytes: $0.bytes) })
+        }
+    }
+
+    @MainActor func gallerySelection(serverID: UUID, libraryOrgID: UUID) async throws -> PhotoGallerySelection {
+        let context = try await CloudMediaAccessContext.capture(orgID: libraryOrgID)
+        var request = makeRequest(url: url(["listings", serverID.uuidString], query: [URLQueryItem(name: "gallery_selection", value: "1")]))
+        request.setValue(libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        let wire: GallerySelectionWire = try decodeExact(data)
+        return try wire.selection(serverID: serverID, libraryOrgID: libraryOrgID, requiresAssets: true)
+    }
+
+    @MainActor func removeGalleryAssets(_ operation: PhotoGalleryRemovalOperation) async throws -> PhotoGalleryRemovalReply {
+        let context = try await CloudMediaAccessContext.capture(orgID: operation.libraryOrgID)
+        guard context.actorID == operation.actorID else { throw CloudSyncError.identityChanged }
+        let body: [String: Any] = [
+            "gallery_remove_asset_ids": operation.requestedAssetIDs.map { $0.uuidString.lowercased() },
+            "gallery_remove_operation_id": operation.operationID.uuidString.lowercased(),
+            "expected_gallery_asset_ids": operation.expectedGalleryAssetIDs.map { $0.map { $0.uuidString.lowercased() } as Any } ?? NSNull(),
+            "expected_main_photo_key": operation.expectedMainPhotoKey.map { $0 as Any } ?? NSNull()
+        ]
+        var request = makeRequest(url: url(["listings", operation.serverListingID.uuidString]), method: "PATCH", json: body,
+            idempotency: .key("gallery-remove:" + operation.operationID.uuidString.lowercased()))
+        request.setValue(operation.libraryOrgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request, beforeSend: { try context.check() })
+        try context.check()
+        let wire: GallerySelectionWire = try decodeExact(data)
+        let selection = try wire.selection(serverID: operation.serverListingID, libraryOrgID: operation.libraryOrgID, requiresAssets: false)
+        guard let receipt = wire.gallery_remove, receipt.operation_id == operation.operationID,
+              receipt.actor_id == operation.actorID, receipt.requested_asset_ids == operation.requestedAssetIDs,
+              Set(receipt.removed_asset_ids).count == receipt.removed_asset_ids.count,
+              receipt.removed_asset_ids.allSatisfy(operation.requestedAssetIDs.contains) else { throw APIError.decoding }
+        return .init(selection: selection, operationID: receipt.operation_id, replayed: receipt.replayed,
+            requestedAssetIDs: receipt.requested_asset_ids, removedAssetIDs: receipt.removed_asset_ids)
     }
 
     // MARK: - Uploads (contract §2)

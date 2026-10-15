@@ -1,264 +1,171 @@
-# Owner request checklist — October 14, 2026
+# Rendprop owner request checklist — October 14–15, 2026
 
-## Active checkpoint — 2026-10-15 08:54 UTC
+This is the consolidated acceptance list for the owner's messages, not a claim that
+all work is finished. Latest explicit decisions override earlier wording/prices.
+Updated October 15 around 11:55 a.m. Eastern. Earlier detailed ledger is retained at
+`_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
+(relative to the outer Rendprop AI folder).
 
-- Normal 1.0.5 (82) is VALID / APP_STORE_ELIGIBLE / IN_BETA_TESTING, build
-  45479fdb…, in the existing internal group. Its 205 native inputs, 170 tracked
-  plus one generated Swift file, no-LAB/DEBUG build and 118.73s Willow intro
-  remain bound to the delivered archive. The phone was last verified on 81;
-  normal 82 has not been physically accepted. At 08:48 UTC, macOS still reported
-  lock=true, so the manual unlock request remains pending.
-  Public 1.0.4 (74) is unchanged. The 1.0.5 draft c15af3a3… is unattached,
-  AFTER_APPROVAL and not submitted. Upload is not phone acceptance or submission.
-- Runtime sourcef1a9765 includes prospective structured judge d4408b3, furniture boundary
-  clarification6cb53b8, ordinary video profile e9628c2, opt-in per-task Pro photo
-  policy8cce236+d95f4e3, and REMOVEONLY Declutter generation prompt8679e4b.
-  HEAD 2fe6d669 is pushed. CI 38705752445 proved the new profile/funding,
-  private CPU and tour-host runtime gates green; three stale test fixtures failed.
-  Test-only corrections d1a3df2 / dcd5a3f / 3e3c632 preserve the safety oracles:
-  fresh/replay 270 invariants plus nine faults, exact legacy fallback controls,
-  and five drift tests/eight mutants passed. Corrected CI 38707737574 is running
-  on 2fe6d669; migration, Studio and Edge jobs are green. Edge reports 2,386
-  tests passed, zero failures and one ignored test. No terminal CI result yet.
-  No native source/archive changes or App Store submission were made.
-- OriginalCI38693470447 on04b31ca finished naturally:15jobs success, sole preserved
-  tour-host baseline red. All native/actualUIKit/paid-recovery/dependent native
-  gates PASS; backend2340pass/0fail/1ignored. Test-only classifier5ab17a5 keeps
-  production RMS/pitch/duration/frame oracles unchanged. That historical result
-  remains retained; corrected CI 38707737574 is not yet terminal.
-- Live strict ai-photo-v2v6/25db7306… all54bytes verified independently; private
-  photo-quality-worker7/3b8b7054… all31exact. Structured JSON/parse diagnostics
-  and rubric are prospective; parser/scores/thresholds and oldHOLDs unchanged.
-  Canonicallegacy ai-photo82/review4/CPU untouched by these latest photo fixes.
-- Actual Pro4Kstage30fab72b… ACCEPT retained:8,897,279B3584x4780 SHA8c661d0f…,
-  fixed features preserved; one generation+onejudge40.0204c catalog liability.
-  Flashstage/declutter and oldProdeclutter HOLDs remain correctly private.
-- V5old-generation-promptdeclutter1eff4615… correctly HOLD: root and independent
-  review confirmed a NEW standing mirror and replaced wall rack. This triggered
-  a real REMOVEONLY generation prompt fix, not threshold weakening.
-- Fresh changed-promptProdeclutter6645067e…/checkf783ed85… ACCEPT in95.185s:
- 8,960,731B3584x4780 SHA1c4b8e49…, exactHTTP==retainedmaster, oneCPU+onejudge,
-  nofindings/conf.9, preservation96–98/artifacts92/edit88. Root/independentvisual
-  agree: no new mirror/shelves; fixed rack/fan/lights/art/kitchen preserved;
-  cat/blanket/loosefloorcables removed. One generation30.5536c+judge9.8584c=
- 40.412c catalog liability, not invoice. Limited single-room positive example.
-  Both temporary Pro owner selectors were exact-value-CAS removed to null.
-- Real FAL4K canary0d656e4b… READY: two first-passaccepted2492x3324/24fps
-  clips, noqualityretry/fallback; master1080x1920/30fps/10s13,008,431B
-  SHA33d14faf…. Exact ownerGET/hash/fullAVdecode/root sampledframes pass,
-  no black/blurpanels.12m2.290stoReady; scopedpushsentonce57.626slater,
-  phone visibility unproved.420cgen+2.6cQC excludesCPU/storage. TemporaryFAL
-  selector restored to exact prior expiredKie; no new paid video reroll.
-- Ordinary immutable-profile video migration is live and ACTIVATED. ai-video80/
- 166cf51e…, worker7/c5502edf…, jobs5/a5881d6d… deployed with exact runtime
-  readbacks/JWT preserved; only verified type declarations erased. New jobs freeze
-  profile/deadline (24hnew/4hlegacy); prior jobs/receipts keep their models.
- 81focused tests+threeentrypoints+12exact-payload quote controls+30fresh/30replay
-  PG assertions/four compiled controls/three races+183legacy/16controls PASS.
-- Ordinary Pro4K Stage/Declutter policy and its two isolated rows are ACTIVATED.
-  Existing legacy route aggregatebc5d181a… unchanged.135base+
- 11per-task+76prompt-focused tests and peer reviews passed; actual narrowPG
-  seed/replay/RLS/compiled controls passed. Both ordinary photo tasks are active;
-  temporary owner selectors are not required for those routes.
-- Real budget issue found:20FAL4Kshots complete conservativequote4403.9552c;
- 20Declutter+20Stage max-tier quote1787.712c =>6191.6672c total. The previous
-  75%-shaped plan COGS and 50%-Apple-net atomic envelope blocked this workflow.
-  Reviewed bounded subsidy policy f1a9765 is now LIVE and ACTIVATED:
-  paidStarter/Solo6500c, Pro12000c, Team30000c per verified Production Apple
-  service month. BothCOGS/atomicwallet and actual Apple-period spend agree;
-  old settled terms excluded, all unresolved holds/all AI costs still count.
- 123fresh+123replay realPG/7compiledfaults/one mixed-writer renewal race and
-  peer PASS. No retailprice/newcharge/counterreset/quota or duplicate bypass.
-  Free/trial/grace/Sandbox grants unchanged. Larger initial-trial allowance is
-  separate work: ceiling mode lacks signed-offer/lifetime buyer attestation;
-  do not raise that generic cap or pretend an unsafe trial expansion was done.
-  OrdinaryFree QA hasphotos5/5consumed/reels0/190.95c budget; cannot prove
-  ordinary positive admission. No sponsorship/Authimpersonation/quota reset.
-- Fresh NORMAL-profile jobbb7ea8c3-b2df-4ac6-9438-51ed63822ec5 READY08:31:11Z,
-  7m28.25s after202; operationecc0e3c4-0a31-4d7d-ab6e-191d8b3e4f49. Actual
-  owner account/no temporary model selector, both paid routeIDs exactnormalrow
-  b04b57c1…/FALKlingV3native4K/210c. Both first-passQC accepted,0retries/fallback;
-  source2492x3324/24fps/5.042s, final1080x1920/30fps/10s/13,631,875B
-  SHA1a5e86f88dc2c9d2f75a4b827501f143f058a437bacab1598e1b1b7bdb9359b9.
- 3exactownerGETs/hash/fullAVdecode PASS; root sampled source/master frames show
-  no black/blur panels. Balcony QC notes minor motion softness; full phone play
-  still required. Private completion created0publications/renders/compositions;
-  scopedpush sent once50.55s later. Generation420c+QC2.6c catalogsubtotal.
- 14closedchecks PASS; receipt `_bridge/build82-normal-profile-canary/FINAL-NORMAL-PROFILE-RECEIPT.json`.
-  This proves hosted NORMAL routing/background completion, NOT ordinary paid
-  account billing,20-photo throughput, Listing16:9 or physical acceptance.
-- Targeted phone plan preserves prior evidence:189of203 common native inputs
-  match phone81;205archive82inputs still exact. Home/Leads/appearance/tabs and
-  review-layout fragments carry prior physical observations with source hashes.
-  Do not repeat a full unmodified UI matrix. Remaining82 deltas are intro,
-  recovery/source-chip/progress and actual HQ workflow/purchase/import/ZIP.
-  Plan: `_bridge/build82-delta-phone-plan/PHONE-PLAN.md`.
-- Full25MiB output/35MBStudio transport live (Studioc0682c56…35files/39GET).
-  CPU3a180766…/f4d26817… adaptive comparison JPEG only; masters/geometry/6MBcap,
-  two slots/controller/bindings/secrets unchanged.118.73s branded Willow1.2x
-  intro has30scenes/29realphoneUI+private savedvideo excerpt, no blank/fullAV
-  issues in offline checks; full physical phone playback/listening remains open.
-- Router operator contract: ai_router OFF selects existing legacy routing;
-  it is not a global AI-off switch. Photo Pro uses its explicit policy/task and
-  enabled eligible legacy-seat gates under either router state, as deliberately
-  tested. Stop photo Pro via its policy/row. New FAL task has no legacy seat and
-  requires routerON. No runtime was changed merely to make these unlike roles
-  identical. Legacy routes still byte-unchanged.
-- Fresh Apple GET08:28Z confirms public74 READY_FOR_SALE;82 VALID/AppStoreeligible;
- 1.0.5 draftc15af3a3… PREPARE_FOR_SUBMISSION/buildnull/AFTER_APPROVAL. Website
-  consumable6822852888 remains MISSING_METADATA. No submission/release performed.
-- Remaining acceptance is the delta-only phone sequence below: 82 intro and
-  photo recovery, import/camera/masking, a representative 20+ photo Listing 16:9
-  job with audio/push/private review, explicit publication/playable hero and ZIP,
-  plus ordinary paid admission and Sandbox purchase/recovery/refund. The genuine
-  $25 offer screenshot is still missing; the SKU remains MISSING_METADATA,
-  Sandbox enabled / Production disabled. Await the corrected CI's terminal result,
-  then the owner's accepted normal candidate can be attached/submitted with
-  automatic distribution after approval. No submission has occurred.
+## Current truth
 
-## Minimal remaining phone sequence
+- Public: **1.0.4 (74)** remains live. Owner's actual phone: **1.0.5 (82)**,
+  installed through TestFlight today. **83 is being prepared, not yet uploaded.**
+- App Store 1.0.5 remains an unattached PREPARE_FOR_SUBMISSION draft configured
+  AFTER_APPROVAL. No latest-build App Store submission or release is claimed.
+- Exact prior source 2fe6d669 passed all 16 CI jobs today. Latest 83 changes are
+  additional work and are not covered merely by that earlier green result.
+- Today's actual 14-photo Listing 16:9 job continued after leaving the editor,
+  then failed in its quality-retry path. That retry repair is now deployed; root
+  resumed the SAME job from the actual phone at 11:23 a.m. Eastern, preserving
+  completed paid clips. It advanced to five ready shots, then stopped on a
+  separate FAL completed-result HTTP403. This is a delivery failure, not proof
+  that generation failed. Same-receipt recovery is being implemented;
+  no master video/publication/completed-video push exists. Do not call it passed.
+- Use only the actual mirrored iPhone for UI acceptance. Backend/SDK/CI tests are
+  allowed, separately identified. All four available execution slots are active; Claude is confirmed working in a separate web/Studio worktree.
+- The owner approved existing portrait/cropped photos for this test and will
+  capture a properly framed new home later. Do not invent a 20-photo or fresh
+  landscape-input prerequisite for finishing this approved 14-photo test.
 
-Carry forward only the source-bound phone 81 observations for unchanged Home,
-Leads, appearance, saved-version tabs and review layout. They are not physical
-82 results. The detailed prior plan and source comparison remain unchanged at
-`_bridge/build82-delta-phone-plan/PHONE-PLAN.md`; its route-deployment prerequisite
-is now met. Do not repeat the full unchanged UI matrix.
+## Latest beta feedback
 
-1. Install normal **1.0.5 (82)**. Play the complete **118.733s** introduction with
-   sound, check transcript/interruption handling and Get Started → address.
-2. In one owned home, import **20+** photos and repeat an import; verify count,
-   order and originals. Check real camera framing, then edit/review/select the
-   intended versions, including the open masking check. Check the changed
-   Original source chip, progress and any retained quality-review operation.
-3. Create one representative **20+ photo Listing 16:9** video from those reviewed
-   versions. After acceptance, leave/lock the phone, observe the scoped push if
-   notifications are enabled, reopen the same job and review sharpness, framing,
-   motion, order and exposed audio settings. Ordinary quality routes and funding
-   are active; owner-unrestricted success still does not prove paid admission.
-4. Explicitly publish the reviewed video/gallery. Check the same property's
-   primary video/poster, Gallery, Nearby, Contact and buyer link in Safari.
-   Export/open the complete coordinator ZIP and verify masters and organized
-   Original/Decluttered/Staged plus destination-format copies.
-5. Complete the genuine **$25** offer screenshot and authorized Sandbox purchase,
-   recovery and refund/property-binding checks; verify ordinary paid admission
-   under its real receipt authority. Keep Production purchase disabled until
-   accepted. Previewing designs is not purchase evidence.
+Fresh read-only App Store Connect fetch at 11:13 a.m. Eastern found three
+screenshot/general submissions since October14, all build82: two comments on
+single-photo editing (one explicitly preserves bulk editing) and one on upload
+order across batches. Zero crash feedback submissions in that interval; this is
+not a claim that no unsubmitted crash occurred. Original reports/screenshots are
+retained privately; no feedback was replied to, marked or deleted. New items P13
+and P14 are part of this build, not deferred.
 
-Use existing authorized account/test capabilities. If ordinary paid-account or
-refund evidence is unavailable, record that limit; do not invent a new UI or
-product feature to force the check. These are existing open checks, not new
-investigations. Record each outcome once; whole-house quality, physical 82
-playback/push and purchase acceptance remain open.
+## Status meanings
 
-This is the working acceptance list for the owner's recent requests. Implementation,
-automated checks, hosted delivery and real consumer acceptance are separate states.
-An unchecked item remains open. The public Apple candidate is not changed by this list.
+**Observed** = specific real-phone behavior observed; it does not certify every
+edge case. **Built** = implemented, with source/automated checks where noted;
+remaining acceptance is explicit. **Active** = implementation or recovery in
+progress. **Open** = not completed. **Later** = deliberately outside this release.
+No whole feature is closed by source existence, upload or a preview alone.
 
-## Product priorities and decisions
+## App flow and layout
 
-- Functionality, faithful property media and professional output come first. The
-  former 75% margin target is guidance, not a reason to block useful functionality.
-- The primary product is photos → polish/stage/review → property video → website.
-  Recorded drone-style walkthroughs remain an optional tool.
-- Classic website is included. Two distinct luxury designs cost **$25 for one
-  property listing**. One entitlement allows changing between paid designs for that
-  property. Hosting still follows the plan; no perpetual hosting promise.
-- The first 15-photo upload cap is removed. Photo import is not video selection:
-  the current video recipe supports up to 100 photos with durable ordered sources.
-- Aerial intro remains Coming soon. Later it can be an optional exterior opening,
-  followed by independent interior photo motion. No invented continuous route.
-- 3D tours, floor plans and measurement experiments remain internal TestFlight
-  work. They are not an App Store release claim. CMA is a separate future product;
-  accurate sold-comparable data rights remain unresolved.
-- Leave John Apple unchanged. Preserve the submitted public candidate while
-  preparing internal builds; account/key/repository administration is separate.
+| ID | Owner request | October 14–15 result | Remaining |
+|---|---|---|---|
+| A01 | Lead with photos → AI edits → photo-based video → property website | Built; photo-first Home and listing tools observed on phone | Complete one accepted published property workflow |
+| A02 | Get Started opens address/add-home form | Built; prior phone observation retained | Include exact final screen in onboarding |
+| A03 | Manage listing details at very top; toolbox above tour | Built; actual phone order observed | Check final 83 changed screens |
+| A04 | Move Studio below primary tools and compliance near bottom | Built; layout changed | Final phone pass; compact disclosures stay accessible |
+| A05 | Listing contact outside toolbox, without duplicate entry | Built | Verify save and correct buyer-enquiry recipient |
+| A06 | Dedicated Leads bottom tab, grouped by home | Built; tab/grouping observed on actual phone | Final account/library isolation acceptance |
+| A07 | iPhone system light/dark by default; glass cards/images/faint purple ring | Built; prior real-phone appearance checked and restored to System | Preserve through newest UI changes |
+| A08 | Replace tiny generic purple buttons with Rendprop branded controls | Active; latest screenshots explicitly included | Finish, compile and inspect actual 83 phone |
+| A09 | Consistent beginner labels across Home/listing/Settings | Built for MVP; lab separation remains experimental | No misleading active 3D/Aerial claim |
 
-## Consumer flow
+## Photos and AI Photo Studio
 
-| Request | Source/check status | Required live acceptance |
+| ID | Owner request | October 14–15 result | Remaining |
+|---|---|---|---|
+| P01 | Remove 15-photo upload ceiling; allow repeated imports | Built; cap removed | Actual >15 import/repeat/partial-failure check still open; do not advertise infinite storage |
+| P02 | Original tab is default edit starting point | Built; Original/Latest/Decluttered/Staged observed today | Retest any changed 83 selection path |
+| P03 | Keep all saved declutter/staging versions; try new style from Original | Built; history preservation tested and earlier phone observation retained | Whole-home fresh capture later |
+| P04 | Contemporary instead of Scandinavian | Built; saved Contemporary/Modern history observed | Preserve older stored style compatibility |
+| P05 | Clean tab labels, selection badges and photo-version review layout | Built and partly observed | Final changed-footer/button inspection |
+| P06 | Real progress while editing/uploading; background work and notification | Built stage/count reporting, not invented AI percentage | Physical completion/reopen/notification acceptance for exposed paths |
+| P07 | Select AND unselect a photo for listing without deleting original/edits | 83 native fix built/tested; atomic server removal deployed today | Install 83; remove/reopen/re-add; verify gallery and cover |
+| P08 | Original can replace an edited public selection without false disclosure error | Genuine Original proof/sync fix built/tested for 83 | Actual original selection → published gallery sync |
+| P09 | AI preserves structure; staging/declutter actually look professional | New Pro4K routes and stricter removal-only declutter prompt live; real stage/declutter outputs accepted | Broader actual-home output review; other exposed edits/masking remain open |
+| P10 | Genuine high-quality exports, not screenshots or fake 4K | Real accepted photo outputs 3584×4780, retained-master bytes checked | Actual phone save/share and final coordinator ZIP |
+| P11 | Organized ZIP: Originals / Decluttered / Staged and listing/social copies | Native/Studio implementation built; masters retained | Open final full export in Files, verify folders, dimensions and completeness |
+| P12 | Landscape listing capture; portrait social capture; 0.5× when whole room needs it | Guide/crop detection built; guidance now placed before video photo grid | Actual camera/lens/orientation and branded framing footer on 83 |
+| P13 | NEW beta: edit one photo directly from Photo versions; KEEP bulk editing | 83 single-photo Original actions built; 47 focused checks +6 fault controls, prior review/lifecycle checks passed | Actual phone83 Declutter/Stage action, result/progress and bulk unchanged |
+| P14 | NEW beta: preserve upload order 1,2,3 and append later batches underneath, through new videos | 83 ordering built/tested,26 compiled controls; latest explicit upload-order choice supersedes automatic scene reordering by default | Actual phone83 batch/library/new-video order; admitted jobs remain unchanged |
+
+## Make a video and optional recorded walkthrough
+
+| ID | Owner request | October 14–15 result | Remaining |
+|---|---|---|---|
+| V01 | Make a reel → Make a video; Listing or Social first | Built; naming/destination observed | Final end-to-end destination tests |
+| V02 | Listing landscape 16:9 / Social portrait 9:16 | Built; actual Listing crop review observed today | Review accepted Listing master; originals remain unchanged |
+| V03 | More than eight photos; current video recipe up to 100 | Built; actual 14-source job admitted today | Finish/recover that job; larger capacity still not physically certified |
+| V04 | Video uses chosen reviewed staged/decluttered bytes without re-upload questions | Built source/provenance contract; unsafe staged photo refused in today's picker | Verify final chosen clips/versions against accepted video |
+| V05 | Automatic useful motion; preserve uploaded order by default; no per-photo editing | Planner/default flow built; current beta requires upload-order preservation | Verify new-job order and whole-property motion |
+| V06 | Simple default UI; Advanced voice/style/transitions; Voice Off hides spoken captions | Built | Actual exposed setting/playback matrix still open |
+| V07 | Commercially reusable optional music; default Off | Three pinned CC0 tracks and mix/encoding checks built | Actual phone listening, loop/duck and voice balance |
+| V08 | At least 1080p; no black bars, blurred panels or severe zoom | Real normal-route two-shot Social master 1080×1920; decoded/sample-frame checks passed | Full actual-phone playback and representative Listing result |
+| V09 | Finish accepted work away from editor; notify and review private result | Two-shot hosted completion/push proven; today's 14-shot job continued after leaving editor | Recover larger job; actual push/reopen/review, no auto-publication |
+| V10 | Check status must visibly respond | 83 code built: spinner, actual last-checked time, safe network feedback | Compile/new phone build and tap acceptance |
+| V11 | Ready banner Review must open exact video, including while modal is closing | 83 navigation/context fix built; exact job intent retained | Focused proof and actual phone opening; unavailable-home banners suppressed |
+| V12 | Fix today's quality-retry failure; retain already paid/accepted clips | Repair live; same-job Resume observed on actual phone, paid clips preserved | Source6 FAL completed-result403 delivery recovery in progress; complete master still open |
+| V13 | Recorded drone-style walkthrough is separate optional toolbox tool | Built; optional route observed | Final upload/play/tag check with real recorded video |
+| V14 | Explain slow/steady drone-like capture, gimbal and actual drone options | Built capture guidance | Final phone copy/animation inspection |
+| V15 | Tag rooms muted until genuine recorded/uploaded walkthrough; tap explains requirement | 83 implementation in progress; generated/sample video must not unlock it | Predicate/entrypoint checks, then actual no-source/upload/tag phone tests |
+| V16 | Cancellation, lost replies and account switches do not duplicate charges or misroute media | Existing recovery/authority automated gates passed | New 83 changes and real final recovery acceptance remain open |
+| V17 | Aerial Intro Coming soon; future exterior opening integrates with photo video | Coming-soon state built/observed | No current generation/publish promise |
+
+## Property websites, purchases, sharing and SEO
+
+| ID | Owner request | October 14–15 result | Remaining |
+|---|---|---|---|
+| W01 | Professional property website: Home, Gallery, Location/Nearby and Contact | Built/deployed; distinct routes return content | Actual phone navigation, image lightbox and authorized enquiry |
+| W02 | Finished photo-based Listing video is main presentation; recorded swipe tour secondary | Built/deployed renderer | Accepted Listing video explicitly published on SAME home and played |
+| W03 | Attractive included Classic plus two distinct luxury designs with restrained glass/motion | Classic + Signature Estate + Coastal Luxe built/deployed previews | Final phone aesthetic/accessibility acceptance; preview ≠ paid entitlement |
+| W04 | Luxury design $25 one-time PER PROPERTY, switching both paid designs for that home | Backend/native product routing built; Apple draft SKU exists | Genuine Sandbox buy/recovery/property binding; real review screenshot/metadata; Production still OFF |
+| W05 | Fast loading, full-quality images; old low-detail edited files not called 4K | Delivered readback: median HTML request 3.921→1.479s; masters separated from thumbnails | Actual phone loading/detail; old public low-resolution result is not magically replaced |
+| W06 | Real nearby shops/restaurants/location at low cost | Live OpenStreetMap data: nine named places with attribution | Actual coordinate/place/map/empty-error acceptance |
+| W07 | Buyer links open website rather than app; preserve old links | Direct /property route and association exclusions deployed | Real Messages/Safari share/open including older cached association |
+| W08 | Readable address URLs, canonical/share metadata, privacy-aware sitemap | Built/deployed and automated checks passed | Actual shared card; genuine opted-in publication inspection; no SEO ranking guarantee |
+| W09 | Compact truthful disclosures; not overwhelming central screen | Built shared components; originals/provenance retained | Final phone/site visibility and exported-media labels |
+| W10 | Photographer reference sites / PILK templates inform premium quality | Designs built for references and original Rendprop branding | Owner visual acceptance, not a claim of exact cloned copyrighted material |
+
+## Accounts, costs, Studio and operations
+
+| ID | Owner request | October 14–15 result | Remaining |
+|---|---|---|---|
+| O01 | Personal accounts avoid workspace jargon; ONLY team owner switches member libraries | Existing authority retained; native copy/routes built | Final member isolation/account-switch tests; no Sally-to-Tom access |
+| O02 | Owner can sponsor/invite testers with expanded usage while costs tracked | Existing owner grants preserved | Confirm real invite/sponsored-seat flow; owner success is not normal paid-user proof |
+| O03 | Quality/functionality outrank old 75% margin; avoid premature normal-user spending blocks | Paid processing allowance aligned and live today; no retail price/counter reset | Ordinary paid receipt-backed admission; trial/free unchanged and not claimed solved |
+| O04 | Choose actual AI providers by quality, Kie backup available | Real model comparisons and normal FAL4K + Pro4K routes tested/live | Finish current real workflow; provider migration not assumed universal fix |
+| O05 | Ask AI is contextual app support and cost is measured | Built/deployed; earlier three ordinary queries6.3¢ catalog estimate. Today actual Sold-home context defect fixed/tested114scope checks+17faults/offline47 | 83 phone retest of exact selected Sold/Archived home, logical member library and navigation |
+| O06 | Rendprop Studio matches native purpose, versions, jobs, settings and exports | Built/deployed; hosted byte/security readbacks and automated flows passed | Real authenticated account/library/recovery/native parity acceptance |
+| O07 | Necessary permission/privacy experience, truthful billing/trial statements | Existing implemented paths retained; no new blanket permission prompt assumed necessary | Final actual device permission/notification/account checks and disclosure consistency |
+| O08 | Clean old files; organize Mac/1TB external drive without breaking active work | Completed verified archive move: 6.2GB / 3,469 files; old worktrees/docs organized. Today removed5.93GiB inactive Rendprop build caches, restored6.02GiB free | Preserve active source/keys and release files; no further unrelated cleanup |
+
+## Final sequence — not yet complete
+
+| ID | Required action | State |
 |---|---|---|
-| Start a home with address/details; Get Started opens that form | Existing native route retained | New account → Get Started → address/details |
-| Photos lead; recorded walkthrough is optional | 78 native listing layout and wording implemented | Understandable on actual phone; no sample tour leads the page |
-| Home leads with Add photos / Edit photos, then Make a video / optional recorded walkthrough | 79 Home order/copy updated; existing glass, images and ring retained | Actual phone tile order, compact image cards and larger text |
-| Manage details at top; toolbox above tour; Studio lower down | 78 native source implemented | Actual phone order, narrow/wide text and system appearance |
-| Listing contact only once, outside toolbox | Native source implemented | Details/contact save and buyer enquiry recipient |
-| Compliance compact at bottom, originals preserved | Native source implemented | Disclosures reachable; gallery/export lineage correct |
-| Original is the AI editing start; finished tabs retain saved styles | 79 native and Studio original/history guards implemented; 640 native history checks, original bytes and prior listing selection retained | Actual Original/Decluttered/Staged UI, new staging style from Original, earlier result still selectable |
-| Dedicated Leads tab grouped by property | Native source implemented | Actual account enquiries and account-switch isolation |
-| No 15-photo upload cap | Native source cap removed | Import >15 photos, interrupted/resumed upload and gallery completeness |
-| Beginner floor plan/measurement vs 3D tour labels | Experimental native lab organization implemented | Owner tests internal routes; no public feature activation |
-| Keep Home glass, images, faint purple ring and iPhone appearance | Existing source retained | Light/dark automatic appearance; other toolboxes preserved |
-| Only team owner switches member libraries | Existing authority preserved | Member isolation, owner selection and stale account cases |
+| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | Active; latest source is additional to earlier 16/16 green CI |
+| R02 | Push frozen changes to GitHub and deliver internal normal TestFlight 83 | Open; archive/upload held until latest fixes are ready |
+| R03 | Install actual phone 83 and test changes; recover 14-photo job and inspect final output | Open; only actual mirrored iPhone counts as UI acceptance |
+| R04 | Finish real paid website/ordinary-account/export/site/Studio acceptance above | Open; no fake transactions or claims that previews prove purchases |
+| R05 | Final Codex + Claude audit with current full context, not stale build 58 text | Open; prepare concrete current handoff; no external message without authorization |
+| R06 | LAST: remake **Rendprop for Realtors** onboarding from actual FINAL screens and URL pages | Deliberately LAST; current 118.73s version REJECTED, not finished |
+| R07 | Use each exact page while narrated, logical workflow/best practices, Willow 1.2×/natural excitement, no duration cap | Part of R06; do not regenerate before app/sites complete |
+| R08 | Verify final video/resource build on phone, then submit newest accepted normal candidate | Open; automatic distribution AFTER_APPROVAL already configured; no latest submission yet |
 
-## Make a video
+## Retained future requests — not forgotten, not this MVP release
 
-| Request | Source/check status | Required live acceptance |
-|---|---|---|
-| Rename reel and choose Listing or Social first | 78 native UI implemented | Actual phone 16:9 / 9:16 selection |
-| Choose exact reviewed staged/decluttered versions without re-upload | 78 resolver and provenance checks passed | Empty-room staging → review/select → video uses those exact bytes |
-| More than eight images; up to 100 per video | Recipe/recovery gates implemented | Real representative 20+ photo job; all frames/order preserved |
-| Automatic room order and varied restrained motion | Selected-photo planner and per-shot recipe implemented | Real home sequence and motion; unknown scenes keep position |
-| No per-photo editing questions | 78 beginner defaults implemented | Actual user can choose photos and create without specialist editing |
-| Voice Off hides spoken captions; labels optional Advanced | 78 native defaults and migration implemented | Fresh/saved setup; Off, own voice and AI voice |
-| Capture landscape for Listing / portrait for Social; fit the whole room | 79 animated guide/crop preview; supported indoor hardware 0.5× default, 1× when the room fits; level-phone guidance, no forced digital zoom; 35 checks + 7 actual ImageIO controls | Actual camera orientation/lens, full original saved, destination crop clear |
-| At least 1080p, no black/blurred panels or severe crop | Normal-profile two-shot Social result is actual 1080×1920, with measured native-4K sources and no retry/fallback; sampled frames and full decode passed | Actual phone playback and representative 20+ photo Listing framing/sharpness remain open |
-| Ordinary customers receive the tested high-quality provider route | Ordinary FAL Kling V3 native-4K profile is active; normal routing completed the two-shot owner canary without a temporary selector | Non-owner/non-sponsored paid admission and representative whole-house Listing 16:9 quality remain open |
-| Finish after accepted job while phone is locked/app closed | Hosted normal-profile job reached private READY and sent one scoped push; source/hash/full decode and no-publication checks passed | Physical 82 enqueue → leave/lock → notification/reopen → review remains open |
-| Lost reply cannot duplicate paid work; cancellation/account changes safe | Frozen native recovery/cancellation gates passed; hosted gateway/delivery acceptance remains open | Real outage/reopen/cancel/account-switch and final source binding |
-| Proven capacity refusal allows adjusting the recipe; accepted work is retained | 79 native recovery requires a fresh exact-context operation lookup proving closed refusal with no job before archiving evidence and allowing a new operation; uncertain/accepted work keeps its operation | Real pre-admission refusal → reduce selection → explicit Create; partial admitted pause resumes the same job without re-buying completed clips |
-| Optional commercially usable music, default Off | Three artist-posted CC0 tracks pinned; encoding/mix gates pass | Listen to all choices, loop/duck, verify shipped assets and licence record |
-| Voice/captions/transitions/music settings survive native and Studio | Native/server/Studio contracts implemented; Studio 508 checks + 36 media-adapter checks and four actual-browser flows | Cross-device setup/status/final playback with every exposed setting |
-| Original-photo fallback cannot invent architecture | Narrow terminal-drift policy implemented | Actual refusal case and truthful finished-video disclosure |
-| No automatic public posting of a newly finished private video | Backend/renderer design enforces private ready result | Explicit review/publish selection, no public stale asset |
+- **3D tours** are the next internal TestFlight priority after release; separate
+  from combined floor plans/measurements. Guided room/spatial routes must be
+  understandable. Blender/Unreal and paid model services need actual research and
+  capture/output tests; not a promise that a few photos equal Matterport.
+- Measurements are last priority and must be accurate; do not claim certified
+  dimensions. Floor plan/measurement labels should logically group together.
+- CMA is a future exceptionally in-depth, evidence-based paid report. Accuracy,
+  licensed sold comps, sources/dates, explained adjustments and agent review first.
+  $5 research cost and $25–$30+ pricing are acceptable; 75% is not a hard gate.
+  MLS/data access remains unknown; no CMA SKU/engine/data licence activated.
+- Separate Bars/Restaurants onboarding later. Current video is Realtors only.
+- Partner deck uses anonymized examples, accurate source-backed figures and
+  explicitly proposed brokerage pricing. App bugs remain higher priority.
+- Fresh correctly captured whole-home owner test follows current checklist/audits.
 
-## Property websites, sharing and SEO
+## Evidence anchors
 
-| Request | Source/check status | Required live acceptance |
-|---|---|---|
-| Professional video is the main playable property media | 79 photo-video renderer/browser gates are deployed in82; recorded walkthrough remains secondary | Root accepts a real Listing16:9 result, explicitly publishes it, then verifies normal Play on that same property; no private result auto-publishes |
-| Home, Gallery, Location and Contact | Current hosted alias routes each return200 with distinct pages; public gallery/contact payload preserved | Actual mirrored-phone navigation, full-image lightbox and real authorised enquiry flow |
-| Classic + Signature Estate + Coastal Luxe | Current hosted Classic plus both clearly marked/noindex/no-form luxury previews verified with real published855 content | Actual phone design quality, keyboard/reduced-motion accessibility; preview is not an entitlement |
-| $25 once per property luxury purchase | Consumable25.00 draft remains MISSING_METADATA with no review screenshot. USA availability is configured; Sandbox enabled for testing, Production disabled | Complete review metadata/screenshot; actual Apple Sandbox purchase/recovery/refund and exact property binding before Production enable |
-| No fake entitlement through a query or unpaid preview | SQL/handler/browser checks pass; hosted unpaid website_theme query remains Classic; marked preview has no form and changes no stored style | Existing/fresh accounts, actual paid entitlement/refund and cross-property isolation |
-| Buyer link opens website instead of Rendprop app | Hosted `/property/<slug>` is direct200 with alias-preserving navigation; AASA public exclusions retained; old `/f` still returns same publication | Messages/Safari on actual phone, including cached older app association |
-| High-quality images and fast loading | Fresh real855 HTML median3.921→1.479s after DB-region affinity and independent read overlap; public DTO bytes identical, no authority cache. Selected/altered262KB image prefixes arrive0.282/0.128s | Actual phone first-visible media and full-image detail; these HTTP timings are not phone LCP or an SLA |
-| No fake4K photo/video quality claim | Old public855 unit1120 stage pair is4032×3024 original vs896×1195 altered, createdOctober2; existing low-detail saved result is not4K. No gallery/image was replaced | Root selects correct current phone property and compares its real accepted files; no cross-listing copy or claim that upscale reconstructs detail |
-| Real nearby data; no invented shops/restaurants | Current nearby route returns9 named places with OpenStreetMap attribution/licence; no invented locality text or paid location request | Actual phone coordinates/place accuracy, empty/outage behaviour and map links |
-| Compact meaningful disclosures | Existing website shared components retained | Altered media labelled; full disclosure/originals available |
-| Readable address URLs and distinct page search/social metadata | 113 renderer/Worker checks pass and deployed82 readback confirms address canonical plus distinct Home/Gallery/Location/Contact metadata | Actual phone shared-link card and duplicate-address behaviour; no Google indexing claim |
-| Dynamic sitemap for published opted-in pages | Bounded backend index + Worker sitemap deployed; hosted sitemap200, privacy/preview/unbranded exclusion controls retained | Inspect a genuinely opted-in publication; no indexing or opt-in fabrication |
-| Shared links expose product discoverability appropriately | Branded footer/app affordance existing | Branded link cards; MLS-safe pages contain no promotion |
-
-## Studio, exports and launch
-
-- [ ] Studio beginner flow is deployed with the same purpose, reviewed versions,
-  automatic scene plan and server jobs as the phone; advanced desktop editor
-  remains.510 tests and35 hosted files/39 bounded GET byte/security checks pass.
-  Real authenticated account/library/recovery and phone/Studio parity remain open.
-- [ ] Native/Studio published output and selected website design agree with server.
-- [ ] Coordinator ZIP has separate Originals, Decluttered and Staged directories
-  plus the agreed listing/social destination formats; files are actual high-quality
-  media, not UI captures. Preserve masters and do not promise a universal MLS ratio.
-- [ ] Ask AI knows the current screen/product flow and true background boundaries;
-  cost remains measured rather than assumed. No false Kie processor claim.
-- [ ] Branded up-to-two-minute onboarding uses current real screens, correct photo-first
-  flow, Willow at1.2x, no blank scenes or misleading trial/publication explanation.
-- [x] Normal82 TestFlight delivered; exact signed archive/source/Apple receipt retained
-  at `_bridge/build82-normal-release-prep/NORMAL82-DELIVERY-RECEIPT.json`.
-- [ ] Actual phone installs82 and completes the remaining acceptance checks.
-- [ ] Three stale CI fixtures are corrected with functional oracles preserved;
-  corrected CI 38707737574 on pushed HEAD 2fe6d669 is running, not terminal.
-- [ ] Real photo enhancement/declutter/stage/masking and video acceptance passed.
-- [ ] Ordinary non-owner/non-sponsored account and Apple purchase paths tested;
-  owner unrestricted use is not evidence of normal customer admission.
-- [x] Normal82 candidate is signed, uploaded and APP_STORE_ELIGIBLE without LAB/DEBUG;
-  current205-input native binding matches its archive. This does not close actual
-  phone acceptance or authorize attaching/submitting an unaccepted candidate.
-- [ ] Newest tested normal candidate submitted with automatic release after approval.
-
-## Evidence records
-
-The superseded05:52 status snapshot is retained locally in
-`_bridge/build82-final-state/CHECKLIST-HISTORICAL-0552.md`. The active checkpoint
-at the top of this checklist controls current release state. Individual evidence
-receipts remain unchanged.
+- Real phone82 install/observations: `_bridge/build82-phone-acceptance/PROGRESS-20261015-1402.json`.
+- Actual14-shot terminal failure: `_bridge/build82-phone-video-c40f4860/TERMINAL-READONLY-RECEIPT-20261015T145238Z.json`.
+- Previous-source 16/16 CI: `_bridge/build82-ci-2fe6d669/FINAL-CI-RECEIPT.json`.
+- Atomic gallery removal deployed today: `_bridge/build83-gallery-deselect/FINAL-DEPLOYED-RECEIPT.json`.
+- Native photo proof: `_bridge/build83-photo-listing-toggle/FINAL-NATIVE-SOURCE-BINDING.json`.
+- Apple13:50UTC read-only truth: `_bridge/build82-release-readonly-refresh/20261015T135013Z/READONLY-RECEIPT.json`.
+- Studio/accepted AI outputs/earlier delivery receipts retain their detailed history
+  in the archived checklist and OWNER-CONTEXT-20261014.md. Evidence paths are relative
+  to outer `/Users/pilksclaes/Rendprop AI`, not this Git worktree.

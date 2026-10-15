@@ -12,9 +12,9 @@ try {
   Object.defineProperty(Deno,"serve",{configurable:true,writable:true,value:(fn:Handler)=>{handler=fn;return {};}});
   await import("./index.ts");
 } finally {Object.defineProperty(Deno,"serve",serve);}
-type Options={photo?:Record<string,unknown>|null; visible?:boolean; visibilityFailure?:boolean; listingMissing?:boolean; readOnly?:boolean; deleting?:boolean; workspace?:string; selection?:string[]|null; existingKey?:string|null; appendFailure?:boolean};
+type Options={photo?:Record<string,unknown>|null; visible?:boolean; visibilityFailure?:boolean; listingMissing?:boolean; readOnly?:boolean; deleting?:boolean; workspace?:string; selection?:string[]|null; existingKey?:string|null; appendFailure?:boolean;removeError?:{code?:string;message?:string};removeAck?:Record<string,unknown>;removeReplayed?:boolean;idempotencyKey?:string|null};
 async function invoke(body:Record<string,unknown>,options:Options={},method="PATCH") {
-  const previous=globalThis.fetch, updates:Record<string,unknown>[]=[],appends:Record<string,unknown>[]=[];
+  const previous=globalThis.fetch, updates:Record<string,unknown>[]=[],appends:Record<string,unknown>[]=[],removals:Record<string,unknown>[]=[],snapshots:Record<string,unknown>[]=[];
   let visibilityReads=0,assetReads=0;
   const row={id:LISTING,org_id:ORG,main_photo_key:options.existingKey===undefined?KEY:options.existingKey,gallery_asset_ids:options.selection??null,address:"Original"};
   const photo=options.photo===undefined?{id:ASSET,listing_id:LISTING,kind:"photo",bucket:"renders",uploaded:true,storage_key:KEY}:options.photo;
@@ -42,6 +42,19 @@ async function invoke(body:Record<string,unknown>,options:Options={},method="PAT
       const saved={...row,gallery_asset_ids:[...new Set([...existing,...args.p_add])],main_photo_key:args.p_set_main?args.p_main_photo_key:row.main_photo_key};
       return response(saved);
     }
+    if(url.pathname.endsWith("listing_gallery_snapshot")){
+      const args=await req.json();snapshots.push(args);assertEquals(args,{p_user:USER,p_org:ORG,p_listing:LISTING});
+      return response({...row,gallery_assets:options.visible===false?[]:[{asset_id:ASSET,sha256:"a".repeat(64),bytes:1024}]});
+    }
+    if(url.pathname.endsWith("remove_listing_gallery")){
+      const args=await req.json();removals.push(args);assertEquals(args.p_user,USER);assertEquals(args.p_org,ORG);assertEquals(args.p_listing,LISTING);
+      if(options.removeError)return response(options.removeError,400);
+      const selected=options.selection??[ASSET];
+      const removed=selected.filter((id:string)=>args.p_remove.includes(id));
+      return response({...row,gallery_asset_ids:options.removeReplayed?selected:selected.filter((id:string)=>!args.p_remove.includes(id)),
+        main_photo_key:options.removeReplayed?row.main_photo_key:removed.includes(ASSET)?null:row.main_photo_key,
+        gallery_remove:{actor_id:USER,operation_id:args.p_operation,replayed:options.removeReplayed??false,requested_asset_ids:args.p_remove,removed_asset_ids:removed,...options.removeAck}});
+    }
     if(url.pathname.endsWith("capture_assets")){
       assetReads++;assertEquals(url.searchParams.get("listing_id"),`eq.${LISTING}`);
       assert(url.searchParams.has("id")||url.searchParams.has("storage_key"));return response(photo);
@@ -53,10 +66,11 @@ async function invoke(body:Record<string,unknown>,options:Options={},method="PAT
     throw new Error(`Unmodeled synthetic request ${url.pathname}`);
   };
   try {
-    const r=await handler(new Request(`https://edge.fixture.invalid/listings${method==="POST"?"":`/${LISTING}`}`,{
-      method,headers:{authorization:"Bearer fixture",...(options.workspace?{"x-org-id":options.workspace}:{})},body:JSON.stringify(body),
+    const key=options.idempotencyKey===undefined&&typeof body.gallery_remove_operation_id==="string"?`gallery-remove:${body.gallery_remove_operation_id}`:options.idempotencyKey;
+    const r=await handler(new Request(`https://edge.fixture.invalid/listings${method==="POST"?"":`/${LISTING}`}${method==="GET"?"?gallery_selection=1":""}`,{
+      method,headers:{authorization:"Bearer fixture",...(options.workspace?{"x-org-id":options.workspace}:{}),...(key?{"Idempotency-Key":key}:{})},body:method==="GET"?undefined:JSON.stringify(body),
     }));
-    return {status:r.status,body:await r.json(),updates,assetReads,visibilityReads,appends};
+    return {status:r.status,body:await r.json(),updates,assetReads,visibilityReads,appends,removals,snapshots};
   }finally{globalThis.fetch=previous;}
 }
 Deno.test("actual cover PATCH resolves an uploaded property photo to its canonical key",async()=>{
@@ -123,4 +137,35 @@ Deno.test("actual cloud addition rejects replacement/detail mixes, invalid input
  for(const [options,status]of [[{readOnly:true},403],[{workspace:OTHER},404],[{deleting:true},409],[{appendFailure:true},503]]as const){
   const r=await invoke({gallery_add_asset_ids:[ASSET]},options);assertEquals(r.status,status);assertEquals(r.updates,[]);
  }
+});
+
+const REMOVE_OP="a0200205-0000-4000-8000-000000000010";
+const removalBody=()=>({gallery_remove_asset_ids:[ASSET],gallery_remove_operation_id:REMOVE_OP,expected_gallery_asset_ids:[OTHER,ASSET],expected_main_photo_key:KEY});
+Deno.test("actual cloud removal uses saved actor-scoped RPC and preserves unknown selected assets",async()=>{
+ const r=await invoke(removalBody(),{selection:[OTHER,ASSET]});assertEquals(r.status,200);assertEquals(r.body.gallery_asset_ids,[OTHER]);assertEquals(r.body.main_photo_key,null);
+ assertEquals(r.removals,[{p_user:USER,p_org:ORG,p_listing:LISTING,p_operation:REMOVE_OP,p_remove:[ASSET],p_expected:[OTHER,ASSET],p_expected_main:KEY}]);
+ assertEquals(r.updates,[]);assertEquals(r.appends,[]);assertEquals(r.body.gallery_remove.actor_id,USER);assertEquals(r.body.library_org_id,ORG);
+ const replay=await invoke(removalBody(),{selection:[OTHER,ASSET],removeReplayed:true});assertEquals(replay.status,200);assertEquals(replay.body.gallery_asset_ids,[OTHER,ASSET]);assertEquals(replay.body.gallery_remove.replayed,true);
+});
+Deno.test("actual cloud removal rejects missing saved operation snapshot and replacement mixes",async()=>{
+ for(const body of [{...removalBody(),gallery_asset_ids:[]},{...removalBody(),main_photo_asset_id:ASSET},{...removalBody(),user_id:OTHER},
+  {...removalBody(),gallery_remove_operation_id:"bad"},{...removalBody(),gallery_remove_asset_ids:[]},{...removalBody(),gallery_remove_asset_ids:null},
+  {...removalBody(),gallery_remove_asset_ids:[ASSET,ASSET]},{...removalBody(),expected_gallery_asset_ids:[ASSET,ASSET]},
+  {...removalBody(),expected_main_photo_key:42},Object.fromEntries(Object.entries(removalBody()).filter(([k])=>k!=="expected_gallery_asset_ids"))]){
+  const r=await invoke(body);assertEquals(r.status,400);assertEquals(r.removals,[]);assertEquals(r.updates,[]);
+ }
+ for(const idempotencyKey of[null,"gallery-remove:"+OTHER]){const r=await invoke(removalBody(),{idempotencyKey});assertEquals(r.status,409);assertEquals(r.removals,[]);}
+});
+Deno.test("actual cloud removal surfaces stale CAS and never replaces or appends after unknown reply",async()=>{
+ const stale=await invoke(removalBody(),{removeError:{code:"PT409",message:"RP409: selection changed"}});assertEquals(stale.status,409);assertEquals(stale.body.code,"gallery_selection_changed");
+ for(const removeError of[{message:"Synthetic transport outage"},{message:"RP404: listing unavailable"},{message:"RP403: write denied"}]){
+  const r=await invoke(removalBody(),{removeError});assertEquals(r.status,removeError.message.startsWith("RP404")?404:removeError.message.startsWith("RP403")?403:503);assertEquals(r.updates,[]);assertEquals(r.appends,[]);
+ }
+ for(const removeAck of[{actor_id:OTHER},{operation_id:OTHER},{requested_asset_ids:[OTHER]},{removed_asset_ids:[OTHER]},{removed_asset_ids:[ASSET,ASSET]}]){
+  const r=await invoke(removalBody(),{removeAck});assertEquals(r.status,503);assertEquals(r.updates,[]);assertEquals(r.appends,[]);
+ }
+});
+Deno.test("actual cloud removal preserves current role workspace deletion and snapshot authority",async()=>{
+ for(const[options,status]of[[{readOnly:true},403],[{workspace:OTHER},404],[{deleting:true},409],[{listingMissing:true},404]]as const){const r=await invoke(removalBody(),options);assertEquals(r.status,status);assertEquals(r.removals,[]);}
+ const r=await invoke({}, {},"GET");assertEquals(r.status,200);assertEquals(r.body.gallery_assets,[{asset_id:ASSET,sha256:"a".repeat(64),bytes:1024}]);assertEquals(r.snapshots,[{p_user:USER,p_org:ORG,p_listing:LISTING}]);assertEquals(r.updates,[]);
 });

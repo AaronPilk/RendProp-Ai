@@ -28,11 +28,16 @@ final class AuthStore {
     static let shared = AuthStore()
     static var currentAccessToken: String? = "offline-fixture-only"
     static var connections = 0
+    var userID: String? = "11111111-1111-4111-8111-111111111111"
+    var syncSessionRevision: UInt64 = 1
     static func jwtSubject(_ token: String) -> String? { "11111111-1111-4111-8111-111111111111" }
     func ensureSession() async -> Bool {
         if Self.currentAccessToken == nil { Self.connections += 1; Self.currentAccessToken = "offline-fixture-only" }
         return true
     }
+}
+enum WorkspaceContext {
+    static var selectedOrgID: UUID? = UUID(uuidString: "22222222-2222-4222-8222-222222222222")
 }
 enum Haptics { static func success() {} }
 final class BackgroundSessionBridge {

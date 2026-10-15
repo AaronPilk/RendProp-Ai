@@ -18,6 +18,9 @@ assert generate.index('DirectUploader.uploadPhoto(')<generate.index('PropertyVid
 assert 'motion: shot?.motion ?? selectedMove' in generate
 assert 'plan = prepared.compactMap { $0.shot?.value }' in generate and 'ordered = Self.reordered(chosen, by: plan)' in generate
 assert 'api as? PropertyVideoPlanningAPI' in generate and 'requireCurrent: requireCurrent' in generate
+assert '@State private var automaticOrder = false' in reel
+assert 'let motionOverride = cameraMove?.rawValue, arrangeScenes = false' in generate
+assert 'plannedPhotos = try PropertyVideoPlanner.preservingInputOrder(result.photos, inputs: inputs)' in generate
 assert 'scenePlanVersion == 1 ? photo.shot?.motion ?? batch.motion : batch.motion' in block(view,'nonisolated private static func completeSavedBatch(')
 assert 'batch.scenePlanVersion != 1 || (batch.photos[index].shot?.motion ?? batch.motion) == motion' in block(view,'nonisolated private static func makeClip(')
 assert '@State private var cameraMove: ReelCameraMove? = nil' in view
@@ -34,6 +37,7 @@ source=aspect+'\n'+planner
 fixture=tests.replace("__ACTUAL_PLAN_WIRE__",wire)
 receipt={'passed':False,'sourceHashes':before,'runs':[],'limitations':['Actual Foundation planner/order/cache and production call-site checks. Scene provider is a closed typed interface; no paid models, user photos, UI or Apple accessed.']}
 variants=[('actual',source,fixture,None),
+ ('lost-upload-order',source.replace('return try inputs.map { input in','return photos\n        /* return try inputs.map { input in').replace('            return photo\n        }\n    }','            return photo\n        } */\n    }'),fixture,'new video plan retains exact upload order across every classified batch'),
  ('twenty-photo-truncation',source.replace('let missing = inputs.filter { rows[$0.photoID] == nil }','let missing = Array(inputs.filter { rows[$0.photoID] == nil }.prefix(20))').replace('let row = rows[input.photoID]!','let row = rows[input.photoID] ?? PropertyVideoSceneRow(photoID:input.photoID,assetID:input.assetID,scene:.unknown,confidence:0,motion:.pushIn,seconds:5)'),fixture,'one hundred sources are classified in five bounded batches'),
  ('lost-uncertain-position',source.replace('photos.enumerated().filter { $0.element.confident }','photos.enumerated()').replace('return photos.map { $0.confident ? iterator.next()! : $0 }','return photos.map { _ in iterator.next()! }'),fixture,'uncertain scenes preserve their original absolute positions'),
  ('lost-byte-cache-binding',source.replace('input.jpegDigest])','"same bytes"])').replace('saved.input.jpegDigest == input.jpegDigest','true'),fixture,'changed JPEG bytes cannot reuse cached visual decisions'),
@@ -47,7 +51,7 @@ try:
   assert expected is None or code!=source or test!=fixture,name+' mutation anchor missing'
   production=out/(name+'.swift');test_path=out/(name+'-tests.swift');binary=out/name
   production.write_text(code);test_path.write_text(test)
-  c=subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library',str(production),str(test_path),'-o',str(binary)],capture_output=True,text=True,timeout=240)
+  c=subprocess.run(['xcrun','swiftc','-swift-version','5','-module-cache-path',str(out/'module-cache'),'-parse-as-library',str(production),str(test_path),'-o',str(binary)],capture_output=True,text=True,timeout=240)
   (out/(name+'-compile.log')).write_text(c.stdout+c.stderr);assert c.returncode==0,(name,c.stderr)
   r=subprocess.run([str(binary)],capture_output=True,text=True,timeout=60);output=r.stdout+r.stderr
   (out/(name+'.log')).write_text(output)

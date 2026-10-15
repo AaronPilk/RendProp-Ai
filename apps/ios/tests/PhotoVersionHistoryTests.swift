@@ -603,6 +603,67 @@ struct PhotoVersionHistoryTests {
                 sourceID: pngSource.id, edit: "stage", style: "modern", disclosure: nil, provenanceID: nil,
                 provenanceRecorded: false, directory: rawFormatDir, imageExtension: "../png")
         }
+        let removedDir = root.appendingPathComponent("listing-removal")
+        for id in ["room", "neighbor"] {
+            try PhotoVersionHistory.saveCapture(original: original, enhanced: enhanced, id: id, directory: removedDir)
+        }
+        check((try? PhotoVersionHistory.load(directory: removedDir).listingSelections) == nil, "old nil selections preserve default gallery before a user removal")
+        let stagedRemoval = try PhotoVersionHistory.saveEdit(jpeg: Data("staged-room".utf8), id: "room-stage",
+            parentID: "room", sourceID: "room", edit: "stage", style: "modern", disclosure: "Virtually staged",
+            provenanceID: "stage-receipt", provenanceRecorded: true, directory: removedDir)
+        try PhotoVersionHistory.selectForPublication(id: stagedRemoval.id, directory: removedDir, reviewed: true)
+        let beforeRemoval = try PhotoVersionHistory.load(directory: removedDir)
+        let filesBeforeRemoval = try FileManager.default.contentsOfDirectory(at: removedDir, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent != ".photo-history.json" }
+        let bytesBeforeRemoval = try Dictionary(uniqueKeysWithValues: filesBeforeRemoval.map { ($0.lastPathComponent, try Data(contentsOf: $0)) })
+        try PhotoVersionHistory.removeFromPublication(id: stagedRemoval.id, directory: removedDir)
+        let removed = try PhotoVersionHistory.load(directory: removedDir)
+        check(removed.current == beforeRemoval.current && removed.versions == beforeRemoval.versions, "removing a listing photo retains editing choice and every history/provenance/review record")
+        check(removed.hiddenFamilies == beforeRemoval.hiddenFamilies, "removal from listing never hides a saved photo from Photos")
+        check(removed.excludedListingFamilies == ["room"], "explicit family exclusion is durable")
+        check(removed.listingSelections == ["neighbor": "neighbor"], "removal excludes exactly one logical family and retains siblings")
+        check(!removed.isSelectedForListing("room-stage") && removed.publicationChoice(for: "room") == nil, "every version of an excluded family reports no public selection")
+        check((try? PhotoVersionHistory.publicationVersions(directory: removedDir)?.map(\.id)) == ["neighbor"], "actual publication resolver omits the removed family")
+        check((try? PhotoVersionHistory.availableCoverVersion(directory: removedDir)?.id) == "neighbor", "removing the cover chooses only a remaining selected family")
+        for (name, bytes) in bytesBeforeRemoval {
+            check((try? Data(contentsOf: removedDir.appendingPathComponent(name))) == bytes, "removing selection retains exact bytes for \(name)")
+        }
+        try PhotoVersionHistory.removeFromPublication(id: stagedRemoval.id, directory: removedDir)
+        check((try? PhotoVersionHistory.load(directory: removedDir).listingSelections) == removed.listingSelections, "repeat removal remains idempotent without restoring defaults")
+        let originalSource = try PhotoVersionHistory.ensureOriginalSources(directory: removedDir).libraryVersions(.original)
+            .first { $0.familyID == "room" }!
+        let cleanRemoval = try PhotoVersionHistory.saveEdit(jpeg: Data("new-clean-room".utf8), id: "room-clean-after-removal",
+            parentID: stagedRemoval.id, sourceID: originalSource.id, edit: "declutter", style: nil, disclosure: nil,
+            provenanceID: "clean-receipt", provenanceRecorded: true, directory: removedDir)
+        check((try? PhotoVersionHistory.publicationVersions(directory: removedDir)?.map(\.id)) == ["neighbor"], "a later automatically selectable edit cannot re-include an explicitly removed family")
+        try PhotoVersionHistory.select(id: "room", directory: removedDir)
+        check((try? PhotoVersionHistory.load(directory: removedDir).isSelectedForListing("room")) == false, "workspace version selection cannot secretly undo listing exclusion")
+        let unreviewedRemoval = try PhotoVersionHistory.saveEdit(jpeg: Data("new-stage".utf8), id: "room-stage-after-removal",
+            parentID: "room", sourceID: "room", edit: "stage", style: "rustic", disclosure: nil,
+            provenanceID: nil, provenanceRecorded: false, directory: removedDir)
+        rejected("re-adding a different staging version still requires that exact output's review") {
+            try PhotoVersionHistory.selectForPublication(id: unreviewedRemoval.id, directory: removedDir)
+        }
+        try PhotoVersionHistory.selectForPublication(id: cleanRemoval.id, directory: removedDir)
+        check((try? PhotoVersionHistory.load(directory: removedDir).isSelectedForListing(cleanRemoval.id)) == true, "explicitly choosing another reviewed version re-includes exactly that version")
+        check((try? PhotoVersionHistory.load(directory: removedDir).excludedListingFamilies?.isEmpty) == true, "explicit listing selection clears only that family's exclusion")
+        rejected("a stale selected sheet cannot remove another version now selected for the family") {
+            try PhotoVersionHistory.removeFromPublication(id: stagedRemoval.id, directory: removedDir)
+        }
+        try FileManager.default.removeItem(at: removedDir.appendingPathComponent(cleanRemoval.imageFile))
+        try PhotoVersionHistory.removeFromPublication(id: cleanRemoval.id, directory: removedDir)
+        check((try? PhotoVersionHistory.load(directory: removedDir).excludedListingFamilies?.contains("room")) == true, "missing selected image can still be removed without decoding or approving it")
+        try PhotoVersionHistory.removeFromPublication(id: "neighbor", directory: removedDir)
+        check((try? PhotoVersionHistory.load(directory: removedDir).listingSelections?.isEmpty) == true, "last removal persists explicit empty selection instead of nil legacy fallback")
+        check((try? PhotoVersionHistory.publicationVersions(directory: removedDir)?.isEmpty) == true, "all deselected photos stay out after disk reload and publication")
+        check((try? PhotoVersionHistory.availableCoverVersion(directory: removedDir)) == nil, "no selected photos means no fallback cover")
+        check((try? PhotoVersionHistory.load(directory: removedDir).versions.count) == 7, "all original, enhanced and edited versions remain available after last removal")
+        let legacyRemoval = root.appendingPathComponent("legacy-listing-removal")
+        try FileManager.default.createDirectory(at: legacyRemoval, withIntermediateDirectories: true)
+        for id in ["a", "b", "c"] { try enhanced.write(to: legacyRemoval.appendingPathComponent("enh-\(id).jpg")) }
+        try PhotoVersionHistory.removeFromPublication(id: "b", directory: legacyRemoval)
+        check((try? Set(PhotoVersionHistory.publicationVersions(directory: legacyRemoval)!.map(\.id))) == ["a", "c"], "first removal from a pre-history gallery adopts all siblings without re-including the omitted family")
+        check((try? PhotoVersionHistory.load(directory: legacyRemoval).versions.count) == 3, "legacy removal retains all saved source entries")
         print("Photo history/export geometry: \(checks) passed")
     }
 }

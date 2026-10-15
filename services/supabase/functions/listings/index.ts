@@ -28,6 +28,7 @@ import { listLibraryListings } from "../_shared/library-listings.ts";
 import { listingLibraryScope, requireLibraryWrite } from "../_shared/library-access.ts";
 import { clientContact, saveClientContact } from "./client-contact.ts";
 import { appendPublishedPhotos, publishedPhotoPatch } from "../_shared/property-cover.ts";
+import { publishedGallerySnapshot, removePublishedPhotos } from "./gallery-remove.ts";
 
 /** How long a deleted listing can be restored (build 58). Mirrors the app copy. */
 // The 30-day restore window is opened by the trash_listing RPC (build 59);
@@ -298,6 +299,11 @@ Deno.serve(async (req) => {
     }
 
     if (req.method === "GET" && id && seg.length === 1) {
+      if (new URL(req.url).searchParams.get("gallery_selection") === "1") {
+        assert(explicitOrg, 409, "Choose your listing library before reviewing its photos.");
+        return json(await responseListing(await publishedGallerySnapshot(adminClient(),
+          {orgId: explicitOrg, listingId: id}, user.id)), 200, {"cache-control": "no-store"});
+      }
       const {data,error} = await db.from("listings").select("*").eq("id",id).is("deleted_at",null).maybeSingle();
       assert(!error,503,"This listing could not be loaded.");
       assert(data,404,"Listing not found in this library.");
@@ -307,6 +313,13 @@ Deno.serve(async (req) => {
     // ---- PATCH /listings/:id ----
     if (req.method === "PATCH" && id) {
       const body = await readJson<Record<string, unknown>>(req);
+      if (Object.keys(body).some(k => k.startsWith("gallery_remove_") || k === "expected_gallery_asset_ids" || k === "expected_main_photo_key")) {
+        assert(seg.length === 1, 404, "Choose the listing's photo-removal route.");
+        await assertNotDeleting(user.id);
+        assert(explicitOrg, 409, "Choose your listing library before removing a photo.");
+        return json(await responseListing(await removePublishedPhotos(adminClient(),
+          {orgId: explicitOrg, listingId: id}, user.id, body, req.headers.get("Idempotency-Key"))));
+      }
       const patch = pick(body);
       assert(Object.keys(patch).every(k => ["main_photo_key", "gallery_asset_ids"].includes(k)), 426,
         "Update Rendprop to sync listing details safely. Your local edits are saved on your phone.");

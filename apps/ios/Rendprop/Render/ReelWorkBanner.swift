@@ -26,6 +26,16 @@ enum ReelWorkBannerCopy {
 /// A notification or banner may open only an existing, currently visible job's
 /// available listing. Visibility is the queue's account/workspace/consent fence.
 @MainActor enum ReelWorkReviewAdmission {
+    static func bannerJob(visibleJobs: [ReelWorkJob], listings: [Listing]) -> ReelWorkJob? {
+        let available = visibleJobs.filter { listing(jobID: $0.id, visibleJobs: visibleJobs, listings: listings) != nil }
+        return available.first(where: { $0.running || $0.isServerRendering || $0.paused }) ?? available.last
+    }
+
+    static func job(jobID: UUID, visibleJobs: [ReelWorkJob], listings: [Listing]) -> ReelWorkJob? {
+        guard listing(jobID: jobID, visibleJobs: visibleJobs, listings: listings) != nil else { return nil }
+        return visibleJobs.first(where: { $0.id == jobID || $0.serverJob?.reply?.jobID == jobID })
+    }
+
     static func listing(jobID: UUID, visibleJobs: [ReelWorkJob], listings: [Listing]) -> Listing? {
         guard let job = visibleJobs.first(where: { $0.id == jobID || $0.serverJob?.reply?.jobID == jobID }),
               let listing = listings.first(where: { $0.id == job.listingID }),
@@ -43,16 +53,25 @@ struct ReelWorkBanner: View {
     @ObservedObject private var push = PushManager.shared
     @State private var reviewListing: Listing?
     @State private var reviewJobID: UUID?
+    @State private var pendingReviewJobID: UUID?
 
     var body: some View {
-        Group {
-            if let job = jobs.currentJob {
+        VStack(spacing: 0) {
+            if let job = ReelWorkReviewAdmission.bannerJob(visibleJobs: jobs.visibleJobs, listings: model.listings) {
                 ReelWorkStatusRow(job: job, review: { open(job.id) }, dismiss: {
                     jobs.dismissResult(listingID: job.listingID)
                 })
+                if pendingReviewJobID != nil {
+                    Text("Close the current sheet to review this video.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .padding(.horizontal, 16).padding(.bottom, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading).background(Theme.card)
+                        .accessibilityIdentifier("reelWork.reviewPending")
+                }
             }
         }
         .task(id: push.pendingReelJobID) { await reviewPendingNotification() }
+        .task(id: pendingReviewJobID) { await reviewPendingBanner() }
         .onChange(of: auth.syncSessionRevision) { _ in invalidateReview() }
         .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in invalidateReview() }
         .onChange(of: consent.isGranted) { _ in invalidateReview() }
@@ -62,10 +81,14 @@ struct ReelWorkBanner: View {
         })) { listing in
             // The view reconnects to the queue-owned job. Opening sends no new
             // generation and does not replace its selected JPEGs or shot order.
-            ReelStudioView(listing: listing,
-                           photos: EnhancedPhoto.loadAll(listingID: listing.id),
-                           extraClipURLs: listing.aerialURL.map { [$0] } ?? [])
-                .environmentObject(model)
+            if let id = reviewJobID,
+               let job = ReelWorkReviewAdmission.job(jobID: id, visibleJobs: jobs.visibleJobs, listings: model.listings) {
+                ReelStudioView(listing: listing,
+                               photos: EnhancedPhoto.loadAll(listingID: listing.id),
+                               extraClipURLs: listing.aerialURL.map { [$0] } ?? [],
+                               reviewingJob: job)
+                    .environmentObject(model)
+            }
         }
     }
 
@@ -75,17 +98,39 @@ struct ReelWorkBanner: View {
     }
 
     private func open(_ id: UUID) {
-        guard !NativePresentationAvailability.hasPresentedController,
-              let listing = ReelWorkReviewAdmission.listing(jobID: id, visibleJobs: jobs.visibleJobs,
+        guard let listing = ReelWorkReviewAdmission.listing(jobID: id, visibleJobs: jobs.visibleJobs,
                                                            listings: model.listings) else { return }
+        // Feature sheets may still be dismissing when the global button is
+        // tapped. Keep this exact intent instead of silently discarding it.
+        if NativePresentationAvailability.hasPresentedController {
+            pendingReviewJobID = id
+            return
+        }
         reviewJobID = id
         reviewListing = listing
+        pendingReviewJobID = nil
+    }
+
+    private func reviewPendingBanner() async {
+        while let id = pendingReviewJobID, !Task.isCancelled {
+            guard ReelWorkReviewAdmission.listing(jobID: id, visibleJobs: jobs.visibleJobs,
+                                                 listings: model.listings) != nil else {
+                pendingReviewJobID = nil
+                return
+            }
+            if reviewListing == nil, !NativePresentationAvailability.hasPresentedController {
+                open(id)
+                return
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
     }
 
     private func invalidateReview() {
         jobs.reconcileIdentity()
         reviewListing = nil
         reviewJobID = nil
+        pendingReviewJobID = nil
         push.clearPendingReelJob()
     }
 
@@ -135,6 +180,8 @@ private struct ReelWorkStatusRow: View {
                         .accessibilityIdentifier("reelWork.dismiss")
                 }
             }
+            Text(job.title).font(.rpCaption.weight(.medium)).foregroundStyle(Theme.inkDim)
+                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
             if (job.running || job.isServerRendering) {
                 ProgressView(value: job.fraction).tint(Theme.accent)
                     .accessibilityLabel("Video photo progress")

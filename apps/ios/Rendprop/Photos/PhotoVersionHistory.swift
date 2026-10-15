@@ -217,10 +217,47 @@ enum PhotoVersionHistory {
         /// Staged previews stay separate from the approved public choice.
         /// Optional so older on-disk indexes continue to decode unchanged.
         var listingSelections: [String: String]? = nil
+        /// Explicit gallery removal survives later edits of this family.
+        /// Optional for existing indexes; unlike hiddenFamilies it never hides
+        /// saved versions from Photos or changes the editing workspace.
+        var excludedListingFamilies: Set<String>? = nil
         /// Selected library order is separate from capture/edit timestamps.
         /// Optional for older indexes; every descendant retains its family key.
         var importOrder: [String: String]? = nil
+        /// Durable source-family positions. A later import appends without an
+        /// edit timestamp, file name or clock change moving existing photos.
+        var familyOrder: [String]? = nil
         var hiddenFamilies: Set<String> = []
+
+        var orderedFamilyIDs: [String] {
+            let roots = Dictionary(grouping: versions.values, by: \.familyID)
+            let remembered = (familyOrder ?? []).filter { roots[$0] != nil }
+            let known = Set(remembered)
+            let legacy = roots.keys.filter { !known.contains($0) }.sorted { a, b in
+                let aDate = roots[a]!.map(\.createdAt).min() ?? .distantPast
+                let bDate = roots[b]!.map(\.createdAt).min() ?? .distantPast
+                if aDate != bDate { return aDate < bDate }
+                // Legacy import IDs descend inside one ordered picker batch.
+                let aOrder = importOrder?[a] ?? a, bOrder = importOrder?[b] ?? b
+                return aOrder != bOrder ? aOrder > bOrder : a > b
+            }
+            return remembered + legacy
+        }
+
+        func orderedForLibrary(_ candidates: [Version]) -> [Version] {
+            let positions = Dictionary(uniqueKeysWithValues: orderedFamilyIDs.enumerated().map { ($0.element, $0.offset) })
+            return candidates.sorted { a, b in
+                let aPosition = positions[a.familyID] ?? Int.max, bPosition = positions[b.familyID] ?? Int.max
+                if aPosition != bPosition { return aPosition < bPosition }
+                return a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
+            }
+        }
+
+        mutating func appendFamily(_ id: String) {
+            var ordered = orderedFamilyIDs
+            if !ordered.contains(id) { ordered.append(id) }
+            familyOrder = ordered
+        }
 
         func history(for id: String) -> [Version] {
             guard let family = versions[id]?.familyID else { return [] }
@@ -235,7 +272,7 @@ enum PhotoVersionHistory {
         /// Every saved edit remains available. Originals and Latest have one
         /// tile per source family; Staged and Decluttered retain every choice.
         func libraryVersions(_ kind: LibraryKind) -> [Version] {
-            let candidates = versions.values.filter { version in
+            let candidates = orderedForLibrary(versions.values.filter { version in
                 guard !hiddenFamilies.contains(version.familyID) else { return false }
                 switch kind {
                 case .original: return version.parentID == nil && version.effects.isEmpty && version.imageFile == version.originalFile
@@ -243,14 +280,15 @@ enum PhotoVersionHistory {
                 case .decluttered: return version.effects.contains("declutter") && !version.effects.contains("stage")
                 case .staged: return version.effects.contains("stage")
                 }
-            }.sorted { $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.id > $1.id }
+            })
             if kind == .staged || kind == .decluttered { return candidates }
             var families: Set<String> = []
             return candidates.filter { families.insert($0.familyID).inserted }
         }
 
         func isSelectedForListing(_ id: String) -> Bool {
-            guard let version = versions[id], !hiddenFamilies.contains(version.familyID) else { return false }
+            guard let version = versions[id], !hiddenFamilies.contains(version.familyID),
+                  excludedListingFamilies?.contains(version.familyID) != true else { return false }
             return (listingSelections ?? current)[version.familyID] == id
         }
 
@@ -259,6 +297,7 @@ enum PhotoVersionHistory {
         /// family's selected image is missing and publication must stop.
         func publicationChoice(for id: String) -> Version? {
             guard let version = versions[id], !hiddenFamilies.contains(version.familyID),
+                  excludedListingFamilies?.contains(version.familyID) != true,
                   let selected = (listingSelections ?? current)[version.familyID] else { return nil }
             return versions[selected]
         }
@@ -303,7 +342,10 @@ enum PhotoVersionHistory {
                       && (v.originalFile.map(safeName) ?? true)
                   }), Set(index.versions.values.map(\.imageFile)).count == index.versions.count,
                   index.current.allSatisfy({ family, id in index.versions[id]?.familyID == family }),
-                  (index.listingSelections ?? [:]).allSatisfy({ family, id in index.versions[id]?.familyID == family })
+                  (index.listingSelections ?? [:]).allSatisfy({ family, id in index.versions[id]?.familyID == family }),
+                  (index.excludedListingFamilies ?? []).isSubset(of: Set(index.versions.values.map(\.familyID))),
+                  Set(index.familyOrder ?? []).count == (index.familyOrder ?? []).count,
+                  Set(index.familyOrder ?? []).isSubset(of: Set(index.versions.values.map(\.familyID)))
             else { throw Failure.invalidHistory }
             return index
         } catch { throw Failure.invalidHistory }
@@ -348,6 +390,8 @@ enum PhotoVersionHistory {
         let current = try loadUnlocked(directory: directory)
         guard current.schema == expected.schema, current.versions == expected.versions,
               current.current == expected.current, current.listingSelections == expected.listingSelections,
+              current.excludedListingFamilies == expected.excludedListingFamilies,
+              current.familyOrder == expected.familyOrder,
               current.hiddenFamilies == expected.hiddenFamilies else { throw Failure.changedVersion }
     }
     /// Publication must not silently replace a saved gallery when its history
@@ -357,7 +401,8 @@ enum PhotoVersionHistory {
         guard FileManager.default.fileExists(atPath: directory.path) else { return nil }
         let index = try loadUnlocked(directory: directory)
         return try (index.listingSelections ?? index.current).compactMap { family, id in
-            guard !index.hiddenFamilies.contains(family) else { return nil }
+            guard !index.hiddenFamilies.contains(family),
+                  index.excludedListingFamilies?.contains(family) != true else { return nil }
             guard let version = index.versions[id], version.familyID == family else { throw Failure.invalidHistory }
             guard !version.needsCustomReview else { throw Failure.customReviewRequired }
             try requireImage(version.imageFile, directory: directory)
@@ -370,7 +415,8 @@ enum PhotoVersionHistory {
     static func availableCoverVersion(directory: URL) throws -> Version? {
         let index = try load(directory: directory)
         return (index.listingSelections ?? index.current).compactMap { family, id -> Version? in
-            guard !index.hiddenFamilies.contains(family), let version = index.versions[id], !version.needsCustomReview,
+            guard !index.hiddenFamilies.contains(family), index.excludedListingFamilies?.contains(family) != true,
+                  let version = index.versions[id], !version.needsCustomReview,
                   (try? requireImage(version.imageFile, directory: directory)) != nil else { return nil }
             return version
         }.sorted { $0.createdAt != $1.createdAt ? $0.createdAt > $1.createdAt : $0.id > $1.id }.first
@@ -422,6 +468,20 @@ enum PhotoVersionHistory {
         return index
     }
 
+    /// Individual review actions always start from this exact family's retained
+    /// capture, never from staged pixels or an unverified earlier-source file.
+    static func originalForEditing(id: String, directory: URL) throws -> Version {
+        let index = try ensureOriginalSources(directory: directory)
+        guard let viewed = index.versions[id], !index.hiddenFamilies.contains(viewed.familyID),
+              let file = viewed.originalFile,
+              let source = index.versions.values.first(where: {
+                  $0.familyID == viewed.familyID && $0.isRetainedOriginalSource
+                      && $0.originalVerified && $0.imageFile == file
+              }) else { throw Failure.missingImage }
+        try requireImage(source.imageFile, directory: directory)
+        return source
+    }
+
     /// Register only a newly captured/imported image whose pre-enhancement bytes
     /// this call owns. Older orig-* files may be AI predecessors, so never infer
     /// this guarantee from a filename.
@@ -434,6 +494,7 @@ enum PhotoVersionHistory {
         try PhotoCaptureStorage.writePair(original: original, enhanced: enhanced, id: id, directory: directory, write: write)
         let originalName = "orig-\(id).jpg", imageName = "enh-\(id).jpg"
         do {
+            index.appendFamily(id)
             let version = Version(id: id, familyID: id, imageFile: imageName, originalFile: originalName,
                                   originalVerified: true, parentID: nil, sourceID: nil, stagingBaseID: nil,
                                   edit: "capture", style: nil, effects: [], sourceHistoryKnown: true,
@@ -467,6 +528,7 @@ enum PhotoVersionHistory {
                               edit: "legacy", style: nil, effects: [], sourceHistoryKnown: false,
                               disclosure: nil, provenanceID: nil, originalAssetID: nil, serverListingID: nil,
                                   provenanceRecorded: false, createdAt: Date())
+        index.appendFamily(id)
         index.versions[id] = version; index.current[id] = id
         index.listingSelections?[id] = id
         try save(index, directory: directory)
@@ -545,7 +607,10 @@ enum PhotoVersionHistory {
             index.versions[id] = version; index.current[parent.familyID] = id
             // A generated window, displaced fixture, blocked door or mismatched
             // furniture must be reviewed rather than automatically published.
-            if version.canAutomaticallySelectForListing { index.listingSelections?[parent.familyID] = id }
+            if version.canAutomaticallySelectForListing,
+               index.excludedListingFamilies?.contains(parent.familyID) != true {
+                index.listingSelections?[parent.familyID] = id
+            }
             try save(index, directory: directory, write: write)
         } catch {
             try? FileManager.default.removeItem(at: imageURL)
@@ -619,7 +684,9 @@ enum PhotoVersionHistory {
         if customReviewed, version.customReviewed != nil { index.versions[id]?.customReviewed = true }
         index.current[version.familyID] = id
         if index.listingSelections == nil { index.listingSelections = index.current }
-        index.listingSelections?[version.familyID] = id
+        if index.excludedListingFamilies?.contains(version.familyID) != true {
+            index.listingSelections?[version.familyID] = id
+        }
         try save(index, directory: directory)
     }
 
@@ -637,7 +704,25 @@ enum PhotoVersionHistory {
         if reviewed, version.effects.contains("stage") { index.versions[id]?.stagingReviewed = true }
         if customReviewed, version.customReviewed != nil { index.versions[id]?.customReviewed = true }
         if index.listingSelections == nil { index.listingSelections = index.current }
+        index.excludedListingFamilies?.remove(version.familyID)
         index.listingSelections?[version.familyID] = id
+        try save(index, directory: directory)
+    }
+
+    /// Remove this logical photo from the listing, retaining its complete
+    /// source/edit history. A stale sheet cannot remove another selected version.
+    /// Materialize legacy defaults before omission, including an explicit empty
+    /// selection when the last photo is removed; nil would revive old defaults.
+    static func removeFromPublication(id: String, directory: URL) throws {
+        lock.lock(); defer { lock.unlock() }
+        var index = try loadUnlocked(directory: directory)
+        guard let version = index.versions[id], !index.hiddenFamilies.contains(version.familyID),
+              index.isSelectedForListing(id) || index.excludedListingFamilies?.contains(version.familyID) == true
+        else { throw Failure.changedVersion }
+        if index.listingSelections == nil { index.listingSelections = index.current }
+        index.listingSelections?.removeValue(forKey: version.familyID)
+        if index.excludedListingFamilies == nil { index.excludedListingFamilies = [] }
+        index.excludedListingFamilies?.insert(version.familyID)
         try save(index, directory: directory)
     }
 

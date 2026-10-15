@@ -1,24 +1,23 @@
 import Foundation
 
 /// Setup migration is separate from paid batch recovery. Legacy setup defaults
-/// cannot be distinguished from explicit choices, so only missing-version
-/// setups adopt Automatic; current setups keep their stated overrides.
+/// cannot be distinguished from explicit choices. New videos always keep the
+/// selected upload order; saved paid batches retain their separate manifest.
 struct NativeReelPlanningSetup: Sendable {
     let motionPreset: String?
     let pictureLabels: Bool
     let automaticOrder: Bool
     let notice: String?
     init(automaticOrder: Bool?, motionPreset: String?, pictureLabels: Bool) {
-        if let automaticOrder {
-            self.automaticOrder = automaticOrder
+        self.automaticOrder = false
+        if automaticOrder != nil {
             self.motionPreset = motionPreset
             self.pictureLabels = pictureLabels
             self.notice = nil
         } else {
-            self.automaticOrder = true
             self.motionPreset = nil
             self.pictureLabels = false
-            self.notice = "Older setups now use automatic scene order and camera motion, with picture labels off. Your photos and narration are kept."
+            self.notice = "Your photo order is kept. Older setups use automatic camera motion with picture labels off; your photos and narration are kept."
         }
     }
 }

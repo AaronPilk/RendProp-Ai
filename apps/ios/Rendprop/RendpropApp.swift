@@ -1331,14 +1331,28 @@ final class AppModel: ObservableObject {
     /// stall.
     private var gallerySyncInFlight: Set<UUID> = []
     private var gallerySyncPending: Set<UUID> = []
+    private let galleryMutationFence = PhotoGalleryMutationFence()
     static let photoSyncErrorPrefix = "Your photo selection hasn't reached the published page."
+
+    func beginPhotoGalleryRemoval(listingID: UUID) async throws {
+        try await galleryMutationFence.acquireRemoval(listingID)
+    }
+
+    func endPhotoGalleryRemoval(listingID: UUID, serverID: UUID) {
+        galleryMutationFence.releaseRemoval(listingID)
+        if gallerySyncPending.remove(listingID) != nil {
+            Task { [weak self] in
+                await self?.syncGalleryPhotos(listingLocalID: listingID, listingServerID: serverID)
+            }
+        }
+    }
 
     func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
         guard Config.useLiveBackend else { return }
         guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
         guard let listing = listings.first(where: { $0.id == listingLocalID }), !listing.isSample,
               listing.serverID == listingServerID else { return }
-        if gallerySyncInFlight.contains(listingLocalID) {
+        if galleryMutationFence.blocksSync(listingLocalID) || gallerySyncInFlight.contains(listingLocalID) {
             gallerySyncPending.insert(listingLocalID); return
         }
         let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
@@ -1351,9 +1365,11 @@ final class AppModel: ObservableObject {
             else { throw CloudSyncError.identityChanged }
         }
         gallerySyncInFlight.insert(listingLocalID)
+        galleryMutationFence.syncDidStart(listingLocalID)
         defer {
             gallerySyncInFlight.remove(listingLocalID)
-            if gallerySyncPending.remove(listingLocalID) != nil {
+            galleryMutationFence.syncDidFinish(listingLocalID)
+            if !galleryMutationFence.blocksSync(listingLocalID), gallerySyncPending.remove(listingLocalID) != nil {
                 Task { [weak self] in
                     await self?.syncGalleryPhotos(listingLocalID: listingLocalID, listingServerID: listingServerID)
                 }
@@ -1367,7 +1383,15 @@ final class AppModel: ObservableObject {
         }
         var selectedAssets: [String] = []
         var mainAsset: String?
+        var originals: [(PhotoGalleryDisclosure.RetainedOriginal, URL, URL)] = []
         do {
+            if listing.cloudImported == true,
+               let actorID = owner.flatMap(UUID.init(uuidString:)), let libraryID = workspace,
+               try PhotoListingRemovalCoordinator.hasPending(directory: EnhancedPhoto.directory(for: listingLocalID),
+                    localListingID: listingLocalID, serverListingID: listingServerID,
+                    actorID: actorID, libraryOrgID: libraryID) {
+                throw PhotoListingRemovalJournal.Failure.pendingOperation
+            }
             let photos = try selectedPhotos()
             if let mainPath, !photos.contains(where: { FileStore.relativePath(for: $0.enhancedURL) == mainPath }) {
                 throw PhotoVersionHistory.Failure.coverNotSelected
@@ -1377,7 +1401,13 @@ final class AppModel: ObservableObject {
                 let url = photo.enhancedURL
                 let bytes = FileStore.fileSize(url)
                 guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { throw PhotoVersionHistory.Failure.missingImage }
-                let memo = "\(owner ?? "guest")|\(workspace?.uuidString ?? "none")|\(listingServerID)|\(FileStore.relativePath(for: url))|\(bytes)"
+                let version = photo.savedVersion
+                let original = try version.flatMap {
+                    try PhotoGalleryDisclosure.retainedOriginal(version: $0, imageURL: url,
+                        sourceURL: photo.originalURL, maxBytes: Self.maxPublishedPhotoBytes)
+                }
+                let originalDigest = original.map { "|original-sha256:\($0.sha256)" } ?? ""
+                let memo = "\(owner ?? "guest")|\(workspace?.uuidString ?? "none")|\(listingServerID)|\(FileStore.relativePath(for: url))|\(bytes)\(originalDigest)"
                 let asset: String
                 if let cached = publishedGalleryAssets[memo] { asset = cached }
                 else {
@@ -1385,8 +1415,20 @@ final class AppModel: ObservableObject {
                     try requireIdentity()
                     publishedGalleryAssets[memo] = asset
                 }
+                if let actorUUID = owner.flatMap(UUID.init(uuidString:)), let library = workspace,
+                   let galleryID = UUID(uuidString: asset) {
+                    try await CloudPhotoReferences.shared.saveGalleryAssetID(assetID: galleryID,
+                        fileURL: url, ownerID: actorUUID, orgID: library, listingID: listingServerID,
+                        physicalOrgID: listing.serverOrgID)
+                    try requireIdentity()
+                }
                 selectedAssets.append(asset)
-                if let version = photo.savedVersion, version.edit != "capture" && version.edit != "legacy" {
+                if let original {
+                    try PhotoGalleryDisclosure.requireUnchanged(original, imageURL: url,
+                        sourceURL: photo.originalURL, maxBytes: Self.maxPublishedPhotoBytes)
+                    originals.append((original, url, photo.originalURL))
+                }
+                if let version, version.edit != "capture" && version.edit != "legacy" && original == nil {
                     guard let provenanceID = version.provenanceID, version.provenanceRecorded else {
                         throw AIImagePrep.error("This edited photo's disclosure hasn't been saved. Keep the earlier version selected and retry its AI edit.")
                     }
@@ -1396,6 +1438,10 @@ final class AppModel: ObservableObject {
                 if FileStore.relativePath(for: url) == mainPath { mainAsset = asset }
             }
             try requireIdentity()
+            for (original, imageURL, sourceURL) in originals {
+                try PhotoGalleryDisclosure.requireUnchanged(original, imageURL: imageURL,
+                    sourceURL: sourceURL, maxBytes: Self.maxPublishedPhotoBytes)
+            }
             // An older upload pass must never replace a newer local selection.
             guard try selectedPhotos().map(\.id) == photos.map(\.id),
                   listings.first(where: { $0.id == listingLocalID })?.mainPhotoRelPath == mainPath else {
