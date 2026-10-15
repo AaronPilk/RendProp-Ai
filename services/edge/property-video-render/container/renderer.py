@@ -10,7 +10,7 @@ from pathlib import Path
 
 from capabilities import download, upload, digest
 from prepare_image import prepare_image, normalize_full_resolution, MAX_SOURCE_BYTES
-from photo_motion import encode_photo_motion
+from photo_motion import encode_photo_motion, encode_static_saved_photo
 from photo_quality import validate_photo_task, prepare_photo_quality, upload_photo_quality
 from compose import MusicSource, QualityError, compose, probe, run
 from music_catalog import validate_music
@@ -144,7 +144,15 @@ def compose_task(task, directory, hosts):
             normalized = directory / f"input-{i:03d}-oriented.png"
             normalize_full_resolution(photo, normalized)
             photo.unlink()
-            encode_photo_motion(normalized, clip, task["aspect"], source["motion"])
+            try:
+                encode_photo_motion(normalized, clip, task["aspect"], source["motion"])
+            except QualityError as error:
+                # Selected saved photos may be smaller than the final canvas.
+                # Keep their exact content as a static resized still; this is
+                # never used for AI clips or other motion/decoder failures.
+                if str(error) != "original_photo_lacks_1080_pixels":
+                    raise
+                encode_static_saved_photo(normalized, clip, task["aspect"])
             normalized.unlink()
         elif source["motion_kind"] == "ai":
             download(source, clip, hosts)

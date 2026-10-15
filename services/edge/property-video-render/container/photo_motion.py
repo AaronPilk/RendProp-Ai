@@ -3,6 +3,7 @@ import shutil
 from compose import QualityError, probe, run
 
 MOTIONS={'fly_through','push_in','side_glide','pull_back'}
+MIN_STATIC_CROP_EDGE=480
 
 
 def motion_filter(source_width, source_height, width, height, motion):
@@ -46,4 +47,44 @@ def encode_photo_motion(photo, clip, aspect, motion):
     run([shutil.which('ffmpeg'),'-hide_banner','-loglevel','error','-nostdin','-y','-i',str(photo),'-vf',filters,
          '-an','-frames:v','150','-c:v','libx264','-crf','18','-maxrate','24M','-bufsize','48M','-threads','2',
          '-movflags','+faststart',str(clip)])
+    return filters
+
+
+def static_saved_photo_filter(source_width, source_height, width, height):
+    """A limited-detail still from existing pixels, never generated detail.
+
+    This separate path is only for an explicitly selected saved-photo fallback.
+    Motion and AI clips retain their existing native-pixel requirements.
+    """
+    if (width,height) not in {(1920,1080),(1080,1920)}:
+        raise QualityError('static_saved_photo_requires_1080_canvas')
+    crop_width=min(source_width,int(source_height*width/height))
+    crop_height=min(source_height,int(source_width*height/width))
+    crop_width-=crop_width%2;crop_height-=crop_height%2
+    if min(crop_width,crop_height)<MIN_STATIC_CROP_EDGE:
+        raise QualityError('saved_photo_crop_too_small')
+    return (f'crop={crop_width}:{crop_height}:(iw-ow)/2:(ih-oh)/2,'
+            f'scale={width}:{height}:flags=lanczos,setsar=1,fps=30,format=yuv420p')
+
+
+def encode_static_saved_photo(photo, clip, aspect):
+    """Five seconds at30fps from one normalized still, with no camera movement.
+
+    The canvas is1080p; resizing cannot restore detail to a smaller source.
+    No zoom, pan, AI-generated detail or padded/blurred panels are added.
+    """
+    if aspect not in {'16:9','9:16'}:
+        raise QualityError('static_saved_photo_requires_1080_canvas')
+    width,height=(1920,1080)if aspect=='16:9'else(1080,1920)
+    videos=[item for item in probe(photo)['streams']if item['codec_type']=='video']
+    if len(videos)!=1 or videos[0].get('codec_name')not in {'png','mjpeg'}:
+        raise QualityError('one_normalized_saved_photo_required')
+    source=videos[0]
+    if source['width']*source['height']>100_000_000:
+        raise QualityError('bounded_photo_pixels_required')
+    filters=static_saved_photo_filter(source['width'],source['height'],width,height)
+    run([shutil.which('ffmpeg'),'-hide_banner','-loglevel','error','-nostdin','-y',
+         '-loop','1','-framerate','30','-i',str(photo),'-vf',filters,'-an',
+         '-frames:v','150','-c:v','libx264','-crf','18','-maxrate','24M','-bufsize','48M',
+         '-threads','2','-movflags','+faststart',str(clip)])
     return filters
