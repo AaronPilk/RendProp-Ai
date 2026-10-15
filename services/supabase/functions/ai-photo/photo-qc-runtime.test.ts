@@ -143,7 +143,7 @@ async function structuredContractOracle(runner=continuePhotoQuality){
   assertEquals(wire.output_config,{effort:"low",format:PHOTO_QC_OUTPUT_FORMAT});assertEquals(wire.max_tokens,4096);assertEquals(wire.messages[0].content.length,20);
   const files=photoDerivatives(ready),rubric=photoJudgeRubric({edit:"stage",style:"modern",instruction:""}),labels=files.map(file=>`${file.role.toUpperCase()} ${file.region}`).join("\n");
   const inputBound=2*4784+8*1369+new TextEncoder().encode(rubric+labels+JSON.stringify(PHOTO_QC_OUTPUT_FORMAT)).byteLength+1024;
-  const binding={policy:PHOTO_QC_POLICY,judge_contract:"photo-qc-structured-json-v4",check_id:check,evidence_id:evidence,prepared_sha256:f.inputSHA,output_sha256:f.outputSHA,derivative_manifest_sha256:"a".repeat(64),rubric,output_format:PHOTO_QC_OUTPUT_FORMAT,images:files.map(file=>({role:file.role,region:file.region,sha256:file.sha256,bytes:file.bytes,width:file.width,height:file.height})),input_token_bound:inputBound,max_output_tokens:4096};
+  const binding={policy:PHOTO_QC_POLICY,judge_contract:"photo-qc-furniture-reflections-v5",check_id:check,evidence_id:evidence,prepared_sha256:f.inputSHA,output_sha256:f.outputSHA,derivative_manifest_sha256:"a".repeat(64),rubric,output_format:PHOTO_QC_OUTPUT_FORMAT,images:files.map(file=>({role:file.role,region:file.region,sha256:file.sha256,bytes:file.bytes,width:file.width,height:file.height})),input_token_bound:inputBound,max_output_tokens:4096};
   assertEquals(f.state.operationInputSHA,await inputHash(binding));assertEquals(f.state.attempt.p_input_sha256,await inputHash(binding));assertEquals(f.state.ledger[0].meta.input_token_bound,inputBound);
   assertEquals(f.state.ledger[0].meta.parse_diagnostic,{reason:"verified",response_sha256:await photoBytesHash(new TextEncoder().encode(JSON.stringify(pass))),response_bytes:new TextEncoder().encode(JSON.stringify(pass)).byteLength});
  }finally{globalThis.fetch=previousFetch;resetServingModeCache();if(previousKey===undefined)Deno.env.delete("ANTHROPIC_API_KEY");else Deno.env.set("ANTHROPIC_API_KEY",previousKey);}
@@ -181,13 +181,27 @@ Deno.test("photo verdict contract quotes the complete4096 output budget and fits
 });
 Deno.test("next photo judge contract distinguishes loose console decor from protected mounted fixtures",()=>{
  const rubric=photoJudgeRubric({edit:"stage",style:"modern",instruction:"Stage this room."});
- assertEquals(PHOTO_QC_JUDGE_CONTRACT,"photo-qc-structured-json-v4");
+ assertEquals(PHOTO_QC_JUDGE_CONTRACT,"photo-qc-furniture-reflections-v5");
  for(const required of["Loose tabletop/freestanding decor is NOT a fixture","decorative plates, books, vases","picture frames resting on a console","mounted wall art or a built-in installation","Report findings ONLY for suspected fixed-feature","Do not include permitted movable-decor/furniture changes as findings","retain a specific uncertain finding about that fixed feature"]){assert(rubric.includes(required),required);}
  const finding={category:"fixtures",region:"br",source:"Loose picture frame resting on a console.",output:"Different loose tabletop decor.",certainty:"uncertain"};
  // Even an incorrectly classified model answer is NOT silently cleared by
  // this prompt clarification. The existing strict parser still requires HOLD.
  assertEquals(parsePhotoQuality(JSON.stringify({...pass,findings:[finding]})).action,"hold");
  assert(photoJudgeQuote(step,rubric,"SOURCE whole\nCANDIDATE whole"));
+});
+Deno.test("prospective furniture/reflection context is funded and cannot erase uncertainty or a real redesign",async()=>{
+ const rubric=photoJudgeRubric({edit:"declutter",instruction:""});
+ assert(rubric.includes("Freestanding TV consoles, tables and chairs are furniture, not installed fixtures."));
+ assert(rubric.includes("Concrete unpermitted furniture redesign remains an edit-quality failure"));
+ const quote=photoJudgeQuote(step,rubric,"SOURCE whole\nCANDIDATE whole")!;
+ assertEquals(quote.textBytes,new TextEncoder().encode(rubric+"SOURCE whole\nCANDIDATE whole"+JSON.stringify(PHOTO_QC_OUTPUT_FORMAT)).byteLength);
+ for(const kind of["uncertain_furniture","confirmed_redesign","uncertain_structure"]){
+  const f=await fixture(),ready=await f.prepare();f.state.row!.evidence.edit="declutter";f.state.row!.evidence.style=null;f.state.row!.evidence.judge_context={edit:"declutter",style:null,instruction:""};
+  const finding={category:"fixtures",region:"bl",source:kind==="uncertain_structure"?"Existing wall opening partially covered.":"Freestanding glossy console partly occluded.",output:kind==="confirmed_redesign"?"Visible console changed from a rectangular cabinet to a curved bench.":"Different reflection or newly exposed surface.",certainty:kind==="confirmed_redesign"?"confirmed":"uncertain"};
+  f.state.verdict=JSON.stringify({...pass,...(kind==="confirmed_redesign"?{verdict:"fail",action:"refuse",edit_quality:35}:{}),findings:[finding]});
+  const before=globalThis.fetch;resetServingModeCache();globalThis.fetch=(()=>{throw Error("No external transport in QC fixture");})as any;
+  try{const result=await f.run(f.view());assertEquals(result.check.state,kind==="confirmed_redesign"?"refuse":"hold");assertEquals((result.check.result as PhotoQualityVerdict).findings,[finding]);assertEquals(f.state.ledger[0].meta.judge_contract,"photo-qc-furniture-reflections-v5");await f.run(ready);assertEquals(f.state.calls,1);}finally{globalThis.fetch=before;resetServingModeCache();}
+ }
 });
 Deno.test("one photo judge may use90seconds but leaves10seconds and obeys the actual remaining endpoint budget",async()=>{
  assertEquals(photoJudgeTimeout(120000,0),90000);assertEquals(photoJudgeTimeout(45000,0),35000);
