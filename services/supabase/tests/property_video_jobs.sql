@@ -108,16 +108,18 @@ select pg_temp.refuse($q$select background_video_delivery(null,(select other_org
 select pg_temp.refuse($q$select background_video_delivery(null,(select org from bf),(select listing from bf),(select o->>'key'||'-forged'from outs),367001600)$q$,'RP403:','background key pattern cannot authorize unregistered bytes');
 select pg_temp.refuse($q$select background_video_delivery(null,(select org from bf),(select listing from bf),(select o->>'key'from outs),367001601)$q$,'RP400:','large read cannot exceed exact saved master bytes');
 select pg_temp.ok(not has_function_privilege('authenticated','public.background_video_delivery(uuid,uuid,uuid,text,bigint)','execute')and not has_function_privilege('anon','public.background_video_delivery(uuid,uuid,uuid,text,bigint)','execute'),'registered larger-object authority stays service-only');
--- Every budget chunk is in ONE transaction. Later-chunk refusal must roll back
--- preceding request/byte updates, including the private library projection.
+-- Each authorized read meters its bounded chunks in ONE transaction. Product
+-- usage is unpriced; earlier finite financial receipts are not reset or charged.
 reset role;
 insert into media_delivery_budgets(org_id,receipt_ref,starts_at,ends_at,request_limit,byte_limit,storage_limit,tariff,reserves,evidence_sha256)values((select org from bf),'synthetic-large-read-budget',now()-interval'1 minute',now()+interval'1 day',20,300*1024*1024,2::bigint*1024*1024*1024,'{}','{}',repeat('d',64));
+create temporary table media_usage_before as select coalesce((select used_requests from media_serving_usage where org_id=(select org from bf)and usage_day=(now()at time zone'UTC')::date),0)requests,coalesce((select used_bytes from media_serving_usage where org_id=(select org from bf)and usage_day=(now()at time zone'UTC')::date),0)bytes;
+grant select on media_usage_before to service_role;
 set local role service_role;
-select pg_temp.refuse($q$select background_video_delivery((select actor from bf),(select org from bf),(select listing from bf),(select o->>'key'from outs),367001600)$q$,'RP429:','laterchunk insufficientbudget refuses entire large read');
-select pg_temp.ok((select used_bytes=0 and used_requests=0 from media_delivery_budgets where receipt_ref='synthetic-large-read-budget'),'refusedlarge read leaves no partial byte or request charge');
+select pg_temp.ok(background_video_delivery((select actor from bf),(select org from bf),(select listing from bf),(select o->>'key'from outs),367001600)->>'bytes'='367001600','authorized large media is functional despite obsolete finite budget');
+select pg_temp.ok((select used_bytes=0 and used_requests=0 from media_delivery_budgets where receipt_ref='synthetic-large-read-budget'),'authorizedlarge read does not reset or charge old finite budget');
 reset role;update media_delivery_budgets set byte_limit=400*1024*1024 where receipt_ref='synthetic-large-read-budget';set local role service_role;
 select background_video_delivery((select actor from bf),(select org from bf),(select listing from bf),(select o->>'key'from outs),367001600);
-select pg_temp.ok((select used_bytes=367001600 and used_requests=2 from media_delivery_budgets where receipt_ref='synthetic-large-read-budget'),'successful350MiB read admits exact bytes across two boundedchunks');
+select pg_temp.ok((select used_bytes=(select bytes from media_usage_before)+734003200 and used_requests=(select requests from media_usage_before)+4 from media_serving_usage where org_id=(select org from bf)and usage_day=(now()at time zone'UTC')::date)and(select used_bytes=0 and used_requests=0 from media_delivery_budgets where receipt_ref='synthetic-large-read-budget'),'two350MiB reads meter exact unpriced bytes across four boundedchunks without financial charge');
 select pg_temp.refuse($q$select media_delivery_admit((select org from bf),367001600,true)$q$,'RP400:','generic media budgetRPC is still256MiB');
 reset role;update listings set deleted_at=now()where id=(select listing from bf);set local role service_role;
 select pg_temp.refuse($q$select background_video_delivery(null,(select org from bf),(select listing from bf),(select o->>'key'from outs),0)$q$,'RP404:','withdrawnlisting cannot retain larger read authority');
