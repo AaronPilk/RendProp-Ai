@@ -5,6 +5,11 @@ import {photoQualityRpc,photoEnvelope,photoQualityScope,type PhotoAdmin,type Pho
 
 export const PHOTO_CHECK_ENDPOINT_BUDGET_MS=120_000;
 export const PHOTO_CHECK_JUDGE_RESERVE_MS=45_000;
+// Supabase's150s wall limit includes generation, evidence writes and QC. Keep
+// ten seconds outside this request's work budget for the saved-state response.
+export const PHOTO_MAIN_REQUEST_BUDGET_MS=140_000;
+export const PHOTO_MAIN_RESPONSE_RESERVE_MS=10_000;
+export const PHOTO_MAIN_PERSIST_RESERVE_MS=20_000;
 export interface PhotoWaitDependencies {
  now():number;
  sleep(milliseconds:number,signal:AbortSignal):Promise<void>;
@@ -29,9 +34,11 @@ const actual:PhotoWaitDependencies={now:Date.now,start:startPhotoComparison,judg
 };
 /** One CPU kickoff, then only fresh scoped status reads. Never restart a CPU
  * or judge in this loop. Leave45s for bounded derivative reads+one judge. */
-export async function waitForPhotoQuality(admin:PhotoAdmin,initial:PhotoQualityEnvelope,args:{actor:string;selected:string|null;request:Request;instruction?:string},deps=actual):Promise<PhotoQualityEnvelope>{
- const deadline=deps.now()+PHOTO_CHECK_ENDPOINT_BUDGET_MS,signal=AbortSignal.any([args.request.signal,AbortSignal.timeout(PHOTO_CHECK_ENDPOINT_BUDGET_MS)]);
+export async function waitForPhotoQuality(admin:PhotoAdmin,initial:PhotoQualityEnvelope,args:{actor:string;selected:string|null;request:Request;instruction?:string;deadline?:number},deps=actual):Promise<PhotoQualityEnvelope>{
+ const now=deps.now(),deadline=Math.min(args.deadline??now+PHOTO_CHECK_ENDPOINT_BUDGET_MS,now+PHOTO_CHECK_ENDPOINT_BUDGET_MS);
  let row=initial;
+ if(!Number.isSafeInteger(deadline)||deadline<=now)return row;
+ const signal=AbortSignal.any([args.request.signal,AbortSignal.timeout(deadline-now)]);
  try{
   await photoQualityScope(admin,row,args.actor,args.selected);signal.throwIfAborted();
   if(row.check.state==="pending"&&row.can_continue&&row.check.judge_started_at===null){

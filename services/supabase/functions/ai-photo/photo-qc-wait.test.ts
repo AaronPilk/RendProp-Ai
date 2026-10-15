@@ -7,7 +7,7 @@ function fixture(){
  const row={evidence:{id,actor_id:actor,org_id:org,library_org_id:org,listing_id:listing,request_key:"wait-fixture",request_sha256:"a".repeat(64),policy:"photo-fixed-features-v1",state:"evidence_ready"},check:{id,evidence_id:id,policy:"photo-fixed-features-v1",state:"pending",judge_started_at:null},can_continue:true} as PhotoQualityEnvelope;
  const admin={rpc:async()=>{state.scope++;return state.withdrawn?{data:null,error:{message:"RP404: Removed"}}:{data:{actor_id:actor,org_id:org,library_org_id:org,listing_id:listing,billing_org_id:org,team_org_id:null,library_owner_user_id:actor,listing_owner_user_id:actor,role:"owner",access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true},error:null};}};
  const deps:PhotoWaitDependencies={now:()=>state.now,sleep:async ms=>{state.now+=ms;},start:async()=>{state.starts++;return{started:!state.busy};},status:async(_admin,row)=>{state.reads++;return{...row,check:{...row.check,state:state.sequence.shift()??"preparing"}};},judge:async(_admin,row,args)=>{state.judges++;state.deadline=args.deadline!;return{...row,check:{...row.check,state:"accept"}};}};
- const run=()=>waitForPhotoQuality(admin,row,{actor,selected:org,request:new Request("https://example.invalid/ai-photo",{signal:state.abort.signal})},deps);
+ const run=(deadline?:number)=>waitForPhotoQuality(admin,row,{actor,selected:org,request:new Request("https://example.invalid/ai-photo",{signal:state.abort.signal}),deadline},deps);
  return{state,row,admin,deps,run};
 }
 Deno.test("fresh ordinary request starts CPU once, polls only scoped status, then judges exactly once",async()=>{
@@ -29,4 +29,17 @@ Deno.test("caller abort, library withdrawal, and replaced IDs cannot trigger a j
   if(fault==="identity")f.deps.status=async(_admin,row)=>({...row,check:{...row.check,id:org,state:"derivative_ready"}});
   await f.run();assertEquals(f.state.judges,0);assertEquals(f.state.starts,fault==="abort"?0:1);
  }
+});
+
+Deno.test("slow90s generation leaves40s: CPU starts once but saved pending returns without a paid judge",async()=>{
+ const f=fixture();f.state.now=90_000;const result=await f.run(130_000);
+ assertEquals(result.check.state,"pending");assertEquals(f.state.now,90_000);assertEquals(f.state.starts,1);assertEquals(f.state.reads,0);assertEquals(f.state.judges,0);
+});
+Deno.test("request absolute deadline cannot restart a fresh120s QC budget",async()=>{
+ const f=fixture();f.state.now=60_000;f.state.sequence=[];await f.run(130_000);
+ assertEquals(f.state.now,85_000);assertEquals(f.state.starts,1);assertEquals(f.state.judges,0);
+ const expired=fixture();expired.state.now=130_000;await expired.run(130_000);assertEquals(expired.state.starts,0);assertEquals(expired.state.reads,0);assertEquals(expired.state.judges,0);
+});
+Deno.test("ready derivatives use only caller remainder, never a fresh judge deadline",async()=>{
+ const f=fixture();f.state.now=70_000;f.row.check.state="derivative_ready";await f.run(130_000);assertEquals(f.state.deadline,130_000);assertEquals(f.state.judges,1);assertEquals(f.state.starts,0);
 });

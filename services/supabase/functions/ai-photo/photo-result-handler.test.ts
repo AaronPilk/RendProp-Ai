@@ -65,6 +65,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from ${url("./protocol.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
+ import {PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from ${url("./photo-qc-wait.ts")};
  import {preparePhoto4KInput,photo4KChain,assertPhoto4KGeometry} from ${url("./photo-quality.ts")};
  import {priceMaskedPhotoChain,isMaskedFillStep} from ${url("./masked-photo-pricing.ts")};
  import {ownerQaPhotoStep as actualOwnerQaPhotoStep,prepareOwnerQaPhotoInput,assertOwnerQaPhotoOutput} from ${url("./owner-photo-qa.ts")};
@@ -93,7 +94,8 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const step={route_id:"fixture-route",provider:"gemini",model:MODEL,task:"photo.twilight",unit:"output_image",unit_cents:1,capabilities:[],max_latency_s:60,min_plan:"free",privacy_tier:"retained_30d",enabled:true};
  const routerEnabled=async()=>state.router,resolveChain=async(task)=>state.routes??[{...step,task}],legacyPhotoStep=(task)=>({...step,task}),needsForPhotoEdit=()=>[];
  const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{state.refunds++;};
- const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
+ const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));state.afterSubmit?.();if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
+ const submitPreparedGeminiPhoto4K=(step,input,budget)=>{state.providerDeadline=budget.deadline;state.providerSignal=budget.signal;return adapterFor().submit(step,input);};
  const recordRoutedAiCost=async(_db,args)=>{state.costs.push(structuredClone(args));},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
  const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:table==="private_ai_outputs"?state.journal:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
  if(name==="library_access"||name==="listing_library_scope"){
@@ -157,7 +159,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  };
  const failPhotoQuality=actualEvidence?actualQualityStore.failPhotoQuality:async(_admin,row,phase,facts)=>{row.check.state="hold";row.failure={phase,facts};return row;};
  const continuePhotoQuality=async(_admin,row)=>row;
- const waitForPhotoQuality=async(...args)=>{state.waits=(state.waits??0)+1;return await continuePhotoQuality(...args);};
+ const waitForPhotoQuality=async(...args)=>{state.waits=(state.waits??0)+1;state.waitDeadline=args[2].deadline;state.waitRemaining=args[2].deadline-Date.now();return await continuePhotoQuality(...args);};
  const calibrationRequest=body=>body;
  const beginPhotoCalibration=async()=>{state.calibrationCalls=(state.calibrationCalls??0)+1;return{evidence:{id:"synthetic-calibration"},check:{state:"pending"}};};
  const photoQualityResponse=actualEvidence?actualQualityStore.photoQualityResponse:async(_admin,row)=>{
@@ -623,4 +625,16 @@ Deno.test("historical exact saved photo replays without new protocol while pendi
   pending.state.qualityPending=true;assertEquals((await pending.run(pending.request())).status,409);const waits=pending.state.waits;
   const result=await pending.run(withoutProtocol(pending.request()));assertEquals(result.status,409);assertEquals((await result.json()).code,"photo_quality_pending");assertEquals(pending.state.waits,waits);assertEquals(pending.state.submits,1);assertEquals(pending.state.holds,1);
  }finally{pending.close();}
+});
+Deno.test("actual handler budgets slow4K generation and returns durable pending without restarting the paid operation",async()=>{
+ const f=await fixture(false,null,true),clock=Date.now;let now=clock();const entered=now;
+ try{
+  Date.now=()=>now;f.state.qualityPending=true;f.state.afterSubmit=()=>{now+=90_000;};
+  const response=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(response.status,409);
+  const body=await response.json();assertEquals(body.code,"photo_quality_pending");assertEquals(f.state.submits,1);assertEquals(f.state.puts,2);assertEquals(f.state.completes,1);
+  assertEquals(f.state.providerDeadline,entered+120_000);assertEquals(f.state.waitDeadline,entered+130_000);assertEquals(f.state.waitRemaining,40_000);
+  assertEquals(Object.keys(f.state.inputs[0].extra).some(key=>/deadline|timeout|signal/.test(key)),false,"Request-local timing must not change paid input identity");
+  assertEquals(f.state.quality.evidence.state,"evidence_ready");assertEquals(f.state.quality.check.state,"pending");assert(f.state.quality.evidence.output_etag);
+  const restored=await f.run(f.request({edit:"stage",style:"modern"}));assertEquals(restored.status,409);assertEquals(f.state.submits,1);assertEquals(f.state.charges,1);assertEquals(f.state.puts,2);
+ }finally{Date.now=clock;f.close();}
 });

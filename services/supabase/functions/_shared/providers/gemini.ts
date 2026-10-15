@@ -40,6 +40,18 @@ export const GEMINI_IMAGE_MAX_OUTPUT_TOKENS = 4096;
 //9MB decoded photo =12MB base64, plus bounded JSON/usage/text metadata.
 // Applied only to prospective normal4K requests; old provider paths unchanged.
 export const GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES=12_100_000;
+// Only the server-verified, prospectively priced4K route receives this longer
+// header+body deadline. Other image/provider submits keep the shared30s budget.
+export const GEMINI_PHOTO_4K_SUBMIT_MS=90_000;
+interface Photo4KRequestBudget {deadline:number;signal:AbortSignal}
+/** Timing is request-local, never serialized into the immutable funded input. */
+export async function submitPreparedGeminiPhoto4K(step:RouteStep,input:GenerateInput,budget:Photo4KRequestBudget):Promise<JobRef>{
+ if(step.provider!==PROVIDER||paramsOf(step)?.image_size!=="4K"||photo4KInputAllowance(input)===null)
+  throw new ProviderError(PROVIDER,"validation","The timed4K submit requires its verified priced route.");
+ if(!Number.isSafeInteger(budget.deadline)||budget.deadline<=Date.now()||budget.signal.aborted)
+  throw new ProviderError(PROVIDER,"timeout","The photo request deadline ended before dispatch.",0,true);
+ return submitGeminiImage(step,input,budget);
+}
 
 function geminiKey(): string {
   const key = Deno.env.get("GEMINI_API_KEY")?.trim();
@@ -117,10 +129,7 @@ function textParts(data: any): string[] {
   return out;
 }
 
-export const geminiAdapter: ProviderAdapter = {
-  key: PROVIDER,
-
-  async submit(step: RouteStep, input: GenerateInput): Promise<JobRef> {
+async function submitGeminiImage(step:RouteStep,input:GenerateInput,budget?:Photo4KRequestBudget):Promise<JobRef>{
     const imageB64 = input.image_b64 ??
       (input.image_url?.startsWith("data:") ? input.image_url.split(",")[1] : undefined);
     if (!imageB64) throw new ProviderError(PROVIDER, "validation", "gemini image edit needs image_b64");
@@ -147,7 +156,10 @@ export const geminiAdapter: ProviderAdapter = {
       throw new ProviderError(PROVIDER, "validation", "The 2K comparison input bound was not verified.");
     if (imageSize === "4K" && photo4KInputAllowance(input) === null)
       throw new ProviderError(PROVIDER, "validation", "The 4K photo input bound was not verified.");
-    const data = await fetchJson<Record<string, unknown>>(
+    const verified4K=imageSize==="4K"&&photo4KInputAllowance(input)!==null;
+    const timeoutMs=verified4K?Math.min(GEMINI_PHOTO_4K_SUBMIT_MS,budget?Math.max(1,budget.deadline-Date.now()):GEMINI_PHOTO_4K_SUBMIT_MS):BUDGETS.submitMs;
+    let data:Record<string,unknown>;
+    try{data = await fetchJson<Record<string, unknown>>(
       PROVIDER,
       `${GEMINI_BASE}/${step.model}:generateContent`,
       {
@@ -155,10 +167,16 @@ export const geminiAdapter: ProviderAdapter = {
         headers: { "content-type": "application/json", "x-goog-api-key": geminiKey() },
         body: JSON.stringify(geminiImagePayload(step.model, input.prompt ?? "", mime, imageB64, reference, imageSize)),
       },
-      BUDGETS.submitMs,
+      timeoutMs,
       classifyGemini,
-      input.extra?.photo_quality_4k===true?{maxResponseBytes:GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES}:undefined,
-    );
+      verified4K?{maxResponseBytes:GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES,signal:budget?.signal}:undefined,
+    );}catch(error){
+      // fetch's signal remains attached to its body stream after headers. Keep
+      // timeout/abort classified as uncertain dispatch, never a free retry.
+      if(error instanceof DOMException&&["TimeoutError","AbortError"].includes(error.name))
+        throw new ProviderError(PROVIDER,"timeout","The photo response deadline ended before a complete image arrived.");
+      throw error;
+    }
 
     const img = firstImage(data);
     const id = newJobId("gemini");
@@ -180,8 +198,11 @@ export const geminiAdapter: ProviderAdapter = {
       });
     }
     return { provider: PROVIDER, model: step.model, id, submitted_at: new Date().toISOString() };
-  },
+}
 
+export const geminiAdapter:ProviderAdapter={
+  key:PROVIDER,
+  submit:submitGeminiImage,
   poll(ref: JobRef): Promise<JobState> {
     return Promise.resolve(takeInline(PROVIDER, ref.id));
   },

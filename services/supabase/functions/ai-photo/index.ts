@@ -96,7 +96,7 @@ import { type ChainResult, resolveChain, runChain } from "../_shared/providers/c
 import { ownerQaPhotoStep, prepareOwnerQaPhotoInput, assertOwnerQaPhotoOutput } from "./owner-photo-qa.ts";
 import { preparePhoto4KInput, photo4KChain, assertPhoto4KGeometry } from "./photo-quality.ts";
 import { priceMaskedPhotoChain, isMaskedFillStep } from "./masked-photo-pricing.ts";
-import { supportsStagingReference } from "../_shared/providers/gemini.ts";
+import { supportsStagingReference,submitPreparedGeminiPhoto4K } from "../_shared/providers/gemini.ts";
 import {
   BUDGETS,
   ProviderError,
@@ -117,7 +117,7 @@ import { photoJsonResponse } from "./photo-response.ts";
 import { validatePhotoInputs, validatePhotoPrompt, decodePhotoOutput } from "./input-policy.ts";
 import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from "./helper-policy.ts";
 import {lookupPhotoQuality,statusPhotoQuality,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
-import {waitForPhotoQuality} from "./photo-qc-wait.ts";
+import {waitForPhotoQuality,PHOTO_MAIN_REQUEST_BUDGET_MS,PHOTO_MAIN_RESPONSE_RESERVE_MS,PHOTO_MAIN_PERSIST_RESERVE_MS} from "./photo-qc-wait.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from "./protocol.ts";
 
@@ -609,6 +609,8 @@ function customPrompt(p: Profile, preparedInstruction: string): string {
 }
 
 export async function handleAIPhoto(req:Request):Promise<Response>{
+  const requestDeadline=Date.now()+PHOTO_MAIN_REQUEST_BUDGET_MS;
+  const qualityDeadline=requestDeadline-PHOTO_MAIN_RESPONSE_RESERVE_MS;
   if (req.method === "OPTIONS") return handleOptions();
   try {
     const user = await getUser(req); // owner auth; RLS not needed (no DB touch beyond quota)
@@ -621,7 +623,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
       const body=calibrationRequest(await readJsonLimited(req,12_100_000));
       const org=await requireEditorRole(user,req,"Photo quality checks",body.generation_request_body.listing_id);
       const row=await beginPhotoCalibration(adminClient(),{actor:user.id,org,selected:preferredOrg(req)??null,body});
-      const checked=await waitForPhotoQuality(adminClient(),row,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.generation_request_body.prompt});
+      const checked=await waitForPhotoQuality(adminClient(),row,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.generation_request_body.prompt,deadline:qualityDeadline});
       return await photoQualityResponse(adminClient(),checked,user.id,preferredOrg(req)??null);
     }
     if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set", "internal");
@@ -805,7 +807,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
         if(quality){
           assert(quality.evidence.request_sha256===await inputHash(body),409,"This request identifier belongs to different photo instructions.","conflict");
           await photoQualityScope(adminClient(),quality,user.id,preferredOrg(req)??null);
-          const continued=hasPhotoRecoveryProtocol(req)?await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt}):quality;
+          const continued=hasPhotoRecoveryProtocol(req)?await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt,deadline:qualityDeadline}):quality;
           return await photoQualityResponse(adminClient(),continued,user.id,preferredOrg(req)??null,{space_type:space});
         }
         const stored=error instanceof SavedFundingResponse?error.saved_response:undefined;
@@ -953,7 +955,9 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
             throw new HttpError(403,"The temporary 2K comparison authorization ended. No new edit was sent.","forbidden");
         }
         const adapter = adapterFor(step.provider);
-        const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), () => adapter.submit(step, genInput));
+        const ref = await fundedAttempt(funding, `${task}:${chain.indexOf(step)}`, step, genInput, mediaAttemptQuote(step, genInput), () => normalPhoto4K
+          ? submitPreparedGeminiPhoto4K(step,genInput,{deadline:requestDeadline-PHOTO_MAIN_PERSIST_RESERVE_MS,signal:req.signal})
+          : adapter.submit(step, genInput));
         const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
         // One download, reused for both the inline answer and the R2 copy.
         const local = await inlineImageResult(step.provider, done);
@@ -1016,7 +1020,7 @@ export async function handleAIPhoto(req:Request):Promise<Response>{
     //9MB download/decode/encode in the generation isolate.
     const inlineCandidate={imageB64:outB64,key:quality.evidence.output!.key,mime:outMime,sha256:quality.evidence.output!.sha256,bytes:quality.evidence.output!.bytes};
     attempt.value.b64="";attempt.value.local={status:"done",mime:outMime,result_url:""};
-    quality=await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt});
+    quality=await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt,deadline:qualityDeadline});
     return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space,...(routerOn?{route:{provider:step.provider,model:step.model,route_id:step.route_id}}:{})},undefined,inlineCandidate);
   } catch (err) {
     return respondError(err);
