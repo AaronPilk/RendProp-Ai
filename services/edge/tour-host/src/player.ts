@@ -2262,7 +2262,7 @@ function overviewTiles(tour: Tour): Array<{ v: string; k: string }> {
   return tiles;
 }
 
-function galleryItems(tour: Tour): Array<{ url: string; label: string }> {
+function galleryItems(tour: Tour): Array<{ url: string; label: string; thumb?: string }> {
   // TWO SHAPES, and for a while only one of them was read.
   //
   //  * TOP LEVEL (`tour.gallery`) — what `GET /tours/:slug` now returns, built
@@ -2279,14 +2279,17 @@ function galleryItems(tour: Tour): Array<{ url: string; label: string }> {
   // An explicit empty array intentionally hides the published gallery. Only a
   // missing legacy field may fall back to editorial details.
   const g = Array.isArray(top) ? top : det(tour, "gallery", "photos");
-  const out: Array<{ url: string; label: string }> = [];
+  const out: Array<{ url: string; label: string; thumb?: string }> = [];
   if (Array.isArray(g)) {
     for (const it of g) {
       if (typeof it === "string") { const u = safeUrl(it); if (u) out.push({ url: u, label: "" }); }
       else if (it && typeof it === "object") {
         const o = it as Record<string, unknown>;
         const url = safeUrl(first(o.url, o.src, o.image));
-        if (url) out.push({ url, label: first(o.label, o.caption, o.name) });
+        // Optional server-made grid derivative (proposed `thumb_url`). The
+        // anchor and viewer always keep the exact published master in `url`.
+        const thumb = typeof o.thumb_url === "string" ? safeUrl(o.thumb_url) : "";
+        if (url) out.push({ url, label: first(o.label, o.caption, o.name), ...(thumb ? { thumb } : {}) });
       }
     }
   }
@@ -2614,11 +2617,11 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
     // Home is a preview. The full Gallery keeps every published selection and
     // its exact full-size URL; offscreen photos need not compete with the hero.
     const preview = page === "home" ? imgs.slice(0, 4) : imgs;
-    const photo = (g: { url: string; label: string }) => {
+    const photo = (g: { url: string; label: string; thumb?: string }) => {
       const alt = escapeAttr(g.label || headingRaw);
-      const image = `<img src="${escapeAttr(g.url)}" alt="${alt}" loading="lazy" decoding="async">`;
+      const image = `<img src="${escapeAttr(page ? g.thumb || g.url : g.url)}" alt="${alt}" loading="lazy" decoding="async">`;
       if (!page) return `<figure class="lp-gcell">${image}${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
-      return `<figure class="lp-gcell"><a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}"><img class="property-thumb" data-property-src="${escapeAttr(g.url)}" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="${alt}" loading="lazy" decoding="async" fetchpriority="low"><noscript>${image}</noscript></a>${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
+      return `<figure class="lp-gcell"><a class="property-photo" data-property-photo href="${escapeAttr(g.url)}" aria-label="${escapeAttr(`View full photo: ${g.label || headingRaw}`)}"><img class="property-thumb" data-property-src="${escapeAttr(g.thumb || g.url)}" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="${alt}" loading="lazy" decoding="async" fetchpriority="low"><noscript>${image}</noscript></a>${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`;
     };
     out.push(sec("gallery", "Gallery", "A closer look",
       `${page ? '<p class="lp-tag">Select a photo to see the complete image.</p><noscript><style>.property-thumb{display:none!important}</style></noscript>' : ""}<div class="lp-gal">${preview.map(photo).join("")}${mediaDateNote(tour)}</div>${page === "home" && imgs.length > preview.length ? `<p><a class="lp-btn ghost" href="${escapeAttr(propertyPageHref(tour.slug, "gallery", publicBase, previewTheme, addressPath))}">View all ${imgs.length} photos</a></p>` : ""}`, page !== "gallery"));
@@ -2661,7 +2664,7 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = "", p
     const locationCard = page ? `<div class="property-location-card"><div class="property-location-copy">
       ${address ? `<address>${escapeHtml(address)}</address>` : '<p class="lp-tag">An address has not been published for this listing. Ask the listing contact for its location.</p>'}
       ${address ? `<a class="lp-btn" href="${escapeAttr(directionsUrl(tour))}" target="_blank" rel="noopener nofollow">Open in Google Maps ↗</a><p class="lp-fine">Opens an external map. Confirm the address and directions before visiting.</p>` : ""}
-    </div><div class="property-location-visual" aria-hidden="true"><span>⌖</span></div></div>` : "";
+    </div><div class="property-location-visual" aria-hidden="true"><span><svg viewBox="0 0 24 24" fill="none" focusable="false"><path d="M12 21s-6.5-5.8-6.5-11A6.5 6.5 0 0 1 18.5 10c0 5.2-6.5 11-6.5 11z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.4" fill="currentColor"/></svg></span></div></div>` : "";
     out.push(sec("location", "The location", detStr(tour, "neighborhood_title") || "The neighborhood",
       `${locationCard}${nb ? `<div class="lp-prose"><p>${escapeHtml(nb)}</p></div>` : ""}${c}`));
   }
@@ -3196,7 +3199,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   </section>`;
   const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, page && page !== "home" ? "" : coverHtml, page, publicBase, previewTheme, addressPath);
   // The end card IS the branding: agent card + CTA/lead form. `/u/` has none.
-  const endcardHtml = embed || unbranded || (page && page !== "home" && page !== "contact") ? "" : `<section id="endcard">
+  const endcardHtml = embed || unbranded || (page && page !== "home" && page !== "contact") ? "" : `<section id="endcard"${polished ? ' aria-label="Contact the listing agent"' : ""}>
   <div class="panel">
     ${renderAgentCard(agent, tour)}
     ${preview ? `<p class="property-preview-note">Design preview. Enquiries are available on the published property website.</p>` : ctaBlock.html}
@@ -3358,8 +3361,8 @@ ${footerHtml}
   ${safeUrl(tour.floorplan_url || "") ? `<a href="#plan">Floor plan</a>` : ""}
   ${!unbranded ? `<a href="#endcard">Contact</a>` : ""}`}
   </div><div class="listing-nav-actions">
-  ${primaryVideo ? page === "home" || !polished ? `<button type="button" id="property-video-nav-play" class="watch-button property-primary-play" aria-controls="property-video">Play property video</button>` : `<a class="property-primary-play" href="${escapeAttr(pageHref("home") + "#property-video")}">Property video</a>` : ""}
-  ${hasVideo ? `<button type="button" class="${primaryVideo ? "walkthrough-secondary" : "watch-button"}" data-open-flythrough aria-label="${primaryVideo ? "Open optional recorded walkthrough" : "Open fly-through"}" aria-haspopup="dialog">${primaryVideo ? "Recorded walkthrough" : "Fly-through"}</button>` : ""}
+  ${primaryVideo ? page === "home" || !polished ? `<button type="button" id="property-video-nav-play" class="watch-button property-primary-play" aria-controls="property-video">${polished ? `<span class="nav-full">Play property video</span><span class="nav-short" aria-hidden="true">▶ Video</span>` : "Play property video"}</button>` : `<a class="property-primary-play" href="${escapeAttr(pageHref("home") + "#property-video")}"><span class="nav-full">Property video</span><span class="nav-short" aria-hidden="true">▶ Video</span></a>` : ""}
+  ${hasVideo ? `<button type="button" class="${primaryVideo ? "walkthrough-secondary" : "watch-button"}" data-open-flythrough aria-label="${primaryVideo ? "Open optional recorded walkthrough" : "Open fly-through"}" aria-haspopup="dialog">${primaryVideo ? polished ? `<span class="nav-full">Recorded walkthrough</span><span class="nav-short" aria-hidden="true">Walkthrough</span>` : "Recorded walkthrough" : "Fly-through"}</button>` : ""}
   ${shareHtml}
   <a href="#listing-top" class="listing-backtop">Top ↑</a>
   </div>
@@ -3369,7 +3372,7 @@ ${endcardHtml}
 ${page === "contact" ? renderDisclosureSection(tour) : ""}
 ${getAppHtml}
 ${footerHtml}
-${polished ? `<dialog id="property-photo-modal" aria-labelledby="property-photo-title"><div class="property-photo-head"><p id="property-photo-title">Property photo</p><button type="button" id="property-photo-close">Close photo ×</button></div><img id="property-photo-full" alt="">${hasDisclosureSection ? '<a href="#disclosure" onclick="document.getElementById(\'property-photo-close\').click()">See disclosures and originals</a>' : ""}</dialog>` : ""}
+${polished ? `<dialog id="property-photo-modal" aria-labelledby="property-photo-title"><div class="property-photo-head"><p id="property-photo-title">Property photo</p><button type="button" id="property-photo-close">Close photo ×</button></div><img id="property-photo-full" alt=""><p id="property-photo-status" role="status" aria-live="polite"></p><div class="property-photo-nav" hidden><button type="button" id="property-photo-prev" aria-label="Previous photo">‹ Previous</button><span id="property-photo-count"></span><button type="button" id="property-photo-next" aria-label="Next photo">Next ›</button></div>${page === "home" && galleryItems(tour).length > 4 ? `<a class="property-photo-all" href="${escapeAttr(pageHref("gallery"))}">View all ${galleryItems(tour).length} photos</a>` : ""}${hasDisclosureSection ? '<a href="#disclosure" onclick="document.getElementById(\'property-photo-close\').click()">See disclosures and originals</a>' : ""}</dialog>` : ""}
 <dialog id="flythrough-modal" aria-labelledby="flythrough-title" aria-modal="true">
   <div class="video-head"><h2 id="flythrough-title">Fly-through</h2><button type="button" id="flythrough-close">Back to listing ×</button></div>
   <div class="flythrough-modes" role="group" aria-label="Choose how to view the tour">

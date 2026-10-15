@@ -50,6 +50,11 @@ export const PROPERTY_DESIGN_CSS = `
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-hero-title,.property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-h,.property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-page-head h1 { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; font-weight:600; letter-spacing:-.045em; line-height:1.1; }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-hero-title { font-size:clamp(30px,4.3vw,60px); max-width:18em; }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-hero-price { font-size:22px; font-weight:500; }
+  /* Signature Estate's own voice: an editorial high-contrast serif for display
+     type (installed system faces only), so the two luxury designs differ at a
+     glance on a phone, not only in colour. Body and form text stay sans. */
+  .property-site.site-theme-signature-estate :is(.property-hero-title,.lp-h,.property-page-head h1,.panel h2,.property-location-copy address) { font-family:Didot,"Bodoni 72","Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif; font-weight:400; letter-spacing:-.01em; }
+  .property-site.site-theme-coastal-luxe .property-location-copy address { font-family:inherit; font-weight:500; letter-spacing:-.02em; }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-eyebrow { color:var(--accent-3); letter-spacing:.15em; font-weight:600; }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-eyebrow::before { background:var(--accent-3); }
   .property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .property-hero-link,.property-site:is(.site-theme-signature-estate,.site-theme-coastal-luxe) .lp-btn.ghost { background:rgba(255,255,255,.7); color:var(--ink); border:1px solid rgba(140,145,150,.24); border-radius:16px; min-height:48px; }
