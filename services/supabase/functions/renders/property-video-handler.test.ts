@@ -16,6 +16,10 @@ async function invoke(options:{superseded?:boolean;posterMissing?:boolean;keyMis
  if(name==='listing_library_scope')return Response.json({actor_id:actor,org_id:org,listing_id:listing,library_org_id:org,listing_owner_user_id:actor,library_owner_user_id:actor,billing_org_id:org,team_org_id:null,role:'owner',access_mode:'own',can_read:true,can_write:true,can_manage_subscription:true});
  if(name==='subscription_trial_video_context')return Response.json({required:false});
  if(name==='property_owned_upload')return Response.json({actor_id:actor,org_id:org,listing_id:listing,asset_id:asset,bucket:'renders',storage_key:key,bytes:f.total,etag:'"fixture-version"',content_type:'video/mp4'});
+ if(name==='background_video_delivery'){
+ assertEquals(args,{p_actor:actor,p_org:org,p_listing:listing,p_key:key,p_bytes:0});
+ return Response.json(null); // This uploaded native fixture has no registered server-master receipt.
+ }
  if(name==='record_property_video_attestation')return Response.json({attested:true});
  if(name==='publish_property_video')return options.superseded?Response.json({message:'RP409: publication_superseded: A newer selection replaced this request'},{status:400}):Response.json({id:render,listing_id:listing,slug:'synthetic-property-video',published_at:'2026-10-14T00:00:00Z'});
  if(name==='studio_presenter_media_visibility')return Response.json(Object.fromEntries(['assets','renders','keys'].map(k=>[k,Object.fromEntries(args[`p_${k}`].map((x:string)=>[x,!options.withdrawn]))])));
@@ -32,7 +36,8 @@ async function invoke(options:{superseded?:boolean;posterMissing?:boolean;keyMis
 Deno.test('actual photo publish acknowledges exact operation/output/property/private-library and verified geometry',async()=>{
  const r=await invoke();assertEquals(r.status,200);assertEquals([r.body.publication_id,r.body.presentation_asset_id,r.body.presentation_kind,r.body.listing_id,r.body.org_id,r.body.library_org_id],[operation,asset,'photo_video',listing,org,org]);
  const publish=r.rpcs.find(x=>x.name==='publish_property_video')!;assertEquals(publish.args.p_poster,poster);assertEquals(publish.args.p_key,`photo-video:${operation}`);assertEquals((publish.args.p_manifest as any).sources[0].photo_version_id,'selected-staged-version.jpg');
- assert(r.rpcs.findIndex(x=>x.name==='record_property_video_attestation')<r.rpcs.findIndex(x=>x.name==='publish_property_video'));assert(r.body.share_url.endsWith('/f/synthetic-property-video'));
+ const registered=r.rpcs.findIndex(x=>x.name==='background_video_delivery'),attested=r.rpcs.findIndex(x=>x.name==='record_property_video_attestation');
+ assert(registered>=0&&registered<attested);assert(attested<r.rpcs.findIndex(x=>x.name==='publish_property_video'));assert(r.body.share_url.endsWith('/f/synthetic-property-video'));
 });
 Deno.test('missing poster,mismatched operation,portrait and changed source refuse before publication; revoked media never acknowledges success',async()=>{
  for(const[o,status]of [[{posterMissing:true},400],[{keyMismatch:true},400],[{portrait:true},400],[{changed:true},409]]as const){const r=await invoke(o);assertEquals(r.status,status);assert(!r.rpcs.some(x=>x.name==='publish_property_video'));}
