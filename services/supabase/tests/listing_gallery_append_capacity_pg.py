@@ -15,7 +15,7 @@ DATA=Path(tempfile.mkdtemp(prefix='owned-append-pg-',dir=OUT));SOCK=Path(tempfil
 ENV={'PATH':os.pathsep.join([os.environ.get('PATH','/usr/bin:/bin'),'/opt/homebrew/opt/postgresql@17/bin','/opt/homebrew/bin','/usr/bin','/bin']),'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n,path=ENV['PATH'])
 assert all(tool(n)for n in ['initdb','pg_ctl','createdb','psql'])
-MIG=SQL/'migrations/20261015215817_listing_gallery_append_capacity.sql';FIX=SQL/'tests/listing_gallery_append_capacity.sql'
+MIG=SQL/'migrations/20261015225447_listing_gallery_append_capacity.sql';FIX=SQL/'tests/listing_gallery_append_capacity.sql'
 MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));assert MIG in MIGRATIONS
 SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',FIX,Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}

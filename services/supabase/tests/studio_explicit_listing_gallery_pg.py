@@ -13,7 +13,7 @@ DATA=Path(tempfile.mkdtemp(prefix='owned-gallery-pg-',dir=OUT));SOCK=Path(tempfi
 ENV={'PATH':os.pathsep.join([os.environ.get('PATH','/usr/bin:/bin'),'/opt/homebrew/opt/postgresql@17/bin','/opt/homebrew/bin','/usr/bin','/bin']),'LC_ALL':'C','TZ':'UTC','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n,path=ENV['PATH'])
 assert all(tool(n)for n in ['initdb','pg_ctl','createdb','psql'])
-MIG=SQL/'migrations/20261015221527_studio_explicit_listing_gallery.sql';FIX=SQL/'tests/studio_explicit_listing_gallery.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));assert MIG in MIGRATIONS
+MIG=SQL/'migrations/20261015225602_studio_explicit_listing_gallery.sql';FIX=SQL/'tests/studio_explicit_listing_gallery.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'));assert MIG in MIGRATIONS
 SOURCES=[*MIGRATIONS,SQL/'tests/ci-bootstrap.sql',FIX,SQL/'tests/listing_gallery_append_capacity.sql',Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
 receipt={'passed':False,'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'scope':'Actual PostgreSQL roles/transactions/concurrency with synthetic metadata, no actual uploaded media or live authority','migration_count':len(MIGRATIONS),'source_hashes':hashes(),'production_mutations':0,'provider_calls':0,'commands':[],'controls':[],'races':[]};started=False
