@@ -81,7 +81,7 @@ class PhotoQualityTests(unittest.TestCase):
                 with Image.open(result['photo_quality_images'][(role,region)]) as image:
                     pixel=image.getpixel((image.width//2,image.height//2));self.assertLess(max(abs(a-b) for a,b in zip(pixel,color)),4)
         self.assertEqual(sum(w*h for k,(x,y,w,h) in rects.items()if k!='whole'),101*67)
-    def test_4k_candidate_downsamples_only_derivatives_with_fixed_q97(self):
+    def test_4k_candidate_downsamples_only_derivatives_starting_q97(self):
         Image.new('RGB',(2048,1365),(20,40,60)).save(self.source,'JPEG',quality=97)
         Image.new('RGB',(4096,2730),(20,40,60)).save(self.candidate,'PNG')
         for key,path in (('prepared_source',self.source),('candidate',self.candidate)):
@@ -116,16 +116,44 @@ class PhotoQualityTests(unittest.TestCase):
         Image.new('RGB',(128,192)).save(self.candidate,'PNG',icc_profile=b'invalid')
         self.task['candidate'].update(sha256=digest(self.candidate),bytes=self.candidate.stat().st_size)
         with self.assertRaisesRegex(ValueError,'color_profile_refused'):self.prepare()
-    def test_aggregate_overflow_has_no_extra_compression_or_partial_master_change(self):
-        # Real high-frequency pixels exceed the agreed aggregate budget. This is
-        # a check HOLD/operational refusal, never an invented visual rejection.
-        image=Image.effect_noise((2048,2048),100).convert('RGB');image.save(self.source,'JPEG',quality=97,subsampling=0)
+    def test_textured_comparison_adapts_one_global_quality_without_changing_geometry_or_masters(self):
+        image=Image.effect_noise((2048,2048),100).convert('RGB')
+        image.paste((100,120,140),(1024,0,2048,1024))
+        image.paste((100,120,140),(0,1024,1024,2048))
+        image.save(self.source,'JPEG',quality=97,subsampling=0)
         image.save(self.candidate,'PNG')
         for key,path in (('prepared_source',self.source),('candidate',self.candidate)):
             self.task[key].update(sha256=digest(path),bytes=path.stat().st_size)
-        source_sha=digest(self.source)
-        with self.assertRaisesRegex(ValueError,'comparison_budget_exceeded'):self.prepare()
-        self.assertEqual(digest(self.source),source_sha)
+        originals=(digest(self.source),digest(self.candidate))
+        with patch('photo_quality.DERIVATIVE_JPEG_QUALITIES',(97,)):
+            with self.assertRaisesRegex(ValueError,'comparison_budget_exceeded'):self.prepare()
+        qualities=[];save=Image.Image.save
+        def measured_save(instance,target,*args,**kwargs):
+            qualities.append(kwargs['quality']);return save(instance,target,*args,**kwargs)
+        with patch.object(Image.Image,'save',new=measured_save):result=self.prepare()
+        selected=result['comparison_jpeg_quality']
+        self.assertLess(selected,97);self.assertGreaterEqual(selected,80)
+        self.assertEqual(len(qualities)%10,0)
+        for n in range(0,len(qualities),10):self.assertEqual(len(set(qualities[n:n+10])),1)
+        self.assertEqual(qualities[-10:],[selected]*10)
+        manifest=result['receipt']['manifest']
+        self.assertLessEqual(sum(row['bytes']for row in manifest['images']),6_000_000)
+        for row in manifest['images']:
+            self.assertEqual((row['width'],row['height']),(2048,2048)if row['region']=='whole'else(1024,1024))
+            self.assertEqual(row['crop'],dict(zip(('left','top','width','height'),crop_rectangles(2048,2048)[row['region']])))
+        with patch('photo_quality.MAX_DERIVATIVE_BYTES',100_000_000):reference=self.prepare()
+        self.assertEqual(reference['comparison_jpeg_quality'],97)
+        self.assertEqual(reference['receipt']['manifest']['parents'],manifest['parents'])
+        self.assertEqual((digest(self.source),digest(self.candidate)),originals)
+    def test_derivative_compression_has_finite_floor_and_never_enlarges_budget(self):
+        qualities=[];save=Image.Image.save
+        def measured_save(instance,target,*args,**kwargs):
+            qualities.append(kwargs['quality']);return save(instance,target,*args,**kwargs)
+        original_sha=(digest(self.source),digest(self.candidate))
+        with patch('photo_quality.MAX_DERIVATIVE_BYTES',1),patch.object(Image.Image,'save',new=measured_save):
+            with self.assertRaisesRegex(ValueError,'comparison_budget_exceeded'):self.prepare()
+        self.assertEqual(qualities,[quality for quality in (97,94,91,88,85,82,80)for _ in range(10)])
+        self.assertEqual((digest(self.source),digest(self.candidate)),original_sha)
     def test_cleanup_and_private_runtime_upload_preserve_exact_ten_descriptors(self):
         result=self.prepare();prepared={'result':result,'directory':self.directory};receipt=result['receipt']
         reserved=[]

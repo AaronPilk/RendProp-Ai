@@ -17,6 +17,9 @@ POLICY = 'photo-fixed-features-v1'
 REGIONS = ('whole', 'tl', 'tr', 'bl', 'br')
 MAX_DERIVATIVE_BYTES = 6_000_000
 MAX_PREPARED_SOURCE_BYTES = 9_000_000
+# Re-encode only inspection copies from retained normalized RGB crops. Each
+# pass uses the same quality for source/candidate and all ten fixed views.
+DERIVATIVE_JPEG_QUALITIES = (97, 94, 91, 88, 85, 82, 80)
 
 
 def validate_photo_task(task):
@@ -54,45 +57,64 @@ def crop_rectangles(width,height):
             'bl':(0,y,x,height-y),'br':(x,y,width-x,height-y)}
 
 
+def encode_comparison(crop,profile,target,quality):
+    crop.save(target,'JPEG',quality=quality,subsampling=0,optimize=True,icc_profile=profile)
+    with Image.open(target) as check:
+        check.load()
+        if check.format!='JPEG' or check.mode!='RGB' or check.size!=crop.size or check.getexif():
+            raise ValueError('photo_quality_derivative_decode_conflict')
+    return {'sha256':digest(target),'bytes':target.stat().st_size,'width':crop.width,'height':crop.height}
+
+
 def prepare_photo_quality(task,directory,hosts):
     validate_photo_task(task)
     parents,images,paths = [],[],{}
-    sizes=[]
-    for role,field in (('source','prepared_source'),('candidate','candidate')):
-        path = directory/f'{role}-master'
-        input_sha = download(task[field],path,hosts,max_bytes=MAX_PREPARED_SOURCE_BYTES if field == 'prepared_source' else MAX_SOURCE_BYTES)
-        with Image.open(path) as header:
-            if min(header.size)<2 or max(header.size)>16384 or header.width*header.height>24_000_000:
-                raise ValueError('photo_quality_parent_geometry_refused')
-        image,profile = decoded_srgb(path)
-        path.unlink()
-        sizes.append(image.size)
-        parents.append({'role':role,'input_sha256':input_sha,'normalized_width':image.width,'normalized_height':image.height,
-                        'normalized_pixel_sha256':pixel_digest(image),'normalization':'exif-icc-srgb-v1',
-                        'pixel_hash_policy':'rgb8-dimensions-row-major-v1'})
-        for region,(left,top,width,height) in crop_rectangles(*image.size).items():
-            crop = image.crop((left,top,left+width,top+height))
-            edge = 2048 if region == 'whole' else 1024
-            crop.thumbnail((edge,edge),Image.Resampling.LANCZOS)
-            target = directory/f'{role}-{region}.jpg'
-            crop.save(target,'JPEG',quality=97,subsampling=0,optimize=True,icc_profile=profile)
-            with Image.open(target) as check:
-                check.load()
-                if check.format!='JPEG' or check.mode!='RGB' or check.size!=crop.size or check.getexif():
-                    raise ValueError('photo_quality_derivative_decode_conflict')
-            row={'role':role,'region':region,'sha256':digest(target),'bytes':target.stat().st_size,
-                 'width':crop.width,'height':crop.height,'crop':{'left':left,'top':top,'width':width,'height':height}}
-            images.append(row);paths[(role,region)]=target
-        image.close()
-    (sw,sh),(cw,ch)=sizes
-    if abs(sw*ch-cw*sh)>max(sw,sh,cw,ch):
-        raise ValueError('photo_quality_parent_aspect_conflict')
-    if sum(x['bytes'] for x in images)>MAX_DERIVATIVE_BYTES:
-        raise ValueError('photo_quality_comparison_budget_exceeded')
-    manifest={'policy':POLICY,'prepared_sha256':task['prepared_source']['sha256'],
-              'candidate_sha256':task['candidate']['sha256'],'parents':parents,'images':images}
-    receipt={'check_id':task['check_id'],'evidence_id':task['evidence_id'],'lease_token':task['lease_token'],'manifest':manifest}
-    return {'receipt':receipt,'photo_quality_images':paths}
+    crops={}
+    try:
+        sizes=[]
+        for role,field in (('source','prepared_source'),('candidate','candidate')):
+            path = directory/f'{role}-master'
+            input_sha = download(task[field],path,hosts,max_bytes=MAX_PREPARED_SOURCE_BYTES if field == 'prepared_source' else MAX_SOURCE_BYTES)
+            with Image.open(path) as header:
+                if min(header.size)<2 or max(header.size)>16384 or header.width*header.height>24_000_000:
+                    raise ValueError('photo_quality_parent_geometry_refused')
+            image,profile = decoded_srgb(path)
+            path.unlink()
+            sizes.append(image.size)
+            parents.append({'role':role,'input_sha256':input_sha,'normalized_width':image.width,'normalized_height':image.height,
+                            'normalized_pixel_sha256':pixel_digest(image),'normalization':'exif-icc-srgb-v1',
+                            'pixel_hash_policy':'rgb8-dimensions-row-major-v1'})
+            for region,(left,top,width,height) in crop_rectangles(*image.size).items():
+                crop = image.crop((left,top,left+width,top+height))
+                edge = 2048 if region == 'whole' else 1024
+                crop.thumbnail((edge,edge),Image.Resampling.LANCZOS)
+                target = directory/f'{role}-{region}.jpg'
+                crops[(role,region)]=(crop,profile)
+                row={'role':role,'region':region,**encode_comparison(crop,profile,target,97),
+                     'crop':{'left':left,'top':top,'width':width,'height':height}}
+                images.append(row);paths[(role,region)]=target
+            image.close()
+        (sw,sh),(cw,ch)=sizes
+        if abs(sw*ch-cw*sh)>max(sw,sh,cw,ch):
+            raise ValueError('photo_quality_parent_aspect_conflict')
+        quality=97
+        if sum(x['bytes'] for x in images)>MAX_DERIVATIVE_BYTES:
+            for quality in DERIVATIVE_JPEG_QUALITIES[1:]:
+                for row in images:
+                    key=(row['role'],row['region']);crop,profile=crops[key]
+                    row.update(encode_comparison(crop,profile,paths[key],quality))
+                if sum(x['bytes'] for x in images)<=MAX_DERIVATIVE_BYTES:
+                    break
+            if sum(x['bytes'] for x in images)>MAX_DERIVATIVE_BYTES:
+                raise ValueError('photo_quality_comparison_budget_exceeded')
+        manifest={'policy':POLICY,'prepared_sha256':task['prepared_source']['sha256'],
+                  'candidate_sha256':task['candidate']['sha256'],'parents':parents,'images':images}
+        receipt={'check_id':task['check_id'],'evidence_id':task['evidence_id'],'lease_token':task['lease_token'],'manifest':manifest}
+        # HTTP exposes only the unchanged exact receipt; quality is private proof.
+        return {'receipt':receipt,'photo_quality_images':paths,'comparison_jpeg_quality':quality}
+    finally:
+        for crop,_ in crops.values():
+            crop.close()
 
 
 def upload_photo_quality(prepared,output,hosts):
