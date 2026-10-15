@@ -5,6 +5,7 @@
   "ai-copy": true,
   "ai-enhance": true,
   "ai-photo": true,
+  "ai-photo-v2": true,
   "ai-video": true,
   "ai-voice": true,
   "apple-subscriptions": false,

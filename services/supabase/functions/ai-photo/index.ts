@@ -119,6 +119,7 @@ import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from ".
 import {lookupPhotoQuality,statusPhotoQuality,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
 import {waitForPhotoQuality} from "./photo-qc-wait.ts";
 import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
+import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from "./protocol.ts";
 
 // Money admission uses the actual conservative payload hold independently of
 // these burst/monthly feature counters.
@@ -607,7 +608,7 @@ function customPrompt(p: Profile, preparedInstruction: string): string {
   );
 }
 
-Deno.serve(async (req) => {
+export async function handleAIPhoto(req:Request):Promise<Response>{
   if (req.method === "OPTIONS") return handleOptions();
   try {
     const user = await getUser(req); // owner auth; RLS not needed (no DB touch beyond quota)
@@ -680,6 +681,8 @@ Deno.serve(async (req) => {
       const helperCharge = await guardHelper(user, req, body.listing_id);
       try {
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        try { assertPhotoRecoveryProtocol(req); }
+        catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
         await assertPhotoHelperSponsorship(funding);
         try { validatePhotoInputs(body.image_b64,mime); }
         catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
@@ -709,6 +712,8 @@ Deno.serve(async (req) => {
       const helperCharge = await guardHelper(user, req, body.listing_id);
       try {
         const funding = await fundingContext(user.id, helperCharge.orgId, req, body, (name, args) => adminClient().rpc(name, args));
+        try { assertPhotoRecoveryProtocol(req); }
+        catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
         await assertPhotoHelperSponsorship(funding);
         const step = legacyPhotoStep("photo.improve_prompt");
         step.provider = "gemini"; step.model = TEXT_MODEL;
@@ -800,7 +805,7 @@ Deno.serve(async (req) => {
         if(quality){
           assert(quality.evidence.request_sha256===await inputHash(body),409,"This request identifier belongs to different photo instructions.","conflict");
           await photoQualityScope(adminClient(),quality,user.id,preferredOrg(req)??null);
-          const continued=await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt});
+          const continued=hasPhotoRecoveryProtocol(req)?await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt}):quality;
           return await photoQualityResponse(adminClient(),continued,user.id,preferredOrg(req)??null,{space_type:space});
         }
         const stored=error instanceof SavedFundingResponse?error.saved_response:undefined;
@@ -818,6 +823,10 @@ Deno.serve(async (req) => {
       }
       throw error;
     }
+    // Historical replay above remains available without a new client capability.
+    // Fresh paid work requires exact retained-operation recovery before quotas.
+    try { assertPhotoRecoveryProtocol(req); }
+    catch(error){await abortFundingOperationBeforeDispatch(funding);throw error;}
     // Saved results above retain their original request/history. The new
     // still-image and UTF-8 policy governs prospective dispatch only.
     try {
@@ -1012,7 +1021,8 @@ Deno.serve(async (req) => {
   } catch (err) {
     return respondError(err);
   }
-});
+}
+if(import.meta.main)Deno.serve(handleAIPhoto);
 
 // ── helper modes: suggest / improve_prompt (text+vision, JSON out) ────────────
 

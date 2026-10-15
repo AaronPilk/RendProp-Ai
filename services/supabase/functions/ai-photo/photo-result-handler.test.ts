@@ -5,8 +5,11 @@ const url=(path:string)=>JSON.stringify(new URL(path,import.meta.url).href);
 // Complete structural JPEG geometry fixture, not a decoded/visual quality proof.
 const outputJPEG=(width=2048,height=2048)=>btoa(String.fromCharCode(...[255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
 const OUTPUT=outputJPEG(4096,4096);
-async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|null=null,actualEvidence=false){
+async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain"|"intent"|"stage"|"stage_prompt"|"quality"|"masked_price"|"protocol"|null=null,actualEvidence=false){
  let source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+ if(removeAdmission==="protocol"){
+  const anchor="try { assertPhotoRecoveryProtocol(req); }";assertEquals(source.split(anchor).length-1,1);source=source.replace(anchor,"try { /* compiled protocol bypass */ }");
+ }
  if(removeAdmission==="input"){
   const anchor='validatePhotoInputs(body.image_b64,mime,body.mask_b64,\n        String(body.mask_mime??"image/png").split(";")[0].trim().toLowerCase());';
   assert(source.includes(anchor));source=source.replace(anchor,"");
@@ -39,10 +42,11 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   const anchor="return buildRealEstateStagePrompt(styleDesc);";
   assert(source.includes(anchor));source=source.replace(anchor,'return "Virtually stage this real-estate photo with " + styleDesc + ". " + STAGE_LOCK;');
  }
- const start=source.indexOf("Deno.serve(async (req) => {")+"Deno.serve(".length,end=source.indexOf("\n});\n\n// ── helper modes",start);
+ const handlerAnchor="export async function handleAIPhoto(req:Request):Promise<Response>{";
+ const start=source.indexOf(handlerAnchor)+handlerAnchor.length,end=source.indexOf("\n}\nif(import.meta.main)Deno.serve(handleAIPhoto);",start);
  assert(start>0&&end>start,"Extract actual handler callback");
  const locksStart=source.indexOf("const CONDITION_LOCK ="),locksEnd=source.indexOf("\n/**\n * The photographer",locksStart);
- const customStart=source.indexOf("function customPrompt("),customEnd=source.indexOf("\nDeno.serve(",customStart);
+ const customStart=source.indexOf("function customPrompt("),customEnd=source.indexOf("\nexport async function handleAIPhoto(",customStart);
  const stageStart=source.indexOf("const RE_STAGE_STYLES:"),stageEnd=source.indexOf("\nfunction prompts(",stageStart);
  assert(locksStart>0&&locksEnd>locksStart&&customStart>0&&customEnd>customStart,"Extract actual fixed-feature locks and custom compiler wrapper");
  assert(stageStart>0&&stageEnd>stageStart,"Extract actual staging styles and prompt compiler");
@@ -58,6 +62,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  // Fresh synthetic boundary state ${crypto.randomUUID()}
  import {assert,HttpError,json,readJson,readJsonLimited,respondError} from ${url("../_shared/http.ts")};
  import {requiredIdempotencyKey} from ${url("../_shared/idempotency.ts")};
+ import {assertPhotoRecoveryProtocol,hasPhotoRecoveryProtocol} from ${url("./protocol.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
  import {preparePhoto4KInput,photo4KChain,assertPhoto4KGeometry} from ${url("./photo-quality.ts")};
@@ -152,7 +157,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  };
  const failPhotoQuality=actualEvidence?actualQualityStore.failPhotoQuality:async(_admin,row,phase,facts)=>{row.check.state="hold";row.failure={phase,facts};return row;};
  const continuePhotoQuality=async(_admin,row)=>row;
- const waitForPhotoQuality=continuePhotoQuality;
+ const waitForPhotoQuality=async(...args)=>{state.waits=(state.waits??0)+1;return await continuePhotoQuality(...args);};
  const calibrationRequest=body=>body;
  const beginPhotoCalibration=async()=>{state.calibrationCalls=(state.calibrationCalls??0)+1;return{evidence:{id:"synthetic-calibration"},check:{state:"pending"}};};
  const photoQualityResponse=actualEvidence?actualQualityStore.photoQualityResponse:async(_admin,row)=>{
@@ -162,7 +167,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   const saved=await restorePhotoResult(admin,row.identity);if(!saved)throw new HttpError(503,"Saved photo is not available.");
   return photoJsonResponse(metadata,saved.image_b64,saved.mime,saved.key);
  };
- export const run=${source.slice(start,end)}};
+ export const run=async(req)=>{${source.slice(start,end)}};
  export async function restore(identity,pointer){return await restorePhotoResult(admin,identity,pointer);}
  export async function withdrawDuringSign(){return await restorePhotoResult(admin,{actorId:state.actor,orgId:state.org,requestKey:"owned-photo-0001",listingId:${JSON.stringify(listing)}},undefined,{head:async()=>({exists:true,bytes:${atob(OUTPUT).length}}),sign:async()=>{state.role="viewer";return"https://synthetic.invalid";},read:async()=>{state.gets++;throw Error("Never read after signing-time withdrawal");}});}
  export {photoResultKeys,inputHash};
@@ -192,7 +197,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  throw Error("Unexpected R2 method");
  }) as typeof fetch;
  const image=btoa(String.fromCharCode(...[255,216,255,192,0,11,8,0,1,0,1,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]));
- return{...imported,close:()=>{globalThis.fetch=previous;},request:(extra:Record<string,unknown>={})=>new Request("https://example.invalid/ai-photo",{method:"POST",headers:{"content-type":"application/json","idempotency-key":"owned-photo-0001"},body:JSON.stringify({image_b64:image,edit:"twilight",mime:"image/jpeg",listing_id:listing,...extra})})};
+ return{...imported,close:()=>{globalThis.fetch=previous;},request:(extra:Record<string,unknown>={})=>new Request("https://example.invalid/ai-photo",{method:"POST",headers:{"content-type":"application/json","idempotency-key":"owned-photo-0001","x-rendprop-photo-quality-protocol":"retained-operation-v1"},body:JSON.stringify({image_b64:image,edit:"twilight",mime:"image/jpeg",listing_id:listing,...extra})})};
 }
 // Load exact production signers only after synthetic test credentials exist.
 for(const [key,value] of Object.entries({CLOUDFLARE_ACCOUNT_ID:"a".repeat(32),R2_ACCESS_KEY_ID:"b".repeat(32),R2_SECRET_ACCESS_KEY:"c".repeat(64)}))Deno.env.set(key,value);
@@ -597,4 +602,25 @@ Deno.test("legacy masked route retains exact combined9MB source/mask and refuses
   const mask=outputJPEG(1536,2048),response=await over.run(over.request({edit:"declutter",image_b64:sizedOutputJPEG(9_000_001-atob(mask).length,1536,2048),mask_b64:mask,mask_mime:"image/jpeg"}));
   assertEquals(response.status,413);assertEquals(over.state.submits,0);assertEquals(over.state.holds,0);assertEquals(over.state.puts,0);assertEquals(over.state.costs.length,0);
  }finally{over.close();}
+});
+
+Deno.test("fresh work without exact retained-operation protocol refuses before quota/hold/provider, compiled bypass fails",async()=>{
+ const oracle=async(remove:boolean)=>{const f=await fixture(false,remove?"protocol":null);try{
+  const original=f.request(),headers=new Headers(original.headers);headers.delete("x-rendprop-photo-quality-protocol");
+  const response=await f.run(new Request(original,{headers}));assertEquals(response.status,409);const body=await response.json();assertEquals(body.recovery_protocol_required,true);assertEquals(body.no_provider_dispatch,true);
+  assertEquals(f.state.charges,0);assertEquals(f.state.holds,0);assertEquals(f.state.submits,0);assertEquals(f.state.puts,0);assertEquals(f.state.costs.length,0);
+ }finally{f.close();}};
+ await oracle(false);await assertRejects(()=>oracle(true),AssertionError);
+});
+Deno.test("historical exact saved photo replays without new protocol while pending replay cannot start a new judge",async()=>{
+ const withoutProtocol=(req:Request)=>{const headers=new Headers(req.headers);headers.delete("x-rendprop-photo-quality-protocol");return new Request(req,{headers});};
+ const f=await fixture();try{
+  assertEquals((await f.run(f.request())).status,200);const saved=f.state.quality.saved,pointer={kind:"photo_output",bucket:"renders",key:saved.key,mime:saved.mime,metadata:{edit:"twilight",disclosure:"Historical saved disclosure",provenance:{id:"synthetic-provenance",recorded:true}}};f.state.saved=pointer;f.state.quality=null;
+  const before={charges:f.state.charges,holds:f.state.holds,submits:f.state.submits,puts:f.state.puts};
+  const restored=await f.run(withoutProtocol(f.request()));assertEquals(restored.status,200);assertEquals((await restored.json()).image_b64,OUTPUT);assertEquals({charges:f.state.charges,holds:f.state.holds,submits:f.state.submits,puts:f.state.puts},before);
+ }finally{f.close();}
+ const pending=await fixture();try{
+  pending.state.qualityPending=true;assertEquals((await pending.run(pending.request())).status,409);const waits=pending.state.waits;
+  const result=await pending.run(withoutProtocol(pending.request()));assertEquals(result.status,409);assertEquals((await result.json()).code,"photo_quality_pending");assertEquals(pending.state.waits,waits);assertEquals(pending.state.submits,1);assertEquals(pending.state.holds,1);
+ }finally{pending.close();}
 });
