@@ -1,4 +1,4 @@
-/** Private CPU-only evidence bridge. It never generates, judges or publishes. */
+/** Private comparison bridge and isolated funded judge. Never generates photos. */
 import{assert,json,pathSegments,readJsonLimited,respondError}from'../_shared/http.ts';
 import{adminClient,isServiceRole}from'../_shared/supabase.ts';
 import{R2_BUCKET_RENDERS}from'../_shared/r2.ts';
@@ -7,13 +7,14 @@ import{boundedPhotoResultBytes}from'../ai-photo/photo-result.ts';
 import{validatePhotoInput}from'../ai-photo/input-policy.ts';
 import{photoBytesHash,photoUUID,photoSHA,photoQualityRpc}from'../ai-photo/photo-qc-store.ts';
 import{photoOutputHead,photoPutCapability}from'./storage.ts';
+import{judgeSavedPhoto}from'./judge.ts';
 const rpc=(name:string,args:Record<string,unknown>)=>photoQualityRpc(adminClient(),name,args);
 const uuid=(v:unknown)=>{assert(photoUUID(v),400,'Use the retained photo check identity.');return v;};
 async function scope(check:string,lease:string){return await rpc('photo_quality_worker_scope',{p_check:check,p_lease:lease});}
 async function media(e:any,kind:'input'|'output'){
  const f=e[kind],etag=e[kind+'_etag'];assert(f&&f.bucket==='renders'&&f.key===`ai-router/${e.org_id}/photo-evidence/${e.actor_id}/${e.id}/${kind==='input'?'input':'candidate'}.${f.mime==='image/jpeg'?'jpg':f.mime==='image/png'?'png':'webp'}`&&photoSHA(f.sha256)&&Number.isSafeInteger(f.bytes)&&f.bytes>0&&f.bytes<=(kind==='input'?1000000:9000000)&&typeof etag==='string',409,'The saved comparison source changed.');
  const head=await photoOutputHead(f.key);assert(head.bytes===f.bytes&&head.sha256===f.sha256&&head.mime===f.mime&&head.etag===etag,409,'The exact saved photo evidence changed.');
- return{...f,etag,url:await presignGet(R2_BUCKET_RENDERS,f.key,600)};
+ return{bucket:'renders',key:f.key,etag,bytes:f.bytes,sha256:f.sha256,mime:f.mime,url:await presignGet(R2_BUCKET_RENDERS,f.key,600)};
 }
 export async function handler(req:Request){try{
  assert(isServiceRole(req),403,'This route is limited to the private Rendprop photo comparison worker.');
@@ -24,6 +25,11 @@ export async function handler(req:Request){try{
  }
  assert(req.method==='POST'&&seg.length===1,405,'Use an explicit private photo comparison action.');
  const b=await readJsonLimited<Record<string,any>>(req,65536),check=uuid(b.check_id);
+ if(seg[0]==='judge'){
+  assert(Object.keys(b).length===1,400,'The private judge accepts only its saved check identity.');
+  const c=await judgeSavedPhoto(adminClient(),check,req);
+  return json({check_id:c.check.id,evidence_id:c.evidence.id,state:c.check.state});
+ }
  if(seg[0]==='tick'){
   assert(b.worker_id==='slot-0'||b.worker_id==='slot-1',400,'Use a fixed dedicated CPU slot.');
   const c=await rpc('photo_quality_claim',{p_check:check});

@@ -21,22 +21,22 @@ type Usage={inputTokens:number;outputTokens:number;cacheReadInputTokens?:number;
 export interface PhotoJudgeDependencies {
  plan(org:string):Promise<string>;
  routes(plan:string):Promise<RouteStep[]>;
- read(file:PhotoDerivative):Promise<Uint8Array<ArrayBuffer>>;
- call(step:RouteStep,rubric:string,content:ContentBlock[],onUsage:(usage:Usage)=>void):Promise<string>;
+ read(file:PhotoDerivative,signal?:AbortSignal):Promise<Uint8Array<ArrayBuffer>>;
+ call(step:RouteStep,rubric:string,content:ContentBlock[],onUsage:(usage:Usage)=>void,options?:{signal:AbortSignal;timeoutMs:number}):Promise<string>;
  report(step:RouteStep,ok:boolean,milliseconds:number):Promise<void>;
  ledger:typeof recordAppAiCost;
 }
 const actual:PhotoJudgeDependencies={
  plan:async org=>(await entitlementForCharge(org)).plan,
  routes:plan=>resolveRoute("judge.qc_drift",{plan,needs:["classifier","vision","multi_image"],carries_customer_media:true}),
- read:async file=>{
-  const head=await headObject(R2_BUCKET_RENDERS,file.key,AbortSignal.timeout(10_000));
+ read:async(file,signal)=>{
+  const head=await headObject(R2_BUCKET_RENDERS,file.key,signal?AbortSignal.any([signal,AbortSignal.timeout(10_000)]):AbortSignal.timeout(10_000));
   assert(head.exists&&head.bytes===file.bytes&&head.etag===file.etag&&head.contentType?.split(";")[0]==="image/jpeg",503,"A photo comparison receipt changed.");
-  const response=await fetch(await presignGet(R2_BUCKET_RENDERS,file.key,60),{method:"GET",credentials:"omit",redirect:"error",signal:AbortSignal.timeout(30_000)});
+  const response=await fetch(await presignGet(R2_BUCKET_RENDERS,file.key,60),{method:"GET",credentials:"omit",redirect:"error",signal:signal?AbortSignal.any([signal,AbortSignal.timeout(30_000)]):AbortSignal.timeout(30_000)});
   assert((response.headers.get("content-type")??"").split(";")[0]==="image/jpeg",503,"A photo comparison format changed.");
   return await boundedPhotoResultBytes(response,file.bytes);
  },
- call:(step,rubric,content,onUsage)=>anthropicMessages({model:step,system:rubric,content,maxTokens:MAX_OUTPUT_TOKENS,onUsage}),
+ call:(step,rubric,content,onUsage,options)=>anthropicMessages({model:step,system:rubric,content,maxTokens:MAX_OUTPUT_TOKENS,onUsage,...options}),
  report:(step,ok,milliseconds)=>reportOutcome(step,{ok,latency_ms:milliseconds,...(!ok?{error_class:"upstream" as const}:{})}),
  ledger:recordAppAiCost,
 };
@@ -69,23 +69,27 @@ export function photoDerivatives(row:PhotoQualityEnvelope):PhotoDerivative[]{
 /** Pending evidence is queued for the CPU controller, never fabricated here.
  * This explicit same-key POST can continue only derivative_ready and only
  * before the one paid judge has definitively ever been dispatched. */
-export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope,args:{actor:string;selected:string|null;request:Request;instruction?:string},deps=actual):Promise<PhotoQualityEnvelope>{
+export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope,args:{actor:string;selected:string|null;request:Request;instruction?:string;deadline?:number},deps=actual):Promise<PhotoQualityEnvelope>{
  await photoQualityScope(admin,row,args.actor,args.selected);
  if(!row.can_continue||row.check.state!=="derivative_ready"||row.check.judge_started_at!==null)return row;
- const e=row.evidence;let claimed:PhotoQualityEnvelope|undefined,dispatched=false,reservedBeforeDispatch=false,paidStep:RouteStep|undefined,started=0;
+ const e=row.evidence,deadline=Math.min(args.deadline??Date.now()+120_000,Date.now()+120_000),signal=AbortSignal.any([args.request.signal,AbortSignal.timeout(Math.max(1,deadline-Date.now()))]);let claimed:PhotoQualityEnvelope|undefined,dispatched=false,reservedBeforeDispatch=false,paidStep:RouteStep|undefined,started=0;
  try{
+  signal.throwIfAborted();assert(Date.now()<deadline,409,"The saved check can continue later without another generation.");
+  const context=e.judge_context;
+  if(!context||Object.keys(context).sort().join(",")!=="edit,instruction,style"||context.edit!==e.edit||context.style!==(e.style??null)||typeof context.instruction!=="string"||context.instruction.length>600||new TextEncoder().encode(context.instruction).byteLength>2400)
+   return await failPhotoQuality(admin,row,"quality_context_missing",{no_quality_provider_dispatch:true,quality_provider_cost_incurred:false,message:"Exact saved edit instructions are required before a quality check can run."});
   const config=await admin.from("app_config").select("value").eq("key","photo_quality").maybeSingle();
   const approved=config.data?.value?.approved_judge;
-  if(config.error||config.data?.value?.enabled!==true||approved?.provider!=="anthropic"||approved?.model!=="claude-sonnet-5")return row;
+  if(config.error||(config.data?.value?.enabled!==true&&e.purpose!=="calibration")||approved?.provider!=="anthropic"||approved?.model!=="claude-sonnet-5")return row;
   const plan=await deps.plan(e.org_id);
   const steps=await deps.routes(plan),step=steps.find(s=>s.provider===approved.provider&&s.model===approved.model);
   if(!step)return row; // no invented fallback or second judge
-  const files=photoDerivatives(row),rubric=photoQualityRubric({edit:e.edit,...(e.style?{style:e.style}:{}),...(args.instruction?{instruction:args.instruction}:{})});
+  const files=photoDerivatives(row),rubric=photoQualityRubric({edit:context.edit,...(context.style?{style:context.style}:{}),instruction:context.instruction});
   const labels=files.map(f=>`${f.role.toUpperCase()} ${f.region}`).join("\n"),quote=photoJudgeQuote(step,rubric,labels);
   if(!quote)return row;
   const content:ContentBlock[]=[];
   for(const file of files){
-   const bytes=await deps.read(file);assert(bytes.byteLength===file.bytes&&await photoBytesHash(bytes)===file.sha256,503,"A saved photo comparison changed.");
+   signal.throwIfAborted();const bytes=await deps.read(file,signal);assert(bytes.byteLength===file.bytes&&await photoBytesHash(bytes)===file.sha256,503,"A saved photo comparison changed.");
    const b64=bytesToB64(bytes),image=validatePhotoInput(b64,"image/jpeg");
    assert(image.width===file.width&&image.height===file.height,503,"The photo comparison dimensions changed.");
    content.push({type:"text",text:`${file.role.toUpperCase()} ${file.region}`},imageBlock(b64));
@@ -94,13 +98,13 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
   // Count its exact UTF8 bytes before reservation/dispatch; no image truncation.
   const wire={model:step.model,max_tokens:anthropicMaxTokens(paramsOf(step),MAX_OUTPUT_TOKENS),messages:[{role:"user",content}],system:rubric,output_config:{effort:paramsOf(step)?.effort??"low"}};
   assert(new TextEncoder().encode(JSON.stringify(wire)).byteLength<=PHOTO_QC_MAX_WIRE_BYTES,503,"The complete photo comparison request exceeds its memory bound.");
-  const claim=await photoQualityRpc(admin,"photo_quality_claim",{p_check:row.check.id});
+  signal.throwIfAborted();const claim=await photoQualityRpc(admin,"photo_quality_claim",{p_check:row.check.id},signal);
   if(claim?.action!=="judge")return await statusPhotoQuality(admin,args.actor,row.check.id,args.selected);
   claimed=photoEnvelope(claim,args.actor);await photoQualityScope(admin,claimed,args.actor,args.selected);
   assert(claimed.check.id===row.check.id&&claimed.evidence.id===e.id&&claimed.evidence.org_id===e.org_id&&claimed.evidence.input.sha256===e.input.sha256&&claimed.evidence.output?.sha256===e.output?.sha256&&claimed.check.state==="derivative_ready"&&claimed.check.lease_token&&claimed.check.judge_started_at===null&&claimed.check.derivative_manifest_sha256===row.check.derivative_manifest_sha256,409,"The photo comparison lease changed.","conflict");
   const binding={policy:PHOTO_QC_POLICY,check_id:row.check.id,evidence_id:e.id,prepared_sha256:e.input.sha256,output_sha256:e.output?.sha256,derivative_manifest_sha256:row.check.derivative_manifest_sha256,rubric,images:files.map(f=>({role:f.role,region:f.region,sha256:f.sha256,bytes:f.bytes,width:f.width,height:f.height})),input_token_bound:quote.inputBound,max_output_tokens:MAX_OUTPUT_TOKENS};
   let reservation:string|undefined;
-  const rpc:FundingContext["rpc"]=async(name,parameters)=>{const result=await admin.rpc(name,parameters);if(name==="serving_cost_reserve"&&!result.error&&result.data?.reserved===true){reservation=result.data.id;reservedBeforeDispatch=true;}return result;};
+  const rpc:FundingContext["rpc"]=async(name,parameters)=>{const admission=name==="serving_cost_reserve"||name==="serving_operation_begin";if(admission)signal.throwIfAborted();let query=admin.rpc(name,parameters);if(admission&&typeof query?.abortSignal==="function")query=query.abortSignal(signal);const result=await query;if(name==="serving_cost_reserve"&&!result.error&&result.data?.reserved===true){reservation=result.data.id;reservedBeforeDispatch=true;}return result;};
   const headers=new Headers(args.request.headers);headers.set("Idempotency-Key",`photo-qc:${row.check.id}`);
   const funding=await fundingContext(args.actor,e.org_id,new Request(args.request.url,{method:"POST",headers}),binding,rpc);
   let usage:Usage|undefined;started=Date.now();paidStep=step;
@@ -109,11 +113,11 @@ export async function continuePhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnve
    // missing/lost reserve response cannot reach bind or the provider.
    try{
     assert(reservation,503,"The photo review funding receipt is missing.");
-    const bound=await photoQualityRpc(admin,"photo_quality_check_bind",{p_actor:args.actor,p_check:row.check.id,p_lease:claimed!.check.lease_token,p_reservation:reservation});
+    signal.throwIfAborted();const bound=await photoQualityRpc(admin,"photo_quality_check_bind",{p_actor:args.actor,p_check:row.check.id,p_lease:claimed!.check.lease_token,p_reservation:reservation},signal);
     const verified=photoEnvelope(bound,args.actor);assert(verified.check.state==="checking"&&verified.check.judge_started_at,503,"The photo review dispatch fence was not confirmed.");
    }catch{throw new ProviderError(step.provider,"validation","The photo review could not be bound before dispatch.",0,true);}
-   dispatched=true;
-   return await deps.call(step,rubric,content,value=>{usage=value;});
+   signal.throwIfAborted();dispatched=true;
+   return await deps.call(step,rubric,content,value=>{usage=value;},{signal,timeoutMs:Math.min(30_000,Math.max(1,deadline-Date.now()))});
   });
   await deps.report(step,true,Date.now()-started).catch(()=>{});
   // This is the documented complete bound, not a fabricated provider invoice.

@@ -1,6 +1,6 @@
 // Prospective photos are quarantined until the SQL quality journal atomically
 // promotes their exact bytes. This module never generates or judges an image.
-import {assert,HttpError,throwRpc} from "../_shared/http.ts";
+import {assert,HttpError,throwRpc,json} from "../_shared/http.ts";
 import {listingLibraryScope,requireContentWrite} from "../_shared/library-access.ts";
 import {R2_BUCKET_RENDERS,inspectPhotoEvidence,writePhotoEvidence} from "../_shared/r2.ts";
 import {bytesToB64,presignGet} from "../_shared/providers/common.ts";
@@ -16,19 +16,21 @@ import {PHOTO_QC_POLICY} from "./photo-qc-verdict.ts";
 export type PhotoAdmin = any;
 export interface PhotoEvidenceFile {bucket:"renders";key:string;sha256:string;bytes:number;mime:string;width:number;height:number}
 export interface PhotoEvidence {
+ purpose?:"prospective"|"calibration";
+ judge_context?:{edit:string;style:string|null;instruction:string}|null;
  id:string;actor_id:string;org_id:string;library_org_id:string;listing_id:string|null;request_key:string;request_sha256:string;
  policy:string;edit:string;style:string|null;input:PhotoEvidenceFile;output:PhotoEvidenceFile|null;input_etag:string|null;output_etag:string|null;
  state:string;provenance_id:string|null;generation_stage:string|null;generation_provider:string|null;generation_model:string|null;
  failure?:{phase?:string;facts?:Record<string,unknown>}|null;
 }
-export interface PhotoQualityCheck {id:string;evidence_id:string;policy:string;state:string;lease_token:string|null;lease_until:string|null;judge_started_at:string|null;derivatives:PhotoDerivative[]|null;derivative_manifest_sha256:string|null}
+export interface PhotoQualityCheck {id:string;evidence_id:string;policy:string;state:string;lease_token:string|null;lease_until:string|null;judge_started_at:string|null;derivatives:PhotoDerivative[]|null;derivative_manifest_sha256:string|null;result?:unknown}
 export interface PhotoDerivative extends PhotoEvidenceFile {role:"source"|"candidate";region:"whole"|"tl"|"tr"|"bl"|"br";etag:string}
 export interface PhotoQualityEnvelope {evidence:PhotoEvidence;check:PhotoQualityCheck;can_continue:boolean;created?:boolean}
 export const photoUUID=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(v);
 export const photoSHA=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{64}$/.test(v);
 export async function photoBytesHash(bytes:Uint8Array<ArrayBuffer>):Promise<string>{return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",bytes)),b=>b.toString(16).padStart(2,"0")).join("");}
-export async function photoQualityRpc(admin:PhotoAdmin,name:string,args:Record<string,unknown>):Promise<any>{
- let result;try{result=await admin.rpc(name,args);}catch{throw new HttpError(503,"The saved photo review could not be checked safely.","upstream");}
+export async function photoQualityRpc(admin:PhotoAdmin,name:string,args:Record<string,unknown>,signal?:AbortSignal):Promise<any>{
+ let result;try{signal?.throwIfAborted();let query=admin.rpc(name,args);if(signal&&typeof query?.abortSignal==="function")query=query.abortSignal(signal);result=await query;}catch{throw new HttpError(503,"The saved photo review could not be checked safely.","upstream");}
  if(result.error)throwRpc(result.error.message??"Photo review is unavailable");
  return result.data;
 }
@@ -81,14 +83,20 @@ async function persistEvidence(admin:PhotoAdmin,row:PhotoQualityEnvelope,kind:"i
  assert(head&&head.bytes===file.bytes&&head.mime===file.mime&&head.sha256===file.sha256&&head.etag.length>0&&head.etag.length<=200,503,"The exact private photo bytes could not be confirmed.","upstream");
  return photoEnvelope(await photoQualityRpc(admin,"photo_quality_evidence_receipt",{p_actor:e.actor_id,p_evidence:e.id,p_kind:kind,p_etag:head.etag}),e.actor_id);
 }
-export async function beginPhotoQuality(admin:PhotoAdmin,identity:PhotoResultIdentity,args:{edit:string;style?:string;originalAsset?:string;imageB64:string;mime:string},io=photoEvidenceIO):Promise<PhotoQualityEnvelope>{
+export async function retainPhotoPreparedSource(admin:PhotoAdmin,row:PhotoQualityEnvelope,bytes:Uint8Array<ArrayBuffer>,io=photoEvidenceIO):Promise<PhotoQualityEnvelope>{return await persistEvidence(admin,row,"input",bytes,io);}
+export async function savePhotoJudgeContext(admin:PhotoAdmin,row:PhotoQualityEnvelope,instruction?:string):Promise<PhotoQualityEnvelope>{
+ const e=row.evidence,text=e.edit==="stage"||e.edit==="custom"?(instruction??"").trim():"";
+ assert(typeof text==="string"&&text.length<=600&&new TextEncoder().encode(text).byteLength<=2400,400,"Photo judge instructions exceed the verified request bound.");
+ return photoEnvelope(await photoQualityRpc(admin,"photo_quality_set_context",{p_actor:e.actor_id,p_evidence:e.id,p_request_sha256:e.request_sha256,p_context:{edit:e.edit,style:e.style??null,instruction:text}}),e.actor_id);
+}
+export async function beginPhotoQuality(admin:PhotoAdmin,identity:PhotoResultIdentity,args:{edit:string;style?:string;instruction?:string;originalAsset?:string;imageB64:string;mime:string},io=photoEvidenceIO):Promise<PhotoQualityEnvelope>{
  const image=validatePhotoInput(args.imageB64,args.mime);
  if(image.bytes>1_000_000)throw new HttpError(413,"Keep the original photo. Prepare an editing copy up to 1 MB before trying this edit. No edit was sent.","payload_too_large",{no_provider_dispatch:true,failure_phase:"prepared_photo_size"});
  const bytes=decodeBase64Bytes(args.imageB64),input={...image,sha256:await photoBytesHash(bytes)};
  const row=photoEnvelope(await photoQualityRpc(admin,"photo_quality_begin",{p_actor:identity.actorId,p_org:identity.orgId,p_key:identity.requestKey,p_listing:identity.listingId,p_edit:args.edit,p_style:args.style??null,p_original_asset:args.originalAsset??null,p_input:input,p_legacy_keys:Object.values(await photoResultKeys(identity))}),identity.actorId,identity);
  // A concurrent/replayed begin may never become another generation owner.
  if(row.created!==true)return row;
- try{return{...await persistEvidence(admin,row,"input",bytes,io),created:true};}
+ try{const contextual=await savePhotoJudgeContext(admin,row,args.instruction);return{...await persistEvidence(admin,contextual,"input",bytes,io),created:true};}
  catch(error){try{await failPhotoQuality(admin,row,"prepared_source_persistence",{provider_cost_incurred:false,no_provider_dispatch:true,message:"The editing copy could not be retained; the original photo is unchanged."});}catch{/* The existing evidence row still prevents another generator. */}throw error;}
 }
 export async function retainPhotoCandidate(admin:PhotoAdmin,row:PhotoQualityEnvelope,image:DecodedStillImage,args:{stage:string;provider:string;model:string},io=photoEvidenceIO):Promise<PhotoQualityEnvelope>{
@@ -101,24 +109,33 @@ export async function failPhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope
 }
 export function photoQualityIdentity(row:PhotoQualityEnvelope,selected:string):Record<string,unknown>{const e=row.evidence;return{check_id:row.check.id,evidence_id:e.id,org_id:e.org_id,selected_library_org_id:selected,listing_id:e.listing_id,generation_request_key:e.request_key};}
 export function throwPhotoQualityState(row:PhotoQualityEnvelope,selected:string):never{
- const state=row.check.state,failure=row.evidence.failure,details={...photoQualityIdentity(row,selected),photo_quality:{policy:row.evidence.policy,check_id:row.check.id,state},retry_existing_job:true,...(failure?.phase?{failure_phase:failure.phase}:{}),...(failure?.facts&&typeof failure.facts.provider_cost_incurred==="boolean"?{provider_cost_incurred:failure.facts.provider_cost_incurred,retained_output:failure.facts.retained_output===true}:{})};
+ const state=row.check.state,failure=row.evidence.failure,cost=failure?.facts?.provider_cost_incurred,details={...photoQualityIdentity(row,selected),photo_quality:{policy:row.evidence.policy,check_id:row.check.id,state},retry_existing_job:true,...(failure?.phase?{failure_phase:failure.phase}:{}),...(typeof cost==="boolean"||cost==="possible"?{provider_cost_incurred:cost,retained_output:failure?.facts?.retained_output===true}:{})};
  if(state==="refuse")throw new HttpError(422,"This edit changed fixed property features or failed the photo quality review. The original is unchanged; the generated edit remains private.","photo_quality_refused",details);
- if(state==="hold"||state==="checking"&&row.check.judge_started_at!==null)throw new HttpError(409,failure?.phase==="photo_output_size"?"The generated photo exceeded the safe 9 MB output limit and could not be saved. This generation was already processed. The original is unchanged; no additional edit was started.":"The saved photo operation needs review before its edit can be used. No new edit or repeat quality check was started.","photo_quality_hold",details);
+ if(state==="hold"||state==="checking"&&row.check.judge_started_at!==null)throw new HttpError(409,failure?.phase==="photo_output_size"?"The generated photo exceeded the safe 9 MB output limit and could not be saved. This generation was already processed. The original is unchanged; no additional edit was started.":failure?.phase==="photo_provider_wire_size"?"The supplier response exceeded the safe transfer limit and could not be confirmed. This operation remains under review; no additional edit was started.":"The saved photo operation needs review before its edit can be used. No new edit or repeat quality check was started.","photo_quality_hold",details);
  throw new HttpError(409,"The edit is saved privately while its photo quality review is pending. Check this saved edit again; no new generation is needed.","photo_quality_pending",details);
 }
 /** Called only after fresh SQL/current-library authority and atomic acceptance.
  * The exact accepted object is re-hashed; a cached/signed URL is never authority. */
-export async function photoQualityResponse(admin:PhotoAdmin,row:PhotoQualityEnvelope,actor:string,selected:string|null,extra:Record<string,unknown>={},io=photoEvidenceIO):Promise<Response>{
+export async function photoQualityResponse(admin:PhotoAdmin,row:PhotoQualityEnvelope,actor:string,selected:string|null,extra:Record<string,unknown>={},io=photoEvidenceIO,inline?:{imageB64:string;key:string;mime:string;sha256:string;bytes:number}):Promise<Response>{
  await photoQualityScope(admin,row,actor,selected);assert(selected,404,"Select the saved edit's library.","not_found");
+ if(row.evidence.purpose==="calibration"){
+  if(!["accept","refuse","hold"].includes(row.check.state))throwPhotoQualityState(row,selected);
+  return json({...photoQualityIdentity(row,selected),purpose:"calibration",publishable:false,photo_quality:{policy:row.evidence.policy,check_id:row.check.id,state:row.check.state},result:row.check.result??null});
+ }
  if(row.check.state!=="accept"||row.evidence.state!=="accept")throwPhotoQualityState(row,selected);
  const e=row.evidence,file=e.output;assert(file&&e.provenance_id&&e.output_etag,503,"The accepted photo receipt is incomplete.");assertPhotoEvidenceFile(e,file,"output");
  const {data,error}=await admin.from("private_ai_outputs").select("org_id,user_id,listing_id,bucket,storage_key,bytes").eq("org_id",e.org_id).eq("user_id",actor).eq("bucket","renders").eq("storage_key",file.key).maybeSingle();
  assert(!error&&data&&data.org_id===e.org_id&&data.user_id===actor&&data.listing_id===e.listing_id&&data.bucket==="renders"&&data.storage_key===file.key&&Number(data.bytes)===file.bytes,503,"The accepted photo delivery receipt could not be verified.");
  await assertHostingAvailable(admin,e.org_id);await admitMediaRead(admin,e.org_id,file.bytes,false);
  const head=await io.inspect(file.key);assert(head&&head.bytes===file.bytes&&head.mime===file.mime&&head.sha256===file.sha256&&head.etag===e.output_etag,503,"The accepted photo changed.");
- const bytes=await io.read(file.key,file.bytes);assert(await photoBytesHash(bytes)===file.sha256,503,"The accepted photo bytes changed.");
+ let imageB64:string;
+ if(inline){
+  const padding=inline.imageB64.endsWith("==")?2:inline.imageB64.endsWith("=")?1:0;
+  assert(inline.key===file.key&&inline.mime===file.mime&&inline.sha256===file.sha256&&inline.bytes===file.bytes&&inline.imageB64.length/4*3-padding===file.bytes,503,"The already-validated inline photo identity changed.");
+  imageB64=inline.imageB64;
+ }else{const bytes=await io.read(file.key,file.bytes);assert(await photoBytesHash(bytes)===file.sha256,503,"The accepted photo bytes changed.");imageB64=bytesToB64(bytes);}
  const fresh=await statusPhotoQuality(admin,actor,row.check.id,selected);
  assert(fresh.check.state==="accept"&&fresh.evidence.state==="accept"&&fresh.evidence.output?.sha256===file.sha256&&fresh.evidence.output?.key===file.key,409,"The photo quality review changed. Check its status again.","conflict");
  const kind=e.edit==="stage"?"virtual_stage":e.edit==="declutter"?"declutter":"photo_edit";
- return photoJsonResponse({...extra,...photoQualityIdentity(fresh,selected),edit:e.edit,...(e.style?{style:e.style}:{}),disclosure:disclosureFallback(kind,e.edit),provenance:{id:e.provenance_id,recorded:true},photo_quality:{policy:e.policy,check_id:fresh.check.id,state:"accept"}},bytesToB64(bytes),file.mime,file.key);
+ return photoJsonResponse({...extra,...photoQualityIdentity(fresh,selected),edit:e.edit,...(e.style?{style:e.style}:{}),disclosure:disclosureFallback(kind,e.edit),provenance:{id:e.provenance_id,recorded:true},photo_quality:{policy:e.policy,check_id:fresh.check.id,state:"accept"}},imageB64,file.mime,file.key);
 }

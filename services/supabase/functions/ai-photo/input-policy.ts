@@ -142,6 +142,15 @@ export function decodePhotoOutput(value:unknown,mime:string):DecodedStillImage {
   try { return validateStillImage(value,mime,{...PHOTO_OUTPUT_POLICY,tooLarge}); }
   catch { throw new HttpError(502,"The provider returned an incomplete, unsupported or oversized image. It was not saved.","upstream"); }
 }
+/** An owned historical result is already a bounded binary download. Inspect
+ * those exact bytes without manufacturing and decoding a second base64 copy. */
+export function inspectPhotoOutputBytes(data:Uint8Array<ArrayBuffer>,mime:string):DecodedStillImage{
+ const tooLarge=():never=>{throw new HttpError(413,"The saved photo exceeds the current safe review bound.","payload_too_large");};
+ if(data.byteLength<1||data.byteLength>PHOTO_OUTPUT_POLICY.maxDecodedBytes)tooLarge();
+ const bounds={...PHOTO_OUTPUT_POLICY,tooLarge};
+ const dimensions=mime==="image/jpeg"?jpeg(data,bounds):mime==="image/png"?png(data,bounds):mime==="image/webp"?webp(data,bounds):invalid();
+ return{mime,bytes:data.byteLength,...dimensions,data};
+}
 function validateStillImage(value:unknown,mime:string,bounds:ImageBounds):DecodedStillImage {
   if (typeof value !== "string" || !value.length) return invalid();
   if (value.length > bounds.maxBase64Chars) bounds.tooLarge();

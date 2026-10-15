@@ -5,6 +5,8 @@ import {decodePhotoOutput} from "./input-policy.ts";
 import {PHOTO_QC_POLICY,unavailablePhotoQuality} from "./photo-qc-verdict.ts";
 import {beginPhotoQuality,retainPhotoCandidate,statusPhotoQuality,photoQualityResponse,photoBytesHash,failPhotoQuality,throwPhotoQualityState,type PhotoQualityEnvelope,type PhotoEvidenceIO} from "./photo-qc-store.ts";
 import {continuePhotoQuality,photoJudgeQuote,photoDerivatives,type PhotoJudgeDependencies} from "./photo-qc-runner.ts";
+import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
+import {photoResultKeys} from "./photo-result.ts";
 const actor="ea100606-0000-4000-8000-000000000001",org="ea100606-0000-4000-8000-000000000002",listing="ea100606-0000-4000-8000-000000000003",evidence="ea100606-0000-4000-8000-000000000004",check="ea100606-0000-4000-8000-000000000005",lease="ea100606-0000-4000-8000-000000000006",reservation="ea100606-0000-4000-8000-000000000007";
 const jpeg=(width=1024,height=768)=>new Uint8Array([255,216,255,192,0,11,8,height>>8,height&255,width>>8,width&255,1,1,17,0,255,218,0,8,1,1,0,0,63,0,1,255,217]);
 const b64=(bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes));
@@ -30,6 +32,11 @@ async function fixture(){
    return{data:view(),error:null};
   }
   if(name==="photo_quality_status"||name==="photo_quality_lookup")return !state.current||args.p_actor!==actor?unavailable():{data:state.row?view():null,error:null};
+  if(name==="photo_quality_set_context"){
+   const e=state.row!.evidence;assertEquals(args.p_request_sha256,e.request_sha256);assertEquals(args.p_context.edit,e.edit);assertEquals(args.p_context.style,e.style);
+   if(e.judge_context&&JSON.stringify(e.judge_context)!==JSON.stringify(args.p_context))return{data:null,error:{message:"RP409: Saved judge context is immutable"}};
+   e.judge_context=args.p_context;return{data:view(),error:null};
+  }
   if(name==="photo_quality_evidence_receipt"){
    const e=state.row!.evidence;
    if(args.p_kind==="input"){e.input_etag=args.p_etag;e.state="input_ready";}
@@ -106,6 +113,16 @@ Deno.test("accepted delivery verifies promotion, exact bytes and fresh authority
  f.state.corruptGet=true;await assertRejects(()=>photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),HttpError,"bytes changed");
  f.state.corruptGet=false;f.state.readWithdraw=true;await assertRejects(()=>photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),HttpError);
 });
+Deno.test("fresh accepted reply reuses only its exact already-validated inline candidate receipt",async()=>{
+ const f=await fixture();await f.retain();f.state.row!.evidence.state="accept";f.state.row!.check.state="accept";
+ const row=f.view(),file=row.evidence.output!,inline={imageB64:b64(f.output),key:file.key,mime:file.mime,sha256:file.sha256,bytes:file.bytes};
+ const response=await photoQualityResponse(f.admin,row,actor,org,{},f.io,inline);assertEquals((await response.json()).image_b64,b64(f.output));assertEquals(f.state.reads,0);
+ await assertRejects(()=>photoQualityResponse(f.admin,row,actor,org,{},f.io,{...inline,sha256:"f".repeat(64)}),HttpError,"identity changed");
+});
+Deno.test("missing saved custom/staging context holds before normal funding and cannot be replaced by caller text",async()=>{
+ const f=await fixture(),row=await f.prepare();row.evidence.judge_context=null;f.state.row!.evidence.judge_context=null;
+ const result=await f.run(row);assertEquals(result.check.state,"hold");assertEquals(f.state.holds,0);assertEquals(f.state.calls,0);
+});
 Deno.test("oversize paid failure remains explicit and cannot advertise a saved result",async()=>{
  const f=await fixture();await f.begin();const row=await failPhotoQuality(f.admin,f.view(),"photo_output_size",{provider_cost_incurred:true,retained_output:false});
  const error=assertThrows(()=>throwPhotoQualityState(row,org),HttpError,"could not be saved");assertEquals(error.code,"photo_quality_hold");assertEquals(error.details?.provider_cost_incurred,true);assertEquals(error.details?.retained_output,false);assertEquals(error.details?.asset_key,undefined);
@@ -139,4 +156,43 @@ Deno.test("lost judge reply retains uncertain liability and HOLD; missing ledger
   try{const result=await f.run(ready);assertEquals(result.check.state,"hold");assertEquals(f.state.calls,1);assertEquals(f.state.attempt.state,kind==="lost"?"uncertain":"succeeded");await f.run(ready);assertEquals(f.state.calls,1);assertEquals(f.state.holds,1);}finally{globalThis.fetch=before;resetServingModeCache();}
  }
  assertEquals(unavailablePhotoQuality().action,"hold");
+});
+
+async function historicalFixture(){
+ const f=await fixture(),old={image_b64:b64(f.input),mime:"image/jpeg",edit:"stage",style:"modern",listing_id:listing,original_asset_id:"ea100606-0000-4000-8000-000000000009"},keys=await photoResultKeys(f.identity),key=keys["image/jpeg"];
+ const originalPointer={kind:"photo_output",bucket:"renders",key,mime:"image/jpeg",metadata:{edit:"stage",style:"modern",provenance:{id:"historical-provenance",recorded:true}}};
+ const historic={operation:{state:"completed",input_sha256:await inputHash(old),operation:"/ai-photo"},result:{result:originalPointer},owned:{org_id:org,user_id:actor,listing_id:listing,bucket:"renders",storage_key:key,bytes:f.output.length},costs:[{provider:"gemini",model:"gemini-3.1-flash-image",total_cents:16.7584,meta:{stage:"photo.stage:0",request_key:f.identity.requestKey}}],paid:true,reads:0};
+ const originalFrom=f.admin.from,originalRPC=f.admin.rpc;
+ f.admin.from=(table:string)=>{
+  if(!["serving_operations","serving_operation_results","private_ai_outputs","cost_ledger","serving_cost_reservations"].includes(table))return originalFrom(table);
+  const query:any={select:()=>query,eq:()=>query,limit:async()=>({data:historic.costs,error:null}),maybeSingle:async()=>({data:table==="serving_operations"?historic.operation:table==="serving_operation_results"?historic.result:table==="private_ai_outputs"?historic.owned:historic.paid?{id:reservation}:null,error:null})};return query;
+ };
+ f.admin.rpc=async(name:string,args:any)=>{
+  if(name!=="photo_quality_calibration_begin")return await originalRPC(name,args);
+  const enabled=f.state.enabled;f.state.enabled=true;const result=await originalRPC("photo_quality_begin",args);f.state.enabled=enabled;
+  f.state.row!.evidence.purpose="calibration";f.state.row!.evidence.request_sha256=args.p_request_sha256;
+  return{data:{...f.view(),created:result.data.created},error:null};
+ };
+ const raw={generation_request_key:f.identity.requestKey,generation_request_body:old};
+ const run=()=>beginPhotoCalibration(f.admin,{actor,org,selected:org,body:calibrationRequest(raw)},{evidence:f.io,read:async()=>{historic.reads++;return f.output.slice();}});
+ return{...f,historic,raw,run};
+}
+Deno.test("explicit historical calibration binds old hash/owned pointer/payment and only copies private evidence",async()=>{
+ const f=await historicalFixture(),old=JSON.stringify(f.historic);f.state.enabled=false;
+ const row=await f.run();assertEquals(row.evidence.purpose,"calibration");assertEquals(row.evidence.output?.sha256,f.outputSHA);assertEquals(f.state.puts,2);assertEquals(f.state.holds,0);assertEquals(f.state.calls,0);assertEquals(f.state.ledger.length,0);assertEquals(f.historic.reads,1);
+ f.historic.reads=0;assertEquals(JSON.stringify(f.historic),old,"Old result pointer/provenance/owned receipt stay identical");
+ await f.run();assertEquals(f.state.puts,2,"An existing calibration does not write evidence again");
+});
+Deno.test("calibration rejects changed source body, foreign saved key, missing ownership or payment before copying",async()=>{
+ for(const fault of ["hash","pointer","owner","payment"]){const f=await historicalFixture();
+  if(fault==="hash")f.raw.generation_request_body.style="rustic";
+  if(fault==="pointer")f.historic.result.result.key="ai-router/foreign/completed-photo/"+"a".repeat(64)+".jpg";
+  if(fault==="owner")f.historic.owned.user_id=org;
+  if(fault==="payment")f.historic.paid=false;
+  await assertRejects(f.run,HttpError);assertEquals(f.state.puts,0);assertEquals(f.historic.reads,0);assertEquals(f.state.calls,0);assertEquals(f.state.holds,0);
+ }
+});
+Deno.test("calibration terminal status is verdict-only and never advertises a ready image or ordinary asset",async()=>{
+ const f=await historicalFixture();await f.run();f.state.row!.evidence.state="accept";f.state.row!.check.state="accept";f.state.row!.check.result=pass;
+ const response=await photoQualityResponse(f.admin,f.view(),actor,org,{},f.io),body=await response.json();assertEquals(body.publishable,false);assertEquals(body.purpose,"calibration");assertEquals(body.result,pass);assertEquals(body.image_b64,undefined);assertEquals(body.asset_key,undefined);assertEquals(f.state.reads,0);
 });

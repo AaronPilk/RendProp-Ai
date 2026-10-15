@@ -17,7 +17,7 @@
 
 import { type ErrorCode, HttpError } from "../http.ts";
 import { type RouteContext, type RouteStep, reportOutcome, resolveRoute, requiresActivePhotoRoute } from "../router.ts";
-import { ProviderError, errorClassOf } from "./common.ts";
+import { ProviderError, ProviderResponseLimitError, errorClassOf } from "./common.ts";
 
 /**
  * A provider failure as an HTTP answer. ProviderError is not an HttpError, and
@@ -47,6 +47,7 @@ export function asHttpError(err: unknown): HttpError {
         provider_status: err.status ?? null,
         error_class: err.error_class,
         dispatch_rejected: err.dispatch_rejected,
+        ...(err instanceof ProviderResponseLimitError?{failure_phase:"photo_provider_wire_size",retain_feature_charge:true,provider_cost_incurred:"possible",retained_output:false,max_response_bytes:err.max_response_bytes}:{}),
       });
   }
   return new HttpError(502, "The media service did not return a usable response.", "upstream");
@@ -108,6 +109,7 @@ export async function runChain<T>(
       const error_class = errorClassOf(err);
       const status = err instanceof ProviderError && typeof err.status === "number" ? err.status : undefined;
       await reportOutcome(step, { ok: false, latency_ms: Date.now() - startedAt, error_class, status });
+      if(err instanceof ProviderResponseLimitError)throw asHttpError(err);
       // The caller's problem, or a refusal about this exact image: stop here.
       if (error_class === "validation" || error_class === "nsfw") throw asHttpError(err);
       console.error(

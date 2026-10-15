@@ -37,6 +37,9 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 // The legacy GenerateContent hard cutoff includes thoughts and output. The
 // serving quote reads the same generation config that is sent to the provider.
 export const GEMINI_IMAGE_MAX_OUTPUT_TOKENS = 4096;
+//9MB decoded photo =12MB base64, plus bounded JSON/usage/text metadata.
+// Applied only to prospective normal4K requests; old provider paths unchanged.
+export const GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES=12_100_000;
 
 function geminiKey(): string {
   const key = Deno.env.get("GEMINI_API_KEY")?.trim();
@@ -154,6 +157,7 @@ export const geminiAdapter: ProviderAdapter = {
       },
       BUDGETS.submitMs,
       classifyGemini,
+      input.extra?.photo_quality_4k===true?{maxResponseBytes:GEMINI_PHOTO_4K_MAX_RESPONSE_BYTES}:undefined,
     );
 
     const img = firstImage(data);

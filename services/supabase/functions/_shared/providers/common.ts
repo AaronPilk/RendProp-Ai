@@ -70,6 +70,13 @@ export class ProviderError extends Error {
   }
 }
 
+/** A dispatched supplier response exceeded its explicitly opted-in wire bound.
+ * No later paid fallback is authorized; its reservation remains uncertain. */
+export class ProviderResponseLimitError extends ProviderError {
+  readonly terminal_after_dispatch=true;
+  constructor(provider:string,readonly response_status:number,readonly max_response_bytes:number){super(provider,"upstream",`${provider} response exceeded its safe transfer bound`,response_status,false);}
+}
+
 /** No timeout/conflict/early-data/5xx response proves that a POST was not accepted. */
 export function definitiveSubmitRejection(status: number, body: unknown): boolean {
   const rejected = [400, 401, 402, 403, 404, 405, 413, 415, 422, 429].includes(status);
@@ -173,9 +180,10 @@ export async function fetchBounded(
   url: string,
   init: RequestInit,
   timeoutMs: number,
+  signal?:AbortSignal,
 ): Promise<Response> {
   try {
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    return await fetch(url, { ...init, signal: signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs) });
   } catch (e) {
     const name = e instanceof DOMException ? e.name : "";
     if (name === "TimeoutError" || name === "AbortError") {
@@ -185,6 +193,20 @@ export async function fetchBounded(
   }
 }
 
+export async function boundedProviderText(response:Response,provider:string,maximum:number):Promise<string>{
+  if(!Number.isSafeInteger(maximum)||maximum<1||maximum>32_000_000)throw new ProviderError(provider,"validation","Invalid provider response bound",0,true);
+  const declared=response.headers.get("content-length");
+  if(declared!==null&&(!/^[0-9]+$/.test(declared)||Number(declared)>maximum)){void response.body?.cancel().catch(()=>{});throw new ProviderResponseLimitError(provider,response.status,maximum);}
+  if(!response.body)return"";
+  const reader=response.body.getReader(),decoder=new TextDecoder("utf-8",{fatal:true}),pieces:string[]=[];let length=0,empty=0;
+  try{for(;;){const {value,done}=await reader.read();if(done)break;
+    if(!(value instanceof Uint8Array)||value.byteLength>maximum-length)throw new ProviderResponseLimitError(provider,response.status,maximum);
+    if(!value.length){if(++empty>64)throw new ProviderResponseLimitError(provider,response.status,maximum);continue;}empty=0;length+=value.byteLength;
+    pieces.push(decoder.decode(value,{stream:true}));
+  }pieces.push(decoder.decode());const text=pieces.join("");pieces.length=0;return text;
+  }catch(error){void reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
+}
+
 /** Bounded fetch → parsed JSON. Non-2xx becomes a ProviderError with a class. */
 export async function fetchJson<T = Record<string, unknown>>(
   provider: string,
@@ -192,9 +214,10 @@ export async function fetchJson<T = Record<string, unknown>>(
   init: RequestInit,
   timeoutMs: number,
   classify: (status: number, body: unknown) => ErrorClass = classifyStatus,
+  options?:{maxResponseBytes?:number;signal?:AbortSignal},
 ): Promise<T> {
-  const res = await fetchBounded(provider, url, init, timeoutMs);
-  const text = await res.text().catch(() => "");
+  const res = await fetchBounded(provider, url, init, timeoutMs,options?.signal);
+  const text = options?.maxResponseBytes===undefined?await res.text().catch(() => ""):await boundedProviderText(res,provider,options.maxResponseBytes);
   let body: unknown = null;
   try {
     body = text ? JSON.parse(text) : null;

@@ -77,7 +77,7 @@ import { libraryBillingOrg } from "../_shared/library-access.ts";
 // — the access-to-the-original half of AB 723.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
+import { HttpError, assert, json, readJson, readJsonLimited, respondError } from "../_shared/http.ts";
 import { adminClient, assertPaidAiIdentity, getUser, type PaidAiCaller, listingSpaceType, orgForUser, contentOrgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { chargeRateReceipt, refundRateReceipt, type RateChargeReceipt } from "../_shared/ratelimit.ts";
 import { requiredIdempotencyKey } from "../_shared/idempotency.ts";
@@ -117,7 +117,8 @@ import { photoJsonResponse } from "./photo-response.ts";
 import { validatePhotoInputs, validatePhotoPrompt, decodePhotoOutput } from "./input-policy.ts";
 import { photoHelperPayload, photoHelperQuote, type PhotoHelperPayload } from "./helper-policy.ts";
 import {lookupPhotoQuality,statusPhotoQuality,photoQualityScope,beginPhotoQuality,retainPhotoCandidate,failPhotoQuality,photoQualityResponse,type PhotoQualityEnvelope} from "./photo-qc-store.ts";
-import {continuePhotoQuality} from "./photo-qc-runner.ts";
+import {waitForPhotoQuality} from "./photo-qc-wait.ts";
+import {calibrationRequest,beginPhotoCalibration} from "./photo-qc-calibration.ts";
 
 // Money admission uses the actual conservative payload hold independently of
 // these burst/monthly feature counters.
@@ -615,6 +616,13 @@ Deno.serve(async (req) => {
       return await photoQualityResponse(adminClient(),row,user.id,preferredOrg(req)??null);
     }
     if (req.method !== "POST") throw new HttpError(405, "POST only");
+    if(new URL(req.url).pathname.endsWith("/ai-photo/check-existing")){
+      const body=calibrationRequest(await readJsonLimited(req,1_400_000));
+      const org=await requireEditorRole(user,req,"Photo quality checks",body.generation_request_body.listing_id);
+      const row=await beginPhotoCalibration(adminClient(),{actor:user.id,org,selected:preferredOrg(req)??null,body});
+      const checked=await waitForPhotoQuality(adminClient(),row,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.generation_request_body.prompt});
+      return await photoQualityResponse(adminClient(),checked,user.id,preferredOrg(req)??null);
+    }
     if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set", "internal");
 
     // VALIDATE FIRST, CHARGE SECOND (audit round 4). Every quota consumption
@@ -792,7 +800,7 @@ Deno.serve(async (req) => {
         if(quality){
           assert(quality.evidence.request_sha256===await inputHash(body),409,"This request identifier belongs to different photo instructions.","conflict");
           await photoQualityScope(adminClient(),quality,user.id,preferredOrg(req)??null);
-          const continued=await continuePhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt});
+          const continued=await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt});
           return await photoQualityResponse(adminClient(),continued,user.id,preferredOrg(req)??null,{space_type:space});
         }
         const stored=error instanceof SavedFundingResponse?error.saved_response:undefined;
@@ -915,7 +923,7 @@ Deno.serve(async (req) => {
     // fails before supplier dispatch; historical saved results above still work.
     let quality:PhotoQualityEnvelope;
     try{
-      quality=await beginPhotoQuality(adminClient(),resultIdentity,{edit,style,originalAsset:body.original_asset_id,imageB64:body.image_b64,mime});
+      quality=await beginPhotoQuality(adminClient(),resultIdentity,{edit,style,instruction:body.prompt,originalAsset:body.original_asset_id,imageB64:body.image_b64,mime});
       if(quality.created!==true){
         await refundEditCharge(charge);
         return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space});
@@ -946,15 +954,16 @@ Deno.serve(async (req) => {
         return { b64, mime: local.mime, local };
       });
     } catch (e) {
-      await refundEditCharge(charge);
+      const retainCharge=e instanceof HttpError&&e.details?.retain_feature_charge===true;
+      if(!retainCharge)await refundEditCharge(charge);
       try{
-        quality=await failPhotoQuality(adminClient(),quality,"generation",{provider_cost_incurred:"possible",message:"The generation did not return a confirmed image. No repeat generation was started."});
+        quality=await failPhotoQuality(adminClient(),quality,retainCharge?"photo_provider_wire_size":"generation",{provider_cost_incurred:"possible",retained_output:false,...(retainCharge?{max_response_bytes:e.details?.max_response_bytes}:{}),message:"The generation did not return a confirmed image. No repeat generation was started."});
         return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
       }catch(statusError){if(statusError instanceof HttpError&&statusError.code.startsWith("photo_quality_"))throw statusError;}
       throw e;
     }
     const step = attempt.step;
-    const outB64 = attempt.value.b64;
+    let outB64 = attempt.value.b64;
     const outMime = attempt.value.mime;
     await completeFundingOperation(funding,{kind:"photo_quality",evidence_id:quality.evidence.id});
 
@@ -993,8 +1002,13 @@ Deno.serve(async (req) => {
       quality=await failPhotoQuality(adminClient(),quality,over?"photo_output_size":phase,{provider_cost_incurred:true,retained_output:!!quality.evidence.output_etag,encoded_characters:outB64.length,mime:outMime,provider:step.provider,model:step.model,message:over?"The paid image exceeded the safe9MB output bound and could not be retained.":"The generated edit could not be confirmed as a usable high-resolution photo. No new generation was started."});
       return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null);
     }
-    quality=await continuePhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt});
-    return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space,...(routerOn?{route:{provider:step.provider,model:step.model,route_id:step.route_id}}:{})});
+    // The heavy judge runs in its separate service function. Retain this exact
+    // already-validated base64 for the eventual accepted reply, avoiding another
+    //9MB download/decode/encode in the generation isolate.
+    const inlineCandidate={imageB64:outB64,key:quality.evidence.output!.key,mime:outMime,sha256:quality.evidence.output!.sha256,bytes:quality.evidence.output!.bytes};
+    attempt.value.b64="";attempt.value.local={status:"done",mime:outMime,result_url:""};
+    quality=await waitForPhotoQuality(adminClient(),quality,{actor:user.id,selected:preferredOrg(req)??null,request:req,instruction:body.prompt});
+    return await photoQualityResponse(adminClient(),quality,user.id,preferredOrg(req)??null,{space_type:space,...(routerOn?{route:{provider:step.provider,model:step.model,route_id:step.route_id}}:{})},undefined,inlineCandidate);
   } catch (err) {
     return respondError(err);
   }

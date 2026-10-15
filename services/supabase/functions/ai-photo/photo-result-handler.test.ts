@@ -56,7 +56,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  }
  const imported=await import(encode(`// @ts-nocheck
  // Fresh synthetic boundary state ${crypto.randomUUID()}
- import {assert,HttpError,json,readJson,respondError} from ${url("../_shared/http.ts")};
+ import {assert,HttpError,json,readJson,readJsonLimited,respondError} from ${url("../_shared/http.ts")};
  import {requiredIdempotencyKey} from ${url("../_shared/idempotency.ts")};
  import {fundingContext,fundedAttempt,mediaAttemptQuote,SavedFundingResponse,completeFundingOperation,abortFundingOperationBeforeDispatch,boundedPhotoChain,assertPhotoHelperSponsorship,inputHash} from ${url("../_shared/funded-serving.ts")};
  import {photoHelperPayload,photoHelperQuote} from ${url("./helper-policy.ts")};
@@ -90,7 +90,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const guardEdit=async()=>{state.charges++;return{orgId:state.org,plan:"pro",monthlyKey:"monthly",burstKey:"burst"};},refundEditCharge=async()=>{state.refunds++;};
  const adapterFor=()=>({submit:async(_step,input)=>{state.submits++;state.prompts.push(input.prompt);state.inputs.push(structuredClone(input));if(state.primaryFail&&state.submits===1)throw new ProviderError(_step.provider,"upstream","Synthetic failure");return{id:"synthetic-job"};}}),awaitJob=async()=>{state.polls++;return{status:"done",mime:"image/jpeg",result_url:"data:image/jpeg;base64,"+state.output};};
  const recordRoutedAiCost=async(_db,args)=>{state.costs.push(structuredClone(args));},recordProvenance=async()=>({id:"synthetic-provenance",recorded:true,disclosure:"Synthetic disclosure"});
- const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
+ const admin={from:(table)=>{let filters=[];const q={select:()=>q,eq:(key,value)=>{filters.push([key,[value]]);return q;},is:(key,value)=>{filters.push([key,[value]]);return q;},in:(key,value)=>{filters.push([key,value]);return q;},limit:async()=>({data:state.journal&&filters.every(([key,values])=>values.includes(state.journal[key]))?[state.journal]:[],error:null}),maybeSingle:async()=>({data:table==="private_ai_outputs"?state.journal:{user_id:state.actor,org_id:state.org,role:state.role},error:null})};return q;},rpc:async(name,args)=>{
  if(name==="library_access"||name==="listing_library_scope"){
  if(state.deleted||state.role!=="owner"||args.p_actor!==state.actor)return {data:null,error:{message:"RP403: Current editor access is required"}};
  return {data:{actor_id:state.actor,org_id:state.org,library_owner_user_id:state.actor,role:state.role,access_mode:"own",can_read:true,can_write:true,can_manage_subscription:true,billing_org_id:state.org,team_org_id:null,
@@ -108,8 +108,9 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
   const {generation_stage,provider,model,...facts}=args.p_output,e=state.quality.evidence,ext={"image/jpeg":"jpg","image/png":"png","image/webp":"webp"}[facts.mime];
   e.output={...facts,bucket:"renders",key:"ai-router/"+state.org+"/photo-evidence/"+state.actor+"/"+e.id+"/candidate."+ext};e.generation_stage=generation_stage;e.generation_provider=provider;e.generation_model=model;return{data:structuredClone(e),error:null};
  }
+ if(name==="photo_quality_set_context"){state.quality.evidence.judge_context=args.p_context;return{data:structuredClone(state.quality),error:null};}
  if(name==="photo_quality_evidence_receipt"){
-  const e=state.quality.evidence;if(args.p_kind==="input"){e.input_etag=args.p_etag;e.state="input_ready";}else{e.output_etag=args.p_etag;e.state="evidence_ready";e.provenance_id="ea100606-0000-4000-8000-000000000008";}return{data:structuredClone(state.quality),error:null};
+  const e=state.quality.evidence;if(args.p_kind==="input"){e.input_etag=args.p_etag;e.state="input_ready";}else{e.output_etag=args.p_etag;e.state="evidence_ready";e.provenance_id="ea100606-0000-4000-8000-000000000008";state.quality.can_continue=true;}return{data:structuredClone(state.quality),error:null};
  }
  if(name==="photo_quality_failure"){state.quality.evidence.state="hold";state.quality.evidence.failure={phase:args.p_phase,facts:args.p_facts};state.quality.check.state="hold";return{data:structuredClone(state.quality),error:null};}
  if(name==="serving_operation_begin"){
@@ -121,7 +122,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  if(name==="subscription_trial_context")return{data:{trial_usage:null},error:null};
  if(name==="hosting_retention_state")return{data:{org_id:state.org,policy:"preserved",protected:true,retention_ends_at:null,hosting_available:true},error:null};
  if(name==="media_delivery_admit")return{data:{admitted:true,legacy_unbudgeted:true},error:null};
- if(name==="serving_cost_finish")return{data:{finished:true},error:null};
+ if(name==="serving_cost_finish"){state.finishStates?.push(args.p_state);return{data:{finished:true},error:null};}
  if(name==="serving_operation_complete"){state.completes++;if(state.completeLost&&state.completes===1)throw Error("lost operation write");state.saved=structuredClone(args.p_result);return{data:{saved:true},error:null};}
  if(name==="register_private_ai_output"){
  if(state.deleted||state.role!=="owner")return{data:null,error:{message:"RP403: gone"}};
@@ -146,10 +147,14 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
  const retainPhotoCandidate=actualEvidence?actualQualityStore.retainPhotoCandidate:async(_admin,row,decoded)=>{
   row.saved=await persistOwnedPhotoResult(admin,row.identity,{status:"done",mime:decoded.mime,result_url:"data:"+decoded.mime+";base64,"+state.output},undefined,decoded.data);
   row.evidence.output_etag="synthetic-confirmed";
+  row.evidence.output={key:row.saved.key,mime:decoded.mime,bytes:decoded.bytes,sha256:"a".repeat(64)};
   row.check.state=state.qualityPending?"pending":"accept";return row;
  };
  const failPhotoQuality=actualEvidence?actualQualityStore.failPhotoQuality:async(_admin,row,phase,facts)=>{row.check.state="hold";row.failure={phase,facts};return row;};
  const continuePhotoQuality=async(_admin,row)=>row;
+ const waitForPhotoQuality=continuePhotoQuality;
+ const calibrationRequest=body=>body;
+ const beginPhotoCalibration=async()=>{state.calibrationCalls=(state.calibrationCalls??0)+1;return{evidence:{id:"synthetic-calibration"},check:{state:"pending"}};};
  const photoQualityResponse=actualEvidence?actualQualityStore.photoQualityResponse:async(_admin,row)=>{
   if(row.check.state!=="accept")throw new HttpError(409,"Saved photo is private pending review.",row.check.state==="hold"?"photo_quality_hold":"photo_quality_pending",{check_id:"synthetic-check",evidence_id:"synthetic-evidence",retry_existing_job:true,failure_phase:row.failure?.phase,...row.failure?.facts});
   const metadata={edit:row.args.edit,...(row.args.style?{style:row.args.style}:{}),disclosure:"Synthetic disclosure",provenance:{id:"synthetic-provenance",recorded:true}};
@@ -191,6 +196,7 @@ async function fixture(removeFinalAuthority=false,removeAdmission:"input"|"chain
 }
 // Load exact production signers only after synthetic test credentials exist.
 for(const [key,value] of Object.entries({CLOUDFLARE_ACCOUNT_ID:"a".repeat(32),R2_ACCESS_KEY_ID:"b".repeat(32),R2_SECRET_ACCESS_KEY:"c".repeat(64)}))Deno.env.set(key,value);
+const {ProviderResponseLimitError}=await import("../_shared/providers/common.ts");
 Deno.test("actual photo handler router-off and router-on persist once and replay inline without another quota or provider",async()=>{
  for(const router of [false,true]){const f=await fixture();try{f.state.router=router;
  const first=await f.run(f.request());assertEquals(first.status,200);const result=await first.json();assertEquals(result.image_b64,OUTPUT);assert(/^ai-router\/.+\/completed-photo\/[a-f0-9]{64}\.jpg$/.test(result.asset_key));
@@ -552,4 +558,19 @@ Deno.test("actual handler plus real quarantine pipeline retains1MB/9MB exact evi
 });
 Deno.test("actual handler plus quarantine records paid output overflow without fake full-output retention",async()=>{
  const f=await fixture(false,null,true);try{f.state.output=sizedOutputJPEG(9_000_001);const response=await f.run(f.request());assertEquals(response.status,409);const body=await response.json();assertEquals(body.code,"photo_quality_hold");assertEquals(body.failure_phase,"photo_output_size");assertEquals(body.provider_cost_incurred,true);assertEquals(body.retained_output,false);assertEquals(f.state.puts,1,"Only the prepared source is retained");assertEquals(f.state.quality.evidence.output,null);assertEquals(f.state.costs.length,1);assertEquals(f.state.refunds,0);assertEquals((await f.run(f.request())).status,409);assertEquals(f.state.submits,1);}finally{f.close();}
+});
+Deno.test("actual handler wire overflow holds uncertain supplier liability and feature charge without paid fallback",async()=>{
+ const f=await fixture(false,null,true);try{
+  f.state.qa=true;f.state.router=true;f.state.finishStates=[];
+  f.state.routes=[0,1].map(i=>({route_id:"authorized-"+i,provider:"gemini",model:"gemini-3.1-flash-image",task:"photo.twilight",unit:"image",unit_cents:16.7584}));
+  Object.defineProperty(f.state,"primaryFail",{get:()=>{throw new ProviderResponseLimitError("gemini",200,12_100_000);}});
+  const response=await f.run(f.request());assertEquals(response.status,409);const body=await response.json();assertEquals(body.code,"photo_quality_hold");assertEquals(body.failure_phase,"photo_provider_wire_size");assertEquals(body.provider_cost_incurred,"possible");assertEquals(body.retained_output,false);
+  assertEquals(f.state.submits,1);assertEquals(f.state.holds,1);assertEquals(f.state.finishStates,["uncertain"]);assertEquals(f.state.refunds,0);assertEquals(f.state.puts,1,"Only the prepared source was retained");assertEquals((await f.run(f.request())).status,409);assertEquals(f.state.submits,1);
+ }finally{f.close();}
+});
+Deno.test("explicit check-existing handler route never enters generation quota or supplier admission",async()=>{
+ const f=await fixture();try{
+  const response=await f.run(new Request("https://example.invalid/ai-photo/check-existing",{method:"POST",headers:{"content-type":"application/json","X-Org":org},body:JSON.stringify({generation_request_key:"old-paid-key",generation_request_body:{listing_id:listing}})}));
+  assertEquals(response.status,409);assertEquals((await response.json()).code,"photo_quality_pending");assertEquals(f.state.calibrationCalls,1);assertEquals(f.state.started,false);assertEquals(f.state.charges,0);assertEquals(f.state.holds,0);assertEquals(f.state.submits,0);assertEquals(f.state.puts,0);
+ }finally{f.close();}
 });

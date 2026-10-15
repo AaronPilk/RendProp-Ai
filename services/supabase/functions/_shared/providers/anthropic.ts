@@ -157,6 +157,8 @@ export interface MessagesArgs {
    *  whatever a passed step carries; omit it in every ordinary call. */
   params?: Record<string, unknown> | null;
   onUsage?: (usage: {inputTokens:number;outputTokens:number;cacheReadInputTokens?:number;cacheCreationInputTokens?:number}) => void;
+  signal?:AbortSignal;
+  timeoutMs?:number;
 }
 
 /** One bounded /v1/messages call → the concatenated text of the reply. */
@@ -190,7 +192,9 @@ export async function anthropicMessages(args: MessagesArgs): Promise<string> {
     PROVIDER,
     `${ANTHROPIC_BASE}/v1/messages`,
     { method: "POST", headers: anthropicHeaders(), body: JSON.stringify(body) },
-    BUDGETS.submitMs,
+    Math.min(BUDGETS.submitMs,Math.max(1,args.timeoutMs??BUDGETS.submitMs)),
+    undefined,
+    args.signal?{signal:args.signal}:undefined,
   );
   const usage = data.usage as Record<string, unknown> | undefined;
   if (args.onUsage && usage && Number.isSafeInteger(usage.input_tokens) && Number(usage.input_tokens) >= 0 &&
