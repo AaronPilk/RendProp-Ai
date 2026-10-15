@@ -4440,11 +4440,18 @@ struct HomeDashboardView: View {
         VStack(alignment: .leading, spacing: 10) {
             sectionTitle("How it works")
             VStack(alignment: .leading, spacing: 14) {
-                // Same instruction as the capture coaching: a steady NORMAL pace
-                // (the render retimes it into a glide) — not "slowly".
-                step(1, "Add the \(noun)", "Give it a name or address. Everything you make is saved to it.")
-                step(2, "Film it", "Walk it at a steady, normal pace on the 0.5× wide lens — or upload a clip.")
-                step(3, "Share it", "One link or QR code. \(customer.capitalized) scroll it, and their questions land in Leads.")
+                if SpaceType.current == .realEstate {
+                    step(1, "Add home", "Enter the address and property details.")
+                    step(2, "Create from photos", "Upload landscape photos, review any optional AI edits, then make a Listing video.")
+                    step(3, "Publish and share", "Choose your gallery and cover, check the video and contact details, then publish your website. Share its link and follow up in Leads.")
+                    Text("Optional: record a slow, steady walkthrough with a gimbal if available, or upload a walkthrough or drone clip.")
+                        .font(.rpCaption).foregroundStyle(HomeStyle.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    step(1, "Add the \(noun)", "Give it a name or address. Everything you make is saved to it.")
+                    step(2, "Film it", "Walk it at a steady, normal pace on the 0.5× wide lens — or upload a clip.")
+                    step(3, "Share it", "One link or QR code. \(customer.capitalized) scroll it, and their questions land in Leads.")
+                }
             }
             .card()
         }
