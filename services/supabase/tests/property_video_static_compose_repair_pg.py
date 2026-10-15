@@ -12,7 +12,7 @@ assert shutil.disk_usage(ROOT).free>=3*1024**3,'Preserve internal3GiB reserve'
 DATA=Path(tempfile.mkdtemp(prefix='static-repair-pg-',dir='/Volumes/Rendprop Files/Builds/Active'if Path('/Volumes/Rendprop Files/Builds/Active').is_dir()else None));SOCK=Path(tempfile.mkdtemp(prefix='static-repair-socket-',dir='/tmp'))
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
 tool=lambda n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)
-CANDIDATE=SQL/'migrations/20261015192807_property_video_static_saved_photo_compose_repair.sql';FIX=SQL/'tests/property_video_static_compose_repair.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
+CANDIDATE=SQL/'migrations/20261015193930_property_video_static_saved_photo_compose_repair.sql';FIX=SQL/'tests/property_video_static_compose_repair.sql';MIGRATIONS=sorted((SQL/'migrations').glob('*.sql'))
 SOURCES=[*MIGRATIONS,CANDIDATE,FIX,SQL/'tests/ci-bootstrap.sql',SQL/'tests/property_video_compose_recovery.sql',Path(__file__).resolve()]
 hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in SOURCES}
 receipt={'passed':False,'scope':'actual disposable PostgreSQL/roles/concurrency, current full migration chain, synthetic metadata only','networkCalls':0,'providerCalls':0,'sourceHashes':hashes(),'commands':[],'controls':[],'races':[]}

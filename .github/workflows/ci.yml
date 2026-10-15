@@ -1608,6 +1608,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_static_compose_repair_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-property-static-compose-repair-pg"
+      - name: Standalone accepted video receipts survive lost replies and canonical erasure
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/app_video_submission_receipts_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-video-submission-receipts-pg"
       - name: API cost reports separate consumption, holds, funding and unpriced usage
         timeout-minutes: 2
         shell: bash
@@ -1642,6 +1649,7 @@ jobs:
             ${{ runner.temp }}/rendprop-property-missing-result-pg/**
             ${{ runner.temp }}/rendprop-property-compose-recovery-pg/**
             ${{ runner.temp }}/rendprop-property-static-compose-repair-pg/**
+            ${{ runner.temp }}/rendprop-video-submission-receipts-pg/**
             ${{ runner.temp }}/rendprop-api-cost-report-unit.log
           if-no-files-found: warn
 
