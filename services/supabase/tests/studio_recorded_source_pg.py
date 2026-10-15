@@ -7,7 +7,7 @@ OUT=a.evidence_dir or Path(tempfile.mkdtemp(prefix='studio-recorded-source-evide
 DATA=Path(tempfile.mkdtemp(prefix='studio-recorded-source-pg-'));SOCK=Path(tempfile.mkdtemp(prefix='studio-recorded-source-sock-'))
 TOOLS={n:shutil.which(n)or str(Path('/opt/homebrew/opt/postgresql@17/bin')/n)for n in ['initdb','pg_ctl','psql','createdb']}
 ENV={'PATH':'/opt/homebrew/bin:/usr/bin:/bin','LC_ALL':'C','PGOPTIONS':'-c statement_timeout=30000 -c lock_timeout=15000'}
-MIG=SQL/'migrations/20261015162802_studio_recorded_source_authority.sql';BASE=SQL/'tests/property_video_websites.sql';EXTRA=SQL/'tests/studio_recorded_source.sql'
+MIG=SQL/'migrations/20261015164224_studio_recorded_source_authority.sql';BASE=SQL/'tests/property_video_websites.sql';EXTRA=SQL/'tests/studio_recorded_source.sql'
 FILES=[*sorted((SQL/'migrations').glob('*.sql')),SQL/'tests/ci-bootstrap.sql',BASE,EXTRA,Path(__file__).resolve()];hashes=lambda:{str(f.relative_to(ROOT)):hashlib.sha256(f.read_bytes()).hexdigest()for f in FILES}
 r={'passed':False,'scope':'Actual disposable PostgreSQL, scoped authority, exact retained output/preparation/attestation fixtures; no network/media/provider/Apple calls','sourceHashes':hashes(),'controls':[],'commands':[]};started=False
 fixture=BASE.read_text();anchor='create temporary table manifest as select';assert fixture.count(anchor)==1;fixture=fixture.replace(anchor,EXTRA.read_text()+'\n'+anchor)
