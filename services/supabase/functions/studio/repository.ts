@@ -74,8 +74,11 @@ export function createStudioRepository(
           // The native/gallery sort is business state, not a display hint.
           // Apply it before pagination; UUID alone preserves the old order after
           // a successful reorder and puts the wrong photos on later pages.
+          // Legacy rows share sort 0: attach time, never a random UUID, keeps
+          // them in upload order (studio_gallery_update_v2 compares the same).
           .eq("listing_id", scope.listingId).or(visiblePhotoFilter(scope))
           .order("sort", { ascending: true })
+          .order("created_at", { ascending: true })
           .order("id", { ascending: true })
           .range(offset, offset + PAGE_SIZE).abortSignal(req.signal),
         db().from("capture_assets")
@@ -86,7 +89,8 @@ export function createStudioRepository(
           .not("storage_key", "like", "%/contact-%")
           .not("storage_key", "like", videoPhotoPatterns(scope)[0])
           .not("storage_key", "like", videoPhotoPatterns(scope)[1])
-          .order("id", { ascending: true }).range(offset, offset + PAGE_SIZE)
+          // Source photos follow upload order; UUID only breaks exact ties.
+          .order("created_at", { ascending: true }).order("id", { ascending: true }).range(offset, offset + PAGE_SIZE)
           .abortSignal(req.signal),
         db().from("renders")
           .select("id,listing_id,video_key,duration_s,created_at")

@@ -235,7 +235,8 @@ Deno.test("all three real RLS media queries use same listing, inclusive lookahea
       ),
     );
     assertEquals(query.operations.filter((op) => op[0] === "order"), query.table === "photos"
-      ? [["order", "sort", { ascending: true }], ["order", "id", { ascending: true }]]
+      ? [["order", "sort", { ascending: true }], ["order", "created_at", { ascending: true }], ["order", "id", { ascending: true }]]
+      : query.table === "capture_assets" ? [["order", "created_at", { ascending: true }], ["order", "id", { ascending: true }]]
       : [["order", "id", { ascending: true }]]);
     assertEquals(query.operations.find((op) => op[0] === "range"), [
       "range",

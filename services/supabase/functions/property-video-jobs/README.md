@@ -17,9 +17,25 @@ requires `x-rendprop-ai-consent: property-video-jobs-v1`.
 - `GET /property-video-jobs/:job_id`: fresh progress/result. Result URLs are
   short-lived private capabilities; clients must refresh and never persist them.
 - `GET ?listing_id=&expected_org_id=&operation_id=`: exact operation/context
-  echoes, `job` (explicitly null when absent), and `operation_closed`. Only a
-  durably capacity-refused operation is conclusively closed. Admission/refusal
-  and lookup serialize the same DB operation; closed operations cannot enqueue.
+  echoes, `job` (explicitly null when absent), `operation_closed` and
+  `closed_reason` (`capacity_refused`, `abandoned` or null). Only a durable
+  capacity refusal or an explicit discard closes an operation. Admission,
+  refusal, discard and lookup serialize the same DB operation; closed
+  operations cannot enqueue. A missing `closed_reason` from an older
+  deployment means `capacity_refused`.
+- `POST /operations/:operation_id/abandon` `{listing_id,expected_org_id}` with
+  `Idempotency-Key: property-video-abandon:<operation_id>` (C2). No AI consent
+  or new work. Returns 200 with the lookup shape after resolving the exact
+  operation under its admission lock: an accepted operation returns its
+  existing `job` unchanged (cancel/recover it normally); a capacity refusal is
+  reported as `capacity_refused`; only an operation the server never accepted
+  or refused is permanently tombstoned (`closed_reason:"abandoned"`). Replays
+  return the same outcome. A later `POST /property-video-jobs` for that
+  operation returns 409 `operation_abandoned`; if a discard commits after the
+  route's pre-check, the database fence refuses admission with 409 instead.
+  Tombstones are per actor, never move to another property and require the
+  same write access and library as creation. Clients must not forget a saved
+  request locally until this route (or the lookup) confirms the outcome.
 - `GET ?listing_id=&expected_org_id=&offset=`: bounded20-job history.
 - `GET /sources?listing_id=&expected_org_id=&offset=`: actual selected gallery
   masters (100/page), exact version/provenance and ready prepared aliases.
@@ -126,6 +142,10 @@ acceptance items; synthetic fixture colors do not certify them.
 - `python3 services/supabase/tests/property_video_jobs_pg.py`: actual migrations,
   RPC/roles/source/payment/output/privacy and concurrent admission/cancel races,
   plus compiled missing global-lock/audio-duration negative controls.
+- `python3 services/supabase/tests/property_video_abandon_pg.py`: C2 discard
+  RPC/trigger/roles, concurrent discard versus enqueue/admission/refusal,
+  held-lock interleavings in both orders, read-committed fail-closed checks
+  and compiled lock/fence/isolation negative controls.
 - `python3 services/supabase/tests/property_video_websites_pg.py`: explicit
   publication/immutable output/reselect/refund/consumable assignment regressions.
 - `deno test --allow-env --allow-read --allow-net` on `ai-video`, `notify`,
