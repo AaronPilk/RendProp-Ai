@@ -406,13 +406,22 @@ Deno.serve(async (req) => {
     const selectedPhotos=listing.gallery_asset_ids??null;
     // Independent public reads overlap; every returned lineage/contact still
     // passes the unchanged final freshness fences below before release.
-    const [gallery, cover_url, { data: job }, { data: clientRow, error: clientError }] = await Promise.all([
+    // Share one actual contact read. Its dependent identity lookup can overlap
+    // gallery assembly; do not await a PostgREST thenable twice (that refetches).
+    const contactRead = Promise.resolve(admin.from("listing_client_contacts")
+      .select("listing_id,org_id,enabled,public_card,hide_rendprop_branding,photo_asset_id,revision")
+      .eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle());
+    const initialIdentity = contactRead.then(async ({data,error}) => {
+      if(error)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
+      return data?.enabled===true ? null : await listingAgentIdentity(admin,listing.id);
+    });
+    const [gallery, cover_url, { data: job }, { data: clientRow, error: clientError }, identity] = await Promise.all([
       galleryFor(admin, listing.org_id, listing.id as string, visibleRefs,selectedPhotos,slug),
       publicMainPhoto(admin,{orgId:listing.org_id,listingId:listing.id},
         listing.main_photo_key,key=>publishedR2Url(slug,key),visibleRefs,selectedPhotos),
       admin.from("render_jobs").select("capture_asset_id").eq("id",render.job_id).maybeSingle(),
-      admin.from("listing_client_contacts").select("listing_id,org_id,enabled,public_card,hide_rendprop_branding,photo_asset_id,revision")
-        .eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle(),
+      contactRead,
+      initialIdentity,
     ]);
     const presentation=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,visibleRefs,publishedR2Url);
     const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
@@ -452,7 +461,6 @@ Deno.serve(async (req) => {
     if(clientError)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
     const clientMode=clientRow?.enabled===true;
     const client=clientMode?await resolveContactPhoto(admin,clientRow,visibleRefs,key=>publishedR2Url(slug,key)):null;
-    const identity = clientMode ? null : await listingAgentIdentity(admin,listing.id);
     const portrait=identity?.legacy_portrait as {asset_id?:unknown;storage_key?:unknown;url?:unknown}|null;
     const portraitURL=portrait && typeof portrait.asset_id==="string" && typeof portrait.storage_key==="string" && typeof portrait.url==="string" &&
       portrait.url===publicR2Url(portrait.storage_key) ? publishedR2Url(slug,portrait.storage_key) ?? undefined : undefined;
@@ -483,17 +491,21 @@ Deno.serve(async (req) => {
     // These service-role reads bypass RLS; recheck every exposed lineage after
     // assembling the response, so revocation during optional reads cannot leak.
     await assertMediaVisible(admin, listing.id, visibleRefs);
-    const {data:currentPhotos,error:currentPhotosError}=await admin.from("listings")
-      .select("main_photo_key,gallery_asset_ids,deleted_at").eq("id",listing.id).maybeSingle();
+    // All are fresh reads AFTER assembled media passed its final visibility
+    // fence. Parallelism changes neither the snapshots nor their refusal rules.
+    const [{data:currentPhotos,error:currentPhotosError},
+      {data:currentClient,error:currentClientError}, currentIdentity] = await Promise.all([
+      admin.from("listings").select("main_photo_key,gallery_asset_ids,deleted_at").eq("id",listing.id).maybeSingle(),
+      admin.from("listing_client_contacts").select("revision,enabled").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle(),
+      clientMode ? Promise.resolve(null) : listingAgentIdentity(admin,listing.id),
+    ]);
     if(currentPhotosError || !currentPhotos || currentPhotos.deleted_at ||
        (currentPhotos.main_photo_key??null)!==(listing.main_photo_key??null) ||
        JSON.stringify(currentPhotos.gallery_asset_ids??null)!==JSON.stringify(selectedPhotos))
       throw new HttpError(503,"The published photos changed. Please refresh.");
-    const {data: currentClient,error: currentClientError}=await admin.from("listing_client_contacts")
-      .select("revision,enabled").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
     if(currentClientError || (currentClient?.revision??null)!==(clientRow?.revision??null) || (currentClient?.enabled??false)!==clientMode)
       throw new HttpError(503,"The listing contact changed. Please refresh.");
-    if (!clientMode && JSON.stringify(await listingAgentIdentity(admin,listing.id))!==JSON.stringify(identity))
+    if (!clientMode && JSON.stringify(currentIdentity)!==JSON.stringify(identity))
       throw new HttpError(503,"The listing agent changed. Please refresh.");
     // Byte requests need publication freshness too, not merely lineage approval.
     const assertCurrentPresentation=async()=>{
@@ -514,8 +526,7 @@ Deno.serve(async (req) => {
       return json({...envelope,...(Object.keys(object_limits).length?{object_limits}:{})},200,deliveryHeaders);
     }
     const publicDetails = publicListingDetails(listing.details);
-    await assertCurrentPresentation();
-    await assertHostingAvailable(admin, listing.org_id);
+    await Promise.all([assertCurrentPresentation(), assertHostingAvailable(admin, listing.org_id)]);
     return json({
       slug: render.slug,
       share_url: brandedUrl(render.slug as string),
