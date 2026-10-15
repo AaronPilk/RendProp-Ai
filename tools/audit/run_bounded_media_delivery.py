@@ -64,7 +64,13 @@ try:
  run('init',[BIN/'initdb','-D',DATA,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8']);run('start',[BIN/'pg_ctl','-D',DATA,'-l',OUT/'server.log','-w','-t','30','-o',f"-k {SOCK} -p 55368 -c listen_addresses='' -c shared_buffers=16MB -c max_connections=15",'start']);started=True
  run('createdb',[BIN/'createdb','--no-password',*CONN,'rendprop_bounded_media_audit']);assert query('identity',"select current_setting('data_directory'),current_setting('listen_addresses');").strip()==str(DATA)+'|'
  query('bootstrap',(INPUT/'services/supabase/tests/ci-bootstrap.sql').read_text())
- for p in sorted((INPUT/'services/supabase/migrations').glob('*.sql')):
+ migrations=sorted((INPUT/'services/supabase/migrations').glob('*.sql'))
+ boundary='20261007145000_pooled_media_startup.sql'
+ boundary_index=next(i for i,p in enumerate(migrations)if p.name==boundary)
+ receipt['legacyFinancialBoundary']=boundary
+ # These unchanged financial/storage assertions describe the Oct7 contract.
+ # Current product serving deliberately meters authorized reads without cash.
+ for p in migrations[:boundary_index+1]:
   query('migration-'+p.stem,p.read_text())
   if p.name=='20261007135843_bounded_media_delivery.sql':
    receipt['coreFreshAssertions']=positive('core-fresh');query('core-boundary-replay',p.read_text());receipt['coreReplayAssertions']=positive('core-replay')
@@ -74,8 +80,6 @@ try:
    assert 'MEDIA DENIAL: read-only funding cannot underprice earlier physical custody' in denied
    receipt['coreStorageFloorRemovalControl']={'compiledActualFunction':True,'oracleRejected':True,'exit':3};receipt['coreRestoredAssertions']=positive('core-floor-restored')
  receipt['freshAssertions']=positive('final-pooled-fresh');query('pooled-replay',(INPUT/'services/supabase/migrations/20261007145000_pooled_media_startup.sql').read_text());receipt['replayAssertions']=positive('final-pooled-replay')
- duration=query('final-trial-video-duration',(INPUT/'services/supabase/tests/subscription_trial_video_duration.sql').read_text());assert 'TRIAL_VIDEO_CHECKS 31' in duration;receipt['trialVideoDurationAssertions']=31
- modern=query('final-modern-transport',(INPUT/'services/supabase/tests/modern_service_transport.sql').read_text());assert 'modern service transport: 7 checks passed' in modern;receipt['modernTransportAssertions']=7
  # Compile and exercise actual source guard-removal controls in transactions.
  source=(INPUT/'services/supabase/migrations/20261007135843_bounded_media_delivery.sql').read_text()
  def function(name):
@@ -114,6 +118,28 @@ try:
  assert any('RP429: Stored media allowance exhausted'in v for _,v in storage)
  assert query('race-postconditions',"select allocated_org_cents=4600 from media_account_reserves where receipt_ref='synthetic-cash-race';select count(*)=1 and sum(bytes)=60 from media_storage_receipts where org_id='"+winner+"';").strip()=='t\nt'
  receipt['actualRaces']={'startupCash':{'success':1,'refused':1,'code':'RP402'},'physicalStorage':{'success':1,'refused':1,'code':'RP429'}}
+ # Advance the tested historical database to the complete copied current chain.
+ # An independent fresh database proves that fixtures/controls left no changed
+ # function definition, owner, ACL or security configuration in today's catalog.
+ for p in migrations[boundary_index+1:]:query('migration-'+p.stem,p.read_text())
+ run('current-reference-createdb',[BIN/'createdb','--no-password',*CONN,'rendprop_media_current_reference'])
+ reference=[str(BIN/'psql'),'-X','--no-password',*CONN,'-d','rendprop_media_current_reference','-v','ON_ERROR_STOP=1','-Atq']
+ run('current-reference-bootstrap',reference,(INPUT/'services/supabase/tests/ci-bootstrap.sql').read_text())
+ for p in migrations:run('current-reference-'+p.stem,reference,p.read_text())
+ catalog="""select coalesce(jsonb_agg(jsonb_build_object('identity',p.oid::regprocedure::text,
+ 'definition',pg_get_functiondef(p.oid),'owner',pg_get_userbyid(p.proowner),
+ 'acl',p.proacl::text,'security_definer',p.prosecdef,'config',p.proconfig)
+ order by p.oid::regprocedure::text),'[]'::jsonb)::text
+ from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public'and p.prokind in('f','p');"""
+ expected=query('current-complete-catalog',catalog)
+ fresh=run('current-reference-complete-catalog',reference,catalog)
+ assert expected==fresh,'Historical media proof changed the final current function catalog'
+ duration=query('final-trial-video-duration',(INPUT/'services/supabase/tests/subscription_trial_video_duration.sql').read_text());assert 'TRIAL_VIDEO_CHECKS 31' in duration;receipt['trialVideoDurationAssertions']=31
+ modern=query('final-modern-transport',(INPUT/'services/supabase/tests/modern_service_transport.sql').read_text());assert 'modern service transport: 7 checks passed' in modern;receipt['modernTransportAssertions']=7
+ assert query('current-complete-catalog-after-checks',catalog)==expected,'Current media checks changed the function catalog'
+ receipt['allCurrentPublicFunctionCatalogExact']=True
+ receipt['allCurrentPublicFunctionCatalogSHA256']=hashlib.sha256(expected.encode()).hexdigest()
+ receipt['currentMigrationCount']=len(migrations)
  receipt['currentByteMatchesCopied']={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest()==hashes[str(p.relative_to(ROOT))]for p in paths}
  receipt.update(passed=True,finishedAt=datetime.now(timezone.utc).isoformat())
 finally:
