@@ -1418,6 +1418,27 @@ jobs:
         run: |
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/property_video_failed_terminal_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-video-failed-terminal-pg"
+      - name: Saved video quality profiles preserve paid identity and admission cutover races
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/property_video_quality_profile_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-video-quality-profile-pg"
+      - name: Ordinary photo quality stays disabled until each task is approved
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/normal_photo_quality_profile_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-normal-photo-quality-pg"
+      - name: Paid quality processing preserves verified billing and finite shared funding
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/paid_quality_processing_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-paid-quality-processing-pg"
       - name: Retain actual background authority and privacy receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1430,6 +1451,9 @@ jobs:
             ${{ runner.temp }}/rendprop-photo-background-pg/**
             ${{ runner.temp }}/rendprop-photo-output-pg/**
             ${{ runner.temp }}/rendprop-video-failed-terminal-pg/**
+            ${{ runner.temp }}/rendprop-video-quality-profile-pg/**
+            ${{ runner.temp }}/rendprop-normal-photo-quality-pg/**
+            ${{ runner.temp }}/rendprop-paid-quality-processing-pg/**
           if-no-files-found: warn
 
   python-worker:
