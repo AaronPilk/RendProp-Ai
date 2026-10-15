@@ -4,6 +4,9 @@ import {beginPhotoRequest,readyPhotoRequest,finishPhotoRequest,validateSavedPhot
 export const PHOTO_RECOVERY_PROTOCOL="retained-operation-v1";
 export function definitivePhotoRefusal(error:unknown):boolean{
  const e=error as {code?:string;status?:number;details?:Record<string,unknown>};
+ // A closed review ends this operation even when it incurred supplier cost.
+ // Releasing the local slot is not a refund and never starts another request.
+ if(e?.code==="photo_quality_closed")return e?.status===422&&e?.details?.operation_closed===true;
  if(e?.details?.provider_cost_incurred===true||e?.details?.provider_cost_incurred==="possible")return false;
  return e?.code==="photo_quality_refused"||e?.details?.no_provider_dispatch===true||[400,402,413,429].includes(e?.status??0)&&!["photo_quality_hold","photo_quality_pending"].includes(e?.code??"");
 }

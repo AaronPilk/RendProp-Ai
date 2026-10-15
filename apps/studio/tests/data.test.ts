@@ -1261,3 +1261,8 @@ test("retained photo transport sends only typed protocol on v2 POST and preserve
  for(const path of["/functions/v1/ai-photo","/functions/v1/ai-photo-v2/status"])await assert.rejects(services.api(path,options));
  await assert.rejects(services.api("/functions/v1/ai-photo-v2",{...options,photoQualityProtocol:"invented"}as any));assert.equal(calls.length,2);services.dispose();
 });
+
+test("typed closed photo review preserves authoritative closure marker and possible cost without claiming a refund",async()=>{
+ const auth=mockAuth();const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url)=>url.pathname==="/functions/v1/ai-photo-v2"?json({error:"This edit is closed. A new edit may use another allowance.",code:"photo_quality_closed",check_id:PHOTO,evidence_id:LISTING,operation_closed:true,retry_existing_job:false,provider_cost_incurred:"possible",untrusted_url:"https://must-not-retain.invalid"},422):fixtureResponse(url))});await services.loadWorkspace();
+ await assert.rejects(services.api("/functions/v1/ai-photo-v2",{orgId:ORG,method:"POST",body:{image_b64:"exact-source",listing_id:LISTING},idempotencyKey:"studio-photo:11111111-1111-4111-8111-111111111111",photoQualityProtocol:"retained-operation-v1"}),(error:unknown)=>{const e=error as StudioError;assert.equal(e.status,422);assert.equal(e.code,"photo_quality_closed");assert.equal(e.details?.operation_closed,true);assert.equal(e.details?.retry_existing_job,false);assert.equal(e.details?.provider_cost_incurred,"possible");assert.equal(e.details?.untrusted_url,undefined);return true;});services.dispose();
+});

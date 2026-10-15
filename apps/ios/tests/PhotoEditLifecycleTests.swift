@@ -144,7 +144,8 @@ struct UNNotificationRequest {
             APIError.server(status: 409, code: "photo_clarification_required", message: "Choose a specific edit."),
             APIError.server(status: 400, code: "unsupported_edit", message: "We can't repaint a listing photo."),
             APIError.server(status: 409, code: "photo_quality_pending", message: "Your edit is saved privately. Check this same saved edit again; no new generation is needed."),
-            APIError.server(status: 409, code: "photo_quality_hold", message: "Your saved edit needs review. Check the saved edit before starting another image.")]
+            APIError.server(status: 409, code: "photo_quality_hold", message: "Your saved edit needs review. Check the saved edit before starting another image."),
+            APIError.server(status: 422, code: "photo_quality_closed", message: "This review is closed. A new explicit edit may use another allowance.")]
         for failure in stoppingFailures {
             reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []
             let refused = PhotoEditService(model: model, listing: listing, process: { photo in

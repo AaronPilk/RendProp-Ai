@@ -33,6 +33,7 @@ export type ErrorCode =
   | "photo_clarification_required"
   | "photo_quality_pending"
   | "photo_quality_hold"
+  | "photo_quality_closed"
   | "photo_quality_refused"
   | "upstream"
   | "internal";

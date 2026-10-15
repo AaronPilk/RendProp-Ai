@@ -257,3 +257,11 @@ test("staging batch forwards Contemporary or an unchanged legacy style exactly",
   await batch.run();assert.equal(batch.choice.style,style);assert.equal(batch.entries[0]?.state,"ready");
  }
 });
+
+test("closed paid review stops remaining batch work and only a new explicit batch may submit again",async()=>{
+ const f=fixture();let calls=0;
+ f.deps.generate=async()=>{calls++;throw new StudioError("photo_quality_closed","The edit is closed and remains private.",422,{operation_closed:true,provider_cost_incurred:"possible"});};
+ const batch=new PhotoBatch(photos(),listingId,choice,f.deps);await batch.run();await batch.run();
+ assert.equal(calls,1);assert.equal(batch.stopRequested,true);assert.deepEqual(batch.entries.map(e=>e.state),["failed","stopped","stopped"]);assert.match(batch.entries[0]!.error!,/may use another allowance/);assert.doesNotMatch(batch.entries[0]!.error!,/No AI edit was started/);
+ const manual=new PhotoBatch(photos(1),listingId,choice,f.deps);await manual.run();assert.equal(calls,2,"Only a separately requested batch starts the second attempt");assert.notEqual(manual.entries[0]!.requestKey,batch.entries[0]!.requestKey);
+});

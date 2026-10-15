@@ -115,10 +115,11 @@ export class PhotoBatch {
           const code = (error as { code?: string })?.code ?? "";
           const refusal = ["photo_clarification_required", "unsupported_edit"].includes(code);
           const qualityWaiting = ["photo_quality_pending", "photo_quality_hold"].includes(code);
+          const qualityClosed = code === "photo_quality_closed";
           entry.state = "failed";
-          entry.error = `${describe(error)}${qualityWaiting ? " This saved edit is retained. The remaining photos were stopped while its review is unresolved." : dispatched && !refusal ? " No automatic retry was made. A request with a lost response may still count against your allowance." : " No AI edit was started for this photo."}`;
+          entry.error = `${describe(error)}${qualityClosed ? " This operation is closed and remains private. Start a new edit only when you choose; it may use another allowance." : qualityWaiting ? " This saved edit is retained. The remaining photos were stopped while its review is unresolved." : dispatched && !refusal ? " No automatic retry was made. A request with a lost response may still count against your allowance." : " No AI edit was started for this photo."}`;
           const status = (error as { status?: number })?.status;
-          if (qualityWaiting || refusal || [401, 402, 403, 429].includes(status ?? 0)) this.stopped = true;
+          if (qualityWaiting || qualityClosed || refusal || [401, 402, 403, 429].includes(status ?? 0)) this.stopped = true;
         }
         this.emit();
       }

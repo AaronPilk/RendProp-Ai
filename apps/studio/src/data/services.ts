@@ -426,9 +426,9 @@ export function createStudioServices(
               if ([400, 402, 409, 413, 422].includes(response.status)) {
                 try {
                   const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown; code?: unknown; [key:string]:unknown };
-                  if (["photo_quality_pending","photo_quality_hold","photo_quality_refused","photo_clarification_required","unsupported_edit"].includes(String(detail.code))) failureCode=String(detail.code);
+                  if (["photo_quality_pending","photo_quality_hold","photo_quality_closed","photo_quality_refused","photo_clarification_required","unsupported_edit"].includes(String(detail.code))) failureCode=String(detail.code);
                   failureDetails=Object.fromEntries(Object.entries(detail).filter(([key,value])=>
-                    ["no_provider_dispatch","retry_existing_job","recovery_protocol_required"].includes(key)&&typeof value==="boolean"
+                    ["no_provider_dispatch","retry_existing_job","recovery_protocol_required","operation_closed"].includes(key)&&typeof value==="boolean"
                     ||key==="provider_cost_incurred"&&(typeof value==="boolean"||value==="possible")
                     ||["check_id","evidence_id"].includes(key)&&typeof value==="string"&&/^[a-f0-9-]{36}$/i.test(value)));
                   if (response.status === 402 && detail.code === "trial_capacity_unavailable") {

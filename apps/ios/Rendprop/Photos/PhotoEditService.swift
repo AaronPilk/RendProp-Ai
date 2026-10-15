@@ -104,12 +104,13 @@ final class PhotoEditService {
         let result: AIPhotoEditResult
         do { result = try await api.aiPhotoEdit(request) }
         catch {
-            // A definite validation/admission refusal bought no edit. A final
-            // quality refusal is retained by the server; the next explicit
-            // user edit may be a different paid attempt. Unknown/pending/held
-            // answers keep the exact operation for a manual status check.
+            // A definite admission refusal or final private review releases
+            // only the local request slot. A closed review may already cost an
+            // allowance; only the next explicit user edit starts a new attempt.
+            // Unknown/pending/active holds keep the exact saved operation.
             if let failure = error as? APIError,
-               failure.isValidation || failure.isQuota || failure.code == "photo_quality_refused",
+               failure.isValidation || failure.isQuota || failure.code == "photo_quality_refused"
+                    || (failure.status == 422 && failure.code == "photo_quality_closed"),
                let pending { try? PhotoPendingEdit.finish(pending) }
             throw error
         }
@@ -165,7 +166,7 @@ final class PhotoEditService {
                 let failure = AIFailure(error)
                 // A busy or held saved review keeps its exact paid request.
                 // Stop unsent photos instead of buying more pending edits.
-                let savedReview = ["photo_quality_pending", "photo_quality_hold"].contains((error as? APIError)?.code ?? "")
+                let savedReview = ["photo_quality_pending", "photo_quality_hold", "photo_quality_closed"].contains((error as? APIError)?.code ?? "")
                 // A refused or unreachable generation service fails every photo
                 // the same way; stop instead of uploading N more to fail N times.
                 return savedReview || failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable || failure.isTrialCapacityUnavailable

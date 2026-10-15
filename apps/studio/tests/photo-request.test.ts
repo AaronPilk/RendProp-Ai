@@ -13,3 +13,15 @@ test("photo recovery scope binds canonical actor/library/property without adopti
  for(const key of["actor","library","listing"]as const)assert.notEqual(photoRequestScope({...scope,[key]:id(4)}),photoRequestScope(scope));
  assert.throws(()=>photoRequestScope({...scope,actor:""}));
 });
+
+test("only authoritative closed422 may release a paid HOLD; active/unknown and marker mismatches remain retained",()=>{
+ for(const cost of[true,"possible",false])assert.equal(definitivePhotoRefusal(new StudioError("photo_quality_closed","Closed; another edit may use allowance",422,{operation_closed:true,provider_cost_incurred:cost})),true);
+ for(const error of[
+  new StudioError("photo_quality_closed","Wrong status",409,{operation_closed:true}),
+  new StudioError("photo_quality_closed","Missing marker",422),
+  new StudioError("photo_quality_closed","Not closed",422,{operation_closed:false,no_provider_dispatch:true}),
+  new StudioError("photo_quality_hold","Still checking",409,{operation_closed:true,provider_cost_incurred:"possible"}),
+  new StudioError("photo_quality_pending","Still pending",409,{provider_cost_incurred:true}),
+  new StudioError("request-failed","Unknown network",503,{operation_closed:true}),
+ ])assert.equal(definitivePhotoRefusal(error),false);
+});

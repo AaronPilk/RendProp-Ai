@@ -23,7 +23,7 @@ export interface PhotoEvidence {
  state:string;provenance_id:string|null;generation_stage:string|null;generation_provider:string|null;generation_model:string|null;
  failure?:{phase?:string;facts?:Record<string,unknown>}|null;
 }
-export interface PhotoQualityCheck {id:string;evidence_id:string;policy:string;state:string;lease_token:string|null;lease_until:string|null;judge_started_at:string|null;derivatives:PhotoDerivative[]|null;derivative_manifest_sha256:string|null;result?:unknown}
+export interface PhotoQualityCheck {id:string;evidence_id:string;policy:string;state:string;lease_token:string|null;lease_until:string|null;judge_started_at:string|null;finished_at?:string|null;derivatives:PhotoDerivative[]|null;derivative_manifest_sha256:string|null;result?:unknown}
 export interface PhotoDerivative extends PhotoEvidenceFile {role:"source"|"candidate";region:"whole"|"tl"|"tr"|"bl"|"br";etag:string}
 export interface PhotoQualityEnvelope {evidence:PhotoEvidence;check:PhotoQualityCheck;can_continue:boolean;created?:boolean}
 export const photoUUID=(v:unknown):v is string=>typeof v==="string"&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(v);
@@ -110,6 +110,11 @@ export async function failPhotoQuality(admin:PhotoAdmin,row:PhotoQualityEnvelope
 export function photoQualityIdentity(row:PhotoQualityEnvelope,selected:string):Record<string,unknown>{const e=row.evidence;return{check_id:row.check.id,evidence_id:e.id,org_id:e.org_id,selected_library_org_id:selected,listing_id:e.listing_id,generation_request_key:e.request_key};}
 export function throwPhotoQualityState(row:PhotoQualityEnvelope,selected:string):never{
  const state=row.check.state,failure=row.evidence.failure,cost=failure?.facts?.provider_cost_incurred,details={...photoQualityIdentity(row,selected),photo_quality:{policy:row.evidence.policy,check_id:row.check.id,state},retry_existing_job:true,...(failure?.phase?{failure_phase:failure.phase}:{}),...(typeof cost==="boolean"||cost==="possible"?{provider_cost_incurred:cost,retained_output:failure?.facts?.retained_output===true}:{})};
+ // A terminal HOLD is immutable, but must not lock the source's local edit
+ // slot forever. Active/unknown/inconsistent rows keep their same operation.
+ const finished=row.check.finished_at;
+ if(state==="hold"&&row.evidence.state==="hold"&&typeof finished==="string"&&Number.isFinite(Date.parse(finished)))
+  throw new HttpError(422,"This edit could not be confirmed and remains private. Your original is unchanged. You can start a new edit; it may use another edit from your allowance.","photo_quality_closed",{...details,operation_closed:true,retry_existing_job:false});
  if(state==="refuse")throw new HttpError(422,"This edit changed fixed property features or failed the photo quality review. The original is unchanged; the generated edit remains private.","photo_quality_refused",details);
  if(state==="hold"||state==="checking"&&row.check.judge_started_at!==null)throw new HttpError(409,failure?.phase==="photo_output_size"?"The generated photo exceeded the safe 9 MB output limit and could not be saved. This generation was already processed. The original is unchanged; no additional edit was started.":failure?.phase==="photo_provider_wire_size"?"The supplier response exceeded the safe transfer limit and could not be confirmed. This operation remains under review; no additional edit was started.":"The saved photo operation needs review before its edit can be used. No new edit or repeat quality check was started.","photo_quality_hold",details);
  throw new HttpError(409,"The edit is saved privately while its photo quality review is pending. Check this saved edit again; no new generation is needed.","photo_quality_pending",details);
