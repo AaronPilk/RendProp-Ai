@@ -64,7 +64,9 @@ struct AIPhotoEditResult {
         let photo = String(data: Data(base64Encoded: request.imageBase64)!, encoding: .utf8)!
         PhotoBoundary.calls.append(photo)
         await PhotoBoundary.suspend("provider", photo)
-        return .init(imageBase64: Data((photo + ".edited").utf8).base64EncodedString())
+        // Image decoding is doubled here; retain the real service's explicit
+        // JPEG-header classification before its closed storage boundary.
+        return .init(imageBase64: (Data([0xff, 0xd8, 0xff]) + Data((photo + ".edited").utf8)).base64EncodedString())
     }
 }
 struct NotificationPrefs { var enabled = true; var renders = true }
@@ -94,11 +96,25 @@ protocol NotificationPrefsAPI { func notificationPrefs() async throws -> Notific
 }
 @MainActor enum WorkspaceContext { static var selectedOrgID: UUID? = UUID() }
 @MainActor enum AIImagePrep {
-    static func jpegBase64(at url: URL, maxDimension: Int, quality: Double) async -> String? {
+    static func jpegBase64(at url: URL, maxDimension: Int, quality: Double, maxBytes: Int? = nil) async -> String? {
+        precondition(maxBytes == nil || maxBytes! > 0 && maxBytes! <= 1_000_000)
         await PhotoBoundary.suspend("image", url.lastPathComponent)
         return Data(url.lastPathComponent.utf8).base64EncodedString()
     }
     nonisolated static func error(_ message: String) -> Error { NSError(domain: "synthetic-photo", code: 1) }
+}
+// Durable disk storage is outside this consent/queue fixture. The production
+// journal has its own real-file/HTTP recovery controls; never replace the
+// actual service's grant checks or asynchronous provider boundaries here.
+@MainActor enum PhotoPendingEdit {
+    struct Identity { let actor: String; let library: UUID; let listing: UUID; let sourceVersion: String }
+    struct Saved { let request: AIPhotoEditRequest }
+    static func begin(_ request: AIPhotoEditRequest, identity: Identity, directory: URL) throws -> Saved {
+        var retained = request
+        retained.idempotencyKey = request.idempotencyKey ?? UUID().uuidString
+        return Saved(request: retained)
+    }
+    static func finish(_ saved: Saved) throws {}
 }
 struct UIImage {
     private let data: Data
@@ -142,8 +158,10 @@ __ACTUAL_EDIT_CONTEXT__
     static func saveEdit(jpeg: Data, id: String, parentID: String, sourceID: String, edit: String, style: String?,
                          disclosure: String, provenanceID: String?, provenanceRecorded: Bool, directory: URL,
                          originalAssetID: String?, serverListingID: String?,
-                         stagingReferenceID: String? = nil, stagingBrief: String? = nil) throws -> Version {
-        PhotoBoundary.saved.append(String(data: jpeg, encoding: .utf8)!)
+                         stagingReferenceID: String? = nil, stagingBrief: String? = nil,
+                         imageExtension: String = "jpg") throws -> Version {
+        precondition(imageExtension == "jpg" && jpeg.starts(with: [0xff, 0xd8, 0xff]))
+        PhotoBoundary.saved.append(String(data: jpeg.dropFirst(3), encoding: .utf8)!)
         return .init(id: id, imageFile: id + ".jpg", originalFile: parentID + ".jpg", effects: [edit])
     }
 }
