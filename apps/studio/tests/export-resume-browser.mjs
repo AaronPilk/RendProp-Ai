@@ -59,13 +59,36 @@ fixture.requestExportFrame=callback=>{
 };
 const NativeRecorder=MediaRecorder;
 function log(event,extra={}){fixture.trace.push({event,at:performance.now(),...extra});}
+// Read-only diagnostics: no extra timers, clock substitution or audio resume.
+// Keep only the preceding read/wait; the existing trace retains each snapshot.
+fixture.clockDiagnostics=(index,audio,phase)=>{
+  const at=performance.now(),previous=fixture.previousClockRead;
+  let outputTimestamp=null,outputTimestampUnavailable=false;
+  try{
+    const value=audio?.getOutputTimestamp?.();
+    if(value&&Number.isFinite(value.contextTime)&&Number.isFinite(value.performanceTime))
+      outputTimestamp={contextTime:value.contextTime,performanceTime:value.performanceTime};
+  }catch{outputTimestampUnavailable=true;}
+  const result={audioState:audio?.state??null,sampleRate:audio?.sampleRate??null,
+    baseLatency:audio?.baseLatency??null,outputLatency:audio?.outputLatency??null,
+    outputTimestamp,outputTimestampUnavailable,visibilityState:document.visibilityState,
+    interReadMs:phase==="read"&&previous?.index===index?at-previous.at:null,
+    frameWaitElapsedMs:phase==="read"&&fixture.clockWait?.index===index?at-fixture.clockWait.at:null,
+    remainingAtWaitMs:phase==="read"&&fixture.clockWait?.index===index?fixture.clockWait.remainingMs:null};
+  if(phase==="start")fixture.previousClockRead=undefined;
+  if(phase==="read")fixture.previousClockRead={index,at};
+  return result;
+};
+fixture.observeClockWait=(index,remainingMs)=>{fixture.clockWait={index,remainingMs,at:performance.now()};};
 fixture.originalAudioLoss=(audio,audioStart,media,mediaStart,rate,info)=>{
   const loss=audio-audioStart-Math.max(0,media-mediaStart)/rate;
   log("original.audio.loss",{...info,audio,audioStart,media,mediaStart,rate,loss});
   return loss;
 };
 const NativeAudioContext=AudioContext;
-window.AudioContext=class extends NativeAudioContext {constructor(...args){super(...args);fixture.audio=this;}};
+window.AudioContext=class extends NativeAudioContext {constructor(...args){super(...args);fixture.audio=this;
+  this.addEventListener("statechange",()=>{if(fixture.exporting)log("audio.statechange",{state:this.state,visibilityState:document.visibilityState});});
+}};
 // The exporter uses detached video elements, so observe them directly without
 // retiming events, from the moment the export decoder creates them so that
 // readiness before playback and the element state at each event are retained.
@@ -100,7 +123,7 @@ HTMLMediaElement.prototype.play=function(...args){observeVideo(this);fixture.pla
 document.querySelector("#sources").onchange=async event=>{fixture.ready=false;try{sources=[];for(const file of event.target.files)sources.push(await inspectFile(file,new AbortController().signal));fixture.ready=true;}catch(error){fixture.error=error.message;}};
 document.querySelector("#voice").onchange=event=>{voice=event.target.files[0];};
 document.querySelector("#run").onclick=async()=>{
-  fixture.error=null;fixture.errorName=null;fixture.errorCause=null;fixture.result=null;fixture.trace=[];fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
+  fixture.error=null;fixture.errorName=null;fixture.errorCause=null;fixture.result=null;fixture.trace=[];fixture.previousClockRead=undefined;fixture.clockWait=undefined;fixture.resources=[];fixture.tracks=[];fixture.exporting=true;fixture.revision=1;decodeIndex=0;exportController=new AbortController();document.querySelector("#download").hidden=true;
   if(url)URL.revokeObjectURL(url);
   try{
     const draft=validateDraft({schema:1,id:"resume-regression",revision:1,ratio:"9:16",title:"",audio:"original",clips:sources.map((local,index)=>({id:"clip-"+index,source:local.source,start:0,end:index===1?4:.5,speed:index===1?2:1,caption:"",focusX:.5,focusY:.5,transition:index===1?"dissolve":index===2?"whip":"cut"})),...(narrated?{narration:{resultId:"10000000-0000-4000-8000-000000000001",label:"Synthetic narration",offset:.15,volume:1,wordCaptions:false,words:[]}}:{})});
@@ -147,8 +170,11 @@ document.querySelector("#run").onclick=async()=>{
     assert.equal(code.split(refusal).length - 1, 1, "Identify only the original-audio refusal call site");
     code = code.replace(audioLoss, "(window as any).fixture.originalAudioLoss(audio.currentTime, mediaClockStart, video.currentTime, mediaTimeStart, (clip.speed ?? 1), {index, elapsed, duration, ended:video.ended, limit:MAX_ORIGINAL_AUDIO_LOSS_SECONDS})")
       .replace(refusal, '            (window as any).fixture.trace.push({event:"original.audio.refusal",kind:"original_audio_stall",at:performance.now()});\n' + refusal);
-    return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index}); if(index===1 && (window as any).fixture.interruptAudio) setTimeout(()=>{const sound=(window as any).fixture.audio; sound.suspend().then(()=>setTimeout(()=>{if(sound.state!=="closed")sound.resume();},180));},250);')
-      .replace('recordingClock.read((now - start)', '(window as any).fixture.trace.push({event:"clip.clock.read",at:performance.now(),index,wall:(now-start)/1000,timeline:elapsed,audio:audio?.currentTime,media:video?.currentTime}); recordingClock.read((now - start)')
+    const clockWait = "const now = await nextExportFrame(renderSignal, (duration - elapsedAtWait) * 1000);";
+    assert.equal(code.split(clockWait).length - 1, 1, "Observe only the existing export-frame wait without changing it");
+    return code.replace(seam, seam + ' (window as any).fixture.frameClipIsPhoto = !video; (window as any).fixture.frameClipIndex = index; (window as any).fixture.trace.push({event:"clip.clock.start",at:start,index,diagnostics:(window as any).fixture.clockDiagnostics(index,audio,"start")}); if(index===1 && (window as any).fixture.interruptAudio) setTimeout(()=>{const sound=(window as any).fixture.audio; sound.suspend().then(()=>setTimeout(()=>{if(sound.state!=="closed")sound.resume();},180));},250);')
+      .replace(clockWait, '(window as any).fixture.observeClockWait(index, (duration - elapsedAtWait) * 1000); ' + clockWait)
+      .replace('recordingClock.read((now - start)', '(window as any).fixture.trace.push({event:"clip.clock.read",at:performance.now(),index,wall:(now-start)/1000,timeline:elapsed,audio:audio?.currentTime,media:video?.currentTime,diagnostics:(window as any).fixture.clockDiagnostics(index,audio,"read")}); recordingClock.read((now - start)')
       .replace(schedule, "const frame = (window as any).fixture.requestExportFrame(done);");
   } };
   const oldFrameClockPlugin = { name: "negative-control-animation-only-clock", enforce: "pre", transform(code, id) {
