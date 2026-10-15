@@ -2,7 +2,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from "https://deno.
 import { parseReelFraming, reelStepPreservesPhoto, reelFramingSteps, buildPhotoPreservingReelPrompt } from "./reel-framing.ts";
 import { HttpError } from "../_shared/http.ts";
 import { ProviderError } from "../_shared/providers/common.ts";
-import { falInput } from "../_shared/providers/fal.ts";
+import { falInput, falAdapter, FAL_OBJECT_LIFECYCLE_HEADER, FAL_OBJECT_LIFECYCLE_VALUE } from "../_shared/providers/fal.ts";
 import { kieAdapter } from "../_shared/providers/kie.ts";
 import { submitReservedVideo } from "./cost-reservation.ts";
 import type { RouteStep } from "../_shared/router.ts";
@@ -75,6 +75,8 @@ function funded(){
   }};
 }
 const options={actorId:"closed-actor",orgId:"closed-org",key:"closed-kling-key",feature:"reel" as const,steps:[step],seconds:5,input,listingId:"closed-listing",allowance:{monthlyWindowStart:"2026-10-12T00:00:00Z",burstWindowStart:"2026-10-12T23:00:00Z"}};
+const fal4K:RouteStep={...step,route_id:"closed-owner-fal-kling4k",provider:"fal",model:"fal-ai/kling-video/v3/4k/image-to-video",unit_cents:42,privacy_tier:"retained_30d"};
+const fal4KInput:GenerateInput={...input,extra:undefined};
 Deno.test("actual Kling admission reserves45 cents in both authorities before exactly one submit and settles owned receipt",async()=>{
   const f=funded();await submitReservedVideo(options,f.deps);assertEquals(f.posts(),1);
   assertEquals(f.calls.filter(x=>x.name.endsWith("reserve")||x.name.endsWith("reserve_v2")).map(x=>({name:x.name,cents:x.args.p_hold_cents})),[{name:"app_video_cost_reserve_v2",cents:45},{name:"serving_cost_reserve",cents:45}]);
@@ -129,4 +131,50 @@ Deno.test("actual FAL Seedance preserves both legacy aspects and sends source-au
 Deno.test("server background targetcanvas reaches actualKlingPro andFAL1080 schemas, old native remains sourceauto",async()=>{
  for(const aspect of['16:9','9:16']as const){const targeted={...input,aspect,extra:{...input.extra,property_video_target_aspect:aspect}};const r=await capturedSubmit(kieAdapter,step,targeted);assertEquals(r.calls[0].body.input.aspect_ratio,aspect);assertEquals(r.calls[0].body.input.mode,'pro');assertEquals(r.calls[0].body.input.duration,'5');assertEquals(r.calls[0].body.input.image_urls,[input.image_url]);const f=falInput({...step,provider:'fal',model:'bytedance/seedance/v1/pro/fast/image-to-video'},targeted);assertEquals(f.aspect_ratio,aspect);assertEquals(f.resolution,'1080p');assertEquals(f.image_url,input.image_url);assertEquals(f.duration,'5');}
  const legacy=falInput({...step,provider:'fal',model:'bytedance/seedance/v1/pro/fast/image-to-video'},input);assertEquals(legacy.aspect_ratio,'auto');assertThrows(()=>falInput({...step,provider:'fal',model:'bytedance/seedance/v1/pro/fast/image-to-video'},{...input,extra:{property_video_target_aspect:'16:9'}}),ProviderError);await assertRejects(()=>capturedSubmit(kieAdapter,step,{...input,extra:{...input.extra,property_video_target_aspect:'16:9'}}),ProviderError);
+});
+
+Deno.test("FAL native4K builds the exact silent five-second source-aspect wire for both destination canvases",async()=>{
+ const previousFetch=globalThis.fetch,previousKey=Deno.env.get("FAL_KEY");Deno.env.set("FAL_KEY","offline-fal-fixture-key");
+ const requests:{url:string;body:unknown;lifecycle:string|null}[]=[];
+ globalThis.fetch=((url:string|URL|Request,init?:RequestInit)=>{
+  requests.push({url:String(url),body:JSON.parse(String(init?.body)),lifecycle:new Headers(init?.headers).get(FAL_OBJECT_LIFECYCLE_HEADER)});
+  return Promise.resolve(new Response(JSON.stringify({request_id:"owned-fal4k-request",status_url:"https://queue.fal.run/fal-ai/kling-video/requests/owned-fal4k-request/status",response_url:"https://queue.fal.run/fal-ai/kling-video/requests/owned-fal4k-request"}),{headers:{"content-type":"application/json"}}));
+ })as typeof fetch;
+ try{
+  assert(reelStepPreservesPhoto(fal4K));
+  for(const aspect of["16:9","9:16"]as const)for(const image_url of[input.image_url!,"data:image/jpeg;base64,c2FtZS1vd25lZC1waG90bw=="]){
+   const value={...fal4KInput,aspect,image_url,extra:{property_video_target_aspect:aspect}};
+   const job=await falAdapter.submit(fal4K,value);
+   assertEquals([job.provider,job.model,job.id],["fal",fal4K.model,"owned-fal4k-request"]);
+   assertEquals(requests.at(-1),{url:"https://queue.fal.run/fal-ai/kling-video/v3/4k/image-to-video",body:{prompt:value.prompt,start_image_url:image_url,duration:"5",generate_audio:false},lifecycle:FAL_OBJECT_LIFECYCLE_VALUE});
+  }
+  assertEquals(requests.length,4,"One POST per validated request, no API fallback or extra upload");
+ }finally{globalThis.fetch=previousFetch;previousKey===undefined?Deno.env.delete("FAL_KEY"):Deno.env.set("FAL_KEY",previousKey);}
+});
+
+Deno.test("FAL native4K refuses unsupported task, framing, duration, resolution, source and mismatched target before HTTP",async()=>{
+ const previousFetch=globalThis.fetch;let posts=0;globalThis.fetch=(()=>{posts++;throw Error("No provider call permitted");})as typeof fetch;
+ try{
+  for(const change of[{task:"video.aerial"},{framing:undefined},{seconds:6},{seconds:4.99},{resolution:"720p"},{aspect:"1:1"},{image_url:undefined},{image_url:"file:///private/photo.jpg"},{image_url:"data:text/plain;base64,YWJj"},{extra:{property_video_target_aspect:"16:9"}}]as Partial<GenerateInput>[])
+   await assertRejects(()=>falAdapter.submit(fal4K,{...fal4KInput,...change}),ProviderError);
+  for(const model of["fal-ai/kling-video/v3/pro/image-to-video","fal-ai/kling-video/o3/4k/image-to-video","arbitrary/kling-video/v3/4k/image-to-video"]){
+   assert(!reelStepPreservesPhoto({...fal4K,model}));await assertRejects(()=>falAdapter.submit({...fal4K,model},fal4KInput),ProviderError);
+  }
+  assertEquals(posts,0);
+ }finally{globalThis.fetch=previousFetch;}
+});
+
+Deno.test("FAL native4K reserves exactly210c in both funding authorities before one submit; no sponsorship or underpriced Pro quote",async()=>{
+ const f=funded();await submitReservedVideo({...options,steps:[fal4K],input:fal4KInput},f.deps);
+ assertEquals(f.posts(),1);
+ assertEquals(f.calls.filter(x=>x.name.endsWith("reserve")||x.name.endsWith("reserve_v2")).map(x=>({name:x.name,hold:x.args.p_hold_cents,provider:x.args.p_provider,model:x.args.p_model})),[
+  {name:"app_video_cost_reserve_v2",hold:210,provider:"fal",model:fal4K.model},{name:"serving_cost_reserve",hold:210,provider:"fal",model:fal4K.model}]);
+ assertEquals(f.calls.at(-1)?.name,"app_video_cost_settle");
+ for(const [route,value]of [[{...fal4K,unit_cents:14},fal4KInput],[{...fal4K,model:"fal-ai/kling-video/v3/pro/image-to-video"},fal4KInput],[fal4K,{...fal4KInput,framing:undefined}],[fal4K,{...fal4KInput,seconds:6}],[fal4K,{...fal4KInput,resolution:"720p"}]]as const){
+  const refused=funded();await assertRejects(()=>submitReservedVideo({...options,steps:[route],input:value},refused.deps));assertEquals(refused.posts(),0);assert(!refused.calls.some(x=>x.name==="serving_cost_reserve"));
+ }
+ const source=await Deno.readTextFile(new URL("./cost-reservation.ts",import.meta.url)),needle='quote = {cents: Math.max(hold, 210),version:TARIFF_VERSION};';assertEquals(source.split(needle).length,2);
+ const mutant=await import(encode(imports(source.replace(needle,'quote = {cents: 45,version:TARIFF_VERSION};'),"./cost-reservation.ts")));
+ const wrong=funded();await mutant.submitReservedVideo({...options,steps:[fal4K],input:fal4KInput},wrong.deps);
+ assertEquals(wrong.calls.find(x=>x.name==="serving_cost_reserve")?.args.p_hold_cents,45,"Independent oracle detects a compiled underfunded4K serving hold");
 });

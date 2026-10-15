@@ -102,6 +102,13 @@ export async function submitReservedVideo<T extends { id: string }>(
     quote = {cents: Math.max(hold, (options.seconds ?? 0) * 16),version:TARIFF_VERSION};
   } else if (step.provider === "fal" && model === "bytedance/seedance/v1/pro/fast/image-to-video" && Number.isInteger(input.seconds) && input.seconds! >= 2 && input.seconds! <= 12 && ["16:9","9:16","1:1"].includes(input.aspect ?? "16:9")) {
     quote = {cents: Math.max(hold, 1920 * 1080 * (input.seconds! * 24 + 1) / 1024 / 10000),version:TARIFF_VERSION};
+  } else if (step.provider === "fal" && model === "kling-video/v3/4k/image-to-video" &&
+      input.seconds === 5 && input.resolution === "1080p" && input.framing === "preserve_photo" &&
+      ["16:9", "9:16"].includes(String(input.aspect)) && unitCents === 42 && step.unit === "second") {
+    // Native4K endpoint:42¢/s, with/without audio. Closed adapter sends silent5s.
+    // Delivery1080 is independently probed; a Pro/other slug cannot use this.
+    // https://fal.ai/models/fal-ai/kling-video/v3/4k/image-to-video
+    quote = {cents: Math.max(hold, 210),version:TARIFF_VERSION};
   } else if (step.provider === "fal" && ["veo3.1/fast/image-to-video","veo3.1/fast"].includes(model) && Number.isInteger(input.seconds) && [4,6,8].includes(input.seconds!)) {
     quote = {cents: Math.max(hold, input.seconds! * (input.resolution === "4k" ? 30 : 10)),version:TARIFF_VERSION};
   } else if (step.provider === "fal" && model === "minimax/hailuo-02/standard/image-to-video" && Number.isInteger(input.seconds) && input.seconds! >= 1 && input.seconds! <= 6) {

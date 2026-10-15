@@ -106,12 +106,24 @@ const secondsOf = (input: GenerateInput, dflt: number) => {
 export function falInput(step: RouteStep, input: GenerateInput): Record<string, unknown> {
   const model = falEndpoint(step.model);
   const extra = input.extra ?? {};
+  const kling4K = model === "fal-ai/kling-video/v3/4k/image-to-video";
   if (input.framing === "preserve_photo" && (input.task !== "video.reel_clip" ||
-      !model.endsWith("bytedance/seedance/v1/pro/fast/image-to-video"))) {
+      (!model.endsWith("bytedance/seedance/v1/pro/fast/image-to-video") && !kling4K))) {
     throw new ProviderError(PROVIDER, "validation", "This model cannot preserve photo framing.", 400, true);
   }
 
   if(extra.property_video_target_aspect!==undefined&&(!['16:9','9:16'].includes(String(extra.property_video_target_aspect))||extra.property_video_target_aspect!==input.aspect))throw new ProviderError(PROVIDER,'validation','The server property-video target canvas changed.',400,true);
+  if (kling4K) {
+    // Exact native4K endpoint. I2V inherits source aspect; do not outpaint or
+    // pretend an ignored aspect field supplies real destination pixels.
+    // https://fal.ai/models/fal-ai/kling-video/v3/4k/image-to-video/api
+    if (input.task !== "video.reel_clip" || input.seconds !== 5 || input.resolution !== "1080p" ||
+        input.framing !== "preserve_photo" || !["16:9", "9:16"].includes(String(input.aspect)) ||
+        typeof input.image_url !== "string" || !/^(https:\/\/|data:image\/(jpeg|png|webp);base64,)/.test(input.image_url)) {
+      throw new ProviderError(PROVIDER, "validation", "Kling4K comparison requires a priced five-second silent photo-preserving shot.", 400, true);
+    }
+    return { prompt: input.prompt, start_image_url: input.image_url, duration: "5", generate_audio: false };
+  }
   // Seedance 1.0 Pro Fast image-to-video — the reel and the grounded aerial.
   if (model.endsWith("bytedance/seedance/v1/pro/fast/image-to-video")) {
     if (input.task === "video.aerial") {

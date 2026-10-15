@@ -13,7 +13,7 @@ export function parseReelFraming(value: unknown): "preserve_photo" | undefined {
 
 export function reelStepPreservesPhoto(step: RouteStep): boolean {
   const model = step.model.replace(/^fal-ai\//, "");
-  return (step.provider === "fal" && model === "bytedance/seedance/v1/pro/fast/image-to-video") ||
+  return (step.provider === "fal" && ["bytedance/seedance/v1/pro/fast/image-to-video", "kling-video/v3/4k/image-to-video"].includes(model)) ||
     (step.provider === "kie" && model === "kling-3.0/video");
 }
 

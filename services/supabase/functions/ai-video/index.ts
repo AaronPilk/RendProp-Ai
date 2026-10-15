@@ -1599,7 +1599,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
           try {
             if(worker)await worker.authorize();
             const providerInput = ownerQaStep ? await prepareOwnerQaReelInput(
-              { actorId: user.id, orgId, listingId: String(body.listing_id ?? reelListingId) }, genInput, {
+              { actorId: user.id, orgId, listingId: String(body.listing_id ?? reelListingId), provider: step.provider === "fal" ? "fal" : "kie" }, genInput, {
                 authorize: async () => {
                   const liveOrg = await contentOrgForUser(user.id, orgId, body.listing_id ?? reelListingId ?? undefined, true);
                   const live = await ownerQaReelStep({ actorId: user.id, orgId: liveOrg,

@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { HttpError } from "../_shared/http.ts";
 import { paramsOf, type RouteStep } from "../_shared/router.ts";
-import { ownerQaReelStep, prepareOwnerQaReelInput, OWNER_REEL_QA_KEY, KIE_REEL_QA_MODEL, OWNER_REEL_QA_CONSENT, KIE_KLING_REEL_QA_MODEL } from "./owner-reel-qa.ts";
+import { ownerQaReelStep, prepareOwnerQaReelInput, OWNER_REEL_QA_KEY, KIE_REEL_QA_MODEL, OWNER_REEL_QA_CONSENT, KIE_KLING_REEL_QA_MODEL, FAL_KLING_4K_REEL_QA_MODEL, OWNER_FAL_REEL_QA_CONSENT } from "./owner-reel-qa.ts";
 import { ProviderError } from "../_shared/providers/common.ts";
 import type { GenerateInput } from "../_shared/providers/types.ts";
 import { submitReservedVideo } from "./cost-reservation.ts";
@@ -200,9 +200,9 @@ Deno.test("compiled owner QA controls expose removal of identity, admin, consent
     ["actor", "canonicalUuid(grant.actor_id) !== actorId", "false", { value: { ...grant, actor_id: OTHER } }, args],
     ["org", "canonicalUuid(grant.org_id) !== orgId", "false", { value: { ...grant, org_id: OTHER } }, args],
     ["listing", "canonicalUuid(grant.listing_id) !== listingId", "false", { value: { ...grant, listing_id: OTHER } }, args],
-    ["provider", 'grant.provider !== "kie"', "false", { value: { ...grant, provider: "unapproved" } }, args],
-    ["model", "grant.model !== KIE_REEL_QA_MODEL", "false", { value: { ...grant, model: "unapproved" } }, args],
-    ["consent", "grant.consent !== OWNER_REEL_QA_CONSENT", "false", { value: { ...grant, consent: null } }, args],
+    ["provider", 'grant.provider === "kie"', "true", { value: { ...grant, provider: "unapproved" } }, args],
+    ["model", "grant.model === KIE_REEL_QA_MODEL", "true", { value: { ...grant, model: "unapproved" } }, args],
+    ["consent", "grant.consent !== (falKling ? OWNER_FAL_REEL_QA_CONSENT : OWNER_REEL_QA_CONSENT)", "false", { value: { ...grant, consent: null } }, args],
     ["changed_by", "canonicalUuid(grant.changed_by) !== actorId", "false", { value: { ...grant, changed_by: OTHER } }, args],
     ["expiry", "end <= clock", "false", { value: { ...grant, expires_at: NOW.toISOString() } }, args],
     ["window", "end - start > MAX_QA_WINDOW_MS", "false", { value: { ...grant, created_at: "2026-10-11T19:00:00.000Z" } }, args],
@@ -334,7 +334,7 @@ async function providerCallbackFixture() {
       const events:any[]=[],user={id:${JSON.stringify(ACTOR)}},orgId=${JSON.stringify(ORG)};
       const body={listing_id:${JSON.stringify(LISTING)}},reelListingId=null,secs=5;
       const genInput=input,framing=input.framing,R2_BUCKET_RENDERS="renders",ownerQaStep=options.normal?null:{};
-      const step={provider:options.normal?"fal":"kie",model:options.normal?"normal-model":${JSON.stringify(KIE_REEL_QA_MODEL)}};
+      const step={provider:options.normal||options.fal4K?"fal":"kie",model:options.normal?"normal-model":options.fal4K?${JSON.stringify(FAL_KLING_4K_REEL_QA_MODEL)}:${JSON.stringify(KIE_REEL_QA_MODEL)}};
       const contentOrgForUser=async(actor:any,org:any,listing:any,write:any)=>{events.push({kind:"content_auth",actor,org,listing,write});if(options.revokedAccess)throw Error("content access revoked");return org;};
       const ownerQaReelStep=async(args:any)=>{events.push({kind:"grant_auth",args});return await realOwnerQaReelStep(args,database,now);};
       const adminClient=()=>({rpc:async(name:any,args:any)=>{events.push({kind:"inventory",name,args});return {data:{ok:!options.inventoryError,key:options.inventoryWrongKey?"wrong-key":args.p_key},error:options.inventoryError?{}:null};}});
@@ -431,4 +431,66 @@ Deno.test("actual routing rejects incompatible photo-preservation before supplie
   const paid=source.indexOf("await submitReservedVideo({",admission);
   assert(route<validation && validation<admission && source.indexOf("reelFramingSteps(candidateSteps, framing)",admission)<paid);
   assert(source.slice(admission,paid).includes("await refundGenerateCharge(charge)"));
+});
+
+Deno.test("FAL native4K selection needs its exact separate current owner grant; old Kie and ordinary routes remain distinct",async()=>{
+ const value={...grant,provider:"fal",model:FAL_KLING_4K_REEL_QA_MODEL,mode:"4K",sound:false,consent:OWNER_FAL_REEL_QA_CONSENT};
+ const framed={...args,framing:"preserve_photo" as const};
+ const route=await ownerQaReelStep(framed,db({value}).client,NOW);assert(route);
+ assertEquals([route.provider,route.model,route.unit_cents,route.route_id,route.privacy_tier,route.same_model_as],
+  ["fal",FAL_KLING_4K_REEL_QA_MODEL,42,"owner-qa-fal-kling3-4k-20261015","retained_30d","kling_3_pro"]);
+ assertEquals(route.capabilities,["i2v","1080p","5s"]);
+ for(const change of [{provider:"kie"},{model:"fal-ai/kling-video/v3/pro/image-to-video"},{mode:"pro"},{mode:"4k"},{sound:true},{sound:null},{consent:OWNER_REEL_QA_CONSENT},{actor_id:OTHER},{org_id:OTHER},{listing_id:OTHER},{changed_by:OTHER},{expires_at:NOW.toISOString()}])
+  assertEquals(await ownerQaReelStep(framed,db({value:{...value,...change}}).client,NOW),null,JSON.stringify(change));
+ assertEquals(await ownerQaReelStep(args,db({value}).client,NOW),null,"Old unframed clients cannot select this route");
+ assertEquals(await ownerQaReelStep(framed,db({value,admin:false}).client,NOW),null);
+ const run=await routingFixture();
+ const selected=await run({body:{framing:"preserve_photo",provider:"kie",model:KIE_KLING_REEL_QA_MODEL}},db({value}).client,NOW);
+ assertEquals(selected.steps.map(x=>[x.provider,x.model,x.unit_cents]),[["fal",FAL_KLING_4K_REEL_QA_MODEL,42]]);
+ const normal=await run({body:{framing:"preserve_photo",provider:"fal",model:FAL_KLING_4K_REEL_QA_MODEL}},db({value,admin:false}).client,NOW);
+ assertEquals(normal.steps.map(x=>x.model),["bytedance/seedance/v1/pro/fast/image-to-video"],"Request-body model claims do not select the canary");
+ const prior=await ownerQaReelStep(framed,db({value:{...grant,model:KIE_KLING_REEL_QA_MODEL,mode:"4K",sound:false}}).client,NOW);
+ assertEquals([prior?.provider,prior?.unit_cents],["kie",33.5],"Existing exact Kie4K grant retains its provider and price");
+});
+
+Deno.test("actual FAL owner callback keeps current scope and owned source registration; revoked or changed grant never POSTs",async()=>{
+ const value={...grant,provider:"fal",model:FAL_KLING_4K_REEL_QA_MODEL,mode:"4K",sound:false,consent:OWNER_FAL_REEL_QA_CONSENT};
+ const run=await providerCallbackFixture();const framed={...input,seconds:5,framing:"preserve_photo" as const};
+ const accepted=await run({fal4K:true},db({value}).client,framed,NOW);
+ assertEquals(accepted.events.map(x=>x.kind),["content_auth","grant_auth","inventory","put","head","content_auth","grant_auth","inventory","sign","POST"]);
+ assertEquals(accepted.events.at(-1)?.provider,"fal");
+ assertEquals((accepted.events.at(-1)?.input as GenerateInput).image_url,"https://qa-capability.invalid/source");
+ for(const changed of [{admin:false},{value:{...value,mode:"pro"}},{value:{...value,consent:OWNER_REEL_QA_CONSENT}},{value:{...value,expires_at:NOW.toISOString()}}]){
+  const e=await assertRejects(()=>run({fal4K:true},db({value,...changed}).client,framed,NOW),ProviderError);
+  assertEquals([e.provider,e.dispatch_rejected,e.status],["fal",true,0],"Selected provider owns its closed pre-dispatch error");
+ }
+});
+
+Deno.test("actual whole-recipe preflight selects the same scoped FAL4K210c shot and includes paid quality at1/20/100 sources",async()=>{
+ const source=await Deno.readTextFile(new URL("./index.ts",import.meta.url));
+ const start=source.indexOf("export async function propertyVideoRecipeQuote("),end=source.indexOf("export interface AiVideoWorkerScope",start);
+ assert(start>0&&end>start);assertEquals(source.match(/const DRIFT_MAX_TOKENS = (\d+);/)?.[1],"400");
+ const module=await import(encode(`
+  import {assert} from ${JSON.stringify(new URL("../_shared/http.ts",import.meta.url).href)};
+  import {paramsOf} from ${JSON.stringify(new URL("../_shared/router.ts",import.meta.url).href)};
+  import {routeCatalogQuote,ceilingVerifiedQuote,textAttemptQuote,visionInputTokenBound} from ${JSON.stringify(new URL("../_shared/funded-serving.ts",import.meta.url).href)};
+  import {reelFramingSteps} from ${JSON.stringify(new URL("./reel-framing.ts",import.meta.url).href)};
+  import {driftRubric} from ${JSON.stringify(new URL("../_shared/drift.ts",import.meta.url).href)};
+  import {DRIFT_SOURCE_EXTRA_INPUT_TOKENS} from ${JSON.stringify(new URL("./drift-input.ts",import.meta.url).href)};
+  const DRIFT_MAX_TOKENS=400,MODEL_I2V="bytedance/seedance/v1/pro/fast/image-to-video",APP_AI_UNIT_CENTS={seedance_per_s:4.86};
+  let selected:any=null;
+  const ownerQaReelStep=async()=>selected;
+  const entitlementForCharge=async()=>({plan:"starter"});
+  const legacyVideoStep=(task:any,model:any,unit:any,unit_cents:any,capabilities:any)=>({task,model,unit,unit_cents,capabilities,provider:"fal"});
+  const resolveChain=async(_task:any,_context:any,legacy:any)=>[legacy];
+  const driftChain=async()=>[{provider:"anthropic",model:"claude-sonnet-5",unit:"call",unit_cents:1.3,capabilities:["classifier","vision","multi_image"]}];
+  ${source.slice(start,end)}
+  export async function run(route:any,count:number,aspect:any){selected=route;return propertyVideoRecipeQuote("actor","org","listing",aspect,count);}
+ `));
+ const grantValue={...grant,provider:"fal",model:FAL_KLING_4K_REEL_QA_MODEL,mode:"4K",sound:false,consent:OWNER_FAL_REEL_QA_CONSENT};
+ const selected=await ownerQaReelStep({...args,framing:"preserve_photo"},db({value:grantValue}).client,NOW);assert(selected);
+ for(const aspect of["16:9","9:16"])for(const count of[1,20,100]){
+  const quote=await module.run(selected,count,aspect);assertEquals([quote.provider,quote.model,quote.source_count,quote.reel_cents],["fal",FAL_KLING_4K_REEL_QA_MODEL,count,210*count]);assert(quote.qc_cents>0&&quote.estimated_cents>=quote.reel_cents+quote.qc_cents);
+ }
+ const ordinary=await module.run(null,20,"16:9");assertEquals([ordinary.provider,ordinary.model,ordinary.reel_cents],["fal","bytedance/seedance/v1/pro/fast/image-to-video",486]);
 });

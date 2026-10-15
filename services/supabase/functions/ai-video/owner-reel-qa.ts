@@ -1,5 +1,5 @@
-// Temporary owner-only reseller comparison. This is not a public route switch:
-// normal tenants retain the table's disabled KIE/privacy policy. The operator
+// Temporary owner-only model comparison. This is not a public route switch:
+// normal tenants retain the table's routing/privacy policy. The operator
 // records explicit consent for their own listing in admin-only app_config.
 import { adminClient } from "../_shared/supabase.ts";
 import type { RouteStep } from "../_shared/router.ts";
@@ -10,6 +10,8 @@ export const OWNER_REEL_QA_KEY = "owner_reel_provider_qa";
 export const KIE_REEL_QA_MODEL = "bytedance/v1-pro-fast-image-to-video";
 export const KIE_KLING_REEL_QA_MODEL = "kling-3.0/video";
 export const OWNER_REEL_QA_CONSENT = "owner-authorized-kie-media-qa-2026-10-12";
+export const FAL_KLING_4K_REEL_QA_MODEL = "fal-ai/kling-video/v3/4k/image-to-video";
+export const OWNER_FAL_REEL_QA_CONSENT = "owner-authorized-fal-kling4k-qa-2026-10-15";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_QA_WINDOW_MS = 24 * 60 * 60 * 1000;
 function canonicalUuid(value: unknown): string | null {
@@ -31,12 +33,14 @@ export async function ownerQaReelStep(
     .eq("key", OWNER_REEL_QA_KEY).maybeSingle();
   if (error || !data?.value || typeof data.value !== "object" || Array.isArray(data.value)) return null;
   const grant = data.value as Record<string, unknown>;
+  const falKling = grant.provider === "fal" && grant.model === FAL_KLING_4K_REEL_QA_MODEL;
+  const kie = grant.provider === "kie" && (grant.model === KIE_REEL_QA_MODEL || grant.model === KIE_KLING_REEL_QA_MODEL);
   if (grant.enabled !== true || canonicalUuid(grant.actor_id) !== actorId || canonicalUuid(grant.org_id) !== orgId ||
-      canonicalUuid(grant.listing_id) !== listingId || grant.provider !== "kie" ||
-      (grant.model !== KIE_REEL_QA_MODEL && grant.model !== KIE_KLING_REEL_QA_MODEL) ||
-      grant.consent !== OWNER_REEL_QA_CONSENT || canonicalUuid(grant.changed_by) !== actorId) return null;
-  const kling = grant.model === KIE_KLING_REEL_QA_MODEL;
+      canonicalUuid(grant.listing_id) !== listingId || (!kie && !falKling) ||
+      grant.consent !== (falKling ? OWNER_FAL_REEL_QA_CONSENT : OWNER_REEL_QA_CONSENT) || canonicalUuid(grant.changed_by) !== actorId) return null;
+  const kling = grant.model === KIE_KLING_REEL_QA_MODEL || falKling;
   if (kling && (args.framing !== "preserve_photo" || !["pro", "4K"].includes(String(grant.mode)) || grant.sound !== false)) return null;
+  if (falKling && grant.mode !== "4K") return null;
   const fourK = kling && grant.mode === "4K";
   const start = typeof grant.created_at === "string" ? Date.parse(grant.created_at) : NaN;
   const end = typeof grant.expires_at === "string" ? Date.parse(grant.expires_at) : NaN;
@@ -45,6 +49,17 @@ export async function ownerQaReelStep(
       end <= start || end - start > MAX_QA_WINDOW_MS) return null;
   const admin = await db.from("profiles").select("is_admin").eq("id", actorId).maybeSingle();
   if (admin.error || admin.data?.is_admin !== true) return null;
+  if (falKling) {
+    // Exact native4K endpoint, $0.42/s with or without native audio. We request
+    // no audio and deliver1080 only after the actual native-pixel/QC gates.
+    // https://fal.ai/models/fal-ai/kling-video/v3/4k/image-to-video
+    return {
+      route_id: "owner-qa-fal-kling3-4k-20261015", task: "video.reel_clip",
+      provider: "fal", model: FAL_KLING_4K_REEL_QA_MODEL, unit: "second", unit_cents: 42,
+      capabilities: ["i2v", "1080p", "5s"], max_latency_s: 900, min_plan: "free",
+      same_model_as: "kling_3_pro", privacy_tier: "retained_30d", enabled: true,
+    };
+  }
   // Published 2026-10-12: 36 credits/$0.18 for 1080p/5 s. Do not use the
   // top-up bonus or marketing speed claim as a billing/latency guarantee.
   // https://kie.ai/seedance-1-0-pro-fast
@@ -74,7 +89,7 @@ interface OwnerQaInputDependencies {
  * deletion and storage metering. Registration precedes every byte write and
  * capability; only the server-authorized owner QA path calls this helper. */
 export async function prepareOwnerQaReelInput(
-  identity: { actorId: string; orgId: string; listingId: string },
+  identity: { actorId: string; orgId: string; listingId: string; provider?: "kie" | "fal" },
   input: GenerateInput,
   deps: OwnerQaInputDependencies,
 ): Promise<GenerateInput> {
@@ -106,6 +121,6 @@ export async function prepareOwnerQaReelInput(
   } catch {
     // No provider HTTP call has occurred. A failed source preparation releases
     // its supplier holds; any staged bytes stay in the deletion/storage journal.
-    throw new ProviderError("kie", "validation", "Owner QA source preparation could not be verified", 0, true);
+    throw new ProviderError(identity.provider ?? "kie", "validation", "Owner QA source preparation could not be verified", 0, true);
   }
 }
