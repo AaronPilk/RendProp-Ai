@@ -49,6 +49,19 @@ Deno.test("full answer bytes reject truncated/trailing images and PNG integrity 
 Deno.test("canonical base64 refuses decoder salvage before geometry parsing",()=>{
   const p=bytes64(pngFixture()); for(const bad of ["",p+"\n","data:image/png;base64,"+p,p.slice(1),"AA=A",p.replace(/=$/,"A")]) assertThrows(()=>validatePhotoInput(bad,"image/png"),HttpError);
 });
+Deno.test("canonical pad-bit validation rejects alternate encodings of the same complete JPEG bytes",()=>{
+  const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const frame=jpegFixture(),variants=[bytes64(frame)];
+  for(const size of [5,6,7]){const extra=new Uint8Array(frame.length+size);extra.set(frame.subarray(0,2));extra.set([255,224,0,size-2],2);extra.set(frame.subarray(2),size+2);variants.push(bytes64(extra));}
+  const one=variants.find(v=>v.endsWith("=")&&!v.endsWith("=="))!,two=variants.find(v=>v.endsWith("=="))!;
+  assertEquals(typeof one,"string");assertEquals(typeof two,"string");
+  for(const [valid,padding]of [[one,1],[two,2]]as const){
+    validatePhotoInput(valid,"image/jpeg");const index=valid.length-padding-1;
+    const bad=valid.slice(0,index)+alphabet[alphabet.indexOf(valid[index])+1]+valid.slice(index+1);
+    assertEquals(atob(valid),atob(bad),"The decoder alone cannot detect noncanonical pad bits");
+    assertThrows(()=>validatePhotoInput(bad,"image/jpeg"),HttpError);
+  }
+});
 Deno.test("input geometry is bounded without pretending geometry is a token invoice",()=>{
   validatePhotoInput(bytes64(jpegFixture(6000,4000)),"image/jpeg");
   for(const [w,h] of [[6001,4000],[8193,1],[0,1]]) invalid(jpegFixture(w,h),"image/jpeg");

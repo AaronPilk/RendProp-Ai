@@ -15,9 +15,18 @@ import { assertNotCoveredModel, outputConfigFor } from "./anthropic.ts";
 import { geminiAdapter, geminiImagePayload, supportsStagingReference } from "./gemini.ts";
 import { runChain } from "./chain.ts";
 import { assertJobTokenSigningReady, extractJobToken, routerStatusUrl, verifyJobToken, verifyJobTokenForRecovery } from "./jobtoken.ts";
-import { ProviderError, snippet } from "./common.ts";
+import { ProviderError, snippet, inlineImageResult } from "./common.ts";
 import { MAX_PARAM_OUTPUT_TOKENS } from "./params.ts";
 import { HttpError } from "../http.ts";
+
+Deno.test("inline image detection returns exact bytes without decoding a discarded4K buffer",async()=>{
+  const previous=globalThis.atob;let decodes=0;
+  globalThis.atob=()=>{decodes++;throw new Error("Inline detection must not allocate image bytes");};
+  try {
+    const state={status:"done" as const,result_url:"data:image/jpeg;base64,YWJj",mime:"image/jpeg",meta:{image_b64:"YWJj"}};
+    assertEquals(await inlineImageResult("gemini",state),state);assertEquals(decodes,0);
+  } finally { globalThis.atob=previous; }
+});
 
 function step(over: Partial<RouteStep> = {}): RouteStep {
   return {

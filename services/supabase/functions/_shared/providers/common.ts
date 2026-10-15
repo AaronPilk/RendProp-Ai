@@ -8,6 +8,7 @@
 
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { HttpError } from "../http.ts";
+import { decodeBase64Bytes } from "../base64-bytes.ts";
 import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS, headObject, presignPut } from "../r2.ts";
 import type { DoneState, ErrorClass, JobRef, JobState, ProviderAdapter } from "./types.ts";
 
@@ -392,12 +393,7 @@ export function routedR2Key(orgId: string, task: string, mime: string): string {
 }
 
 /** base64 → bytes. Typed on a real ArrayBuffer so it is a valid BodyInit/BlobPart. */
-export function b64Bytes(b64: string): Uint8Array<ArrayBuffer> {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(new ArrayBuffer(bin.length));
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
+export function b64Bytes(b64: string): Uint8Array<ArrayBuffer> { return decodeBase64Bytes(b64); }
 
 /** bytes → base64, chunked so a large image cannot blow the call stack. */
 export function bytesToB64(bytes: Uint8Array): string {
@@ -535,7 +531,10 @@ export const MAX_INLINE_IMAGE_BYTES = 25 * 1024 * 1024;
  * bytes already in hand. An inline result is returned untouched.
  */
 export async function inlineImageResult(provider: string, state: DoneState): Promise<DoneState> {
-  if (decodeDataUrl(state.result_url)) return state;
+  // Detect an inline image without decoding and discarding its full byte
+  // buffer. Its strict validation and eventual persistence each do real work;
+  // allocating another4K image here only raises the worker's peak memory.
+  if (/^data:[^;,]+;base64,[\s\S]/.test(state.result_url)) return state;
   const res = await fetchBounded(provider, state.result_url, { method: "GET" }, BUDGETS.transferMs);
   if (!res.ok) {
     throw new ProviderError(provider, "upstream", `${provider} image download failed (HTTP ${res.status})`);

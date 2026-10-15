@@ -2,6 +2,7 @@
 // Originals remain untouched. Oversized photos must be resized by the caller;
 // the server never silently crops, truncates or changes the source image.
 import { HttpError } from "../_shared/http.ts";
+import { decodeBase64Bytes } from "../_shared/base64-bytes.ts";
 
 export const PHOTO_INPUT_POLICY = Object.freeze({
   maxBase64Chars: 12_000_000,
@@ -70,12 +71,16 @@ function jpeg(b: Uint8Array, bounds:ImageBounds) {
   }
   return invalid();
 }
+// One lookup per byte instead of eight bit-steps for multi-megabyte4K PNGs.
+const CRC_TABLE = new Uint32Array(256);
+for(let byte=0;byte<256;byte++) {
+  let crc=byte;
+  for(let bit=0;bit<8;bit++)crc=(crc>>>1)^(crc&1?0xedb88320:0);
+  CRC_TABLE[byte]=crc>>>0;
+}
 function crc32(b: Uint8Array, start: number, end: number) {
   let crc = 0xffffffff;
-  for (let i = start; i < end; i++) {
-    crc ^= b[i];
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-  }
+  for (let i = start; i < end; i++) crc=(crc>>>8)^CRC_TABLE[(crc^b[i])&255];
   return (crc ^ 0xffffffff) >>> 0;
 }
 function png(b: Uint8Array, bounds:ImageBounds) {
@@ -133,11 +138,16 @@ function validateStillImage(value:unknown,mime:string,bounds:ImageBounds):StillI
   if (value.length > bounds.maxBase64Chars) bounds.tooLarge();
   // Canonical padded base64 only: no data-URL, whitespace or decoder salvage.
   const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
-  if (value.length % 4 || /[^A-Za-z0-9+/=]/.test(value) || value.slice(0, value.length - padding).includes("=")) invalid();
-  let decoded: string; try { decoded = atob(value); } catch { return invalid(); }
-  if (decoded.length > bounds.maxDecodedBytes) bounds.tooLarge();
-  if (btoa(decoded) !== value) invalid();
-  const bytes = Uint8Array.from(decoded, (char) => char.charCodeAt(0));
+  if (value.length % 4 || /[^A-Za-z0-9+/=]/.test(value) || value.indexOf("=") !== (padding ? value.length-padding : -1)) invalid();
+  // RFC4648 canonical pad bits must be zero. This proves the same property
+  // as re-encoding the entire decoded image, without another full base64 copy.
+  const alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  if ((padding===2&&(alphabet.indexOf(value[value.length-3])&15)!==0)
+    ||(padding===1&&(alphabet.indexOf(value[value.length-2])&3)!==0)) invalid();
+  if(value.length/4*3-padding>bounds.maxDecodedBytes)bounds.tooLarge();
+  // Chunked decoding avoids both Uint8Array.from's intermediate JS array and
+  // a complete decoded string beside the final25MiB image buffer.
+  let bytes:Uint8Array<ArrayBuffer>;try{bytes=decodeBase64Bytes(value);}catch{return invalid();}
   const dimensions = mime === "image/jpeg" ? jpeg(bytes,bounds) : mime === "image/png" ? png(bytes,bounds) : mime === "image/webp" ? webp(bytes,bounds) : invalid();
   return { mime, bytes: bytes.length, ...dimensions };
 }

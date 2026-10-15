@@ -46,7 +46,12 @@ Deno.test("normal4K output accepts every official aspect but refuses2K, malforme
  while(size<10_000_000){const n=Math.min(65_000,10_000_000-size),part=new Uint8Array(n);part.set([255,224,(n-2)>>8,(n-2)&255]);parts.push(part);size+=n;}
  const bytes=new Uint8Array(size);bytes.set(frame.subarray(0,2));let offset=2;for(const part of parts){bytes.set(part,offset);offset+=part.length;}bytes.set(frame.subarray(2),offset);
  const pieces:string[]=[];for(let i=0;i<bytes.length;i+=32768)pieces.push(String.fromCharCode(...bytes.subarray(i,i+32768)));const b64=btoa(pieces.join(""));
- assertPhoto4KOutput(b64,"image/jpeg");assertThrows(()=>validatePhotoInput(b64,"image/jpeg"),HttpError);
+ const decode=globalThis.atob,encode=globalThis.btoa;let calls=0;
+ globalThis.atob=value=>{assert(value.length<=32768,"A4K check decoded a whole binary image string");calls++;return decode(value);};
+ globalThis.btoa=()=>{throw Error("A4K check must validate pad bits without re-encoding the entire image");};
+ try {assertPhoto4KOutput(b64,"image/jpeg");assert(calls>1,"The large image must exercise bounded decode chunks");}
+ finally {globalThis.atob=decode;globalThis.btoa=encode;}
+ assertThrows(()=>validatePhotoInput(b64,"image/jpeg"),HttpError);
 });
 
 Deno.test("actual normal4K adapter holds the complete price before its only POST and refuses unpriced/denied dispatch",async()=>{
