@@ -342,6 +342,50 @@ function extractResult(result: any): { url: string; mime: string; width?: number
   return null;
 }
 
+export interface FalRetainedResultDiagnostic {
+  state:"completed"|"failed"|"unavailable";
+  provider_status:number|null;
+  reason?:ReturnType<typeof falResultErrorReason>;
+  has_media?:boolean;
+  error_class?:ErrorClass;
+}
+/** ONE read of the exact paired result endpoint, even when status is missing.
+ * This does not persist, submit, refund or expose the returned media URL. */
+export async function falRetainedResultDiagnostic(ref:JobRef):Promise<FalRetainedResultDiagnostic>{
+  const response=ref.poll_url?falResponseUrl(ref.poll_url):null;
+  const pair=ref.poll_url&&response?falLegacyReceipt(ref.poll_url,response):null;
+  if(!pair||!falLegacyReceiptMatchesModel(ref.model,ref.id,pair))throw new ProviderError(PROVIDER,"validation","The retained provider receipt pair does not match.",0,true);
+  const failure:{status:number|null;reason:ReturnType<typeof falResultErrorReason>}={status:null,reason:"unknown"};
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),BUDGETS.pollMs);
+  try{
+    // Keep this diagnostic self-contained: the deployed video closure retains
+    // its older shared fetch helper. Bound both the read and response here.
+    const res=await fetch(response!,{method:"GET",headers:falHeaders(),redirect:"error",signal:controller.signal});
+    failure.status=res.status;
+    const maximum=16384,declared=res.headers.get("content-length");
+    if(declared!==null&&(!/^[0-9]+$/.test(declared)||Number(declared)>maximum)){
+      void res.body?.cancel().catch(()=>{});
+      throw new ProviderError(PROVIDER,"upstream","The retained result response exceeded its diagnostic bound.",res.status);
+    }
+    const reader=res.body?.getReader(),chunks:Uint8Array[]=[];let bytes=0;
+    if(reader)try{for(;;){const next=await reader.read();if(next.done)break;
+      if(!(next.value instanceof Uint8Array)||next.value.length>maximum-bytes)throw new ProviderError(PROVIDER,"upstream","The retained result response exceeded its diagnostic bound.",res.status);
+      bytes+=next.value.length;chunks.push(next.value);
+    }}catch(error){void reader.cancel().catch(()=>{});throw error;}finally{reader.releaseLock();}
+    const joined=new Uint8Array(bytes);let at=0;for(const chunk of chunks){joined.set(chunk,at);at+=chunk.length;}
+    const text=new TextDecoder("utf-8",{fatal:true}).decode(joined);
+    let body:unknown=null;try{body=text?JSON.parse(text):null;}catch{body=text;}
+    if(!res.ok){failure.reason=falResultErrorReason(body);throw new ProviderError(PROVIDER,classifyFal(res.status,body),"The retained result endpoint refused the read.",res.status);}
+    if(!body||typeof body!=="object"||Array.isArray(body))return{state:"unavailable",provider_status:200,reason:"unknown",has_media:false};
+    const failed=falCompletedFailure(body as Record<string,unknown>);
+    if(failed)return{state:"failed",provider_status:200,error_class:failed.error_class};
+    const media=extractResult(body);
+    return media&&media.mime.split(";")[0].trim().toLowerCase()==="video/mp4"?{state:"completed",provider_status:200,has_media:true}:{state:"unavailable",provider_status:200,reason:"unknown",has_media:false};
+  }catch(error){return{state:"unavailable",provider_status:failure.status??(error instanceof ProviderError?error.status??null:null),reason:failure.reason,error_class:error instanceof ProviderError?error.error_class:controller.signal.aborted?"timeout":"other"};}
+  finally{clearTimeout(timer);}
+}
+
 export const falAdapter: ProviderAdapter = {
   key: PROVIDER,
 
@@ -400,13 +444,19 @@ export const falAdapter: ProviderAdapter = {
     const statusUrl = new URL(requireHost(ref.poll_url, FAL_HOSTS, PROVIDER));
     statusUrl.searchParams.set("logs", "1");
 
-    const st = await fetchJson<Record<string, unknown>>(
-      PROVIDER,
-      statusUrl.toString(),
-      { method: "GET", headers: falHeaders() },
-      BUDGETS.pollMs,
-      classifyFal,
-    );
+    let st:Record<string,unknown>, retainedResult:Record<string,unknown>|undefined;
+    try{st = await fetchJson<Record<string, unknown>>(
+      PROVIDER, statusUrl.toString(), { method: "GET", headers: falHeaders() }, BUDGETS.pollMs, classifyFal,
+    );}catch(error){
+      if(!(error instanceof ProviderError)||error.status!==404)throw error;
+      const responseUrl=falResponseUrl(ref.poll_url),pair=falLegacyReceipt(ref.poll_url,responseUrl);
+      if(!pair||!falLegacyReceiptMatchesModel(ref.model,ref.id,pair))throw new ProviderError(PROVIDER,"validation","The saved provider receipt pair does not match.",0,true);
+      // A missing status is not proof the generation failed. Try its exact
+      // paired result once; a usable result keeps the normal persist/QC path.
+      try{retainedResult=await fetchJson<Record<string,unknown>>(PROVIDER,responseUrl,{method:"GET",headers:falHeaders(),redirect:"error"},BUDGETS.pollMs,classifyFal);}
+      catch(resultError){if(resultError instanceof ProviderError&&resultError.status===404)return{status:"running",delivery_issue:{phase:"status_and_result_read",provider:"fal",provider_state:"unavailable",provider_status:404,result_status:404,reason:"not_found"}};throw resultError;}
+      st={status:"COMPLETED"};
+    }
 
     const status = String(st.status ?? "");
     if (status === "IN_QUEUE") return { status: "queued" };
@@ -423,7 +473,7 @@ export const falAdapter: ProviderAdapter = {
       let result: Record<string, unknown>;
       const delivery: { issue: ProviderDeliveryIssue | null } = { issue: null };
       try {
-        result = await fetchJson<Record<string, unknown>>(
+        result = retainedResult ?? await fetchJson<Record<string, unknown>>(
           PROVIDER, responseUrl, { method: "GET", headers: falHeaders() }, BUDGETS.pollMs, (status, body) => { delivery.issue = falResultReadIssue(status, body); return classifyFal(status, body); },
         );
       } catch (error) {

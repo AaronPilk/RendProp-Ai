@@ -29,6 +29,9 @@ export async function poll(ctx:any){
   const link=new URL(s.receipt.status_url);assert(link.searchParams.has('job'),403,'Use the server-owned signed provider receipt.');
   phase='provider_status';const out=await callAI(ctx,'GET','status?'+link.searchParams.toString());
   const issue=out.value.delivery_issue;
+  if(out.status===200&&out.value.status==='processing'&&issue?.phase==='status_and_result_read'&&issue.provider==='fal'&&issue.provider_state==='unavailable'&&issue.provider_status===404&&issue.result_status===404&&issue.reason==='not_found'){
+   await rpc('property_video_job_result_missing',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id});return;
+  }
   if(out.status===200&&out.value.status==='processing'&&issue?.phase==='result_read'&&issue.provider==='fal'&&issue.provider_state==='completed'&&issue.provider_status===403&&['balance_exhausted','account_locked','auth','permission','unknown'].includes(issue.reason)){
    await rpc('property_video_job_result_read_failure',{p_job:j.id,p_lease:s.lease_token,p_attempt:s.attempt_id,p_reason:issue.reason});return;
   }
