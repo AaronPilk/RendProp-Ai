@@ -365,6 +365,11 @@ function demoTour(): Record<string, unknown> {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
+  // Aggregate public read phases only: no listing/account/media identifiers,
+  // credentials or query text. Useful for measuring the real regional path.
+  const started=performance.now();let checkpoint=started;
+  const phases:string[]=[];
+  const mark=(name:string)=>{const now=performance.now();phases.push(`${name};dur=${(now-checkpoint).toFixed(1)}`);checkpoint=now;};
 
   try {
     const seg = pathSegments(req, "tours");
@@ -397,6 +402,7 @@ Deno.serve(async (req) => {
     const admin = adminClient();
 
     const context = await publishedTourContext(admin, slug, seg[1] === "location");
+    mark("context");
     const { render, listing, visibleRefs } = context;
     if (seg[1] === "location") return json(await publishedLocation(admin, context), 200, { "Cache-Control": "no-store" });
     const requestedDeliveryBytes=seg[1]==='delivery'?deliveryBytes(req,REGISTERED_BACKGROUND_BYTES):0;
@@ -423,9 +429,12 @@ Deno.serve(async (req) => {
       contactRead,
       initialIdentity,
     ]);
+    mark("gallery_contact");
     const presentation=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,visibleRefs,publishedR2Url);
+    mark("presentation");
     const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs,
       new Set([...visibleRefs.keys,...(render.presentation_kind!=="photo_video"&&typeof render.video_key==="string"?[render.video_key]:[])]),slug);
+    mark("disclosures");
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: SpatialChapter[] = [];
@@ -487,10 +496,12 @@ Deno.serve(async (req) => {
     const staged = Boolean(render.staged);
     const sold_at = (listing.sold_at as string | null) ?? null;
     const status = (listing.status as string) ?? "ready";
+    mark("optional_media");
 
     // These service-role reads bypass RLS; recheck every exposed lineage after
     // assembling the response, so revocation during optional reads cannot leak.
     await assertMediaVisible(admin, listing.id, visibleRefs);
+    mark("media_fence");
     // All are fresh reads AFTER assembled media passed its final visibility
     // fence. Parallelism changes neither the snapshots nor their refusal rules.
     const [{data:currentPhotos,error:currentPhotosError},
@@ -507,6 +518,7 @@ Deno.serve(async (req) => {
       throw new HttpError(503,"The listing contact changed. Please refresh.");
     if (!clientMode && JSON.stringify(currentIdentity)!==JSON.stringify(identity))
       throw new HttpError(503,"The listing agent changed. Please refresh.");
+    mark("fresh_photos_contact");
     // Byte requests need publication freshness too, not merely lineage approval.
     const assertCurrentPresentation=async()=>{
       const current=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,{assets:[],keys:[]},publishedR2Url);
@@ -527,6 +539,7 @@ Deno.serve(async (req) => {
     }
     const publicDetails = publicListingDetails(listing.details);
     await Promise.all([assertCurrentPresentation(), assertHostingAvailable(admin, listing.org_id)]);
+    mark("fresh_presentation_hosting");
     return json({
       slug: render.slug,
       share_url: brandedUrl(render.slug as string),
@@ -586,7 +599,7 @@ Deno.serve(async (req) => {
         ? "✦ AI-altered media"
         : null,
       altered_media,
-    });
+    },200,{"Server-Timing":[...phases,`total;dur=${(performance.now()-started).toFixed(1)}`].join(", ")});
   } catch (err) {
     return respondError(err);
   }

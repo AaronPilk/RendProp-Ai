@@ -34,7 +34,7 @@ async function invoke(options:{unpublish?:boolean;changedObject?:boolean;revoked
   if(table==="capture_assets")return reply([{id:photo,storage_key:options.crossProperty?gallery.replace(listing,other):gallery},{id:other,storage_key:retired}]);
   throw Error("Unexpected fixture request "+u.pathname);
  };
- try{const res=await handler(new Request(`https://api.fixture.invalid/tours/${slug}${options.publicPage?"":"/delivery"}`,{headers:{"X-Rendprop-Media-Gateway":"d".repeat(64)}}));return{status:res.status,body:await res.json(),renders,listings,permissions,requests,contacts,identities,finalReads:[...finalReads]};}finally{globalThis.fetch=original;}
+ try{const res=await handler(new Request(`https://api.fixture.invalid/tours/${slug}${options.publicPage?"":"/delivery"}`,{headers:{"X-Rendprop-Media-Gateway":"d".repeat(64)}}));return{status:res.status,body:await res.json(),timing:res.headers.get("Server-Timing"),renders,listings,permissions,requests,contacts,identities,finalReads:[...finalReads]};}finally{globalThis.fetch=original;}
 }
 Deno.test("actual delivery endpoint carries only DB-published video/poster/current selected gallery exact identities",async()=>{
  const r=await invoke();assertEquals(r.status,200);assertEquals(r.body,{schema:1,slug,objects:{[gallery]:"renders",[video]:"renders",[poster]:"renders"},stream_uid:null});assertEquals(r.renders,2);assert(r.permissions>=4);assert(!JSON.stringify(r.body).includes(retired));assert(!JSON.stringify(r.body).includes("private-sentinel"));
@@ -65,6 +65,7 @@ Deno.test("composition reselection during byte authority is refused rather than 
 
 Deno.test("actual public tour overlaps final independent snapshots and shares one initial contact query",async()=>{
  const r=await invoke({publicPage:true,parallelFinalBarrier:true});assertEquals(r.status,200);assertEquals(r.listings,2);assertEquals(r.contacts,2);assertEquals(r.identities,2);assertEquals(new Set(r.finalReads),new Set(["photos","contact","identity"]));assert(!JSON.stringify(r.body).includes("private-sentinel"));
+ assert(r.timing);const phases=r.timing.split(", ");assertEquals(phases.map(p=>p.split(";")[0]),["context","gallery_contact","presentation","disclosures","optional_media","media_fence","fresh_photos_contact","fresh_presentation_hosting","total"]);for(const phase of phases)assert(/^[a-z_]+;dur=\d+\.\d$/.test(phase));assert(!r.timing.includes(listing));assert(!r.timing.includes(org));
 });
 Deno.test("parallel public assembly retains fresh photo, contact, identity, media, presentation and hosting refusals",async()=>{
  for(const fault of [{photoSelectionChanged:true},{contactChanged:true},{identityChanged:true},{revokedAtPublicFinal:true},{photoVideo:true,compositionChanged:true},{hostingExpiresAtFinal:true},{deleteAtFinal:true}]){const r=await invoke({publicPage:true,...fault});assert([403,404,503].includes(r.status),JSON.stringify(fault));assert(!JSON.stringify(r.body).includes(gallery));assert(!JSON.stringify(r.body).includes("private-sentinel"));}

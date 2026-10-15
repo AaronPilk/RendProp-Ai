@@ -6,6 +6,7 @@ import { buildSrc } from "./build-src.mjs";
 const load = buildSrc("upstream-check");
 const worker = (await load("index")).default;
 const { buildDemoTour, buildDemoPortfolio } = await load("demo");
+const { fetchUpstreamJSON } = await load("upstream");
 const LIMIT = 4 * 1024 * 1024;
 const ENV = {
   SUPABASE_FUNCTIONS_URL: "https://upstream.invalid/functions/v1",
@@ -147,6 +148,18 @@ for (const path of ["/f/customer", "/u/customer", "/a/customer"]) {
       expect(specimen.state.cancelled, `[${path}] stalled body cancellation attempted`);
       expect(requestInit.signal.aborted, `[${path}] body deadline aborts original fetch`);
     });
+}
+
+// Region affinity is trusted configuration only, and can be disabled without
+// changing publication, credentials, retries or the 8-second safety budget.
+for (const [region, expected] of [["us-west-2", "us-west-2"], [undefined, null], ["", null], ["viewer-controlled.invalid", null]]) {
+  let headers;
+  globalThis.fetch = async (_url, init) => { headers = new Headers(init.headers); return Response.json({ ok: true }); };
+  const result = await fetchUpstreamJSON("/tours/customer", { ...ENV, SUPABASE_READ_REGION: region });
+  expect(result.kind === "ok", `region ${String(region)} preserves successful read`);
+  expect(headers.get("x-region") === expected, `only an approved deployment region is sent: ${String(region)}`);
+  expect(headers.get("apikey") === ENV.SUPABASE_ANON_KEY, "region routing preserves exact API credential");
+  expect(!headers.has("X-Rendprop-Media-Gateway"), "region routing does not add a gateway credential");
 }
 
 expect(cases === 75, `expected all 75 actual-handler cases, got ${cases}`);

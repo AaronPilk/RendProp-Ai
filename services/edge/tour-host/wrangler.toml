@@ -51,6 +51,10 @@ run_worker_first = true
 [vars]
 # Base URL of the Supabase Edge Functions (no trailing slash needed).
 SUPABASE_FUNCTIONS_URL = "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1"
+# This project's DB is in Oregon. Fresh multi-roundtrip tour authority reads
+# measured faster there than automatic east-coast execution. Empty this setting
+# to restore automatic routing during a regional outage; no payload is cached.
+SUPABASE_READ_REGION = "us-west-2"
 
 # Supabase anon (publishable) key. This is PUBLIC by design — RLS enforces
 # access and it already ships in every Supabase client. It's the apikey/Bearer

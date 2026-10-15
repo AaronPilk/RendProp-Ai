@@ -7,6 +7,7 @@ import type { Env } from "./types";
 const UPSTREAM_TIMEOUT_MS = 8_000;
 const UPSTREAM_JSON_BYTES = 4 * 1024 * 1024;
 const MAX_EMPTY_CHUNKS = 64;
+const READ_REGIONS = new Set(["ap-northeast-1", "ap-northeast-2", "ap-south-1", "ap-southeast-1", "ap-southeast-2", "ca-central-1", "us-east-1", "us-west-1", "us-west-2", "eu-central-1", "eu-west-1", "eu-west-2", "eu-west-3", "sa-east-1"]);
 
 type UpstreamJSON =
   | { kind: "ok"; value: unknown }
@@ -43,9 +44,13 @@ export async function fetchUpstreamJSON(path: string, env: Env, gateway = false,
   const read = async (): Promise<UpstreamJSON> => {
     const key = env.SUPABASE_ANON_KEY || "";
     const base = String(env.SUPABASE_FUNCTIONS_URL || "").replace(/\/+$/, "");
+    // Public metadata requires many fresh DB fences. Colocate those reads;
+    // this is deployment configuration, never a viewer-supplied header.
+    const region = env.SUPABASE_READ_REGION;
     response = await fetch(`${base}${path}`, {
       method: payload ? "POST" : "GET",
       headers: { apikey: key, ...(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(key)?{Authorization:`Bearer ${key}`}:{ }), Accept: "application/json",
+        ...(region && READ_REGIONS.has(region) ? { "x-region": region } : {}),
         ...(gateway ? { "X-Rendprop-Media-Gateway": env.MEDIA_GATEWAY_SECRET! } : {}),
         ...(payload ? { "Content-Type": "application/json" } : {}) },
       ...(payload ? {body:JSON.stringify(payload)} : {}),

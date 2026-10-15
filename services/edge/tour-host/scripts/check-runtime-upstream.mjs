@@ -80,6 +80,7 @@ const worker = await unstable_startWorker({
   bindings: {
     SUPABASE_FUNCTIONS_URL: { type: "plain_text", value: base },
     SUPABASE_ANON_KEY: { type: "plain_text", value: "runtime-check-anon-key" },
+    SUPABASE_READ_REGION: { type: "plain_text", value: "us-west-2" },
     TURNSTILE_SITE_KEY: { type: "plain_text", value: "runtime-check-turnstile" },
     TOUR_CACHE_TTL: { type: "plain_text", value: "60" },
   },
@@ -102,6 +103,7 @@ try {
   assert.equal(hits[0].url, "/tours/" + SLUG, "exact upstream route");
   assert.equal(hits[0].headers.apikey, "runtime-check-anon-key", "apikey header reaches the upstream");
   assert.equal(hits[0].headers.accept, "application/json");
+  assert.equal(hits[0].headers["x-region"], "us-west-2", "trusted DB region reaches the actual upstream");
   assert.equal(hits[0].headers["cache-control"], "no-cache", "cache:\"no-store\" is honoured by the runtime (it adds Cache-Control: no-cache)");
 
   // 2. A missing tour is a 404 from the upstream, not a swallowed runtime error.

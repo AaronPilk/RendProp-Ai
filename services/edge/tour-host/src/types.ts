@@ -16,6 +16,9 @@ export interface Env extends Partial<Pick<TourHostBindings, "ASSETS" | "MEDIA_RE
   MEDIA_GATEWAY_SECRET?: string;
   /** Base URL of the Supabase Edge Functions, e.g. https://<ref>.supabase.co/functions/v1 */
   SUPABASE_FUNCTIONS_URL: string;
+  /** Explicit read-function region, colocated with this project's database.
+   * Empty/unset restores automatic routing during a regional outage. */
+  SUPABASE_READ_REGION?: string;
   /** Supabase anon key — public by design (RLS enforces access). Used as the
    *  apikey/Authorization header on the server->Supabase read and on the public
    *  browser lead/beacon calls. Provided as a Worker SECRET (`wrangler secret
