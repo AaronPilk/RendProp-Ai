@@ -2,21 +2,28 @@
 """Publication photo boundaries against an owned socket-only Postgres fixture."""
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
-import hashlib, json, os, pathlib, shutil, subprocess, tempfile, time, uuid
+import argparse, hashlib, json, os, pathlib, shutil, subprocess, tempfile, time, uuid
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SQL = ROOT / "services/supabase"
 TARGET = SQL / "migrations/20261002160344_listing_gallery_selection.sql"
 TEST = SQL / "tests/listing_gallery_selection.sql"
-OUT = pathlib.Path(tempfile.mkdtemp(prefix="rendprop-gallery-selection-", dir="/tmp"))
-SOCK, DATA = OUT / "socket", OUT / "cluster"
-SOCK.mkdir(mode=0o700)
+CURRENT_TEST = SQL / "tests/listing_gallery_append_capacity.sql"
+FIXTURE_DEPENDENCY = SQL / "migrations/20261005024702_listing_facts_intent_cas.sql"
+parser = argparse.ArgumentParser(); parser.add_argument("--evidence-dir", type=pathlib.Path); args = parser.parse_args()
+os.umask(0o077)
+OUT = (args.evidence_dir or pathlib.Path(tempfile.mkdtemp(prefix="rendprop-gallery-selection-", dir="/tmp"))).resolve()
+OUT.mkdir(mode=0o700, parents=True, exist_ok=True)
+assert shutil.disk_usage(ROOT).free >= 3 * 1024 ** 3, "Preserve internal 3 GiB reserve"
+SOCK, DATA = pathlib.Path(tempfile.mkdtemp(prefix="gallery-socket-", dir="/tmp")), OUT / "cluster"
 ENV = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C", "TZ": "UTC"}
 BIN = {n: shutil.which(n) for n in ["initdb", "pg_ctl", "psql", "createdb"]}
 assert all(BIN.values())
 CONN = ["-h", str(SOCK), "-p", "55458", "-U", "postgres"]
 PSQL = [BIN["psql"], "-X", "--no-password", *CONN, "-d", "rendprop_audit", "-v", "ON_ERROR_STOP=1", "-Atq"]
-paths = [*sorted((SQL / "migrations").glob("*.sql")), SQL / "tests/ci-bootstrap.sql", TEST, pathlib.Path(__file__).resolve()]
+migrations = sorted((SQL / "migrations").glob("*.sql")); assert TARGET in migrations
+paths = [*migrations, SQL / "tests/ci-bootstrap.sql", TEST, CURRENT_TEST, pathlib.Path(__file__).resolve()]
+CATALOG = "select coalesce(jsonb_agg(jsonb_build_object('signature',oid::regprocedure::text,'definition',pg_get_functiondef(oid),'owner',pg_get_userbyid(proowner),'acl',proacl,'security',prosecdef,'config',proconfig)order by oid::regprocedure::text),'[]')from pg_proc where pronamespace='public'::regnamespace and prokind='f';"
 def hashes():
     return {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 receipt = {"startedAt": datetime.now(timezone.utc).isoformat(), "sourceHashes": hashes(), "commands": [], "passed": False,
@@ -42,12 +49,22 @@ try:
     run("create", [BIN["createdb"], "--no-password", *CONN, "rendprop_audit"])
     assert query("identity", "select current_setting('data_directory'),current_setting('listen_addresses');").strip() == str(DATA) + "|"
     query("bootstrap", (SQL / "tests/ci-bootstrap.sql").read_text())
-    for p in sorted((SQL / "migrations").glob("*.sql")):
+    # The unchanged fixture also tests that explicit fact edits omit gallery
+    # fields. That RPC first exists Oct5; gallery functions are unchanged up to
+    # this dependency-complete boundary. Replay Oct2 at its own boundary first.
+    boundary = migrations.index(FIXTURE_DEPENDENCY)
+    for p in migrations[:boundary + 1]:
         query("migration-" + p.stem, p.read_text())
+        if p == TARGET:
+            own_catalog = json.loads(query("own-boundary-catalog", CATALOG))
+            query("replay-own-boundary", TARGET.read_text())
+            assert json.loads(query("own-boundary-replay-catalog", CATALOG)) == own_catalog
+    historical_catalog = json.loads(query("historical-catalog", CATALOG))
     counts = []
     for phase in ["fresh", "replayed"]:
         if phase == "replayed":
             query("replay", TARGET.read_text())
+            assert json.loads(query("historical-replay-catalog", CATALOG)) == historical_catalog
         result = query("gallery-" + phase, TEST.read_text())
         count = result.count("|t")
         assert count == 47, result[-3000:]
@@ -96,10 +113,38 @@ try:
     assert query('concurrent-union', f"select cardinality(gallery_asset_ids)=3 and gallery_asset_ids[1]='{first}'::uuid and gallery_asset_ids@>array['{add_a}','{add_b}']::uuid[]and main_photo_key='{prefix}{first}.jpg'from listings where id='{lid}';").strip() == 't'
     race('concurrent-repeat-addition', [f"select append_listing_gallery('{actor}','{org}','{lid}',array['{add_a}']::uuid[]);" for actor in [owner, agent]])
     assert query('concurrent-idempotence', f"select cardinality(gallery_asset_ids)=3 from listings where id='{lid}';").strip() == 't'
+    assert json.loads(query("historical-final-catalog", CATALOG)) == historical_catalog
+    # The unchanged 47-oracle fixture, two compiled controls, and original two
+    # races above execute at their own historical function boundary. Never
+    # reinstall this unguarded ancestor over later authority/capacity changes.
+    for p in migrations[boundary + 1:]:
+        query("migration-" + p.stem, p.read_text())
+    current_catalog = json.loads(query("current-catalog", CATALOG))
+    refused = query("current-head-obsolete40-oracle", TEST.read_text(), expected=3)
+    assert "GALLERY FAIL: overflow never discards an old cloud photo to fit a new one" in refused
+    query("current-race-reset", f"update listings set gallery_asset_ids=array['{first}']::uuid[],main_photo_key='{prefix}{first}.jpg'where id='{lid}';")
+    race('current-concurrent-different-additions', [f"select append_listing_gallery('{owner}','{org}','{lid}',array['{asset}']::uuid[]);" for asset in [add_a, add_b]])
+    assert query('current-concurrent-union', f"select cardinality(gallery_asset_ids)=3 and gallery_asset_ids[1]='{first}'::uuid and gallery_asset_ids@>array['{add_a}','{add_b}']::uuid[]and main_photo_key='{prefix}{first}.jpg'from listings where id='{lid}';").strip() == 't'
+    race('current-concurrent-repeat-addition', [f"select append_listing_gallery('{owner}','{org}','{lid}',array['{add_a}']::uuid[]);" for _ in range(2)])
+    assert query('current-concurrent-idempotence', f"select cardinality(gallery_asset_ids)=3 from listings where id='{lid}';").strip() == 't'
+    assert json.loads(query("current-final-catalog", CATALOG)) == current_catalog
+    # Clone this full-current disposable DB so the new fixture runs with its
+    # unchanged socket/database safety guard and all 100-photo/authority oracles.
+    run("clone-current", [BIN["createdb"], "--no-password", *CONN, "--template=rendprop_audit", "gallery_append_capacity_proof"])
+    current_psql = [*PSQL]; current_psql[current_psql.index("rendprop_audit")] = "gallery_append_capacity_proof"
+    modern_counts = []
+    for phase in ["fresh", "repeated"]:
+        result = run("current100-" + phase, current_psql, CURRENT_TEST.read_text())
+        values = [json.loads(line) for line in result.splitlines() if line.startswith('{') and 'assertions' in line]
+        assert len(values) == 1 and values[0]["passed"] and values[0]["assertions"] == 28
+        modern_counts.append(values[0]["assertions"])
+    assert json.loads(run("clone-final-catalog", current_psql, CATALOG)) == current_catalog
     assert receipt["sourceHashes"] == hashes(), "Source changed during verification"
-    receipt.update(passed=True, sqlAssertionsEach=counts, negativeControls=["wrong-media-kind", "foreign-storage-prefix"], concurrencyChecks=['different additions preserved','repeat additions idempotent'], finishedAt=datetime.now(timezone.utc).isoformat())
+    receipt.update(passed=True, historicalSqlAssertionsEach=counts, chronologicalBoundary=TARGET.name, fixtureDependencyBoundary=FIXTURE_DEPENDENCY.name, historicalReplayCatalogExact=True, negativeControls=["wrong-media-kind", "foreign-storage-prefix"], historicalConcurrencyChecks=['different additions preserved','repeat additions idempotent'], currentSqlAssertionsEach=modern_counts, obsolete40OracleRefusesCurrentPolicy=True, currentConcurrencyChecks=['different additions preserved','repeat additions idempotent'], fullCurrentCatalogOwnerACLSecurityConfigUnchanged=True, migrationCount=len(migrations), finishedAt=datetime.now(timezone.utc).isoformat())
 finally:
     if started and (DATA / "postmaster.pid").exists():
         run("stop", [BIN["pg_ctl"], "-D", DATA, "-m", "immediate", "-w", "stop"])
     (OUT / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    if receipt["passed"]: shutil.rmtree(DATA)
+    shutil.rmtree(SOCK, ignore_errors=True)
 print("PASS: current gallery selection and main-photo fences", flush=True)

@@ -1542,6 +1542,13 @@ jobs:
           set -euo pipefail
           export PATH="$(pg_config --bindir):$PATH"
           python3 services/supabase/tests/listing_gallery_remove_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-gallery-remove-pg"
+      - name: Listing gallery appends preserve exact selections through one hundred photos
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(pg_config --bindir):$PATH"
+          python3 services/supabase/tests/listing_gallery_append_capacity_pg.py --evidence-dir "$RUNNER_TEMP/rendprop-listing-gallery-append-capacity-pg"
       - name: Terminal quality retry retains paid evidence and same-job owner recovery
         timeout-minutes: 10
         shell: bash
@@ -1643,6 +1650,7 @@ jobs:
             ${{ runner.temp }}/rendprop-normal-photo-quality-pg/**
             ${{ runner.temp }}/rendprop-paid-quality-processing-pg/**
             ${{ runner.temp }}/rendprop-listing-gallery-remove-pg/**
+            ${{ runner.temp }}/rendprop-listing-gallery-append-capacity-pg/**
             ${{ runner.temp }}/rendprop-property-derived-retry-pg/**
             ${{ runner.temp }}/rendprop-property-result-delivery-pg/**
             ${{ runner.temp }}/rendprop-property-submit-recovery-pg/**
