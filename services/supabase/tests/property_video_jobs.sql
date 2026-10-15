@@ -62,7 +62,16 @@ select pg_temp.refuse($q$select property_video_job_receipt((select id from bj),(
 select pg_temp.refuse($q$select property_video_job_qc((select id from bj),(select(c#>>'{source,lease_token}')::uuid from claim1),(select(c#>>'{source,attempt_id}')::uuid from claim1))$q$,'RP409:','no provider/QC ledger cannot claim AI ready');
 select pg_temp.reject_claim((select c from claim1));
 select pg_temp.reject_claim((select c from claim2));
-do $$declare c jsonb;begin for i in 3..100 loop c:=property_video_job_claim((select id from bj),'slot-0');if c->>'action'<>'dispatch'then raise exception'100-source sequential admission dropped position%: %',i,c;end if;perform pg_temp.reject_claim(c);end loop;end$$;
+-- These are98 separate normal RPC requests, not one aggregate production
+-- statement. Retain the30s per-call deadline on slower/JIT-enabled hosts.
+select format($sequence$
+do $claim$declare c jsonb;begin
+ c:=property_video_job_claim((select id from bj),'slot-0');
+ if c->>'action'<>'dispatch'then raise exception using message='100-source sequential admission dropped position'||%s||': '||c;end if;
+ perform pg_temp.reject_claim(c);
+end$claim$;
+$sequence$,i)from generate_series(3,100)i
+\gexec
 select pg_temp.ok((select count(*)=100 and bool_and(fallback_evidence->>'action'='refuse')from property_video_job_sources where job_id=(select id from bj)and state='original_photo'),'all100 explicit original-photo fallbacks preserve order');
 create temporary table comp as select property_video_job_claim((select id from bj),'slot-0')c;grant select on comp to service_role,authenticated;
 select pg_temp.ok((select c->>'action'='compose'and jsonb_array_length(c->'sources')=100 from comp),'composition contains every selected photo');
