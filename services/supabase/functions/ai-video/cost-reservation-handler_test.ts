@@ -80,7 +80,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
   assert(start > 0 && drone > start && end > drone);
   const prelude = source.slice(start, drone).replace(
     "export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {",
-    `export const handler = async (req: Request) => {const worker=state.options.background?{user:{id:"actor-synthetic",is_anonymous:false},targetAspect:"16:9",authorize:async()=>{state.events.push("fresh-worker-authority");},accepted:async(r:any)=>{state.accepted=r;state.events.push("saved-accepted-receipt");},provenance:async()=>{state.events.push("worker-provenance");if(state.options.provenanceError)throw Error("closed provenance outage");return{id:"provenance-synthetic",recorded:true};}}:undefined;`,
+    `export const handler = async (req: Request,suppliedWorker?:any) => {const worker=suppliedWorker??(state.options.background?{user:{id:"actor-synthetic",is_anonymous:false},targetAspect:"16:9",authorize:async()=>{state.events.push("fresh-worker-authority");},accepted:async(r:any)=>{state.accepted=r;state.events.push("saved-accepted-receipt");},provenance:async()=>{state.events.push("worker-provenance");if(state.options.provenanceError)throw Error("closed provenance outage");return{id:"provenance-synthetic",recorded:true};}}:undefined);`,
   );
   let routes = source.slice(drone, end);
   if(dropSigningReadiness){
@@ -134,6 +134,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     import {parseReelFraming,reelFramingSteps,buildPhotoPreservingReelPrompt,buildPropertyCanvasReelPrompt} from ${
     JSON.stringify(new URL("./reel-framing.ts", import.meta.url).href)
   };
+    import {PROPERTY_VIDEO_QUALITY_PROFILE,propertyVideoQualityProfile,propertyVideoQualitySteps as actualPropertyVideoQualitySteps} from ${JSON.stringify(new URL("./property-video-quality.ts", import.meta.url).href)};
     import {paramsOf} from ${
     JSON.stringify(new URL("../_shared/router.ts", import.meta.url).href)
   };
@@ -144,7 +145,7 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     type PaidAiCaller=any;
     type RouteStep=any;type JobRef=any;type JobTokenOwner=any;type ChainResult<T>={value:T,step:any};type GenerateInput=any;type DroneBody=any;type AerialBody=any;type ReelBody=any;type DroneEstimate=any;type AerialMotion=any;type ReelMotion=any;
     export const state:any={options:{},events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]};
-    export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],grantReads:[],access:null,billing:null,refunds:0,oldLedger:0,admitted:new Set(),holds:new Map(),ledger:[]});}
+    export function reset(options:any={}){Object.assign(state,{options,events:[],rpcs:[],posts:[],steps:[],probes:[],charges:[],grantReads:[],access:null,billing:null,refunds:0,oldLedger:0,profileReads:0,admitted:new Set(),holds:new Map(),ledger:[]});}
     const getUser=async(_req:Request)=>({id:"actor-synthetic",is_anonymous:false});
     const userClient=(_req:Request)=>({});
     const orgForUser=async(..._a:any[])=>"org-synthetic";
@@ -176,8 +177,10 @@ async function fixture(reserveLate = false, priceRequestedTier = false, dropReje
     const refundGenerateCharge=async(..._a:any[])=>{state.refunds++;};
     const routerEnabled=async()=>state.options.routerOn??false;
     const resolveChain=async(task:any,_context:any,legacy:any)=>[state.options.badRoute?{...legacy,model:"unknown-tariff-model"}:state.options.routerOn?{...legacy,route_id:"live-shaped-route",model:task.startsWith("video.upscale_")?"topaz/upscale/video":legacy.model,unit_cents:task==="video.upscale_1080p60"?4:8}:legacy,{...legacy,route_id:"eligible-second",provider:"other",model:"second-model"}];
-    const runChain=async(_task:any,steps:any[],callback:any)=>{state.steps.push(steps);return {step:steps[0],value:await callback(steps[0])};};
-    class ProviderError extends Error {status?:number;error_class?:string;}
+    import {asHttpError} from ${JSON.stringify(new URL("../_shared/providers/chain.ts", import.meta.url).href)};
+    const runChain=async(_task:any,steps:any[],callback:any)=>{state.steps.push(steps);try{return {step:steps[0],value:await callback(steps[0])};}catch(error){throw asHttpError(error);}};
+    import {ProviderError} from ${JSON.stringify(new URL("../_shared/providers/common.ts", import.meta.url).href)};
+    const propertyVideoQualitySteps=async(plan:string)=>{state.profileReads=(state.profileReads??0)+1;if(state.options.profileUnavailable||state.options.profileRevoked&&state.profileReads>1)throw new HttpError(503,"Closed profile unavailable");return actualPropertyVideoQualitySteps(plan,async()=>[{route_id:"ordinary-property-profile",task:"video.property_reel_clip",provider:"fal",model:"fal-ai/kling-video/v3/4k/image-to-video",unit:"second",unit_cents:42,capabilities:["i2v","1080p","5s","native4k","preserve_photo"],max_latency_s:900,min_plan:"free",same_model_as:"kling_3_pro",privacy_tier:"retained_30d",enabled:true}]);};
     const echo={request_id:"accepted-provider-id",status_url:"https://fixture.invalid/ai-video/status?job=opaque-fixture",response_url:"https://queue.fal.run/model/requests/accepted-provider-id"};
     const falSubmitEcho=(_id:string)=>echo;
     const routerStatusUrl=async(..._a:any[])=>{if(state.options.background)state.events.push("signed-worker-receipt");if(state.options.signerMissing)throw Error("No signer");return "https://fixture.invalid/ai-video/status?job=opaque-fixture";};
@@ -700,3 +703,19 @@ Deno.test("compiled omitted Aerial launch gate is caught before any ordinary pai
 });
 
 Deno.test("background actual reel route saves signedaccepted receipt withrouteroff evenifledger/provenance reconciliationisdown",async()=>{const f=await fixture();f.reset({background:true,ordinary:true,routerOn:false,settleError:true,provenanceError:true});const r=await f.handler(req('reel-clip','background-source-op',{preset_version:1,framing:'preserve_photo',aspect:'16:9',motion:'push_in'}));assert(r.status>=500);assertEquals(f.state.posts.length,1);assertEquals(f.state.holds.size,1);assertEquals(f.state.accepted.request_id,'accepted-provider-id');assertEquals(f.state.accepted.model_id,f.state.posts[0].step.model);assert(f.state.accepted.status_url.includes('?job='));assert(f.state.events.indexOf('signed-worker-receipt')<f.state.events.indexOf('saved-accepted-receipt'));assert(f.state.events.indexOf('saved-accepted-receipt')<f.state.events.indexOf('worker-provenance'));assertEquals(f.state.refunds,0);});
+
+Deno.test("actual ordinary saved profile uses exact same210c funded model for both formats and no owner grant",async()=>{
+ const f=await fixture();for(const aspect of["16:9","9:16"]as const){f.reset({ordinary:true});
+ const worker={user:{id:"actor-synthetic",is_anonymous:false},listing:"listing-synthetic",targetAspect:aspect,qualityProfile:"fal-kling3-4k-v1",authorize:async()=>{},accepted:async()=>{},provenance:async()=>({id:"owned-provenance",recorded:true,disclosure:"AI motion"})};
+ const response=await f.handler(req("reel-clip","normal-profile-"+aspect,{preset_version:1,motion:"push_in",framing:"preserve_photo",aspect}),worker);
+ assertEquals(response.status,202);assertEquals(f.state.posts.length,1);assertEquals(f.state.posts[0].step.model,"fal-ai/kling-video/v3/4k/image-to-video");assertEquals(f.state.posts[0].input.extra.property_video_quality_profile,"fal-kling3-4k-v1");
+ assertEquals(f.state.ledger[0].p_hold_cents,210);assertEquals(f.state.ledger[0].p_unit_cost_cents,42);assertEquals(f.state.profileReads,2);assertEquals(f.state.oldLedger,0);
+ }
+});
+Deno.test("new profile route revocation refuses before HTTP and preserves known-no-dispatch refund rules",async()=>{
+ const f=await fixture();for(const fault of["profileUnavailable","profileRevoked"]){f.reset({ordinary:true,[fault]:true});
+ const worker={user:{id:"actor-synthetic",is_anonymous:false},listing:"listing-synthetic",targetAspect:"9:16",qualityProfile:"fal-kling3-4k-v1",authorize:async()=>{},accepted:async()=>{},provenance:async()=>({})};
+ const r=await f.handler(req("reel-clip","profile-refused-"+fault,{preset_version:1,motion:"push_in",framing:"preserve_photo",aspect:"9:16"}),worker);
+ assert(r.status>=400);assertEquals(f.state.posts.length,0);assertEquals(f.state.refunds,1);assertEquals(f.state.holds.size,0);assertEquals(f.state.ledger.length,0);
+ }
+});

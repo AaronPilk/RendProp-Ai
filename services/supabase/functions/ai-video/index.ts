@@ -238,6 +238,7 @@ import { createRoutedOutput } from "./routed-output.ts";
 import { createBriaAdapter } from "./bria.ts";
 import { submitReservedVideo, VideoDispatchUnconfirmed } from "./cost-reservation.ts";
 import { ownerQaReelStep, prepareOwnerQaReelInput } from "./owner-reel-qa.ts";
+import {PROPERTY_VIDEO_QUALITY_PROFILE,currentPropertyVideoQualityProfile,propertyVideoQualityProfile,propertyVideoQualitySteps,type PropertyVideoQualityProfile} from "./property-video-quality.ts";
 import { buildPhotoPreservingReelPrompt, buildPropertyCanvasReelPrompt, parseReelFraming, reelFramingSteps } from "./reel-framing.ts";
 import { probeMP4Video } from "./mp4video.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
@@ -1096,19 +1097,20 @@ const eraseHandler = createEraseHandler({
  * HTTP entry below never accepts this object or an actor header. No JWT stored. */
 /** Current route catalog and existing paid judge bounds; no dispatch/meter.
  * This recipe quote is a precheck, not an atomic promise of future capacity. */
-export async function propertyVideoRecipeQuote(actor:string,org:string,listing:string,aspect:'16:9'|'9:16',count:number){
+export async function propertyVideoRecipeQuote(actor:string,org:string,listing:string,aspect:'16:9'|'9:16',count:number,savedProfile?:PropertyVideoQualityProfile){
  const ent=await entitlementForCharge(org),task='video.reel_clip';
- const owner=await ownerQaReelStep({actorId:actor,orgId:org,listingId:listing,seconds:5,framing:'preserve_photo'});
- const candidates=owner?[owner]:await resolveChain(task,{plan:ent.plan,needs:['i2v','1080p','5s'],carries_customer_media:true},legacyVideoStep(task,MODEL_I2V,'second',APP_AI_UNIT_CENTS.seedance_per_s,['i2v','1080p','5s','16:9','9:16']));
+ const profile=savedProfile===undefined?await currentPropertyVideoQualityProfile():propertyVideoQualityProfile(savedProfile);
+ const owner=profile==='legacy'?await ownerQaReelStep({actorId:actor,orgId:org,listingId:listing,seconds:5,framing:'preserve_photo'}):null;
+ const candidates=profile===PROPERTY_VIDEO_QUALITY_PROFILE?await propertyVideoQualitySteps(ent.plan):owner?[owner]:await resolveChain(task,{plan:ent.plan,needs:['i2v','1080p','5s'],carries_customer_media:true},legacyVideoStep(task,MODEL_I2V,'second',APP_AI_UNIT_CENTS.seedance_per_s,['i2v','1080p','5s','16:9','9:16']));
  const steps=reelFramingSteps(candidates,'preserve_photo');assert(steps.length>0,503,'No supported property-video quality route is currently available.');
  const input={task,seconds:5,resolution:'1080p',aspect,framing:'preserve_photo',extra:{...(owner?paramsOf(owner)??{}:{}),property_video_target_aspect:aspect}};
  const step=steps[0],catalog=routeCatalogQuote(step,input),verified=ceilingVerifiedQuote(step,input,catalog);assert(catalog&&verified,503,'The complete video recipe could not be priced safely.');
  const perShot=Math.max(catalog.cents,verified.cents),rubric=driftRubric({kind:'reel',sceneNoun:'property',motionText:'X'.repeat(2000)}),judgeSteps=await driftChain(ent.plan);
  const quotes=judgeSteps.map(s=>textAttemptQuote(s,rubric,'',DRIFT_MAX_TOKENS,true,visionInputTokenBound(4,new TextEncoder().encode(rubric).length)+DRIFT_SOURCE_EXTRA_INPUT_TOKENS));assert(quotes.length&&quotes.every(q=>q&&Number.isFinite(q.cents)&&q.cents>0),503,'The complete video quality review could not be priced safely.');
  const perQC=2*quotes.reduce((total,q)=>total+q!.cents,0),estimated=Math.ceil((perShot+perQC)*count*10000)/10000;
- return{source_count:count,estimated_cents:estimated,reel_cents:perShot*count,qc_cents:perQC*count,planning_cents:0,narration_cents:0,provider:step.provider,model:step.model,basis:'current_catalog_and_documented_bounds',atomic_reservation:false};
+ return{quality_profile:profile,source_count:count,estimated_cents:estimated,reel_cents:perShot*count,qc_cents:perQC*count,planning_cents:0,narration_cents:0,provider:step.provider,model:step.model,basis:'current_catalog_and_documented_bounds',atomic_reservation:false};
 }
-export interface AiVideoWorkerScope {user:PaidAiCaller;listing:string;targetAspect?:'16:9'|'9:16';accepted?:(receipt:{request_id:string;status_url:string;response_url:string;model_id:string;seconds:number})=>Promise<void>;authorize:()=>Promise<void>;provenance:(args:ProvenanceArgs)=>Promise<ProvenanceResult>}
+export interface AiVideoWorkerScope {user:PaidAiCaller;listing:string;targetAspect?:'16:9'|'9:16';qualityProfile?:PropertyVideoQualityProfile;accepted?:(receipt:{request_id:string;status_url:string;response_url:string;model_id:string;seconds:number})=>Promise<void>;authorize:()=>Promise<void>;provenance:(args:ProvenanceArgs)=>Promise<ProvenanceResult>}
 export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Promise<Response> {
   if (req.method === "OPTIONS") return handleOptions();
 
@@ -1432,6 +1434,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
     if (req.method === "POST" && seg.length === 1 && seg[0] === "reel-clip") {
       const body = await readJson<ReelBody>(req);
       const framing = parseReelFraming(body.framing);
+      const savedQualityProfile=worker?propertyVideoQualityProfile(worker.qualityProfile):"legacy";
       let secs = Math.round(Number(body.seconds ?? 5));
       if (!Number.isFinite(secs)) secs = 5;
       secs = Math.min(12, Math.max(2, secs)); // Seedance duration range 2–12 s
@@ -1548,9 +1551,10 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
       const task = "video.reel_clip";
       const routerOn = await routerEnabled();
       const reelAspect = body.aspect === "16:9" || body.aspect === "9:16" ? body.aspect : null;
-      const ownerQaStep = await ownerQaReelStep({ actorId: user.id, orgId,
-        listingId: body.listing_id ?? reelListingId, seconds: secs, framing });
-      const candidateSteps = ownerQaStep ? [ownerQaStep] : await resolveChain(
+      const ownerQaStep = savedQualityProfile==="legacy"?await ownerQaReelStep({ actorId: user.id, orgId,
+        listingId: body.listing_id ?? reelListingId, seconds: secs, framing }):null;
+      let candidateSteps:RouteStep[];
+      try{candidateSteps = savedQualityProfile===PROPERTY_VIDEO_QUALITY_PROFILE?await propertyVideoQualitySteps(plan):ownerQaStep ? [ownerQaStep] : await resolveChain(
         task,
         {
           plan,
@@ -1561,6 +1565,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         },
         legacyVideoStep(task, MODEL_I2V, "second", APP_AI_UNIT_CENTS.seedance_per_s, ["i2v", "1080p", "5s", "16:9", "9:16"]),
       );
+      }catch(error){await refundGenerateCharge(charge);throw error;}
       let steps: RouteStep[];
       try {
         steps = reelFramingSteps(candidateSteps, framing);
@@ -1576,7 +1581,7 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
         ...(framing ? { framing } : {}),
-        ...((ownerQaStep?.model === "kling-3.0/video" || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}) } } : {}),
+        ...((ownerQaStep?.model === "kling-3.0/video" || worker?.targetAspect) ? { extra: { ...(ownerQaStep?paramsOf(ownerQaStep)??{}:{}), ...(worker?.targetAspect?{property_video_target_aspect:worker.targetAspect}:{}),...(savedQualityProfile===PROPERTY_VIDEO_QUALITY_PROFILE?{property_video_quality_profile:savedQualityProfile}:{}) } } : {}),
       };
       // A priced hold precedes one POST. Definitive refusal releases it;
       // transport ambiguity retains it without another provider attempt.
@@ -1598,6 +1603,10 @@ export async function handleAiVideo(req:Request,worker?:AiVideoWorkerScope):Prom
           submit: (selected) => runChain(task, [selected], async (step) => {
           try {
             if(worker)await worker.authorize();
+            if(savedQualityProfile===PROPERTY_VIDEO_QUALITY_PROFILE){
+              try{const fresh=(await propertyVideoQualitySteps(plan))[0];if(fresh.route_id!==step.route_id||fresh.model!==step.model||fresh.unit_cents!==step.unit_cents)throw Error("Changed property quality route");}
+              catch{throw new ProviderError("fal","validation","The saved property quality route changed before dispatch.",0,true);}
+            }
             const providerInput = ownerQaStep ? await prepareOwnerQaReelInput(
               { actorId: user.id, orgId, listingId: String(body.listing_id ?? reelListingId), provider: step.provider === "fal" ? "fal" : "kie" }, genInput, {
                 authorize: async () => {
