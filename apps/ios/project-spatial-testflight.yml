@@ -9,7 +9,7 @@ settings:
     # Background property video and guided capture update. Normal project remains74.
     # Recheck Apple inventory; never automatically renumber an upload retry.
     MARKETING_VERSION: "1.0.5"
-    CURRENT_PROJECT_VERSION: "80"
+    CURRENT_PROJECT_VERSION: "81"
 targets:
   Rendprop:
     sources:
