@@ -1,5 +1,52 @@
 # Owner request checklist — October 14, 2026
 
+## Active checkpoint — 2026-10-15 07:25 UTC
+
+- Normal1.0.5(82) is VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING, build45479fdb…,
+  existing internal group. One signed archive/upload;205boundinputs/170tracked
+  +1generatedSwift, noLAB/DEBUG, exact118.73s Willow intro. Public1.0.4(74)
+  unchanged; real1.0.5 draftc15af3a3… unattached/AFTER_APPROVAL, not submitted.
+- Current source70c2adf, origin pushed onlythrough04b31ca. CI38693470447 has
+  backend2340/0/1ignore/privateCPU/PG/actualUIKit export green; offline native
+  audit still progressing. Original tour negative-control red retained; test-only
+  classifier5ab17a5 and unchanged production oracles need final changed-source CI.
+- Full-resolution output25MiB/actual256MB governor and35MB Studio transport are
+  implemented/deployed; Studioc0682c56… has35-file/39GET proof. CPU3a180766…/
+  f4d26817… adaptive comparison-only JPEG fix is live; masters/geometry/6MBcap/
+  gates/2slots/controller/bindings/secrets unchanged. Hosted freshstage/declutter
+  both completed comparison preparation once, proving technical size repair.
+- ActualFlashstage b397f0de… anddeclutter35cca0e5… privateHOLD on fixed-feature
+  changes; no reroll/rejudge. Stagewood shelves/removalofmountedplates visually
+  confirmed. This is real model-fidelity work, not a billing or UI finding.
+- ExplicitPro4Kstage30fab72b…/checkcc4672bd… ACCEPT: sameexact original/body,
+  JPEG8,897,279B3584x4780 SHA8c661d0f…, oneCPU+onejudge, nofindings/conf.9,
+  allpreservation96–97/artifacts92/editquality88. Root/independentvisual agree
+  fixedracks/plates/ceilings/kitchen preserved. HTTP200exactmasterSHA returned;
+  gen30.5536¢+QC9.4668¢=40.0204¢ catalogbound, notinvoice. One room comparison.
+- ExplicitProdeclutter9f541542…/check1b11a9c4… terminalUNKNOWN/HOLD: visually
+  preservesfeatures/noaddedpendant, butend_turn358tokenjudgefailedstrictformat.
+  Not timeout/max_tokens and rawresponse wasnotretained, exactviolatedfield
+  retrospectivelyunclassifiable. StructuredJSONrequest+boundedparse diagnostics
+  are being implemented prospectively, withunchangedparser/scores/oldreceipts.
+- Procomparison deployedONLYai-photo-v2v5 c17aaa07…, all52runtimebytes match
+  prepared six-leaf patch. Canonicallegacy82/privateworker5/review4 unchanged.
+  Scopedowner_photo_pro_4k_qa taskdeclutter expires08:16:31UTC; root must remove
+  exacttemporarygrant after terminal/finalcomparison. Ordinaryphotos stillFlash.
+- FALKlingV3native4K job0d656e4b… READY07:18:04UTC. Bothfirst-passAI/native
+  2492x3324/24fps5.042s, noqualityretry/fallback; actualmaster1080x1920/30fps/
+  10s13,008,431B SHA33d14faf…. ExactownerGET/hash/fullAVdecode/rootsampledframe
+  review passed, no black/blurpanels.12m2.290stoReady, scopedpushoutboxsentonce
+  57.626slater, phonevisibilityunproved.420¢gen+2.6¢QC excludesCPU/storage.
+  TemporaryFALselectorCASrestored exactpriorexpiredKie; ordinaryroute unchanged.
+- Videoai-video79/privateworker6 exactfive-leafFALpatch islivebyteverified.
+  No new job/oldreceipt migrations, capbypass, quota reset, public publication or
+  paidrequest retries were performed. Ordinaryquality-profile design is pending.
+- Mirroring stillreportsMaclocked despiteunlockreply; onefreshrequestpending.
+  Phone81 until82installed. Remaininggates: actual82UI/import/ZIP/camera/intro/
+  audio/push; ordinaryrouting/funding; acceptedfreshdeclutter/masking; $25Sandbox
+  purchase/recovery/refund+genuinescreenshot (Sandboxtrue/Productionfalse);
+  reviewedListing16:9publication/playback; finalCI andAppStoresubmission.
+
 This is the working acceptance list for the owner's recent requests. Implementation,
 automated checks, hosted delivery and real consumer acceptance are separate states.
 An unchecked item remains open. The public Apple candidate is not changed by this list.
@@ -65,171 +112,49 @@ An unchecked item remains open. The public Apple candidate is not changed by thi
 
 | Request | Source/check status | Required live acceptance |
 |---|---|---|
-| Professional video is the main playable property media | 78 Worker renderer/browser checks pass | Real listing video and normal Play; recorded scrub stays secondary |
-| Home, Gallery, Location and Contact | 78 website sections/routes implemented | Actual mobile navigation, full-image lightbox and enquiry flow |
-| Classic + Signature Estate + Coastal Luxe | 78 private same-property previews and glass layouts tested | Real property designs, mobile/desktop, keyboard, reduced motion |
-| $25 once per property luxury purchase | Apple unsubmitted draft price verified25; backend79 delta underway | Apple Sandbox purchase/restore/lost reply/refund/property binding |
-| No fake entitlement through a query or unpaid preview | SQL/handler/browser closed checks pass | Existing/fresh accounts, public preview isolation and refunds |
-| Buyer link opens website instead of Rendprop app | Unclaimed `/property/<slug>` alias/AASA exclusion live from77 | Messages/Safari actual phone; old links remain usable |
-| High-quality images and fast loading | Responsive/lazy originals and cache/readback work in source | Exact real listing, first visible photo/video latency and full-image detail |
-| No fake4K photo/video quality claim | Preserve genuine originals and identify actual AI/output dimensions; synthetic encoder tests do not establish model detail | Real Original/Enhanced/Staged full-resolution files and website lightbox comparison; no claim that upscale reconstructs missing detail |
-| Real nearby data; no invented shops/restaurants | Existing location route retained | Matched coordinates, actual sources, outages and cached response |
+| Professional video is the main playable property media | 79 photo-video renderer/browser gates are deployed in82; recorded walkthrough remains secondary | Root accepts a real Listing16:9 result, explicitly publishes it, then verifies normal Play on that same property; no private result auto-publishes |
+| Home, Gallery, Location and Contact | Current hosted alias routes each return200 with distinct pages; public gallery/contact payload preserved | Actual mirrored-phone navigation, full-image lightbox and real authorised enquiry flow |
+| Classic + Signature Estate + Coastal Luxe | Current hosted Classic plus both clearly marked/noindex/no-form luxury previews verified with real published855 content | Actual phone design quality, keyboard/reduced-motion accessibility; preview is not an entitlement |
+| $25 once per property luxury purchase | Consumable25.00 draft remains MISSING_METADATA with no review screenshot. USA availability is configured; Sandbox enabled for testing, Production disabled | Complete review metadata/screenshot; actual Apple Sandbox purchase/recovery/refund and exact property binding before Production enable |
+| No fake entitlement through a query or unpaid preview | SQL/handler/browser checks pass; hosted unpaid website_theme query remains Classic; marked preview has no form and changes no stored style | Existing/fresh accounts, actual paid entitlement/refund and cross-property isolation |
+| Buyer link opens website instead of Rendprop app | Hosted `/property/<slug>` is direct200 with alias-preserving navigation; AASA public exclusions retained; old `/f` still returns same publication | Messages/Safari on actual phone, including cached older app association |
+| High-quality images and fast loading | Fresh real855 HTML median3.921→1.479s after DB-region affinity and independent read overlap; public DTO bytes identical, no authority cache. Selected/altered262KB image prefixes arrive0.282/0.128s | Actual phone first-visible media and full-image detail; these HTTP timings are not phone LCP or an SLA |
+| No fake4K photo/video quality claim | Old public855 unit1120 stage pair is4032×3024 original vs896×1195 altered, createdOctober2; existing low-detail saved result is not4K. No gallery/image was replaced | Root selects correct current phone property and compares its real accepted files; no cross-listing copy or claim that upscale reconstructs detail |
+| Real nearby data; no invented shops/restaurants | Current nearby route returns9 named places with OpenStreetMap attribution/licence; no invented locality text or paid location request | Actual phone coordinates/place accuracy, empty/outage behaviour and map links |
 | Compact meaningful disclosures | Existing website shared components retained | Altered media labelled; full disclosure/originals available |
-| Readable address URLs and distinct page search/social metadata | 79 Worker source implemented; 113 renderer/Worker SEO checks | Hosted redirect/canonical correctness, old links, duplicate addresses |
-| Dynamic sitemap for published opted-in pages | Backend bounded public index + Worker sitemap source implemented and tested | Hosted readback; no private/deleted/offline/unbranded/preview pages leak |
+| Readable address URLs and distinct page search/social metadata | 113 renderer/Worker checks pass and deployed82 readback confirms address canonical plus distinct Home/Gallery/Location/Contact metadata | Actual phone shared-link card and duplicate-address behaviour; no Google indexing claim |
+| Dynamic sitemap for published opted-in pages | Bounded backend index + Worker sitemap deployed; hosted sitemap200, privacy/preview/unbranded exclusion controls retained | Inspect a genuinely opted-in publication; no indexing or opt-in fabrication |
 | Shared links expose product discoverability appropriately | Branded footer/app affordance existing | Branded link cards; MLS-safe pages contain no promotion |
 
 ## Studio, exports and launch
 
-- [ ] Studio beginner flow uses the same purpose, reviewed versions, automatic
-  scene plan and server jobs as the phone; existing advanced desktop editor remains.
+- [ ] Studio beginner flow is deployed with the same purpose, reviewed versions,
+  automatic scene plan and server jobs as the phone; advanced desktop editor
+  remains.510 tests and35 hosted files/39 bounded GET byte/security checks pass.
+  Real authenticated account/library/recovery and phone/Studio parity remain open.
 - [ ] Native/Studio published output and selected website design agree with server.
 - [ ] Coordinator ZIP has separate Originals, Decluttered and Staged directories
   plus the agreed listing/social destination formats; files are actual high-quality
   media, not UI captures. Preserve masters and do not promise a universal MLS ratio.
 - [ ] Ask AI knows the current screen/product flow and true background boundaries;
   cost remains measured rather than assumed. No false Kie processor claim.
-- [ ] Branded ≤60-second onboarding uses current real screens, correct photo-first
+- [ ] Branded up-to-two-minute onboarding uses current real screens, correct photo-first
   flow, Willow at1.2x, no blank scenes or misleading trial/publication explanation.
-- [ ] Internal TestFlight delivered; exact build/source receipt retained.
+- [x] Normal82 TestFlight delivered; exact signed archive/source/Apple receipt retained
+  at `_bridge/build82-normal-release-prep/NORMAL82-DELIVERY-RECEIPT.json`.
+- [ ] Actual phone installs82 and completes the remaining acceptance checks.
 - [ ] CI failures classified and corrected without deleting functional oracles.
 - [ ] Real photo enhancement/declutter/stage/masking and video acceptance passed.
 - [ ] Ordinary non-owner/non-sponsored account and Apple purchase paths tested;
   owner unrestricted use is not evidence of normal customer admission.
-- [ ] Public candidate is built without the spatial-lab flag from tested source.
+- [x] Normal82 candidate is signed, uploaded and APP_STORE_ELIGIBLE without LAB/DEBUG;
+  current205-input native binding matches its archive. This does not close actual
+  phone acceptance or authorize attaching/submitting an unaccepted candidate.
 - [ ] Newest tested normal candidate submitted with automatic release after approval.
 
-## Verified checkpoint and remaining release gates
+## Evidence records
 
-On October 14 the frozen 79 native runtime passed normal and lab iPhoneOS SDK
-compilation, 36 Phase1 tests and 73 native CI command steps. The actual UIKit
-export suite includes 693 rendering/packaging checks, 449 encoded ZIP checks and
-33 compiled corruption controls. These are automated proofs; they do not replace
-the owner's real-phone/provider acceptance. Exact receipts are in
-`_bridge/build79-ci-native/final-receipt.json` and
-`_bridge/build79-native-sdk-admission-final-receipt.json` outside this checkout.
-
-The internal overlay is now79. Its actual iPhoneOS Release SDK build passed with
-`SPATIAL_CAPTURE_LAB` and without `DEBUG`; all161 frozen Swift hashes still match.
-Normal74 YAML/generated project are byte-identical to the earlier SDK proof.
-Seven bundled introduction/music/catalog/licence resources match their source
-bytes. This is an unsigned build/preflight, not a signed archive or TestFlight
-delivery. Proof: `_bridge/build79-background-testflight/lab79-build-preflight.json`.
-No Apple/provider write was made by that preparation step.
-
-Internal build 78 is installed on the actual mirrored iPhone. Its six-function
-backend rollout and website Worker `0059fa27-9afd-4d4c-b0df-57bf42874260` are live.
-The new 79 schema/functions/CPU worker and Studio remain unactivated. New website
-purchase flags remain off; the USD25 Apple draft still requires completion and
-Sandbox acceptance. The approved public 1.0.3 is build42. Candidate 1.0.4 build74
-is **IN_REVIEW**, set to **AFTER_APPROVAL**; no public Apple write was made for79.
-
-## Reference review log
-
-References are inspiration, not evidence of their capture method or permission to
-copy photographs, scripts or branding. The actual mirrored iPhone is used for
-native/phone acceptance. No enquiry form or message is sent to reference contacts.
-
-- Matthew Benham,4816KellyWoodsLn: real Safari landscape property video observed
-  previously; image-only AI production method is unproven.
-- Nextdoor Photos,17018HarcombeDrive: actual mobile page observed October14;
-  large photo gallery, navigation for Photos/3DTour/FloorPlans/Documents/Map/Contact;
-  embedded Zillow tour with room image and plan positions.
-- Charlotte Real Estate Photos,6812LinksideCt: exact owner URL currently renders
-  a branded Page not found screen on the real phone. No fabricated design review.
-- HDBros,5828CopperleafCommonsCt: actual mobile page observed; large exterior
-  carousel, property info,56-photo gallery, floor-plan navigation and persistent
-  small contact action. Avoid excessive gallery dots and empty vertical space.
-- Media Partner Services,5919DerryHillPl: review in progress.
-- Vimeo1226997254: review in progress.
-
-This file must be updated with actual source hashes and acceptance receipts as
-each open item is completed. Do not equate source completion with live acceptance.
-
-## Evening owner feedback and corrected release state
-
-- [ ] Replace the visible Scandinavian choice with Contemporary, using a distinct
-  contemporary furniture prompt. Keep decoding historical Scandinavian results
-  and accepting legacy clients without rewriting saved media.
-- [ ] Photo edits show real preparation/upload/generation/returned-image-check/save
-  stages and batch completion. The current synchronous provider response has no
-  live percentage; do not invent elapsed-time percentages or provider progress.
-- [ ] Redesign Photo versions with adaptive system/glass materials, a larger
-  uncropped image, clear saved-version selection, one comparison action, compact
-  required review checks, and bottom actions above the safe area. Preserve exact
-  source/version review bindings, originals and explicit listing selection.
-
-The owner's October14 19:08 Modern staging result on the actual mirrored iPhone78
-was visually approved as good. Root observed that result at19:15; required review
-toggles remain unchecked and root has not published or selected that staged result
-for the listing. This confirms one real output, not every style or generation.
-Phone78 still has Latest/Scandinavian; Original is in79 source, and the newer
-Contemporary/review/progress requests are implemented in isolated80 work lanes.
-
-Apple readback at22:55Z supersedes the preceding candidate status:1.0.4(74) is
-READY_FOR_SALE, reviewCOMPLETE, AFTER_APPROVAL. Internal1.0.4(79) upload was refused
-with90062/90186 because that release train is closed; its failure evidence remains.
-79 is absent across app trains. Only the lab marketing version changed to1.0.5;
-normal74/1.0.4 project,161 Swift files and7 resources remain unchanged. Fresh
-internal1.0.5(79) signed archive/Apple processing/hardware acceptance are pending.
-
-All five79 migrations and13 affected functions are now deployed with exact-source
-and JWT-policy readback. The original partial CLI failure remains preserved;
-reconnected Supabase MCP delivered the three remaining exact-source functions.
-The dedicated CPU Worker and music files are deployed but disabled; no hosted
-CPU encoding or background-video acceptance is claimed. Studio/website79 rollout,
-premium Sandbox acceptance and refreshed onboarding remain open release work.
-
-### Current internal80 integration checkpoint
-
-Internal1.0.5(79) is VALID/INTERNAL_ONLY, in the existing internal group, installed
-through TestFlight on the owner's actual mirrored iPhone. Original-only editing
-and the saved Modern staging result were observed after the update. Existing
-listing selection stayed on the earlier version; root made no publication or
-selection change. Delivery/readback evidence is under
-`_bridge/build79-v105-testflight/`, including the preserved post-upload GET
-disconnect and its read-only reconciliation. The upload was not repeated.
-
-Build80 source now includes Contemporary, the adaptive photo review, aspect-fit
-preview, fixed safe-area actions and honest progress stages/counts. One combined
-Release iPhoneOS SDK build compiled the changed Swift; source/history/lifecycle,
-privacy, staging and progress controls passed. The two stale test harnesses were
-repaired without runtime changes. All218 captured native inputs match
-`_bridge/build80-integrated-native/FINAL-NATIVE-RECEIPT.json`. Signed80 archive,
-upload and actual-phone visual/progress acceptance remain pending here.
-
-Backend80 support is already live: ai-photo78 has distinct Contemporary prompts
-while preserving legacy Scandinavian; coach40 has updated context/routing and
-actual token-usage metadata alongside catalog cost estimates. Exact runtime-file
-and JWT readback passed; all27 unrelated functions stayed unchanged. Evidence:
-`_bridge/build80-photo-review-backend/combined-live-readback.json`. No schema,
-secret, funding or feature flag changed and no provider call was made by this
-deployment. Studio80 source is tested but not yet deployed. New background-video
-execution and premium purchases are still disabled pending their live acceptance;
-80 must not be described as full launch acceptance or a public Apple submission.
-
-
-### Actual80/81 phone and delivery update,01:12UTC
-
-- [x] Contemporary is visible instead of Scandinavian for new edits; one actual
-  phone Contemporary operation completed and remains saved beside Modern.
-- [x] Photo versions adaptive light layout, original comparison, scrollable
-  required checks and safe-area footer observed on the actual phone80. No
-  publication/check approval was made.
-- [x] Owner's8:38PM selector-only clarification implemented in81: readable glass
-  capsules, current full labels, actual selected state and existing filter
-  semantics. All four filters were tapped on actual TestFlight81.
-- [x] New selector observed in Light and temporary Dark appearance.
-- [ ] Physical Large Text/smaller-phone selector check remains open.
-- [ ] Full per-operation phase visibility in the global photo banner remains a
-  polish follow-up; it currently shows truthful completed-photo percentage.
-
-Both80 and81 internal uploads succeeded once; Apple reports VALID/INTERNAL_ONLY
-and IN_BETA_TESTING with existing group/notes verified. Source81 is3c19f441;
-its fresh signed archive performs the real81SDKcompile. Delivery/phone receipts
-are in `_bridge/build81-photo-labels-testflight/` and the80photo receipt is in
-`_bridge/build80-photo-review-testflight/phone80-partial-acceptance.json`.
-These newer observations supersede the preceding pending80delivery paragraph.
-Public1.0.4(74) is still READY_FOR_SALE, AFTER_APPROVAL and unchanged. No full
-launch, hosted background rendering, premium purchase or website/Studio rollout
-acceptance is implied.
+The superseded05:52 status snapshot is retained locally in
+`_bridge/build82-final-state/CHECKLIST-HISTORICAL-0552.md`. The active checkpoint
+at the top of this checklist controls current release state. Individual evidence
+receipts remain unchanged.

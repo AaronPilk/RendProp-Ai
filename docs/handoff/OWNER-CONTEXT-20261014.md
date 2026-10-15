@@ -1,5 +1,52 @@
 # Rendprop owner context — October 14, 2026
 
+## Active checkpoint — 2026-10-15 07:25 UTC
+
+- Normal1.0.5(82) is VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING, build45479fdb…,
+  existing internal group. One signed archive/upload;205boundinputs/170tracked
+  +1generatedSwift, noLAB/DEBUG, exact118.73s Willow intro. Public1.0.4(74)
+  unchanged; real1.0.5 draftc15af3a3… unattached/AFTER_APPROVAL, not submitted.
+- Current source70c2adf, origin pushed onlythrough04b31ca. CI38693470447 has
+  backend2340/0/1ignore/privateCPU/PG/actualUIKit export green; offline native
+  audit still progressing. Original tour negative-control red retained; test-only
+  classifier5ab17a5 and unchanged production oracles need final changed-source CI.
+- Full-resolution output25MiB/actual256MB governor and35MB Studio transport are
+  implemented/deployed; Studioc0682c56… has35-file/39GET proof. CPU3a180766…/
+  f4d26817… adaptive comparison-only JPEG fix is live; masters/geometry/6MBcap/
+  gates/2slots/controller/bindings/secrets unchanged. Hosted freshstage/declutter
+  both completed comparison preparation once, proving technical size repair.
+- ActualFlashstage b397f0de… anddeclutter35cca0e5… privateHOLD on fixed-feature
+  changes; no reroll/rejudge. Stagewood shelves/removalofmountedplates visually
+  confirmed. This is real model-fidelity work, not a billing or UI finding.
+- ExplicitPro4Kstage30fab72b…/checkcc4672bd… ACCEPT: sameexact original/body,
+  JPEG8,897,279B3584x4780 SHA8c661d0f…, oneCPU+onejudge, nofindings/conf.9,
+  allpreservation96–97/artifacts92/editquality88. Root/independentvisual agree
+  fixedracks/plates/ceilings/kitchen preserved. HTTP200exactmasterSHA returned;
+  gen30.5536¢+QC9.4668¢=40.0204¢ catalogbound, notinvoice. One room comparison.
+- ExplicitProdeclutter9f541542…/check1b11a9c4… terminalUNKNOWN/HOLD: visually
+  preservesfeatures/noaddedpendant, butend_turn358tokenjudgefailedstrictformat.
+  Not timeout/max_tokens and rawresponse wasnotretained, exactviolatedfield
+  retrospectivelyunclassifiable. StructuredJSONrequest+boundedparse diagnostics
+  are being implemented prospectively, withunchangedparser/scores/oldreceipts.
+- Procomparison deployedONLYai-photo-v2v5 c17aaa07…, all52runtimebytes match
+  prepared six-leaf patch. Canonicallegacy82/privateworker5/review4 unchanged.
+  Scopedowner_photo_pro_4k_qa taskdeclutter expires08:16:31UTC; root must remove
+  exacttemporarygrant after terminal/finalcomparison. Ordinaryphotos stillFlash.
+- FALKlingV3native4K job0d656e4b… READY07:18:04UTC. Bothfirst-passAI/native
+  2492x3324/24fps5.042s, noqualityretry/fallback; actualmaster1080x1920/30fps/
+  10s13,008,431B SHA33d14faf…. ExactownerGET/hash/fullAVdecode/rootsampledframe
+  review passed, no black/blurpanels.12m2.290stoReady, scopedpushoutboxsentonce
+  57.626slater, phonevisibilityunproved.420¢gen+2.6¢QC excludesCPU/storage.
+  TemporaryFALselectorCASrestored exactpriorexpiredKie; ordinaryroute unchanged.
+- Videoai-video79/privateworker6 exactfive-leafFALpatch islivebyteverified.
+  No new job/oldreceipt migrations, capbypass, quota reset, public publication or
+  paidrequest retries were performed. Ordinaryquality-profile design is pending.
+- Mirroring stillreportsMaclocked despiteunlockreply; onefreshrequestpending.
+  Phone81 until82installed. Remaininggates: actual82UI/import/ZIP/camera/intro/
+  audio/push; ordinaryrouting/funding; acceptedfreshdeclutter/masking; $25Sandbox
+  purchase/recovery/refund+genuinescreenshot (Sandboxtrue/Productionfalse);
+  reviewedListing16:9publication/playback; finalCI andAppStoresubmission.
+
 This consolidates the owner's recent messages and retained decisions. New messages
 steer the same work; they do not erase earlier open requests. Later explicit
 decisions supersede earlier prices, limits and priorities. The acceptance ledger is
@@ -116,7 +163,7 @@ decisions supersede earlier prices, limits and priorities. The acceptance ledger
 - Ask AI acts as contextual support: current screen/listing/action, correct
   feature availability and practical navigation. Measure its cost. A constantly
   running account-analysis agent was a possibility, not a requirement.
-- Branded onboarding: up to60seconds, real relevant screens without blank scenes,
+- Branded onboarding: up to about two minutes, real relevant screens without blank scenes,
   Willow narration at1.2×, natural/excited tone. Correct sequence is sign-in/eligible
   trial confirmation → address/details → photos/optional steady video → AI editing
   and selecting images → property video → publish/site/share; then other tools.
@@ -161,45 +208,67 @@ and independently verified on `/Volumes/Rendprop Files`;35 loose documents and
 Active source, keys and current releases remain local. Time Machine is separate
 and was preserved. Start at `/Users/pilksclaes/Rendprop AI/START HERE.md`.
 
-79 source passed the recorded native, backend, Studio, Linux renderer and website
-checks. The concrete cross-service large-video delivery mismatch is fixed and
-tested in source, with a fifth matching backend migration pending deployment.
-New79 hosted jobs/provider quality/locked-phone
-completion/purchases/onboarding acceptance remain open. Do not mark launch ready
-from counts or old receipts. Continue from the exact current checkpoint, without
-restarting unrelated passed checks or silently dropping requests.
+The active checkpoint at the top of `OWNER-REQUEST-CHECKLIST-20261014.md`
+controls current execution. The superseded05:52UTC snapshot is retained at
+`_bridge/build82-final-state/CHECKLIST-HISTORICAL-0552.md`; its pending/archive/
+deployment language is historical, not a current instruction.
 
+Normal1.0.5(82) has been signed, uploaded once and verified VALID,
+APP_STORE_ELIGIBLE and available in the existing internal TestFlight group.
+All205 captured native inputs,170 tracked Swift files and7 packaged resources
+still match the delivered archive; the later backend/CPU/test changes do not
+change that native binding. Exact delivery evidence:
+`_bridge/build82-normal-release-prep/NORMAL82-DELIVERY-RECEIPT.json`.
+Public1.0.4(74) remains live and unchanged. AppStoreVersion1.0.5 is the real draft
+`c15af3a3-8cf3-44ef-93ca-6d0d1777d1e3`, PREPARE_FOR_SUBMISSION, no attached build,
+AFTER_APPROVAL. The older `8aa89a41…` identity is an IAP version, not this draft.
+No new App Store submission or actual82 phone acceptance is claimed.
 
-## 01:12UTC physical photo and selector checkpoint (October15UTC / October14ET)
+Current strict photo/CPU, provider-comparison, Studio and CI status is in the
+active checkpoint above. The old two-shot original-photo fallback and the later
+single balcony owner-only Kling result are distinct evidence; neither certifies
+ordinary-customer/interior/Listing quality. Historical photo HOLDs and uncertain
+paid requests remain retained; a deployment does not reroll them. ProcessRSS is
+not the Supabase memory governor. Actual native256MB/2s controls, bounded output
+transport and the6MB comparison package have separate source-bound receipts.
 
-The owner clarified that the8:38PM complaint referred specifically to the
-Original/Latest/Decluttered/Staged selector, not the green thumbnail publication
-badges. Build81 changes only that selector and its existing UI helper, plus
-lab metadata. Keep thumbnail publication labels/actions unchanged.
+Studio organized full-library ZIP, contextual Ask AI and durable IndexedDB
+recovery are deployed in c0682c56… with35-file/39GET byte/security readback:
+`_bridge/build82-gemini-large-output/studio-deployed-readback.json`.
+Three real ordinary Ask AI calls cost6.3¢ in recorded catalog estimates with
+provider token receipts; that is not a supplier invoice claim or ordinary video
+billing acceptance. The118.733s Willow1.2× introduction remains exact in the
+signed82 archive. Its current media/source checks are retained at
+`_bridge/build82-onboarding/FINAL-SOURCE-BINDING.json`; physical playback and
+subjective listening remain pending.
 
-Internal1.0.5(80) and(81) both uploaded once, VALID/INTERNAL_ONLY, existing
-internal group and testing notes read back. Actual phone installed81 through
-TestFlight. All four glass-tab names fit at the owner's current text size;
-Original starts selected. Actual taps of Staged, Decluttered, Latest and Original
-show the expected saved results/empty state, with the purple selected capsule.
-Light and temporary Dark appearance were visually checked on that phone.
-Large-text and smaller-device physical acceptance are not claimed.
+The$25 per-property website SKU has Sandbox enabled for testing, Production
+still disabled, and USA availability configured. Its missing review screenshot
+and actual Sandbox purchase/recovery/refund acceptance remain open. Previewing a
+luxury design is not proof of a paid public entitlement.
 
-On80, the adaptive Photo versions screen, larger aspect-fit photo, original
-comparison, reachable required checks and persistent safe-area footer were
-observed. Use on listing stayed disabled before review, and root did not approve
-checks, change the cover, choose a published version or publish. One Contemporary
-edit from the living-room Original completed, with the actual0%-completed-batch
-bar followed by1of1ready. Staged now retains Contemporary and Modern separately.
-This is one real Contemporary result, not acceptance of all AI outputs. The
-global banner currently shows completed-photo percentage; detailed phase text
-is in the detailed studio batch card rather than that global banner.
+Actual phone81 accepted readable Original/Latest/Decluttered/Staged glass tabs,
+saved Contemporary/Modern history, Original-only editing, uncropped photo review,
+reachable required checks/footer, Homephoto-first/GetStartedaddress form,
+ManageDetails/toolbox ordering, Leads grouping and temporaryLight/Dark restored to
+System. No large-text, freshordinarybilling, premium purchase, whole-listing export
+or updated82 realphone acceptance is claimed. The Mac is currently locked;
+Mirroring's manual unlock request remains pending. Keep using the actual phone.
 
-Source81 is3c19f441 (selector e1a4352); one real signed archive compiled3app
-Swift commands withLAB/noDEBUG; signature/resource/dSYM verification passed,
-and internal delivery is recorded under `_bridge/build81-photo-labels-testflight/`.
-No normal App Store74 project, public candidate or release setting changed.
-80CI hosted UIKit passed693pixel and449ZIP assertions with33compiled negative
-controls on exact cfad13f; whole-run native audit was still running at the last
-readback. Background canary, website/Studio rollout, premium purchase acceptance
-and refreshed onboarding remain open.
+## Latest owner onboarding requirement, October14 evening
+
+- [x] Remake the onboarding as a complete, precise consumer walkthrough, up to
+  about two minutes if needed. This supersedes the previous60-second target.
+  Explain why the app exists, the purpose and function of each available tool,
+  and the full real-estate workflow in its natural order. Include best practices
+  and operating procedures: address/details → level, well-lit whole-room
+  landscape photos (0.5× when needed) → AI edit from originals → compare/review
+  and choose gallery/cover → automatic photo-to-video in Listing/Social format
+  → review → publish a property website → share/export → manage leads. Explain
+  optional steady recorded walkthroughs, voice/music/labels, saved versions and
+  Ask AI without making those mandatory. Use actual screens and clear branded
+  narration with Willow at the accepted20% faster pace. No unsupported feature,
+  trial eligibility, background, purchase or MLS-syndication promise.
+  Rendered118.733s/327words with29real phone scenes and one genuine saved-video
+  excerpt; bundled SHA2160f41c48eeffa17815190861c8805038a0de60bca35233800cf836cee2b921.
+  Encoded/audio/frame checks pass; actual phone replay remains pending unlock.
