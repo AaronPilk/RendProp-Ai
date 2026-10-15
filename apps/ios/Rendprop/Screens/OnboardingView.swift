@@ -11,18 +11,18 @@ struct OnboardingView: View {
     // Feature-first: each page is one headline feature wearing its signature
     // gradient (the same one it wears on Home's showroom).
     private let cards: [(icon: String, gradient: LinearGradient, title: String, body: String)] = [
-        ("video.fill", RPGradient.drone,
-         "Film with your phone.\nGet a drone-style tour.",
-         "Walk through once while recording. Rendprop turns it into a smooth, cinematic flythrough people scroll to explore."),
+        ("house.fill", RPGradient.drone,
+         "Start with your home.\nAdd the details.",
+         "Enter the address and property details. Your photos, video, website and leads stay grouped with that home."),
         ("wand.and.stars", RPGradient.photo,
-         "An AI photo studio\nin your pocket.",
-         "Twilight skies, decluttered rooms, virtual staging — pro listing photos from the ones you already have."),
+         "Landscape photos.\nOptional AI edits.",
+         "Add landscape photos and keep the camera level. Use 0.5× when needed and available. Keep your Originals and review optional AI edits."),
         ("film.stack", RPGradient.reel,
-         "Your photos.\nReady for social.",
-         "Choose your listing photos and a camera style. Rendprop turns them into a reel you can review, save and share."),
+         "Make a Listing video.\nReview the result.",
+         "Choose landscape Listing or portrait Social media. Your selected order is kept, with automatic camera motion. Voice and music are optional."),
         ("link", RPGradient.share,
-         "One link.\nReal leads.",
-         "Share your tour anywhere. Your card rides along, every viewer can reach you in a tap, and their inquiries land in Leads."),
+         "Your website.\nShare and follow up.",
+         "Choose your gallery and cover, check video and contact details, then publish. Share the link and follow up in Leads. Recorded walkthroughs are optional."),
     ]
 
     var body: some View {

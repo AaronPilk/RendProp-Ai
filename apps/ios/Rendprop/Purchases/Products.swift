@@ -5,6 +5,7 @@ import Foundation
 // ONE source of truth for the product ids, the plan they map to, and the
 // "what you get" lines. The numbers below are COPIED from
 // `services/supabase/migrations/0044_plan_rework_and_industry_trial.sql`
+// with video-shot counts updated by `20261014200302_property_video_recipe_allowances.sql`
 // (`plan_entitlements`, the table 0010 introduced), which is what the server
 // actually enforces — if that table changes, change these in the same commit
 // or the paywall starts lying.
@@ -91,13 +92,13 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
         return isSold(fallback) ? fallback : nil
     }
 
-    /// The server-enforced monthly allowances for this plan (migration 0044).
+    /// Base monthly allowances (0044), with current generated-shot caps (20261014200302).
     var allowances: PlanAllowances {
         switch self {
         // plan_entitlements: renders, photo_edits, reels, aerials, topaz, seats
-        case .starter: return PlanAllowances(renders: 4,  photoEdits: 100, reels: 6,  aerials: 2, topaz: 0, seats: 1)
-        case .pro:     return PlanAllowances(renders: 10, photoEdits: 200, reels: 12, aerials: 4, topaz: 0, seats: 1)
-        case .team:    return PlanAllowances(renders: 25, photoEdits: 400, reels: 25, aerials: 8, topaz: 2, seats: 2)
+        case .starter: return PlanAllowances(renders: 4,  photoEdits: 100, reels: 30,  aerials: 2, topaz: 0, seats: 1)
+        case .pro:     return PlanAllowances(renders: 10, photoEdits: 200, reels: 60, aerials: 4, topaz: 0, seats: 1)
+        case .team:    return PlanAllowances(renders: 25, photoEdits: 400, reels: 150, aerials: 8, topaz: 2, seats: 2)
         }
     }
 
@@ -125,7 +126,7 @@ struct PlanAllowances: Hashable, Sendable {
         var lines: [String] = [
             "\(renders) cloud tour \(renders == 1 ? "render" : "renders") a month",
             "High-resolution AI photo edits",
-            "\(reels) reel \(reels == 1 ? "clip" : "clips")",
+            "\(reels) AI video shots a month",
         ]
         if topaz > 0 {
             // Quality upgrades have a separate expensive AI allowance.
@@ -137,7 +138,7 @@ struct PlanAllowances: Hashable, Sendable {
         return lines
     }
 
-    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Reel clips have their own allowance. Aerial intro is Coming soon and is not included at launch."
+    static let videoAllowanceExplanation = "Cloud tour renders process existing footage. Publishing a tour video made on your iPhone doesn't use that allowance. Video quality upgrades are separate AI upscales; they improve resolution and detail but don't turn walking footage into a real drone shot. Each AI video shot animates one photo for about 5 seconds. Make a video combines shots into a Listing or Social video; the count is shots, not finished videos. Aerial intro is Coming soon and is not included at launch."
 }
 
 /// How often the subscription bills.

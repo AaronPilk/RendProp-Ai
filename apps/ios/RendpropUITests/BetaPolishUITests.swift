@@ -556,10 +556,175 @@ final class BetaPolishUITests: XCTestCase {
         app.navigationBars["Custom AI edit"].buttons["Cancel"].tap()
     }
 
+    /// Exact mounted first-run cards on the existing offline Simulator route.
+    /// Capture only: three Continue taps; never Get started, account, plans or AI.
+    func testPhotoFirstOnboardingCardsAreVisibleBeforeGetStarted() {
+        executionTimeAllowance = 120
+        app.launchArguments = ["-uiTesting", "-ui.onboardingReset", "-space.type", "real_estate", "-appearance", "light"]
+        app.launch()
+        let cards: [(title: String, body: String)] = [
+            ("Start with your home.\nAdd the details.",
+             "Enter the address and property details. Your photos, video, website and leads stay grouped with that home."),
+            ("Landscape photos.\nOptional AI edits.",
+             "Add landscape photos and keep the camera level. Use 0.5× when needed and available. Keep your Originals and review optional AI edits."),
+            ("Make a Listing video.\nReview the result.",
+             "Choose landscape Listing or portrait Social media. Your selected order is kept, with automatic camera motion. Voice and music are optional."),
+            ("Your website.\nShare and follow up.",
+             "Choose your gallery and cover, check video and contact details, then publish. Share the link and follow up in Leads. Recorded walkthroughs are optional.")
+        ]
+        for (index, card) in cards.enumerated() {
+            let title = app.staticTexts.matching(NSPredicate(format: "label == %@", card.title)).firstMatch
+            let body = app.staticTexts.matching(NSPredicate(format: "label == %@", card.body)).firstMatch
+            let next = app.buttons[index < 3 ? "Continue" : "Get started"]
+            XCTAssertTrue(title.waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertTrue(body.exists && next.exists, app.debugDescription)
+            let visible = NSPredicate { _, _ in title.isHittable && body.isHittable && next.isHittable }
+            expectation(for: visible, evaluatedWith: app); waitForExpectations(timeout: 10)
+            for text in [title, body] {
+                XCTAssertGreaterThan(text.frame.width, 0, text.label)
+                XCTAssertGreaterThan(text.frame.height, 0, text.label)
+                XCTAssertGreaterThanOrEqual(text.frame.minX, app.frame.minX - 1, text.label)
+                XCTAssertLessThanOrEqual(text.frame.maxX, app.frame.maxX + 1, text.label)
+                XCTAssertGreaterThanOrEqual(text.frame.minY, app.frame.minY - 1, text.label)
+                XCTAssertLessThanOrEqual(text.frame.maxY, app.frame.maxY + 1, text.label)
+            }
+            XCTAssertLessThanOrEqual(title.frame.maxY, body.frame.minY + 1, "Card title and full explanation cannot overlap")
+            XCTAssertLessThanOrEqual(body.frame.maxY, next.frame.minY + 1, "The full explanation stays above the action")
+            XCTAssertGreaterThanOrEqual(next.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(next.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(next.frame.minY, app.frame.minY - 1)
+            XCTAssertLessThanOrEqual(next.frame.maxY, app.frame.maxY + 1)
+            attach("photo-first-onboarding-card-\(index + 1)")
+            if index < 3 { next.tap() }
+        }
+        XCTAssertTrue(app.buttons["Get started"].isHittable)
+        XCTAssertFalse(app.buttons["onboarding.explore"].exists, "Capture stops before the business picker")
+    }
+
+    /// Actual user navigation on the existing offline rich fixture. No import,
+    /// camera, AI action, publication, export or Photos permission is invoked.
+    func testLargestTextPhotoGridReviewEditCompareAndPagerAreReachable() {
+        executionTimeAllowance = 180
+        app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "rich",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertFalse(element("detail.fixtureFailure").exists)
+        let photos = app.buttons["detail.photos"]
+        revealForBoundedAcceptance(photos); photos.tap()
+        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 15), app.debugDescription)
+        let addPhotos = app.buttons["Add photos"], take = app.buttons["photos.takePhoto"]
+        XCTAssertTrue(addPhotos.waitForExistence(timeout: 10) && take.exists, app.debugDescription)
+        XCTAssertTrue(addPhotos.isHittable && take.isHittable, "Both import controls must be reachable without opening them")
+        XCTAssertGreaterThanOrEqual(addPhotos.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(take.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(take.frame.minY, addPhotos.frame.maxY - 1, "Largest text stacks Add and Take without shrinking the labels")
+        XCTAssertEqual(addPhotos.label, "Add photos"); XCTAssertEqual(take.label, "Take a photo")
+        let before = take.frame
+        attach("largest-text-photos-before-scroll")
+        acceptancePageDrag(up: true)
+        expectation(for: NSPredicate { _, _ in take.frame.minY < before.minY - 2 }, evaluatedWith: take)
+        waitForExpectations(timeout: 5)
+        attach("largest-text-photos-after-scroll")
+        let movement = XCTAttachment(string: "Take before: \(before)\nTake after: \(take.frame)\nApp: \(app.frame)")
+        movement.name = "largest-text-photo-scroll-geometry"; movement.lifetime = .keepAlways; add(movement)
+        let photo = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.version.")).firstMatch
+        revealForBoundedAcceptance(photo); photo.tap()
+        let save = photoReviewFooterButton(download: true)
+        XCTAssertTrue(save.waitForExistence(timeout: 10), app.debugDescription)
+        assertAcceptanceFooterIsVisible()
+        let title = app.staticTexts["photoVersion.headerTitle"]
+        let history = app.buttons["photoVersion.history"]
+        let close = app.buttons["Close"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5) && history.exists && close.exists, app.debugDescription)
+        let headerGeometry = XCTAttachment(string: "Title: \(title.frame)\nHistory: \(history.frame)\nClose: \(close.frame)\nApp: \(app.frame)")
+        headerGeometry.name = "largest-text-review-header-geometry"; headerGeometry.lifetime = .keepAlways; add(headerGeometry)
+        attach("largest-text-review-full-width-header")
+        XCTAssertEqual(title.label, "Photo versions"); XCTAssertEqual(history.label, "All edits")
+        XCTAssertTrue(title.isHittable && history.isHittable && close.isHittable,
+                      "The full title, saved-edit menu and Close must be visible together at largest text")
+        XCTAssertGreaterThanOrEqual(title.frame.minX, app.frame.minX)
+        XCTAssertEqual(title.frame.minX, history.frame.minX, accuracy: 1, "Title and history share the full row’s leading edge")
+        XCTAssertGreaterThan(title.frame.width, 0); XCTAssertGreaterThan(title.frame.height, 0)
+        XCTAssertGreaterThanOrEqual(title.frame.minY, app.frame.minY)
+        XCTAssertLessThanOrEqual(title.frame.maxX, app.frame.maxX)
+        XCTAssertLessThanOrEqual(title.frame.maxY, min(history.frame.minY, close.frame.minY) + 1,
+                                 "Largest-text actions must sit below the title without overlap")
+        XCTAssertLessThanOrEqual(history.frame.maxX, close.frame.minX + 1,
+                                 "All edits must not overlap Close")
+        XCTAssertGreaterThanOrEqual(history.frame.height, 44)
+        XCTAssertTrue(element("photoVersion.savedChoices").exists)
+        assertPhotoReviewChoicesAndToolsFitViewport("largest-text-polished-review")
+        let position = app.staticTexts["photoVersion.position"]
+        XCTAssertEqual(position.label, "Photo 1 of 3")
+        let edit = app.buttons["photoVersion.editOriginal"]
+        revealForBoundedAcceptance(edit)
+        XCTAssertTrue(edit.isEnabled); attach("largest-text-review-edit-and-footer")
+        edit.tap()
+        XCTAssertTrue(app.navigationBars["Edit original photo"].waitForExistence(timeout: 10), app.debugDescription)
+        let declutter = app.buttons["photoVersion.edit.declutter"]
+        revealForBoundedAcceptance(declutter)
+        XCTAssertTrue(declutter.isEnabled)
+        XCTAssertTrue(app.buttons["photoVersion.edit.stage"].exists)
+        attach("largest-text-single-photo-actions-no-selection")
+        // Opening this sheet is safe. Selecting an AI action is deliberately
+        // outside this test, including when the transport is a mock.
+        app.navigationBars["Edit original photo"].buttons["Cancel"].tap()
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        let compare = app.buttons["photoVersion.fullSize"]
+        revealForBoundedAcceptance(compare); XCTAssertTrue(compare.isEnabled); compare.tap()
+        let done = app.buttons["photoComparison.close"]
+        XCTAssertTrue(done.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(element("photoComparison.image").exists)
+        attach("largest-text-full-size-comparison")
+        done.tap()
+        let next = app.buttons["photoVersion.nextPhoto"], previous = app.buttons["photoVersion.previousPhoto"]
+        revealForBoundedAcceptance(next)
+        XCTAssertTrue(next.isEnabled); XCTAssertFalse(previous.isEnabled)
+        next.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Photo 2 of 3"), evaluatedWith: position)
+        waitForExpectations(timeout: 10)
+        attach("largest-text-second-family")
+        XCTAssertTrue(previous.isEnabled); previous.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Photo 1 of 3"), evaluatedWith: position)
+        waitForExpectations(timeout: 10)
+        assertAcceptanceFooterIsVisible()
+        attach("largest-text-first-family-restored")
+        app.buttons["Close"].tap()
+    }
+
+    /// The existing two-home host mounts the production HomeDashboardView.
+    /// Inspect its current copy without creating, selecting or changing a home.
+    func testMountedHomeExplainsPhotoFirstWorkflow() {
+        executionTimeAllowance = 180
+        app.launchArguments = baseArguments + ["-ui.homeProjectCreationFixture", "two-homes", "-ui.currentLocationFixture"]
+        app.launch()
+        XCTAssertTrue(app.buttons["home.getStarted"].waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertEqual(app.staticTexts["home.fixture.projectCount"].label, "2 synthetic homes")
+        let steps = [
+            ("Add home", "Enter the address and property details.", "add-home"),
+            ("Create from photos", "Upload landscape photos, review any optional AI edits, then make a Listing video.", "create-from-photos"),
+            ("Publish and share", "Choose your gallery and cover, check the video and contact details, then publish your website. Share its link and follow up in Leads.", "publish-and-share")
+        ]
+        revealForBoundedAcceptance(app.staticTexts["How it works"])
+        for (title, detail, name) in steps {
+            XCTAssertTrue(app.staticTexts[title].exists, title)
+            revealForBoundedAcceptance(app.staticTexts.matching(NSPredicate(format: "label == %@", detail)).firstMatch)
+            attach("home-photo-first-" + name)
+        }
+        let optional = "Optional: record a slow, steady walkthrough with a gimbal if available, or upload a walkthrough or drone clip."
+        revealForBoundedAcceptance(app.staticTexts.matching(NSPredicate(format: "label == %@", optional)).firstMatch)
+        attach("home-photo-first-optional-recording")
+        XCTAssertFalse(app.staticTexts["Film it"].exists)
+        XCTAssertFalse(app.staticTexts["Walk it at a steady, normal pace on the 0.5× wide lens — or upload a clip."].exists)
+        XCTAssertEqual(app.staticTexts["home.fixture.projectCount"].label, "2 synthetic homes")
+    }
+
     /// Compiled here for future UI acceptance; no provider or Photos writes.
     /// The fixed actions must remain reachable while scrolling larger text.
     func testPhotoReviewFixedActionsAcrossAppearanceAndAccessibilityText() {
         for appearance in ["light", "dark"] {
+            if app.state != .notRunning { app.terminate() }
             app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "rich",
                 "-appearance", appearance, "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
             app.launch()
@@ -567,20 +732,20 @@ final class BetaPolishUITests: XCTestCase {
             openDetail("detail.photos", title: "Photos")
             let photo = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare")).firstMatch
             scrollTo(photo); photo.tap()
-            let preview = app.otherElements["photoVersion.preview"]
-            let save = app.buttons["photoVersion.download"]
+            let preview = element("photoVersion.preview")
+            let save = photoReviewFooterButton(download: true)
             XCTAssertTrue(save.waitForExistence(timeout: 10), app.debugDescription)
             XCTAssertTrue(save.isHittable && save.frame.maxY <= app.frame.maxY, "Save stays inside the bottom safe area")
-            XCTAssertTrue(app.scrollViews["photoVersion.savedChoices"].exists)
+            XCTAssertTrue(element("photoVersion.savedChoices").exists)
             XCTAssertTrue(app.buttons["photoVersion.fullSize"].exists)
             if preview.exists {
                 XCTAssertGreaterThan(preview.frame.height, 0)
                 XCTAssertLessThanOrEqual(preview.frame.height, min(560, app.frame.height))
             }
-            app.scrollViews.firstMatch.swipeUp()
+            acceptancePageDrag(up: true)
             XCTAssertTrue(save.isHittable, "Scrolling review content cannot hide Save")
             attach("photo-review-fixed-actions-\(appearance)-large-text")
-            app.buttons["Close"].tap(); app.terminate()
+            app.buttons["Close"].tap()
         }
     }
 
@@ -607,12 +772,12 @@ final class BetaPolishUITests: XCTestCase {
         XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0,
                        "New custom previews cannot replace the published gallery")
         scrollTo(cards.firstMatch); cards.firstMatch.tap()
-        let download = app.buttons["photoVersion.download"]
-        let use = app.buttons["photoVersion.useOnListing"]
+        let download = photoReviewFooterButton(download: true)
+        let use = photoReviewFooterButton(download: false)
         XCTAssertTrue(download.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(download.isEnabled, "Edited custom downloads require exact comparison")
         XCTAssertFalse(use.isEnabled, "The same new custom remains unpublishable")
-        let choices = app.scrollViews["photoVersion.savedChoices"]
+        let choices = element("photoVersion.savedChoices")
         choices.buttons["Earlier source"].tap()
         assertSelectedExportForCompareButton("Download earlier source", original: true)
         choices.buttons["Enhanced"].tap()
@@ -643,194 +808,137 @@ final class BetaPolishUITests: XCTestCase {
         app.buttons["Close"].tap()
     }
 
-    func testLegacyGalleryKeepsSiblingsAndStagedCoverRequiresReview() {
-        launchDetail() // Three enh-/orig- pairs, deliberately no history file.
-        openDetail("detail.photos", title: "Photos")
-        let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
-        XCTAssertEqual(cards.count, 3)
-        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 3,
-                       "Every pre-history sibling remains eligible for publication")
-        // First history mutation is removal, not an all-photo fixture import.
-        scrollTo(cards.firstMatch); cards.firstMatch.press(forDuration: 1)
-        let remove = app.buttons.matching(NSPredicate(format: "label == %@", "Remove from gallery")).firstMatch
-        XCTAssertTrue(remove.waitForExistence(timeout: 5), app.debugDescription); remove.tap()
-        XCTAssertTrue(remove.waitForExistence(timeout: 5), app.debugDescription); remove.tap()
-        let two = NSPredicate { _, _ in cards.count == 2 }
-        expectation(for: two, evaluatedWith: app); waitForExpectations(timeout: 10)
-        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 2,
-                       "Removing one legacy family cannot empty the selected gallery")
-        let cover = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.cover.")).firstMatch
-        scrollTo(cover); cover.tap()
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "This is the cover photo")).count, 1,
-                       "A legacy cover is also an indexed publication choice")
-        app.navigationBars["Photos"].buttons.element(boundBy: 0).tap()
-        openDetail("detail.photoStudio", title: "AI Photo Studio")
-        let modern = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Modern — pick the photos")).firstMatch
-        scrollTo(modern); modern.tap()
-        let apply = app.buttons["studio.batchApply"]
-        scrollTo(apply)
-        XCTAssertEqual(apply.label, "Apply"); XCTAssertFalse(apply.isEnabled, "Staging requires explicit selection")
-        app.buttons["Select all"].tap()
-        XCTAssertEqual(apply.label, "Apply to 2 photos"); apply.tap()
-        confirmSyntheticStaging(count: 2)
-        let finished = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@", "Staging · Modern", "2 photos changed")).firstMatch
-        XCTAssertTrue(finished.waitForExistence(timeout: 40), app.debugDescription)
-        app.navigationBars["AI Photo Studio"].buttons.element(boundBy: 0).tap()
-        openDetail("detail.photos", title: "Photos")
-        XCTAssertEqual(cards.count, 2)
-        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Earlier version on listing")).count, 2,
-                       "Staging leaves both retained legacy choices on the listing")
-        let stagedCover = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.cover.")).firstMatch
-        scrollTo(stagedCover)
-        let versionID = String(stagedCover.identifier.dropFirst("photos.cover.".count))
-        stagedCover.tap()
-        assertCompareContains("Virtually staged")
-        let use = app.buttons["photoVersion.useOnListing"]
-        XCTAssertTrue(use.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertEqual(use.label, "Use this version on listing", "The cover star opens review instead of publishing staging immediately")
-        attach("legacy-staging-cover-review-gate")
-        reviewSyntheticStagingForPublication()
-        use.tap(); XCTAssertEqual(use.label, "Selected for listing")
-        app.buttons["Close"].tap()
-        let reviewedCover = app.buttons["photos.cover.\(versionID)"]
-        scrollTo(reviewedCover)
-        XCTAssertEqual(reviewedCover.label, "This is the cover photo", "The explicit review completes the requested cover change")
-        let reviewedCard = app.buttons["photos.version.\(versionID)"]
-        XCTAssertEqual(reviewedCard.value as? String, "Selected for listing")
-        // Hiding the family with the cover must choose a selected predecessor
-        // from the remaining family, never its unreviewed latest staging.
-        reviewedCard.press(forDuration: 1)
-        XCTAssertTrue(remove.waitForExistence(timeout: 5)); remove.tap()
-        XCTAssertTrue(remove.waitForExistence(timeout: 5)); remove.tap()
-        let one = NSPredicate { _, _ in cards.count == 1 }
-        expectation(for: one, evaluatedWith: app); waitForExpectations(timeout: 10)
-        XCTAssertEqual(cards.firstMatch.value as? String, "Earlier version on listing")
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "This is the cover photo")).count, 0,
-                       "Fallback cover must not approve the remaining staged preview")
-        attach("legacy-gallery-retained-clean-cover-fallback")
-    }
-
-    func testSavedDeclutterAndStagingLibrariesKeepDownloadsAndListingChoiceSeparate() {
-        launchDetail() // Existing procedural legacy fixture; MockAPIClient only.
-        let desktop = element("studio.desktopLink")
-        scrollTo(desktop)
-        XCTAssertTrue(desktop.isHittable, "Uploaded listings need a discoverable desktop continuation")
-        XCTAssertTrue(app.staticTexts["studio.rendprop.com"].exists)
-        openDetail("detail.photoStudio", title: "AI Photo Studio")
-        let declutter = app.buttons["studio.edit.declutter"]
-        scrollTo(declutter); declutter.tap()
-        applyThreeFixturePhotosAndWait(for: "Declutter")
-        let modern = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Modern — pick the photos")).firstMatch
-        scrollTo(modern); modern.tap()
-        applyThreeFixturePhotosAndWait(for: "Staging · Modern")
-        app.navigationBars["AI Photo Studio"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10), app.debugDescription)
+    /// Legacy files remain usable without being certified as Originals or AI inputs.
+    func testLegacyPhotosStayUnverifiedAndRequireOriginalBeforeEditing() {
+        executionTimeAllowance = 180
+        launchLegacyPhotoDetail()
         openDetail("detail.photos", title: "Photos")
         let library = app.scrollViews["photos.savedVersions"]
-        scrollTo(library)
-        XCTAssertTrue(library.exists, app.debugDescription)
-        for label in ["Original", "Latest", "Decluttered", "Staged"] {
-            XCTAssertTrue(library.buttons[label].exists, "The full saved-version name stays available")
-        }
-        XCTAssertTrue(library.buttons["Original"].isSelected, "Photos still starts with retained originals")
-        library.buttons["Decluttered"].tap()
-        let cards = app.buttons.matching(NSPredicate(format: "label == %@", "Photo — opens before-and-after compare"))
-        XCTAssertEqual(cards.count, 3, "There is one saved clean photo per family after staging")
-        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 3,
-                       "Each retained declutter must expose its actual listing selection")
-        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "Change this photo with AI")).count, 0,
-                       "Browsing old clean versions must not replace the current editing workspace")
-        scrollTo(cards.firstMatch); cards.firstMatch.tap()
-        assertCompareContains("Digitally decluttered")
-        assertSelectedExportForCompareButton("Download decluttered photo", original: false)
-        app.buttons["Close"].tap()
-        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
-
-        scrollTo(library)
-        if !library.buttons["Staged"].isHittable { library.swipeLeft() }
-        library.buttons["Staged"].tap()
-        XCTAssertEqual(cards.count, 3, "The staged library keeps one newest preview per family")
-        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0,
-                       "Unselected staged previews must not acquire a listing badge")
-        scrollTo(cards.firstMatch); cards.firstMatch.tap()
-        assertCompareContains("Virtually staged")
-        let choices = app.scrollViews["photoVersion.savedChoices"]
-        XCTAssertTrue(choices.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertTrue(choices.buttons["Decluttered"].exists && choices.buttons["Staged"].exists, app.debugDescription)
-        // Rich's enh-/orig- files predate the durable capture history. They
-        // must remain explicitly unverified, never gain a certified-original
-        // label just because the offline edit runner touched them.
-        let source = choices.buttons["Earlier source"]
-        XCTAssertTrue(source.exists && !choices.buttons["Original"].exists, app.debugDescription)
-        assertSelectedExportForCompareButton("Download staged photo", original: false)
-        source.tap()
-        XCTAssertTrue(source.isSelected, app.debugDescription)
-        assertSelectedExportForCompareButton("Download earlier source", original: true)
-        choices.buttons["Decluttered"].tap()
-        XCTAssertTrue(choices.buttons["Decluttered"].isSelected, app.debugDescription)
-        assertCompareContains("Digitally decluttered")
-        assertSelectedExportForCompareButton("Download decluttered photo", original: false)
-        let publication = app.buttons["photoVersion.useOnListing"]
-        XCTAssertEqual(publication.label, "Selected for listing", "Staging stays a preview until explicitly chosen")
-        choices.buttons["Staged"].tap()
-        let stageNotSelected = NSPredicate { _, _ in publication.exists && publication.label == "Use this version on listing" }
-        expectation(for: stageNotSelected, evaluatedWith: app); waitForExpectations(timeout: 5)
-        reviewSyntheticStagingForPublication()
-        publication.tap()
-        XCTAssertEqual(publication.label, "Selected for listing")
-        choices.buttons["Decluttered"].tap()
-        let cleanNotSelected = NSPredicate { _, _ in publication.exists && publication.label == "Use this version on listing" }
-        expectation(for: cleanNotSelected, evaluatedWith: app); waitForExpectations(timeout: 5)
-        publication.tap()
-        XCTAssertEqual(publication.label, "Selected for listing")
-        attach("saved-photo-library-public-clean-selection")
-        app.buttons["Close"].tap()
-        XCTAssertTrue(app.navigationBars["Photos"].waitForExistence(timeout: 10), app.debugDescription)
-        scrollTo(library); library.buttons["Latest"].tap()
+        let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.version."))
+        XCTAssertTrue(library.buttons["Original"].isSelected)
+        XCTAssertEqual(cards.count, 0, "A legacy filename must not create a verified Original")
+        library.buttons["Latest"].tap()
         XCTAssertEqual(cards.count, 3)
-        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0,
-                       "Selecting an older declutter keeps the latest staged tiles unselected")
-        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Decluttered version on listing")).count, 3,
-                       "Latest staging must explain that the saved clean version is on the listing")
-        scrollTo(cards.firstMatch); cards.firstMatch.tap()
-        assertCompareContains("Virtually staged")
-        XCTAssertTrue(app.scrollViews["photoVersion.savedChoices"].buttons["Staged"].isSelected,
-                      "Choosing the declutter for publication must not change the latest staging workspace")
-        XCTAssertEqual(app.buttons["photoVersion.useOnListing"].label, "Use this version on listing")
-        attach("saved-photo-library-latest-stage-retained")
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 3,
+                       "All legacy siblings remain selected before the first indexed mutation")
+        scrollTo(cards.firstMatch); cards.firstMatch.press(forDuration: 1)
+        let remove = app.buttons.matching(NSPredicate(format: "label == %@", "Remove from gallery")).firstMatch
+        XCTAssertTrue(remove.waitForExistence(timeout: 5)); remove.tap()
+        XCTAssertTrue(remove.waitForExistence(timeout: 5)); remove.tap()
+        expectation(for: NSPredicate { _, _ in cards.count == 2 }, evaluatedWith: app)
+        waitForExpectations(timeout: 10)
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 2,
+                       "Hiding one family cannot erase its selected siblings")
+        let cardID = cards.firstMatch.identifier
+        let versionID = String(cardID.dropFirst("photos.version.".count))
+        let card = app.buttons[cardID], cover = app.buttons["photos.cover.\(versionID)"]
+        scrollTo(cover); cover.tap()
+        XCTAssertEqual(cover.label, "This is the cover photo")
+        scrollTo(card); card.tap()
+        let choices = element("photoVersion.savedChoices")
+        XCTAssertTrue(choices.buttons["Earlier source"].waitForExistence(timeout: 10))
+        XCTAssertFalse(choices.buttons["Original"].exists, "Legacy source pixels are not certified by opening review")
+        choices.buttons["Earlier source"].tap()
+        assertSelectedExportForCompareButton("Download earlier source", original: true)
+        choices.buttons["Enhanced"].tap()
+        let edit = app.buttons["photoVersion.editOriginal"]
+        revealForBoundedAcceptance(edit); edit.tap()
+        let alert = app.alerts["Photo action needs attention"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(alert.staticTexts["A source photo is missing from this phone. Import it again before editing."].exists)
+        XCTAssertFalse(app.navigationBars["Edit original photo"].exists)
+        XCTAssertFalse(app.buttons["photoVersion.edit.stage"].exists)
+        XCTAssertFalse(element("photoVersion.edit.progress").exists)
+        attach("legacy-source-requires-original-import-no-AI")
+        alert.buttons["OK"].tap()
+        let use = photoReviewFooterButton(download: false)
+        XCTAssertEqual(use.label, "Remove this photo from listing")
+        use.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Use this version on listing"), evaluatedWith: use)
+        waitForExpectations(timeout: 5)
         app.buttons["Close"].tap()
-        app.navigationBars["Photos"].buttons.element(boundBy: 0).tap()
-        XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 10))
-        // Exercise the exact listing file grid reported in beta feedback, not
-        // only the separate Photos library. File-row ids are kind-prefixed;
-        // the first compare action must still target the saved version id.
-        let filePhotos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "listing.filePhoto.photo-"))
-        scrollTo(filePhotos.firstMatch)
-        XCTAssertEqual(filePhotos.count, 3)
-        let fileSaves = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "listing.savePhoto.photo-"))
-        XCTAssertEqual(fileSaves.count, 3)
-        XCTAssertTrue(fileSaves.allElementsBoundByIndex.allSatisfy { $0.label == "Save this photo to your Photos app" },
-                      "Download controls must not inherit the open-photo label or selected state")
-        XCTAssertEqual(filePhotos.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 0)
-        XCTAssertEqual(filePhotos.matching(NSPredicate(format: "value == %@", "Decluttered version on listing")).count, 3,
-                       "The listing file grid must identify each family's selected clean version")
-        filePhotos.firstMatch.tap()
-        let fileSelection = app.buttons["photoVersion.useOnListing"]
-        XCTAssertTrue(fileSelection.waitForExistence(timeout: 10), app.debugDescription)
-        XCTAssertEqual(fileSelection.label, "Use this version on listing")
-        fileSelection.tap() // No version-chip tap to repair a malformed id.
-        XCTAssertEqual(fileSelection.label, "Selected for listing", app.debugDescription)
+        XCTAssertEqual(cards.count, 2, "Unselecting keeps both source families and files visible")
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 1)
+        XCTAssertNotEqual(cover.label, "This is the cover photo", "An unselected family cannot remain cover")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == %@", "This is the cover photo")).count, 1,
+                       "The remaining selected sibling supplies the cover")
+        scrollTo(card); card.tap()
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); XCTAssertEqual(use.label, "Use this version on listing")
+        XCTAssertTrue(choices.buttons["Earlier source"].exists); XCTAssertFalse(choices.buttons["Original"].exists)
+        use.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Remove this photo from listing"), evaluatedWith: use)
+        waitForExpectations(timeout: 5)
         app.buttons["Close"].tap()
-        let selectedFiles = filePhotos.matching(NSPredicate(format: "value == %@", "Selected for listing"))
-        let refreshed = NSPredicate { _, _ in selectedFiles.count == 1 }
-        expectation(for: refreshed, evaluatedWith: app); waitForExpectations(timeout: 10)
-        scrollTo(selectedFiles.firstMatch)
-        attach("listing-file-grid-selected-version")
-        selectedFiles.firstMatch.tap()
-        XCTAssertTrue(fileSelection.waitForExistence(timeout: 10))
-        let persisted = NSPredicate { _, _ in fileSelection.label == "Selected for listing" }
-        expectation(for: persisted, evaluatedWith: app); waitForExpectations(timeout: 5)
-        XCTAssertEqual(fileSelection.label, "Selected for listing", "The file viewer must use the persisted photo version id on first open")
+        XCTAssertEqual(cards.matching(NSPredicate(format: "value == %@", "Selected for listing")).count, 2)
+        scrollTo(card); card.tap()
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); XCTAssertEqual(use.label, "Remove this photo from listing")
+        XCTAssertTrue(choices.buttons["Earlier source"].exists); XCTAssertFalse(choices.buttons["Original"].exists)
+        attach("legacy-selection-reopen-source-stays-unverified")
+        app.buttons["Close"].tap()
+    }
+
+    /// The normal rich fixture has genuine captures and an explicitly reviewed saved stage.
+    /// This tests saved selection, never claims a fresh-stage approval or generation.
+    func testVerifiedSavedVersionsKeepSelectionAndUnselectAcrossReopen() {
+        executionTimeAllowance = 180
+        launchDetail()
+        openDetail("detail.photos", title: "Photos")
+        let library = app.scrollViews["photos.savedVersions"]
+        XCTAssertTrue(library.buttons["Original"].isSelected)
+        let cards = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "photos.version."))
+        XCTAssertEqual(cards.count, 3)
+        library.buttons["Latest"].tap()
+        let stage = app.buttons["photos.version.fixture-0"]
+        XCTAssertTrue(stage.exists); XCTAssertEqual(stage.value as? String, "Selected for listing")
+        scrollTo(stage); stage.tap()
+        let choices = element("photoVersion.savedChoices")
+        XCTAssertTrue(choices.buttons["Staged"].waitForExistence(timeout: 10))
+        XCTAssertTrue(choices.buttons["Staged"].isSelected)
+        XCTAssertTrue(choices.buttons["Original"].exists); XCTAssertFalse(choices.buttons["Earlier source"].exists)
+        assertPhotoReviewChoicesAndToolsFitViewport("normal-polished-review")
+        let use = photoReviewFooterButton(download: false)
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); XCTAssertEqual(use.label, "Remove this photo from listing")
+        XCTAssertTrue(use.isEnabled, "This saved fixture stage was already explicitly reviewed")
+        use.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Use this version on listing"), evaluatedWith: use)
+        waitForExpectations(timeout: 5)
+        app.buttons["Close"].tap()
+        XCTAssertTrue(stage.exists); XCTAssertNotEqual(stage.value as? String, "Selected for listing")
+        scrollTo(stage); stage.tap()
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); XCTAssertEqual(use.label, "Use this version on listing")
+        XCTAssertTrue(choices.buttons["Staged"].isSelected)
+        use.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Remove this photo from listing"), evaluatedWith: use)
+        waitForExpectations(timeout: 5)
+        app.buttons["Close"].tap()
+        XCTAssertEqual(stage.value as? String, "Selected for listing")
+        scrollTo(stage); stage.tap()
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); XCTAssertEqual(use.label, "Remove this photo from listing")
+        choices.buttons["Original"].tap()
+        expectation(for: NSPredicate(format: "label == %@", "Use this version on listing"), evaluatedWith: use)
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(choices.buttons["Original"].isSelected)
+        XCTAssertEqual(photoReviewFooterButton(download: true).label, "Download original photo")
+        app.buttons["Close"].tap()
+        XCTAssertEqual(stage.value as? String, "Selected for listing", "Browsing Original never publishes it")
+        scrollTo(stage); stage.tap()
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); XCTAssertEqual(use.label, "Remove this photo from listing")
+        choices.buttons["Original"].tap()
+        expectation(for: NSPredicate(format: "label == %@", "Use this version on listing"), evaluatedWith: use)
+        waitForExpectations(timeout: 5)
+        use.tap()
+        expectation(for: NSPredicate(format: "label == %@", "Remove this photo from listing"), evaluatedWith: use)
+        waitForExpectations(timeout: 5)
+        app.buttons["Close"].tap()
+        XCTAssertTrue(stage.exists); XCTAssertEqual(stage.value as? String, "Earlier version on listing")
+        scrollTo(stage); stage.tap()
+        XCTAssertTrue(use.waitForExistence(timeout: 10)); XCTAssertEqual(use.label, "Use this version on listing")
+        choices.buttons["Original"].tap()
+        expectation(for: NSPredicate(format: "label == %@", "Remove this photo from listing"), evaluatedWith: use)
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(choices.buttons["Original"].isSelected && choices.buttons["Staged"].exists)
+        XCTAssertEqual(photoReviewFooterButton(download: true).label, "Download original photo")
+        attach("verified-saved-selection-unselect-original-and-reopen")
         app.buttons["Close"].tap()
     }
 
@@ -1206,9 +1314,9 @@ final class BetaPolishUITests: XCTestCase {
     }
 
     private func reviewSyntheticStagingForPublication() {
-        let use = app.buttons["photoVersion.useOnListing"]
+        let use = photoReviewFooterButton(download: false)
         XCTAssertFalse(use.isEnabled, "Unreviewed staging must remain unpublishable")
-        let choices = app.scrollViews["photoVersion.savedChoices"]
+        let choices = element("photoVersion.savedChoices")
         choices.buttons["Earlier source"].tap()
         XCTAssertTrue(choices.buttons["Earlier source"].isSelected, app.debugDescription)
         choices.buttons["Staged"].tap()
@@ -1254,6 +1362,12 @@ final class BetaPolishUITests: XCTestCase {
         ["-uiTesting", "-hasOnboarded", "YES", "-space.type", "real_estate", "-appearance", "light",
          "-ai.thirdPartyProcessing.consent.v3", "YES"]
     }
+    private func launchLegacyPhotoDetail() {
+        app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "rich", "-ui.legacyPhotoPairs"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Detail fixture rich"].waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertFalse(element("detail.fixtureFailure").exists, app.debugDescription)
+    }
     private func launchDetail() {
         app.launchArguments = baseArguments + ["-ui.detailMetadataFixture", "rich"]
         app.launch()
@@ -1285,6 +1399,97 @@ final class BetaPolishUITests: XCTestCase {
     }
     private func element(_ id: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+    private func assertPhotoReviewChoicesAndToolsFitViewport(_ name: String) {
+        let choices = element("photoVersion.savedChoices")
+        XCTAssertTrue(choices.waitForExistence(timeout: 5), app.debugDescription)
+        let buttons = choices.buttons.allElementsBoundByIndex
+        XCTAssertGreaterThanOrEqual(buttons.count, 2, "Every saved category remains a visible choice")
+        XCTAssertTrue(["Original", "Earlier source"].contains(buttons.first?.label ?? ""),
+                      "The retained source appears before saved edits")
+        var geometry = "App: \(app.frame)\n"
+        for button in buttons {
+            revealForBoundedAcceptance(button)
+            XCTAssertTrue(button.isHittable, button.label + " must be reachable without horizontal scrolling")
+            XCTAssertGreaterThanOrEqual(button.frame.height, 43.5)
+            XCTAssertGreaterThanOrEqual(button.frame.minX, app.frame.minX + 15)
+            XCTAssertLessThanOrEqual(button.frame.maxX, app.frame.maxX - 15,
+                                     button.label + " must not clip beyond the right edge")
+            XCTAssertGreaterThanOrEqual(button.frame.minY, app.frame.minY)
+            XCTAssertLessThanOrEqual(button.frame.maxY, photoReviewFooterButton(download: true).frame.minY + 1)
+            geometry += button.label + ": " + String(describing: button.frame) + "\n"
+        }
+        let edit = app.buttons["photoVersion.editOriginal"], compare = app.buttons["photoVersion.fullSize"]
+        for button in [edit, compare] {
+            revealForBoundedAcceptance(button)
+            XCTAssertTrue(button.isHittable && button.isEnabled)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 43.5)
+            XCTAssertGreaterThanOrEqual(button.frame.minX, app.frame.minX + 15)
+            XCTAssertLessThanOrEqual(button.frame.maxX, app.frame.maxX - 15)
+            XCTAssertGreaterThanOrEqual(button.frame.minY, app.frame.minY)
+            XCTAssertLessThanOrEqual(button.frame.maxY, photoReviewFooterButton(download: true).frame.minY + 1)
+            geometry += button.label + ": " + String(describing: button.frame) + "\n"
+        }
+        XCTAssertEqual(edit.label, "Edit original photo"); XCTAssertEqual(compare.label, "Compare")
+        XCTAssertFalse(edit.frame.intersects(compare.frame), "Edit and Compare must not overlap")
+        let attachment = XCTAttachment(string: geometry)
+        attachment.name = name + "-geometry"; attachment.lifetime = .keepAlways; add(attachment)
+        attach(name)
+    }
+
+    private func photoReviewFooterButton(download: Bool) -> XCUIElement {
+        // SwiftUI Group can propagate fixedActions onto both child buttons.
+        // Keep the known IDs and exact production accessibility labels so Save
+        // can never resolve to Use/Unselect, or to a covered unrelated action.
+        let childID = download ? "photoVersion.download" : "photoVersion.useOnListing"
+        let labels = download
+            ? ["Download original", "Download earlier source", "Download original photo",
+               "Download earlier source photo", "Download enhanced photo", "Download decluttered photo", "Download staged photo"]
+            : ["Use this version on listing", "Remove this photo from listing"]
+        return app.buttons.matching(NSPredicate(format: "(identifier == %@ OR identifier == %@) AND label IN %@",
+            childID, "photoVersion.fixedActions", labels as NSArray)).firstMatch
+    }
+    private func acceptanceViewport() -> (XCUIElement, CGFloat, CGFloat)? {
+        guard let outer = app.scrollViews.allElementsBoundByIndex.reversed().first(where: {
+            $0.frame.width >= app.frame.width - 8 && $0.isHittable
+        }) else { XCTFail("No visible app page scroll view: \(app.debugDescription)"); return nil }
+        let navigation = app.navigationBars.allElementsBoundByIndex.reversed().first { $0.isHittable }
+        let top = max(outer.frame.minY, navigation?.frame.maxY ?? outer.frame.minY) + 8
+        var bottom = min(outer.frame.maxY, app.frame.maxY) - 20
+        let footer = element("photoVersion.fixedActions")
+        if footer.exists && footer.isHittable { bottom = min(bottom, footer.frame.minY - 8) }
+        if let tabs = app.tabBars.allElementsBoundByIndex.first(where: { $0.isHittable }) {
+            bottom = min(bottom, tabs.frame.minY - 8)
+        }
+        guard bottom - top > 80 else { XCTFail("No usable app scroll viewport: \(app.debugDescription)"); return nil }
+        return (outer, top, bottom)
+    }
+    private func acceptancePageDrag(up: Bool) {
+        guard let (outer, top, bottom) = acceptanceViewport() else { return }
+        // App-local gutter coordinates avoid image horizontal paging, buttons,
+        // covered sheets and the fixed footer. No desktop input is involved.
+        let origin = outer.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0))
+        let high = origin.withOffset(CGVector(dx: 0, dy: top - outer.frame.minY + (bottom - top) * 0.2))
+        let low = origin.withOffset(CGVector(dx: 0, dy: top - outer.frame.minY + (bottom - top) * 0.8))
+        (up ? low : high).press(forDuration: 0.05, thenDragTo: up ? high : low)
+    }
+    private func revealForBoundedAcceptance(_ control: XCUIElement) {
+        for attempt in 0...8 {
+            guard let (_, top, bottom) = acceptanceViewport() else { return }
+            if control.exists && control.isHittable && control.frame.height > 0
+                && control.frame.minY >= top && control.frame.maxY <= bottom { return }
+            if attempt < 8 { acceptancePageDrag(up: !control.exists || control.frame.minY >= top) }
+        }
+        XCTFail("Control was unreachable after eight app-local gestures: \(control.debugDescription)\n\(app.debugDescription)")
+    }
+    private func assertAcceptanceFooterIsVisible() {
+        let save = photoReviewFooterButton(download: true), use = photoReviewFooterButton(download: false)
+        for button in [save, use] {
+            XCTAssertTrue(button.exists && button.isHittable, button.debugDescription)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+            XCTAssertGreaterThanOrEqual(button.frame.minY, app.frame.minY)
+            XCTAssertLessThanOrEqual(button.frame.maxY, app.frame.maxY)
+        }
     }
     private func scrollTo(_ control: XCUIElement) {
         XCTAssertTrue(app.scrollViews.firstMatch.waitForExistence(timeout: 5), app.debugDescription)

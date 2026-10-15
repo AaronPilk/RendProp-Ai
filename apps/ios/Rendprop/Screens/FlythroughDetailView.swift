@@ -500,6 +500,9 @@ struct DetailMetadataRegressionHost: View {
         if photoCount > 0 {
             let directory = EnhancedPhoto.directory(for: value.id)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let legacyPhotoPairs = name == "rich" && Config.isOfflineAccountFixture
+                && (model.api is MockAPIClient)
+                && ProcessInfo.processInfo.arguments.contains("-ui.legacyPhotoPairs")
             for index in 0..<photoCount {
                 let image = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 480)).image { context in
                     UIColor(hue: CGFloat(index) / 3, saturation: 0.35, brightness: 0.8, alpha: 1).setFill()
@@ -508,7 +511,10 @@ struct DetailMetadataRegressionHost: View {
                 }
                 guard let jpeg = image.jpegData(compressionQuality: 0.85) else { throw FixtureError.image }
                 let id = "fixture-\(index)"
-                if name == "rich", index == 0 {
+                if legacyPhotoPairs {
+                    // Real pre-history pairs stay unverified; the normal rich fixture is unchanged.
+                    try PhotoCaptureStorage.writePair(original: jpeg, enhanced: jpeg, id: id, directory: directory)
+                } else if name == "rich", index == 0 {
                     let base = "fixture-base-0"
                     try PhotoVersionHistory.saveCapture(original: jpeg, enhanced: jpeg, id: base, directory: directory)
                     _ = try PhotoVersionHistory.saveEdit(jpeg: jpeg, id: id, parentID: base, sourceID: base,
@@ -7134,6 +7140,15 @@ private enum PhotoReviewLayout {
         // proportions rather than reserving an empty portrait-shaped container.
         return min(heightLimit, availableWidth * (imageSize.height / imageSize.width))
     }
+    static func previewWidth(imageSize: CGSize?, availableWidth: CGFloat, viewportHeight: CGFloat) -> CGFloat {
+        guard let imageSize, imageSize.width.isFinite, imageSize.height.isFinite,
+              imageSize.width > 0, imageSize.height > 0,
+              availableWidth.isFinite, availableWidth > 0 else {
+            return availableWidth.isFinite ? max(0, availableWidth) : 0
+        }
+        let height = previewHeight(imageSize: imageSize, availableWidth: availableWidth, viewportHeight: viewportHeight)
+        return min(availableWidth, height * (imageSize.width / imageSize.height))
+    }
     static func stacksActions(width: CGFloat, accessibilityType: Bool) -> Bool {
         accessibilityType || width < 320
     }
@@ -7257,12 +7272,16 @@ struct PhotoCompareView: View {
     private var versionChoices: [EnhancedPhoto] {
         let history = viewed.history
         var kinds: Set<String> = []
-        return history.filter { version in
+        let choices = history.filter { version in
             let effects = version.savedVersion?.effects ?? []
             let source = version.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } ?? false
             let kind = source ? "Original" : effects.contains("stage") ? "Staged" : effects.contains("declutter") ? "Decluttered" : "Enhanced"
             return kinds.insert(kind).inserted
         }
+        // Keep the retained source first without changing which saved edit
+        // represents each category or the order of the remaining categories.
+        return choices.filter { $0.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } == true }
+            + choices.filter { $0.savedVersion.map { $0.parentID == nil && $0.imageFile == $0.originalFile } != true }
     }
     private func choiceTitle(_ version: EnhancedPhoto) -> String {
         if let saved = version.savedVersion, saved.parentID == nil && saved.imageFile == saved.originalFile {
@@ -7286,9 +7305,8 @@ struct PhotoCompareView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     reviewHeader
                     familyNavigation
-                    savedVersionStrip
-                    reviewTools(stacked: PhotoReviewLayout.stacksActions(width: geometry.size.width,
-                        accessibilityType: dynamicTypeSize.isAccessibilitySize))
+                    savedVersionStrip(stacked: geometry.size.width < 320 || dynamicTypeSize >= .xxLarge)
+                    reviewTools(stacked: geometry.size.width < 320 || dynamicTypeSize >= .xxLarge)
                     ZStack {
                         if let image = showOriginal ? original : enhanced {
                             Image(uiImage: image).resizable().scaledToFit()
@@ -7298,12 +7316,16 @@ struct PhotoCompareView: View {
                                 .foregroundStyle(Theme.inkDim)
                         } else { ProgressView().tint(Theme.accent) }
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(width: PhotoReviewLayout.previewWidth(
+                        imageSize: (showOriginal ? original : enhanced)?.size,
+                        availableWidth: max(0, min(760, geometry.size.width) - 32),
+                        viewportHeight: geometry.size.height))
                     .frame(height: PhotoReviewLayout.previewHeight(
                         imageSize: (showOriginal ? original : enhanced)?.size,
                         availableWidth: max(0, min(760, geometry.size.width) - 32),
                         viewportHeight: geometry.size.height))
                     .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .frame(maxWidth: .infinity, alignment: .center)
                     .accessibilityIdentifier("photoVersion.preview")
                     .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { value in
                         if let offset = PhotoFamilyPager.swipeOffset(horizontal: Double(value.translation.width), vertical: Double(value.translation.height)) {
@@ -7499,12 +7521,13 @@ struct PhotoCompareView: View {
                 .accessibilityIdentifier("photoVersion.edit.progress")
                 SecondaryButton(title: "Stop photo edit", systemImage: "stop.circle", isCompact: true) { photoJobs.cancel() }
             } else {
-                SecondaryButton(title: "Edit original photo", systemImage: "wand.and.stars",
+                SecondaryButton(title: "Edit", systemImage: "wand.and.stars",
                     isDisabled: imageContext?.isCurrent != true || selectionWorkID != nil
                         || photoJobs.visibleJob?.running == true || editConnection.isWaiting || reviewListing == nil,
                     isCompact: true,
                     action: openSinglePhotoEdit)
                     .accessibilityIdentifier("photoVersion.editOriginal")
+                    .accessibilityLabel("Edit original photo")
                     .accessibilityHint("Declutter, stage or edit only this photo’s retained Original. Saved versions stay unchanged.")
             }
         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -7515,7 +7538,7 @@ struct PhotoCompareView: View {
             if stacked {
                 VStack(spacing: 8) { singlePhotoEditing; comparisonButton }
             } else {
-                HStack(alignment: .top, spacing: 10) { singlePhotoEditing; comparisonButton.fixedSize(horizontal: true, vertical: false) }
+                HStack(alignment: .top, spacing: 10) { singlePhotoEditing; comparisonButton }
             }
         }
     }
@@ -7606,40 +7629,62 @@ struct PhotoCompareView: View {
 
 
     private var reviewHeader: some View {
-        HStack {
-            Text("Photo versions").font(.title2.weight(.bold)).foregroundStyle(Theme.ink)
-            Spacer(minLength: 8)
-            if viewed.history.count > 1 {
-                Menu {
-                    ForEach(viewed.history) { version in
-                        Button(version.savedVersion?.title ?? "Earlier version") { chooseVersion(version) }
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    reviewHeaderTitle.frame(maxWidth: .infinity, alignment: .leading)
+                    HStack {
+                        reviewHeaderActions
                     }
-                } label: {
-                    Label("All edits", systemImage: "clock.arrow.circlepath").font(.subheadline)
-                        .frame(minHeight: 44)
-                }.accessibilityHint("Every saved style and earlier version remains available.")
+                }
+            } else {
+                HStack {
+                    reviewHeaderTitle
+                    Spacer(minLength: 8)
+                    reviewHeaderActions
+                }
             }
-            Button { clearAndDismiss() } label: {
-                Image(systemName: "xmark").font(.body.weight(.semibold))
-                    .frame(width: 44, height: 44).background(.thinMaterial, in: Circle())
-            }.accessibilityLabel("Close")
         }
     }
 
-    private var savedVersionStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                if viewed.originalURL != viewed.enhancedURL && !versionChoices.contains(where: isRetainedSource) {
-                    versionChip(viewed.retainedSourceIsVerified ? "Original" : "Earlier source", selected: showOriginal) {
-                        showOriginal = true
-                    }
+    private var reviewHeaderTitle: some View {
+        Text("Photo versions").font(.title2.weight(.bold)).foregroundStyle(Theme.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("photoVersion.headerTitle")
+    }
+
+    @ViewBuilder private var reviewHeaderActions: some View {
+        if viewed.history.count > 1 {
+            Menu {
+                ForEach(viewed.history) { version in
+                    Button(version.savedVersion?.title ?? "Earlier version") { chooseVersion(version) }
                 }
-                ForEach(versionChoices) { version in
-                    versionChip(choiceTitle(version), selected: showOriginal ? isRetainedSource(version) : choiceTitle(viewed) == choiceTitle(version)) {
-                        chooseVersion(version)
-                    }
+            } label: {
+                Label("All edits", systemImage: "clock.arrow.circlepath").font(.subheadline)
+                    .frame(minHeight: 44)
+            }.accessibilityHint("Every saved style and earlier version remains available.")
+                .accessibilityIdentifier("photoVersion.history")
+        }
+        if dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 8) }
+        Button { clearAndDismiss() } label: {
+            Image(systemName: "xmark")
+                .font(dynamicTypeSize.isAccessibilitySize ? .system(size: 20, weight: .semibold) : .body.weight(.semibold))
+                .frame(width: 44, height: 44).background(.thinMaterial, in: Circle())
+        }.accessibilityLabel("Close")
+    }
+
+    private func savedVersionStrip(stacked: Bool) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 8), count: stacked ? 1 : 2), spacing: 8) {
+            if viewed.originalURL != viewed.enhancedURL && !versionChoices.contains(where: isRetainedSource) {
+                versionChip(viewed.retainedSourceIsVerified ? "Original" : "Earlier source", selected: showOriginal) {
+                    showOriginal = true
                 }
-            }.padding(.vertical, 2)
+            }
+            ForEach(versionChoices) { version in
+                versionChip(choiceTitle(version), selected: showOriginal ? isRetainedSource(version) : choiceTitle(viewed) == choiceTitle(version)) {
+                    chooseVersion(version)
+                }
+            }
         }.accessibilityIdentifier("photoVersion.savedChoices")
     }
 
@@ -7924,10 +7969,14 @@ struct PhotoCompareView: View {
 
     private func versionChip(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.subheadline.weight(.semibold)).padding(.horizontal, 14).padding(.vertical, 10)
-                .background(selected ? Theme.accent : Theme.fillSubtle, in: Capsule())
+            Text(title).font(.subheadline.weight(.semibold))
+                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(selected ? Theme.accent : Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .foregroundStyle(selected ? Color.white : Theme.ink)
-        }.accessibilityAddTraits(selected ? .isSelected : [])
+        }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
