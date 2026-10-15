@@ -3732,8 +3732,9 @@ struct HomeProjectCreationFixtureHost: View {
                                           spaceTypeRaw: SpaceType.realEstate.rawValue)
                     listing.cloudDraftOrgID = WorkspaceContext.selectedOrgID
                     listing.cloudSyncOwnerID = owner
-                    // Avoid geocoder or map tile requests in any later screen.
-                    listing.latitude = .nan; listing.longitude = .nan
+                    // Infinity is reflexive for synthesized Hashable; isFinite
+                    // stays false, suppressing map tiles/geocoding in this fixture.
+                    listing.latitude = .infinity; listing.longitude = .infinity
                     listing.regionLabel = "Synthetic fixture"
                     return listing
                 }

@@ -456,10 +456,10 @@ struct DetailMetadataRegressionHost: View {
                             sqft: 1800, price: Money(cents: 45_000_000))
         value.spaceTypeRaw = name == "venue" ? SpaceType.venue.rawValue : SpaceType.realEstate.rawValue
         value.isSample = name == "sample"
-        // A nonfinite coordinate sentinel is rejected by mapCoordinate; the
-        // existing hasCoordinate + region guard also prevents geocoding. No
-        // MapKit tile/geocoder request is needed for this offline fixture.
-        value.latitude = .nan; value.longitude = .nan; value.regionLabel = "Synthetic fixture"
+        // Infinity keeps synthesized Hashable reflexive; mapCoordinate rejects
+        // it as nonfinite. hasCoordinate + region still prevents geocoding, so
+        // this offline fixture needs no MapKit tile/geocoder request.
+        value.latitude = .infinity; value.longitude = .infinity; value.regionLabel = "Synthetic fixture"
         value.clientContactLoaded = true
         if name == "rich" {
             value.clientContact = ListingClientContact(listingID: value.id, enabled: true,
