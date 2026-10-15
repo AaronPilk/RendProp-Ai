@@ -6,6 +6,9 @@ Deno.test("staging prompts preserve both solid slabs and existing open pergolas 
   for (const fixed of ["roof", "ceiling", "overhead slab", "beams", "rafters", "garage doors", "paint colours", "materials", "positions", "solid slabs solid", "existing open pergolas open"]) assertStringIncludes(prompt, fixed);
   for (const scope of ["edit movable furnishings only", "outdoor furniture on a balcony", "existing floor", "clear walking routes", "Use fewer pieces", "same photograph", "leave that area unchanged"]) assertStringIncludes(prompt, scope);
   for (const placement of ["door swings", "unobstructed", "Never place furniture across an opening or into a wall"]) assertStringIncludes(prompt, placement);
+  // The live ordinary staging canary replaced wall art with floating shelves.
+  // Mounted items and new installations must remain outside furniture authority.
+  for (const fixed of ["wall-mounted, ceiling-mounted and built-in items", "shelving, lighting and appliances, exactly in place", "Do not add shelves, mounted decor, cabinetry or any other installed feature", "new decor may stand only on the floor or existing movable furniture"]) assertStringIncludes(prompt, fixed);
 });
 Deno.test("furniture style stays quoted and cannot override property condition, reference geometry or camera locks", () => {
   const detail = 'linen sofa, "warm" wood accents';
@@ -37,6 +40,7 @@ Deno.test("compiled staging controls expose missing fixed-feature, source and co
   const controls = [
     ["openings and walls", "Never place furniture across an opening or into a wall. ", "Never place furniture across an opening or into a wall"],
     ["fixed geometry", "Preserve its exact roof, ceiling, overhead slab, beams, rafters, walls, openings, windows, doors and garage doors, trim, flooring, railings, built-ins, cabinets, counters and fixed appliances/fixtures. ", "overhead slab"],
+    ["mounted installation authority", "Preserve all existing wall-mounted, ceiling-mounted and built-in items, including shelving, lighting and appliances, exactly in place. Do not add shelves, mounted decor, cabinetry or any other installed feature; new decor may stand only on the floor or existing movable furniture. ", "Do not add shelves"],
     ["finish", "Keep their paint colours, materials, textures and positions, including garage-door color and finish and trim color and finish. Never move refrigerators, ovens, sinks or their connections. ", "paint colours"],
     ["reference authority", "A second image, if present, supplies movable-furniture correspondence only; never copy its architecture or viewpoint. ", "never copy its architecture or viewpoint"],
     ["condition", "Keep visible cracks, holes, dents, stains, water marks, damp, mould, rust, worn/damaged flooring, broken glass, chipped/peeling paint, wear and damage; do not repair or hide them. ", "water marks"],
