@@ -2,7 +2,7 @@
 
 This is the consolidated acceptance list for the owner's messages, not a claim that
 all work is finished. Latest explicit decisions override earlier wording/prices.
-Updated October 15 at 19:15 UTC after live and local acceptance checks. Earlier detailed ledger
+Updated October 15 at 19:36 UTC after live and local acceptance checks. Earlier detailed ledger
 is retained at
 `_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
 (relative to the outer Rendprop AI folder).
@@ -37,9 +37,13 @@ is retained at
   896×1195 and its landscape crop896×504; the former motion encoder refuses it.
   A separately reviewed static-only fallback now produces a real local70s
   1920×1080 master from those exact14 inputs; all bytes/hashes and full AV
-  decoding pass. This CPU change is NOT deployed yet. The softer still is not
-  restored4K. A distinct bounded repair operation is being prepared; no further
-  Resume, new paid generation, publication or completed-video push is claimed.
+  decoding pass. The exact new CPU image passed nine actual-container tests and one default-
+  entrypoint/authentication check. One deployment reached Worker d98a3ddd… with
+  image801fd35b… and unchanged six bindings; readback found a changed script ETag,
+  so GET-only artifact comparison is underway before repair activation. The softer
+  still is not restored4K. The default-OFF distinct repair migration192807 is
+  committed92ff808 and proven locally, but is NOT applied/activated; no further
+  Resume, paid generation, publication or completed-video push is claimed.
   The owner approved these portrait crops for this test; a fresh landscape-home
   test later is not an invented prerequisite.
 - The owner explicitly allows Simulator UI acceptance while the physical phone
@@ -56,16 +60,14 @@ is retained at
   text grid/viewer reachability is unresolved, not a proven scrolling defect.
   The isolated test Simulator has been shut down; no UI test is still running.
   Claude's separate web/Studio work is preserved.
-- Studio frontend72e336f2 remains deployed, with35 exact files/39 GET readbacks.
-  Fresh Supabase readback is Studio35, not the separate frontend's version34.
-  C2 atomic discard/upload ordering is integrated in6849c3e/4a14484b with actual
-  SQL39+19 assertions, race/fault controls,575 Studio tests and two browser flows;
-  C2 is NOT live yet. Root43bf1e8 additionally projects new-video sources in
-  saved gallery order and uses the chosen edited key; missing/revoked edits
-  never silently become Original or offer preparation. All35 jobs handler tests
-  and three compiled controls pass, with peer review. Explicit gallery IDs and
-  frozen/manual recipes retain their order. Authenticated customer acceptance
-  remains open.
+- C2 is LIVE: Studio frontend91727361… has35 exact public artifact readbacks;
+  Edge Studio36 has54 exact runtime files, jobs12 has64, and SQL191755/191916
+  match the reviewed migrations. Atomic discard/upload ordering and root43bf1e8
+  chosen-version source ordering are deployed. Existing bindings, configuration
+  and other Edge functions remain unchanged. Local SQL race/fault controls,
+  575 Studio tests and focused browser flows passed; real authenticated Studio
+  acceptance remains open. Studio is signed out on this laptop; a human sign-in
+  request is pending while other work continues.
 - W05 point authority is LIVE: SQL20261015184120 / tours68 exact readback.
   The SAME saved-edit preview initial GET measured7.3032→1.6476s and repeat
   6.5564→1.6701s; Original repeat3.5797→1.5815s. Master/preview hashes and geometry
@@ -89,7 +91,7 @@ is retained at
 
 ## Latest beta feedback
 
-Fresh read-only App Store Connect fetch at 18:15 UTC (2:15 p.m. Eastern) found
+Fresh read-only App Store Connect fetch at 19:19 UTC (3:19 p.m. Eastern) found
 the same three screenshot/general submissions since October14, all build82: two comments on
 single-photo editing (one explicitly preserves bulk editing) and one on upload
 order across batches. Zero crash feedback submissions in that interval; this is
@@ -186,9 +188,9 @@ No whole feature is closed by source existence, upload or a preview alone.
 | O03 | Quality/functionality outrank old 75% margin; avoid premature normal-user spending blocks | Paid processing allowance aligned and live today; no retail price/counter reset | Ordinary paid receipt-backed admission; trial/free unchanged and not claimed solved |
 | O04 | Choose actual AI providers by quality, Kie backup available | Real model comparisons and normal FAL4K + Pro4K routes tested/live | Finish current real workflow; provider migration not assumed universal fix |
 | O05 | Ask AI is contextual app support and cost is measured | Built/deployed; earlier three ordinary queries6.3¢ catalog estimate. Today actual Sold-home context defect fixed/tested114scope checks+17faults/offline47 | Final retest of exact selected Sold/Archived home, logical member library and navigation |
-| O06 | Rendprop Studio matches native purpose, versions, jobs, settings and exports | Frontend 72e336f2 exact 35-file/39-GET readback; Edge Studio 34 photo/recorded-source separation deployed | Real authenticated account/library/recovery/native parity acceptance |
+| O06 | Rendprop Studio matches native purpose, versions, jobs, settings and exports | C2 frontend91727361…/35 artifacts, Edge Studio36/54 runtime, jobs12/64 runtime and two SQL migrations verified live;575 unit tests and focused browser flows pass | Real authenticated account/library/recovery/native parity acceptance; laptop sign-in requested |
 | O07 | Necessary permission/privacy experience, truthful billing/trial statements | Existing implemented paths retained; no new blanket permission prompt assumed necessary | Final actual device permission/notification/account checks and disclosure consistency |
-| O08 | Clean old files; organize Mac/1TB external drive without breaking active work | Prior 6.2GB/3,469-file move and cache cleanup retained. Later 67 inactive bridge folders moved externally with all hashes verified and compatibility symlinks; 8.54GiB free before successful 83 archive | Preserve current Mac files/source/keys and release evidence. Full Mac backup is UNVERIFIED; the verified archive move is not a full backup |
+| O08 | Clean old files; organize Mac/1TB external drive without breaking active work | Prior 6.2GB/3,469-file move and cache cleanup retained. Later 67 inactive bridge folders moved externally with all hashes verified and compatibility symlinks; 8.54GiB free before successful 83 archive | Preserve current Mac files/source/keys and release evidence. Time Machine is still copying to the encrypted Rendprop Archive volume (read-only status19:30 UTC); the verified archive move is separate, not proof of a completed full backup |
 | O09 | Retain all app API-cost records and distinguish usage from added credits | Private export preserves ledger/hold identity, priced bases and separate funding; both media meters remain unpriced | Reconcile supplied vendor records; missing historical links/deleted rows/other spools/infra invoices prevent an all-time or invoice-complete claim |
 | O10 | Functional testing first; final prices/margins audited after acceptance | Owner and general product-media SQL LIVE; authorized media no longer has a financial reserve activation block; request/byte metering retained | Actual loading/UX acceptance remains separate. Audit final prices after functional acceptance, before submission; no invented cash/reserve/cost receipts |
 
@@ -196,7 +198,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 
 | ID | Required action | State |
 |---|---|---|
-| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | 84 SDK/archive passed; CI38780154650 tests ff84129, native harness repaired separately in b911419; no final-head CI pass claimed |
+| R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | Native prepaid-source fix960ef4b and accessibility changes peer-reviewed; compile-only Release iphoneos check now authorized with protected prior archive. Current CI still pending; old ff84129 run remains red |
 | R02 | Deliver internal normal TestFlight 84 from reviewed native source | Done; compact08098a9/metadata75738bf, VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING; final integrated push/CI coordinated separately |
 | R03 | Test final changed UI and recover 14-photo job; inspect final output | Simulator UI now owner-authorized while phone unavailable; 84 compact device acceptance and real output/hardware checks remain open |
 | R04 | Finish real paid website/ordinary-account/export/site/Studio acceptance above | Open; no fake transactions or claims that previews prove purchases |
@@ -209,9 +211,10 @@ Use one delta-focused sequence: on the authorized Simulator inspect 84 compact
 review controls, Edit/Compare visibility, swipe/count and large-text layout; label
 that evidence as Simulator UI. When the phone is available, check only remaining
 real-device behavior: single-photo edit/progress, remove/reopen/re-add and Original
-sync, manual tap order, exact status/Review and recorded-only Tags. Resume the
-existing 14-photo job through its normal operator action and inspect its completed
-master. Continue open import/ZIP/share, voice/music/notification, genuine purchase,
+sync, manual tap order, exact status/Review and recorded-only Tags. For the
+existing14-photo job, first verify the exact fixed CPU deployment, then apply and
+activate the reviewed distinct static-repair operation. Do NOT replay the exhausted
+ordinary Resume or reset counters. Inspect its completed master before publication. Continue open import/ZIP/share, voice/music/notification, genuine purchase,
 shared-site and authenticated Studio acceptance without repeating unchanged prior
 Home/Leads/System-appearance checks solely for a build number. Remake onboarding
 LAST after app/URL acceptance, then verify that final resource build and submit.
@@ -247,6 +250,11 @@ LAST after app/URL acceptance, then verify that final resource build and submit.
 - Simulator actual UI/control receipts: `/Volumes/Rendprop Files/Builds/Active/build84-simulator-acceptance/{UI-ACCEPTANCE-RECEIPT,FIXTURE-CONTROL-RECEIPT}.json`.
 - Prospective accessibility layout/source proof: `/Volumes/Rendprop Files/Builds/Active/build84-simulator-acceptance/accessibility-layout-control/FINAL-RECEIPT.json`.
 - Retained CI failure and focused harness repair: `_bridge/build84-ci-native-privacy-failure/HARNESS-REPAIR-RECEIPT.json`.
+- C2 complete live rollout: `_bridge/build84-c2-rollout/FINAL-ROLLOUT-RECEIPT.json`.
+- CPU exact-image tests and staged repair: `_bridge/build84-static-compose-repair/FINAL-PREDEPLOY-READINESS-v2.json`; deployment outcome in `DEPLOY-STATIC-READABLE-ONCE.json` remains under GET-only comparison.
+- Native prepaid source floor: `_bridge/build85-video-source-floor/SOURCE-BINDING.json`; compile-only plan in `_bridge/build84-postdelivery-native-sdk/COMPILE-PLAN.json`.
+- Latest cost coverage: `/Volumes/Rendprop Files/Builds/Active/build84-owner-api-costs/20261015T1854Z/ACCOUNTING-READONLY-RECEIPT.json`.
+- Backup read-only status: `/Volumes/Rendprop Files/Builds/Active/build84-backup-readonly/STATUS-20261015T1930Z.json`.
 - Product-media SQL/cost coverage: `_bridge/build84-product-media-serving/FINAL-CLOSURE.private.json` and `cost-export/report.private.json`.
 - Missing paid-result recovery: `_bridge/build83-fal-missing-result/FINAL-DEPLOYED-RECEIPT.json`.
 - C1/C4 deployed authority: `_bridge/build83-studio-recorded-source/ROOT-DEPLOYED-READBACK.json`.

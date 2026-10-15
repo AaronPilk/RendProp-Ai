@@ -1,3 +1,45 @@
+# Latest execution delta — October15,2026,19:36 UTC
+
+This delta supersedes the historical checkpoint below. The full current acceptance
+list remains OWNER-REQUEST-CHECKLIST-20261014.md. No submission is authorized by
+source or TestFlight delivery alone.
+
+- Owner can remotely control the Mac while away; notify here for a specific human
+  step. Simulator authorized; physical phone remains unavailable. Studio is signed
+  out; pending human request is to sign in with the same Apple account, while other
+  work continues.
+- C2 complete rollout verified: SQL191755/191916, Studio Edge36/54 runtime,
+  jobs12/64 runtime, frontend91727361…/35 exact artifacts. Atomic discard, append
+  ordering and chosen-version source projection are live. Source/schema/ACL/bindings
+  readbacks passed. Authenticated account, export and full video acceptance remain.
+- CPU static saved-photo fallback c8da480 passed nine actual-image tests and its
+  unchanged USER10001/default-entrypoint/auth checks. The first image was refused
+  before deployment because COPY permissions were0600; corrected image801fd35b…
+  uses0644 for the same two changed Python files, retaining all old layers/runtime.
+  One deployment reached Workerd98a3ddd… with that exact image and six unchanged
+  bindings. Script ETag changed, so compare actual artifacts GET-only before any
+  repair activation; do not assume it is harmless or redeploy blindly.
+- Distinct fixed-renderer assembly repair92ff808 is committed, defaultOFF and
+  NOT applied. Actual current169-migration SQL proofs:45+45 assertions/34 legacy,
+  five fault controls/three races, plus ancestor compatibility controls. Ordinary
+  exhausted Resume must not be replayed or counters reset. No further AI charges,
+  new source selection, repair activation or public publication have occurred.
+- Native960ef4b checks every exact prepared JPEG/crop before any upload or paid
+  planning, preserves source/order/cancellation and reports preparation/upload
+  stages truthfully. Focused tests/peer review pass; normal unsigned iphoneos
+  Release compile-only is now authorized, with fresh external outputs and the
+  prior signed84 archive protected. No85 archive/upload/metadata change.
+- The full Mac Time Machine backup is still COPYING to encrypted Rendprop Archive
+  as of19:30 UTC. Verified manual archives are separate; never call this completed.
+- Latest whole-app accounting remains283 retained rows/9030.6640 cents at18:50:52Z,
+  with42.3796 cents unresolved holds and$25 provider funding separate. This is not
+  an invoice or complete historical bill. Latest beta GET19:19Z still has the same
+  three build82 comments and zero submitted crashes; no feedback mutations.
+- All post-ff84129 changes still need current full CI. Old run38780154650 remains
+  red. Onboarding118.73s remains rejected/internal-only; remake LAST after app/URL
+  acceptance, actual matching screens, Willow1.2x, no duration cap. Public74 and
+  unattached1.0.5 AFTER_APPROVAL draft unchanged; no latest submission.
+
 # Current execution checkpoint — October 15, 2026, 18:30 UTC source review
 
 The authoritative acceptance list is
