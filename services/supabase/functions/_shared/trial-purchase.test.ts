@@ -13,8 +13,17 @@ Deno.test("trial prepare requires explicit authenticated buyer/token/org and ech
  for(const patch of [{actor_id:"foreign"},{app_account_token:"foreign"},{actor_id:undefined},{app_account_token:undefined},{org_id:"foreign"},{product_id:"unknown"}])await assertRejects(()=>prepareTrialPurchase(admin,actor,org,{...body(),...patch}),HttpError);
  assertEquals(calls,1);
 });
+Deno.test("trial held and prepare preserve each exact five-to-twenty photo reservation without new authority",async()=>{
+ for(const cap of [5,6,20]){
+  const data=receipt();data.trial_offer.photo_edits=cap;const calls:string[]=[];
+  const admin={rpc:(name:string,args:unknown)=>{calls.push(name);assertEquals(args,name==="subscription_trial_held_offer"?{p_actor:actor,p_org:org}:{p_actor:actor,p_org:org,p_product:product});return Promise.resolve({data,error:null});}};
+  assertEquals(await heldTrialPurchase(admin,actor,org),data);
+  assertEquals(await prepareTrialPurchase(admin,actor,org,body()),data);
+  assertEquals(calls,["subscription_trial_held_offer","prepare_subscription_trial_purchase"]);
+ }
+});
 Deno.test("trial held DTO refuses foreign actor/token/org/SKU and inflated or short terms",async()=>{
- const data=receipt();for(const mutate of [(r:any)=>r.actor_id=org,(r:any)=>r.app_account_token=org,(r:any)=>delete r.app_account_token,(r:any)=>r.org_id=actor,(r:any)=>r.product_id="unknown",(r:any)=>r.trial_offer.max_days=3,(r:any)=>r.trial_offer.photo_edits=6,(r:any)=>r.trial_offer.max_video_seconds=91,(r:any)=>r.trial_offer.upload_budget_bytes=1073741825,(r:any)=>r.held_at="invalid"]){const r=structuredClone(data);mutate(r);await assertRejects(()=>heldTrialPurchase({rpc:()=>Promise.resolve({data:r,error:null})},actor,org),HttpError);}
+ const data=receipt();for(const mutate of [(r:any)=>r.actor_id=org,(r:any)=>r.app_account_token=org,(r:any)=>delete r.app_account_token,(r:any)=>r.org_id=actor,(r:any)=>r.product_id="unknown",(r:any)=>r.trial_offer.max_days=3,(r:any)=>r.trial_offer.photo_edits=21,(r:any)=>r.trial_offer.photo_edits=4,(r:any)=>r.trial_offer.photo_edits=5.5,(r:any)=>r.trial_offer.photo_edits="20",(r:any)=>r.trial_offer.photo_edits=null,(r:any)=>r.trial_offer.walkthroughs=2,(r:any)=>r.trial_offer.published_listings=2,(r:any)=>r.trial_offer.max_video_seconds=91,(r:any)=>r.trial_offer.upload_budget_bytes=1073741825,(r:any)=>r.held_at="invalid"]){const r=structuredClone(data);mutate(r);await assertRejects(()=>heldTrialPurchase({rpc:()=>Promise.resolve({data:r,error:null})},actor,org),HttpError);}
  assertEquals(await heldTrialPurchase({rpc:()=>Promise.resolve({data:null,error:null})},actor,org),null);
 });
 Deno.test("trial prepare propagates bounded admission errors and refuses unknown or malformed upstream",async()=>{

@@ -102,6 +102,19 @@ import Foundation
         check(recorded.trialUsage?.photoEdits.cap == 3, "Recorded cap is never replaced with offer or hardcoded five")
         let context = try SubscriptionBillingContext.fromMe(reply(trial(), offer()), selectedOrg: org)
         check(context.trialUsage?.photoEdits.used == 2 && context.trialOffer?.benefitLines.count == 4, "Billing consumer receives paired additive presentation")
+        for cap in [1, 3, 5, 6, 20] {
+            var saved = trial(); saved["photo_edits"] = counter(cap - 1, cap)
+            var proposed = offer(); proposed["photo_edits"] = cap
+            let payload = try reply(saved, proposed)
+            let decoded = try await LiveTrialFixture(data: payload).me()
+            let billing = try SubscriptionBillingContext.fromMe(payload, selectedOrg: org)
+            check(decoded.trialUsage?.photoEdits.cap == cap && decoded.trialUsage?.photoEdits.used == cap - 1 && decoded.trialUsage?.photoEdits.remaining == 1,
+                  "Actual me preserves exact recorded photo cap through twenty")
+            check(decoded.trialOffer?.photoEdits == cap && billing.trialUsage?.photoEdits.cap == cap && billing.trialOffer?.photoEdits == cap,
+                  "Billing and offer preserve exact historical and twenty-photo terms")
+            check(decoded.trialUsage?.walkthroughs.cap == 1 && decoded.trialUsage?.publishedListings.cap == 1,
+                  "Wider photo decoding never expands another trial bucket")
+        }
         let legacyBilling = try SubscriptionBillingContext.fromMe(reply(), selectedOrg: org)
         check(legacyBilling.trialUsage == nil && legacyBilling.trialOffer == nil, "Legacy billing does not invent an offer")
         var fullIngress = trial(); fullIngress["upload_used_bytes"] = 134_217_728
@@ -128,7 +141,8 @@ import Foundation
         bad = trial(); bad["photo_edits"] = ["used": "2", "cap": 5, "remaining": 3]; invalid.append(bad)
         bad = trial(); bad.removeValue(forKey: "published_listings"); invalid.append(bad)
         bad = trial(); bad["photo_edits"] = counter(0, 0); invalid.append(bad)
-        bad = trial(); bad["photo_edits"] = counter(0, 6); invalid.append(bad)
+        bad = trial(); bad["photo_edits"] = counter(0, 21); invalid.append(bad)
+        bad = trial(); bad["photo_edits"] = ["used": 0, "cap": 20.5, "remaining": 20.5]; invalid.append(bad)
         bad = trial(); bad["walkthroughs"] = counter(0, 2); invalid.append(bad)
         bad = trial(); bad["published_listings"] = counter(0, 2); invalid.append(bad)
         bad = trial(); bad["upload_budget_bytes"] = 1_073_741_825; invalid.append(bad)
@@ -139,7 +153,7 @@ import Foundation
         var wrongDays = offer(); wrongDays["max_days"] = 8
         do { _ = try await LiveTrialFixture(data: reply(nil, wrongDays)).me(); fatalError("Non-seven-day enabled offer accepted") }
         catch { checks += 1 }
-        for (key, value) in [("walkthroughs", 2), ("photo_edits", 6), ("published_listings", 2), ("max_video_seconds", 91), ("upload_budget_bytes", 1_073_741_825)] {
+        for (key, value) in [("walkthroughs", 2), ("photo_edits", 21), ("published_listings", 2), ("max_video_seconds", 91), ("upload_budget_bytes", 1_073_741_825)] {
             var malformed = offer(); malformed[key] = value
             do { _ = try await LiveTrialFixture(data: reply(nil, malformed)).me(); fatalError("Unbounded enabled offer accepted") }
             catch { checks += 1 }

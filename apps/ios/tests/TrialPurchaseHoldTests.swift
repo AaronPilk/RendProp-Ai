@@ -98,6 +98,15 @@ func makeHold(actor: UUID, org: UUID, product: String, reservation: UUID = UUID(
             check(Product.sheetCalls == 0 && api.prepareCalls == 0, "Unauthorized or stale ceiling purchase opened Apple sheet")
         }
         check(hold.checked(actor: actor, org: org, product: sku) == hold, "Exact held identity refused")
+        for cap in [5, 6, 20] {
+            let recorded = makeHold(actor: actor, org: org, product: sku, photos: cap)
+            check(recorded.checked(actor: actor, org: org, product: sku) == recorded,
+                  "Exact historical and twenty-photo held allowance refused")
+            let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
+            let decoded = try TrialPurchaseReservation.decode(encoder.encode(recorded), actor: actor, org: org, product: sku)
+            check(decoded == recorded && decoded.trialOffer.photoEdits == cap, "Held photo cap was replaced during exact wire decoding")
+        }
+        check(makeHold(actor: actor, org: org, product: sku, photos: 21).checked(actor: actor, org: org, product: sku) == nil, "Oversized held allowance accepted")
         check(hold.checked(actor: other, org: org, product: sku) == nil, "Wrong held actor accepted")
         let wrongActor = TrialPurchaseReservation(reservationId: hold.reservationId, actorId: other,
             appAccountToken: actor, orgId: org, productId: sku, heldAt: hold.heldAt, trialOffer: hold.trialOffer)

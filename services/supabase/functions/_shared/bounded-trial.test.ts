@@ -26,8 +26,19 @@ Deno.test("bounded trial context preserves paid/null and exposes no dormant offe
  assertEquals(await boundedTrialContext(client({trial_usage:null,trial_offer:null}),actor,org),{trial_usage:null,trial_offer:null});
  const usage=current(); assertEquals(await boundedTrialContext(client({trial_usage:usage,trial_offer:null}),actor,org),{trial_usage:usage,trial_offer:null});
 });
+Deno.test("bounded trial context preserves exact historical and twenty-photo recorded counters",async()=>{
+ for(const cap of [1,3,5,6,20]){
+  const usage=current();usage.photo_edits={used:cap-1,cap,remaining:1};
+  const result=await boundedTrialContext(client({trial_usage:usage,trial_offer:null}),actor,org);
+  assertEquals(result,{trial_usage:usage,trial_offer:null});
+  assertEquals(result.trial_usage?.walkthroughs,{used:0,cap:1,remaining:1});
+  assertEquals(result.trial_usage?.published_listings,{used:0,cap:1,remaining:1});
+ }
+});
 Deno.test("bounded trial context refuses wrong workspace, inflated counters, old active time and live proposal",async()=>{
- const mutations=[(u:any)=>u.org_id="other",(u:any)=>u.photo_edits.cap=6,(u:any)=>u.photo_edits.remaining=4,
+ const mutations=[(u:any)=>u.org_id="other",(u:any)=>u.photo_edits={used:0,cap:21,remaining:21},(u:any)=>u.photo_edits.remaining=4,
+  (u:any)=>u.photo_edits={used:0,cap:20.5,remaining:20.5},(u:any)=>u.photo_edits={used:0,cap:"20",remaining:20},
+  (u:any)=>u.photo_edits={used:21,cap:20,remaining:0},(u:any)=>u.walkthroughs={used:0,cap:2,remaining:2},(u:any)=>u.published_listings={used:0,cap:2,remaining:2},
   (u:any)=>u.upload_budget_bytes=1073741825,(u:any)=>u.upload_used_bytes=-1,(u:any)=>u.ends_at=new Date(Date.now()-1000).toISOString(),
   (u:any)=>u.ends_at=new Date(Date.now()+8*86400000).toISOString()];
  for(const mutate of mutations){const usage=current();mutate(usage);await assertRejects(()=>boundedTrialContext(client({trial_usage:usage,trial_offer:null}),actor,org),HttpError);}

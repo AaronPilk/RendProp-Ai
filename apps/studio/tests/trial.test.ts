@@ -101,6 +101,20 @@ test("signed seven-day trial crossing month-end retains three independent counte
 test("a different workspace trial cannot be attached to the current account", () => {
   assert.throws(() => decodeWorkspace({ ...workspace(), trial_usage: { ...trial(), org_id: USER } }, USER, memberships), /different workspace/);
 });
+test("actual workspace and account decode preserve historical and twenty-photo trial terms", () => {
+  for (const cap of [1, 3, 5, 6, 20]) {
+    const usage = { ...trial(), photo_edits: { used: cap - 1, cap, remaining: 1 } };
+    const offer = { enabled: true, walkthroughs: 1, photo_edits: cap, published_listings: 1, max_days: 7, max_video_seconds: 90, upload_budget_bytes: 1_073_741_824 };
+    const selected = decodeWorkspace({ ...workspace(), trial_usage: usage, trial_offer: offer }, USER, memberships);
+    const current = decodeAccount({ ...account(), trial_usage: usage }, selected);
+    assert.deepEqual(selected.trialUsage?.photoEdits, { used: cap - 1, cap, remaining: 1 });
+    assert.deepEqual(current.trialUsage?.photoEdits, selected.trialUsage?.photoEdits);
+    assert.equal(selected.trialOffer?.photoEdits, cap);
+    assert.equal(current.trialUsage?.walkthroughs.cap, 1); assert.equal(current.trialUsage?.publishedListings.cap, 1);
+    const html = renderToStaticMarkup(createElement(TrialAllowance, { trial: current.trialUsage! }));
+    assert.match(html, new RegExp(`${cap - 1} of ${cap} used`));
+  }
+});
 test("malformed trial counters and windows are refused instead of offering additional usage", () => {
   for (const value of [
     { ...trial(), status: "paid" },
@@ -116,7 +130,7 @@ test("malformed trial counters and windows are refused instead of offering addit
     { ...trial(), upload_budget_bytes: 0 },
     { ...trial(), walkthroughs: [] },
     { ...trial(), walkthroughs: { used: 0, cap: 2, remaining: 2 } },
-    { ...trial(), photo_edits: { used: 0, cap: 6, remaining: 6 } },
+    { ...trial(), photo_edits: { used: 0, cap: 21, remaining: 21 } },
     { ...trial(), published_listings: { used: 0, cap: 2, remaining: 2 } },
     { ...trial(), upload_budget_bytes: 1_073_741_825 },
   ]) assert.throws(() => decodeTrialUsage(value, ORG), /allowance could not be verified/);
@@ -144,7 +158,7 @@ test("dormant offer never displays proposed caps; enabled offers require verifie
   assert.equal(decodeTrialOffer({ enabled: false, photo_edits: 1000 }), null);
   const offer = { enabled: true, walkthroughs: 1, photo_edits: 5, published_listings: 1, max_days: 7, max_video_seconds: 90, upload_budget_bytes: 1_073_741_824 };
   assert.equal(decodeTrialOffer(offer)?.photoEdits, 5);
-  for (const value of [{ ...offer, enabled: "true" }, { ...offer, max_days: 8 }, { ...offer, walkthroughs: 0 }, { ...offer, photo_edits: -1 }, { ...offer, max_video_seconds: undefined }, { ...offer, walkthroughs: 2 }, { ...offer, photo_edits: 6 }, { ...offer, published_listings: 2 }, { ...offer, max_video_seconds: 91 }, { ...offer, upload_budget_bytes: 1_073_741_825 }]) {
+  for (const value of [{ ...offer, enabled: "true" }, { ...offer, max_days: 8 }, { ...offer, walkthroughs: 0 }, { ...offer, photo_edits: -1 }, { ...offer, max_video_seconds: undefined }, { ...offer, walkthroughs: 2 }, { ...offer, photo_edits: 21 }, { ...offer, photo_edits: 20.5 }, { ...offer, photo_edits: "20" }, { ...offer, published_listings: 2 }, { ...offer, max_video_seconds: 91 }, { ...offer, upload_budget_bytes: 1_073_741_825 }]) {
     assert.throws(() => decodeTrialOffer(value), /allowance could not be verified/);
   }
 });

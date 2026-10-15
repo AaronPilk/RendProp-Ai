@@ -116,6 +116,7 @@ def generated(billing_source, live_source, manager_source, banner_source):
 faults = [
     ('actual', None, None, None),
     ('counter-remaining', 'remaining == cap - used', 'remaining >= 0', 'Malformed trial response accepted'),
+    ('counter-photo-bound', 'cap <= 20', 'cap <= Int.max', 'Malformed trial response accepted'),
     ('counter-org', 'orgId == org,', 'true,', 'Recorded trial cannot cross workspaces'),
     ('trial-window', 'end.timeIntervalSince(start) <= 7 * 24 * 60 * 60', 'true', 'Malformed trial response accepted'),
     ('disabled-offer', 'guard enabled, checked() != nil', 'guard checked() != nil', 'Disabled configured quantities stay hidden'),

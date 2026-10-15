@@ -126,6 +126,27 @@ Deno.test("actual me returns scoped bounded trial usage without advertising a do
  assertEquals(unfunded.response.status,200);assertEquals(unfunded.body.plan,"starter");assertEquals(unfunded.body.plan_raw,"starter");assertEquals(unfunded.body.entitlement.degraded,true);
  assertEquals(unfunded.body.usage.caps,{renders:0,photo_edits:0,reels:0,aerials:0,drone:0});assertEquals(unfunded.body.serving_activation.available,false);assertEquals(unfunded.body.billing.can_manage_subscription,true);
 });
+Deno.test("actual me preserves exact twenty-photo recorded usage and held offer without granting a new allowance",async()=>{
+ for(const cap of [5,20]){
+  const usage={org_id:ORG,status:"active",starts_at:new Date(Date.now()-1000).toISOString(),ends_at:new Date(Date.now()+86400000).toISOString(),walkthroughs:{used:0,cap:1,remaining:1},photo_edits:{used:cap-2,cap,remaining:2},published_listings:{used:0,cap:1,remaining:1},upload_budget_bytes:1073741824,upload_used_bytes:20};
+  const held={reservation_id:"e3000000-0000-4000-8000-000000000001",actor_id:USER,app_account_token:USER,org_id:ORG,product_id:"com.rendprop.app.starter.monthly",held_at:new Date().toISOString(),trial_offer:{enabled:true,walkthroughs:1,photo_edits:cap,published_listings:1,max_days:7,max_video_seconds:90,upload_budget_bytes:1073741824}};
+  const r=await invoke({plan:"starter",source:"apple",trialUsage:usage,heldPurchase:held});
+  assertEquals(r.response.status,200);assertEquals(r.body.trial_usage,usage);
+  assertEquals(r.body.trial_reservation,held);assertEquals(r.body.trial_offer,held.trial_offer);
+  assertEquals(r.body.trial_usage.photo_edits.remaining,2);
+  assert(!r.queries.some(u=>/prepare_subscription_trial_purchase|fund_|reserve|bump_rate/.test(u.pathname)),"A GET must not create funding, reserve capacity or reset usage");
+ }
+});
+Deno.test("actual me refuses future, malformed and foreign twenty-photo trial receipts",async()=>{
+ const usage={org_id:ORG,status:"active",starts_at:new Date(Date.now()-1000).toISOString(),ends_at:new Date(Date.now()+86400000).toISOString(),walkthroughs:{used:0,cap:1,remaining:1},photo_edits:{used:2,cap:20,remaining:18},published_listings:{used:0,cap:1,remaining:1},upload_budget_bytes:1073741824,upload_used_bytes:20};
+ const held={reservation_id:"e3000000-0000-4000-8000-000000000001",actor_id:USER,app_account_token:USER,org_id:ORG,product_id:"com.rendprop.app.starter.monthly",held_at:new Date().toISOString(),trial_offer:{enabled:true,walkthroughs:1,photo_edits:20,published_listings:1,max_days:7,max_video_seconds:90,upload_budget_bytes:1073741824}};
+ for(const trialUsage of [{...usage,photo_edits:{used:0,cap:21,remaining:21}},{...usage,photo_edits:{used:2,cap:20,remaining:19}},{...usage,org_id:OTHER}]){
+  const r=await invoke({trialUsage});assertEquals(r.response.status,503);assert(!r.body.trial_usage);
+ }
+ for(const heldPurchase of [{...held,trial_offer:{...held.trial_offer,photo_edits:21}},{...held,trial_offer:{...held.trial_offer,photo_edits:"20"}},{...held,org_id:OTHER}]){
+  const r=await invoke({heldPurchase});assertEquals(r.response.status,503);assert(!r.body.trial_reservation);
+ }
+});
 for(const role of ["agent","marketing"])Deno.test(`billing refuses shared-workspace subscription for ${role}`,async()=>{const r=await invoke({role});assertEquals(r.response.status,200);assertEquals(r.body.billing.can_manage_subscription,false);});
 Deno.test("admin may manage ordinary subscription",async()=>{const r=await invoke({role:"admin",plan:"pro",source:"apple"});assertEquals(r.body.billing.can_manage_subscription,true);});
 Deno.test("contract, manual and degraded entitlement contexts do not invite a new Apple purchase",async()=>{for(const option of [{plan:"brokerage",source:"apple"},{plan:"pro",source:"manual"},{degraded:true}]){const r=await invoke(option);assertEquals(r.response.status,200);assertEquals(r.body.billing.can_manage_subscription,false);}});

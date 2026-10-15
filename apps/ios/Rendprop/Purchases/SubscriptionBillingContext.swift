@@ -232,7 +232,7 @@ struct TrialUsageCounter: Codable, Hashable, Sendable {
     let cap: Int
     let remaining: Int
     var isValid: Bool {
-        used >= 0 && cap > 0 && cap <= 5 && used <= cap && remaining == cap - used
+        used >= 0 && cap > 0 && cap <= 20 && used <= cap && remaining == cap - used
     }
     var displayValue: String { "\(used) of \(cap) used · \(remaining) remaining" }
 }
@@ -301,7 +301,7 @@ struct TrialOfferSummary: Codable, Hashable, Sendable {
         guard enabled else { return self }
         guard let walkthroughs, let photoEdits, let publishedListings,
               maxDays == 7, let maxVideoSeconds, let uploadBudgetBytes,
-              walkthroughs == 1, photoEdits > 0, photoEdits <= 5, publishedListings == 1,
+              walkthroughs == 1, photoEdits > 0, photoEdits <= 20, publishedListings == 1,
               maxVideoSeconds > 0, maxVideoSeconds <= 90,
               uploadBudgetBytes > 0, uploadBudgetBytes <= 1_073_741_824 else { return nil }
         return self
@@ -420,7 +420,7 @@ struct TrialPurchaseReservation: Codable, Hashable, Sendable {
         guard actorId == actor, appAccountToken == actor, orgId == org, productId == product,
               TrialUsageSummary.date(heldAt) != nil,
               trialOffer.enabled, trialOffer.checked() != nil,
-              trialOffer.walkthroughs == 1, trialOffer.photoEdits == 5,
+              trialOffer.walkthroughs == 1, (5...20).contains(trialOffer.photoEdits ?? 0),
               trialOffer.publishedListings == 1 else { return nil }
         return self
     }

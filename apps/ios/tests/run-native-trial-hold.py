@@ -197,7 +197,7 @@ faults = [
     ('hold-token', 'appAccountToken == actor,', 'true,', 'Wrong echoed appAccountToken accepted'),
     ('hold-org', 'orgId == org, productId == product,', 'true, productId == product,', 'Wrong held workspace accepted'),
     ('hold-product', 'productId == product,', 'true,', 'Wrong held product accepted'),
-    ('hold-photo-cap', 'trialOffer.photoEdits == 5,', 'true,', 'Wrong held allowance accepted'),
+    ('hold-photo-cap', '(5...20).contains(trialOffer.photoEdits ?? 0),', 'true,', 'Wrong held allowance accepted'),
     ('hold-enabled', 'trialOffer.enabled,', 'true,', 'Disabled held offer accepted'),
     ('region-country', 'country == "USA" &&', 'true &&', 'Foreign country created a hold'),
     ('region-currency', 'currency == "USD"', 'true', 'Non-USD currency created a hold'),

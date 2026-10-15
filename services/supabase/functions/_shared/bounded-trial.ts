@@ -48,7 +48,7 @@ export async function boundedTrialContext(admin: any, actor: string, org: string
     Number.isSafeInteger(row.upload_budget_bytes) && row.upload_budget_bytes > 0 && row.upload_budget_bytes <= 1073741824 &&
     Number.isSafeInteger(row.upload_used_bytes) && row.upload_used_bytes >= 0 && row.upload_used_bytes <= row.upload_budget_bytes,
     503, unavailable);
-  const walkthroughs = bucket(row.walkthroughs, 1), photo_edits = bucket(row.photo_edits, 5), published_listings = bucket(row.published_listings, 1);
+  const walkthroughs = bucket(row.walkthroughs, 1), photo_edits = bucket(row.photo_edits, 20), published_listings = bucket(row.published_listings, 1);
   assert(row.status === "expired" || end > Date.now(), 503, unavailable);
   assert(row.status !== "active" ||
     walkthroughs.remaining + photo_edits.remaining + published_listings.remaining > 0, 503, unavailable);
