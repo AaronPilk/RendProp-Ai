@@ -1,191 +1,78 @@
 # Rendprop owner request checklist — October 14–15, 2026
 
-## Current release checkpoint — October 15, 2026, 21:29 UTC
+## Current release checkpoint — October 15, 2026, 21:52 UTC
 
 This checkpoint supersedes historical status below. The checklist is not complete.
 
-- The owner is away and has authorized Simulator testing. Notify the owner in this chat for a specific laptop action. Signed-in Studio acceptance still needs the owner to sign into https://studio.rendprop.com with the normal Apple account. No mirrored-phone acceptance is available while the owner is away.
-- The same 14-photo job is READY and explicitly published on the same `g2afbgmv32` link. Its actual 70-second, 1920×1080 master fully decodes. All three hosted designs played it; 16 desktop/mobile website states passed gallery, lightbox, navigation, real nearby places and contact checks. These are browser results, not physical Safari/Messages or enquiry proof.
-- The improved custom-lighting prompt produced an accepted 3584×4780 candidate. Independent full-image/TV/cat inspection passed for this image; the earlier unsafe candidate remains HOLD. Original bytes, gallery and cover are unchanged. No general claim that AI never changes a property.
-- Ask AI fix `b550212` is live as Coach43. It distinguishes `sold_at` availability from raw processing status without reading an address. One normal owner query correctly identified this selected home as sold and recommended Make a video from reviewed photos. Its one action targeted the exact home and was not executed. Booked cost: 2.1 cents, separate from the 20:46 accounting export.
-- Home guide `cc1c89e` now says address/details → landscape photos and optional reviewed edits → Listing video → choose gallery/cover/contact → publish/share/Leads. Recorded walkthrough remains optional. One source-bound unsigned normal Release SDK compile PASSED:209inputs/174trackedSwift+onegenerated/sevenresources/zeroerrors/140.094s; all19priorartifacts unchanged. Receipt737bd4b8… outer_bridge/build85-home-photo-first/native-sdk/. No new archive or upload. Later trial and voice fixes need a new integrated compile.
-- CI38801653301 still tests older `b244c5d`: 11 component jobs passed, three known failures have causal fixes committed, and the long offline audit is progressing through bounded checks. AVFoundation passed in 5m45s. A full run of the final source is still due; no current-head green claim.
-- The $25 per-property consumable has the intended US price; Sandbox is enabled and Production remains off. Apple reports MISSING_METADATA and no review screenshot. A genuine product fetch/purchase/recovery/property-binding test and real review screenshot remain open. Previews and source tests do not prove a purchase.
-- Cost export at20:46:56UTC retains 297 rows / $91.480052 priced accounting. The later Coach query adds one known 2.1-cent entry; this is not an updated invoice-complete total. Holds, funding, unpriced serving and infrastructure remain separate.
-- Internal disk has 7.3GiB free; the external 1TB APFS container has about393GiB shared free. Encrypted Time Machine is still COPYING (reported66.93%); verified manual archives do not prove a finished full backup. All new build/media outputs stay external with the internal3GiB guard.
+- The owner is away and authorizes Simulator testing. Notify the owner in this chat for a specific laptop action. Normal Apple sign-in to https://studio.rendprop.com is still pending; no token injection or mirrored-phone acceptance while away.
+- The SAME 14-photo job is READY and explicitly published on the SAME `g2afbgmv32` link. The actual 70-second 1920×1080 master fully decodes; all three hosted designs played it. Sixteen desktop/mobile states passed gallery, lightbox, real nearby places and contact checks. These are browser results, not physical Safari/Messages, enquiry or genuine purchase proof. Thirteen AI shots plus one explicitly softer static-photo fallback are retained.
+- Current Sky and improved custom-lighting samples passed prospective QC and visual inspection. The earlier unsafe custom candidate stays HOLD. Originals, gallery and cover remain unchanged. One successful room is not proof that every AI edit on every home is correct.
+- Ask AI `b550212` is live as Coach43: server-derived sold availability is separate from pipeline status. A normal owner query correctly identified this Sold home and recommended Make a video from reviewed photos; its exact-home action was not executed. Home guide `cc1c89e` follows address/details → landscape photos/optional reviewed edits → Listing video → gallery/cover/contact → publish/share/Leads. Recorded walkthrough stays optional.
+- Trial compatibility `bfbe9d1` preserves exact recorded5–20 held terms and≤20 usage/offers, historical5 and all money/identity authority. Focused38Deno/13Studio/typecheck,240native assertions/51compiled controls and independent peer passed. Me69/Apple-subscriptions35 are LIVE; no trial/grant/config/funding writes. One existing-ownerGET/me200 proves liveness only, not a real20-photo trial grant.
+- Studio frontend37 `359c1ab9-56fa-435a-96f5-17dcd8122d91` is now LIVE. Exactly one deployment;35public artifact hashes, three routes, security headers, existing config/runtime/zero nonasset bindings verified. Initial exact-old-index/new-script404 propagation is preserved; identical GET-only reconciliation passed without redeploy. Receipt `a7bc5ffd…` external `build85-trial20-studio/FINAL-DEPLOYED-RECEIPT.json`. Signed-in Studio acceptance remains open.
+- Narration readiness `65012f7` prevents creation during script/TTS/recording/transcription/permission preparation and retains an active take. A view-local UUID retires old permission callbacks; overlong guidance says shorten narration/add photos. Peer review and portable64assertions/15compiled controls passed after test-only portability fix `6745141`; diagnostic reds remain retained.
+- Final integrated unsigned normal Release SDK PASSED:209inputs/174trackedSwift+onegenerated/sevenresources, zeroerrors/140.105s, noLABDEBUG. OnlyFlyDetail350168… andBilling33310a35… differ from the accepted Home compile; all25 prior signed/archive/SDK artifacts unchanged. Receipt `69af3eb0…` outer `_bridge/build85-final-native-sdk/`. This is source1.0.5(84) compilation, not a new TestFlight delivery.
+- Full current Edge suite PASSED2510tests/0fail/1ignored against447unchanged source inputs,132.885s; external `build85-final-edge-tests/FINAL-RECEIPT.json`. CI38801653301 still tests OLDERb244c5d:11component jobs passed, three known failures causally repaired. Its37m32s Floor measurements step finished successfully21:48:22Z; next export checks continue. Final whole-source CI is still due. Do not dispatch the same-branch run blindly: cancel-in-progress would cancel the old audit.
+- Isolated XCTest actually navigated under the locked Mac. Attempt1 had two test-locator failures (inherited footer identifier and XCTest128-character string query limit), not established product defects. Its screenshots/logs are retained. Corrected test-only three-case incremental attempt2 is RUNNING with unchanged209app inputs and preserved prior artifacts: largest-text scroll/Edit/Compare/pager, exact Home copy, light/dark fixed footer. Do not count these cases passed before the result.
+- Actual current coordinator component prepared/downloaded a55,544,455-byte ZIP from four retained real Original/Decluttered/Staged/custom masters;42entries,16actual browser-rendered JPEG copies fully decoded/hash-checked, masters unchanged/systemunzipPASS. Receipt `fca2140a…` external `build85-current-real-photo-package/`. This isolated unstyled component/closed metadata proof is not signed-in Studio or iPhone Files acceptance.
+- $25 per-property consumable has the intended US price, Sandbox enabled, Production OFF. Apple still reports MISSING_METADATA/no review screenshot. Genuine product fetch, purchase/recovery/property binding and actual review screenshot remain open. Trial1500c budget versus20FAL4K clips remains a separate final pricing/allowance audit item; no invented grant or funding.
+- Latest retained cost snapshot21:38:22Z:300ledger rows/9211.2124c ($92.112124 internal priced accounting). All prior297rows unchanged; additions are Coach2.1c plus ordinary retained Stage/Declutter30.5536c each, without attributing those two to root tests. Holds42.3796c, owner$25FAL funding, unpriced serving, supplier invoices and infrastructure remain separate. Receipt `9d269a95…` external `build85-closeout-costs/FINAL-RECEIPT.private.json`.
+- Fresh Apple/beta read21:29Z: same three build82 feedback submissions, zero submitted crash reports sinceOct14 (not crash-free proof). Public1.0.4(74), internal1.0.5(84) and unattached AFTER_APPROVAL draft unchanged. No85 archive/upload or newest App Store submission.
+- Disk check21:51Z: internal6.88GiB/external376.13GiB available. Encrypted Time Machine is now ThinningPostBackup but Running=1; a finished full backup is NOT yet verified. Manual verified archives are separate. All fresh build/media outputs stay external with continuous3GiBinternal/8GiBexternal guard.
+- Onboarding remains REJECTED temporary internal content. Remake LAST only after final app and URL pages are accepted, Realtors only, exact matching screens/narration, Willow1.2× natural excitement, logical full workflow/best practices, no duration cap. Then verify final resource build and submit the accepted newest candidate with AFTER_APPROVAL.
 
-- Final audit repairs are committed. Trial compatibility `bfbe9d1` preserves exact recorded5–20 held terms and≤20 usage/offers, historical5 and all money/identity authority. Focused38Deno/13Studio/typecheck,240native assertions/51compiled controls and independent peer passed. Me69/Apple-subscriptions35 are LIVE with all75 runtime files exact and other30functions/SQL/configs unchanged; existing ownerGET/me200 is liveness only, not a fabricated20grant. Studio frontend build is underway, not deployed.
-- Narration readiness `65012f7` prevents creation while script/TTS/recording/transcription/permission is pending; creation no longer deletes an active take. A view-local permission UUID retires old callbacks across dismissal/reopen or mode changes. Overlong guidance now says shorten narration/add photos. Independent peer passed. Root caught the new test runner's postcommit HEAD self-comparison failure; test-only `6745141` makes its preserved oracles portable. Final actual-source64assertions/15compiled omission controls and source-only/no.git preflight pass; original diagnostic reds retained.
-- Integrated unsigned normal Release SDK PASSED all final native changes:209inputs/174trackedSwift+onegenerated/sevenresources/zeroerrors/140.105s, noLABDEBUG. OnlyFlyDetail350168… andBilling33310a35… differ from accepted Home compile; other207inputs exact. All25 prior signed/archive/SDK artifacts unchanged, minimuminternal7.203GiB. Receipt69af3eb0… outer_bridge/build85-final-native-sdk/. It remains1.0.5(84) unsigned compilation, not a new TestFlight delivery. No new build metadata/archive/upload.
-
-- Actual current coordinator component successfully prepared and downloaded a55,544,455-byte ZIP using four retained real Original/Decluttered/Staged/custom files, including the accepted3584×4780 custom master.42entries/16real browser-rendered JPEG copies fully decoded with manifest dimensions/SHA; master bytes stayed exact and systemunzip passed. This was an isolated unstyled component/closed local metadata proof, not signed-in Studio/phone Files acceptance. Source was unchanged, no provider/hosted calls. Receiptfca2140a… externalbuild85-current-real-photo-package/FINAL-RECEIPT.private.json. Initial harness-only import/root/default-wait failures are retained separately.
-
-- Public1.0.4(74), internal1.0.5(84), and the unattached AFTER_APPROVAL draft are unchanged. No85 archive/upload or App Store submission. Rejected onboarding remains temporary internal content; remake it LAST from the exact accepted final pages, Realtors only, Willow1.2×, logical complete workflow and no duration cap.
-
-
-## Latest execution delta — October15,20:52UTC
-
-- Most recent owner session is `/Users/pilksclaes/Rendprop AI/_bridge/build85-owner-ask-ai/owner-session.private.json`, normal official refresh200 at20:50Z, sameactor, expiry21:50:02Z. Prior Skyrefreshtoken ROTATED; doNOTreuse/refresholdaliases. Studio human browserlogin remainsseparate/pending.
-- Custom improved-prompt5e43c387… returned200/85.28s,4K3584x4780/9,187,689B/SHA9baa7ba7…, QCcheck351b8d2d…ACCEPT +rootfull/TV/catvisualPASS. PrivateGET byteexact; Original82a5…/5,178,125B/gallery/coverunchanged. PriorrawHOLDretained. Ledger26.6692c; no retry/rejudge/publish. Finalactualreceiptbe13d7c8… underouter_bridge/build84-custom-improved-plan/actual/.
-- SoldContact6fff665 LIVE Worker5c6c9fbb/ETag7a4189…/10bindings preserved. Published+2previewcorrectheadings andnoindex/noforms; same70s1080p video1.42s. Firstpropagation/overstrictbeaconharnessredsretained, noseconddeploy. Finalreceipt47f616… externalbuild85-hosted-flow-after-publication.
-- FullcurrentEdge447sourceinputs unchanged:2500PASS/0fail/1ignored/2m5s; receipt externalbuild84-current-ci/CURRENT-EDGE-ALL-FINAL-RECEIPT.json. Futurecoachfixnotincludedinthatpass.
-- CI38801653301atb244c5d stillrunning ONLYofflineaudit/largevideo step at20:49;11componentspassed/3knownoldsourcefailures. All3repaired6225beb/96d3acf/32c5a67. NewfullsourceheadrunNOTdispatchedyet;waitcoachcandidate andcurrentauditfinish, thenpush+ONEnewrun. CurrentHEAD32c5a67 (notpushedbeyondb244).
-- Freshcostexport20:46:56Z297rows9148.0052c($91.480052 internalretainedpricedaccounting), allprior293rowfieldsunchanged, +4rows30.0692c. Holds42.3796c/$25funding/unpricedmedia/infra/invoices/historygapsseparate. Finalreceipt22b5da6f… outer_bridge/build85-final-cost-snapshot/20261015T204653Z. No newcoachPOSTyet.
-- NewAskAIpreflightfoundtruthgap BEFOREpaidcall: exactSoldlistingDBstatusready +sold_atOct11, coach42onlyreadsstatus so falselymissesSold. Inventoryassignedminimalserver-only availabilitycurrent|sold|archived|null fromownedid/status/sold_at/space_type; preserve rawpipeline status andprivacylabelCentralAve/noaddresses. Candidate/testsunderway, NOdeploy/POSTGOyet. Native114+17selectedSoldscopefixalreadyretained,butdoesn'tfixbackendavailabilityalone.
-- Rootprepared outer_bridge/CLAUDE-CURRENT-LAUNCH-AUDIT.txt for independentexternalreview;notmessaged. OnboardingstillLAST/rejected/noAppStoresubmit/no85archiveupload. Useraway;Simulatorallowed;pendinghumanStudioApplelogin, genuinepurchase/invite/phoneacceptance remain.
-
-
-## Latest checkpoint — October15,20:39UTC (supersedes older status below)
-
-- Actual SAME14-photo70s1080p video now EXPLICITLY PUBLISHED by normal owner
-  /renders/republish-app200 with original publication18541eb5…, assete201b961…,
-  SAMEslug g2afbgmv32. Prior400 retained, samekey/samebody retry after56ab142/
-  renders57 exact15files/13preserved/JWTtrue/all31othersunchanged. No newAI/QC.
-- Actual hosted mobile Chromium3designs all play1920x1080/70s in1.296–1.765s
-  afterPlay/noautoplay/nooverflow/noJSfault; root viewed actualscreens. Expanded
-  16desktop/mobile states passedGallery15master/lightbox/PrevNext/keyboard/touch,
- 9OSMplaces/Contact/previewnoindex+noforms. CloudflareautomaticchallengePOSTs
- wereharness-onlyclassification; appactionwrites0. PosteractualJPEG200/198ms
- decoded1080p. SoldContactheading mismatch is narrowcopyfixunderway, notdeployed.
-- NativeAnimate24b5157 sourceSDK209/77+22PASS. ai-video85 canonicalHTTPSstatusfix
- c34e813 exact56runtime/54preserved/JWTtrue; same5c768b1d… operationGET +direct
- returnedURLGET200 nowworks, originalproviderref/time/outputa96621…/ledger/QC
- byteequivalent. Actual1248x1664/24fps/5.041667sAVdecode/source+3frames/QCACCEPT;
- 24.3cgen+1.3cQC owner-sponsored, notretailpayerproof. No85archive/upload.
-- Improveec4ed60 deployed finalai-copy43/canonicalai-photo84/v2v8 minimaloverlays
- exact/JWTtrue; temporarytracingfullyremoved. Onefreshnormal00b536ac…HTTP200
- 6.96s/265charprompt/ready[lighting]/scopeexact; ONEactualSonnet5initialstage2.1c,
- nointernal/clientretry. SameOriginal/gallery/cover unchanged.
-- Studio exactstatic7d2ec537…/35publicartifacthashes+securityheaders/config/bindings
- preserved;normalrealaccountUIstillawaitshumanApplelogin. Sourcehelperand575tests
- passbutnotrealaccountproof. One distinctnormalcustomlightingtest nowauthorized:
- sameOriginal/copyONLYacceptedImprovepromptchange, normalv2/QC;stopifHOLD, no pub.
-- CI38801653301atb244c5d running; known3componentfailureswebinventory6225beb,
- closedpublicationfixture96d3acf corrected; historicalOct7financialmediabudget
- fixturechronologicalboundaryrepair underway. Runtimefinancial/securityguards
- unchanged; originalredretained. Newfullsourceheadrunstilldueafterfinalfreeze.
-- Fresh20:23accounting293rows9117.9360c+separate42.3796cholds/$25FALfunding;
- subsequentAnimateQC1.3c/normalImprove2.1c/newcustomtest awaitfinalsnapshot. Supplier
- invoices/unpricedinfra/missinghistoricalcoverage remainexplicit. Freshbeta3build82
- submissions/0submittedcrashes unchanged. Disk7.63GiB, encryptedTimeMachineCopying
- reported59.05%20:24Z, NOTfullbackupcomplete.
-- Public1.0.4(74)/internal1.0.5(84)/unattacheddraftAFTER_APPROVAL unchanged.
- OnboardingREJECTED118.73s/remakeLASTexactfinalscreens/URLs, noAppStoresubmission.
- OwnerawaySimulatorallowed/phoneunavailable/remotelaptopcontrolnotifyhere.
 
 
 This is the consolidated acceptance list for the owner's messages, not a claim that
 all work is finished. Latest explicit decisions override earlier wording/prices.
-Updated October 15 at 21:29 UTC after live and local acceptance checks. Earlier detailed ledger
+Updated October 15 at 21:52 UTC after live and local acceptance checks. Earlier detailed ledger
 is retained at
 `_bridge/build83-owner-checklist/CHECKLIST-PRE-CONSOLIDATION-20261015-1503.md`
 (relative to the outer Rendprop AI folder).
 
 ## Current truth
 
-- Functionality and logical UX/testing come first. Provisional prices and margin
-  targets must not block authorized functional tests. Audit final pricing after
-  acceptance and before App Store submission; 75% is not an acceptance gate.
-  Keep security, abuse/rate limits and actual supplier-credit requirements intact.
-- Public **1.0.4 (74)** remains live. Normal **1.0.5 (84)** is VALID,
-  APP_STORE_ELIGIBLE and IN_BETA_TESTING in the existing internal group.
-  Native compact commit **08098a9** and normal metadata **75738bf** bind the
-  114-input gate and 209 archive inputs. One signed SDK/archive and one upload
-  passed; 174 tracked Swift files, one generated file and seven resources are
-  verified with no LAB/DEBUG. Actual 84 compact-review acceptance remains open.
-- App Store 1.0.5 remains an unattached PREPARE_FOR_SUBMISSION draft configured
-  AFTER_APPROVAL. No latest-build App Store submission or release is claimed.
-- Prior source 2fe6d669 passed all 16 CI jobs. Run 38780154650 completed on
-  ff84129 with four component-job failures and the required aggregate failure.
-  Actual UIKit passed 693 rendering/packaging checks, including 449 ZIP checks
-  and 33 compiled controls. Later privacy repair b911419 passes 42 checks/17
-  controls, and PG harness repair f68118f passed its isolated proofs. Export
-  diagnostics 56aeb29 preserve the CI timing refusal; one local six-variant run
-  passed with runtime/thresholds unchanged. These repairs and fixture-only
-  2e59899 are outside that run. No full current-head CI pass is claimed.
-- Current CI38795295089 at695b64d completed FAILURE:12 component jobs passed,
-  three failed (source-bound Swift dependencies/old button assertions and an old
-  PostgreSQL replay boundary), plus required aggregate failure. Harness-only
-  repairs2a7163b/932e788 passed279+55 recovery controls,169-migration replay checks,
-  130+3 batch controls,263+9 actual Simulator media checks and ten focused Swift
-  runners. Runtime guards were retained. A new full current-head run is still due.
-- Native standalone Animate recovery24b5157 retains the exact request/JPEG/receipt
-  before dispatch, recovers lost acceptance without a new paid key, and pins QC to
-  exact downloaded bytes.77 assertions/22 controls and the actual209-input unsigned
-  Release SDK compile passed140.09s; no85 archive/upload or physical acceptance.
-  SQL200518 and ai-video84 exact runtime readbacks are live; one ordinary-route
-  owner-sponsored Animate acceptance test is underway, separate from normal payer proof.
-
-- The SAME14-photo Listing job c40f4860… is now **READY**. Exact CPU image
-  801fd35b… / Worker d98a3ddd… was verified; its script ETag change was independently
-  proved to be only four non-executing build-path comments. Default-OFF repair SQL
-  applied once as20261015193930, then an explicit operator repairfb32d201… retained
-  every source, paid row, operation, manifest, output ID and original history entry.
-  Normal cron assembled on attempt1: H2641920×1080/30fps/70.000s/2100frames,
-  56,590,848 bytes/SHA3ec4d2f5…. Full decode passed;42 sampled temporal frames
-  show full-frame scenes, motion and the intended softer saved-photo still.
-  One completion push was sent. No new AI/QC charge or automatic publication.
-  One explicit normal owner publication attempt failed400 before publishing because
-  the website used the uploaded-input timing verifier on a composed master. Exact
-  master reproduction: strict400 vs composed70s1080p PASS. Fix56ab142 permits the
-  existing exact compositor verifier ONLY after registered ready output/source/QC
-  authority; native uploads remain strict.72 focused tests and three compiled
-  guard-removal controls pass; deployment/publication/browser acceptance are pending.
-  Owner-approved portrait crops remain a test limitation, not a new requirement.
-- The owner explicitly allows Simulator UI acceptance while the physical phone
-  is unavailable. Compact review and two batches retaining six exact PNG Originals
-  were observed there; physical 84 acceptance remains open. Keep Simulator,
-  SDK/backend and actual-device results distinct: fixture UI does not establish
-  hardware, purchase, notification or provider proof. Both apparent navigation
-  freezes were fixture-only NaN/equality artifacts: 2e59899 fixes just two sentinels,
-  and one controlled rebuild opened both routes at idle CPU. No production route
-  bug/fix is claimed. Largest-text Add/Take wrapping remains a separate layout
-  finding. Source8e0eeaa now stacks those buttons only at accessibility sizes;
-  the controlled Simulator build proves readable labels and unchanged normal row.
-  It is NOT in delivered84. One normal unsigned Release iphoneos compile passed
-  for the209-input post-delivery source including960ef4b; later Animate changes
-  now also passed a separate209-input Release SDK check, but need a normal release. Largest-
-  text grid/viewer reachability is unresolved, not a proven scrolling defect.
-  The isolated test Simulator has been shut down; no UI test is still running.
-  Claude's separate web/Studio work is preserved.
-- C2 is LIVE: Studio frontend91727361… has35 exact public artifact readbacks;
-  Edge Studio36 has54 exact runtime files, jobs12 has64, and SQL191755/191916
-  match the reviewed migrations. Atomic discard/upload ordering and root43bf1e8
-  chosen-version source ordering are deployed. Existing bindings, configuration
-  and other Edge functions remain unchanged. Local SQL race/fault controls,
-  575 Studio tests and focused browser flows passed; real authenticated Studio
-  acceptance remains open. Studio is signed out on this laptop; a human sign-in
-  request is pending while other work continues.
-- W05 point authority is LIVE: SQL20261015184120 / tours68 exact readback.
-  The SAME saved-edit preview initial GET measured7.3032→1.6476s and repeat
-  6.5564→1.6701s; Original repeat3.5797→1.5815s. Master/preview hashes and geometry
-  are unchanged. These are single-sample hosted controls, not a phone guarantee.
-  The actual Home cover is served directly by public R2 and decoded in230–312ms;
-  hero readiness measured2.02–3.35s across the three designs. A proposed hero
-  preview change would have slowed this cover and was reverted in49d242a without
-  deployment. The separate generic private full-master path remains slower.
-  Worker996484bb, three fresh authority checks, flags and secrets are unchanged.
-- Owner media migration 20261015170710 and general product-media migration
-  20261015171923 are LIVE. Authorized media no longer requires a financial reserve
-  to activate; current publication/object/hosting/visibility checks remain. Actual
-  requests/bytes are metered as unpriced usage, without invented funding/cost rows.
-- The retained18:50:52 UTC whole-app accounting export covers283 ledger rows /
-  9030.6640 cents. Unreconciled holds42.3796 cents and the owner's$25 FAL funding
-  are separate. Invoices, unpriced infrastructure, missing historical links,
-  deletion-related history and unseen worker spools remain explicit gaps. This
-  is internal retained accounting, not an all-time supplier-billed total.
-- Onboarding is still LAST and not done. The rejected 118.73s intro is unchanged
-  in internal84; it must not become the finished App Store onboarding.
+- The checkpoint above is the current execution state. The tables below retain
+  every requested MVP change and distinguish implementation from acceptance.
+  Detailed historical failures, deploys and superseded checkpoints are preserved
+  in OWNER-CONTEXT-20261014.md and the private evidence folders.
+- Functionality, quality and simple consumer use come first. Provisional prices
+  and the former75% target are not release gates; truthful offers, verified Apple
+  authority and a final pricing/allowance audit are required before submission.
+- Public1.0.4(74) remains live. Internal1.0.5(84) is delivered. Later native
+  changes have the final integrated unsigned Release SDK proof and are undergoing
+  delta-focused Simulator checks; they are not delivered in84. No85archive/upload.
+  Draft1.0.5 is unattached/PREPARE_FOR_SUBMISSION/AFTER_APPROVAL.
+- Actual14photo video is READY, explicitly published and playable on the same
+  home/link. Real Sky/Stage/Declutter/Animate/Improve/custom samples and recovered
+  receipt proofs are retained; not every sample passed, and rejected history stays
+  rejected. No automatic publication or false refund was used.
+- C2 atomic discard and Studio upload order are integrated and LIVE, with35asset
+  static readback, both migrations and exact runtime readbacks. Claude's older
+  branch is already integrated and must not be merged again. Root is checking
+  his five documented cross-client gaps against the current follow-up43bf1e8;
+  do not assume his old-base findings are either all fixed or all new defects.
+- W05 preview authority is LIVE; exact selected-edit previews improved on the
+  measured same-image sample. Full master resolution is retained. A separate
+  generic private full-master path is slower, and older low-resolution edits
+  cannot be advertised as4K. Website tests are browser proof, not physical Safari.
+- New-source full Edge2510/0/1 and integrated native SDK checks pass; older CI is
+  still finishing, and a final whole-source run is due. Automated controls do not
+  replace genuine purchases, signed-in Studio, hardware/permission/push or phone
+  sharing checks. Owner explicitly permits Simulator while away.
+- Accounting export retains300rows/$92.112124 internally priced usage as of
+  21:38Z. Holds/funding/unpriced serving/invoices/infrastructure and historical
+  gaps remain separate. Do not label a partial retained ledger an all-time bill.
+- Onboarding remains LAST. The rejected118.73s version stays temporary internal
+  content until final app/pages are accepted and exact new footage is produced.
 
 ## Latest beta feedback
 
-Fresh read-only App Store Connect fetch at 19:19 UTC (3:19 p.m. Eastern) found
-the same three screenshot/general submissions since October14, all build82: two comments on
-single-photo editing (one explicitly preserves bulk editing) and one on upload
-order across batches. Zero crash feedback submissions in that interval; this is
-not a claim that no unsubmitted crash occurred. Original reports/screenshots are
-retained privately; no feedback was replied to, marked or deleted. New items P13
-and P14 are part of this build, not deferred.
+Fresh read-only Apple fetch21:29UTC found the same three build82 submissions:
+two on single-photo editing (one explicitly preserves bulk editing) and one on
+upload order across batches. Zero submitted crash reports sinceOctober14 is not
+a claim that no unsubmitted crash occurred. Originals remain private; no feedback
+was replied to, marked or deleted. P13–P15 below retain these requirements.
 
 ## Status meanings
 
@@ -276,9 +163,9 @@ No whole feature is closed by source existence, upload or a preview alone.
 | O03 | Quality/functionality outrank old 75% margin; avoid premature normal-user spending blocks | Paid processing allowance aligned and live today; no retail price/counter reset | Ordinary paid receipt-backed admission; trial/free unchanged and not claimed solved |
 | O04 | Choose actual AI providers by quality, Kie backup available | Real model comparisons and normal FAL4K + Pro4K routes tested/live | Finish current real workflow; provider migration not assumed universal fix |
 | O05 | Ask AI is contextual app support and cost is measured | Coach43 live: server-derived sold availability and photo-first guidance. Actual selected Sold-home query200 correctly targeted same home; one2.1-cent booked call,72 focused tests | Native action execution and member/library device acceptance; owner query is not retail billing proof |
-| O06 | Rendprop Studio matches native purpose, versions, jobs, settings and exports | C2 then policy frontend7d2ec537…/35 exact artifacts, Edge Studio36/54 runtime, jobs12/64 runtime and two SQL migrations verified live;575 unit tests and focused browser flows pass | Real authenticated account/library/recovery/native parity acceptance; laptop sign-in requested |
+| O06 | Rendprop Studio matches native purpose, versions, jobs, settings and exports | C2 plus trial-compatible frontend359c1ab9…/35 exact artifacts and three routes, Edge Studio36/54 runtime, jobs12/64 runtime and two SQL migrations verified live;575 unit tests and focused browser flows pass | Real authenticated account/library/recovery/native parity acceptance; laptop sign-in requested |
 | O07 | Necessary permission/privacy experience, truthful billing/trial statements | Existing implemented paths retained; no new blanket permission prompt assumed necessary | Final actual device permission/notification/account checks and disclosure consistency |
-| O08 | Clean old files; organize Mac/1TB external drive without breaking active work | Prior 6.2GB/3,469-file move and cache cleanup retained. Later 67 inactive bridge folders moved externally with all hashes verified and compatibility symlinks; 8.54GiB free before successful 83 archive | Preserve current Mac files/source/keys and release evidence. Time Machine is still copying to the encrypted Rendprop Archive volume (read-only status19:30 UTC); the verified archive move is separate, not proof of a completed full backup |
+| O08 | Clean old files; organize Mac/1TB external drive without breaking active work | Prior 6.2GB/3,469-file move and cache cleanup retained. Later 67 inactive bridge folders moved externally with all hashes verified and compatibility symlinks; 8.54GiB free before successful 83 archive | Preserve current Mac files/source/keys and release evidence. Time Machine is still running in ThinningPostBackup on the encrypted Rendprop Archive volume (read-only status21:51 UTC); the verified archive move is separate, not proof of a completed full backup |
 | O09 | Retain all app API-cost records and distinguish usage from added credits | Private export preserves ledger/hold identity, priced bases and separate funding; both media meters remain unpriced | Reconcile supplied vendor records; missing historical links/deleted rows/other spools/infra invoices prevent an all-time or invoice-complete claim |
 | O10 | Functional testing first; final prices/margins audited after acceptance | Owner and general product-media SQL LIVE; authorized media no longer has a financial reserve activation block; request/byte metering retained | Actual loading/UX acceptance remains separate. Audit final prices after functional acceptance, before submission; no invented cash/reserve/cost receipts |
 
@@ -288,7 +175,7 @@ No whole feature is closed by source existence, upload or a preview alone.
 |---|---|---|
 | R01 | Freeze latest native fixes, peer review, compile and run appropriate checks | Home/Trial/Voice final native source peer-reviewed; integrated209-input unsigned normal ReleaseSDK passed. Portable64+15 voice gate and240+51 trial gate passed. Three older-CI failures repaired; final whole-source CI still due |
 | R02 | Deliver internal normal TestFlight 84 from reviewed native source | Done; compact08098a9/metadata75738bf, VALID/APP_STORE_ELIGIBLE/IN_BETA_TESTING; final integrated push/CI coordinated separately |
-| R03 | Test final changed UI and recover 14-photo job; inspect final output | SAME14-photo job recovered to READY and hosted master decoded/visually sampled. Simulator checks pass for reviewed flows; actual84 compact/device/hardware acceptance remains open |
+| R03 | Test final changed UI and recover 14-photo job; inspect final output | SAME14-photo job recovered to READY and hosted master decoded/visually sampled. Prior Simulator flows passed; final largest-text/Edit/Compare/Home three-case XCTest is running. Actual final device/hardware acceptance remains open |
 | R04 | Finish real paid website/ordinary-account/export/site/Studio acceptance above | Open; no fake transactions or claims that previews prove purchases |
 | R05 | Final Codex + Claude audit with current full context, not stale build 58 text | Open; prepare concrete current handoff; no external message without authorization |
 | R06 | LAST: remake **Rendprop for Realtors** onboarding from actual FINAL screens and URL pages | Deliberately LAST; current 118.73s version REJECTED, not finished |
