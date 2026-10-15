@@ -163,9 +163,12 @@ final class PhotoEditService {
             identityIsCurrent: { self.identityIsCurrent }, stopOnError: { error in
                 Task { @MainActor in Analytics.trackAIFailure("photo_edit", step: edit, error: error) }
                 let failure = AIFailure(error)
+                // A busy or held saved review keeps its exact paid request.
+                // Stop unsent photos instead of buying more pending edits.
+                let savedReview = ["photo_quality_pending", "photo_quality_hold"].contains((error as? APIError)?.code ?? "")
                 // A refused or unreachable generation service fails every photo
                 // the same way; stop instead of uploading N more to fail N times.
-                return failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable || failure.isTrialCapacityUnavailable
+                return savedReview || failure.isQuota || failure.isUnauthorized || failure.isServiceUnavailable || failure.isTrialCapacityUnavailable
                     || (error as? APIError)?.isPhotoPromptRefusal == true
             }, process: { id in
                 guard let photo = byID[id] else { throw PhotoVersionHistory.Failure.missingImage }

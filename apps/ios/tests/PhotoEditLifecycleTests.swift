@@ -142,7 +142,9 @@ struct UNNotificationRequest {
         let stoppingFailures: [any Error] = [SyntheticFailure.quota, SyntheticFailure.unauthorized,
             SyntheticFailure.serviceUnavailable, SyntheticFailure.trialCapacityUnavailable,
             APIError.server(status: 409, code: "photo_clarification_required", message: "Choose a specific edit."),
-            APIError.server(status: 400, code: "unsupported_edit", message: "We can't repaint a listing photo.")]
+            APIError.server(status: 400, code: "unsupported_edit", message: "We can't repaint a listing photo."),
+            APIError.server(status: 409, code: "photo_quality_pending", message: "Your edit is saved privately. Check this same saved edit again; no new generation is needed."),
+            APIError.server(status: 409, code: "photo_quality_hold", message: "Your saved edit needs review. Check the saved edit before starting another image.")]
         for failure in stoppingFailures {
             reset(); model.testAPI.reset(); model.api = model.testAPI; model.listings = [listing]; calls = []
             let refused = PhotoEditService(model: model, listing: listing, process: { photo in
@@ -156,6 +158,13 @@ struct UNNotificationRequest {
                   "Refused batch preserves its failure and releases exact leases")
             check(UNUserNotificationCenter.shared.delivered.isEmpty && model.testAPI.preferencesRead == 0,
                   "A stopped batch cannot announce that the photos are ready")
+            if let code = (failure as? APIError)?.code, ["photo_quality_pending", "photo_quality_hold"].contains(code) {
+                check(calls == ["one"] && PhotoWorkQueue.shared.job?.remaining == 1,
+                      "Saved photo quality stops the next unsent image")
+                let retained = PhotoWorkQueue.shared.job?.failures.first?.error as? APIError
+                check(retained?.code == code && retained?.localizedDescription.contains("saved edit") == true,
+                      "Saved quality code and existing-edit follow-up remain visible without a ready claim")
+            }
         }
 
         for boundary in ["owner", "session", "workspace", "delete", "unavailable"] {
