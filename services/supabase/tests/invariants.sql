@@ -1378,12 +1378,13 @@ where table_schema = 'public' and table_name = 'ai_routes'
 -- NULL means "whatever the adapter does by default", which is what makes 0030
 -- additive — so it must stay legal. 0030 seeds two Astra writing routes and
 -- 0034 adds the agent-reel writing route. The two bounded Studio text tasks
--- added by 20260924235553 also carry params. Require all five exact seats:
+-- added by 20260924235553 also carry params. The two isolated Pro photo seats
+-- added by 20261015074002 require their exact 4K image knob. Require all seven:
 -- arbitrary replacements, duplicate tasks or larger Studio budgets cannot pass.
 -- This inventory change does not alter the three Astra paid-plan/headroom rules.
 insert into _inv(name, pass, note)
-select 'only the three explicit Astra and two bounded Studio text seats carry params',
-       count(*) filter (where params is not null) = 5
+select 'only the three explicit Astra, two bounded Studio text and two isolated Pro photo seats carry params',
+       count(*) filter (where params is not null) = 7
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
                         and position = 1 and task = 'copy.shotlist') = 1
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
@@ -1405,7 +1406,15 @@ select 'only the three explicit Astra and two bounded Studio text seats carry pa
                         and enabled and retire_after is null
                         and capabilities @> array['text','compliant']
                         and capabilities <@ array['text','compliant']
-                        and params = '{"effort":"low","max_output_tokens":1600}'::jsonb) = 1,
+                        and params = '{"effort":"low","max_output_tokens":1600}'::jsonb) = 1
+   and count(*) filter (where id = 'c43f188c-faf0-46c8-a646-ea71b8481201'::uuid
+                        and task = 'photo.quality_stage' and position = 1
+                        and provider = 'gemini' and model = 'gemini-3-pro-image'
+                        and params = '{"image_size":"4K"}'::jsonb) = 1
+   and count(*) filter (where id = 'c43f188c-faf0-46c8-a646-ea71b8481202'::uuid
+                        and task = 'photo.quality_declutter' and position = 1
+                        and provider = 'gemini' and model = 'gemini-3-pro-image'
+                        and params = '{"image_size":"4K"}'::jsonb) = 1,
        format('%s row(s) with params: %s', count(*) filter (where params is not null),
               coalesce(string_agg(format('%s/%s', task, model), ', ')
                        filter (where params is not null), 'none'))
@@ -1430,13 +1439,19 @@ where params is not null and jsonb_typeof(params) <> 'object';
 -- Every key an adapter will ACT on. A key outside this set is not an error —
 -- _shared/providers/params.ts treats it as absent, deliberately, so a future
 -- knob can be seeded before the deploy that reads it — but a row full of keys
--- nothing reads is almost always a typo, and it is worth seeing here.
+-- nothing reads is almost always a typo, and it is worth seeing here. The
+-- image-size exception is limited to the two exact isolated Pro route rows;
+-- it is not a general permission to add image_size to another route.
 insert into _inv(name, pass, note)
 select 'every seeded params key is one an adapter actually reads',
        count(*) = 0,
        coalesce(string_agg(format('%s/%s has %s', task, model, k), '; '), 'all keys recognised')
 from ai_routes r, lateral jsonb_object_keys(r.params) k
-where r.params is not null and k not in ('effort', 'max_output_tokens');
+where r.params is not null and k not in ('effort', 'max_output_tokens')
+  and not (k = 'image_size' and r.provider = 'gemini' and r.model = 'gemini-3-pro-image'
+           and r.params = '{"image_size":"4K"}'::jsonb
+           and ((r.id = 'c43f188c-faf0-46c8-a646-ea71b8481201'::uuid and r.task = 'photo.quality_stage')
+             or (r.id = 'c43f188c-faf0-46c8-a646-ea71b8481202'::uuid and r.task = 'photo.quality_declutter')));
 
 -- 0030: and it is gated to PAYING plans. min_plan is the only working plan
 -- lever — router.ts's defaultPolicyFor() is dead code, so the cheapest-policy
