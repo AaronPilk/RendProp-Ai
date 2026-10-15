@@ -56,6 +56,7 @@ import { resolveContactPhoto } from "../listings/client-contact.ts";
 import { buildCta } from "./cta.ts";
 import { bindSpatialChapters, type SpatialChapter } from "../spatial/chapters.ts";
 import { publishedTourContext, publishedLocation } from "./published-context.ts";
+import { photoDelivery } from "./photo-delivery.ts";
 import { propertyPublicPresentation } from '../_shared/property-public-presentation.ts';
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -396,9 +397,11 @@ Deno.serve(async (req) => {
       await admitMediaRead(admin,seg[1],deliveryBytes(req));
       return json(await businessLogoDelivery(admin,seg[1],new URL(req.url).searchParams.get("key")),200,{"Cache-Control":"no-store"});
     }
-    if (seg.length > 2 || seg.length === 2 && !["delivery", "location"].includes(seg[1])) throw new HttpError(404,"Tour not found");
+    if (seg.length > 2 || seg.length === 2 && !["delivery", "photo-delivery", "location"].includes(seg[1])) throw new HttpError(404,"Tour not found");
     if (!slug) throw new HttpError(400, "slug is required: GET /tours/:slug");
-    if (seg[1] === "delivery") await requireMediaGateway(req);
+    const previewDelivery = seg[1] === "photo-delivery";
+    const mediaDelivery = seg[1] === "delivery" || previewDelivery;
+    if (mediaDelivery) await requireMediaGateway(req);
 
     // The hardcoded sample tour — answered before any DB access (see above).
     if (DEMO_SLUGS.has(slug)) {
@@ -408,12 +411,21 @@ Deno.serve(async (req) => {
 
     const admin = adminClient();
 
+    if (previewDelivery) {
+      const params = new URL(req.url).searchParams;
+      assert(params.getAll("key").length === 1 && params.getAll("bytes").length <= 1
+        && [...params.keys()].every(key => key === "key" || key === "bytes"), 400, "Use one exact published photo.");
+      const narrow = await photoDelivery(admin, slug, params.get("key"), deliveryBytes(req, 2 * 1024 * 1024));
+      if (narrow) return json(narrow, 200, { "Cache-Control": "no-store" });
+      // Existing disclosure and legacy shapes retain the complete authority.
+    }
+
     const context = await publishedTourContext(admin, slug, seg[1] === "location");
     mark("context");
     const { render, listing, visibleRefs } = context;
     if (seg[1] === "location") return json(await publishedLocation(admin, context), 200, { "Cache-Control": "no-store" });
-    const requestedDeliveryBytes=seg[1]==='delivery'?deliveryBytes(req,REGISTERED_BACKGROUND_BYTES):0;
-    if (seg[1] === "delivery") await admitMediaRead(admin,listing.org_id,requestedDeliveryBytes>GENERIC_MEDIA_BYTES?0:requestedDeliveryBytes);
+    const requestedDeliveryBytes=mediaDelivery?deliveryBytes(req,REGISTERED_BACKGROUND_BYTES):0;
+    if (mediaDelivery) await admitMediaRead(admin,listing.org_id,requestedDeliveryBytes>GENERIC_MEDIA_BYTES?0:requestedDeliveryBytes);
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
     const selectedPhotos=listing.gallery_asset_ids??null;
@@ -538,7 +550,7 @@ Deno.serve(async (req) => {
       const current=await propertyPublicPresentation(admin,{id:listing.id,org_id:listing.org_id},slug,{assets:[],keys:[]},publishedR2Url);
       if(JSON.stringify(current)!==JSON.stringify(presentation))throw new HttpError(503,'The property website changed. Please refresh.');
     };
-    if (seg[1] === "delivery") {
+    if (mediaDelivery) {
       const {data:currentRender,error:currentRenderError}=await admin.from("renders").select("id,listing_id,slug,video_key,poster_key,stream_uid,published_at").eq("id",render.id).not("published_at","is",null).maybeSingle();
       if(currentRenderError)throw new HttpError(503,"Published media could not be verified.");
       if(!currentRender || currentRender.listing_id!==listing.id || currentRender.slug!==slug || !currentRender.published_at || (["video_key","poster_key","stream_uid"] as const).some(k=>currentRender[k]!==render[k]))throw new HttpError(404,"This media is no longer published.");

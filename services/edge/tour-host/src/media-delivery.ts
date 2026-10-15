@@ -37,8 +37,10 @@ export async function handleMediaDelivery(req:Request,env:Env):Promise<Response>
   if((!match&&!brand&&!privateMatch)||u.search||!["GET","HEAD"].includes(req.method))return unavailable();
   if(privateMatch&&privateMatch[1].length>4096)return unavailable();
   const slug=privateMatch?"private":brand?brand[2]:match![1],kind=privateMatch||brand?"r2":match![2],encodedPath=match?.[4];
-  const authorityPath=privateMatch?"/tours/private-media":brand?`/tours/business-logo/${slug}?key=${encodeURIComponent(brand[1])}`:`/tours/${encodeURIComponent(slug)}/delivery`;
-  const authority=(bytes=0,objectKey?:string)=>fetchUpstreamJSON(privateMatch?authorityPath:authorityPath+(bytes?`${authorityPath.includes("?")?"&":"?"}bytes=${bytes}${objectKey?`&key=${encodeURIComponent(objectKey)}`:""}`:""),env,true,privateMatch?{cap:privateMatch[1],bytes}:undefined);
+  const previewKey=kind==="thumb"?decode(match![3]):null;
+  if(kind==="thumb"&&(!previewKey||!safeIdentity(previewKey)))return unavailable();
+  const authorityPath=privateMatch?"/tours/private-media":brand?`/tours/business-logo/${slug}?key=${encodeURIComponent(brand[1])}`:kind==="thumb"?`/tours/${encodeURIComponent(slug)}/photo-delivery?key=${encodeURIComponent(previewKey!)}`:`/tours/${encodeURIComponent(slug)}/delivery`;
+  const authority=(bytes=0,objectKey?:string)=>fetchUpstreamJSON(privateMatch?authorityPath:authorityPath+(bytes?`${authorityPath.includes("?")?"&":"?"}bytes=${bytes}${objectKey&&kind!=="thumb"?`&key=${encodeURIComponent(objectKey)}`:""}`:""),env,true,privateMatch?{cap:privateMatch[1],bytes}:undefined);
   const auth=await authority();
   if(auth.kind!=="ok")return unavailable(auth.kind==="not-found"?404:auth.status);
   if(!contract(auth.value,slug))return unavailable(503);
